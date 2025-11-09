@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGÊNCIA OPPUS</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/perfil.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Landing Page -->
+        <div id="landingPage">
+            <header class="header">
+                <h1 class="title">AGÊNCIA OPPUS</h1>
+                <p class="subtitle">Escolha um serviço abaixo para continuar.</p>
+            </header>
+            <main class="main-content">
+                <!-- Seção: Seguidores -->
+                <section class="section-block">
+                    <h2 class="section-label centered-label">Seguidores</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=seguidores_mistos" data-servico="seguidores_mistos">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores Mistos</h3>
+                                <p class="card-desc">Perfis variados, entrega rápida.</p>
+                            </div>
+                        </a>
+                        <a class="service-card" href="/perfil?servico=seguidores_brasileiros" data-servico="seguidores_brasileiros">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores Brasileiros</h3>
+                                <p class="card-desc">Foco no público do Brasil.</p>
+                            </div>
+                        </a>
+                        <a class="service-card disabled" href="#" aria-disabled="true" title="Disponível para teste somente após primeira compra." data-servico="seguidores_organicos">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores Orgânicos</h3>
+                                <p class="card-desc">Disponível para teste após primeira compra.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+
+                <!-- Seção: Curtidas -->
+                <section class="section-block centered">
+                    <h2 class="section-label">Curtidas</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=curtidas_brasileiras" data-servico="curtidas_brasileiras">
+                            <div class="card-content">
+                                <h3 class="card-title">Curtidas Brasileiras</h3>
+                                <p class="card-desc">Interações reais do público brasileiro.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+
+                <!-- Seção: Visualização Reels -->
+                <section class="section-block centered">
+                    <h2 class="section-label">Visualização Reels</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=visualizacoes_reels" data-servico="visualizacoes_reels">
+                            <div class="card-content">
+                                <h3 class="card-title">Visualizações Reels</h3>
+                                <p class="card-desc">Aumente o alcance dos seus vídeos.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+            </main>
+            <footer class="footer">
+                <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+            </footer>
+        </div>
+        <!-- Página de Perfil (inicialmente oculta) -->
+        <div id="perfilPage" style="display:none;">
+            <div id="timer" class="timer">05:00</div>
+            <header class="header">
+                <button class="back-button" onclick="goBack()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Voltar
+                </button>
+            </header>
+            <main class="main-content">
+                <div class="profile-section">
+                    <h1 class="title">Buscar Perfil</h1>
+                    <p class="subtitle">Digite o nome de usuário do Instagram</p>
+                    <div id="profileImageContainer" class="profile-image-container" style="display: none;">
+                        <div class="profile-image-embed">
+                            <img id="profileImage" src="" alt="Foto de perfil" class="profile-image">
+                            <div id="verifiedBadge" class="profile-verified-badge" style="display: none;">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="profile-info">
+                            <div id="profileUsername" class="profile-username"></div>
+                            <div id="profileStats" class="profile-stats"></div>
+                        </div>
+                    </div>
+                    <div class="search-container">
+                        <div class="input-group">
+                            <input 
+                                type="text" 
+                                id="usernameInput" 
+                                placeholder="Digite o nome de usuário ou URL do Instagram..."
+                                class="username-input"
+                                maxlength="100"
+                            >
+                            <button id="checkButton" class="check-button" onclick="checkProfile()">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="statusMessage" class="status-message" style="display: none;"></div>
+                    <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Verificando perfil...</p>
+                    </div>
+                    <div class="action-container">
+                        <button id="confirmButton" class="confirm-button" onclick="confirmProfile()" disabled>
+                            Confirmar
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </main>
+            <footer class="footer">
+                <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+            </footer>
+            <div id="toastContainer" class="toast-container"></div>
+            <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+                <div class="loading-content">
+                    <div class="spinner-large"></div>
+                    <p>Processando...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/js/main.js"></script>
+    <script src="/js/perfil.js"></script>
+</body>
+</html>
+
