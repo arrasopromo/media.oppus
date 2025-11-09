@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buscar Perfil - AGÊNCIA OPPUS</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/perfil.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Temporizador -->
+        <div id="timer" class="timer">05:00</div>
+        
+        <!-- Header -->
+        <header class="header">
+            <button class="back-button" onclick="goBack()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Voltar
+            </button>
+        </header>
+
+        <!-- Conteúdo principal -->
+        <main class="main-content">
+            <div class="profile-section">
+                <h1 class="title">Buscar Perfil</h1>
+                <p class="subtitle">Digite o nome de usuário do Instagram</p>
+
+                <!-- Foto de perfil (inicialmente oculta) -->
+                <div id="profileImageContainer" class="profile-image-container" style="display: none;">
+                    <div class="profile-image-embed">
+                        <img id="profileImage" src="" alt="Foto de perfil" class="profile-image">
+                        <div id="verifiedBadge" class="profile-verified-badge" style="display: none;">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="profile-info">
+                        <div id="profileUsername" class="profile-username"></div>
+                        <div id="profileStats" class="profile-stats"></div>
+                    </div>
+                </div>
+
+                <!-- Embed de Post para serviço Curtidas (inicialmente oculto) -->
+                <div id="postEmbedContainer" class="post-embed-container" style="display: none;"></div>
+
+                <!-- Campo de busca -->
+                <div class="search-container">
+                    <div class="input-group">
+                        <input 
+                            type="text" 
+                            id="usernameInput" 
+                            placeholder="Digite o nome de usuário ou URL do Instagram..."
+                            class="username-input"
+                            maxlength="100"
+                        >
+                        <button id="checkButton" class="check-button" onclick="checkProfile()">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                        <!-- Pop-ups de Tutorial: Etapas visuais -->
+                        <div id="tutorialPop1" class="tutorial-pop tutorial-pop-input">
+                            <div class="tutorial-pop-step">1/3</div>
+                            <div class="tutorial-pop-text"><span id="tutorialPop1Text">Digite ou cole seu dado aqui</span></div>
+                        </div>
+                        <div id="tutorialPop2" class="tutorial-pop tutorial-pop-check" style="display:none;">
+                            <div class="tutorial-pop-step">2/3</div>
+                            <div class="tutorial-pop-text"><span id="tutorialPop2Text">Clique no V para validar</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mensagem de status -->
+                <div id="statusMessage" class="status-message" style="display: none;"></div>
+
+                <!-- Loading -->
+                <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Verificando perfil...</p>
+                </div>
+
+                <!-- Botão confirmar -->
+                <div class="action-container">
+                    <button id="confirmButton" class="confirm-button" onclick="confirmProfile()" disabled>
+                        Confirmar
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                    <!-- Pop-up 3: Confirmar -->
+                    <div id="tutorialPop3" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
+                        <div class="tutorial-pop-step">3/3</div>
+                        <div class="tutorial-pop-text">Depois clique em Confirmar</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+        </footer>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-content">
+            <div class="spinner-large"></div>
+            <p>Processando...</p>
+        </div>
+    </div>
+
+    <script src="/js/perfil.js"></script>
+</body>
+</html>
+

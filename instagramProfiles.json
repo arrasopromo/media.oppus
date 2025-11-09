@@ -1,0 +1,120 @@
+[
+    {
+        "sessionid": "58145436541%3ABfEGrqQnYc1G6g%3A15%3AAYdodplZQg01NX7g-ZfU1v1FiQwIEd3EJKoMaa8CkQ",
+        "ds_user_id": "58145436541",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "8e23eea78993",
+                "password": "c24e7ff91b12"
+            }
+        }
+    },
+    {
+        "sessionid": "67560483301%3AM2uufpcBtORMLp%3A15%3AAYcThzlBBqBaXK8yoxeQz9uPDfRMpSD2x5sRdHJOJA",
+        "ds_user_id": "67560483301",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "19e9497855c9",
+                "password": "5d2717c85c48"
+            }
+        }
+    },
+    {
+        "sessionid": "67441971128%3Ae56smw8SzxyeSm%3A5%3AAYcrnGLuayXfexnTl9H-gi4vOVQkAy5kL7C-stMK9g",
+        "ds_user_id": "67441971128",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "4315b5249d9c",
+                "password": "20e07229f661"
+            }
+        }
+    },
+    {
+        "sessionid": "58223294440%3Ag78baTL9cv35J2%3A11%3AAYcs72mTxVRF3xj-QI2DAFWhVXIiqXtHtZnp8rf26w",
+        "ds_user_id": "58223294440",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "275a97be4dc7",
+                "password": "28c0f08822a6"
+            }
+        }
+    },
+    {
+        "sessionid": "54810149178%3A28wipAwLmE447y%3A1%3AAYemIpAWw7SN_0O6di2T0j__wakt1dLGo-BXa1HQGw",
+        "ds_user_id": "54810149178",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "8e23eea78993",
+                "password": "c24e7ff91b12"
+            }
+        }
+    },
+    {
+        "sessionid": "58145436541%3AuGb60d7VPJnZ8n%3A17%3AAYf9C8VJO2mfZ0525pqCgOsFk4FFyvftezJE6boqBw",
+        "ds_user_id": "58145436541",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "19e9497855c9",
+                "password": "5d2717c85c48"
+            }
+        }
+    },
+    {
+        "sessionid": "58223294440%3AxqRau7fIa2iVfG%3A27%3AAYcknIRr4Th7ZmilnMFhEH44bHDfmIPcA3mSGToaFA",
+        "ds_user_id": "58223294440",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "4315b5249d9c",
+                "password": "20e07229f661"
+            }
+        }
+    },
+    {
+        "sessionid": "54810149178%3A0hQvZt9j3tl8ZK%3A16%3AAYf3WuDYSdfocroW0rzUTm524GvuXpPBSaD8Ah32TQ",
+        "ds_user_id": "54810149178",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "275a97be4dc7",
+                "password": "28c0f08822a6"
+            }
+        }
+    },
+    {
+        "sessionid": "75489726402%3ACUJhdJ38edxkRv%3A3%3AAYf_hsoLAWpupEVhvCQ_fjLSMQWh_mdLdOmudtO6hw",
+        "ds_user_id": "75489726402",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "proxy": {
+            "host": "server.sixproxy.com",
+            "port": 24654,
+            "auth": {
+                "username": "8e23eea78993",
+                "password": "c24e7ff91b12"
+            }
+        }
+    }
+]
+
