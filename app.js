@@ -285,7 +285,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
             if (user.is_private) {
                 unlockCookie(selectedProfile.ds_user_id); // Liberar cookie
-                let profileImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
+                const originalImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
                 let driveImageUrl = null;
 
                 if (user.profile_pic_url_hd || user.profile_pic_url) {
@@ -294,7 +294,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                             try {
                                 // Tentar fazer upload para Google Drive se disponível
                                 // Por enquanto, usar apenas a URL original do Instagram
-                                console.log(`📸 Usando URL original do Instagram: ${user.profile_pic_url_hd || user.profile_pic_url}`);
+                                console.log(`📸 Usando URL original do Instagram: ${originalImageUrl}`);
                             } catch (driveError) {
                                 console.warn("Erro ao processar imagem:", driveError.message);
                             }
@@ -311,7 +311,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     profile: {
                         username: user.username,
                         fullName: user.full_name,
-                        profilePicUrl: profileImageUrl,
+                        profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
                         driveImageUrl: driveImageUrl,
                         isVerified: user.is_verified,
                         followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
@@ -328,35 +328,34 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             // Processar imagem do perfil
             let driveImageUrl = null;
 
-            if (user.profile_pic_url_hd || user.profile_pic_url) {
+            const originalImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
+            if (originalImageUrl) {
                 try {
+                    // Sempre tentar baixar e servir localmente para evitar bloqueios externos
+                    const localImageUrl = await downloadAndServeImage(originalImageUrl, user.username);
+                    driveImageUrl = localImageUrl || originalImageUrl;
+
+                    // Upload opcional ao Google Drive (se configurado), sem afetar a URL usada
                     if (driveManager.isReady()) {
-                        const imageUrl = user.profile_pic_url_hd || user.profile_pic_url;
-                        const imageResponse = await axios.get(imageUrl, {
-                            responseType: 'arraybuffer',
-                            timeout: 10000
-                        });
-                        
-                        const fileName = `${user.username}_profile_${Date.now()}.jpg`;
-                        const uploadResult = await driveManager.uploadBuffer(
-                            imageResponse.data,
-                            fileName,
-                            'image/jpeg',
-                            driveManager.profileImagesFolderId
-                        );
-                        
-                        if (uploadResult.success) {
-                            // Baixar e servir localmente
-                            const localImageUrl = await downloadAndServeImage(imageUrl, user.username);
-                            driveImageUrl = localImageUrl || imageUrl;
-                        } else {
-                            driveImageUrl = imageUrl;
+                        try {
+                            const imageResponse = await axios.get(originalImageUrl, {
+                                responseType: 'arraybuffer',
+                                timeout: 10000
+                            });
+                            const fileName = `${user.username}_profile_${Date.now()}.jpg`;
+                            await driveManager.uploadBuffer(
+                                imageResponse.data,
+                                fileName,
+                                'image/jpeg',
+                                driveManager.profileImagesFolderId
+                            );
+                        } catch (driveErr) {
+                            console.warn('Falha ao enviar imagem ao Google Drive:', driveErr.message);
                         }
-                    } else {
-                        driveImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
                     }
                 } catch (error) {
-                    driveImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
+                    // Em caso de erro ao baixar, usar URL original do Instagram
+                    driveImageUrl = originalImageUrl;
                 }
             }
 
@@ -420,7 +419,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             const responseProfile = {
                 username: user.username,
                 fullName: user.full_name,
-                profilePicUrl: driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url,
+                profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
                 isVerified: user.is_verified,
                 followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
                 isPrivate: user.is_private,
@@ -702,6 +701,47 @@ app.use((req, res, next) => {
 // Servir arquivos estáticos
 app.use(express.static("public"));
 app.use('/temp-images', express.static(path.join(__dirname, 'temp_images')));
+
+// Helper: validar hosts permitidos para proxy de imagem
+function isAllowedImageHost(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
+    return (
+      host.includes('instagram') ||
+      host.includes('cdninstagram') ||
+      host.includes('fbcdn') ||
+      host.includes('scontent')
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+// Endpoint de proxy de imagem para evitar bloqueios de CSP/Proxy
+app.get('/image-proxy', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl || !isAllowedImageHost(targetUrl)) {
+    return res.status(400).send('Invalid image URL');
+  }
+  try {
+    const response = await axios.get(targetUrl, {
+      responseType: 'arraybuffer',
+      timeout: 10000,
+      headers: {
+        'User-Agent': req.get('User-Agent') || 'Mozilla/5.0',
+        'Accept': 'image/*,*/*;q=0.8'
+      }
+    });
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minutos
+    return res.send(response.data);
+  } catch (err) {
+    console.error('Erro proxy de imagem:', err.message);
+    return res.status(502).send('Failed to fetch image');
+  }
+});
 
 // Configurar view engine
 app.set("view engine", "ejs");
