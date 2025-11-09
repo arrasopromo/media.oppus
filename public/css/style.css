@@ -142,6 +142,12 @@ body::before {
         text-align: center;
     }
 }
+/* Mobile: centralizar somente o texto do label de Seguidores */
+@media (max-width: 768px) {
+    .centered-label {
+        text-align: center;
+    }
+}
 @media (min-width: 769px) {
     .section-block.centered .cards-grid {
         grid-template-columns: minmax(280px, 360px);

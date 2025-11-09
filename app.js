@@ -480,7 +480,7 @@ if (baserowToken) {
 
 // IDs das tabelas do Baserow
 const BASEROW_TABLES = {
-    CONTROLE: 631, // Tabela controle criada pelo usuário
+    CONTROLE: Number(process.env.BASEROW_CONTROLE_TABLE_ID || 631), // Tabela controle criada pelo usuário
     ACCESS_LOGS: process.env.BASEROW_ACCESS_LOG_TABLE_ID || null,
     PROFILES: process.env.BASEROW_PROFILES_TABLE_ID || null,
     WEBHOOKS: process.env.BASEROW_WEBHOOKS_TABLE_ID || null
@@ -1263,10 +1263,18 @@ app.post('/api/webhook-phone', async (req, res) => {
     const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, data);
     if (result.success) {
       console.log("✅ Webhook registrado na tabela controle:", result.row.id);
+      // Verificar leitura imediata para confirmar persistência
+      const readBack = await baserowManager.getRow(BASEROW_TABLES.CONTROLE, result.row.id);
+      if (!readBack.success) {
+        console.error("⚠️ Criado mas não foi possível ler a linha imediatamente:", readBack.error);
+      } else {
+        console.log("🔎 Linha confirmada no Baserow:", readBack.row?.id);
+      }
       res.json({ 
         success: true, 
         link: `https://agenciaoppus.site/${linkInfo.id}`,
-        rowId: result.row.id
+        rowId: result.row.id,
+        confirmed: !!readBack.success
       });
     } else {
       console.error("❌ Erro ao registrar webhook na tabela controle:", result.error);
@@ -1275,6 +1283,21 @@ app.post('/api/webhook-phone', async (req, res) => {
   } catch (err) {
     console.error("❌ Erro ao registrar webhook:", err);
     res.status(500).json({ error: 'Erro ao criar linha no Baserow', details: err.message });
+  }
+});
+
+// Endpoint de diagnóstico: ler linha do Baserow por ID
+app.get('/api/debug-baserow-row', async (req, res) => {
+  const id = Number(req.query.id);
+  if (!id) return res.status(400).json({ error: 'Informe ?id=<rowId>' });
+  try {
+    const result = await baserowManager.getRow(BASEROW_TABLES.CONTROLE, id);
+    if (!result.success) {
+      return res.status(500).json({ error: 'Falha ao ler linha', details: result.error });
+    }
+    return res.json({ success: true, row: result.row });
+  } catch (err) {
+    return res.status(500).json({ error: 'Exceção ao ler linha', details: err.message });
   }
 });
 
