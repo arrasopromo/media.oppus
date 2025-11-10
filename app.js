@@ -490,6 +490,7 @@ const CONTROLE_FIELDS = {
     USER_AGENT: process.env.BASEROW_FIELD_USER_AGENT || 'user-agent',
     IP: process.env.BASEROW_FIELD_IP || 'ip',
     INSTAUSER: process.env.BASEROW_FIELD_INSTAUSER || 'instauser',
+    LINKPOST: process.env.BASEROW_FIELD_LINKPOST || 'linkpost',
     TESTE: process.env.BASEROW_FIELD_TESTE || 'teste',
     STATUSHTTP: process.env.BASEROW_FIELD_STATUSHTTP || 'statushttp',
     CRIADO: process.env.BASEROW_FIELD_CRIADO || 'criado',
@@ -501,6 +502,7 @@ const CONTROLE_FIELDS = {
 const CONTROLE_FIELD_IDS = {
     USER_AGENT: process.env.BASEROW_FIELDID_USER_AGENT || 'field_6023', // fingerprint
     INSTAUSER: process.env.BASEROW_FIELDID_INSTAUSER || 'field_6025',
+    LINKPOST: process.env.BASEROW_FIELDID_LINKPOST || null,
     TESTE: process.env.BASEROW_FIELDID_TESTE || 'field_6026',
     STATUSHTTP: process.env.BASEROW_FIELDID_STATUSHTTP || 'field_6027',
     CRIADO: process.env.BASEROW_FIELDID_CRIADO || 'field_6028',
@@ -524,6 +526,10 @@ function mapControleData(data) {
     if (typeof data.instauser !== 'undefined') {
         mapped[CONTROLE_FIELDS.INSTAUSER] = data.instauser;
         mapped[CONTROLE_FIELD_IDS.INSTAUSER] = data.instauser;
+    }
+    if (typeof data.linkpost !== 'undefined') {
+        mapped[CONTROLE_FIELDS.LINKPOST] = data.linkpost;
+        if (CONTROLE_FIELD_IDS.LINKPOST) mapped[CONTROLE_FIELD_IDS.LINKPOST] = data.linkpost;
     }
     if (typeof data.teste !== 'undefined') {
         mapped[CONTROLE_FIELDS.TESTE] = data.teste;
@@ -1251,10 +1257,15 @@ app.post('/api/ggram-order', async (req, res) => {
                 const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
                 if (row) {
                     const updateData = {
-                        instauser: targetValue,
                         statushttp: 'OK',
                         teste: 'OK'
                     };
+                    // Para serviços de seguidores, salva instauser; para post (curtidas/visualizações), salva linkpost
+                    if (isFollowerService) {
+                        updateData.instauser = targetValue;
+                    } else {
+                        updateData.linkpost = targetValue;
+                    }
                     await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                 }
             }
