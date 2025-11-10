@@ -89,7 +89,7 @@ class BaserowManager {
     async createRow(tableId, data) {
         try {
             const response = await axios.post(
-                `${this.baseUrl}/api/database/rows/table/${tableId}/`,
+                `${this.baseUrl}/api/database/rows/table/${tableId}/?user_field_names=true`,
                 data,
                 { headers: this.headers }
             );
@@ -104,7 +104,7 @@ class BaserowManager {
     async updateRow(tableId, rowId, data) {
         try {
             const response = await axios.patch(
-                `${this.baseUrl}/api/database/rows/table/${tableId}/${rowId}/`,
+                `${this.baseUrl}/api/database/rows/table/${tableId}/${rowId}/?user_field_names=true`,
                 data,
                 { headers: this.headers }
             );
