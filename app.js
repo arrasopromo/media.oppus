@@ -56,7 +56,7 @@ function scheduleDeleteGoogleDriveImage(fileId) {
 }
 
 // Função para baixar e servir imagem localmente
-async function downloadAndServeImage(imageUrl, username) {
+async function downloadAndServeImage(imageUrl, username, httpsAgent = null) {
   try {
     // Criar pasta de cache se não existir
     const cacheDir = path.join(__dirname, 'temp_images');
@@ -71,7 +71,8 @@ async function downloadAndServeImage(imageUrl, username) {
     // Baixar imagem
     const response = await axios.get(imageUrl, {
       responseType: 'arraybuffer',
-      timeout: 10000
+      timeout: 10000,
+      httpsAgent: httpsAgent || undefined
     });
     
     // Salvar localmente
@@ -332,7 +333,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             if (originalImageUrl) {
                 try {
                     // Sempre tentar baixar e servir localmente para evitar bloqueios externos
-                    const localImageUrl = await downloadAndServeImage(originalImageUrl, user.username);
+                    const localImageUrl = await downloadAndServeImage(originalImageUrl, user.username, proxyAgent);
                     driveImageUrl = localImageUrl || originalImageUrl;
 
                     // Upload opcional ao Google Drive (se configurado), sem afetar a URL usada
