@@ -615,7 +615,7 @@ function redirectToWhatsAppWithDelay() {
         showStatusMessage(`Redirecionando para o WhatsApp em ${seconds} segundos...`, 'info');
         if (seconds <= 0) {
             clearInterval(interval);
-            window.location.href = 'http://wa.me/47996680429';
+            window.location.href = 'http://wa.me/47997086876';
         }
     }, 1000);
 }
