@@ -377,7 +377,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 if (linkId) {
                     const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
                     if (result.success) {
-                        const row = result.rows.find(r => r.link === linkId);
+                        const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
                         if (row) {
                             const fingerprint = generateFingerprint(ip, userAgent);
                             const updateData = {
@@ -387,7 +387,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                                 'statushttp': '200',
                                 'teste': ''
                             };
-                            await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, updateData);
+                            await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                             console.log(`📊 Linha do Baserow atualizada para link=${linkId}, id=${row.id}`);
                         } else {
                             // Fallback: criar nova linha (não deve acontecer normalmente)
@@ -402,7 +402,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                                 'statushttp': '200',
                                 'criado': new Date().toISOString()
                             };
-                            await baserowManager.createRow(BASEROW_TABLES.CONTROLE, data);
+                            await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
                         }
                     } else {
                         console.error('❌ Erro ao buscar linhas do Baserow:', result.error);
@@ -485,6 +485,68 @@ const BASEROW_TABLES = {
     PROFILES: process.env.BASEROW_PROFILES_TABLE_ID || null,
     WEBHOOKS: process.env.BASEROW_WEBHOOKS_TABLE_ID || null
 };
+// Mapeamento configurável dos nomes de campos na tabela CONTROLE
+const CONTROLE_FIELDS = {
+    USER_AGENT: process.env.BASEROW_FIELD_USER_AGENT || 'user-agent',
+    IP: process.env.BASEROW_FIELD_IP || 'ip',
+    INSTAUSER: process.env.BASEROW_FIELD_INSTAUSER || 'instauser',
+    TESTE: process.env.BASEROW_FIELD_TESTE || 'teste',
+    STATUSHTTP: process.env.BASEROW_FIELD_STATUSHTTP || 'statushttp',
+    CRIADO: process.env.BASEROW_FIELD_CRIADO || 'criado',
+    LINK: process.env.BASEROW_FIELD_LINK || 'link',
+    TEL: process.env.BASEROW_FIELD_TEL || 'tel'
+};
+
+// IDs dos campos (opcional). Defaults conforme tabela informada.
+const CONTROLE_FIELD_IDS = {
+    USER_AGENT: process.env.BASEROW_FIELDID_USER_AGENT || 'field_6023', // fingerprint
+    INSTAUSER: process.env.BASEROW_FIELDID_INSTAUSER || 'field_6025',
+    TESTE: process.env.BASEROW_FIELDID_TESTE || 'field_6026',
+    STATUSHTTP: process.env.BASEROW_FIELDID_STATUSHTTP || 'field_6027',
+    CRIADO: process.env.BASEROW_FIELDID_CRIADO || 'field_6028',
+    TEL: process.env.BASEROW_FIELDID_TEL || 'field_6029',
+    LINK: process.env.BASEROW_FIELDID_LINK || 'field_6030',
+    COMPROU: process.env.BASEROW_FIELDID_COMPROU || 'field_6038',
+    IP: process.env.BASEROW_FIELDID_IP || null // se houver coluna IP, preencha no .env
+};
+
+function mapControleData(data) {
+    const mapped = {};
+    const uaVal = data['user-agent'] || data.userAgent;
+    if (uaVal) {
+        mapped[CONTROLE_FIELDS.USER_AGENT] = uaVal;
+        mapped[CONTROLE_FIELD_IDS.USER_AGENT] = uaVal;
+    }
+    if (typeof data.ip !== 'undefined') {
+        mapped[CONTROLE_FIELDS.IP] = data.ip;
+        if (CONTROLE_FIELD_IDS.IP) mapped[CONTROLE_FIELD_IDS.IP] = data.ip;
+    }
+    if (typeof data.instauser !== 'undefined') {
+        mapped[CONTROLE_FIELDS.INSTAUSER] = data.instauser;
+        mapped[CONTROLE_FIELD_IDS.INSTAUSER] = data.instauser;
+    }
+    if (typeof data.teste !== 'undefined') {
+        mapped[CONTROLE_FIELDS.TESTE] = data.teste;
+        mapped[CONTROLE_FIELD_IDS.TESTE] = data.teste;
+    }
+    if (typeof data.statushttp !== 'undefined') {
+        mapped[CONTROLE_FIELDS.STATUSHTTP] = data.statushttp;
+        mapped[CONTROLE_FIELD_IDS.STATUSHTTP] = data.statushttp;
+    }
+    if (typeof data.criado !== 'undefined') {
+        mapped[CONTROLE_FIELDS.CRIADO] = data.criado;
+        mapped[CONTROLE_FIELD_IDS.CRIADO] = data.criado;
+    }
+    if (typeof data.link !== 'undefined') {
+        mapped[CONTROLE_FIELDS.LINK] = data.link;
+        mapped[CONTROLE_FIELD_IDS.LINK] = data.link;
+    }
+    if (typeof data.tel !== 'undefined') {
+        mapped[CONTROLE_FIELDS.TEL] = data.tel;
+        mapped[CONTROLE_FIELD_IDS.TEL] = data.tel;
+    }
+    return mapped;
+}
 
 // ==================== FUNÇÕES DE CONTROLE DE ACESSO ====================
 
@@ -500,9 +562,9 @@ async function checkUserInControle(userAgent, ip, instauser) {
         
         // Verificar se já existe registro com mesmo user-agent, ip e instauser
         const existingRecord = result.rows.find(row => 
-            (row['user-agent'] === userAgent) &&  // user-agent
-            (row.ip === ip) &&                     // ip
-            (row.instauser === instauser)         // instauser
+            (row[CONTROLE_FIELDS.USER_AGENT] === userAgent) &&  // user-agent
+            (row[CONTROLE_FIELDS.IP] === ip) &&                 // ip
+            (row[CONTROLE_FIELDS.INSTAUSER] === instauser)      // instauser
         );
         
         return existingRecord;
@@ -526,7 +588,7 @@ async function registerUserInControle(userAgent, ip, instauser, statushttp) {
             "criado": new Date().toISOString()
         };
         
-        const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, data);
+        const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
         
         if (result.success) {
             console.log("✅ Usuário registrado na tabela controle:", result.row.id);
@@ -561,7 +623,7 @@ async function updateTesteStatus(recordId, testeStatus) {
         };
         
         console.log(`📝 Atualizando linha ${recordId} com dados:`, data);
-        const result = await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, recordId, data);
+        const result = await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, recordId, mapControleData(data));
         
         if (result.success) {
             console.log("✅ Status do teste atualizado:", recordId, testeStatus);
@@ -587,13 +649,14 @@ async function checkInstauserExists(instauser) {
             return false; // Em caso de erro, permitir continuar
         }
         // Verificar se alguma linha tem o mesmo instauser E teste === 'OK'
-        const existingUser = result.rows.find(row =>
-            (row.instauser && row.instauser.toLowerCase() === instauser.toLowerCase())
-        );
+        const existingUser = result.rows.find(row => {
+            const iu = row[CONTROLE_FIELDS.INSTAUSER];
+            return (iu && iu.toLowerCase() === instauser.toLowerCase());
+        });
         
         if (existingUser) {
             // Verificar se o teste está como 'OK'
-            const testeValue = existingUser.teste;
+            const testeValue = existingUser[CONTROLE_FIELDS.TESTE];
             if (testeValue === 'OK') {
                 console.log(`❌ Instauser '${instauser}' já foi usado na linha ${existingUser.id} (teste=OK)`);
                 return true;
@@ -798,13 +861,13 @@ app.get('/:slug', async (req, res, next) => {
             const ip = req.realIP || req.ip || req.connection.remoteAddress || 'unknown';
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
-                const row = result.rows.find(r => r.link === slug);
+                const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === slug);
                 if (row) {
                     const updateData = {
                         'user-agent': userAgent,
                         'ip': ip
                     };
-                    await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, updateData);
+                    await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                 }
             }
             return res.render('index');
@@ -1185,14 +1248,14 @@ app.post('/api/ggram-order', async (req, res) => {
             // Buscar a linha correta no Baserow pelo campo 'link' igual ao linkId
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
-                const row = result.rows.find(r => r.link === linkId);
+                const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
                 if (row) {
                     const updateData = {
                         instauser: targetValue,
                         statushttp: 'OK',
                         teste: 'OK'
                     };
-                    await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, updateData);
+                    await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                 }
             }
             
@@ -1234,12 +1297,12 @@ app.post('/api/check-usage', async (req, res) => {
       return res.json({ used: false });
     }
     const found = result.rows.find(row =>
-      (row['user-agent'] === userAgent) &&
-      (row.ip === ip)
+      (row[CONTROLE_FIELDS.USER_AGENT] === userAgent) &&
+      (row[CONTROLE_FIELDS.IP] === ip)
     );
     if (found) {
       // Verificar se o teste está como 'OK' - só bloquear se teste for OK
-      const testeValue = found.teste;
+      const testeValue = found[CONTROLE_FIELDS.TESTE];
       if (testeValue === 'OK') {
         return res.json({ used: true, message: 'Já há registro de utilização para este IP e navegador.' });
       }
@@ -1265,8 +1328,8 @@ app.post('/api/check-link-status', async (req, res) => {
     }
     
     const found = result.rows.find(row =>
-      (row.link === id) &&
-      (row.teste === 'OK')
+      (row[CONTROLE_FIELDS.LINK] === id) &&
+      (row[CONTROLE_FIELDS.TESTE] === 'OK')
     );
     
     if (found) {
@@ -1301,7 +1364,7 @@ app.post('/api/webhook-phone', async (req, res) => {
 
   // Criar linha no Baserow
   try {
-    const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, data);
+    const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
     if (result.success) {
       console.log("✅ Webhook registrado na tabela controle:", result.row.id);
       // Verificar leitura imediata para confirmar persistência
@@ -1309,7 +1372,7 @@ app.post('/api/webhook-phone', async (req, res) => {
       if (!readBack.success) {
         console.error("⚠️ Criado mas não foi possível ler a linha imediatamente:", readBack.error);
       } else {
-        console.log("🔎 Linha confirmada no Baserow:", readBack.row?.id);
+        console.log("🔎 Linha confirmada no Baserow:", readBack.row?.id, readBack.row);
       }
       res.json({ 
         success: true, 
