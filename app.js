@@ -423,6 +423,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
                 isVerified: user.is_verified,
                 followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
+                followingCount: user.edge_follow ? user.edge_follow.count : 0,
+                postsCount: (user.edge_owner_to_timeline_media && user.edge_owner_to_timeline_media.count) ? user.edge_owner_to_timeline_media.count : 0,
                 isPrivate: user.is_private,
                 alreadyTested: instauserExists
             };
@@ -462,7 +464,12 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
 const app = express();
 app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
-const port = 3000;
+const port = process.env.PORT ? Number(process.env.PORT) : 3100;
+
+// (Removido) Handler ASAP de /checkout antes do view engine
+// Motivo: estava tentando renderizar antes de configurar a engine,
+// causando respostas vazias (Content-Length: 0). A rota oficial de
+// checkout é registrada após a configuração da view engine.
 
 // Inicializar gerenciadores
 const linkManager = new LinkManager();
@@ -768,6 +775,101 @@ app.use((req, res, next) => {
     next();
 });
 
+// Configurar view engine ANTES de qualquer render
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+
+// Rota de diagnóstico simples
+app.get('/ping', (req, res) => {
+  console.log('🏓 Ping recebido');
+  res.type('text/plain').send('pong');
+});
+
+// Diagnóstico: ambiente de execução
+app.get('/__debug/env', (req, res) => {
+  try {
+    const fs = require('fs');
+    const info = {
+      cwd: process.cwd(),
+      dirname: __dirname,
+      filename: __filename,
+      appMtime: (() => {
+        try {
+          const st = fs.statSync(__filename);
+          return st.mtimeMs;
+        } catch (_) { return null; }
+      })(),
+      node: process.version,
+    };
+    res.type('application/json').send(JSON.stringify(info, null, 2));
+  } catch (e) {
+    res.status(500).type('text/plain').send('env_error: ' + (e?.message || 'unknown'));
+  }
+});
+
+// Diagnóstico: logar tamanho do corpo enviado para /checkout
+app.use((req, res, next) => {
+  if (req.path.startsWith('/checkout')) {
+    const originalSend = res.send.bind(res);
+    res.send = (body) => {
+      try {
+        const len = typeof body === 'string' ? body.length : (Buffer.isBuffer(body) ? body.length : 0);
+        console.log('📦 Enviando body para', req.originalUrl, 'len=', len);
+      } catch (_) {}
+      return originalSend(body);
+    };
+  }
+  next();
+});
+
+// Rota de checkout será tratada mais abaixo por app.get('/checkout')
+// Diagnóstico: enviar conteúdo bruto do template de checkout
+app.get('/__debug/checkout-raw', (req, res) => {
+  try {
+    const fs = require('fs');
+    const p = path.join(__dirname, 'views', 'checkout.ejs');
+    const stat = fs.statSync(p);
+    const txt = fs.readFileSync(p, 'utf8');
+    res.type('text/plain').send(`path=${p}\nsize=${stat.size}\n---\n${txt}`);
+  } catch (e) {
+    res.status(500).type('text/plain').send('read_error: ' + (e?.message || 'unknown'));
+  }
+});
+
+// Diagnóstico: enviar conteúdo bruto do template index
+app.get('/__debug/index-raw', (req, res) => {
+  try {
+    const fs = require('fs');
+    const p = path.join(__dirname, 'views', 'index.ejs');
+    const stat = fs.statSync(p);
+    const txt = fs.readFileSync(p, 'utf8');
+    res.type('text/plain').send(`path=${p}\nsize=${stat.size}\n---\n${txt}`);
+  } catch (e) {
+    res.status(500).type('text/plain').send('read_error: ' + (e?.message || 'unknown'));
+  }
+});
+
+// Diagnóstico: listar arquivos e tamanhos em views/
+app.get('/__debug/views-list', (req, res) => {
+  try {
+    const fs = require('fs');
+    const dir = path.join(__dirname, 'views');
+    const files = fs.readdirSync(dir);
+    const lines = files.map((f) => {
+      const fp = path.join(dir, f);
+      try {
+        const s = fs.statSync(fp);
+        return `${f}\t${s.size}`;
+      } catch (e) {
+        return `${f}\tstat_error:${e?.message || 'unknown'}`;
+      }
+    }).join('\n');
+    res.type('text/plain').send(`dir=${dir}\n---\n${lines}`);
+  } catch (e) {
+    res.status(500).type('text/plain').send('read_error: ' + (e?.message || 'unknown'));
+  }
+});
+
 // Servir arquivos estáticos
 app.use(express.static("public"));
 app.use('/temp-images', express.static(path.join(__dirname, 'temp_images')));
@@ -813,9 +915,7 @@ app.get('/image-proxy', async (req, res) => {
   }
 });
 
-// Configurar view engine
-app.set("view engine", "ejs");
-app.set("views", path.join(__dirname, "views"));
+// (mantido acima)
 
 // Middleware para controlar acesso à página de perfil
 function perfilAccessGuard(req, res, next) {
@@ -827,9 +927,33 @@ function perfilAccessGuard(req, res, next) {
     return res.status(403).render('restrito');
 }
 
+// Log global de requisições para diagnosticar roteamento
+app.use((req, res, next) => {
+    try {
+        console.log('➡️', req.method, req.originalUrl);
+    } catch (_) {}
+    next();
+});
+
 // Rota para bloquear acesso direto à raiz
 app.get('/', (req, res) => {
     return res.status(403).render('restrito');
+});
+
+// Debug: listar rotas registradas
+app.get('/__routes', (req, res) => {
+    try {
+        const stack = app._router?.stack || [];
+        const routes = stack
+            .filter((layer) => layer.route)
+            .map((layer) => ({
+                path: layer.route.path,
+                methods: Object.keys(layer.route.methods)
+            }));
+        res.json(routes);
+    } catch (e) {
+        res.status(500).json({ error: 'cannot_list_routes', message: e?.message });
+    }
 });
 
 // Rota especial para teste123 (DEVE vir ANTES da rota /:slug)
@@ -840,21 +964,197 @@ app.get('/teste123', (req, res) => {
     res.render('index');
 });
 
+// Página de Checkout (nova slug dedicada)
+app.get('/checkout', (req, res) => {
+    console.log('🛒 Acessando rota /checkout');
+    res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+        if (err) {
+            console.error('❌ Erro ao renderizar checkout:', err.message);
+            return res.status(500).send('Erro ao renderizar checkout');
+        }
+        // Garantir envio explícito do conteúdo para evitar Content-Length: 0
+        res.type('text/html');
+        res.send(html);
+    });
+});
+
+// API: criar cobrança PIX via Woovi
+app.post('/api/woovi/charge', async (req, res) => {
+    const WOOVI_AUTH = process.env.WOOVI_AUTH || 'Q2xpZW50X0lkXzI1OTRjODMwLWExN2YtNDc0Yy05ZTczLWJjNDRmYTc4NTU2NzpDbGllbnRfU2VjcmV0X0NCVTF6Szg4eGJyRTV0M1IxVklGZEpaOHZLQ0N4aGdPR29UQnE2dDVWdU09';
+    const {
+        correlationID,
+        value,
+        comment,
+        customer,
+        additionalInfo
+    } = req.body || {};
+
+    if (!value || typeof value !== 'number') {
+        return res.status(400).json({ error: 'invalid_value', message: 'Campo value (centavos) é obrigatório.' });
+    }
+
+    // Função para remover emojis (pares substitutos) e normalizar travessões para hífen
+    const sanitizeText = (s) => {
+        if (typeof s !== 'string') return s;
+        return s
+            .replace(/[\u2012-\u2015]/g, '-') // dashes (figura, en, em)
+            .replace(/[\uD800-\uDFFF]/g, '')  // surrogate pairs (emojis)
+            .trim();
+    };
+
+    const sanitizedAdditional = Array.isArray(additionalInfo)
+        ? additionalInfo.map((item) => ({
+            key: sanitizeText(String(item?.key ?? '')),
+            value: sanitizeText(String(item?.value ?? '')),
+          }))
+        : [];
+
+    // Normaliza telefone para formato E.164 (prioriza Brasil +55 quando aplicável)
+    const normalizePhone = (s) => {
+        const raw = typeof s === 'string' ? s : '';
+        const digits = raw.replace(/\D/g, '');
+        if (!digits) return '';
+        if (raw.trim().startsWith('+')) {
+            // Já possui +, mantém dígitos originais
+            return `+${digits}`;
+        }
+        if (digits.startsWith('55')) {
+            return `+${digits}`;
+        }
+        // Se tiver 11+ dígitos, assume BR e prefixa +55
+        if (digits.length >= 11) {
+            return `+55${digits}`;
+        }
+        // Caso não haja dígitos suficientes, retorna apenas com + para não ficar vazio
+        return `+${digits}`;
+    };
+
+    const customerPayload = {
+        name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'),
+        phone: normalizePhone((customer && customer.phone) ? customer.phone : ''),
+    };
+
+    // Criar correlationID no formato xxx-xxx-{phoneDigits}
+    const phoneDigitsRaw = (customer && customer.phone) ? String(customer.phone).replace(/\D/g, '') : '';
+    const randChunk = () => Math.random().toString(36).slice(2, 5);
+    const chargeCorrelationID = `${randChunk()}-${randChunk()}-${phoneDigitsRaw || 'no-phone'}`;
+
+    const payload = {
+        correlationID: chargeCorrelationID,
+        value,
+        comment: sanitizeText(comment || 'Agência OPPUS - Checkout'),
+        customer: customerPayload,
+        additionalInfo: sanitizedAdditional
+    };
+
+    try {
+        const response = await axios.post('https://api.woovi.com/api/v1/charge', payload, {
+            headers: {
+                Authorization: WOOVI_AUTH,
+                'Content-Type': 'application/json'
+            },
+            timeout: 15000
+        });
+        // Salvar na tabela Baserow conforme solicitado
+        try {
+            const data = response.data || {};
+            const charge = data.charge || data || {};
+            const addInfoArr = Array.isArray(sanitizedAdditional) ? sanitizedAdditional : [];
+            const addInfo = addInfoArr.reduce((acc, item) => {
+                const k = String(item?.key || '').trim();
+                const v = String(item?.value || '').trim();
+                acc[k] = v;
+                return acc;
+            }, {});
+
+            const tipo = addInfo['tipo_servico'] || '';
+            const qtd = Number(addInfo['quantidade'] || 0) || 0;
+            const instauser = addInfo['instagram_username'] || '';
+            const identifier = charge.identifier || charge.paymentMethods?.pix?.transactionID || '';
+            const brCode = charge.paymentMethods?.pix?.brCode || charge.brCode || '';
+            const phoneDigits = phoneDigitsRaw;
+
+            const row = {
+                nome: '',
+                telefone: phoneDigits,
+                correlationid: chargeCorrelationID,
+                instauser: (/mistos|brasileiros|organicos/i.test(tipo) ? instauser : ''),
+                criado: new Date().toISOString(),
+                identifier,
+                status: 'pendente',
+                qtd,
+                qrcode: brCode,
+                tipo
+            };
+            await baserowManager.createRow(BASEROW_TABLES.CONTROLE, row);
+        } catch (saveErr) {
+            console.error('⚠️ Falha ao salvar cobrança no Baserow:', saveErr?.response?.data || saveErr?.message || saveErr);
+        }
+
+        res.status(200).json(response.data);
+    } catch (err) {
+        const status = err.response?.status || 500;
+        const details = err.response?.data || { message: err.message };
+    console.error('❌ Erro ao criar charge Woovi:', details);
+    res.status(status).json({ error: 'woovi_error', details });
+  }
+});
+
+// API: consultar status de cobrança PIX via Woovi
+app.get('/api/woovi/charge-status', async (req, res) => {
+  try {
+    const WOOVI_AUTH = process.env.WOOVI_AUTH || 'Q2xpZW50X0lkXzI1OTRjODMwLWExN2YtNDc0Yy05ZTczLWJjNDRmYTc4NTU2NzpDbGllbnRfU2VjcmV0X0NCVTF6Szg4eGJyRTV0M1IxVklGZEpaOHZLQ0N4aGdPR29UQnE2dDVWdU09';
+    const id = (req.query.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ error: 'invalid_id', message: 'Informe ?id=<chargeId>' });
+    }
+    const axios = require('axios');
+    const url = `https://api.woovi.com/api/v1/charge/${encodeURIComponent(id)}`;
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: WOOVI_AUTH,
+        'Content-Type': 'application/json'
+      }
+    });
+    return res.status(200).json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const details = {
+      message: err.response?.data?.message || err.message,
+      status,
+      data: err.response?.data
+    };
+    console.error('❌ Erro ao consultar status Woovi:', details);
+    return res.status(status).json({ error: 'woovi_status_error', details });
+  }
+});
+
 // Rota para liberar acesso à /perfil após validação de link temporário
 app.get('/:slug', async (req, res, next) => {
     const { slug } = req.params;
-    const reservedSlugs = [
-        'perfil', 'used.html', 'admin', 'api', 'generate', 'favicon.ico', 'robots.txt', 'css', 'js', 'images', 'public', 'node_modules', 'teste123'
-    ];
-    if (reservedSlugs.includes(slug)) return next();
-
-    // EXCEÇÃO: Permitir fluxo normal para /teste123
+    console.log('🔎 Capturado em /:slug:', slug);
+    // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
+    if (slug === 'checkout') {
+        return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' });
+    }
     if (slug === 'teste123') {
         req.session.perfilAccessAllowed = true;
         req.session.linkSlug = slug;
         req.session.linkAccessTime = Date.now();
         return res.render('index');
     }
+
+    // Só tratar como link temporário se for um ID hex de 12 caracteres
+    if (!/^[a-f0-9]{12}$/i.test(slug)) {
+        return next();
+    }
+    const reservedSlugs = [
+        'perfil', 'used.html', 'admin', 'api', 'generate', 'favicon.ico', 'robots.txt', 'css', 'js', 'images', 'public', 'node_modules', 'teste123'
+    ];
+    if (reservedSlugs.includes(slug)) return next();
+
+    // (exceções já tratadas acima)
+
 
     try {
         const validation = linkManager.validateLink(slug, req);
@@ -878,8 +1178,10 @@ app.get('/:slug', async (req, res, next) => {
             }
             return res.render('index');
         }
+        console.log('⛔ Link inválido/expirado para slug:', slug);
         return res.status(410).render('used');
     } catch (err) {
+        console.log('⚠️ Erro na validação do slug, render used:', slug, err?.message);
         return res.status(410).render('used');
     }
 });
@@ -1053,7 +1355,7 @@ app.post('/api/ggram-order', async (req, res) => {
             // Mapear serviço conforme escolha
             const serviceMap = {
                 seguidores_mistos: '659',
-                seguidores_brasileiros: '617',
+                seguidores_brasileiros: '625',
                 visualizacoes_reels: '250',
                 curtidas_brasileiras: 'LIKES_BRS',
                 curtidas: 'LIKES_BRS'
@@ -1401,6 +1703,39 @@ app.post('/api/webhook-phone', async (req, res) => {
   }
 });
 
+// Importação em massa de telefones
+app.post('/api/webhook-phone-bulk', async (req, res) => {
+  try {
+    const { tels, link } = req.body || {};
+    if (!Array.isArray(tels) || tels.length === 0) {
+      return res.status(400).json({ error: 'no_tels', message: 'Envie um array "tels" com um ou mais números.' });
+    }
+    // Normalizar: somente dígitos, remover vazios, deduplicar
+    const normalized = Array.from(new Set(
+      tels
+        .map(t => String(t).replace(/\D/g, ''))
+        .filter(t => t && t.length >= 8)
+    ));
+    const createdIds = [];
+    const errors = [];
+    for (const tel of normalized) {
+      const data = { tel, criado: new Date().toISOString() };
+      if (link) data.link = link;
+      const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
+      if (result.success) {
+        createdIds.push(result.row.id);
+      } else {
+        errors.push({ tel, error: result.error });
+      }
+    }
+    console.log(`📦 Importação bulk de telefones concluída: ${createdIds.length} criados, ${errors.length} erros.`);
+    return res.json({ success: true, total: normalized.length, createdCount: createdIds.length, errorCount: errors.length, createdIds, errors });
+  } catch (err) {
+    console.error('❌ Erro em webhook-phone-bulk:', err);
+    return res.status(500).json({ error: 'bulk_error', message: err.message || 'Erro ao importar telefones' });
+  }
+});
+
 // Endpoint de diagnóstico: ler linha do Baserow por ID
 app.get('/api/debug-baserow-row', async (req, res) => {
   const id = Number(req.query.id);
@@ -1416,7 +1751,137 @@ app.get('/api/debug-baserow-row', async (req, res) => {
   }
 });
 
+// Meta CAPI: Track InitiateCheckout
+app.post('/api/meta/track', async (req, res) => {
+  try {
+    const PIXEL_ID = process.env.PIXEL_ID || '1019661457030791';
+    const ACCESS_TOKEN = process.env.META_CAPI_TOKEN || 'EAAbmJnZB6GX8BP0bbQu4rrUk1FrzDQJGJu58NGKq1YIApXxPbDQ9TcZCJTBIWlsri8iG3dL1BTLc6L65LylloIeicHRPj1oxzZAUcLdSHzOOOFJ6NhrbIgZA4l7VqYffK89T4viCdHqBwcBIHLjZAoDhe1N58ZCzblp7kbvrDk6bYgW3eLroywac08SopAnAZDZD';
+
+    const {
+      eventName = 'InitiateCheckout',
+      value = 0,
+      currency = 'BRL',
+      contentName = '',
+      contents = [],
+      phone = '',
+      fbp = '',
+      correlationID = '',
+      eventSourceUrl = ''
+    } = req.body || {};
+
+    // Normalização e hashing do telefone para CAPI
+    const normalizePhone = (p) => (String(p || '').replace(/[^0-9]/g, ''));
+    const phoneNorm = normalizePhone(phone);
+    const phoneHash = phoneNorm ? crypto.createHash('sha256').update(phoneNorm, 'utf8').digest('hex') : undefined;
+
+    const event_time = Math.floor(Date.now() / 1000);
+    const userAgent = req.headers['user-agent'] || '';
+    const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
+
+    const testCode = process.env.META_TEST_EVENT_CODE;
+    const payload = {
+      data: [
+        {
+          event_name: eventName,
+          event_time,
+          action_source: 'website',
+          event_source_url: eventSourceUrl || `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+          event_id: correlationID || undefined,
+          user_data: {
+            fbp: fbp || undefined,
+            client_user_agent: userAgent,
+            client_ip_address: clientIp,
+            ph: phoneHash ? [phoneHash] : undefined,
+          },
+          custom_data: {
+            value: Number(value) || 0,
+            currency,
+            content_name: contentName,
+            contents: Array.isArray(contents) ? contents : [],
+            num_items: Array.isArray(contents) ? contents.reduce((acc, c) => acc + (Number(c.quantity) || 0), 0) : 0,
+          }
+        }
+      ],
+      ...(testCode ? { test_event_code: testCode } : {})
+    };
+
+    const url = `https://graph.facebook.com/v18.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      return res.status(resp.status).json({ success: false, error: data?.error || 'meta_error', details: data });
+    }
+    return res.json({ success: true, result: data });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'exception', details: err?.message || String(err) });
+  }
+});
+
+// Webhook Woovi/OpenPix: CHARGE_CREATED -> enviar InitiateCheckout (CAPI)
+app.post('/api/openpix/webhook', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const event = String(body.event || '').toUpperCase();
+    if (!/CHARGE_CREATED/.test(event)) {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+
+    const charge = body.charge || {};
+    const addInfoArr = Array.isArray(charge.additionalInfo) ? charge.additionalInfo : [];
+    const addInfo = addInfoArr.reduce((acc, item) => {
+      const k = String(item?.key || '').trim();
+      const v = String(item?.value || '').replace(/[`]/g, '').trim();
+      acc[k] = v;
+      return acc;
+    }, {});
+
+    const tipo = addInfo['tipo_servico'] || '';
+    const qtd = Number(addInfo['quantidade'] || 0) || 0;
+    const pacote = addInfo['pacote'] || '';
+    const phoneRaw = addInfo['phone'] || charge?.customer?.phone || '';
+    const correlationID = charge.correlationID || charge?.customer?.correlationID || '';
+    const valueCents = Number(charge.value || 0) || 0;
+    const valueBRL = valueCents ? (Math.round(valueCents) / 100) : 0;
+    const paymentLinkUrl = String(charge.paymentLinkUrl || '').replace(/[`]/g, '').trim();
+
+    // Monta payload para CAPI
+    const contents = (tipo && qtd) ? [{ id: tipo, quantity: qtd }] : [];
+    const userAgent = req.headers['user-agent'] || '';
+    const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
+    const eventSourceUrl = paymentLinkUrl || `https://agenciaoppus.site/checkout${phoneRaw ? `?phone=${encodeURIComponent(phoneRaw)}` : ''}`;
+
+    // Reutiliza endpoint de rastreio
+    const trackResp = await fetch(`${req.protocol}://${req.get('host')}/api/meta/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventName: 'InitiateCheckout',
+        value: valueBRL,
+        currency: 'BRL',
+        contentName: pacote,
+        contents,
+        phone: phoneRaw,
+        correlationID,
+        eventSourceUrl
+      })
+    });
+    const trackData = await trackResp.json();
+    if (!trackResp.ok) {
+      return res.status(trackResp.status).json({ ok: false, error: trackData?.error || 'capi_error', details: trackData });
+    }
+    return res.json({ ok: true, capi: trackData });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'exception', details: err?.message || String(err) });
+  }
+});
+
 app.listen(port, () => {
+  console.log("🗄️ Baserow configurado com sucesso");
   console.log(`Servidor rodando na porta ${port}`);
+  console.log(`Preview disponível: http://localhost:${port}/checkout`);
 });
 
