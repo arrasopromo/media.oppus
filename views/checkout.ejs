@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Checkout - Seguidores</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/css/style.css" rel="stylesheet" />
+  <link href="/css/perfil.css" rel="stylesheet" />
+  <script>
+    (function(){
+      var PIXEL_ID = '<%= PIXEL_ID %>';
+      if (!PIXEL_ID) return;
+      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+      n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+      t.src='https://connect.facebook.net/en_US/fbevents.js';s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s)}(window, document,'script');
+      fbq('init', PIXEL_ID);
+      fbq('consent', 'grant');
+      fbq('track', 'PageView');
+    })();
+  </script>
+  <% if (PIXEL_ID) { %>
+    <noscript>
+      <img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=<%= PIXEL_ID %>&ev=PageView&noscript=1" />
+    </noscript>
+  <% } %>
+</head>
+<body>
+  <div class="container checkout-page">
+    <header class="header">
+      <h1 class="title">Checkout</h1>
+      <p class="subtitle">Escolha o tipo de seguidores e a quantidade/preço.</p>
+    </header>
+
+    <main class="main-content">
+      <section class="section-block centered">
+        <div class="cards-grid checkout-grid">
+          <div class="service-card" id="perfilCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title">Perfil do Instagram</h3>
+              <div class="card-desc">
+                <div class="input-group" id="grupoUsername" style="position:relative;">
+                  <input
+                    type="text"
+                    id="usernameCheckoutInput"
+                    placeholder="Digite o nome de usuário ou URL do Instagram..."
+                    class="select-input"
+                    maxlength="100"
+                  />
+                  <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem;">
+                    <span class="button-text">Validar</span>
+                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                  <!-- Tutorial: 3/5 e 4/5 -->
+                  <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                    <div class="tutorial-pop-step">3/5</div>
+                    <div class="tutorial-pop-text">Informe o nome de usuário</div>
+                  </div>
+                  <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-check" style="display:none;">
+                    <div class="tutorial-pop-step">4/5</div>
+                    <div class="tutorial-pop-text">Clique em Validar o perfil</div>
+                  </div>
+                </div>
+                <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                  <div class="spinner"></div>
+                  <p>Verificando perfil...</p>
+                </div>
+                <div id="profilePreview" style="display:none; margin-top:0.75rem; text-align:center;">
+                  <img id="checkoutProfileImage" alt="Foto do perfil" style="width:72px; height:72px; border-radius:50%; object-fit:cover; background:#fff; display:block; margin:0 auto 0.5rem;" />
+                  <div style="color:#fff; margin-bottom:0.5rem;">
+                    <strong>@<span id="checkoutProfileUsername"></span></strong>
+                  </div>
+                  <div id="checkoutProfileStats" style="display:flex; gap:1rem; justify-content:center; color:#fff;">
+                    <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
+                    <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
+                    <div><strong>Posts:</strong> <span id="checkoutPostsCount">-</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          
+          <div class="service-card">
+            <div class="card-content">
+              <h3 class="card-title">Tipo de serviço</h3>
+              <div class="input-group" id="grupoTipo" style="position:relative;">
+                <select id="tipoSelect" class="select-input" style="flex:1;">
+                  <option value="" selected>Selecione...</option>
+                  <option value="mistos">Seguidores Mistos</option>
+                  <option value="brasileiros">Seguidores Brasileiros</option>
+                  <option value="organicos">Seguidores Orgânicos</option>
+                  <option value="curtidas_reais">Curtidas reais</option>
+                  <option value="visualizacoes_reels">Visualizações Reels</option>
+                </select>
+                <!-- Tutorial: 1/5 -->
+                <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:block;">
+                  <div class="tutorial-pop-step">1/5</div>
+                  <div class="tutorial-pop-text">Selecione o tipo de serviço</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="service-card">
+            <div class="card-content">
+              <h3 class="card-title">Escolha o pacote</h3>
+              <div class="input-group" id="grupoQuantidade" style="position:relative;">
+                <select id="quantidadeSelect" class="select-input" disabled style="flex:1;">
+                  <option value="">Selecione o tipo primeiro...</option>
+                </select>
+                <!-- Tutorial: 2/5 -->
+                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">2/5</div>
+                  <div class="tutorial-pop-text">Escolha o pacote</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-block centered">
+        <div class="cards-grid checkout-grid">
+          <div class="service-card" id="resumo" hidden>
+            <div class="card-content">
+              <h3 class="card-title">Resumo</h3>
+              <div class="card-desc">
+                <div><strong>Tipo:</strong> <span id="resTipo"></span></div>
+                <div><strong>Quantidade:</strong> <span id="resQtd"></span></div>
+                <div><strong>Preço:</strong> <span id="resPreco"></span></div>
+              </div>
+              <div class="action-container" id="grupoPedido">
+                <div class="button-container">
+                  <button id="realizarPedidoBtn" class="continue-button">
+                    <span class="button-text">Realizar pedido</span>
+                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+                <!-- Tutorial: 5/5 -->
+                <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
+                  <div class="tutorial-pop-step">5/5</div>
+                  <div class="tutorial-pop-text">Clique para realizar o pedido</div>
+                </div>
+              </div>
+              <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer">
+      <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+    </footer>
+  </div>
+
+  <script src="/js/checkout.js"></script>
+  <style>
+    /* Título do Checkout com especificações fornecidas */
+    .checkout-page .title {
+      font-size: clamp(2rem, 4vw, 2.5rem);
+      font-weight: 700;
+      color: #FFFFFF;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.02em;
+    }
+
+    /* Ampliar área de conteúdo e larguras dos cards no desktop */
+    @media (min-width: 1024px) {
+      .checkout-page .main-content { max-width: 1280px; }
+      .checkout-page .section-block.centered .cards-grid.checkout-grid {
+        grid-template-columns: minmax(640px, 960px);
+        justify-content: center;
+        justify-items: stretch;
+        gap: 1.75rem;
+      }
+      /* Força override do tema para desktop do checkout */
+      .checkout-page .section-block.centered .cards-grid { grid-template-columns: minmax(640px, 960px) !important; }
+      .checkout-page .service-card { width: 100%; margin: 0 auto; padding: 0.5rem 0.75rem; }
+      .checkout-page .select-input {
+        background: rgba(255, 255, 255, 0.95);
+        color: #111827;
+        width: 100%;
+        margin-top: 0.25rem; /* mais rente às bordas do card */
+        /* aumenta área útil horizontal no desktop */
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+      }
+      .checkout-page .input-group { width: 100%; }
+    }
+    /* Garantir largura total dos inputs no mobile e desktop */
+    .checkout-page .input-group { width: 100%; }
+    .checkout-page .select-input { width: 100%; }
+    .cards-grid.checkout-grid { gap: 1.25rem; }
+    .checkout-page .select-input option { color: #111827; }
+    /* Centralizar área de resultado PIX */
+    #pixResultado { text-align: center; }
+  </style>
+</body>
+</html>

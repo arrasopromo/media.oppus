@@ -222,6 +222,45 @@ body::before {
     color: var(--text-secondary);
 }
 
+/* Inputs de seleção com estética de card */
+.select-input {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.875rem 1.125rem;
+    border: 1px solid #4B5563; /* contraste um pouco maior */
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    font-family: var(--font-family);
+    box-shadow: var(--shadow-sm);
+    appearance: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.select-input:hover {
+    border-color: var(--primary-purple);
+    background: rgba(107, 70, 193, 0.10);
+}
+
+.select-input:focus {
+    outline: none;
+    border-color: var(--primary-purple);
+    box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.45);
+    background: rgba(107, 70, 193, 0.12);
+}
+
+.select-input:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+@media (min-width: 1024px) {
+    .select-input {
+        padding: 1rem 1.25rem; /* mais largo no desktop */
+        font-size: 1.05rem;
+    }
+}
+
 /* Container do botão */
 .button-container {
     display: flex;
