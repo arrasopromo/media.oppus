@@ -974,12 +974,10 @@ app.get('/image-proxy', async (req, res) => {
 
 // Middleware para controlar acesso à página de perfil
 function perfilAccessGuard(req, res, next) {
-    // Permitir acesso se sessão indicar acesso válido
     if (req.session && req.session.perfilAccessAllowed) {
         return next();
     }
-    // Caso contrário, renderizar restrito
-    return res.status(403).render('restrito');
+    return res.redirect('/');
 }
 
 // Log global de requisições para diagnosticar roteamento
@@ -1304,8 +1302,7 @@ app.get('/perfil', (req, res) => {
         req.session.linkAccessTime = Date.now();
         return res.render('perfil');
     }
-    // Caso contrário, acesso restrito
-    return res.status(403).render('restrito');
+    return res.redirect('/');
 });
 
 // Rota protegida da página de perfil (apenas via links temporários)
