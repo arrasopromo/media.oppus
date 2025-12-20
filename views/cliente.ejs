@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Consulta de Pedido</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <link href="/css/perfil.css" rel="stylesheet" />
+</head>
+<body>
+  
+  <main style="padding: 1rem 0; font-family: var(--font-family);">
+    <div id="clientPage" class="client-page" style="position: static; display: block;">
+      <div class="client-page-inner">
+        <div class="client-actions" style="justify-content: center; margin-bottom: 0.75rem;">
+          <button id="clientPageBackBtn" class="continue-button btn-back" style="margin: 0 auto;">
+            <span class="button-text">Voltar</span>
+          </button>
+        </div>
+        <h2 class="client-title">Consulta de Pedido</h2>
+        <p class="client-desc">Digite seu número de telefone para localizar seu pedido.</p>
+        <div class="client-form">
+          <input id="clientPhoneInputPage" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
+          <div class="client-actions" style="justify-content: center;">
+            <button id="clientPageConsultBtn" class="continue-button"><span class="button-text">Consultar</span></button>
+          </div>
+        </div>
+        <div id="clientPageOrders" class="client-orders"></div>
+      </div>
+    </div>
+  </main>
+  <script src="/js/checkout.js"></script>
+  <script>
+    (function(){
+      try {
+        var theme = localStorage.getItem('oppus_theme') || 'dark';
+        document.body.classList.toggle('theme-light', theme === 'light');
+      } catch (_) {}
+      var backBtn = document.getElementById('clientPageBackBtn');
+      if (backBtn) backBtn.addEventListener('click', function(){ window.location.href = '/'; });
+      var phone = document.getElementById('clientPhoneInputPage');
+      if (phone && typeof onlyDigits === 'function' && typeof maskBrPhone === 'function') {
+        phone.addEventListener('input', function(){ phone.value = maskBrPhone(phone.value); });
+      }
+    })();
+  </script>
+</body>
+</html>

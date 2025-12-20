@@ -31,6 +31,7 @@ const toastContainer = document.getElementById('toastContainer');
 const timerElement = document.getElementById('timer');
 const continueBtn = document.getElementById('continueBtn');
 const postEmbedContainer = document.getElementById('postEmbedContainer');
+const searchContainer = document.querySelector('.search-container');
 // Pop-ups interativos
 const tutorialPop1 = document.getElementById('tutorialPop1');
 const tutorialPop2 = document.getElementById('tutorialPop2');
@@ -78,6 +79,9 @@ function initializePage() {
 
     // Mostrar o primeiro pop inicialmente
     showTutorialStep(1);
+
+    updateSearchVisibility();
+    try { positionHomeTutorials(); } catch(_) {}
 }
 
 function handleUsernameInput(event) {
@@ -195,17 +199,15 @@ async function checkProfile() {
         });
         const data = await response.json();
         hideLoading();
-        if (data.success) {
-            currentProfile = data.profile;
-            showProfileSuccess(data.profile);
-            // Mostrar etapa 3 após sucesso
+        const errMsg = (data && data.error) ? String(data.error) : '';
+        if (data.success || data.code === 'INSTAUSER_ALREADY_USED' || /já foi testado/i.test(errMsg) || /perfil\s+é\s+privad/i.test(errMsg) || /privad/i.test(errMsg)) {
+            const fallback = { username };
+            const profile = Object.assign({}, data.profile || fallback, { alreadyTested: false });
+            currentProfile = profile;
+            showProfileSuccess(profile);
             showTutorialStep(3);
         } else {
-            if (data.code === 'INSTAUSER_ALREADY_USED') {
-                showStatusMessage('Este perfil já foi testado anteriormente. O serviço de teste já foi realizado para este usuário.', 'error');
-            } else {
-                showStatusMessage(data.error, 'error');
-            }
+            showStatusMessage(errMsg || 'Não foi possível validar o perfil.', 'error');
         }
     } catch (error) {
         hideLoading();
@@ -279,12 +281,6 @@ function showProfileSuccess(profile) {
         confirmButton.textContent = 'Pedido Realizado';
         confirmButton.style.opacity = '0.6';
         showStatusMessage('Sessão bloqueada. Você já realizou um pedido.', 'info');
-    } else if (profile.alreadyTested) {
-        // Se o perfil já foi testado anteriormente
-        confirmButton.disabled = true;
-        confirmButton.textContent = 'Perfil Já Testado';
-        confirmButton.style.opacity = '0.6';
-        showStatusMessage('O serviço de teste já foi realizado para este usuário.', 'error');
     } else {
         enableConfirmButton();
     }
@@ -297,6 +293,12 @@ function hideLoading() {
     loadingSpinner.style.display = 'none';
 }
 function showStatusMessage(message, type = 'success') {
+    try {
+        const msg = String(message || '').toLowerCase();
+        if (msg.includes('já foi testado') || msg.includes('teste já foi realizado') || msg.includes('perfil é privado') || msg.includes('privado')) {
+            return; // ignorar completamente no site home
+        }
+    } catch(_) {}
     statusMessage.textContent = message;
     statusMessage.className = 'status-message ' + type;
     statusMessage.style.display = 'block';
@@ -420,11 +422,7 @@ async function confirmProfile() {
             showToast('❌ Primeiro valide o perfil antes de confirmar', 'error');
             return;
         }
-        if (currentProfile.alreadyTested) {
-            showToast('❌ Este perfil já foi testado anteriormente', 'error');
-            showStatusMessage('O serviço de teste já foi realizado para este usuário.', 'error');
-            return;
-        }
+        // Ignorar validação de perfil já testado no site home
     }
     showLoadingOverlay('Enviando pedido ao serviço...');
     try {
@@ -631,9 +629,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initializePage();
     setupEventListeners();
     const selectedServiceInit = (sessionStorage.getItem('oppus_servico') || new URLSearchParams(window.location.search).get('servico') || '').toLowerCase();
-    if (!isPostService(selectedServiceInit)) {
-        checkUsageBlock();
-    }
 
     // Timer de 5 minutos para expirar a sessão e redirecionar
     setTimeout(() => {
@@ -654,6 +649,7 @@ function showTutorialStep(step) {
         tutorialPop3.style.display = 'flex';
         confirmButton.classList.add('tutorial-highlight');
     }
+    try { positionHomeTutorials(); } catch(_) {}
 }
 
 function hideTutorial() {
@@ -665,3 +661,93 @@ function hideTutorial() {
     checkButton.classList.remove('tutorial-highlight');
     confirmButton.classList.remove('tutorial-highlight');
 }
+function getSelectedService() {
+    try {
+        return (sessionStorage.getItem('oppus_servico') || new URLSearchParams(window.location.search).get('servico') || '').toLowerCase();
+    } catch (_) {
+        return (new URLSearchParams(window.location.search).get('servico') || '').toLowerCase();
+    }
+}
+
+function getSelectedQuantity() {
+    try {
+        return (sessionStorage.getItem('oppus_qtd') || new URLSearchParams(window.location.search).get('qtd') || '').trim();
+    } catch (_) {
+        return (new URLSearchParams(window.location.search).get('qtd') || '').trim();
+    }
+}
+
+function updateSearchVisibility() {
+    try {
+        if (searchContainer) {
+            searchContainer.style.display = 'block';
+        }
+        if (checkButton) {
+            // Estado do botão é controlado pelo input (handleUsernameInput)
+            const hasValue = Boolean(usernameInput && usernameInput.value && usernameInput.value.trim().length >= 1);
+            checkButton.disabled = !hasValue;
+        }
+        if (confirmButton) {
+            // Confirmar permanece desabilitado até validar perfil/post
+            confirmButton.disabled = true;
+        }
+    } catch (_) {}
+}
+
+// Atualizar visibilidade ao mudar parâmetros (ex.: navegação volta/avança)
+window.addEventListener('popstate', updateSearchVisibility);
+function positionHomeTutorials() {
+    try {
+        const group = document.querySelector('.input-group');
+        if (group && tutorialPop1) {
+            const inputRect = usernameInput.getBoundingClientRect();
+            const groupRect = group.getBoundingClientRect();
+            const center = (inputRect.left - groupRect.left) + (inputRect.width / 2);
+            const bubbleWidth = tutorialPop1.offsetWidth || 220;
+            let left = center - (bubbleWidth / 2);
+            left = Math.max(8, Math.min(group.clientWidth - bubbleWidth - 8, left));
+            const top = (inputRect.bottom - groupRect.top) + 16; // descer mais o 1/3
+            tutorialPop1.style.left = `${left}px`;
+            tutorialPop1.style.top = `${top}px`;
+            const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, center - left));
+            tutorialPop1.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+            tutorialPop1.style.setProperty('--tip-arrow-top', `-8px`);
+        }
+    } catch(_) {}
+    try {
+        const group = document.querySelector('.input-group');
+        if (group && tutorialPop2 && checkButton) {
+            const btnRect = checkButton.getBoundingClientRect();
+            const groupRect = group.getBoundingClientRect();
+            const center = (btnRect.left - groupRect.left) + (btnRect.width / 2);
+            const bubbleWidth = tutorialPop2.offsetWidth || 200;
+            let left = center - (bubbleWidth / 2);
+            left = Math.max(8, Math.min(group.clientWidth - bubbleWidth - 8, left));
+            const top = (btnRect.bottom - groupRect.top) + 18; // descer mais o 2/3
+            tutorialPop2.style.left = `${left}px`;
+            tutorialPop2.style.top = `${top}px`;
+            const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, center - left));
+            tutorialPop2.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+            tutorialPop2.style.setProperty('--tip-arrow-top', `-8px`);
+        }
+    } catch(_) {}
+    try {
+        const actionBox = document.querySelector('.action-container');
+        if (actionBox && tutorialPop3 && confirmButton) {
+            const btnRect = confirmButton.getBoundingClientRect();
+            const boxRect = actionBox.getBoundingClientRect();
+            const center = (btnRect.left - boxRect.left) + (btnRect.width / 2);
+            const bubbleWidth = tutorialPop3.offsetWidth || 220;
+            let left = center - (bubbleWidth / 2);
+            left = Math.max(8, Math.min(actionBox.clientWidth - bubbleWidth - 8, left));
+            const top = (btnRect.bottom - boxRect.top) + 12; // abaixo do confirmar
+            tutorialPop3.style.left = `${left}px`;
+            tutorialPop3.style.top = `${top}px`;
+            const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, center - left));
+            tutorialPop3.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+            tutorialPop3.style.setProperty('--tip-arrow-top', `-8px`);
+        }
+    } catch(_) {}
+}
+
+window.addEventListener('resize', () => { try { positionHomeTutorials(); } catch(_) {} });
