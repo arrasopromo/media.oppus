@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Refil de Seguidores</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/css/style.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="container checkout-page">
+    <header class="header">
+      <h1 class="title">Refil</h1>
+      <p class="subtitle">Informe o Order ID para repor seguidores (Mistos ou Brasileiros)</p>
+    </header>
+    <main class="main-content">
+      <section class="section-block">
+        <div class="service-card" id="refilCard">
+          <div class="card-content">
+            <h3 class="card-title">Refil de Pedido</h3>
+            <div class="card-desc">
+              <div class="input-group" id="grupoRefil" style="position:relative;">
+                <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Digite seu Order ID" maxlength="20" />
+                <button id="refilSubmitBtn" class="continue-button" type="button" style="margin-left:0.5rem;">
+                  <span class="button-text">Solicitar Refil</span>
+                </button>
+              </div>
+              <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+              <div id="refilResult" class="card-desc" style="display:none; margin-top:0.75rem;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script>
+    (function(){
+      const orderInput = document.getElementById('refilOrderIdInput')
+      const submitBtn = document.getElementById('refilSubmitBtn')
+      const statusEl = document.getElementById('refilStatus')
+      const resultEl = document.getElementById('refilResult')
+      function setStatus(msg, type){
+        if (!statusEl) return
+        statusEl.textContent = msg
+        statusEl.style.display = 'block'
+        statusEl.style.textAlign = 'center'
+        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ffb4b4' : '#ffffff')
+      }
+      async function submitRefil(){
+        const orderId = (orderInput && orderInput.value || '').trim()
+        if (!orderId) { setStatus('Informe seu Order ID', 'error'); return }
+        setStatus('Solicitando refil...', 'info')
+        resultEl.style.display = 'none'
+        try {
+          const resp = await fetch('/api/refil/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order_id: orderId, username: 'arraso' })
+          })
+          const data = await resp.json()
+          if (!resp.ok) throw new Error(data?.error || 'Falha ao solicitar refil')
+          setStatus('Refil processado com sucesso', 'success')
+          resultEl.style.display = 'block'
+          const item = Array.isArray(data) ? data[0] : data
+          const msg = item?.message || 'OK'
+          const drop = item?.data?.drop_amount ?? '—'
+          const qtd = item?.data?.quantidade_reposta ?? '—'
+          const status = item?.data?.status ?? '—'
+          const extId = item?.data?.external_refill_id ?? '—'
+          resultEl.innerHTML = `<div style="text-align:left;">
+            <div><strong>Mensagem:</strong> ${msg}</div>
+            <div><strong>Queda detectada:</strong> ${drop}</div>
+            <div><strong>Quantidade reposta:</strong> ${qtd}</div>
+            <div><strong>Status:</strong> ${status}</div>
+            <div><strong>ID externo:</strong> ${extId}</div>
+          </div>`
+        } catch (e) {
+          setStatus(e?.message || 'Erro ao solicitar refil', 'error')
+        }
+      }
+      if (submitBtn) submitBtn.addEventListener('click', submitRefil)
+    })()
+  </script>
+</body>
+</html>
