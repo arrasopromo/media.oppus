@@ -562,13 +562,17 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 .promo-item:hover { border-color: var(--primary-purple); box-shadow: var(--shadow-sm); }
 .promo-item input[type="checkbox"] { margin-top: 0.2rem; }
 .promo-content { display: grid; gap: 0.2rem; }
-.promo-highlight { font-weight: 700; color: var(--primary-purple); background: transparent; border: none; border-radius: 0; padding: 0; text-transform: uppercase; letter-spacing: 0.02em; }
+.promo-highlight { font-weight: 700; color: #ffffff; background: var(--primary-purple); border: none; border-radius: 8px; padding: 0.15rem 0.5rem; text-transform: uppercase; letter-spacing: 0.02em; display: inline-block; }
 .promo-title { font-weight: 600; color: var(--text-primary); }
+.promo-item.warranty30 .promo-title { color: var(--primary-purple); text-transform: uppercase; }
 .promo-desc { color: var(--text-secondary); font-size: 0.95rem; }
 .promo-item.upgrade { background: #232336; border-color: var(--border-color); }
 .promo-item.comments { background: #232336; border-color: var(--border-color); }
 .promo-item.warranty30 { background: #232336; border-color: var(--border-color); }
 .promo-prices { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
+.likes-control { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.35rem; }
+.likes-control .likes-arrow { padding: 0.25rem 0.5rem; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-secondary); color: var(--text-primary); }
+.likes-control .likes-qty { min-width: 48px; text-align: center; font-weight: 700; color: var(--text-primary); }
 .promo-prices .old-price { color: #9ca3af; text-decoration: line-through; }
 .promo-prices .discount-badge { background: rgba(34,197,94,0.18); color: #86efac; border: 1px solid rgba(34,197,94,0.35); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
 .promo-prices .new-price { color: #22C55E; font-weight: 700; }

@@ -363,6 +363,17 @@
         cards.forEach(c => c.classList.toggle('active', c === card));
         updatePerfilVisibility();
         try { applyCheckoutFlow(); } catch(_) {}
+        // Âncora: ao selecionar pacote, focar no perfil no mobile
+        try {
+          const isMobile = window.innerWidth <= 640;
+          if (isMobile) {
+            if (perfilCard) perfilCard.style.display = 'block';
+            const target = document.getElementById('grupoUsername') || perfilCard;
+            if (target && typeof target.scrollIntoView === 'function') {
+              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }
+        } catch(_) {}
       });
       planCards.appendChild(card);
     }
@@ -932,6 +943,104 @@
       }
     } catch(_) {}
   });
+
+  const likesTable = [
+    { q: 150, price: 'R$ 4,90' },
+    { q: 300, price: 'R$ 9,90' },
+    { q: 500, price: 'R$ 14,90' },
+    { q: 700, price: 'R$ 19,90' },
+    { q: 1000, price: 'R$ 24,90' },
+    { q: 2000, price: 'R$ 34,90' },
+    { q: 3000, price: 'R$ 49,90' },
+    { q: 4000, price: 'R$ 59,90' },
+    { q: 5000, price: 'R$ 69,90' },
+    { q: 7500, price: 'R$ 89,90' },
+    { q: 10000, price: 'R$ 109,90' },
+    { q: 15000, price: 'R$ 159,90' }
+  ];
+  const likesQtyEl = document.getElementById('likesQty');
+  const likesDec = document.getElementById('likesDec');
+  const likesInc = document.getElementById('likesInc');
+  const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
+  function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
+  function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
+  function updateLikesPrice(q) {
+    const entry = likesTable.find(e => e.q === q);
+    const newEl = likesPrices ? likesPrices.querySelector('.new-price') : null;
+    const oldEl = likesPrices ? likesPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
+    const hl = document.querySelector('.promo-item.comments .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} CURTIDAS`;
+  }
+  function stepLikes(dir) {
+    const current = Number(likesQtyEl?.textContent || 150);
+    const idx = likesTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= likesTable.length) nextIdx = likesTable.length - 1;
+    const next = likesTable[nextIdx].q;
+    if (likesQtyEl) likesQtyEl.textContent = String(next);
+    updateLikesPrice(next);
+  }
+  if (likesDec) likesDec.addEventListener('click', () => stepLikes(-1));
+  if (likesInc) likesInc.addEventListener('click', () => stepLikes(1));
+  if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
+
+  // Slider de Visualizações (Order Bump)
+  const viewsTable = [
+    { q: 1000, price: 'R$ 4,90' },
+    { q: 2500, price: 'R$ 9,90' },
+    { q: 5000, price: 'R$ 14,90' },
+    { q: 10000, price: 'R$ 19,90' },
+    { q: 25000, price: 'R$ 24,90' },
+    { q: 50000, price: 'R$ 34,90' },
+    { q: 100000, price: 'R$ 49,90' },
+    { q: 150000, price: 'R$ 59,90' },
+    { q: 200000, price: 'R$ 69,90' },
+    { q: 250000, price: 'R$ 89,90' },
+    { q: 500000, price: 'R$ 109,90' },
+    { q: 1000000, price: 'R$ 159,90' }
+  ];
+  const viewsQtyEl = document.getElementById('viewsQty');
+  const viewsDec = document.getElementById('viewsDec');
+  const viewsInc = document.getElementById('viewsInc');
+  const viewsPrices = document.querySelector('.promo-prices[data-promo="views"]');
+  function formatCurrencyBR(n) {
+    return `R$ ${n.toFixed(2).replace('.', ',')}`;
+  }
+  function parseCurrencyBR(s) {
+    const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.');
+    const val = parseFloat(cleaned);
+    return isNaN(val) ? 0 : val;
+  }
+  function updateViewsPrice(q) {
+    const entry = viewsTable.find(e => e.q === q);
+    const newEl = viewsPrices ? viewsPrices.querySelector('.new-price') : null;
+    const oldEl = viewsPrices ? viewsPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    // Calcular preço cortado (antes) assumindo 30% off
+    if (oldEl && entry) {
+      const newVal = parseCurrencyBR(entry.price);
+      const oldVal = newVal / 0.7;
+      oldEl.textContent = formatCurrencyBR(oldVal);
+    }
+    const hl = document.querySelector('.promo-item.warranty30 .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} VISUALIZAÇÕES`;
+  }
+  function stepViews(dir) {
+    const current = Number(viewsQtyEl?.textContent || 1000);
+    const idx = viewsTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= viewsTable.length) nextIdx = viewsTable.length - 1;
+    const next = viewsTable[nextIdx].q;
+    if (viewsQtyEl) viewsQtyEl.textContent = String(next);
+    updateViewsPrice(next);
+  }
+  if (viewsDec) viewsDec.addEventListener('click', () => stepViews(-1));
+  if (viewsInc) viewsInc.addEventListener('click', () => stepViews(1));
+  if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
 
   function parsePrecoToCents(precoStr) {
     // Converte 'R$ 7,90' -> 790

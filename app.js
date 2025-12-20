@@ -1052,6 +1052,31 @@ app.get('/checkout', (req, res) => {
     });
 });
 
+// Página de Refil
+app.get('/refil', (req, res) => {
+    try {
+        res.render('refil');
+    } catch (e) {
+        res.status(500).send('Erro ao carregar página de refil');
+    }
+});
+
+// API para solicitar refil (proxy para smmrefil)
+app.post('/api/refil/create', async (req, res) => {
+    try {
+        const { order_id, username } = req.body || {};
+        if (!order_id) return res.status(400).json({ error: 'missing_order_id' });
+        const axios = require('axios');
+        const payload = { order_id: String(order_id).trim(), username: String(username || 'arraso') };
+        const response = await axios.post('https://smmrefil.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+        return res.status(200).json(response.data);
+    } catch (err) {
+        const status = err.response?.status || 500;
+        const details = err.response?.data || { message: err.message };
+        return res.status(status).json({ error: 'refil_error', details });
+    }
+});
+
 // API: criar cobrança PIX via Woovi
 app.post('/api/woovi/charge', async (req, res) => {
     const WOOVI_AUTH = process.env.WOOVI_AUTH || 'Q2xpZW50X0lkXzI1OTRjODMwLWExN2YtNDc0Yy05ZTczLWJjNDRmYTc4NTU2NzpDbGllbnRfU2VjcmV0X0NCVTF6Szg4eGJyRTV0M1IxVklGZEpaOHZLQ0N4aGdPR29UQnE2dDVWdU09';
