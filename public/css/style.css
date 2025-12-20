@@ -213,7 +213,7 @@ body.theme-light .checkout-page .logo-light { display: inline-block; }
     animation: fadeInUp 1s ease-out 0.3s both;
 }
 html, body { overflow-x: hidden; }
-.checkout-page .cards-grid.checkout-grid { justify-content: start; justify-items: stretch; align-items: stretch; }
+.checkout-page .cards-grid.checkout-grid { justify-content: center; justify-items: stretch; align-items: stretch; }
 .checkout-page .service-card { width: 100%; margin: 0 auto; box-sizing: border-box; }
 .checkout-page #clientFetchBtn { display: inline-block !important; }
 .checkout-page .client-tools.active { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
@@ -783,7 +783,8 @@ body.theme-light .promo-prices .new-price { color: #14532d; }
   .checkout-page .client-tools { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
   .checkout-page .client-tools .select-input { max-width: 220px; }
   .checkout-page.container { padding-left: 2rem; padding-right: 2rem; }
-  .checkout-page .cards-grid.checkout-grid { justify-content: start; }
+  .checkout-page .cards-grid.checkout-grid { justify-content: center; }
+  .checkout-page.container { justify-content: center; align-items: center; }
   /* Mobile: cards especiais ocupam 100% de largura */
   .checkout-page #perfilCard, .checkout-page #orderBumpInline, .checkout-page #resumo { width: 100% !important; max-width: none !important; }
   /* Mobile: garantir que o perfil ocupe totalmente o espaço do grid */
