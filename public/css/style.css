@@ -73,7 +73,7 @@ body.theme-light .continue-button { box-shadow: var(--shadow-md); }
 /* Promoções no tema claro */
 body.theme-light .promo-item { background: #ffffff; border-color: #e5e7eb; }
 body.theme-light .promo-item:hover { border-color: var(--primary-purple); }
-body.theme-light .promo-highlight { color: var(--text-primary); background: transparent; border: none; }
+body.theme-light .promo-highlight { color: #ffffff; background: var(--primary-purple); border: none; }
 /* Checkout: melhorar contraste no tema claro para preview e stats */
 body.theme-light #profilePreview { color: #0f172a; }
 body.theme-light #profilePreview strong { color: #0f172a; }
@@ -230,7 +230,7 @@ html, body { overflow-x: hidden; }
 .checkout-page #tipoCards .service-card .card-title, .checkout-page #tipoCards .service-card .card-desc { margin: 0; }
 .checkout-page .client-tools { display: none; }
 @media (max-width: 640px) {
-  .checkout-page .header { margin-top: 2rem; }
+    .checkout-page .header { margin-top: 2rem; }
   .checkout-page .client-tools.active { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
   .checkout-page .client-tools .select-input { max-width: 220px; }
   .checkout-page #clientFetchBtn { display: block; margin: 0.5rem auto 0; }
@@ -812,6 +812,17 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
   .phone-hint { font-size: calc(0.875rem + 3px); text-align: center; }
   .checkout-page #paymentCard .phone-field .select-input { max-width: 100%; }
   .checkout-page #paymentCard .phone-field .select-input { font-size: 16px; }
+
+  /* Mobile: garantir afastamento das bordas para demais cards */
+  .checkout-page #audioCard,
+  .checkout-page #tipoDescCard,
+  .checkout-page #depoimentosCard,
+  .checkout-page #plataformaCard,
+  .checkout-page #planCards .service-card {
+    width: calc(100vw - 20px) !important;
+    margin-left: calc(50% - 50vw + 10px) !important;
+    margin-right: calc(50% - 50vw + 10px) !important;
+  }
 }
 
 .client-btn {

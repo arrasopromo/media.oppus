@@ -350,6 +350,7 @@
     resumo.hidden = false;
     try { resumo.style.display = 'block'; } catch(e) {}
     updateOrderBump(tipo, Number(item.q));
+        try { updatePromosSummary(); } catch(_) {}
         try {
           const paymentCardEl = document.getElementById('paymentCard');
           if (paymentCardEl) paymentCardEl.style.display = 'block';
@@ -982,6 +983,7 @@
     const next = likesTable[nextIdx].q;
     if (likesQtyEl) likesQtyEl.textContent = String(next);
     updateLikesPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
   }
   if (likesDec) likesDec.addEventListener('click', () => stepLikes(-1));
   if (likesInc) likesInc.addEventListener('click', () => stepLikes(1));
@@ -1037,10 +1039,50 @@
     const next = viewsTable[nextIdx].q;
     if (viewsQtyEl) viewsQtyEl.textContent = String(next);
     updateViewsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
   }
   if (viewsDec) viewsDec.addEventListener('click', () => stepViews(-1));
   if (viewsInc) viewsInc.addEventListener('click', () => stepViews(1));
   if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
+
+  function getSelectedPromos() {
+    const promos = [];
+    try {
+      const likesChecked = !!document.getElementById('promoLikes')?.checked;
+      const viewsChecked = !!document.getElementById('promoViews')?.checked;
+      const commentsChecked = !!document.getElementById('promoComments')?.checked;
+      const warrantyChecked = !!document.getElementById('promoWarranty30')?.checked;
+      const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
+      if (likesChecked && likesPrices) {
+        const qty = Number(likesQtyEl?.textContent || 150);
+        const priceStr = likesPrices.querySelector('.new-price')?.textContent || '';
+        promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (viewsChecked && viewsPrices) {
+        const qty = Number(viewsQtyEl?.textContent || 1000);
+        const priceStr = viewsPrices.querySelector('.new-price')?.textContent || '';
+        promos.push({ key: 'views', qty, label: `Visualizações (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (commentsChecked) {
+        const priceStr = document.querySelector('.promo-prices[data-promo="comments"] .new-price')?.textContent || '';
+        promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (warrantyChecked) {
+        const priceStr = document.querySelector('.promo-prices[data-promo="warranty30"] .new-price')?.textContent || '';
+        promos.push({ key: 'warranty30', qty: 1, label: '+30 dias de reposição', priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (upgradeChecked) {
+        const priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
+        const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
+        promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
+      }
+    } catch (_) {}
+    return promos;
+  }
+
+  function calcPromosTotalCents(promos) {
+    try { return (Array.isArray(promos) ? promos : []).reduce((acc, p) => acc + (Number(p.priceCents) || 0), 0); } catch (_) { return 0; }
+  }
 
   function parsePrecoToCents(precoStr) {
     // Converte 'R$ 7,90' -> 790
@@ -1205,8 +1247,11 @@
       btnPedido.classList.add('loading');
 
       const correlationID = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const promos = getSelectedPromos();
+      const promosTotalCents = calcPromosTotalCents(promos);
+      const totalCents = Math.max(0, Number(valueCents) + Number(promosTotalCents));
       // Tracking: Meta Pixel + CAPI (InitiateCheckout)
-      const valueBRL = Math.round(Number(valueCents)) / 100;
+      const valueBRL = Math.round(Number(totalCents)) / 100;
       const fbpCookie = (document.cookie.match(/_fbp=([^;]+)/)?.[1]) || '';
       try {
         if (typeof fbq === 'function') {
@@ -1238,7 +1283,7 @@
       const phoneValue = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl);
       const payload = {
         correlationID,
-        value: valueCents,
+        value: totalCents,
         comment: 'Checkout OPPUS',
         customer: {
           name: 'Cliente Checkout',
@@ -1250,7 +1295,9 @@
           { key: 'quantidade', value: String(qtd) },
           { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
-          { key: 'instagram_username', value: (sessionStorage.getItem('oppus_instagram_username') || '') }
+          { key: 'instagram_username', value: (sessionStorage.getItem('oppus_instagram_username') || '') },
+          { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
         ]
       };
 
@@ -1670,12 +1717,18 @@
   function updatePromosSummary() {
     const resPromos = document.getElementById('resPromos');
     if (!resPromos) return;
-    const checked = Array.from(document.querySelectorAll('.promo-item input[type="checkbox"]:checked'));
-    const labels = checked.map(inp => {
-      const titleEl = inp.closest('.promo-item')?.querySelector('.promo-title');
-      return titleEl ? titleEl.textContent.trim() : '';
-    }).filter(Boolean);
+    const tipo = tipoSelect?.value || '';
+    const qtdSel = Number(qtdSelect?.value || 0);
+    const baseStr = findPrice(tipo, qtdSel) || '';
+    const baseCents = parsePrecoToCents(baseStr);
+    const promos = getSelectedPromos();
+    const labels = promos.map(p => p.label).filter(Boolean);
     resPromos.textContent = labels.length ? labels.join(', ') : 'Nenhuma';
+    const totalCents = Math.max(0, Number(baseCents) + Number(calcPromosTotalCents(promos)));
+    const resPrecoEl = document.getElementById('resPreco');
+    if (resPrecoEl) {
+      resPrecoEl.textContent = formatCentsToBRL(totalCents);
+    }
   }
 
   Array.from(document.querySelectorAll('.promo-item input[type="checkbox"]')).forEach(inp => {

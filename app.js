@@ -1054,11 +1054,15 @@ app.get('/checkout', (req, res) => {
 
 // Página de Refil
 app.get('/refil', (req, res) => {
-    try {
-        res.render('refil');
-    } catch (e) {
-        res.status(500).send('Erro ao carregar página de refil');
-    }
+    console.log('🔁 Acessando rota /refil');
+    res.render('refil', {}, (err, html) => {
+        if (err) {
+            console.error('❌ Erro ao renderizar refil:', err.message);
+            return res.status(500).send('Erro ao carregar página de refil');
+        }
+        res.type('text/html');
+        res.send(html);
+    });
 });
 
 // API para solicitar refil (proxy para smmrefil)
