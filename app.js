@@ -464,7 +464,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
 const app = express();
 app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
-const port = process.env.PORT ? Number(process.env.PORT) : 3100;
+const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 // (Removido) Handler ASAP de /checkout antes do view engine
 // Motivo: estava tentando renderizar antes de configurar a engine,
@@ -475,6 +475,7 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3100;
 const linkManager = new LinkManager();
 const driveManager = new GoogleDriveManager();
 const baserowManager = new BaserowManager("https://baserow.atendimento.info", process.env.BASEROW_TOKEN);
+const { getCollection } = require('./mongodbClient');
 
 // Configurar Baserow
 const baserowToken = process.env.BASEROW_TOKEN || "manus";
@@ -807,6 +808,60 @@ app.get('/__debug/env', (req, res) => {
   }
 });
 
+// Diagnóstico: testar a chave da Fama24h (sem expor o valor)
+app.get('/__debug/fama24h-balance', async (req, res) => {
+  try {
+    const apiKey = (process.env.FAMA24H_API_KEY || '').trim();
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'missing_api_key',
+        message: 'FAMA24H_API_KEY não está definida no servidor.'
+      });
+    }
+
+    const params = new URLSearchParams();
+    params.append('key', apiKey);
+    params.append('action', 'balance');
+
+    try {
+      const axios = require('axios');
+      const response = await axios.post('https://fama24h.net/api/v2', params, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' }
+      });
+
+      // Normalizar resposta: não expor dados sensíveis
+      if (response?.data?.balance !== undefined) {
+        return res.json({
+          success: true,
+          provider: 'fama24h',
+          hasKey: true,
+          maskedKey: apiKey.slice(0, 6) + '***',
+          balance: response.data.balance
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        provider: 'fama24h',
+        hasKey: true,
+        maskedKey: apiKey.slice(0, 6) + '***',
+        error: response?.data?.error || 'api_error',
+        response: response?.data || null
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        provider: 'fama24h',
+        hasKey: true,
+        maskedKey: apiKey.slice(0, 6) + '***',
+        error: err?.message || 'request_error'
+      });
+    }
+  } catch (e) {
+    res.status(500).json({ success: false, error: e?.message || 'unknown' });
+  }
+});
+
 // Diagnóstico: logar tamanho do corpo enviado para /checkout
 app.use((req, res, next) => {
   if (req.path.startsWith('/checkout')) {
@@ -935,9 +990,30 @@ app.use((req, res, next) => {
     next();
 });
 
-// Rota para bloquear acesso direto à raiz
+// Home: renderizar Checkout como página inicial
 app.get('/', (req, res) => {
-    return res.status(403).render('restrito');
+    console.log('🏠 Acessando rota / (home -> checkout)');
+    res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+        if (err) {
+            console.error('❌ Erro ao renderizar home/checkout:', err.message);
+            return res.status(500).send('Erro ao renderizar checkout');
+        }
+        res.type('text/html');
+        res.send(html);
+    });
+});
+
+// Página dedicada de Cliente (consulta de pedidos)
+app.get('/cliente', (req, res) => {
+    console.log('👤 Acessando rota /cliente');
+    res.render('cliente', {}, (err, html) => {
+        if (err) {
+            console.error('❌ Erro ao renderizar cliente:', err.message);
+            return res.status(500).send('Erro ao abrir página do cliente');
+        }
+        res.type('text/html');
+        res.send(html);
+    });
 });
 
 // Debug: listar rotas registradas
@@ -1055,7 +1131,7 @@ app.post('/api/woovi/charge', async (req, res) => {
             },
             timeout: 15000
         });
-        // Salvar na tabela Baserow conforme solicitado
+        // Persistir dados no MongoDB (db: site-whatsapp, coleção: checkout_orders)
         try {
             const data = response.data || {};
             const charge = data.charge || data || {};
@@ -1069,26 +1145,51 @@ app.post('/api/woovi/charge', async (req, res) => {
 
             const tipo = addInfo['tipo_servico'] || '';
             const qtd = Number(addInfo['quantidade'] || 0) || 0;
-            const instauser = addInfo['instagram_username'] || '';
-            const identifier = charge.identifier || charge.paymentMethods?.pix?.transactionID || '';
-            const brCode = charge.paymentMethods?.pix?.brCode || charge.brCode || '';
-            const phoneDigits = phoneDigitsRaw;
+            const instauserFromClient = addInfo['instagram_username'] || '';
+            const userAgent = req.get('User-Agent') || '';
+            const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+            const slug = req.session?.linkSlug || '';
 
-            const row = {
-                nome: '',
-                telefone: phoneDigits,
-                correlationid: chargeCorrelationID,
-                instauser: (/mistos|brasileiros|organicos/i.test(tipo) ? instauser : ''),
-                criado: new Date().toISOString(),
+            const pix = charge?.paymentMethods?.pix || {};
+            const createdIso = new Date().toISOString();
+            const identifier = charge?.identifier || pix?.transactionID || null;
+            const record = {
+                // Campos principais solicitados
+                nomeUsuario: null, // será atualizado quando o pagamento for confirmado
+                telefone: customerPayload.phone || '',
+                correlationID: chargeCorrelationID,
+                instauser: instauserFromClient,
+                criado: createdIso,
                 identifier,
                 status: 'pendente',
                 qtd,
-                qrcode: brCode,
-                tipo
+                tipo,
+
+                // Demais campos já utilizados pelo app
+                valueCents: value,
+                customer: customerPayload,
+                additionalInfo: addInfoArr,
+                tipoServico: tipo,
+                quantidade: qtd,
+                instagramUsername: instauserFromClient,
+                slug,
+                userAgent,
+                ip,
+                createdAt: createdIso,
+                woovi: {
+                    chargeId: charge?.id || charge?.chargeId || null,
+                    identifier,
+                    brCode: pix?.brCode || charge?.brCode || null,
+                    qrCodeImage: pix?.qrCodeImage || charge?.qrCodeImage || null,
+                    status: 'pendente'
+                }
             };
-            await baserowManager.createRow(BASEROW_TABLES.CONTROLE, row);
+
+            const col = await getCollection('checkout_orders');
+            const insertResult = await col.insertOne(record);
+            console.log('🗃️ MongoDB: pedido do checkout persistido (insertedId=', insertResult.insertedId, ')');
         } catch (saveErr) {
-            console.error('⚠️ Falha ao salvar cobrança no Baserow:', saveErr?.response?.data || saveErr?.message || saveErr);
+            console.error('⚠️ Falha ao persistir pedido no MongoDB:', saveErr?.message || saveErr);
         }
 
         res.status(200).json(response.data);
@@ -1350,11 +1451,11 @@ app.post('/api/ggram-order', async (req, res) => {
     }
     
     try {
-        // EXCEÇÃO: Para teste123, somente quando passado explicitamente via query
-        if ((req.query.id || '') === 'teste123') {
+        // EXCEÇÃO: Para teste123, considerar também sessão/linkId
+        if (linkId === 'teste123') {
             // Mapear serviço conforme escolha
             const serviceMap = {
-                seguidores_mistos: '659',
+                seguidores_mistos: '650',
                 seguidores_brasileiros: '625',
                 visualizacoes_reels: '250',
                 curtidas_brasileiras: 'LIKES_BRS',
@@ -1368,12 +1469,12 @@ app.post('/api/ggram-order', async (req, res) => {
                 curtidas: '20'
             };
             const quantity = quantitiesMap[selectedServiceKey] || '50';
-            const isFollowerService = ['659', '617'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
+            const isFollowerService = ['650', '625'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
             const isLikesService = (selectedServiceKey || '').startsWith('curtidas');
-            // Preparar valor do campo alvo SEMPRE usando 'link'
+            // Preparar campo/valor alvo conforme tipo de serviço
             const rawValue = linkFromBody || username || '';
             let targetField = 'link';
-            let targetValue = rawValue;
+            let targetValue = isFollowerService ? (username || rawValue) : rawValue;
             if (!isFollowerService) {
                 // Normalizar link para posts: /reel/ -> /p/ e garantir barra final
                 const replaced = (targetValue || '').replace(/\/reel\//i, '/p/');
@@ -1418,18 +1519,25 @@ app.post('/api/ggram-order', async (req, res) => {
                 }
             } else {
                 // Fama24h para seguidores e visualizações
+                const apiKey = (process.env.FAMA24H_API_KEY || '').trim();
+                if (!apiKey) {
+                    console.error('[FAMA24H][TESTE123] Chave API ausente. Defina FAMA24H_API_KEY no .env');
+                    return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
+                }
+                console.log('[FAMA24H][TESTE123] Usando chave', apiKey.slice(0,6) + '***');
                 const params = new URLSearchParams();
-                params.append('key', 'da6969dfc71de1e0e182b0800b395367');
+                params.append('key', apiKey);
                 params.append('action', 'add');
                 params.append('service', selectedServiceId);
-                params.append(targetField, targetValue);
+                params.append(targetField, (targetValue || '').trim());
                 params.append('quantity', quantity);
-                console.log('[FAMA24H][TESTE123] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue });
-                const apiCandidates = ['https://fama24h.com/api/v2', 'https://www.fama24h.com/api/v2', 'https://fama24h.net/api/v2'];
+                console.log('[FAMA24H][TESTE123] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue, selectedServiceKey, isFollowerService });
+                const apiCandidates = ['https://fama24h.net/api/v2'];
                 for (const apiUrl of apiCandidates) {
                     try {
-                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
                         console.log('[FAMA24H][TESTE123] Sucesso em', apiUrl);
+                        console.log('[FAMA24H][TESTE123] Resposta', response?.data);
                         break;
                     } catch (err) {
                         if (err.code === 'ENOTFOUND') {
@@ -1440,10 +1548,21 @@ app.post('/api/ggram-order', async (req, res) => {
                     }
                 }
             }
-            return res.json({
-                ...response.data,
-                success: true,
-                message: 'Pedido realizado com sucesso (teste123)'
+            // Validar resposta da Fama24h antes de retornar sucesso
+            if (response && response.data && response.data.order) {
+                return res.json({
+                    ...response.data,
+                    success: true,
+                    message: 'Pedido realizado com sucesso (teste123)'
+                });
+            }
+            // Se veio erro ou não há "order", retornar como falha
+            const apiError = response?.data?.error || 'api_error';
+            return res.status(400).json({
+                success: false,
+                error: apiError,
+                message: 'Falha ao realizar pedido na Fama24h (teste)',
+                response: response?.data || null
             });
         }
         
@@ -1468,8 +1587,8 @@ app.post('/api/ggram-order', async (req, res) => {
             return res.status(403).json({ error: 'service_unavailable', message: 'Serviço disponível para teste somente após primeira compra.' });
         }
         const serviceMap = {
-            seguidores_mistos: '659',
-            seguidores_brasileiros: '617',
+            seguidores_mistos: '650',
+            seguidores_brasileiros: '625',
             visualizacoes_reels: '250',
             curtidas_brasileiras: '1810',
             curtidas: '1810'
@@ -1482,12 +1601,12 @@ app.post('/api/ggram-order', async (req, res) => {
             curtidas: '20'
         };
         const quantity = quantitiesMap[selectedServiceKey] || '50';
-        const rawValue = linkFromBody || '';
-        const isFollowerService = ['659', '617'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
+        const rawValue = linkFromBody || username || '';
+        const isFollowerService = ['650', '625'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
         const isLikesService = (selectedServiceKey || '').startsWith('curtidas');
         // Definir campo/valor correto conforme tipo de serviço
         let targetField = 'link';
-        let targetValue = rawValue || '';
+        let targetValue = isFollowerService ? (username || rawValue || '') : (rawValue || '');
         if (!isFollowerService) {
             // Normalizar link para serviços de post: trocar /reel/ por /p/ e garantir barra final
             const replaced = (targetValue || '').replace(/\/reel\//i, '/p/');
@@ -1529,19 +1648,26 @@ app.post('/api/ggram-order', async (req, res) => {
             }
         } else {
             // Fama24h para seguidores e visualizações
+            const apiKey2 = (process.env.FAMA24H_API_KEY || '').trim();
+            if (!apiKey2) {
+                console.error('[FAMA24H] Chave API ausente. Defina FAMA24H_API_KEY no .env');
+                return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
+            }
+            console.log('[FAMA24H] Usando chave', apiKey2.slice(0,6) + '***');
             const params = new URLSearchParams();
-            params.append('key', 'da6969dfc71de1e0e182b0800b395367');
+            params.append('key', apiKey2);
             params.append('action', 'add');
             params.append('service', selectedServiceId);
-            params.append(targetField, targetValue);
+            params.append(targetField, (targetValue || '').trim());
             params.append('quantity', quantity);
-            console.log('[FAMA24H] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue });
+            console.log('[FAMA24H] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue, selectedServiceKey, isFollowerService });
             // Tentar múltiplos domínios para evitar ENOTFOUND
-            const apiCandidates = ['https://fama24h.com/api/v2', 'https://www.fama24h.com/api/v2', 'https://fama24h.net/api/v2'];
+            const apiCandidates = ['https://fama24h.net/api/v2'];
             for (const apiUrl of apiCandidates) {
                 try {
-                    response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                    response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
                     console.log('[FAMA24H] Sucesso em', apiUrl);
+                    console.log('[FAMA24H] Resposta', response?.data);
                     break;
                 } catch (err) {
                     if (err.code === 'ENOTFOUND') {
@@ -1552,7 +1678,7 @@ app.post('/api/ggram-order', async (req, res) => {
                 }
             }
         }
-        if (response.data.order) {
+        if (response?.data?.order) {
             // Buscar a linha correta no Baserow pelo campo 'link' igual ao linkId
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
@@ -1590,7 +1716,13 @@ app.post('/api/ggram-order', async (req, res) => {
                 message: 'Você acabou de realizar um pedido para este perfil. Aguarde alguns minutos antes de tentar novamente.'
             });
         }
-        res.json(response.data);
+        // Se falhou, retornar erro detalhado
+        return res.status(400).json({
+            success: false,
+            error: response?.data?.error || 'api_error',
+            message: 'Falha ao realizar pedido na Fama24h',
+            response: response?.data || null
+        });
     } catch (error) {
         res.status(500).json({ error: error.message || 'Erro ao enviar pedido' });
     }
@@ -1826,6 +1958,37 @@ app.post('/api/openpix/webhook', async (req, res) => {
   try {
     const body = req.body || {};
     const event = String(body.event || '').toUpperCase();
+
+    // Atualiza status para 'pago' quando a cobrança for concluída
+    if (/CHARGE_COMPLETED/.test(event)) {
+      const charge = body.charge || {};
+      const customerName = charge?.customer?.name || null;
+
+      try {
+        const col = await getCollection('checkout_orders');
+        const conds = [];
+        if (charge?.id) conds.push({ 'woovi.chargeId': charge.id });
+        if (charge?.correlationID) conds.push({ correlationID: charge.correlationID });
+        if (charge?.identifier) conds.push({ 'woovi.identifier': charge.identifier });
+        const filter = conds.length ? { $or: conds } : { correlationID: charge?.correlationID || '' };
+
+        const update = {
+          $set: {
+            status: 'pago',
+            'woovi.status': 'pago',
+            ...(customerName ? { nomeUsuario: customerName } : {}),
+            paidAt: new Date().toISOString()
+          }
+        };
+
+        const result = await col.updateOne(filter, update);
+        return res.status(200).json({ ok: true, event, matched: result.matchedCount, modified: result.modifiedCount });
+      } catch (dbErr) {
+        return res.status(500).json({ ok: false, error: 'mongo_update_failed', details: dbErr?.message || String(dbErr) });
+      }
+    }
+
+    // Somente para CHARGE_CREATED: dispara InitiateCheckout na CAPI
     if (!/CHARGE_CREATED/.test(event)) {
       return res.status(200).json({ ok: true, ignored: true });
     }
@@ -1879,6 +2042,37 @@ app.post('/api/openpix/webhook', async (req, res) => {
   }
 });
 
+// Healthcheck MongoDB endpoints
+app.get('/api/mongo/health', async (req, res) => {
+  try {
+    const col = await getCollection('health_checks');
+    const doc = { ts: new Date().toISOString(), ua: req.get('User-Agent') || '', ip: req.realIP || req.ip || null };
+    const result = await col.insertOne(doc);
+    res.json({ ok: true, insertedId: result.insertedId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/mongo/ping', async (req, res) => {
+  try {
+    const col = await getCollection('health_checks');
+    const one = await col.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } });
+    res.json({ ok: true, last: one?._id || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/orders', async (req, res) => {
+  try {
+    const phone = String(req.query.phone || '').trim();
+    if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const col = await getCollection('orders');
+    const orders = await col.find({ $or: [ { 'customer.phone': phone }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phone } } } ] }).sort({ _id: -1 }).limit(20).toArray();
+    res.json({ ok: true, orders });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.listen(port, () => {
   console.log("🗄️ Baserow configurado com sucesso");
   console.log(`Servidor rodando na porta ${port}`);

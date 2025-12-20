@@ -28,14 +28,159 @@
 </head>
 <body>
   <div class="container checkout-page">
+    <div class="site-brand" aria-label="Marca do site">
+      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+      <span class="site-brand-text">Agência Oppus</span>
+    </div>
     <header class="header">
       <h1 class="title">Checkout</h1>
       <p class="subtitle">Escolha o tipo de seguidores e a quantidade/preço.</p>
+      <div id="headerTicker" class="header-ticker" aria-live="polite">
+        <span class="ticker-item"></span>
+      </div>
+      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema">Tema: Escuro</button>
+      <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
+      <div id="clientTools" class="client-tools" style="display:none;"></div>
     </header>
 
+    <div id="clientPage" class="client-page" aria-label="Consulta de pedidos" style="display:none;">
+      <div class="client-page-inner">
+        <h2 class="client-title">Consultar Pedido</h2>
+        <p class="client-desc">Digite seu número de telefone para localizar seu pedido.</p>
+        <div class="client-form">
+          <input id="clientPhoneInputPage" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
+          <div class="client-actions">
+            <button id="clientPageConsultBtn" class="continue-button"><span class="button-text">Consultar</span></button>
+            <button id="clientPageBackBtn" class="continue-button" style="background: transparent; border-color: var(--border-color); color: var(--text-primary);"><span class="button-text">Voltar</span></button>
+          </div>
+        </div>
+        <div id="clientPageOrders" class="client-orders"></div>
+      </div>
+    </div>
+
     <main class="main-content">
-      <section class="section-block centered">
+      <section class="section-block">
         <div class="cards-grid checkout-grid">
+          <div class="service-card" id="audioCard">
+            <div class="card-content">
+              <h3 class="card-title">Guia de áudio</h3>
+              <div class="card-desc">
+                  <div class="audio-player">
+                  <audio id="guideAudio" class="audio-element" preload="none" src="/audio/guia.mp3"></audio>
+                  <div class="audio-controls">
+                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" style="display:block;">
+                      <div class="tutorial-pop-step">1/5</div>
+                      <div class="tutorial-pop-text">Ouvir o áudio</div>
+                    </div>
+                    <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
+                    <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
+                    <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
+                  </div>
+                  <div class="audio-speed-row">
+                    <button type="button" id="audioSpeed15x" class="audio-speed-btn">1.5x</button>
+                    <button type="button" id="audioSpeed2x" class="audio-speed-btn">2x</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="testimonials-section" id="depoimentosCard">
+            <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 0.5rem;">Veja depoimentos de clientes</h3>
+            <div id="testimonialsCarousel" class="testimonials-carousel">
+              <button type="button" class="carousel-btn prev" aria-label="Anterior">‹</button>
+              <div class="carousel-viewport">
+              <div class="carousel-track">
+                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" /></div>
+                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" /></div>
+                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" /></div>
+              </div>
+              </div>
+              <button type="button" class="carousel-btn next" aria-label="Próximo">›</button>
+            </div>
+          </div>
+          <!-- Toggle de plataforma: colocar antes dos cards de seguidores -->
+          <div class="service-card" id="plataformaCard">
+            <div class="card-content">
+              <h3 class="card-title">Plataforma</h3>
+              <div class="card-desc">
+                  <div style="margin-bottom:0.5rem; color: var(--text-secondary);">Escolha a plataforma em que deseja os serviços</div>
+                  <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
+                  <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
+                    </svg>
+                    <span>Instagram</span>
+                  </button>
+                  <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
+                    </svg>
+                    <span>TikTok</span>
+                  </button>
+                  <div id="tutorialPlatform" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                    <div class="tutorial-pop-step">2/5</div>
+                    <div class="tutorial-pop-text">Selecionar rede social</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Desktop: seleção por cards de tipo -->
+          <div id="tipoCards" class="option-cards" style="display:none;"></div>
+          <!-- Descrição do serviço (após escolher tipo, antes dos preços) -->
+          <div class="service-card" id="tipoDescCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title" id="tipoDescTitle"></h3>
+              <div class="card-desc" id="tipoDescContent"></div>
+            </div>
+          </div>
+          <!-- Desktop: cards de planos/valores -->
+          <div id="planCards" class="plan-cards" style="display:none;"></div>
+
+          
+          <div class="service-card" id="tipoSelectCard">
+            <div class="card-content">
+              <h3 class="card-title">Tipo de serviço</h3>
+              <div class="input-group" id="grupoTipo" style="position:relative;">
+                <select id="tipoSelect" class="select-input" style="flex:1;">
+                  <option value="" selected>Selecione...</option>
+                  <option value="mistos">Seguidores Mistos</option>
+                  <option value="brasileiros">Seguidores Brasileiros</option>
+                  <option value="organicos">Seguidores Orgânicos</option>
+                  <option value="curtidas_reais">Curtidas reais</option>
+                  <option value="visualizacoes_reels">Visualizações Reels</option>
+                </select>
+                <!-- Tutorial: 2/4 (selecionar rede social) -->
+                <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">2/4</div>
+                  <div class="tutorial-pop-text">Selecionar rede social</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="service-card" id="quantidadeSelectCard">
+            <div class="card-content">
+              <h3 class="card-title">Escolha o pacote</h3>
+              <div class="input-group" id="grupoQuantidade" style="position:relative;">
+                <select id="quantidadeSelect" class="select-input" disabled style="flex:1;">
+                  <option value="">Selecione o tipo primeiro...</option>
+                </select>
+                <!-- Tutorial: 3/4 -->
+                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">3/4</div>
+                  <div class="tutorial-pop-text">Selecionar o plano</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-block">
+        <div class="cards-grid checkout-grid">
+          <!-- Campo Perfil do Instagram (antes das promoções) -->
           <div class="service-card" id="perfilCard" style="display:none;">
             <div class="card-content">
               <h3 class="card-title">Perfil do Instagram</h3>
@@ -54,14 +199,10 @@
                       <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                   </button>
-                  <!-- Tutorial: 3/5 e 4/5 -->
+                  <!-- Tutorial: 3/5 -->
                   <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
                     <div class="tutorial-pop-step">3/5</div>
-                    <div class="tutorial-pop-text">Informe o nome de usuário</div>
-                  </div>
-                  <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-check" style="display:none;">
-                    <div class="tutorial-pop-step">4/5</div>
-                    <div class="tutorial-pop-text">Clique em Validar o perfil</div>
+                    <div class="tutorial-pop-text">Digitar o Instagram</div>
                   </div>
                 </div>
                 <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
@@ -82,50 +223,83 @@
                 </div>
               </div>
             </div>
-          </div>
-
-          
-          <div class="service-card">
-            <div class="card-content">
-              <h3 class="card-title">Tipo de serviço</h3>
-              <div class="input-group" id="grupoTipo" style="position:relative;">
-                <select id="tipoSelect" class="select-input" style="flex:1;">
-                  <option value="" selected>Selecione...</option>
-                  <option value="mistos">Seguidores Mistos</option>
-                  <option value="brasileiros">Seguidores Brasileiros</option>
-                  <option value="organicos">Seguidores Orgânicos</option>
-                  <option value="curtidas_reais">Curtidas reais</option>
-                  <option value="visualizacoes_reels">Visualizações Reels</option>
-                </select>
-                <!-- Tutorial: 1/5 -->
-                <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:block;">
-                  <div class="tutorial-pop-step">1/5</div>
-                  <div class="tutorial-pop-text">Selecione o tipo de serviço</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="service-card">
-            <div class="card-content">
-              <h3 class="card-title">Escolha o pacote</h3>
-              <div class="input-group" id="grupoQuantidade" style="position:relative;">
-                <select id="quantidadeSelect" class="select-input" disabled style="flex:1;">
-                  <option value="">Selecione o tipo primeiro...</option>
-                </select>
-                <!-- Tutorial: 2/5 -->
-                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                  <div class="tutorial-pop-step">2/5</div>
-                  <div class="tutorial-pop-text">Escolha o pacote</div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
-      </section>
+        <!-- Promoções -->
+        <div class="service-card" id="orderBumpInline" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title">Promoções</h3>
+            <div class="card-desc promo-list">
+                <!-- Upgrade dinâmico -->
+                <label class="promo-item upgrade">
+                  <input type="checkbox" id="orderBumpCheckboxInline" />
+                  <div class="promo-content">
+                    <div class="promo-highlight" id="orderBumpHighlight">Upgrade de seguidores</div>
+                    <div class="promo-title">Upgrade de pacote</div>
+                    <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
+                    <div class="promo-prices" data-promo="upgrade">
+                      <span class="old-price">—</span>
+                      <span class="discount-badge">OFERTA</span>
+                      <span class="new-price">—</span>
+                    </div>
+                  </div>
+                </label>
+                <!-- Demais promoções -->
+                <label class="promo-item comments">
+                  <input type="checkbox" id="promoLikes" data-promo="likes" />
+                  <div class="promo-content">
+                    <div class="promo-highlight">+ curtidas</div>
+                    <div class="promo-title">Curtidas promocionais</div>
+                    <div class="promo-desc">Adicionar curtidas no último post.</div>
+                    <div class="promo-prices" data-promo="likes">
+                      <span class="old-price">R$ 49,90</span>
+                      <span class="discount-badge">80% OFF</span>
+                      <span class="new-price">R$ 9,90</span>
+                    </div>
+                  </div>
+                </label>
+                <label class="promo-item warranty30">
+                  <input type="checkbox" id="promoViews" data-promo="views" />
+                  <div class="promo-content">
+                    <div class="promo-highlight">+ visualizações</div>
+                    <div class="promo-title">Visualizações promocionais</div>
+                    <div class="promo-desc">Adicionar visualizações em stories/reels.</div>
+                    <div class="promo-prices" data-promo="views">
+                      <span class="old-price">R$ 89,90</span>
+                      <span class="discount-badge">78% OFF</span>
+                      <span class="new-price">R$ 19,90</span>
+                    </div>
+                  </div>
+                </label>
+                <label class="promo-item">
+                  <input type="checkbox" id="promoComments" data-promo="comments" />
+                  <div class="promo-content">
+                    <div class="promo-title">Comentário promocional</div>
+                    <div class="promo-desc">Adicionar um comentário promocional.</div>
+                    <div class="promo-prices" data-promo="comments">
+                      <span class="old-price">R$ 29,90</span>
+                      <span class="discount-badge">67% OFF</span>
+                      <span class="new-price">R$ 9,90</span>
+                    </div>
+                  </div>
+                </label>
+                
+                <label class="promo-item">
+                  <input type="checkbox" id="promoWarranty30" data-promo="warranty30" />
+                  <div class="promo-content">
+                    <div class="promo-title">+30 dias de reposição</div>
+                    <div class="promo-desc">Extensão de garantia com reposição por 30 dias.</div>
+                    <div class="promo-prices" data-promo="warranty30">
+                      <span class="old-price">R$ 59,90</span>
+                      <span class="discount-badge">68% OFF</span>
+                      <span class="new-price">R$ 19,90</span>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
 
-      <section class="section-block centered">
-        <div class="cards-grid checkout-grid">
+          <!-- Resumo do pedido (após promoções e antes do finalizar) -->
           <div class="service-card" id="resumo" hidden>
             <div class="card-content">
               <h3 class="card-title">Resumo</h3>
@@ -133,74 +307,201 @@
                 <div><strong>Tipo:</strong> <span id="resTipo"></span></div>
                 <div><strong>Quantidade:</strong> <span id="resQtd"></span></div>
                 <div><strong>Preço:</strong> <span id="resPreco"></span></div>
+                <div><strong>Promoções:</strong> <span id="resPromos"></span></div>
               </div>
-              <div class="action-container" id="grupoPedido">
-                <div class="button-container">
-                  <button id="realizarPedidoBtn" class="continue-button">
-                    <span class="button-text">Realizar pedido</span>
-                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </button>
-                </div>
-                <!-- Tutorial: 5/5 -->
-                <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
-                  <div class="tutorial-pop-step">5/5</div>
-                  <div class="tutorial-pop-text">Clique para realizar o pedido</div>
-                </div>
-              </div>
-              <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
             </div>
+          </div>
+
+          <!-- Campo Finalizar -->
+          <div id="paymentCard" style="display:none;">
+            <div class="action-container" id="grupoPedido" style="position:relative;">
+              <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
+                <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:600; margin-bottom:0.25rem;">Telefone de contato</label>
+                <input id="checkoutPhoneInput" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
+                <p class="phone-hint" style="margin-top:0.25rem; color:#9ca3af;">Usaremos este contato caso precisarmos falar com você.</p>
+                <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">4/5</div>
+                  <div class="tutorial-pop-text">Digite seu telefone</div>
+                </div>
+              </div>
+              <div class="button-container">
+                <button id="realizarPedidoBtn" class="continue-button">
+                  <span class="button-text">Realizar pedido</span>
+                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+              <!-- Tutorial: 5/5 -->
+              <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
+                <div class="tutorial-pop-step">5/5</div>
+                <div class="tutorial-pop-text">Clique para realizar o pedido</div>
+              </div>
+            </div>
+            <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
           </div>
         </div>
       </section>
     </main>
     <footer class="footer">
-      <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+      <div class="footer-bar">
+        <a href="https://instagram.com/agencia.oppus" target="_blank" rel="noopener" class="footer-link instagram-link" aria-label="Instagram Agência OPPUS">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>
+        </a>
+        <span class="footer-center">&copy; 2025 Agência OPPUS. Todos os direitos reservados.</span>
+        <a href="#" id="termsLink" class="footer-link">Termos de Uso</a>
+      </div>
     </footer>
   </div>
 
+  <script src="/js/main.js"></script>
   <script src="/js/checkout.js"></script>
+  <div id="toastContainer" class="toast-container"></div>
+  <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
+    <div class="client-page-inner">
+      <h2 class="client-title">Termos de Uso</h2>
+      <p class="client-desc">Exemplo de termos. Substitua por seu conteúdo oficial.</p>
+      <div style="color: var(--text-primary); line-height: 1.6; max-width: 720px; margin: 0 auto;">
+        <p>Bem-vindo à Agência OPPUS. Ao utilizar nossos serviços, você concorda com estes termos. Este texto é um exemplo e deverá ser substituído pelos seus termos oficiais.</p>
+        <p>1. Uso do serviço: você se compromete a utilizar de forma lícita e ética.</p>
+        <p>2. Pagamentos e reembolsos: políticas aplicáveis conforme legislação vigente.</p>
+        <p>3. Privacidade: tratamos seus dados conforme nossa política de privacidade.</p>
+      </div>
+      <div class="client-actions" style="margin-top: 1rem;">
+        <button id="termsCloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
+      </div>
+    </div>
+  </div>
   <style>
     /* Título do Checkout com especificações fornecidas */
     .checkout-page .title {
-      font-size: clamp(2rem, 4vw, 2.5rem);
+      font-size: clamp(2.75rem, 5.2vw, 4rem);
       font-weight: 700;
       color: #FFFFFF;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.6rem;
       letter-spacing: -0.02em;
     }
+    .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
 
     /* Ampliar área de conteúdo e larguras dos cards no desktop */
     @media (min-width: 1024px) {
-      .checkout-page .main-content { max-width: 1280px; }
-      .checkout-page .section-block.centered .cards-grid.checkout-grid {
-        grid-template-columns: minmax(640px, 960px);
-        justify-content: center;
-        justify-items: stretch;
-        gap: 1.75rem;
-      }
-      /* Força override do tema para desktop do checkout */
-      .checkout-page .section-block.centered .cards-grid { grid-template-columns: minmax(640px, 960px) !important; }
-      .checkout-page .service-card { width: 100%; margin: 0 auto; padding: 0.5rem 0.75rem; }
+      .checkout-page.container { max-width: 100%; width: 100%; }
+      .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
+      .checkout-page .subtitle { font-size: 1.4rem; }
+      .checkout-page .service-card { width: 100%; padding: 0.55rem 0.7rem; }
+      .checkout-page .card-content { gap: 0.2rem; }
+      /* Desktop: reduzir levemente os cards de planos (quantidade/preço) */
+      .checkout-page #planCards .service-card { min-height: 130px; }
+      .checkout-page #planCards .card-title { font-size: 1.15rem; }
+      .checkout-page #planCards .card-desc { font-size: 1.05rem; }
+      /* Desktop: aumentar título e botões da plataforma */
+      .checkout-page #plataformaCard .card-title { font-size: calc(clamp(2.75rem, 5.2vw, 3.75rem) - 2px); }
+      .checkout-page #plataformaCard .card-desc { font-size: calc(1.25rem - 2px); }
+      .checkout-page .platform-btn { padding: 1.2rem 1.6rem; font-size: 1.15rem; }
       .checkout-page .select-input {
         background: rgba(255, 255, 255, 0.95);
         color: #111827;
         width: 100%;
-        margin-top: 0.25rem; /* mais rente às bordas do card */
+        margin-top: 0.1rem; /* mais rente às bordas do card */
         /* aumenta área útil horizontal no desktop */
-        padding-left: 1.25rem;
-        padding-right: 1.25rem;
+        padding-left: 0.9rem;
+        padding-right: 0.9rem;
       }
       .checkout-page .input-group { width: 100%; }
+      .checkout-page .input-group { max-width: 820px; }
+
+      /* Desktop-only: esconder selects de tipo/quantidade e usar cards */
+      #grupoTipo, #grupoQuantidade { display: none; }
+      #tipoCards, #planCards { display: grid !important; }
+      #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+      #planCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+      #tipoCards .card-title { font-size: 1.1rem; }
+      #tipoCards .card-desc { font-size: 1rem; }
+      .option-card, .plan-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 0.6rem 0.8rem;
+        color: var(--text-primary);
+        box-shadow: var(--shadow-sm);
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        flex-direction: column;
+      }
+      .option-card .card-content, .plan-card .card-content { display: flex; align-items: center; justify-content: center; flex-direction: column; width: 100%; height: 100%; text-align: center; }
+      .option-card:hover, .plan-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: #6B46C1; }
+      .option-card.active, .plan-card.active { border-color: #6B46C1; box-shadow: var(--shadow-md); }
+      .plan-card .plan-title { font-weight: 600; }
+      .plan-card .plan-sub { color: var(--text-secondary); font-size: 0.95rem; }
+      .site-brand { left: 5rem; }
+      #audioCard .card-content { align-items: stretch; }
+      #audioCard .audio-player { width: 100%; }
+      #audioCard .audio-controls { width: 100%; }
+      #audioCard .audio-progress { height: 10px; }
+      #tipoDescCard .card-desc { font-size: calc(1rem + 2px); }
+      #resumo .card-desc { font-size: calc(1rem + 2px); }
+      .phone-label { font-size: calc(1rem + 2px); }
+      .phone-hint { font-size: calc(0.875rem + 2px); }
     }
     /* Garantir largura total dos inputs no mobile e desktop */
     .checkout-page .input-group { width: 100%; }
+    @media (min-width: 1024px) { .checkout-page .input-group { max-width: 700px; } }
     .checkout-page .select-input { width: 100%; }
-    .cards-grid.checkout-grid { gap: 1.25rem; }
+    .cards-grid.checkout-grid { gap: 1.25rem; grid-template-columns: 1fr; }
+    @media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
+    .checkout-page .subtitle { font-size: 1.125rem; color: #cbd5e1; }
+    /* Notificação de venda (toast) um pouco maior na Home */
+    .toast-container .toast-item { font-size: 1.05rem; padding: 0.8rem 1.05rem; }
     .checkout-page .select-input option { color: #111827; }
     /* Centralizar área de resultado PIX */
     #pixResultado { text-align: center; }
+
+    /* Cards do checkout: usar cards em todas as visões e esconder selects originais */
+    #tipoSelectCard, #quantidadeSelectCard { display: none; }
+    #grupoTipo, #grupoQuantidade { display: none !important; }
+      #tipoCards, #planCards { display: grid !important; gap: 0.75rem; grid-template-columns: 1fr; }
+      #tipoCards .service-card, #planCards .service-card { min-height: 50px; }
+    @media (min-width: 640px) { #tipoCards, #planCards { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 1024px) { #tipoCards, #planCards { grid-template-columns: repeat(3, 1fr); } }
+      .service-card.active { border-color: var(--primary-purple); box-shadow: 0 0 0 3px rgba(107,70,193,0.35); }
+
+    @media (max-width: 639px) {
+      #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.5rem; }
+      #planCards { grid-template-columns: 1fr !important; gap: 0.5rem; }
+      #tipoCards .option-card, #planCards .plan-card { width: 100%; min-height: 90px; }
+      #tipoCards .card-title, #planCards .card-title { font-size: 0.9rem; line-height: 1.2; }
+      #tipoCards .card-desc, #planCards .card-desc { font-size: 0.85rem; }
+    }
+    @media (min-width: 1024px) {
+      #tipoCards .service-card { min-height: 120px; }
+    }
+    /* Card de descrição do tipo */
+    #tipoDescCard .card-desc p { margin: 0.4rem 0; }
+    #tipoDescCard .card-desc ul { margin: 0.5rem 0 0.25rem; padding-left: 1rem; }
+    #tipoDescCard .card-desc li { margin: 0.2rem 0; }
+
+    /* Centralizar texto nos cards de seguidores (tipo) */
+    #tipoCards .card-content { text-align: center; }
+    #tipoCards .card-title { text-align: center; }
+    #tipoCards .card-desc { text-align: center; }
+
+    #plataformaCard { background: transparent; border: none; box-shadow: none; padding: 0; }
+    #plataformaCard .card-content { align-items: center; }
+    #plataformaCard .card-title { font-size: calc(clamp(2.5rem, 5vw, 3.25rem) - 2px); font-weight: 700; letter-spacing: -0.02em; color: #FFFFFF; text-align: center; margin-bottom: 0.4rem; }
+    #plataformaCard .card-desc { text-align: center; }
+    #plataformaCard .platform-toggle { display: flex; justify-content: center; gap: 1rem; margin-top: 0.5rem; margin-bottom: 1.25rem; }
+    .checkout-page .platform-btn { padding: 1rem 1.35rem; font-size: 1rem; }
+    
+    .testimonials-title { font-family: var(--font-family); font-weight: 600; }
+
+    @media (max-width: 640px) {
+      .footer .footer-bar { flex-direction: column; gap: 0.4rem; }
+      .footer .footer-center { order: 3; }
+    }
   </style>
 </body>
 </html>

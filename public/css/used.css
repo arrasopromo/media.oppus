@@ -530,7 +530,7 @@
     border: 1px solid rgba(107, 70, 193, 0.3);
     border-radius: 12px;
     padding: 1rem 1.5rem;
-    color: var(--text-primary);
+    color: #FFFFFF;
     backdrop-filter: blur(20px);
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
     transform: translateX(100%);
