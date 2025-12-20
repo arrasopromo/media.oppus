@@ -988,18 +988,7 @@
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         // Avança para o passo final
         showTutorialStep(5);
-        // Mobile: rolar suavemente até a área de realizar pedido
-        try {
-          const isMobile = window.innerWidth <= 768;
-          if (isMobile) {
-            setTimeout(() => {
-              const target = document.getElementById('grupoPedido') || document.getElementById('resumo');
-              if (target && typeof target.scrollIntoView === 'function') {
-                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }
-            }, 300);
-          }
-        } catch (e) { /* silencioso */ }
+        
       } else {
         const msg = String(data.error || 'Falha ao verificar perfil.');
         const isAlreadyTested = (data.code === 'INSTAUSER_ALREADY_USED') || /já foi testado|teste já foi realizado/i.test(msg);
