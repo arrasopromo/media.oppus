@@ -179,51 +179,45 @@
       </section>
 
       <section class="section-block">
-        <div class="cards-grid checkout-grid">
-          <!-- Campo Perfil do Instagram (antes das promoções) -->
-          <div class="service-card" id="perfilCard" style="display:none;">
-            <div class="card-content">
-              <h3 class="card-title">Perfil do Instagram</h3>
-              <div class="card-desc">
-                <div class="input-group" id="grupoUsername" style="position:relative;">
-                  <input
-                    type="text"
-                    id="usernameCheckoutInput"
-                    placeholder="Digite o nome de usuário ou URL do Instagram..."
-                    class="select-input"
-                    maxlength="100"
-                  />
-                  <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem;">
-                    <span class="button-text">Validar</span>
-                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </button>
-                  <!-- Tutorial: 3/5 -->
-                  <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                    <div class="tutorial-pop-step">3/5</div>
-                    <div class="tutorial-pop-text">Digitar o Instagram</div>
-                  </div>
+        <div class="service-card" id="perfilCard" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title">Perfil do Instagram</h3>
+            <div class="card-desc">
+              <div class="input-group" id="grupoUsername" style="position:relative;">
+                <input type="text" id="usernameCheckoutInput" placeholder="Digite o nome de usuário ou URL do Instagram..." class="select-input" maxlength="100" />
+                <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem;">
+                  <span class="button-text">Validar</span>
+                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">3/5</div>
+                  <div class="tutorial-pop-text">Digitar o Instagram</div>
                 </div>
-                <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
-                <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
-                  <div class="spinner"></div>
-                  <p>Verificando perfil...</p>
+              </div>
+              <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+              <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                <div class="spinner"></div>
+                <p>Verificando perfil...</p>
+              </div>
+              <div id="profilePreview" style="display:none; margin-top:0.75rem; text-align:center;">
+                <img id="checkoutProfileImage" alt="Foto do perfil" style="width:72px; height:72px; border-radius:50%; object-fit:cover; background:#fff; display:block; margin:0 auto 0.5rem;" />
+                <div style="color:#fff; margin-bottom:0.5rem;">
+                  <strong>@<span id="checkoutProfileUsername"></span></strong>
                 </div>
-                <div id="profilePreview" style="display:none; margin-top:0.75rem; text-align:center;">
-                  <img id="checkoutProfileImage" alt="Foto do perfil" style="width:72px; height:72px; border-radius:50%; object-fit:cover; background:#fff; display:block; margin:0 auto 0.5rem;" />
-                  <div style="color:#fff; margin-bottom:0.5rem;">
-                    <strong>@<span id="checkoutProfileUsername"></span></strong>
-                  </div>
-                  <div id="checkoutProfileStats" style="display:flex; gap:1rem; justify-content:center; color:#fff;">
-                    <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
-                    <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
-                    <div><strong>Posts:</strong> <span id="checkoutPostsCount">-</span></div>
-                  </div>
+                <div id="checkoutProfileStats" style="display:flex; gap:1rem; justify-content:center; color:#fff;">
+                  <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
+                  <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
+                  <div><strong>Posts:</strong> <span id="checkoutPostsCount">-</span></div>
                 </div>
               </div>
             </div>
+          </div>
         </div>
+      </section>
+      <section class="section-block">
+        <div class="cards-grid checkout-grid">
         <!-- Promoções -->
         <div class="service-card" id="orderBumpInline" style="display:none;">
           <div class="card-content">

@@ -782,16 +782,23 @@ body.theme-light .promo-prices .new-price { color: #14532d; }
   .checkout-page .header { margin-top: 2rem; }
   .checkout-page .client-tools { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
   .checkout-page .client-tools .select-input { max-width: 220px; }
-  .checkout-page.container { padding-left: 2rem; padding-right: 2rem; }
+  .checkout-page.container { padding-left: 1rem; padding-right: 1rem; }
   .checkout-page .cards-grid.checkout-grid { justify-content: center; }
   .checkout-page.container { justify-content: center; align-items: center; }
   /* Mobile: cards especiais ocupam 100% de largura */
-  .checkout-page #perfilCard, .checkout-page #orderBumpInline, .checkout-page #resumo { width: 100% !important; max-width: none !important; }
-  /* Mobile: garantir que o perfil ocupe totalmente o espaço do grid */
-  .checkout-page #perfilCard { width: 100% !important; }
-  .checkout-page #perfilCard .card-content, .checkout-page #orderBumpInline .card-content, .checkout-page #resumo .card-content { align-items: stretch; width: 100%; }
-  .checkout-page #grupoUsername #checkCheckoutButton { margin-left: 0; }
-  .checkout-page #grupoUsername { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; width: 100%; }
+  .checkout-page #perfilCard, .checkout-page #orderBumpInline, .checkout-page #resumo { width: calc(100vw - 20px) !important; max-width: none !important; margin-left: calc(50% - 50vw + 10px) !important; margin-right: calc(50% - 50vw + 10px) !important; }
+  .checkout-page #perfilCard .card-content, .checkout-page #orderBumpInline .card-content, .checkout-page #resumo .card-content { align-items: stretch; width: 100%; padding-left: 0; padding-right: 0; }
+  .checkout-page #orderBumpInline, .checkout-page #resumo { padding-left: 10px; padding-right: 10px; }
+  .checkout-page #grupoUsername #checkCheckoutButton { margin-left: 0 !important; }
+  .checkout-page #grupoUsername { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0.2rem; width: 100%; }
+  .checkout-page .service-card { padding-left: 1rem; padding-right: 1rem; }
+  .checkout-page #perfilCard { margin-left: 0; margin-right: 0; padding-left: 10px; padding-right: 10px; box-sizing: border-box; }
+  .checkout-page #perfilCard .card-content { padding-left: 0; padding-right: 0; }
+  .checkout-page #perfilCard .input-group { width: 100%; margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+  .checkout-page #perfilCard .select-input { box-sizing: border-box; width: 100%; padding-left: 0.75rem; padding-right: 0.75rem; }
+  .checkout-page #perfilCard .tutorial-highlight { width: 100%; margin-left: 0; margin-right: 0; }
+  .checkout-page #orderBumpInline, .checkout-page #resumo { width: calc(100vw - 20px) !important; margin-left: calc(50% - 50vw + 10px) !important; margin-right: calc(50% - 50vw + 10px) !important; padding-left: 10px; padding-right: 10px; }
+  .checkout-page #orderBumpInline .card-desc, .checkout-page #resumo .card-desc { padding-left: 0; padding-right: 0; }
   /* Mobile: telefone maior e centralizar texto informativo */
   .phone-label { font-size: calc(1rem + 3px); }
   .phone-hint { font-size: calc(0.875rem + 3px); text-align: center; }

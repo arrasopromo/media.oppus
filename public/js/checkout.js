@@ -1480,7 +1480,7 @@
     if (container.parentNode !== parent) {
       parent.appendChild(container);
     }
-    const minutesCycle = [1, 3, 6, 10, 12, 20];
+    const minutesCycle = [20, 12, 10, 6, 3, 1];
     let minutesIdx = 0;
     function nextMinutes(){ const m = minutesCycle[minutesIdx]; minutesIdx = (minutesIdx + 1) % minutesCycle.length; return m; }
     function getPlatformIcon(pl){
@@ -1549,13 +1549,12 @@
     }
     const platformCycle = ['instagram','instagram','tiktok'];
     let cycleIdx = 0;
-    makeToast(platformCycle[cycleIdx]);
-    cycleIdx = (cycleIdx + 1) % platformCycle.length;
-    // Ciclo contínuo com proporção 2:1 (IG:TikTok)
-    setInterval(()=>{
+    function cycle(){
       makeToast(platformCycle[cycleIdx]);
       cycleIdx = (cycleIdx + 1) % platformCycle.length;
-    }, 8000);
+      setTimeout(()=>{ setTimeout(cycle, 10000); }, 4000);
+    }
+    cycle();
   })();
 })();
   function updatePromosSummary() {
