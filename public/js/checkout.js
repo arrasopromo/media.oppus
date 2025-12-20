@@ -921,6 +921,16 @@
     updatePerfilVisibility();
     updatePromosSummary();
     showTutorialStep(4);
+    try {
+      const isMobile = window.innerWidth <= 640;
+      if (isMobile) {
+        if (perfilCard) perfilCard.style.display = 'block';
+        const target = document.getElementById('grupoUsername') || perfilCard;
+        if (target && typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    } catch(_) {}
   });
 
   function parsePrecoToCents(precoStr) {
