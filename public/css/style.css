@@ -785,6 +785,7 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
   .checkout-page.container { padding-left: 1rem; padding-right: 1rem; }
   .checkout-page .cards-grid.checkout-grid { justify-content: center; }
   .checkout-page .cards-grid.checkout-grid { padding-left: 10px; padding-right: 10px; }
+  .checkout-page .section-block { padding-left: 10px; padding-right: 10px; }
   .checkout-page .cards-grid.checkout-grid { padding-left: 10px; padding-right: 10px; }
   .checkout-page.container { justify-content: center; align-items: center; }
   /* Mobile: cards especiais ocupam 100% de largura */
