@@ -1068,7 +1068,9 @@
           if (tutPhone) tutPhone.style.display = 'block';
           if (checkoutPhoneInput && typeof checkoutPhoneInput.scrollIntoView === 'function') {
             checkoutPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            checkoutPhoneInput.focus();
+          }
+          if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
           }
           if (grupoPedido) grupoPedido.classList.add('tutorial-highlight');
         } catch (_) {}
@@ -1552,7 +1554,7 @@
     function cycle(){
       makeToast(platformCycle[cycleIdx]);
       cycleIdx = (cycleIdx + 1) % platformCycle.length;
-      setTimeout(()=>{ setTimeout(cycle, 10000); }, 4000);
+      setTimeout(()=>{ setTimeout(cycle, 15000); }, 4000);
     }
     cycle();
   })();
