@@ -571,7 +571,7 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 .promo-prices { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
 .promo-prices .old-price { color: #9ca3af; text-decoration: line-through; }
 .promo-prices .discount-badge { background: rgba(34,197,94,0.18); color: #86efac; border: 1px solid rgba(34,197,94,0.35); border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
-.promo-prices .new-price { color: #b8ffb8; font-weight: 700; }
+.promo-prices .new-price { color: #22C55E; font-weight: 700; }
 
 @media (min-width: 1024px) {
   /* Desktop: aumentar 2px textos das promoções */
@@ -775,7 +775,7 @@ body.theme-light .promo-prices .discount-badge {
   color: #166534;
   border-color: rgba(34,197,94,0.45);
 }
-body.theme-light .promo-prices .new-price { color: #14532d; }
+body.theme-light .promo-prices .new-price { color: #22C55E; }
 
 .checkout-page .client-tools { display: none; }
 @media (max-width: 640px) {
