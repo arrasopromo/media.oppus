@@ -485,7 +485,7 @@
     statusCheckoutMessage.style.display = 'block';
     statusCheckoutMessage.style.textAlign = 'center';
     if (type === 'success') {
-      statusCheckoutMessage.style.color = '#b8ffb8';
+      statusCheckoutMessage.style.color = '#22C55E';
     } else if (type === 'error') {
       statusCheckoutMessage.style.color = '#ffb4b4';
     } else {
