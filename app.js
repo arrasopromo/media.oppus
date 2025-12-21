@@ -1115,6 +1115,9 @@ app.post('/api/woovi/charge', async (req, res) => {
             value: sanitizeText(String(item?.value ?? '')),
           }))
         : [];
+    const sanitizedAdditionalFiltered = sanitizedAdditional
+        .filter((it) => typeof it.key === 'string' && it.key.trim().length > 0 && typeof it.value === 'string' && it.value.trim().length > 0)
+        .map((it) => ({ key: it.key.trim(), value: it.value.trim() }));
 
     // Normaliza telefone para formato E.164 (prioriza Brasil +55 quando aplicável)
     const normalizePhone = (s) => {
@@ -1151,7 +1154,7 @@ app.post('/api/woovi/charge', async (req, res) => {
         value,
         comment: sanitizeText(comment || 'Agência OPPUS - Checkout'),
         customer: customerPayload,
-        additionalInfo: sanitizedAdditional
+        additionalInfo: sanitizedAdditionalFiltered
     };
 
     try {
@@ -1166,7 +1169,7 @@ app.post('/api/woovi/charge', async (req, res) => {
         try {
             const data = response.data || {};
             const charge = data.charge || data || {};
-            const addInfoArr = Array.isArray(sanitizedAdditional) ? sanitizedAdditional : [];
+            const addInfoArr = Array.isArray(sanitizedAdditionalFiltered) ? sanitizedAdditionalFiltered : [];
             const addInfo = addInfoArr.reduce((acc, item) => {
                 const k = String(item?.key || '').trim();
                 const v = String(item?.value || '').trim();
@@ -2031,16 +2034,31 @@ app.post('/api/meta/track', async (req, res) => {
   }
 });
 
-// Webhook Woovi/OpenPix: CHARGE_CREATED -> enviar InitiateCheckout (CAPI)
-app.post('/api/openpix/webhook', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const event = String(body.event || '').toUpperCase();
+  // Webhook Woovi/OpenPix: CHARGE_CREATED -> enviar InitiateCheckout (CAPI)
+  app.post('/api/openpix/webhook', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const event = String(body.event || '').toUpperCase();
 
-    // Atualiza status para 'pago' quando a cobrança for concluída
+      // Atualiza status para 'pago' quando a cobrança for concluída
     if (/CHARGE_COMPLETED/.test(event)) {
       const charge = body.charge || {};
       const customerName = charge?.customer?.name || null;
+      const customerObj = charge?.customer || (body.pix && body.pix.customer) || null;
+      const payerObj = charge?.payer || (body.pix && body.pix.payer) || null;
+      const additionalInfoArr = Array.isArray(charge.additionalInfo)
+        ? charge.additionalInfo
+            .filter((it) => it && typeof it.key === 'string' && typeof it.value === 'string' && it.key.trim() && it.value.trim())
+            .map((it) => ({ key: String(it.key).trim(), value: String(it.value).trim() }))
+        : [];
+      const additionalInfoMap = additionalInfoArr.reduce((acc, item) => {
+        acc[item.key] = item.value;
+        return acc;
+      }, {});
+      const pixMethod = charge?.paymentMethods?.pix || {};
+      const paidAtRaw = charge?.paidAt || (body.pix && body.pix.time) || null;
+      const endToEndId = (body.pix && body.pix.endToEndId) || null;
+      const txId = pixMethod?.txId || charge?.transactionID || (body.pix && body.pix.transactionID) || null;
 
       try {
         const col = await getCollection('checkout_orders');
@@ -2050,21 +2068,63 @@ app.post('/api/openpix/webhook', async (req, res) => {
         if (charge?.identifier) conds.push({ 'woovi.identifier': charge.identifier });
         const filter = conds.length ? { $or: conds } : { correlationID: charge?.correlationID || '' };
 
-        const update = {
-          $set: {
-            status: 'pago',
-            'woovi.status': 'pago',
-            ...(customerName ? { nomeUsuario: customerName } : {}),
-            paidAt: new Date().toISOString()
-          }
+        const setFields = {
+          status: 'pago',
+          'woovi.status': 'pago',
+          paidAt: new Date().toISOString(),
         };
+        if (customerName) setFields.nomeUsuario = customerName;
+        if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
+        if (typeof endToEndId === 'string') setFields['woovi.endToEndId'] = endToEndId;
+        if (typeof txId === 'string') setFields['woovi.paymentMethods.pix.txId'] = txId;
+        if (typeof pixMethod.status === 'string') setFields['woovi.paymentMethods.pix.status'] = pixMethod.status;
+        if (typeof pixMethod.value === 'number') setFields['woovi.paymentMethods.pix.value'] = pixMethod.value;
+        if (customerObj && typeof customerObj.name === 'string') setFields['customer.name'] = customerObj.name;
+        if (customerObj && customerObj.taxID && typeof customerObj.taxID.taxID === 'string') setFields['customer.taxID'] = customerObj.taxID.taxID;
+        if (customerObj && customerObj.taxID && typeof customerObj.taxID.type === 'string') setFields['customer.taxType'] = customerObj.taxID.type;
+        if (payerObj && typeof payerObj.name === 'string') setFields['payer.name'] = payerObj.name;
+        if (payerObj && payerObj.taxID && typeof payerObj.taxID.taxID === 'string') setFields['payer.taxID'] = payerObj.taxID.taxID;
+        if (payerObj && payerObj.taxID && typeof payerObj.taxID.type === 'string') setFields['payer.taxType'] = payerObj.taxID.type;
+        if (additionalInfoArr.length) setFields['additionalInfoPaid'] = additionalInfoArr;
+        if (Object.keys(additionalInfoMap).length) setFields['additionalInfoMapPaid'] = additionalInfoMap;
+
+        const update = { $set: setFields };
 
         const result = await col.updateOne(filter, update);
+        try {
+          const record = await col.findOne(filter);
+          const alreadySent = record?.fama24h?.orderId ? true : false;
+          const tipo = additionalInfoMap['tipo_servico'] || record?.tipo || record?.tipoServico || '';
+          const qtd = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
+          const instaUser = additionalInfoMap['instagram_username'] || record?.instagramUsername || record?.instauser || '';
+          const key = process.env.FAMA24H_API_KEY || '';
+          const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+          const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
+          if (canSend) {
+            const axios = require('axios');
+            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+            console.log('➡️ Enviando pedido Fama24h', { service: serviceId, link: instaUser, quantity: qtd });
+            try {
+              const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              const famaData = famaResp.data || {};
+              console.log('✅ Fama24h resposta', { status: famaResp.status, data: famaData });
+              const orderId = famaData.order || famaData.id || null;
+              await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+            } catch (fErr) {
+              console.error('❌ Fama24h erro', fErr?.response?.data || fErr?.message || String(fErr));
+              await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+            }
+          } else {
+            console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd, instaUser, alreadySent });
+          }
+        } catch (sendErr) {
+          console.error('⚠️ Falha ao enviar para Fama24h', sendErr?.message || String(sendErr));
+        }
         return res.status(200).json({ ok: true, event, matched: result.matchedCount, modified: result.modifiedCount });
-      } catch (dbErr) {
-        return res.status(500).json({ ok: false, error: 'mongo_update_failed', details: dbErr?.message || String(dbErr) });
+        } catch (dbErr) {
+          return res.status(500).json({ ok: false, error: 'mongo_update_failed', details: dbErr?.message || String(dbErr) });
+        }
       }
-    }
 
     // Somente para CHARGE_CREATED: dispara InitiateCheckout na CAPI
     if (!/CHARGE_CREATED/.test(event)) {
@@ -2181,7 +2241,8 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
       if (digits.length >= 11) return `+55${digits}`;
       return `+${digits}`;
     };
-    const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo.map((item) => ({ key: sanitizeText(String(item?.key ?? '')), value: sanitizeText(String(item?.value ?? '')) })) : [];
+    const addInfoArrRaw = Array.isArray(additionalInfo) ? additionalInfo.map((item) => ({ key: sanitizeText(String(item?.key ?? '')), value: sanitizeText(String(item?.value ?? '')) })) : [];
+    const addInfoArr = addInfoArrRaw.filter((it) => typeof it.key === 'string' && it.key.trim().length > 0 && typeof it.value === 'string' && it.value.trim().length > 0).map((it) => ({ key: it.key.trim(), value: it.value.trim() }));
     const addInfo = addInfoArr.reduce((acc, item) => { acc[String(item.key || '')] = String(item.value || ''); return acc; }, {});
     const tipo = addInfo['tipo_servico'] || '';
     const qtd = Number(addInfo['quantidade'] || 0) || 0;
