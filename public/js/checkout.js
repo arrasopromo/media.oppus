@@ -819,6 +819,18 @@
       setTimeout(positionTutorials, 300);
       enableTipDrag();
       updateWarrantyVisibility();
+      try {
+        const isMobile = window.innerWidth <= 640;
+        if (isMobile) {
+          const phoneTipInit = document.getElementById('tutorial4Validar');
+          const phoneInputInit = document.getElementById('checkoutPhoneInput');
+          const phoneFieldInit = phoneInputInit ? phoneInputInit.closest('.phone-field') : null;
+          if (phoneTipInit && phoneFieldInit) {
+            phoneTipInit.classList.remove('hide');
+            phoneTipInit.style.display = 'block';
+          }
+        }
+      } catch(_) {}
     } catch(_) {}
   });
   window.addEventListener('resize', () => { try { positionTutorials(); } catch(_) {} });
