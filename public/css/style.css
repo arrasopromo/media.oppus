@@ -46,8 +46,8 @@ body {
 
 /* Tema claro: sobrescreve variáveis para alto contraste em fundo claro */
 body.theme-light {
-    --bg-dark: #ffffff;
-    --bg-secondary: #f8fafc; /* cinza muito claro */
+    --bg-dark: #f3f4f6;
+    --bg-secondary: #f3f4f6;
     --text-primary: #0f172a; /* slate-900 */
     --text-secondary: #475569; /* slate-600 */
     --border-color: #e2e8f0; /* slate-200 */
@@ -209,7 +209,7 @@ body.theme-light .checkout-page .logo-light { display: inline-block; }
 /* Conteúdo principal */
 .main-content {
     width: 100%;
-    max-width: 800px;
+    max-width: 960px;
     animation: fadeInUp 1s ease-out 0.3s both;
 }
 html, body { overflow-x: hidden; }
@@ -223,11 +223,22 @@ html, body { overflow-x: hidden; }
 }
 @media (min-width: 1024px) {
   .checkout-page .option-card { min-height: 120px; }
+  .checkout-page #quantidadeSelectCard { max-width: 100%; }
+  .checkout-page .section-block,
+  .checkout-page #tipoDescCard,
+  .checkout-page #planCards,
+  .checkout-page #orderBumpInline,
+  .checkout-page #resumo,
+  .checkout-page #perfilCard { max-width: 1200px; margin-left: auto; margin-right: auto; }
+  .checkout-page .plan-cards { padding-left: 0; padding-right: 0; }
 }
 /* Centralização total dos cards de seguidores (desktop e mobile) */
 .checkout-page #tipoCards .service-card { display: flex; align-items: center; justify-content: center; min-height: 140px; }
 .checkout-page #tipoCards .service-card .card-content { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.2rem; width: 100%; height: 100%; text-align: center; }
 .checkout-page #tipoCards .service-card .card-title, .checkout-page #tipoCards .service-card .card-desc { margin: 0; }
+.checkout-page .plan-cards { display: grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap: 1rem; max-width: 100%; margin: 0 auto; justify-content: flex-start; justify-items: stretch; align-items: stretch; }
+@media (max-width: 1024px) { .checkout-page .plan-cards { grid-template-columns: repeat(2, minmax(240px, 1fr)); } }
+@media (max-width: 640px) { .checkout-page .plan-cards { grid-template-columns: 1fr; max-width: 100%; } }
 .checkout-page .client-tools { display: none; }
 @media (max-width: 640px) {
     .checkout-page .header { margin-top: 2rem; }
@@ -283,6 +294,35 @@ html, body { overflow-x: hidden; }
         justify-content: center;
         justify-items: center;
     }
+    .checkout-page #tipoCards,
+    .checkout-page #tipoDescCard,
+    .checkout-page #planCards,
+    .checkout-page #orderBumpInline,
+    .checkout-page #resumo,
+    .checkout-page #perfilCard {
+        max-width: 100%;
+        margin-left: auto;
+        margin-right: auto;
+    }
+}
+
+/* Unificar largura dos blocos de tipo, descrição e planos no checkout */
+.checkout-page #tipoCards,
+.checkout-page #tipoDescCard,
+.checkout-page #planCards,
+.checkout-page #perfilCard,
+.checkout-page #orderBumpInline,
+.checkout-page #resumo {
+    width: 100%;
+    max-width: 960px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Resumo: permitir quebra de linha para bullets das promoções */
+.checkout-page #resumo #resPromos {
+  white-space: pre-line;
+  display: block;
 }
 
 .service-card {
@@ -565,6 +605,11 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 .promo-highlight { font-weight: 700; color: #ffffff; background: var(--primary-purple); border: none; border-radius: 8px; padding: 0.15rem 0.5rem; text-transform: uppercase; letter-spacing: 0.02em; display: inline-block; }
 .promo-title { font-weight: 600; color: var(--text-primary); }
 .promo-item.warranty30 .promo-title { color: var(--primary-purple); text-transform: uppercase; }
+.promo-item.warranty60 .promo-title { color: #ffffff; text-transform: none; }
+.checkout-page #warranty60InfoBtn { background: var(--bg-secondary) !important; border: none !important; color: var(--text-primary) !important; box-shadow: none !important; }
+.checkout-page #warranty60InfoBtn::before { display: none !important; }
+.checkout-page #warranty60InfoBtn:hover { transform: none !important; box-shadow: none !important; }
+.promo-item.warranty60 { background: #232336; border-color: var(--border-color); }
 .promo-desc { color: var(--text-secondary); font-size: 0.95rem; }
 .promo-item.upgrade { background: #232336; border-color: var(--border-color); }
 .promo-item.comments { background: #232336; border-color: var(--border-color); }
@@ -868,7 +913,10 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
 .audio-controls { position: relative; }
 .tutorial-pop { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; box-shadow: var(--shadow-md); padding: 0.5rem 0.7rem; color: var(--text-primary); display: flex; flex-direction: column; align-items: center; gap: 0.25rem; z-index: 4000; pointer-events: none; max-width: 280px; white-space: normal; line-height: 1.3; }
 .checkout-page .tutorial-pop { display: none !important; }
-.tutorial-pop::after { content: ""; position: absolute; bottom: -6px; left: var(--tip-arrow-left, 50%); transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid var(--bg-secondary); }
+.checkout-page #tutorialAudio { display: block !important; }
+.checkout-page #tutorialAudio { transform: none; }
+.tutorial-pop.hide { display: none !important; }
+.tutorial-pop::after { content: ""; position: absolute; bottom: -60px; left: var(--tip-arrow-left, 50%); transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid var(--bg-secondary); }
 .tutorial-pop .tutorial-pop-step { display: inline-block; background: transparent; color: var(--text-secondary); border-radius: 0; font-size: 0.75rem; padding: 0; margin: 0; }
 .tutorial-pop .tutorial-pop-text { font-size: 0.9rem; display: block; }
 .tutorial-pop-input { top: auto; bottom: auto; }
@@ -908,4 +956,30 @@ body:not(.theme-light) .theme-toggle:hover { border-color: #6B46C1; }
 .checkout-page #perfilCard .card-desc { font-size: calc(0.95rem + 1px); }
 .checkout-page #perfilCard .select-input { font-size: calc(1rem + 1px); }
 .checkout-page #perfilCard .continue-button .button-text { font-size: calc(1rem + 1px); }
+
+/* Tema claro: contraste melhor para Garantia estendida */
+body.theme-light .promo-item.warranty60 .promo-title { color: #111827; }
+
+/* Tema claro: título Plataforma em preto */
+body.theme-light #plataformaCard .card-title { color: #0f172a; }
+
+/* Tema claro: botões do guia de áudio na paleta do toast */
+body.theme-light .audio-speed-btn { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+body.theme-light .audio-speed-btn:hover { border-color: #6B46C1; }
+
+/* Modal simples para Garantia 60 */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; z-index: 1000; align-items: center; justify-content: center; }
+.modal-dialog { width: 100%; max-width: 420px; margin: 0 auto; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: var(--shadow-lg); color: var(--text-primary); height: 85vh; aspect-ratio: 9 / 16; display: flex; flex-direction: column; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 1rem; border-bottom: 1px solid var(--border-color); }
+.modal-title { font-weight: 700; }
+.modal-close { background: transparent; border: none; color: var(--text-primary); font-size: 1rem; cursor: pointer; }
+.modal-body { padding: 1rem; flex: 1; overflow: auto; }
+.modal-footer { padding: 0.9rem 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: center; }
+body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
+
+/* Centralização das dicas do perfil Instagram */
+.checkout-page #perfilHints { text-align: center; }
+.checkout-page #perfilHints .perfil-hint { line-height: 1.25; }
+.checkout-page #perfilHints .perfil-hint.strong { font-weight: 700; color: var(--text-primary); }
+.modal-image-placeholder { width: 100%; aspect-ratio: 9 / 16; }
 

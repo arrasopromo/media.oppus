@@ -307,8 +307,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
                 return { 
                     success: false, 
-                    status: 403, 
+                    status: 200, 
                     error: "Este perfil é privado. Para que o serviço seja realizado, o perfil precisa estar no modo público.",
+                    code: 'INSTAUSER_PRIVATE',
                     profile: {
                         username: user.username,
                         fullName: user.full_name,
@@ -1072,11 +1073,14 @@ app.post('/api/refil/create', async (req, res) => {
         if (!order_id) return res.status(400).json({ error: 'missing_order_id' });
         const axios = require('axios');
         const payload = { order_id: String(order_id).trim(), username: String(username || 'arraso') };
-        const response = await axios.post('https://smmrefil.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+        console.log('🔁 [Refil] Solicitando:', payload);
+        const response = await axios.post('https://smmrefil.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
+        console.log('✅ [Refil] OK status:', response.status);
         return res.status(200).json(response.data);
     } catch (err) {
         const status = err.response?.status || 500;
         const details = err.response?.data || { message: err.message };
+        console.error('❌ [Refil] Erro:', { status, details });
         return res.status(status).json({ error: 'refil_error', details });
     }
 });
@@ -1672,35 +1676,83 @@ app.post('/api/ggram-order', async (req, res) => {
                     throw err;
                 }
             }
-        } else {
-            // Fama24h para seguidores e visualizações
-            const apiKey2 = (process.env.FAMA24H_API_KEY || '').trim();
-            if (!apiKey2) {
-                console.error('[FAMA24H] Chave API ausente. Defina FAMA24H_API_KEY no .env');
-                return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
-            }
-            console.log('[FAMA24H] Usando chave', apiKey2.slice(0,6) + '***');
-            const params = new URLSearchParams();
-            params.append('key', apiKey2);
-            params.append('action', 'add');
-            params.append('service', selectedServiceId);
-            params.append(targetField, (targetValue || '').trim());
-            params.append('quantity', quantity);
-            console.log('[FAMA24H] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue, selectedServiceKey, isFollowerService });
-            // Tentar múltiplos domínios para evitar ENOTFOUND
-            const apiCandidates = ['https://fama24h.net/api/v2'];
-            for (const apiUrl of apiCandidates) {
-                try {
-                    response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
-                    console.log('[FAMA24H] Sucesso em', apiUrl);
-                    console.log('[FAMA24H] Resposta', response?.data);
-                    break;
-                } catch (err) {
-                    if (err.code === 'ENOTFOUND') {
-                        console.warn('[FAMA24H] ENOTFOUND em', apiUrl, '- tentando próximo');
-                        continue;
+            if (!response) {
+                const likesProviders = [1,2,3,4].map(n => ({
+                    url: (process.env[`LIKES${n}_URL`] || '').trim(),
+                    key: (process.env[`LIKES${n}_KEY`] || '').trim(),
+                    service: (process.env[`LIKES${n}_SERVICE_ID`] || '').trim()
+                })).filter(p => p.url && p.key && p.service);
+                for (const p of likesProviders) {
+                    try {
+                        const lp = new URLSearchParams();
+                        lp.append('key', p.key);
+                        lp.append('action', 'add');
+                        lp.append('service', p.service);
+                        lp.append('link', targetValue);
+                        lp.append('quantity', quantity);
+                        const r = await axios.post(p.url, lp, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+                        response = r;
+                        console.log('[LIKES][ALT] Sucesso em', p.url);
+                        break;
+                    } catch (err) {
+                        if (err.code === 'ENOTFOUND') {
+                            console.warn('[LIKES][ALT] ENOTFOUND em', p.url);
+                            continue;
+                        }
                     }
-                    throw err;
+                }
+            }
+        } else {
+            const smmProviders = [1,2,3,4].map(n => ({
+                url: (process.env[`SMM${n}_URL`] || '').trim(),
+                key: (process.env[`SMM${n}_KEY`] || '').trim(),
+                serviceId: (process.env[`SMM${n}_SERVICE_${(selectedServiceKey || '').toUpperCase()}`] || '').trim()
+            })).filter(p => p.url && p.key && p.serviceId);
+            if (smmProviders.length > 0) {
+                for (const p of smmProviders) {
+                    try {
+                        const sp = new URLSearchParams();
+                        sp.append('key', p.key);
+                        sp.append('action', 'add');
+                        sp.append('service', p.serviceId);
+                        sp.append(targetField, (targetValue || '').trim());
+                        sp.append('quantity', quantity);
+                        const r = await axios.post(p.url, sp, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
+                        response = r;
+                        console.log('[SMM][ALT] Sucesso em', p.url);
+                        break;
+                    } catch (err) {
+                        if (err.code === 'ENOTFOUND') {
+                            console.warn('[SMM][ALT] ENOTFOUND em', p.url);
+                            continue;
+                        }
+                    }
+                }
+            }
+            if (!response) {
+                const apiKey2 = (process.env.FAMA24H_API_KEY || '').trim();
+                if (!apiKey2) {
+                    console.error('[FAMA24H] Chave API ausente. Defina FAMA24H_API_KEY no .env');
+                    return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
+                }
+                const params = new URLSearchParams();
+                params.append('key', apiKey2);
+                params.append('action', 'add');
+                params.append('service', selectedServiceId);
+                params.append(targetField, (targetValue || '').trim());
+                params.append('quantity', quantity);
+                const apiCandidates = ['https://fama24h.net/api/v2'];
+                for (const apiUrl of apiCandidates) {
+                    try {
+                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
+                        console.log('[FAMA24H] Sucesso em', apiUrl);
+                        break;
+                    } catch (err) {
+                        if (err.code === 'ENOTFOUND') {
+                            console.warn('[FAMA24H] ENOTFOUND em', apiUrl);
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -2095,6 +2147,68 @@ app.get('/api/orders', async (req, res) => {
     const col = await getCollection('orders');
     const orders = await col.find({ $or: [ { 'customer.phone': phone }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phone } } } ] }).sort({ _id: -1 }).limit(20).toArray();
     res.json({ ok: true, orders });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/checkout-orders', async (req, res) => {
+  try {
+    const phone = String(req.query.phone || '').trim();
+    if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const col = await getCollection('checkout_orders');
+    const orders = await col.find({ $or: [ { 'customer.phone': phone }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phone } } } ] }).sort({ _id: -1 }).limit(20).toArray();
+    res.json({ ok: true, orders });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/woovi/charge/dev', async (req, res) => {
+  try {
+    const { correlationID, value, comment, customer, additionalInfo } = req.body || {};
+    if (!value || typeof value !== 'number') {
+      return res.status(400).json({ error: 'invalid_value' });
+    }
+    const sanitizeText = (s) => {
+      if (typeof s !== 'string') return s;
+      return s.replace(/[\u2012-\u2015]/g, '-').replace(/[\uD800-\uDFFF]/g, '').trim();
+    };
+    const normalizePhone = (s) => {
+      const raw = typeof s === 'string' ? s : '';
+      const digits = raw.replace(/\D/g, '');
+      if (!digits) return '';
+      if (raw.trim().startsWith('+')) return `+${digits}`;
+      if (digits.startsWith('55')) return `+${digits}`;
+      if (digits.length >= 11) return `+55${digits}`;
+      return `+${digits}`;
+    };
+    const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo.map((item) => ({ key: sanitizeText(String(item?.key ?? '')), value: sanitizeText(String(item?.value ?? '')) })) : [];
+    const addInfo = addInfoArr.reduce((acc, item) => { acc[String(item.key || '')] = String(item.value || ''); return acc; }, {});
+    const tipo = addInfo['tipo_servico'] || '';
+    const qtd = Number(addInfo['quantidade'] || 0) || 0;
+    const instauserFromClient = addInfo['instagram_username'] || '';
+    const customerPayload = { name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'), phone: normalizePhone((customer && customer.phone) ? customer.phone : '') };
+    const createdIso = new Date().toISOString();
+    const record = {
+      nomeUsuario: null,
+      telefone: customerPayload.phone || '',
+      correlationID: correlationID || `dev-${Date.now()}`,
+      instauser: instauserFromClient,
+      criado: createdIso,
+      identifier: 'dev',
+      status: 'pendente',
+      qtd,
+      tipo,
+      valueCents: value,
+      customer: customerPayload,
+      additionalInfo: addInfoArr,
+      tipoServico: tipo,
+      quantidade: qtd,
+      instagramUsername: instauserFromClient,
+      woovi: { chargeId: null, identifier: 'dev', brCode: null, qrCodeImage: null, status: 'pendente' }
+    };
+    const col = await getCollection('checkout_orders');
+    const insertResult = await col.insertOne(record);
+    res.status(200).json({ ok: true, insertedId: insertResult.insertedId, username: instauserFromClient });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
