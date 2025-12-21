@@ -86,19 +86,28 @@ body.theme-light .audio-progress::-moz-range-track { background: rgba(15,23,42,0
 
 /* Tutoriais e toasts: manter roxo com contraste em claro */
 body.theme-light .tutorial-pop { border-color: #6366F1; background: rgba(99, 102, 241, 0.18); color: #111827; }
-body.theme-light .tutorial-pop .tutorial-pop-step { color: #4338CA; }
+body.theme-light .tutorial-pop .tutorial-pop-step { color: #ffffff; }
 body.theme-light #tutorialAudio { border-color: #0f172a; background: #0f172a; color: #ffffff; }
 body.theme-light #tutorialAudio .tutorial-pop-text { color: #ffffff; }
 body.theme-light #tutorialAudio .tutorial-pop-step { color: #ffffff; }
 body.theme-light #tutorialAudio::after { border-top-color: #0f172a; }
-body.theme-light #tutorialPlatform { border-color: #ffffff; background: #ffffff; color: #ffffff; }
+body.theme-light #tutorialPlatform { border-color: #0f172a; background: #0f172a; color: #ffffff; }
 body.theme-light #tutorialPlatform .tutorial-pop-text { color: #ffffff; }
 body.theme-light #tutorialPlatform .tutorial-pop-step { color: #ffffff; }
-body.theme-light #tutorialPlatform::after { border-top-color: #ffffff; }
+body.theme-light #tutorialPlatform::after { border-top-color: #0f172a; }
 body.theme-light #tutorial3Usuario { border-color: #0f172a; background: #0f172a; color: #ffffff; }
 body.theme-light #tutorial3Usuario .tutorial-pop-text { color: #ffffff; }
 body.theme-light #tutorial3Usuario .tutorial-pop-step { color: #ffffff; }
 body.theme-light #tutorial3Usuario::after { border-top-color: #0f172a; }
+body.theme-light #tutorial4Validar { border-color: #0f172a; background: #0f172a; color: #ffffff; }
+body.theme-light #tutorial4Validar .tutorial-pop-text { color: #ffffff; }
+body.theme-light #tutorial4Validar .tutorial-pop-step { color: #ffffff; }
+body.theme-light #tutorial4Validar::after { border-top-color: #0f172a; }
+body.theme-light #tutorial5Pedido { border-color: #0f172a; background: #0f172a; color: #ffffff; }
+body.theme-light #tutorial5Pedido .tutorial-pop-text { color: #ffffff; }
+body.theme-light #tutorial5Pedido .tutorial-pop-step { color: #ffffff; }
+body.theme-light #tutorial5Pedido::after { border-top-color: #0f172a; }
+body.theme-light .tutorial-pop::after { border-top-color: #0f172a !important; }
 body.theme-light .toast { background: #ffffff; }
 
 /* Notificações de venda no checkout: canto inferior esquerdo */
@@ -214,7 +223,7 @@ body.theme-light .checkout-page .logo-light { display: inline-block; }
 }
 
 /* Letreiro no header */
-.checkout-page .header-ticker { margin-top: 0.35rem; text-align: center; }
+.checkout-page .header-ticker { margin-top: calc(0.35rem + 20px); text-align: center; }
 .checkout-page .header-ticker .ticker-item { display: inline-block; font-weight: 600; color: var(--text-primary); transition: opacity 0.6s ease, transform 0.6s ease; }
 .checkout-page .header-ticker .ticker-item.enter { opacity: 1; transform: translateY(0); }
 .checkout-page .header-ticker .ticker-item.leave { opacity: 0; transform: translateY(-8px); }
@@ -932,6 +941,9 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
 .checkout-page #tutorialPlatform { display: block !important; top: 50px !important; }
 .checkout-page #tutorialAudio.hide { display: none !important; }
 .checkout-page #tutorialPlatform.hide { display: none !important; }
+.checkout-page #tutorial4Validar { display: block !important; transform: none !important; }
+.checkout-page #tutorial4Validar.hide { display: none !important; }
+.checkout-page .phone-field #tutorial4Validar { top: 140px !important; left: 448px !important; }
 .checkout-page #tutorial3Usuario { display: block !important; top: 70px !important; }
 .checkout-page #tutorial3Usuario.hide { display: none !important; }
 .checkout-page #tutorialAudio.dragging { cursor: grabbing; }
@@ -939,7 +951,15 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
 .checkout-page #tutorialAudio { transform: none; }
 .tutorial-pop.hide { display: none !important; }
 .tutorial-pop::after { content: ""; position: absolute; bottom: -6px; left: var(--tip-arrow-left, 50%); transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid var(--bg-secondary); }
+.checkout-page #tutorial5Pedido { display: block !important; }
+.checkout-page #tutorial5Pedido.hide { display: none !important; }
+.checkout-page .button-container { position: relative; }
+.checkout-page .button-container #tutorial5Pedido { top: calc(100% + 22px) !important; bottom: auto !important; }
+@media (max-width: 640px) {
+  .checkout-page .phone-field #tutorial4Validar { left: 8px !important; top: 140px !important; }
+}
 .tutorial-pop .tutorial-pop-step { display: inline-block; background: transparent; color: var(--text-secondary); border-radius: 0; font-size: 0.75rem; padding: 0; margin: 0; }
+body.theme-light .tutorial-pop .tutorial-pop-step { color: #ffffff !important; }
 .tutorial-pop .tutorial-pop-text { font-size: 0.9rem; display: block; }
 .tutorial-pop-input { top: auto; bottom: auto; }
 
@@ -973,6 +993,9 @@ body:not(.theme-light) .theme-toggle:hover { border-color: #6B46C1; }
   .checkout-page .main-content { max-width: 1440px; width: 100%; }
 }
 .checkout-page .cards-grid.checkout-grid { width: 100%; }
+.checkout-page .phone-hint { font-size: 1.125rem !important; }
+.checkout-page .phone-label { font-size: calc(1.125rem + 8px) !important; }
+.checkout-page .button-container { margin-top: calc(2rem + 50px) !important; }
 .checkout-page .subtitle { max-width: none; }
 .checkout-page #perfilCard .card-title { font-size: calc(0.9rem + 1px); }
 .checkout-page #perfilCard .card-desc { font-size: calc(0.95rem + 1px); }
@@ -984,6 +1007,8 @@ body.theme-light .promo-item.warranty60 .promo-title { color: #111827; }
 
 /* Tema claro: título Plataforma em preto */
 body.theme-light #plataformaCard .card-title { color: #0f172a; }
+body.theme-light #plataformaCard .platform-help { color: #0f172a !important; }
+body.theme-light .checkout-page .phone-hint { color: #0f172a !important; }
 
 /* Tema claro: botões do guia de áudio na paleta do toast */
 body.theme-light .audio-speed-btn { background: #0f172a; color: #ffffff; border-color: #0f172a; }

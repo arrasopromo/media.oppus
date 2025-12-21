@@ -34,8 +34,8 @@
       <span class="site-brand-text">Agência Oppus</span>
     </div>
     <header class="header">
-      <h1 class="title">Checkout</h1>
-      <p class="subtitle">Escolha o tipo de seguidores e a quantidade/preço.</p>
+      <h1 class="title">Cresça o seu perfil Instagram</h1>
+      <p class="subtitle" style="margin-top:0.25rem;">Melhor suporte e transparência para crescer seu Instagram</p>
       <div id="headerTicker" class="header-ticker" aria-live="polite">
         <span class="ticker-item"></span>
       </div>
@@ -104,7 +104,7 @@
             <div class="card-content">
               <h3 class="card-title">Plataforma</h3>
               <div class="card-desc">
-                  <div style="margin-bottom:0.5rem; color: var(--text-secondary);">Escolha a plataforma em que deseja os serviços</div>
+                  <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
                   <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
                   <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -332,10 +332,10 @@
           <!-- Campo Finalizar -->
           <div id="paymentCard" style="display:none;">
             <div class="action-container" id="grupoPedido" style="position:relative;">
-              <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
-                <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:600; margin-bottom:0.25rem;">Telefone de contato</label>
+                <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
+                <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 10px);">Telefone de contato</label>
+                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 3px);">Usaremos este contato caso precisarmos falar com você.</p>
                 <input id="checkoutPhoneInput" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
-                <p class="phone-hint" style="margin-top:0.25rem; color:#9ca3af;">Usaremos este contato caso precisarmos falar com você.</p>
                 <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
                   <div class="tutorial-pop-step">4/5</div>
                   <div class="tutorial-pop-text">Digite seu telefone</div>
@@ -348,11 +348,10 @@
                     <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-              </div>
-              <!-- Tutorial: 5/5 -->
-              <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
-                <div class="tutorial-pop-step">5/5</div>
-                <div class="tutorial-pop-text">Clique para realizar o pedido</div>
+                <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
+                  <div class="tutorial-pop-step">5/5</div>
+                  <div class="tutorial-pop-text">Receba seus seguidores</div>
+                </div>
               </div>
             </div>
             <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
@@ -432,7 +431,7 @@
     @media (min-width: 1024px) {
       .checkout-page.container { max-width: 100%; width: 100%; }
       .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
-      .checkout-page .subtitle { font-size: 1.4rem; }
+      .checkout-page .subtitle { font-size: 1.4rem; color: #cbd5e1; text-align: center; margin-bottom: 0.4rem; }
       .checkout-page .service-card { width: 100%; padding: 0.55rem 0.7rem; }
       .checkout-page .card-content { gap: 0.2rem; }
       /* Desktop: reduzir levemente os cards de planos (quantidade/preço) */
@@ -498,7 +497,7 @@
     .checkout-page .select-input { width: 100%; }
     .cards-grid.checkout-grid { gap: 1.25rem; grid-template-columns: 1fr; }
     @media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
-    .checkout-page .subtitle { font-size: 1.125rem; color: #cbd5e1; }
+      .checkout-page .subtitle { font-size: 1.125rem; color: #cbd5e1; text-align: center; margin-bottom: 0.4rem; }
     /* Notificação de venda (toast) um pouco maior na Home */
     .toast-container .toast-item { font-size: 1.05rem; padding: 0.8rem 1.05rem; }
     .checkout-page .select-input option { color: #111827; }
