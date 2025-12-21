@@ -663,6 +663,13 @@
           }
         }
         break;
+      case 5:
+        const t5 = document.getElementById('tutorial5Pedido');
+        if (t5) t5.style.display = 'block';
+        if (grupoPedido) grupoPedido.classList.add('tutorial-highlight');
+        try { positionTutorials(); } catch(_) {}
+        setTimeout(() => { try { positionTutorials(); } catch(_) {} }, 120);
+        break;
       default:
         break;
     }
@@ -762,6 +769,44 @@
         userTip.style.top = `${bubbleTop}px`;
         const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, center - bubbleLeft));
         userTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+      }
+    } catch(_) {}
+    try {
+      const phoneTip = document.getElementById('tutorial4Validar');
+      const phoneInput = document.getElementById('checkoutPhoneInput');
+      const phoneField = phoneInput ? phoneInput.closest('.phone-field') : null;
+      if (phoneTip && phoneInput && phoneField && phoneTip.style.display !== 'none') {
+        const inputRect = phoneInput.getBoundingClientRect();
+        const fieldRect = phoneField.getBoundingClientRect();
+        const leftRel = inputRect.left - fieldRect.left;
+        const topRel = inputRect.top - fieldRect.top;
+        const bubbleWidth = phoneTip.offsetWidth || 220;
+        const fieldWidth = phoneField.clientWidth || fieldRect.width;
+        const bubbleLeft = Math.max(8, Math.min(fieldWidth - bubbleWidth - 8, leftRel));
+        const bubbleTop = Math.max(0, topRel + inputRect.height + 100);
+        phoneTip.style.left = `${bubbleLeft}px`;
+        phoneTip.style.top = `${bubbleTop}px`;
+        const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, 14));
+        phoneTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+      }
+    } catch(_) {}
+    try {
+      const confirmTip = document.getElementById('tutorial5Pedido');
+      const confirmBtn = document.getElementById('realizarPedidoBtn');
+      const btnContainer = confirmBtn ? confirmBtn.closest('.button-container') : null;
+      if (confirmTip && confirmBtn && btnContainer && confirmTip.style.display !== 'none') {
+        const btnRect = confirmBtn.getBoundingClientRect();
+        const contRect = btnContainer.getBoundingClientRect();
+        const leftRel = btnRect.left - contRect.left;
+        const topRel = btnRect.top - contRect.top;
+        const bubbleWidth = confirmTip.offsetWidth || 220;
+        const contWidth = btnContainer.clientWidth || contRect.width;
+        const bubbleLeft = Math.max(8, Math.min(contWidth - bubbleWidth - 8, leftRel));
+        const bubbleTop = Math.max(0, topRel + btnRect.height + 52);
+        confirmTip.style.left = `${bubbleLeft}px`;
+        confirmTip.style.top = `${bubbleTop}px`;
+        const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, 14));
+        confirmTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
       }
     } catch(_) {}
   }
@@ -1344,7 +1389,40 @@
 
   attachPhoneMask(checkoutPhoneInput);
 
+  // Ocultar 4/5 ao interagir com o campo de telefone (comportamento igual ao 3/5)
+  if (checkoutPhoneInput) {
+    const suppressTip4 = () => {
+      const t = document.getElementById('tutorial4Validar');
+      if (t) { t.style.display = 'none'; t.classList.add('hide'); }
+      if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+    };
+    checkoutPhoneInput.addEventListener('focus', suppressTip4);
+    checkoutPhoneInput.addEventListener('click', suppressTip4);
+    checkoutPhoneInput.addEventListener('paste', suppressTip4);
+    checkoutPhoneInput.addEventListener('pointerdown', suppressTip4);
+    checkoutPhoneInput.addEventListener('input', suppressTip4);
+    if (grupoPedido) {
+      grupoPedido.addEventListener('focusin', suppressTip4);
+      grupoPedido.addEventListener('pointerdown', suppressTip4);
+    }
+  }
+
+  if (btnPedido) {
+    const suppressTip5 = () => {
+      const t = document.getElementById('tutorial5Pedido');
+      if (t) { t.style.display = 'none'; t.classList.add('hide'); }
+      if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+    };
+    btnPedido.addEventListener('click', suppressTip5);
+    btnPedido.addEventListener('pointerdown', suppressTip5);
+  }
+
   async function criarPixWoovi() {
+    try {
+      const t = document.getElementById('tutorial5Pedido');
+      if (t) { t.style.display = 'none'; t.classList.add('hide'); }
+      if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+    } catch (_) {}
     try {
       const tipo = tipoSelect.value;
       const qtd = Number(qtdSelect.value);
