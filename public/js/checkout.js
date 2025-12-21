@@ -77,6 +77,7 @@
   const grupoTipo = document.getElementById('grupoTipo');
   const grupoQuantidade = document.getElementById('grupoQuantidade');
   const grupoUsername = document.getElementById('grupoUsername');
+  let tutorial3Suppressed = false;
   const grupoPedido = document.getElementById('grupoPedido');
   // carrossel removido
   let isInstagramVerified = false;
@@ -279,6 +280,7 @@
     popularQuantidades(tipo);
     clearResumo();
     updatePerfilVisibility();
+    updateWarrantyVisibility();
     showTutorialStep(2);
     renderPlanCards(tipo);
     renderTipoDescription(tipo);
@@ -368,6 +370,7 @@
         const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
         cards.forEach(c => c.classList.toggle('active', c === card));
         updatePerfilVisibility();
+        updateWarrantyVisibility();
         try { applyCheckoutFlow(); } catch(_) {}
         // Âncora: ao selecionar pacote, focar no perfil no mobile
         try {
@@ -652,8 +655,12 @@
         break;
       case 4:
         if (isFollowersSelected()) {
-          if (tutorial3Usuario) tutorial3Usuario.style.display = 'block';
-          if (grupoUsername) grupoUsername.classList.add('tutorial-highlight');
+          if (!tutorial3Suppressed) {
+            if (tutorial3Usuario) tutorial3Usuario.style.display = 'block';
+            if (grupoUsername) grupoUsername.classList.add('tutorial-highlight');
+            try { positionTutorials(); } catch(_) {}
+            setTimeout(() => { try { positionTutorials(); } catch(_) {} }, 120);
+          }
         }
         break;
       default:
@@ -666,7 +673,33 @@
       const anchorEl = document.getElementById('audioSpeed15x');
       const audioTip = document.getElementById('tutorialAudio');
       const audioParent = anchorEl ? anchorEl.closest('.audio-controls') : null;
-      if (anchorEl && audioTip && audioParent) {
+      if (audioTip && audioParent) {
+        const manualLeft = audioTip.getAttribute('data-tip-left');
+        const manualTop = audioTip.getAttribute('data-tip-top');
+        const manualArrow = audioTip.getAttribute('data-tip-arrow-left');
+        const mode = (audioTip.getAttribute('data-tip-mode') || 'auto').toLowerCase();
+      const dx = parseFloat(audioTip.getAttribute('data-tip-dx') || '0') || 0;
+      const dy = parseFloat(audioTip.getAttribute('data-tip-dy') || '0') || 0;
+      if (manualLeft || manualTop) {
+        if (manualLeft) audioTip.style.left = `${parseFloat(manualLeft) || 0}px`;
+        if (manualTop) audioTip.style.top = `${parseFloat(manualTop) || 0}px`;
+        if (manualArrow) audioTip.style.setProperty('--tip-arrow-left', `${parseFloat(manualArrow) || 12}px`);
+        return;
+      }
+      if (mode === 'manual') {
+        const parentRect = audioParent.getBoundingClientRect();
+        const bubbleWidth = Math.max(180, audioTip.offsetWidth || 0);
+        const parentWidth = audioParent.clientWidth || parentRect.width;
+        let bubbleLeft = Math.max(0, Math.min(parentWidth - bubbleWidth, (parentWidth - bubbleWidth) / 2 + dx));
+        const compTop = parseFloat((window.getComputedStyle(audioTip).top || '0').toString()) || 0;
+        let bubbleTop = Math.max(0, compTop + dy);
+        audioTip.style.left = `${bubbleLeft}px`;
+        audioTip.style.top = `${bubbleTop}px`;
+        const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, (bubbleWidth / 2)));
+        audioTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+        return;
+      }
+      if (!anchorEl) return;
         const btnRect = anchorEl.getBoundingClientRect();
         const parentRect = audioParent.getBoundingClientRect();
         const leftRel = btnRect.left - parentRect.left;
@@ -677,7 +710,13 @@
         const parentWidth = audioParent.clientWidth || parentRect.width;
         let bubbleLeft = btnCenter - (bubbleWidth / 2);
         bubbleLeft = Math.max(0, Math.min(parentWidth - bubbleWidth, bubbleLeft));
-        const bubbleTop = Math.max(0, topRel - bubbleHeight - 40);
+        let bubbleTop = Math.max(0, topRel + btnRect.height + 8); // posiciona abaixo do botão 1.5x
+        if (mode === 'auto') {
+          bubbleLeft = bubbleLeft + dx;
+          bubbleTop = bubbleTop + dy + 10;
+        } else {
+          bubbleTop = bubbleTop + 10;
+        }
         audioTip.style.left = `${bubbleLeft}px`;
         audioTip.style.top = `${bubbleTop}px`;
         const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, btnCenter - bubbleLeft));
@@ -698,11 +737,31 @@
         const parentWidth = platformParent.clientWidth || parentRect.width;
         let bubbleLeft = btnCenter - (bubbleWidth / 2);
         bubbleLeft = Math.max(0, Math.min(parentWidth - bubbleWidth, bubbleLeft));
-        const bubbleTop = Math.max(0, topRel + btnRect.height + 60);
+        const bubbleTop = Math.max(0, topRel + btnRect.height + 120);
         platformTip.style.left = `${bubbleLeft}px`;
         platformTip.style.top = `${bubbleTop}px`;
         const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, btnCenter - bubbleLeft));
-        platformTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+      platformTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
+      }
+    } catch(_) {}
+    try {
+      const userTip = document.getElementById('tutorial3Usuario');
+      const inputEl = document.getElementById('usernameCheckoutInput');
+      const groupEl = document.getElementById('grupoUsername');
+      if (userTip && inputEl && groupEl && userTip.style.display !== 'none') {
+        const inputRect = inputEl.getBoundingClientRect();
+        const groupRect = groupEl.getBoundingClientRect();
+        const leftRel = inputRect.left - groupRect.left;
+        const topRel = inputRect.top - groupRect.top;
+        const center = leftRel + (inputRect.width / 2);
+        const bubbleWidth = userTip.offsetWidth || 220;
+        let bubbleLeft = center - (bubbleWidth / 2);
+        bubbleLeft = Math.max(8, Math.min(groupEl.clientWidth - bubbleWidth - 8, bubbleLeft));
+        const bubbleTop = Math.max(0, topRel + inputRect.height + 28);
+        userTip.style.left = `${bubbleLeft}px`;
+        userTip.style.top = `${bubbleTop}px`;
+        const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, center - bubbleLeft));
+        userTip.style.setProperty('--tip-arrow-left', `${arrowLeft}px`);
       }
     } catch(_) {}
   }
@@ -713,6 +772,8 @@
       positionTutorials();
       setTimeout(positionTutorials, 100);
       setTimeout(positionTutorials, 300);
+      enableTipDrag();
+      updateWarrantyVisibility();
     } catch(_) {}
   });
   window.addEventListener('resize', () => { try { positionTutorials(); } catch(_) {} });
@@ -759,6 +820,17 @@
   function isPostSelected() {
     const selectedOption = tipoSelect.options[tipoSelect.selectedIndex];
     return !!(selectedOption && /(curtidas|visualiza\u00e7oes|visualizações)/i.test(selectedOption.textContent));
+  }
+
+  function updateWarrantyVisibility() {
+    const tipo = (tipoSelect && tipoSelect.value) || '';
+    const warrantyInput = document.getElementById('promoWarranty60');
+    const warrantyItem = warrantyInput ? warrantyInput.closest('.promo-item') : null;
+    if (!warrantyItem) return;
+    const show = (tipo === 'mistos' || tipo === 'brasileiros');
+    warrantyItem.style.display = show ? '' : 'none';
+    if (!show && warrantyInput) { warrantyInput.checked = false; }
+    try { updatePromosSummary(); } catch(_) {}
   }
 
   function computePostFieldsCount(tipo, qtd) {
@@ -926,6 +998,7 @@
       showTutorialStep(1);
     }
     renderPlanCards(tipo);
+    updateWarrantyVisibility();
   });
 
   if (qtdSelect) qtdSelect.addEventListener('change', () => {
@@ -952,6 +1025,7 @@
     updatePedidoButtonState();
     updatePerfilVisibility();
     updatePromosSummary();
+    updateWarrantyVisibility();
     showTutorialStep(4);
     try {
       const isMobile = window.innerWidth <= 640;
@@ -1240,6 +1314,24 @@
 
   // Avançar de 3 -> 4 quando o usuário digita algo
   if (usernameCheckoutInput) {
+    const suppressTip3 = () => {
+      tutorial3Suppressed = true;
+      const t = document.getElementById('tutorial3Usuario');
+      if (t) { t.style.display = 'none'; t.classList.add('hide'); }
+      if (grupoUsername) grupoUsername.classList.remove('tutorial-highlight');
+    };
+    usernameCheckoutInput.addEventListener('focus', () => {
+      suppressTip3();
+    });
+    usernameCheckoutInput.addEventListener('click', () => {
+      suppressTip3();
+    });
+    usernameCheckoutInput.addEventListener('paste', () => { suppressTip3(); });
+    usernameCheckoutInput.addEventListener('pointerdown', () => { suppressTip3(); });
+    if (grupoUsername) {
+      grupoUsername.addEventListener('focusin', () => { suppressTip3(); });
+      grupoUsername.addEventListener('pointerdown', () => { suppressTip3(); });
+    }
     usernameCheckoutInput.addEventListener('input', () => {
       const hasValue = usernameCheckoutInput.value.trim().length > 0;
       if (hasValue && isFollowersSelected()) {
@@ -1516,7 +1608,7 @@
   }
   if (audioPlayBtn) audioPlayBtn.addEventListener('click', async () => {
     if (!guideAudio) return;
-    if (guideAudio.paused) { await guideAudio.play(); audioPlayBtn.textContent = 'Pause'; } else { guideAudio.pause(); audioPlayBtn.textContent = 'Play'; }
+    if (guideAudio.paused) { await guideAudio.play(); audioPlayBtn.textContent = 'Pause'; } else { guideAudio.pause(); audioPlayBtn.textContent = 'Ouvir Áudio'; }
     try { const ta = document.getElementById('tutorialAudio'); if (ta) ta.style.display = 'none'; } catch(_) {}
     showTutorialStep(2);
   });
@@ -1534,8 +1626,14 @@
       if (!target) return;
       if (target.classList.contains('instagram')) setPlatform('instagram');
       if (target.classList.contains('tiktok')) setPlatform('tiktok');
+      try {
+        const tp = document.getElementById('tutorialPlatform');
+        if (tp) { tp.style.display = 'none'; tp.classList.add('hide'); }
+      } catch(_) {}
     });
   }
+
+  
 
   const testimonialsCarousel = document.getElementById('testimonialsCarousel');
   if (testimonialsCarousel) {
@@ -1609,6 +1707,58 @@
       setInterval(step, 3200);
     }
   })();
+
+  function enableTipDrag(){
+    const tip = document.getElementById('tutorialAudio');
+    const parent = tip ? tip.closest('.audio-controls') : null;
+    if (!tip || !parent) return;
+    let dragging = false;
+    let startX = 0, startY = 0, initLeft = 0, initTop = 0;
+    function onDown(e){
+      dragging = true;
+      tip.classList.add('dragging');
+      startX = e.clientX;
+      startY = e.clientY;
+      initLeft = parseFloat(tip.style.left || '0') || 0;
+      initTop = parseFloat(tip.style.top || '0') || 0;
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    }
+    function onMove(e){
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const pw = parent.clientWidth;
+      const ph = parent.clientHeight;
+      const bw = tip.offsetWidth;
+      const bh = tip.offsetHeight;
+      let left = Math.max(0, Math.min(pw - bw, initLeft + dx));
+      let top = Math.max(0, Math.min(ph - bh, initTop + dy));
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+    function onUp(){
+      dragging = false;
+      tip.classList.remove('dragging');
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      const left = parseFloat(tip.style.left || '0') || 0;
+      const top = parseFloat(tip.style.top || '0') || 0;
+      tip.setAttribute('data-tip-left', String(left));
+      tip.setAttribute('data-tip-top', String(top));
+      try { localStorage.setItem('oppus_tip_audio_pos', JSON.stringify({ left, top })); } catch(_) {}
+    }
+    tip.addEventListener('pointerdown', onDown);
+    try {
+      const saved = JSON.parse(localStorage.getItem('oppus_tip_audio_pos') || 'null');
+      if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+        tip.style.left = saved.left + 'px';
+        tip.style.top = saved.top + 'px';
+        tip.setAttribute('data-tip-left', String(saved.left));
+        tip.setAttribute('data-tip-top', String(saved.top));
+      }
+    } catch(_) {}
+  }
 
   (function initClientHeader(){
     const fetchBtn = document.getElementById('clientFetchBtn');
@@ -1977,3 +2127,23 @@
       audioBtn.addEventListener('click', () => { audioTip.classList.add('hide'); });
     }
   } catch(_) {}
+
+  (function adjustValidateBtn(){
+    try {
+      const btn = document.getElementById('checkCheckoutButton');
+      if (!btn) return;
+      const apply = () => {
+        const w = window.innerWidth || document.documentElement.clientWidth;
+        if (w <= 480) {
+          btn.style.padding = '0.26rem 0.48rem';
+          btn.style.fontSize = '12px';
+        } else if (w <= 768) {
+          btn.style.padding = '0.32rem 0.52rem';
+          btn.style.fontSize = '12.5px';
+        }
+      };
+      apply();
+      window.addEventListener('resize', apply);
+      window.addEventListener('orientationchange', apply);
+    } catch(_) {}
+  })();
