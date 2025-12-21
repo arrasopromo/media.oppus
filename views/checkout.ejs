@@ -69,9 +69,9 @@
                   <div class="audio-player">
                   <audio id="guideAudio" class="audio-element" preload="none" src="/audio/guia.mp3"></audio>
                   <div class="audio-controls">
-                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" style="display:block;">
+                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input">
                       <div class="tutorial-pop-step">1/5</div>
-                      <div class="tutorial-pop-text">Ouvir o áudio</div>
+                      <div class="tutorial-pop-text">Ouça o áudio primeiro</div>
                     </div>
                     <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
                     <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
@@ -196,6 +196,9 @@
                   <div class="tutorial-pop-text">Digitar o Instagram</div>
                 </div>
               </div>
+              <div id="perfilHints" style="margin-top:0.8rem; color: var(--text-secondary);">
+                <div class="perfil-hint strong">• Não precisamos da sua senha</div>
+              </div>
               <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
               <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
                 <div class="spinner"></div>
@@ -238,7 +241,7 @@
                   </div>
                 </label>
                 <!-- Demais promoções -->
-                <label class="promo-item comments">
+                <label class="promo-item likes">
                   <input type="checkbox" id="promoLikes" data-promo="likes" />
                   <div class="promo-content">
                     <div class="promo-highlight">+ curtidas</div>
@@ -274,29 +277,39 @@
                     </div>
                   </div>
                 </label>
-                <label class="promo-item">
+                <label class="promo-item comments">
                   <input type="checkbox" id="promoComments" data-promo="comments" />
                   <div class="promo-content">
+                    <div class="promo-highlight">+ COMENTÁRIOS</div>
                     <div class="promo-title">Comentário promocional</div>
-                    <div class="promo-desc">Adicionar um comentário promocional.</div>
+                    <div class="promo-desc">1 comentário = R$ 1,00 cada.</div>
                     <div class="promo-prices" data-promo="comments">
                       <span class="old-price">R$ 29,90</span>
                       <span class="discount-badge">67% OFF</span>
                       <span class="new-price">R$ 9,90</span>
                     </div>
+                    <div class="likes-control" aria-label="Quantidade de comentários">
+                      <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                      <span id="commentsQty" class="likes-qty">1</span>
+                      <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                    </div>
                   </div>
                 </label>
                 
-                <label class="promo-item">
-                  <input type="checkbox" id="promoWarranty30" data-promo="warranty30" />
+                <label class="promo-item warranty60">
+                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
                   <div class="promo-content">
-                    <div class="promo-title">+30 dias de reposição</div>
-                    <div class="promo-desc">Extensão de garantia com reposição por 30 dias.</div>
-                    <div class="promo-prices" data-promo="warranty30">
-                      <span class="old-price">R$ 59,90</span>
-                      <span class="discount-badge">68% OFF</span>
-                      <span class="new-price">R$ 19,90</span>
+                    <div class="promo-highlight">+ 60 DIAS DE REPOSIÇÃO</div>
+                    <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                      <span>Garantia estendida</span>
+                      <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
                     </div>
+                  <div class="promo-desc">Extensão de garantia com reposição por 60 dias.</div>
+                  <div class="promo-prices" data-promo="warranty60">
+                    <span class="old-price">R$ 59,90</span>
+                    <span class="discount-badge">68% OFF</span>
+                    <span class="new-price">R$ 19,90</span>
+                  </div>
                   </div>
                 </label>
               </div>
@@ -346,6 +359,22 @@
           </div>
         </div>
       </section>
+      <!-- Modal: Garantia 60 dias (conteúdo simples) -->
+      <div id="warranty60Modal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">Garantia estendida</h3>
+            <button id="warranty60CloseBtn" class="modal-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div class="modal-body">
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vel augue ut eros fermentum tempus. Suspendisse potenti. Donec non turpis id felis laoreet facilisis.</p>
+            <div class="modal-image-placeholder" style="height:160px; border:1px dashed var(--border-color); border-radius:12px; display:flex; align-items:center; justify-content:center; color: var(--text-secondary); margin-top:0.75rem;">Área para imagem</div>
+          </div>
+          <div class="modal-footer">
+            <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
     </main>
     <footer class="footer">
       <div class="footer-bar">
@@ -373,6 +402,18 @@
       </div>
       <div class="client-actions" style="margin-top: 1rem;">
         <button id="termsCloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
+      </div>
+    </div>
+  </div>
+  <div id="warranty60Modal" class="client-page" aria-label="Garantia 60 dias" style="display:none;">
+    <div class="client-page-inner">
+      <h2 class="client-title">+60 dias de reposição</h2>
+      <p class="client-desc">Garantia estendida: caso haja queda no período de 60 dias, nós repomos sem custo. A reposição segue as regras do serviço contratado.</p>
+      <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px;">
+        
+      </div>
+      <div class="client-actions" style="margin-top: 1rem;">
+        <button id="warranty60CloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
       </div>
     </div>
   </div>

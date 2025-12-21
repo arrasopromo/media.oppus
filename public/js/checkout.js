@@ -13,6 +13,7 @@
   const btnInstagram = document.querySelector('.platform-btn.instagram');
   const btnTikTok = document.querySelector('.platform-btn.tiktok');
   let selectedPlatform = (btnInstagram && btnInstagram.getAttribute('aria-pressed') === 'true') ? 'instagram' : 'tiktok';
+  let basePriceCents = 0;
   let paymentPollInterval = null;
   const checkoutPhoneInput = document.getElementById('checkoutPhoneInput');
   function onlyDigits(v){ return String(v||'').replace(/\D+/g,''); }
@@ -98,7 +99,7 @@
       { q: 15000, p: 'R$ 219,90' },
     ],
     brasileiros: [
-      { q: 150, p: 'R$ 12,90' },
+      { q: 150, p: 'R$ 19,90' },
       { q: 300, p: 'R$ 29,90' },
       { q: 500, p: 'R$ 39,90' },
       { q: 700, p: 'R$ 49,90' },
@@ -161,12 +162,16 @@
     comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
     warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
     warranty30: { old: 'R$ 59,90', price: 'R$ 19,90', discount: 68 },
+    warranty60: { old: 'R$ 59,90', price: 'R$ 19,90', discount: 68 },
   };
+  try { window.promoPricing = promoPricing; } catch(_) {}
 
   function renderPromoPrices() {
     const blocks = document.querySelectorAll('.promo-prices');
     blocks.forEach(b => {
       const key = b.getAttribute('data-promo');
+      // Não sobrescrever preços dinâmicos de likes, views e comments
+      if (key === 'likes' || key === 'views' || key === 'comments') return;
       const conf = promoPricing[key];
       if (!conf) return;
       const oldEl = b.querySelector('.old-price');
@@ -346,10 +351,10 @@
         if (selectedOpt) { selectedOpt.selected = true; }
         resTipo.textContent = getLabelForTipo(tipo);
         resQtd.textContent = `${item.q} ${unit}`;
-    resPreco.textContent = baseText;
-    resumo.hidden = false;
-    try { resumo.style.display = 'block'; } catch(e) {}
-    updateOrderBump(tipo, Number(item.q));
+        resPreco.textContent = baseText;
+        try { basePriceCents = parsePrecoToCents(baseText); } catch(_) { basePriceCents = 0; }
+        showResumoIfAllowed();
+        updateOrderBump(tipo, Number(item.q));
         try { updatePromosSummary(); } catch(_) {}
         try {
           const paymentCardEl = document.getElementById('paymentCard');
@@ -658,20 +663,21 @@
 
   function positionTutorials() {
     try {
-      const audioBtn = document.getElementById('audioPlayBtn');
+      const anchorEl = document.getElementById('audioSpeed15x');
       const audioTip = document.getElementById('tutorialAudio');
-      const audioParent = audioBtn ? audioBtn.closest('.audio-controls') : null;
-      if (audioBtn && audioTip && audioParent) {
-        const btnRect = audioBtn.getBoundingClientRect();
+      const audioParent = anchorEl ? anchorEl.closest('.audio-controls') : null;
+      if (anchorEl && audioTip && audioParent) {
+        const btnRect = anchorEl.getBoundingClientRect();
         const parentRect = audioParent.getBoundingClientRect();
         const leftRel = btnRect.left - parentRect.left;
         const topRel = btnRect.top - parentRect.top;
         const btnCenter = leftRel + (btnRect.width / 2);
-        const bubbleWidth = audioTip.offsetWidth || 200;
+        const bubbleWidth = Math.max(180, audioTip.offsetWidth || 0);
+        const bubbleHeight = Math.max(48, audioTip.offsetHeight || 0);
         const parentWidth = audioParent.clientWidth || parentRect.width;
         let bubbleLeft = btnCenter - (bubbleWidth / 2);
         bubbleLeft = Math.max(0, Math.min(parentWidth - bubbleWidth, bubbleLeft));
-        const bubbleTop = Math.max(0, topRel + btnRect.height + 60);
+        const bubbleTop = Math.max(0, topRel - bubbleHeight - 40);
         audioTip.style.left = `${bubbleLeft}px`;
         audioTip.style.top = `${bubbleTop}px`;
         const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, btnCenter - bubbleLeft));
@@ -702,7 +708,15 @@
   }
 
   window.addEventListener('resize', () => { try { positionTutorials(); } catch(_) {} });
-  window.addEventListener('load', () => { try { positionTutorials(); } catch(_) {} });
+  window.addEventListener('load', () => {
+    try {
+      positionTutorials();
+      setTimeout(positionTutorials, 100);
+      setTimeout(positionTutorials, 300);
+    } catch(_) {}
+  });
+  window.addEventListener('resize', () => { try { positionTutorials(); } catch(_) {} });
+  window.addEventListener('orientationchange', () => { try { positionTutorials(); } catch(_) {} });
 
   function clearResumo() {
     if (resumo) resumo.hidden = true;
@@ -925,9 +939,15 @@
     }
     resTipo.textContent = String(tipo).replace(/_/g, ' ');
     resQtd.textContent = `${qtd} ${getUnitForTipo(tipo)}`;
+    const baseStr = String(preco).replace(/[^0-9,\.]/g, '');
+    let base = 0; try { base = parseFloat(baseStr.replace('.', '').replace(',', '.')); } catch(_) {}
+    const inc = base * 1.15;
+    const ceilInt = Math.ceil(inc);
+    const increasedRounded = (ceilInt - 0.10);
+    const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
     resPreco.textContent = preco;
-    resumo.hidden = false;
-    try { resumo.style.display = 'block'; } catch(e) {}
+    try { basePriceCents = parsePrecoToCents(preco); } catch(_) { basePriceCents = 0; }
+    showResumoIfAllowed();
     try { sessionStorage.setItem('oppus_qtd', String(qtd || '')); } catch(_) {}
     updatePedidoButtonState();
     updatePerfilVisibility();
@@ -971,7 +991,7 @@
     const oldEl = likesPrices ? likesPrices.querySelector('.old-price') : null;
     if (newEl && entry) newEl.textContent = entry.price;
     if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
-    const hl = document.querySelector('.promo-item.comments .promo-highlight');
+    const hl = document.querySelector('.promo-item.likes .promo-highlight');
     if (hl) hl.textContent = `+ ${q} CURTIDAS`;
   }
   function stepLikes(dir) {
@@ -1027,7 +1047,7 @@
       const oldVal = newVal / 0.7;
       oldEl.textContent = formatCurrencyBR(oldVal);
     }
-    const hl = document.querySelector('.promo-item.warranty30 .promo-highlight');
+    const hl = document.querySelector('.promo-item.views .promo-highlight');
     if (hl) hl.textContent = `+ ${q} VISUALIZAÇÕES`;
   }
   function stepViews(dir) {
@@ -1044,6 +1064,33 @@
   if (viewsDec) viewsDec.addEventListener('click', () => stepViews(-1));
   if (viewsInc) viewsInc.addEventListener('click', () => stepViews(1));
   if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
+  try { updatePromosSummary(); } catch(_) {}
+
+  // Quantidade de Comentários (R$ 1,00 cada)
+  const commentsQtyEl = document.getElementById('commentsQty');
+  const commentsDec = document.getElementById('commentsDec');
+  const commentsInc = document.getElementById('commentsInc');
+  const commentsPrices = document.querySelector('.promo-prices[data-promo="comments"]');
+  function updateCommentsPrice(q) {
+    const newEl = commentsPrices ? commentsPrices.querySelector('.new-price') : null;
+    const oldEl = commentsPrices ? commentsPrices.querySelector('.old-price') : null;
+    if (newEl) newEl.textContent = formatCurrencyBR(q * 1);
+    if (oldEl) { const oldVal = (q * 1) * 1.7; oldEl.textContent = formatCurrencyBR(oldVal); }
+    const hl = document.querySelector('.promo-item.comments .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} COMENTÁRIOS`;
+  }
+  function stepComments(dir) {
+    const current = Number(commentsQtyEl?.textContent || 1);
+    let next = current + dir;
+    if (next < 1) next = 1;
+    if (next > 100) next = 100;
+    if (commentsQtyEl) commentsQtyEl.textContent = String(next);
+    updateCommentsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  if (commentsDec) commentsDec.addEventListener('click', () => stepComments(-1));
+  if (commentsInc) commentsInc.addEventListener('click', () => stepComments(1));
+  if (commentsQtyEl) updateCommentsPrice(Number(commentsQtyEl.textContent || 1));
 
   function getSelectedPromos() {
     const promos = [];
@@ -1051,28 +1098,32 @@
       const likesChecked = !!document.getElementById('promoLikes')?.checked;
       const viewsChecked = !!document.getElementById('promoViews')?.checked;
       const commentsChecked = !!document.getElementById('promoComments')?.checked;
-      const warrantyChecked = !!document.getElementById('promoWarranty30')?.checked;
+      const warrantyChecked = !!document.getElementById('promoWarranty60')?.checked;
       const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
-      if (likesChecked && likesPrices) {
-        const qty = Number(likesQtyEl?.textContent || 150);
-        const priceStr = likesPrices.querySelector('.new-price')?.textContent || '';
+      if (likesChecked) {
+        const qty = Number(document.getElementById('likesQty')?.textContent || 150);
+        let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.likes?.price || '';
         promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
       }
-      if (viewsChecked && viewsPrices) {
-        const qty = Number(viewsQtyEl?.textContent || 1000);
-        const priceStr = viewsPrices.querySelector('.new-price')?.textContent || '';
+      if (viewsChecked) {
+        const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
+        let priceStr = document.querySelector('.promo-prices[data-promo="views"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.views?.price || '';
         promos.push({ key: 'views', qty, label: `Visualizações (${qty})`, priceCents: parsePrecoToCents(priceStr) });
       }
       if (commentsChecked) {
-        const priceStr = document.querySelector('.promo-prices[data-promo="comments"] .new-price')?.textContent || '';
-        promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: parsePrecoToCents(priceStr) });
+        const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
+        const priceCents = qty * 100;
+        promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
       if (warrantyChecked) {
-        const priceStr = document.querySelector('.promo-prices[data-promo="warranty30"] .new-price')?.textContent || '';
-        promos.push({ key: 'warranty30', qty: 1, label: '+30 dias de reposição', priceCents: parsePrecoToCents(priceStr) });
+        let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.warranty60?.price || '';
+        promos.push({ key: 'warranty60', qty: 1, label: '+60 dias de reposição', priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
-        const priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
+        let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
         const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
         promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
       }
@@ -1145,6 +1196,8 @@
         try { sessionStorage.setItem('oppus_instagram_username', profile.username || username); } catch(e) {}
         isInstagramVerified = true;
         updatePedidoButtonState();
+        showResumoIfAllowed();
+        try { updatePromosSummary(); } catch(_) {}
         try { applyCheckoutFlow(); } catch(_) {}
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         // Avança para o passo final
@@ -1170,6 +1223,8 @@
           if (profilePreview) profilePreview.style.display = 'block';
           isInstagramVerified = true;
           updatePedidoButtonState();
+          showResumoIfAllowed();
+          try { updatePromosSummary(); } catch(_) {}
           try { applyCheckoutFlow(); } catch(_) {}
           showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
           showTutorialStep(5);
@@ -1281,6 +1336,12 @@
         });
       } catch (_) { /* silencioso */ }
       const phoneValue = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl);
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      let usernameFromSession = '';
+      try { usernameFromSession = sessionStorage.getItem('oppus_instagram_username') || ''; } catch(_) {}
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameFromSession || usernameInputNorm || '';
       const payload = {
         correlationID,
         value: totalCents,
@@ -1295,7 +1356,7 @@
           { key: 'quantidade', value: String(qtd) },
           { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
-          { key: 'instagram_username', value: (sessionStorage.getItem('oppus_instagram_username') || '') },
+          { key: 'instagram_username', value: instagramUsernameFinal },
           { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
           { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
         ]
@@ -1519,6 +1580,7 @@
   updatePedidoButtonState();
   clearResumo();
   renderPromoPrices();
+  try { updatePromosSummary(); } catch(_) {}
   showTutorialStep(1);
   // sem carrossel de posts
 
@@ -1613,16 +1675,39 @@
       const stored = localStorage.getItem('oppus_client_phone');
       if (stored && phoneInputPage) phoneInputPage.value = stored;
     } catch (_) {}
-    // Termos de uso
-    const termsLink = document.getElementById('termsLink');
-    const termsPage = document.getElementById('termsPage');
-    const termsCloseBtn = document.getElementById('termsCloseBtn');
-    if (termsLink && termsPage) {
-      termsLink.addEventListener('click', (e)=>{ e.preventDefault(); termsPage.style.display='block'; });
-    }
-    if (termsCloseBtn && termsPage) {
-      termsCloseBtn.addEventListener('click', ()=>{ termsPage.style.display='none'; });
-    }
+  // Termos de uso
+  const termsLink = document.getElementById('termsLink');
+  const termsPage = document.getElementById('termsPage');
+  const termsCloseBtn = document.getElementById('termsCloseBtn');
+  if (termsLink && termsPage) {
+    termsLink.addEventListener('click', (e)=>{ e.preventDefault(); termsPage.style.display='block'; });
+  }
+  if (termsCloseBtn && termsPage) {
+    termsCloseBtn.addEventListener('click', ()=>{ termsPage.style.display='none'; });
+  }
+  const warrantyModal = document.getElementById('warranty60Modal');
+  const warrantyInfoBtn = document.getElementById('warranty60InfoBtn');
+  const warrantyCloseBtn = document.getElementById('warranty60CloseBtn');
+  if (warrantyInfoBtn && warrantyModal) {
+    warrantyInfoBtn.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyCloseBtn && warrantyModal) {
+    warrantyCloseBtn.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  const warrantyCloseBtn2 = document.getElementById('warranty60CloseBtn2');
+  if (warrantyCloseBtn2 && warrantyModal) {
+    warrantyCloseBtn2.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  if (warrantyModal) {
+    warrantyModal.addEventListener('click', function(e){ if (e.target === warrantyModal) { warrantyModal.style.display = 'none'; } });
+  }
   })();
   (function initSaleToasts(){
     const isCheckout = !!document.querySelector('.checkout-page');
@@ -1709,30 +1794,102 @@
     function cycle(){
       makeToast(platformCycle[cycleIdx]);
       cycleIdx = (cycleIdx + 1) % platformCycle.length;
-      setTimeout(()=>{ setTimeout(cycle, 15000); }, 4000);
+      setTimeout(cycle, 15000);
     }
-    cycle();
+    setTimeout(cycle, 2000);
   })();
 })();
-  function updatePromosSummary() {
-    const resPromos = document.getElementById('resPromos');
-    if (!resPromos) return;
-    const tipo = tipoSelect?.value || '';
-    const qtdSel = Number(qtdSelect?.value || 0);
-    const baseStr = findPrice(tipo, qtdSel) || '';
-    const baseCents = parsePrecoToCents(baseStr);
-    const promos = getSelectedPromos();
-    const labels = promos.map(p => p.label).filter(Boolean);
-    resPromos.textContent = labels.length ? labels.join(', ') : 'Nenhuma';
-    const totalCents = Math.max(0, Number(baseCents) + Number(calcPromosTotalCents(promos)));
-    const resPrecoEl = document.getElementById('resPreco');
-    if (resPrecoEl) {
-      resPrecoEl.textContent = formatCentsToBRL(totalCents);
-    }
+
+// Garantir utilitários acessíveis globalmente para funções fora do escopo do IIFE
+(function(){
+  if (typeof window.parsePrecoToCents !== 'function') {
+    window.parsePrecoToCents = function(precoStr){
+      if (!precoStr) return 0;
+      const cleaned = String(precoStr).replace(/[^\d,]/g, '').replace(',', '.');
+      const value = Math.round(parseFloat(cleaned) * 100);
+      return isNaN(value) ? 0 : value;
+    };
   }
+  if (typeof window.formatCentsToBRL !== 'function') {
+    window.formatCentsToBRL = function(cents){
+      const valor = Math.max(0, Number(cents) || 0);
+      const reais = Math.floor(valor / 100);
+      const centavos = valor % 100;
+      return `R$ ${reais.toLocaleString('pt-BR')},${String(centavos).padStart(2, '0')}`;
+    };
+  }
+  if (typeof window.calcPromosTotalCents !== 'function') {
+    window.calcPromosTotalCents = function(promos){
+      try { return (Array.isArray(promos) ? promos : []).reduce((acc, p) => acc + (Number(p.priceCents) || 0), 0); } catch (_) { return 0; }
+    };
+  }
+  if (typeof window.getSelectedPromos !== 'function') {
+    window.getSelectedPromos = function(){
+      const promos = [];
+      try {
+        const likesChecked = !!document.getElementById('promoLikes')?.checked;
+        const viewsChecked = !!document.getElementById('promoViews')?.checked;
+        const commentsChecked = !!document.getElementById('promoComments')?.checked;
+        const warrantyChecked = !!document.getElementById('promoWarranty60')?.checked;
+        const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
+        if (likesChecked) {
+          const qty = Number(document.getElementById('likesQty')?.textContent || 150);
+          let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
+          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.likes ? window.promoPricing.likes.price : '') || '';
+          promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: window.parsePrecoToCents(priceStr) });
+        }
+        if (viewsChecked) {
+          const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
+          let priceStr = document.querySelector('.promo-prices[data-promo="views"] .new-price')?.textContent || '';
+          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.views ? window.promoPricing.views.price : '') || '';
+          promos.push({ key: 'views', qty, label: `Visualizações (${qty})`, priceCents: window.parsePrecoToCents(priceStr) });
+        }
+        if (commentsChecked) {
+          let priceStr = document.querySelector('.promo-prices[data-promo="comments"] .new-price')?.textContent || '';
+          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.comments ? window.promoPricing.comments.price : '') || '';
+          promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: window.parsePrecoToCents(priceStr) });
+        }
+        if (warrantyChecked) {
+          let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
+          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.warranty60 ? window.promoPricing.warranty60.price : '') || '';
+          promos.push({ key: 'warranty60', qty: 1, label: '+60 dias de reposição', priceCents: window.parsePrecoToCents(priceStr) });
+        }
+        if (upgradeChecked) {
+          let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
+          const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
+          promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: window.parsePrecoToCents(priceStr) });
+        }
+      } catch (_) {}
+      return promos;
+    };
+  }
+})();
 
   Array.from(document.querySelectorAll('.promo-item input[type="checkbox"]')).forEach(inp => {
     inp.addEventListener('change', updatePromosSummary);
+    inp.addEventListener('click', updatePromosSummary);
+  });
+  Array.from(document.querySelectorAll('.promo-item')).forEach(function(node){
+    node.addEventListener('click', function(){ setTimeout(function(){ try { updatePromosSummary(); } catch(_) {} }, 0); });
+  });
+  const inlineUpgradeCheckbox = document.getElementById('orderBumpCheckboxInline');
+  if (inlineUpgradeCheckbox) {
+    inlineUpgradeCheckbox.addEventListener('change', function(){ try { updatePromosSummary(); } catch(_) {} });
+  }
+  // Reforço: qualquer interação na área de promoções recalcula o resumo
+  (function(){
+    const promoContainer = document.getElementById('orderBumpInline');
+    if (!promoContainer) return;
+    ['change','input','click'].forEach(evt => {
+      promoContainer.addEventListener(evt, function(){
+        try { updatePromosSummary(); } catch(_) {}
+      });
+    });
+  })();
+  Array.from(document.querySelectorAll('.promo-prices[data-promo] .new-price')).forEach(function(el){
+    var parent = el.closest('.promo-item');
+    if (!parent) return;
+    parent.addEventListener('click', function(){ try { updatePromosSummary(); } catch(_) {} });
   });
   (function(){
     const phoneEl = document.getElementById('checkoutPhoneInput');
@@ -1773,3 +1930,50 @@
     }
   });
 })();
+  
+  function showResumoIfAllowed(){
+    try {
+      const allow = (!isFollowersSelected()) || !!isInstagramVerified;
+      if (!resumo) return;
+      resumo.hidden = !allow;
+      resumo.style.display = allow ? 'block' : 'none';
+    } catch(_) {}
+  }
+
+  function updatePromosSummary() {
+    const resPromos = document.getElementById('resPromos');
+    if (!resPromos) return;
+    showResumoIfAllowed();
+    // Base: prioriza o card de plano ativo; depois texto do resumo; por fim base armazenada
+    let baseCents = 0;
+    try {
+      const activeCard = planCards?.querySelector('.service-card[data-role="plano"].active');
+      if (activeCard && activeCard.dataset && activeCard.dataset.preco) {
+        baseCents = parsePrecoToCents(activeCard.dataset.preco);
+      }
+    } catch(_) {}
+    if (!baseCents) {
+      const resTxt = document.getElementById('resPreco')?.textContent || '';
+      baseCents = parsePrecoToCents(resTxt);
+    }
+    if (!baseCents) {
+      baseCents = basePriceCents || 0;
+    }
+    const promos = (typeof window.getSelectedPromos === 'function') ? window.getSelectedPromos() : [];
+    const labels = promos.map(p => {
+      const val = formatCentsToBRL(Number(p.priceCents) || 0);
+      return `${p.label} (${val})`;
+    }).filter(Boolean);
+    const resPrecoEl = document.getElementById('resPreco');
+    const totalCents = Math.max(0, Number(baseCents) + Number(window.calcPromosTotalCents ? window.calcPromosTotalCents(promos) : 0));
+    const bullets = labels.length ? labels.map(s => `• ${s}`).join('\n') : 'Nenhuma';
+    if (resPromos) resPromos.textContent = bullets;
+    if (resPrecoEl) resPrecoEl.textContent = formatCentsToBRL(totalCents);
+  }
+  try {
+    const audioBtn = document.getElementById('audioPlayBtn');
+    const audioTip = document.getElementById('tutorialAudio');
+    if (audioBtn && audioTip) {
+      audioBtn.addEventListener('click', () => { audioTip.classList.add('hide'); });
+    }
+  } catch(_) {}

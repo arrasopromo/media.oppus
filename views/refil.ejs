@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="/css/style.css" rel="stylesheet" />
 </head>
-<body>
+<body class="refil-page">
   <div class="container checkout-page">
     <header class="header">
       <h1 class="title">Refil</h1>
@@ -32,6 +32,12 @@
       </section>
     </main>
   </div>
+  <style>
+    .refil-page .main-content { max-width: 1040px; width: 100%; margin: 0 auto; }
+    .refil-page #refilCard { width: 100%; }
+    .refil-page #grupoRefil { display: grid; grid-template-columns: minmax(0,1fr); gap: 0.5rem; justify-items: center; }
+    .refil-page #refilSubmitBtn { margin-left: 0 !important; }
+  </style>
   <script>
     (function(){
       const orderInput = document.getElementById('refilOrderIdInput')
@@ -45,6 +51,18 @@
         statusEl.style.textAlign = 'center'
         statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ffb4b4' : '#ffffff')
       }
+      function extractErrorMessage(data){
+        try {
+          if (!data) return 'Falha ao solicitar refil'
+          const main = (data.message || data.error || '').toString().trim()
+          const details = data.details
+          const sub = (typeof details === 'string') ? details
+            : (details && (details.message || details.error || details.detail || details.reason))
+            || ''
+          const merged = [main, sub].map(s => String(s || '').trim()).filter(Boolean)
+          return merged.length ? merged.join(' — ') : 'Falha ao solicitar refil'
+        } catch(_) { return 'Falha ao solicitar refil' }
+      }
       async function submitRefil(){
         const orderId = (orderInput && orderInput.value || '').trim()
         if (!orderId) { setStatus('Informe seu Order ID', 'error'); return }
@@ -57,7 +75,10 @@
             body: JSON.stringify({ order_id: orderId, username: 'arraso' })
           })
           const data = await resp.json()
-          if (!resp.ok) throw new Error(data?.error || 'Falha ao solicitar refil')
+          if (!resp.ok) {
+            const errMsg = extractErrorMessage(data)
+            throw new Error(errMsg)
+          }
           setStatus('Refil processado com sucesso', 'success')
           resultEl.style.display = 'block'
           const item = Array.isArray(data) ? data[0] : data
