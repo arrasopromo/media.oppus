@@ -2371,6 +2371,44 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.get('/pedido', async (req, res) => {
+  try {
+    const identifier = String(req.query.identifier || '').trim();
+    const correlationID = String(req.query.correlationID || '').trim();
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    const filter = conds.length ? { $or: conds } : {};
+    const doc = await col.findOne(filter);
+    const order = doc || {};
+    return res.render('pedido', { order });
+  } catch (e) {
+    return res.status(500).type('text/plain').send('Erro ao carregar pedido');
+  }
+});
+app.get('/api/order', async (req, res) => {
+  try {
+    const id = req.query.id ? String(req.query.id).trim() : '';
+    const identifier = String(req.query.identifier || '').trim();
+    const correlationID = String(req.query.correlationID || '').trim();
+    const col = await getCollection('checkout_orders');
+    let doc = null;
+    if (id) {
+      try { doc = await col.findOne({ _id: new (require('mongodb').ObjectId)(id) }); } catch(_) {}
+    }
+    if (!doc) {
+      const conds = [];
+      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+      if (correlationID) conds.push({ correlationID });
+      const filter = conds.length ? { $or: conds } : {};
+      doc = await col.findOne(filter);
+    }
+    return res.json({ ok: true, order: doc || null });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.post('/api/woovi/charge/dev', async (req, res) => {
   try {
     const { correlationID, value, comment, customer, additionalInfo } = req.body || {};

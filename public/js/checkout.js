@@ -1641,15 +1641,8 @@
             if (isPaid) {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
-              // Atualiza UI para pagamento confirmado
-              pixResultado.innerHTML = `
-                ${imgHtml}${codeFieldHtml}${copyBtnHtml}
-                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#b8ffb8; font-weight:600;">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" stroke="#b8ffb8" stroke-width="2"/>
-                  </svg>
-                  <span>Pagamento confirmado!</span>
-                </div>`;
+              const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
+              window.location.href = `/pedido?${qs}`;
             }
           } catch (e) {
             // Silencioso: mantém próximo ciclo
@@ -1669,14 +1662,8 @@
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               if (paymentEventSource) { try { paymentEventSource.close(); } catch(_) {} paymentEventSource = null; }
-              pixResultado.innerHTML = `
-                ${imgHtml}${codeFieldHtml}${copyBtnHtml}
-                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#b8ffb8; font-weight:600;">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" stroke="#b8ffb8" stroke-width="2"/>
-                  </svg>
-                  <span>Pagamento confirmado!</span>
-                </div>`;
+              const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
+              window.location.href = `/pedido?${qs}`;
             }
           } catch (e) {}
         };
@@ -1691,14 +1678,8 @@
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
-              pixResultado.innerHTML = `
-                ${imgHtml}${codeFieldHtml}${copyBtnHtml}
-                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#b8ffb8; font-weight:600;">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" stroke="#b8ffb8" stroke-width="2"/>
-                  </svg>
-                  <span>Pagamento confirmado!</span>
-                </div>`;
+              const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
+              window.location.href = `/pedido?${qs}`;
             } catch(_) {}
           });
         } catch(_) {}
