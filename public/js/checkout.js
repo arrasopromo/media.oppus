@@ -1967,7 +1967,11 @@
               try {
                 const only = list[0];
                 const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : '';
-                if (onlyOid) { window.location.href = `/pedido?orderid=${encodeURIComponent(onlyOid)}`; return; }
+                if (onlyOid) {
+                  try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
+                  window.location.href = '/pedido';
+                  return;
+                }
               } catch(_) {}
             }
             ordersBox.innerHTML = list.map((o) => {
@@ -1997,7 +2001,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<a href="/pedido?orderid=${encodeURIComponent(oid)}" class="button primary" style="text-decoration:none;">Abrir pedido</a>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Abrir pedido</button>` : ''}</div>
               </div>`;
             }).join('');
           }
@@ -2021,13 +2025,40 @@
     });
     if (backBtn) backBtn.addEventListener('click', hideClientPage);
     if (consultBtn) {
-      consultBtn.addEventListener('click', () => {
+      consultBtn.addEventListener('click', async () => {
         const raw = (phoneInputPage && phoneInputPage.value && phoneInputPage.value.trim()) || '';
         const v = onlyDigits(raw);
         if (!v) { alert('Digite seu telefone ou número do pedido.'); return; }
+        const digits = v;
+        if (digits.length >= 5 && digits.length <= 10) {
+          try {
+            const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
+            const d = await r.json();
+            const o = d && d.order ? d.order : null;
+            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+            if (oid) {
+              try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
+              window.location.href = '/pedido';
+              return;
+            }
+          } catch(_) {}
+        }
         fetchOrders(v);
       });
     }
+    async function openPedido(orderID) {
+      try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID }) }); } catch(_) {}
+      try { window.location.href = '/pedido'; } catch(_) {}
+    }
+    document.addEventListener('click', (ev) => {
+      const t = ev.target;
+      const btn = t && (t.classList && t.classList.contains('open-pedido-btn')) ? t : (t.closest && t.closest('.open-pedido-btn'));
+      if (btn) {
+        ev.preventDefault();
+        const oid = btn.getAttribute('data-orderid') || '';
+        if (oid) { openPedido(oid); }
+      }
+    });
     try {
       const stored = localStorage.getItem('oppus_client_phone');
       if (stored && phoneInputPage) phoneInputPage.value = stored;
@@ -2336,12 +2367,12 @@
       const data = await resp.json();
       const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || null;
       if (oid) {
-        targetUrl = `/pedido?orderID=${encodeURIComponent(String(oid))}`;
+        try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
+        targetUrl = `/pedido`;
       }
     } catch(_) {}
     if (!targetUrl) {
-      const qs = new URLSearchParams({ identifier, correlationID }).toString();
-      targetUrl = `/pedido?${qs}`;
+      targetUrl = `/pedido`;
     }
     const url = targetUrl;
     try { window.location.assign(url); } catch(_) {}
@@ -2349,7 +2380,7 @@
       setTimeout(async () => {
         try {
           if (location && location.pathname === '/pedido') return;
-          const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
+          const r = await fetch('/pedido', { method: 'GET', headers: { 'Accept': 'text/html' } });
           if (r && r.ok) { window.location.href = url; return; }
         } catch(_) {}
         try { markPaymentConfirmed(); } catch(_) {}
