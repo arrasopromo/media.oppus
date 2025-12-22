@@ -2412,27 +2412,31 @@ app.get('/pedido', async (req, res) => {
     const orderIDRaw = String(req.query.orderID || req.query.orderid || '').trim();
     const phoneRaw = String(req.query.phone || '').trim();
     const col = await getCollection('checkout_orders');
-    const conds = [];
-    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
-    if (correlationID) conds.push({ correlationID });
-    if (orderIDRaw) {
-      const maybeNum = Number(orderIDRaw);
-      if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
-      conds.push({ 'fama24h.orderId': orderIDRaw });
-    }
-    if (phoneRaw) {
-      const digits = phoneRaw.replace(/\D/g, '');
-      if (digits) {
-        conds.push({ 'customer.phone': `+55${digits}` });
-        conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
-      }
-    }
-    if (!conds.length && req.session && req.session.selectedOrderID) {
+    let doc = null;
+    // Priorizar pedido selecionado em sessão
+    if (req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
-      conds.push({ 'fama24h.orderId': soid });
+      doc = await col.findOne({ 'fama24h.orderId': soid });
     }
-    const filter = conds.length ? { $or: conds } : {};
-    const doc = await col.findOne(filter);
+    if (!doc) {
+      const conds = [];
+      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+      if (correlationID) conds.push({ correlationID });
+      if (orderIDRaw) {
+        const maybeNum = Number(orderIDRaw);
+        if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
+        conds.push({ 'fama24h.orderId': orderIDRaw });
+      }
+      if (phoneRaw) {
+        const digits = phoneRaw.replace(/\D/g, '');
+        if (digits) {
+          conds.push({ 'customer.phone': `+55${digits}` });
+          conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
+        }
+      }
+      const filter = conds.length ? { $or: conds } : {};
+      doc = await col.findOne(filter);
+    }
     const order = doc || {};
     return res.render('pedido', { order });
   } catch (e) {
@@ -2465,6 +2469,10 @@ app.get('/api/order', async (req, res) => {
     if (id) {
       try { doc = await col.findOne({ _id: new (require('mongodb').ObjectId)(id) }); } catch(_) {}
     }
+    if (!doc && req.session && req.session.selectedOrderID) {
+      const soid = req.session.selectedOrderID;
+      doc = await col.findOne({ 'fama24h.orderId': soid });
+    }
     if (!doc) {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
@@ -2480,10 +2488,6 @@ app.get('/api/order', async (req, res) => {
           conds.push({ 'customer.phone': `+55${digits}` });
           conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
         }
-      }
-      if (!conds.length && req.session && req.session.selectedOrderID) {
-        const soid = req.session.selectedOrderID;
-        conds.push({ 'fama24h.orderId': soid });
       }
       const filter = conds.length ? { $or: conds } : {};
       doc = await col.findOne(filter);
