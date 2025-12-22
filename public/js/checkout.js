@@ -1642,7 +1642,7 @@
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
-              window.location.href = `/pedido?${qs}`;
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             }
           } catch (e) {
             // Silencioso: mantém próximo ciclo
@@ -1663,7 +1663,7 @@
               paymentPollInterval = null;
               if (paymentEventSource) { try { paymentEventSource.close(); } catch(_) {} paymentEventSource = null; }
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
-              window.location.href = `/pedido?${qs}`;
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             }
           } catch (e) {}
         };
@@ -1679,7 +1679,7 @@
               paymentPollInterval = null;
               if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
-              window.location.href = `/pedido?${qs}`;
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             } catch(_) {}
           });
         } catch(_) {}
@@ -2238,6 +2238,31 @@
     const bullets = labels.length ? labels.map(s => `• ${s}`).join('\n') : 'Nenhuma';
     if (resPromos) resPromos.textContent = bullets;
     if (resPrecoEl) resPrecoEl.textContent = formatCentsToBRL(totalCents);
+  }
+
+  async function navigateToPedidoOrFallback(identifier, correlationID) {
+    try {
+      const qs = new URLSearchParams({ identifier, correlationID }).toString();
+      const url = `/pedido?${qs}`;
+      const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
+      if (r && r.ok) {
+        window.location.href = url;
+        return;
+      }
+    } catch (_) {}
+    try {
+      showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success');
+    } catch (_) {}
+    try {
+      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+      const resp = await fetch(apiUrl);
+      const data = await resp.json();
+      if (data && data.order) {
+        showResumoIfAllowed();
+      }
+    } catch (_) {
+      showResumoIfAllowed();
+    }
   }
   try {
     const audioBtn = document.getElementById('audioPlayBtn');
