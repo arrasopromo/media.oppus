@@ -1905,28 +1905,100 @@
     function applyPhone(v) {
       phoneFromUrl = v;
       try { localStorage.setItem('oppus_client_phone', v); } catch (_) {}
-      try {
-        const u = new URL(window.location.href);
-        u.searchParams.set('phone', v);
-        history.replaceState(null, document.title, u.toString());
-      } catch (_) {}
     }
     async function fetchOrders(v){
+      const digits = String(v || '').replace(/\D/g, '');
+      if (!digits) { if (ordersBox) { ordersBox.style.display = 'block'; ordersBox.textContent = 'Digite seu telefone ou número de pedido.'; } return; }
       try {
-        const resp = await fetch(`/api/orders?phone=${encodeURIComponent(v)}`);
+        if (digits.length >= 5 && digits.length <= 10) {
+          const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
+          const d = await r.json();
+          const o = d && d.order ? d.order : null;
+          if (ordersBox) {
+            ordersBox.style.display = 'block';
+            if (!o) {
+              ordersBox.textContent = 'Pedido não encontrado.';
+            } else {
+              try {
+                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+                if (oid) { window.location.href = `/pedido?orderid=${encodeURIComponent(oid)}`; return; }
+              } catch (_) {}
+              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+              const status = String(o.status || o.woovi?.status || '-');
+              const tipo = String(o.tipo || o.tipoServico || '-');
+              const qtd = String(o.quantidade || o.qtd || '-');
+              const user = String(o.instagramUsername || o.instauser || '-');
+              const paid = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
+              let paidStr = '-';
+              if (paid) {
+                try {
+                  const d0 = new Date(paid);
+                  const sp = new Date(d0.getTime() - (3*60*60*1000));
+                  const dd = String(sp.getUTCDate()).padStart(2,'0');
+                  const mm = String(sp.getUTCMonth()+1).padStart(2,'0');
+                  const yyyy = sp.getUTCFullYear();
+                  const hh = String(sp.getUTCHours()).padStart(2,'0');
+                  const mn = String(sp.getUTCMinutes()).padStart(2,'0');
+                  paidStr = `${dd}/${mm}/${yyyy} as ${hh}:${mn}`;
+                } catch(_) {}
+              }
+              ordersBox.innerHTML = `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
+                <div><strong>Status:</strong> <span>${status}</span></div>
+                <div><strong>Serviço:</strong> <span>${tipo}</span></div>
+                <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
+                <div><strong>Instagram:</strong> <span>${user}</span></div>
+                <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
+                <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
+                <div style="margin-top:8px;"><a href="/pedido?orderid=${encodeURIComponent(oid)}" class="button primary" style="text-decoration:none;">Abrir pedido</a></div>
+              </div>`;
+            }
+          }
+          return;
+        }
+        const resp = await fetch(`/api/checkout-orders?phone=${encodeURIComponent(digits)}`);
         const data = await resp.json();
         const list = Array.isArray(data.orders) ? data.orders : [];
         if (ordersBox) {
+          ordersBox.style.display = 'block';
           if (!list.length) {
-            ordersBox.style.display = 'block';
             ordersBox.textContent = 'Nenhum pedido encontrado.';
           } else {
-            ordersBox.style.display = 'block';
+            if (list.length === 1) {
+              try {
+                const only = list[0];
+                const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : '';
+                if (onlyOid) { window.location.href = `/pedido?orderid=${encodeURIComponent(onlyOid)}`; return; }
+              } catch(_) {}
+            }
             ordersBox.innerHTML = list.map((o) => {
-              const val = (o.value && Number(o.value)) ? `Valor: R$ ${(o.value/100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '';
-              const cmt = o.comment ? `Comentário: ${o.comment}` : '';
-              const id = o._id ? String(o._id) : '';
-              return `<div style="padding:6px;border:1px solid var(--border-color);border-radius:8px;margin:4px auto;max-width:560px;color:var(--text-primary);">${id ? `Pedido ${id}` : 'Pedido'}<div>${val}</div><div>${cmt}</div></div>`;
+              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+              const status = String(o.status || o.woovi?.status || '-');
+              const tipo = String(o.tipo || o.tipoServico || '-');
+              const qtd = String(o.quantidade || o.qtd || '-');
+              const user = String(o.instagramUsername || o.instauser || '-');
+              const paid = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
+              let paidStr = '-';
+              if (paid) {
+                try {
+                  const d0 = new Date(paid);
+                  const sp = new Date(d0.getTime() - (3*60*60*1000));
+                  const dd = String(sp.getUTCDate()).padStart(2,'0');
+                  const mm = String(sp.getUTCMonth()+1).padStart(2,'0');
+                  const yyyy = sp.getUTCFullYear();
+                  const hh = String(sp.getUTCHours()).padStart(2,'0');
+                  const mn = String(sp.getUTCMinutes()).padStart(2,'0');
+                  paidStr = `${dd}/${mm}/${yyyy} as ${hh}:${mn}`;
+                } catch(_) {}
+              }
+              return `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
+                <div><strong>Status:</strong> <span>${status}</span></div>
+                <div><strong>Serviço:</strong> <span>${tipo}</span></div>
+                <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
+                <div><strong>Instagram:</strong> <span>${user}</span></div>
+                <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
+                <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
+                <div style="margin-top:8px;">${oid ? `<a href="/pedido?orderid=${encodeURIComponent(oid)}" class="button primary" style="text-decoration:none;">Abrir pedido</a>` : ''}</div>
+              </div>`;
             }).join('');
           }
         }
@@ -1950,9 +2022,9 @@
     if (backBtn) backBtn.addEventListener('click', hideClientPage);
     if (consultBtn) {
       consultBtn.addEventListener('click', () => {
-        const v = onlyDigits((phoneInputPage && phoneInputPage.value && phoneInputPage.value.trim()) || '');
-        if (!v) { alert('Digite seu telefone.'); return; }
-        applyPhone(v);
+        const raw = (phoneInputPage && phoneInputPage.value && phoneInputPage.value.trim()) || '';
+        const v = onlyDigits(raw);
+        if (!v) { alert('Digite seu telefone ou número do pedido.'); return; }
         fetchOrders(v);
       });
     }
