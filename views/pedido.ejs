@@ -6,6 +6,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
+  <script>
+    (function(){
+      var PIXEL_ID = '<%= PIXEL_ID %>';
+      if (!PIXEL_ID) return;
+      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+      n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+      t.src='https://connect.facebook.net/en_US/fbevents.js';s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s)}(window, document,'script');
+      fbq('init', PIXEL_ID);
+      fbq('consent', 'grant');
+      fbq('track', 'PageView');
+      window._oppusPixelReady = true;
+    })();
+  </script>
 </head>
 <body>
   <div class="container checkout-page">
@@ -32,7 +47,7 @@
                 <div><strong>Quantidade:</strong> <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div><strong>Instagram:</strong> <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
-                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> <button id="copyOrderBtn" class="button" style="margin-left:8px;padding:4px 8px;font-weight:700;">📋 Copiar</button></div>
+                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> <button id="copyOrderBtn" class="continue-button small" style="margin-left:8px;" aria-label="Copiar número do pedido">📋 Copiar</button></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">

@@ -1,5 +1,5 @@
 (() => {
-  try { if (typeof fbq === 'function') fbq('track', 'PageView'); } catch(e) {}
+  try { if (typeof fbq === 'function' && window._oppusPixelReady) fbq('track', 'PageView'); } catch(e) {}
   const tipoSelect = document.getElementById('tipoSelect');
   const qtdSelect = document.getElementById('quantidadeSelect');
   const tipoCards = document.getElementById('tipoCards');
@@ -1794,7 +1794,7 @@
       autoTimer = setInterval(() => {
         idx = (idx + 1) % items.length;
         render();
-      }, 3500);
+      }, 45000);
     }
     function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
     if (prev) prev.addEventListener('click', () => { idx = (idx - 1 + items.length) % items.length; render(); });
@@ -1953,7 +1953,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}" style="font-weight:700;padding:10px 14px;">Detalhes do pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }
           }
@@ -2005,7 +2005,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}" style="font-weight:700;padding:10px 14px;">Detalhes do pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }).join('');
           }

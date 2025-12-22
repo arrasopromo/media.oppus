@@ -1367,6 +1367,32 @@ app.get('/api/woovi/charge-status', async (req, res) => {
             const orderId = famaData.order || famaData.id || null;
             await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
           }
+          try {
+            const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+            const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+            const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+            let viewsQty = 0;
+            if (typeof bumpsStr === 'string' && bumpsStr) {
+              const parts = bumpsStr.split(';');
+              const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+              if (vPart) {
+                const num = Number(vPart.split(':')[1]);
+                if (!Number.isNaN(num) && num > 0) viewsQty = num;
+              }
+            }
+            if (viewsQty > 0 && instaUser && (process.env.FAMA24H_API_KEY || '')) {
+              const axios = require('axios');
+              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
+              try {
+                const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataViews = respViews.data || {};
+                const orderIdViews = dataViews.order || dataViews.id || null;
+                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+              } catch (e2) {
+                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+              }
+            }
+          } catch (_) {}
         } catch (_) {}
         broadcastPaymentPaid(identifier, correlationID);
       }
@@ -2257,6 +2283,33 @@ app.post('/api/openpix/webhook', async (req, res) => {
           }
 
           try {
+            const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+            const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+            const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+            let viewsQty = 0;
+            if (typeof bumpsStr === 'string' && bumpsStr) {
+              const parts = bumpsStr.split(';');
+              const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+              if (vPart) {
+                const num = Number(vPart.split(':')[1]);
+                if (!Number.isNaN(num) && num > 0) viewsQty = num;
+              }
+            }
+            if (viewsQty > 0 && instaUser && (process.env.FAMA24H_API_KEY || '')) {
+              const axios = require('axios');
+              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
+              try {
+                const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataViews = respViews.data || {};
+                const orderIdViews = dataViews.order || dataViews.id || null;
+                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+              } catch (e2) {
+                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+              }
+            }
+          } catch (_) {}
+
+          try {
             const trackUrl = 'https://track.agenciaoppus.site/webhook/validar-confirmado';
             const trackPayload = {
               event: 'CHECKOUT_PIX_PAID',
@@ -2438,7 +2491,7 @@ app.get('/pedido', async (req, res) => {
       doc = await col.findOne(filter);
     }
     const order = doc || {};
-    return res.render('pedido', { order });
+    return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
   }
@@ -2614,6 +2667,32 @@ app.post('/api/payment/confirm', async (req, res) => {
         const orderId = famaData.order || famaData.id || null;
         await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
       }
+      try {
+        const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+        const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+        const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+        let viewsQty = 0;
+        if (typeof bumpsStr === 'string' && bumpsStr) {
+          const parts = bumpsStr.split(';');
+          const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+          if (vPart) {
+            const num = Number(vPart.split(':')[1]);
+            if (!Number.isNaN(num) && num > 0) viewsQty = num;
+          }
+        }
+        if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+          const axios = require('axios');
+          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(resolvedUser), quantity: String(viewsQty) });
+          try {
+            const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const dataViews = respViews.data || {};
+            const orderIdViews = dataViews.order || dataViews.id || null;
+            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+          } catch (e2) {
+            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+          }
+        }
+      } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
     } catch (_) {}
 
@@ -2681,6 +2760,32 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
         const orderId = famaData.order || famaData.id || null;
         await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
       }
+      try {
+        const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+        const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+        const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+        let viewsQty = 0;
+        if (typeof bumpsStr === 'string' && bumpsStr) {
+          const parts = bumpsStr.split(';');
+          const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+          if (vPart) {
+            const num = Number(vPart.split(':')[1]);
+            if (!Number.isNaN(num) && num > 0) viewsQty = num;
+          }
+        }
+        if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+          const axios = require('axios');
+          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(resolvedUser), quantity: String(viewsQty) });
+          try {
+            const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const dataViews = respViews.data || {};
+            const orderIdViews = dataViews.order || dataViews.id || null;
+            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+          } catch (e2) {
+            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+          }
+        }
+      } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
     } catch (_) {}
 
