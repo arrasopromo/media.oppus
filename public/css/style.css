@@ -543,7 +543,7 @@ html, body { overflow-x: hidden; }
 }
 .copy-icon-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); border-color: #1d4ed8; }
 .copy-icon-btn:active { transform: translateY(0); }
-.copy-icon-btn svg { display:block; }
+.copy-icon-btn svg { display:block; width: 24px; height: 24px; }
 .copy-icon-btn.copied { border-color: #22c55e; }
 
 /* Botão de alternância de tema */
