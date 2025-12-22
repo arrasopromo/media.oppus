@@ -2409,10 +2409,16 @@ app.get('/pedido', async (req, res) => {
   try {
     const identifier = String(req.query.identifier || '').trim();
     const correlationID = String(req.query.correlationID || '').trim();
+    const orderIDRaw = String(req.query.orderID || '').trim();
     const col = await getCollection('checkout_orders');
     const conds = [];
     if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
     if (correlationID) conds.push({ correlationID });
+    if (orderIDRaw) {
+      const maybeNum = Number(orderIDRaw);
+      if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
+      conds.push({ 'fama24h.orderId': orderIDRaw });
+    }
     const filter = conds.length ? { $or: conds } : {};
     const doc = await col.findOne(filter);
     const order = doc || {};
@@ -2426,6 +2432,7 @@ app.get('/api/order', async (req, res) => {
     const id = req.query.id ? String(req.query.id).trim() : '';
     const identifier = String(req.query.identifier || '').trim();
     const correlationID = String(req.query.correlationID || '').trim();
+    const orderIDRaw = String(req.query.orderID || '').trim();
     const col = await getCollection('checkout_orders');
     let doc = null;
     if (id) {
@@ -2435,6 +2442,11 @@ app.get('/api/order', async (req, res) => {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
+      if (orderIDRaw) {
+        const maybeNum = Number(orderIDRaw);
+        if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
+        conds.push({ 'fama24h.orderId': orderIDRaw });
+      }
       const filter = conds.length ? { $or: conds } : {};
       doc = await col.findOne(filter);
     }
