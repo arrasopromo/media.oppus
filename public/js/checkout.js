@@ -1953,7 +1953,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Abrir pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}" style="font-weight:700;padding:10px 14px;">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }
           }
@@ -2005,7 +2005,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Abrir pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}" style="font-weight:700;padding:10px 14px;">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }).join('');
           }
