@@ -1641,8 +1641,22 @@
             if (isPaid) {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
+              try { markPaymentConfirmed(); } catch(_) {}
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            }
+            if (!isPaid) {
+              try {
+                const dbUrl = `/api/checkout/payment-state?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+                const dbResp = await fetch(dbUrl);
+                const dbData = await dbResp.json();
+                if (dbData?.paid === true) {
+                  clearInterval(paymentPollInterval);
+                  paymentPollInterval = null;
+                  try { markPaymentConfirmed(); } catch(_) {}
+                  await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+                }
+              } catch(_) {}
             }
           } catch (e) {
             // Silencioso: mantém próximo ciclo
@@ -1662,6 +1676,7 @@
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               if (paymentEventSource) { try { paymentEventSource.close(); } catch(_) {} paymentEventSource = null; }
+              try { markPaymentConfirmed(); } catch(_) {}
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             }
@@ -1678,6 +1693,7 @@
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
+              try { markPaymentConfirmed(); } catch(_) {}
               const qs = new URLSearchParams({ identifier, correlationID: serverCorrelationID || correlationID }).toString();
               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             } catch(_) {}
@@ -2263,6 +2279,16 @@
     } catch (_) {
       showResumoIfAllowed();
     }
+  }
+
+  function markPaymentConfirmed() {
+    try {
+      if (pixResultado) {
+        pixResultado.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;color:#fff;"><span>Pagamento confirmado</span><span>✅</span></div>';
+      }
+    } catch(_) {}
+    try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
+    try { showResumoIfAllowed(); } catch(_) {}
   }
   try {
     const audioBtn = document.getElementById('audioPlayBtn');
