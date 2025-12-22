@@ -40,14 +40,22 @@
         <div class="service-card">
           <div class="card-content">
             <h3 class="card-title">Informações do pedido</h3>
-            <div class="card-desc" style="font-size: calc(1rem + 1px);">
+            <div class="card-desc" style="font-size: calc(1rem + 2px);">
               <div style="display:grid; gap:0.5rem;">
                 <div><strong>Status:</strong> <span id="orderStatus" class="status-text <%= ((String(order.status||order.woovi?.status||'').toLowerCase()==='pago') ? 'status-green' : (String(order.status||order.woovi?.status||'').toLowerCase()==='pendente' ? 'status-yellow' : '')) %>" style="font-weight:700;"><%= (String(order.status||order.woovi?.status||'').toLowerCase()==='pago' ? 'pedido pago' : String(order.status || order.woovi?.status || 'pendente')) %></span></div>
                 <div><strong>Serviço:</strong> <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
                 <div><strong>Quantidade:</strong> <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div><strong>Instagram:</strong> <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
-                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> <button id="copyOrderBtn" class="continue-button small" style="margin-left:8px;" aria-label="Copiar número do pedido">📋 Copiar</button></div>
+                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> 
+                  <button id="copyOrderBtn" class="copy-icon-btn" style="margin-left:8px;" aria-label="Copiar número do pedido">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="7" y="7" width="10" height="10" rx="2" stroke="#1d4ed8" stroke-width="2"/>
+                      <rect x="3" y="3" width="10" height="10" rx="2" stroke="#1d4ed8" stroke-width="2" opacity="0.6"/>
+                    </svg>
+                  </button>
+                </div>
+                <div><strong>Total do pedido:</strong> <span id="orderTotal">-</span></div>
                 <div><strong>Itens adicionais:</strong> <span id="orderBumpsBox">-</span></div>
                 <div><strong>Total de adicionais:</strong> <span id="orderBumpsTotal">-</span></div>
               </div>
@@ -146,9 +154,33 @@
                 };
                 var bumpsStr = getAddVal(o, 'order_bumps');
                 var bumpsTotal = getAddVal(o, 'order_bumps_total');
+                var baseCents = 0;
+                try {
+                  if (typeof o.valueCents === 'number') baseCents = o.valueCents;
+                  else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && typeof o.woovi.paymentMethods.pix.value === 'number') baseCents = o.woovi.paymentMethods.pix.value;
+                } catch(_) {}
+                var bumpsCents = 0;
+                if (typeof bumpsTotal === 'string' && bumpsTotal) {
+                  var m = bumpsTotal.match(/(\d+)[,\.]?(\d{0,2})/);
+                  if (m) {
+                    var whole = Number(m[1]);
+                    var frac = String(m[2]||'');
+                    var frac2 = frac.padEnd(2,'0').slice(0,2);
+                    bumpsCents = (whole*100) + Number(frac2);
+                  }
+                }
+                var totalCents = baseCents + bumpsCents;
+                var totalStr = '-';
+                if (totalCents > 0) {
+                  var reais = Math.floor(totalCents/100);
+                  var cents = String(totalCents%100).padStart(2,'0');
+                  totalStr = 'R$ ' + reais + ',' + cents;
+                }
                 var elB = document.getElementById('orderBumpsBox');
                 var elBT = document.getElementById('orderBumpsTotal');
+                var elTot = document.getElementById('orderTotal');
                 if (elBT) { elBT.textContent = bumpsTotal || '-'; }
+                if (elTot) { elTot.textContent = totalStr; }
                 if (elB) {
                   if (typeof bumpsStr === 'string' && bumpsStr) {
                     var parts = bumpsStr.split(';').map(function(p){ return p.trim(); }).filter(Boolean);
@@ -183,7 +215,7 @@
           var val = (span.textContent || '').trim();
           if (!val) return;
           navigator.clipboard.writeText(val).then(function(){
-            try { btn.textContent = 'Copiado'; setTimeout(function(){ btn.textContent = '📋 Copiar'; }, 1500); } catch(_) {}
+            try { btn.classList.add('copied'); setTimeout(function(){ btn.classList.remove('copied'); }, 1200); } catch(_) {}
           });
         } catch(_) {}
       });
