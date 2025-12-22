@@ -2427,12 +2427,30 @@ app.get('/pedido', async (req, res) => {
         conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
       }
     }
+    if (!conds.length && req.session && req.session.selectedOrderID) {
+      const soid = req.session.selectedOrderID;
+      conds.push({ 'fama24h.orderId': soid });
+    }
     const filter = conds.length ? { $or: conds } : {};
     const doc = await col.findOne(filter);
     const order = doc || {};
     return res.render('pedido', { order });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
+  }
+});
+
+app.post('/pedido/select', async (req, res) => {
+  try {
+    const orderIDRaw = String((req.body && (req.body.orderID || req.body.orderid)) || '').trim();
+    if (!orderIDRaw) {
+      return res.status(400).json({ ok: false, error: 'missing_orderid' });
+    }
+    const maybeNum = Number(orderIDRaw);
+    req.session.selectedOrderID = !Number.isNaN(maybeNum) ? maybeNum : orderIDRaw;
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 app.get('/api/order', async (req, res) => {
@@ -2462,6 +2480,10 @@ app.get('/api/order', async (req, res) => {
           conds.push({ 'customer.phone': `+55${digits}` });
           conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
         }
+      }
+      if (!conds.length && req.session && req.session.selectedOrderID) {
+        const soid = req.session.selectedOrderID;
+        conds.push({ 'fama24h.orderId': soid });
       }
       const filter = conds.length ? { $or: conds } : {};
       doc = await col.findOne(filter);
