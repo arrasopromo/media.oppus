@@ -814,6 +814,7 @@ app.use((req, res, next) => {
 // Configurar view engine ANTES de qualquer render
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
+app.use((req, res, next) => { res.locals.PIXEL_ID = process.env.PIXEL_ID || ''; next(); });
 
 // Rota de diagnóstico simples
 app.get('/ping', (req, res) => {
