@@ -1921,7 +1921,11 @@
             } else {
               try {
                 const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
-                if (oid) { window.location.href = `/pedido?orderid=${encodeURIComponent(oid)}`; return; }
+                if (oid) {
+                  try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
+                  window.location.href = '/pedido';
+                  return;
+                }
               } catch (_) {}
               const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
               const status = String(o.status || o.woovi?.status || '-');
