@@ -2257,28 +2257,26 @@
   }
 
   async function navigateToPedidoOrFallback(identifier, correlationID) {
+    const qs = new URLSearchParams({ identifier, correlationID }).toString();
+    const url = `/pedido?${qs}`;
+    try { window.location.assign(url); } catch(_) {}
     try {
-      const qs = new URLSearchParams({ identifier, correlationID }).toString();
-      const url = `/pedido?${qs}`;
-      const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
-      if (r && r.ok) {
-        window.location.href = url;
-        return;
-      }
-    } catch (_) {}
-    try {
-      showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success');
-    } catch (_) {}
-    try {
-      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
-      const resp = await fetch(apiUrl);
-      const data = await resp.json();
-      if (data && data.order) {
-        showResumoIfAllowed();
-      }
-    } catch (_) {
-      showResumoIfAllowed();
-    }
+      setTimeout(async () => {
+        try {
+          if (location && location.pathname === '/pedido') return;
+          const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
+          if (r && r.ok) { window.location.href = url; return; }
+        } catch(_) {}
+        try { markPaymentConfirmed(); } catch(_) {}
+        try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
+        try {
+          const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+          const resp = await fetch(apiUrl);
+          const data = await resp.json();
+          if (data && data.order) { showResumoIfAllowed(); }
+        } catch(_) { showResumoIfAllowed(); }
+      }, 2500);
+    } catch(_) {}
   }
 
   function markPaymentConfirmed() {
