@@ -2257,8 +2257,21 @@
   }
 
   async function navigateToPedidoOrFallback(identifier, correlationID) {
-    const qs = new URLSearchParams({ identifier, correlationID }).toString();
-    const url = `/pedido?${qs}`;
+    let targetUrl = '';
+    try {
+      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+      const resp = await fetch(apiUrl);
+      const data = await resp.json();
+      const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || null;
+      if (oid) {
+        targetUrl = `/pedido?orderID=${encodeURIComponent(String(oid))}`;
+      }
+    } catch(_) {}
+    if (!targetUrl) {
+      const qs = new URLSearchParams({ identifier, correlationID }).toString();
+      targetUrl = `/pedido?${qs}`;
+    }
+    const url = targetUrl;
     try { window.location.assign(url); } catch(_) {}
     try {
       setTimeout(async () => {
@@ -2270,10 +2283,10 @@
         try { markPaymentConfirmed(); } catch(_) {}
         try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
         try {
-          const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
-          const resp = await fetch(apiUrl);
-          const data = await resp.json();
-          if (data && data.order) { showResumoIfAllowed(); }
+          const checkUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+          const resp2 = await fetch(checkUrl);
+          const data2 = await resp2.json();
+          if (data2 && data2.order) { showResumoIfAllowed(); }
         } catch(_) { showResumoIfAllowed(); }
       }, 2500);
     } catch(_) {}

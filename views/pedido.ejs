@@ -17,6 +17,8 @@
     <header class="header">
       <h1 class="title">Pedido confirmado</h1>
       <p class="subtitle">Resumo do seu pedido</p>
+      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema">Tema: Escuro</button>
+      <a href="/checkout" id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido" style="text-decoration:none;">Cliente</a>
     </header>
     <main class="main-content">
       <section class="section-block">
@@ -29,11 +31,8 @@
                 <div><strong>Serviço:</strong> <span><%= String(order.tipo || order.tipoServico || '-') %></span></div>
                 <div><strong>Quantidade:</strong> <span><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div><strong>Instagram:</strong> <span><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
-                <div><strong>Identificador:</strong> <span><%= String((order.woovi && order.woovi.identifier) || order.identifier || '-') %></span></div>
-                <div><strong>CorrelationID:</strong> <span><%= String(order.correlationID || '-') %></span></div>
-                <div><strong>EndToEndId:</strong> <span><%= String((order.woovi && order.woovi.endToEndId) || '-') %></span></div>
-                <div><strong>Pago em:</strong> <span><%= String((order.woovi && order.woovi.paidAt) || order.paidAt || '-') %></span></div>
-                <div><strong>Order ID (Fama24h):</strong> <span><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
+                <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
+                <div><strong>Número do pedido:</strong> <span><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
@@ -56,9 +55,26 @@
       try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
       var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
       var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
+      try {
+        var paidRaw = (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
+        if (paidRaw) {
+          var d = new Date(paidRaw);
+          var spTime = new Date(d.getTime() - (3 * 60 * 60 * 1000));
+          var dd = String(spTime.getUTCDate()).padStart(2,'0');
+          var mm = String(spTime.getUTCMonth()+1).padStart(2,'0');
+          var yyyy = spTime.getUTCFullYear();
+          var hh = String(spTime.getUTCHours()).padStart(2,'0');
+          var min = String(spTime.getUTCMinutes()).padStart(2,'0');
+          var txt = dd + '/' + mm + '/' + yyyy + ' as ' + hh + ':' + min;
+          var el = document.getElementById('paidAtLocal');
+          if (el) el.textContent = txt;
+        }
+      } catch(_) {}
       function check() {
         if (hasFama) return;
-        var url = '/api/order?id=' + encodeURIComponent(String(orderId || ''));
+        var orderIDParam = (orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '';
+        var baseUrl = orderIDParam ? ('/api/order?orderID=' + encodeURIComponent(orderIDParam)) : ('/api/order?id=' + encodeURIComponent(String(orderId || '')));
+        var url = baseUrl;
         fetch(url)
           .then(function(r){return r.json();})
           .then(function(d){
@@ -72,6 +88,26 @@
           .catch(function(){});
       }
       setInterval(check, 8000);
+    })();
+    (function initThemeToggle(){
+      var btn = document.getElementById('themeToggleBtn');
+      if (!btn) return;
+      var applyLabel = function(){
+        var isLight = document.body.classList.contains('theme-light');
+        btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
+      };
+      try {
+        var pref = localStorage.getItem('oppus_theme') || 'dark';
+        document.body.classList.toggle('theme-light', pref === 'light');
+      } catch(_) {}
+      applyLabel();
+      btn.addEventListener('click', function(){
+        var isLight = document.body.classList.contains('theme-light');
+        var next = isLight ? 'dark' : 'light';
+        try { localStorage.setItem('oppus_theme', next); } catch(_) {}
+        document.body.classList.toggle('theme-light', next === 'light');
+        applyLabel();
+      });
     })();
   </script>
 </body>
