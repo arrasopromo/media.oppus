@@ -27,12 +27,12 @@
             <h3 class="card-title">Informações do pedido</h3>
             <div class="card-desc">
               <div style="display:grid; gap:0.5rem;">
-                <div><strong>Status:</strong> <span><%= String(order.status || 'pendente') %></span></div>
-                <div><strong>Serviço:</strong> <span><%= String(order.tipo || order.tipoServico || '-') %></span></div>
-                <div><strong>Quantidade:</strong> <span><%= Number(order.qtd || order.quantidade || 0) %></span></div>
-                <div><strong>Instagram:</strong> <span><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
+                <div><strong>Status:</strong> <span id="orderStatus"><%= String(order.status || 'pendente') %></span></div>
+                <div><strong>Serviço:</strong> <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
+                <div><strong>Quantidade:</strong> <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
+                <div><strong>Instagram:</strong> <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
-                <div><strong>Número do pedido:</strong> <span><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
+                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
@@ -68,7 +68,6 @@
         }
       } catch(_) {}
       function check() {
-        if (hasFama) return;
         var orderIDParam = (orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '';
         var baseUrl = orderIDParam ? ('/api/order?orderID=' + encodeURIComponent(orderIDParam)) : ('/api/order?id=' + encodeURIComponent(String(orderId || '')));
         var url = baseUrl;
@@ -76,10 +75,39 @@
           .then(function(r){return r.json();})
           .then(function(d){
             try {
-              var el = document.querySelector('.card-desc span:last-child');
-              var current = el && el.textContent;
-              var oid = (d && d.order && d.order.fama24h && d.order.fama24h.orderId) || null;
-              if (oid && el && (!current || current === '-')) { el.textContent = String(oid); hasFama = true; }
+              var o = d && d.order ? d.order : null;
+              if (!o) return;
+              var oid = (o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : null;
+              var paidRaw = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
+              var status = String(o.status || o.woovi && o.woovi.status || 'pendente');
+              var tipo = String(o.tipo || o.tipoServico || '-');
+              var qtd = String(o.qtd || o.quantidade || '0');
+              var insta = String(o.instagramUsername || o.instauser || '-');
+              var paidStr = null;
+              if (paidRaw) {
+                try {
+                  var d0 = new Date(paidRaw);
+                  var sp = new Date(d0.getTime() - (3*60*60*1000));
+                  var dd = String(sp.getUTCDate()).padStart(2,'0');
+                  var mm = String(sp.getUTCMonth()+1).padStart(2,'0');
+                  var yyyy = sp.getUTCFullYear();
+                  var hh = String(sp.getUTCHours()).padStart(2,'0');
+                  var mn = String(sp.getUTCMinutes()).padStart(2,'0');
+                  paidStr = dd + '/' + mm + '/' + yyyy + ' as ' + hh + ':' + mn;
+                } catch(_) {}
+              }
+              var elNum = document.getElementById('orderNumberId');
+              if (elNum && oid) elNum.textContent = String(oid);
+              var elPaid = document.getElementById('paidAtLocal');
+              if (elPaid && paidStr) elPaid.textContent = paidStr;
+              var elSt = document.getElementById('orderStatus');
+              if (elSt) elSt.textContent = status;
+              var elTipo = document.getElementById('orderTipo');
+              if (elTipo) elTipo.textContent = tipo;
+              var elQtd = document.getElementById('orderQtd');
+              if (elQtd) elQtd.textContent = String(qtd);
+              var elUser = document.getElementById('orderInsta');
+              if (elUser) elUser.textContent = insta;
             } catch(_){}
           })
           .catch(function(){});
