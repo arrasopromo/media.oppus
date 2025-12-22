@@ -42,12 +42,14 @@
             <h3 class="card-title">Informações do pedido</h3>
             <div class="card-desc" style="font-size: calc(1rem + 1px);">
               <div style="display:grid; gap:0.5rem;">
-                <div><strong>Status:</strong> <span id="orderStatus"><%= String(order.status || 'pendente') %></span></div>
+                <div><strong>Status:</strong> <span id="orderStatus" class="status-text <%= ((String(order.status||order.woovi?.status||'').toLowerCase()==='pago') ? 'status-green' : (String(order.status||order.woovi?.status||'').toLowerCase()==='pendente' ? 'status-yellow' : '')) %>" style="font-weight:700;"><%= (String(order.status||order.woovi?.status||'').toLowerCase()==='pago' ? 'pedido pago' : String(order.status || order.woovi?.status || 'pendente')) %></span></div>
                 <div><strong>Serviço:</strong> <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
                 <div><strong>Quantidade:</strong> <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div><strong>Instagram:</strong> <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
                 <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> <button id="copyOrderBtn" class="continue-button small" style="margin-left:8px;" aria-label="Copiar número do pedido">📋 Copiar</button></div>
+                <div><strong>Itens adicionais:</strong> <span id="orderBumpsBox">-</span></div>
+                <div><strong>Total de adicionais:</strong> <span id="orderBumpsTotal">-</span></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
@@ -116,13 +118,55 @@
               var elPaid = document.getElementById('paidAtLocal');
               if (elPaid && paidStr) elPaid.textContent = paidStr;
               var elSt = document.getElementById('orderStatus');
-              if (elSt) elSt.textContent = status;
+              if (elSt) {
+                var s = String(status||'').toLowerCase();
+                elSt.textContent = s==='pago' ? 'pedido pago' : status;
+                try {
+                  elSt.classList.toggle('status-green', s==='pago');
+                  elSt.classList.toggle('status-yellow', s==='pendente');
+                } catch(_) {}
+              }
               var elTipo = document.getElementById('orderTipo');
               if (elTipo) elTipo.textContent = tipo;
               var elQtd = document.getElementById('orderQtd');
               if (elQtd) elQtd.textContent = String(qtd);
               var elUser = document.getElementById('orderInsta');
               if (elUser) elUser.textContent = insta;
+              try {
+                var getAddVal = function(obj, key){
+                  var arrPaid = Array.isArray(obj && obj.additionalInfoPaid) ? obj.additionalInfoPaid : [];
+                  var arr = Array.isArray(obj && obj.additionalInfo) ? obj.additionalInfo : [];
+                  var mapPaid = obj && obj.additionalInfoMapPaid || {};
+                  var foundPaid = arrPaid.find(function(it){ return it && it.key === key; });
+                  if (foundPaid && typeof foundPaid.value === 'string') return foundPaid.value;
+                  var found = arr.find(function(it){ return it && it.key === key; });
+                  if (found && typeof found.value === 'string') return found.value;
+                  if (mapPaid && typeof mapPaid[key] === 'string') return mapPaid[key];
+                  return '';
+                };
+                var bumpsStr = getAddVal(o, 'order_bumps');
+                var bumpsTotal = getAddVal(o, 'order_bumps_total');
+                var elB = document.getElementById('orderBumpsBox');
+                var elBT = document.getElementById('orderBumpsTotal');
+                if (elBT) { elBT.textContent = bumpsTotal || '-'; }
+                if (elB) {
+                  if (typeof bumpsStr === 'string' && bumpsStr) {
+                    var parts = bumpsStr.split(';').map(function(p){ return p.trim(); }).filter(Boolean);
+                    var labels = parts.map(function(p){
+                      var kv = p.split(':');
+                      var k = kv[0];
+                      var v = kv[1];
+                      if (k === 'views') return 'Visualizações (' + v + ')';
+                      if (k === 'likes') return 'Curtidas (' + v + ')';
+                      if (k === 'comments') return 'Comentários (' + v + ')';
+                      return k + ' (' + v + ')';
+                    });
+                    elB.textContent = labels.join(', ');
+                  } else {
+                    elB.textContent = '-';
+                  }
+                }
+              } catch(_) {}
             } catch(_){}
           })
           .catch(function(){});
