@@ -36,6 +36,9 @@
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
+              <button id="backToPrevBtn" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem; margin-right:0.5rem;">
+                <span class="button-text">Voltar</span>
+              </button>
               <a href="/checkout" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem;">
                 <span class="button-text">Voltar ao Checkout</span>
               </a>
@@ -88,6 +91,20 @@
           .catch(function(){});
       }
       setInterval(check, 8000);
+    })();
+    (function initBackButton(){
+      var btn = document.getElementById('backToPrevBtn');
+      if (!btn) return;
+      btn.addEventListener('click', function(){
+        try {
+          if (window.history && window.history.length > 1) { window.history.back(); return; }
+        } catch(_) {}
+        try {
+          var phone = localStorage.getItem('oppus_client_phone') || '';
+          if (phone) { window.location.href = '/cliente'; return; }
+        } catch(_) {}
+        window.location.href = '/checkout';
+      });
     })();
     (function initThemeToggle(){
       var btn = document.getElementById('themeToggleBtn');

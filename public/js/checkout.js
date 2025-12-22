@@ -1949,7 +1949,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;"><a href="/pedido?orderid=${encodeURIComponent(oid)}" class="button primary" style="text-decoration:none;">Abrir pedido</a></div>
+                <div style="margin-top:8px;">${oid ? `<button class="button primary open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Abrir pedido</button>` : ''}</div>
               </div>`;
             }
           }
