@@ -1673,7 +1673,7 @@
           if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
           const sseUrl = `/api/payment/subscribe?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
           paymentEventSource = new EventSource(sseUrl);
-          paymentEventSource.addEventListener('paid', (ev) => {
+          paymentEventSource.addEventListener('paid', async (ev) => {
             try {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
