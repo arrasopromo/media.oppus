@@ -15,6 +15,7 @@
   let selectedPlatform = (btnInstagram && btnInstagram.getAttribute('aria-pressed') === 'true') ? 'instagram' : 'tiktok';
   let basePriceCents = 0;
   let paymentPollInterval = null;
+  let paymentEventSource = null;
   const checkoutPhoneInput = document.getElementById('checkoutPhoneInput');
   function onlyDigits(v){ return String(v||'').replace(/\D+/g,''); }
   function maskBrPhone(v){
@@ -86,6 +87,7 @@
 
   const tabela = {
     mistos: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 14,90' },
       { q: 500, p: 'R$ 22,90' },
@@ -100,6 +102,7 @@
       { q: 15000, p: 'R$ 219,90' },
     ],
     brasileiros: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 19,90' },
       { q: 300, p: 'R$ 29,90' },
       { q: 500, p: 'R$ 39,90' },
@@ -186,9 +189,9 @@
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
-    const base = [150, 500, 1200, 3000, 5000, 10000];
+    const base = [50, 150, 500, 1200, 3000, 5000, 10000];
     if (tipo === 'brasileiros' || tipo === 'organicos') {
-      return [150, 500, 1000, 3000, 5000, 10000];
+      return [50, 150, 500, 1000, 3000, 5000, 10000];
     }
     return base;
   }
@@ -1620,8 +1623,9 @@
         });
       }
 
-      // Inicia polling de pagamento a cada 30 segundos
       const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
+      const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
+      const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
       if (paymentPollInterval) {
         clearInterval(paymentPollInterval);
         paymentPollInterval = null;
@@ -1654,6 +1658,50 @@
         // Executa imediatamente e depois a cada 30s
         checkPaid();
         paymentPollInterval = setInterval(checkPaid, 30000);
+      } else {
+        const checkPaidDb = async () => {
+          try {
+            const url = `/api/checkout/payment-state?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+            const stResp = await fetch(url);
+            const stData = await stResp.json();
+            const isPaid = stData?.paid === true;
+            if (isPaid) {
+              clearInterval(paymentPollInterval);
+              paymentPollInterval = null;
+              if (paymentEventSource) { try { paymentEventSource.close(); } catch(_) {} paymentEventSource = null; }
+              pixResultado.innerHTML = `
+                ${imgHtml}${codeFieldHtml}${copyBtnHtml}
+                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#b8ffb8; font-weight:600;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" stroke="#b8ffb8" stroke-width="2"/>
+                  </svg>
+                  <span>Pagamento confirmado!</span>
+                </div>`;
+            }
+          } catch (e) {}
+        };
+        checkPaidDb();
+        paymentPollInterval = setInterval(checkPaidDb, 12000);
+        try {
+          if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
+          const sseUrl = `/api/payment/subscribe?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+          paymentEventSource = new EventSource(sseUrl);
+          paymentEventSource.addEventListener('paid', (ev) => {
+            try {
+              clearInterval(paymentPollInterval);
+              paymentPollInterval = null;
+              if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
+              pixResultado.innerHTML = `
+                ${imgHtml}${codeFieldHtml}${copyBtnHtml}
+                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#b8ffb8; font-weight:600;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" stroke="#b8ffb8" stroke-width="2"/>
+                  </svg>
+                  <span>Pagamento confirmado!</span>
+                </div>`;
+            } catch(_) {}
+          });
+        } catch(_) {}
       }
     } catch (err) {
       alert('Erro ao criar PIX: ' + (err?.message || err));
