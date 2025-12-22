@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Resumo do Pedido</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/css/style.css" rel="stylesheet" />
+  <link href="/css/perfil.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="container checkout-page">
+    <div class="site-brand" aria-label="Marca do site">
+      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+      <span class="site-brand-text">Agência Oppus</span>
+    </div>
+    <header class="header">
+      <h1 class="title">Pedido confirmado</h1>
+      <p class="subtitle">Resumo do seu pedido</p>
+    </header>
+    <main class="main-content">
+      <section class="section-block">
+        <div class="service-card">
+          <div class="card-content">
+            <h3 class="card-title">Informações do pedido</h3>
+            <div class="card-desc">
+              <div style="display:grid; gap:0.5rem;">
+                <div><strong>Status:</strong> <span><%= String(order.status || 'pendente') %></span></div>
+                <div><strong>Serviço:</strong> <span><%= String(order.tipo || order.tipoServico || '-') %></span></div>
+                <div><strong>Quantidade:</strong> <span><%= Number(order.qtd || order.quantidade || 0) %></span></div>
+                <div><strong>Instagram:</strong> <span><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
+                <div><strong>Identificador:</strong> <span><%= String((order.woovi && order.woovi.identifier) || order.identifier || '-') %></span></div>
+                <div><strong>CorrelationID:</strong> <span><%= String(order.correlationID || '-') %></span></div>
+                <div><strong>EndToEndId:</strong> <span><%= String((order.woovi && order.woovi.endToEndId) || '-') %></span></div>
+                <div><strong>Pago em:</strong> <span><%= String((order.woovi && order.woovi.paidAt) || order.paidAt || '-') %></span></div>
+                <div><strong>Order ID (Fama24h):</strong> <span><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
+              </div>
+            </div>
+            <div class="button-container" style="margin-top:0.75rem;">
+              <a href="/checkout" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem;">
+                <span class="button-text">Voltar ao Checkout</span>
+              </a>
+              <a href="/" class="continue-button" style="background: transparent; border-color: var(--border-color); color: var(--text-primary); text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem; margin-left:0.5rem;">
+                <span class="button-text">Página inicial</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script id="orderDataJson" type="application/json"><%= JSON.stringify(order || {}) %></script>
+  <script>
+    (function(){
+      var orderData = {};
+      try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
+      var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
+      var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
+      function check() {
+        if (hasFama) return;
+        var url = '/api/order?id=' + encodeURIComponent(String(orderId || ''));
+        fetch(url)
+          .then(function(r){return r.json();})
+          .then(function(d){
+            try {
+              var el = document.querySelector('.card-desc span:last-child');
+              var current = el && el.textContent;
+              var oid = (d && d.order && d.order.fama24h && d.order.fama24h.orderId) || null;
+              if (oid && el && (!current || current === '-')) { el.textContent = String(oid); hasFama = true; }
+            } catch(_){}
+          })
+          .catch(function(){});
+      }
+      setInterval(check, 8000);
+    })();
+  </script>
+</body>
+</html>
