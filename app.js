@@ -787,6 +787,40 @@ app.get('/ping', (req, res) => {
   res.type('text/plain').send('pong');
 });
 
+// SSE para atualização instantânea de pagamento
+const paymentSubscribers = [];
+function addPaymentSubscriber(identifier, correlationID, res) {
+  paymentSubscribers.push({ identifier, correlationID, res });
+}
+function removePaymentSubscriber(res) {
+  const idx = paymentSubscribers.findIndex((c) => c.res === res);
+  if (idx >= 0) paymentSubscribers.splice(idx, 1);
+}
+function broadcastPaymentPaid(identifier, correlationID) {
+  const ident = String(identifier || '').trim();
+  const corr = String(correlationID || '').trim();
+  paymentSubscribers.forEach(({ identifier: id, correlationID: cid, res }) => {
+    if ((ident && id === ident) || (corr && cid === corr)) {
+      try {
+        res.write(`event: paid\n`);
+        res.write(`data: ${JSON.stringify({ identifier: ident, correlationID: corr })}\n\n`);
+      } catch(_) {}
+    }
+  });
+}
+
+app.get('/api/payment/subscribe', (req, res) => {
+  const identifier = String(req.query.identifier || '').trim();
+  const correlationID = String(req.query.correlationID || '').trim();
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  res.write(`: connected\n\n`);
+  addPaymentSubscriber(identifier, correlationID, res);
+  req.on('close', () => { removePaymentSubscriber(res); });
+});
+
 // Diagnóstico: ambiente de execução
 app.get('/__debug/env', (req, res) => {
   try {
@@ -1251,7 +1285,59 @@ app.get('/api/woovi/charge-status', async (req, res) => {
         'Content-Type': 'application/json'
       }
     });
-    return res.status(200).json(response.data);
+    const respData = response.data || {};
+    try {
+      const charge = respData.charge || respData || {};
+      const status = String(charge.status || '').toLowerCase();
+      const paidFlag = charge.paid === true || /paid/.test(status);
+      if (paidFlag) {
+        const col = await getCollection('checkout_orders');
+        const pixMethod = charge.paymentMethods?.pix || {};
+        const identifier = charge.identifier || null;
+        const correlationID = charge.correlationID || null;
+        const paidAtRaw = charge.paidAt || null;
+        const txId = pixMethod?.txId || charge?.transactionID || null;
+        const endToEndId = charge?.endToEndId || null;
+        const setFields = {
+          status: 'pago',
+          'woovi.status': 'pago',
+          paidAt: new Date().toISOString(),
+        };
+        if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
+        if (typeof endToEndId === 'string') setFields['woovi.endToEndId'] = endToEndId;
+        if (typeof txId === 'string') setFields['woovi.paymentMethods.pix.txId'] = txId;
+        if (typeof pixMethod.status === 'string') setFields['woovi.paymentMethods.pix.status'] = pixMethod.status;
+        if (typeof pixMethod.value === 'number') setFields['woovi.paymentMethods.pix.value'] = pixMethod.value;
+        const conds = [ { 'woovi.chargeId': id } ];
+        if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+        if (correlationID) conds.push({ correlationID });
+        const filter = { $or: conds };
+        const upd = await col.updateOne(filter, { $set: setFields });
+        if (!upd.matchedCount && identifier) {
+          await col.updateOne({ identifier }, { $set: setFields });
+        }
+        try {
+          const record = await col.findOne(filter);
+          const alreadySent = record?.fama24h?.orderId ? true : false;
+          const tipo = record?.tipo || record?.tipoServico || '';
+          const qtd = Number(record?.quantidade || record?.qtd || 0) || 0;
+          const instaUser = record?.instagramUsername || record?.instauser || '';
+          const key = process.env.FAMA24H_API_KEY || '';
+          const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+          const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
+          if (canSend) {
+            const axios = require('axios');
+            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+            const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const famaData = famaResp.data || {};
+            const orderId = famaData.order || famaData.id || null;
+            await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+          }
+        } catch (_) {}
+        broadcastPaymentPaid(identifier, correlationID);
+      }
+    } catch (_) {}
+    return res.status(200).json(respData);
   } catch (err) {
     const status = err.response?.status || 500;
     const details = {
@@ -2035,10 +2121,13 @@ app.post('/api/meta/track', async (req, res) => {
 });
 
   // Webhook Woovi/OpenPix: CHARGE_CREATED -> enviar InitiateCheckout (CAPI)
-  app.post('/api/openpix/webhook', async (req, res) => {
-    try {
-      const body = req.body || {};
-      const event = String(body.event || '').toUpperCase();
+app.post('/api/openpix/webhook', async (req, res) => {
+  try {
+    let body = req.body || {};
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch(_) { body = {}; }
+    }
+    const event = String(body.event || '').toUpperCase();
 
       // Atualiza status para 'pago' quando a cobrança for concluída
     if (/CHARGE_COMPLETED/.test(event)) {
@@ -2065,7 +2154,10 @@ app.post('/api/meta/track', async (req, res) => {
         const conds = [];
         if (charge?.id) conds.push({ 'woovi.chargeId': charge.id });
         if (charge?.correlationID) conds.push({ correlationID: charge.correlationID });
-        if (charge?.identifier) conds.push({ 'woovi.identifier': charge.identifier });
+        if (charge?.identifier) {
+          conds.push({ 'woovi.identifier': charge.identifier });
+          conds.push({ identifier: charge.identifier });
+        }
         const filter = conds.length ? { $or: conds } : { correlationID: charge?.correlationID || '' };
 
         const setFields = {
@@ -2091,6 +2183,18 @@ app.post('/api/meta/track', async (req, res) => {
         const update = { $set: setFields };
 
         const result = await col.updateOne(filter, update);
+        if (!result.matchedCount) {
+          const altFilter = charge?.identifier ? { identifier: charge.identifier } : filter;
+          const altResult = await col.updateOne(altFilter, update);
+          if (!altResult.matchedCount) {
+            const phone = (customerObj && customerObj.phone) || additionalInfoMap['phone'] || null;
+            const phoneNorm = phone ? String(phone).replace(/\D/g, '') : null;
+            const phoneFilter = phoneNorm ? { $or: [ { 'customer.phone': `+55${phoneNorm}` }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phoneNorm } } } ] } : null;
+            if (phoneFilter) {
+              await col.updateOne(phoneFilter, update);
+            }
+          }
+        }
         try {
           const record = await col.findOne(filter);
           const alreadySent = record?.fama24h?.orderId ? true : false;
@@ -2117,6 +2221,33 @@ app.post('/api/meta/track', async (req, res) => {
           } else {
             console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd, instaUser, alreadySent });
           }
+
+          try {
+            const trackUrl = 'https://track.agenciaoppus.site/webhook/validar-confirmado';
+            const trackPayload = {
+              event: 'CHECKOUT_PIX_PAID',
+              identifier: charge?.identifier || null,
+              correlationID: charge?.correlationID || null,
+              value: Number(charge?.value || 0) || null,
+              paidAt: paidAtRaw || null,
+              endToEndId: endToEndId || null,
+              tipo_servico: tipo || null,
+              quantidade: qtd || null,
+              instagram_username: instaUser || null,
+              phone: (customerObj && customerObj.phone) || additionalInfoMap['phone'] || null
+            };
+            const resp = await fetch(trackUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(trackPayload)
+            });
+            const data = await resp.text();
+            console.log('🔗 Track validar-confirmado', { status: resp.status, body: data });
+          } catch (tErr) {
+            console.error('⚠️ Falha ao notificar validar-confirmado', tErr?.message || String(tErr));
+          }
+          // Notificar clientes conectados via SSE
+          broadcastPaymentPaid(charge?.identifier, charge?.correlationID);
         } catch (sendErr) {
           console.error('⚠️ Falha ao enviar para Fama24h', sendErr?.message || String(sendErr));
         }
@@ -2222,6 +2353,24 @@ app.get('/api/checkout-orders', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.get('/api/checkout/payment-state', async (req, res) => {
+  try {
+    const id = String(req.query.id || '').trim();
+    const identifier = String(req.query.identifier || '').trim();
+    const correlationID = String(req.query.correlationID || '').trim();
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (id) conds.push({ 'woovi.chargeId': id });
+    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    const filter = conds.length ? { $or: conds } : {};
+    const doc = await col.findOne(filter, { projection: { status: 1, woovi: 1 } });
+    const paid = !!doc && (String(doc.status).toLowerCase() === 'pago' || String(doc.woovi?.status || '').toLowerCase() === 'pago');
+    return res.json({ ok: true, paid, order: doc || null });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.post('/api/woovi/charge/dev', async (req, res) => {
   try {
     const { correlationID, value, comment, customer, additionalInfo } = req.body || {};
@@ -2278,5 +2427,140 @@ app.listen(port, () => {
   console.log("🗄️ Baserow configurado com sucesso");
   console.log(`Servidor rodando na porta ${port}`);
   console.log(`Preview disponível: http://localhost:${port}/checkout`);
+});
+
+app.post('/api/payment/confirm', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const identifier = String(body.identifier || '').trim();
+    const correlationID = String(body.correlationID || '').trim();
+    const value = Number(body.value || 0) || 0;
+    const paidAtRaw = body.paidAt || null;
+    const endToEndId = String(body.endToEndId || '').trim() || null;
+    const tipo = String(body.tipo_servico || '').trim();
+    const qtd = Number(body.quantidade || 0) || 0;
+    const instaUser = String(body.instagram_username || '').trim();
+    const phoneRaw = String(body.phone || '').trim();
+
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    if (phoneRaw) {
+      const digits = phoneRaw.replace(/\D/g, '');
+      if (digits) {
+        conds.push({ 'customer.phone': `+55${digits}` });
+        conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
+      }
+    }
+    const filter = conds.length ? { $or: conds } : {};
+
+    const setFields = {
+      status: 'pago',
+      'woovi.status': 'pago',
+    };
+    if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
+    if (endToEndId) setFields['woovi.endToEndId'] = endToEndId;
+    if (typeof value === 'number') setFields['woovi.paymentMethods.pix.value'] = value;
+    if (tipo) setFields['tipo'] = tipo;
+    if (qtd) setFields['qtd'] = qtd;
+    if (instaUser) setFields['instagramUsername'] = instaUser;
+
+    const upd = await col.updateOne(filter, { $set: setFields });
+    if (!upd.matchedCount) {
+      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
+    }
+
+    try {
+      const record = await col.findOne(filter);
+      const alreadySent = record?.fama24h?.orderId ? true : false;
+      const resolvedTipo = tipo || record?.tipo || record?.tipoServico || '';
+      const resolvedQtd = qtd || record?.quantidade || record?.qtd || 0;
+      const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
+      const key = process.env.FAMA24H_API_KEY || '';
+      const serviceId = (/^mistos$/i.test(resolvedTipo)) ? 659 : (/^brasileiros$/i.test(resolvedTipo)) ? 23 : null;
+      const canSend = !!key && !!serviceId && !!resolvedUser && resolvedQtd > 0 && !alreadySent;
+      if (canSend) {
+        const axios = require('axios');
+        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(resolvedUser), quantity: String(resolvedQtd) });
+        const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        const famaData = famaResp.data || {};
+        const orderId = famaData.order || famaData.id || null;
+        await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      }
+      broadcastPaymentPaid(identifier, correlationID);
+    } catch (_) {}
+
+    return res.json({ ok: true, updated: upd.matchedCount });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/webhook/validar-confirmado', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const identifier = String(body.identifier || '').trim();
+    const correlationID = String(body.correlationID || '').trim();
+    const value = Number(body.value || 0) || 0;
+    const paidAtRaw = body.paidAt || null;
+    const endToEndId = String(body.endToEndId || '').trim() || null;
+    const tipo = String(body.tipo_servico || '').trim();
+    const qtd = Number(body.quantidade || 0) || 0;
+    const instaUser = String(body.instagram_username || '').trim();
+    const phoneRaw = String(body.phone || '').trim();
+
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    if (phoneRaw) {
+      const digits = phoneRaw.replace(/\D/g, '');
+      if (digits) {
+        conds.push({ 'customer.phone': `+55${digits}` });
+        conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
+      }
+    }
+    const filter = conds.length ? { $or: conds } : {};
+
+    const setFields = {
+      status: 'pago',
+      'woovi.status': 'pago',
+    };
+    if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
+    if (endToEndId) setFields['woovi.endToEndId'] = endToEndId;
+    if (typeof value === 'number') setFields['woovi.paymentMethods.pix.value'] = value;
+    if (tipo) setFields['tipo'] = tipo;
+    if (qtd) setFields['qtd'] = qtd;
+    if (instaUser) setFields['instagramUsername'] = instaUser;
+
+    const upd = await col.updateOne(filter, { $set: setFields });
+    if (!upd.matchedCount) {
+      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
+    }
+
+    try {
+      const record = await col.findOne(filter);
+      const alreadySent = record?.fama24h?.orderId ? true : false;
+      const resolvedTipo = tipo || record?.tipo || record?.tipoServico || '';
+      const resolvedQtd = qtd || record?.quantidade || record?.qtd || 0;
+      const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
+      const key = process.env.FAMA24H_API_KEY || '';
+      const serviceId = (/^mistos$/i.test(resolvedTipo)) ? 659 : (/^brasileiros$/i.test(resolvedTipo)) ? 23 : null;
+      const canSend = !!key && !!serviceId && !!resolvedUser && resolvedQtd > 0 && !alreadySent;
+      if (canSend) {
+        const axios = require('axios');
+        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(resolvedUser), quantity: String(resolvedQtd) });
+        const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        const famaData = famaResp.data || {};
+        const orderId = famaData.order || famaData.id || null;
+        await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      }
+      broadcastPaymentPaid(identifier, correlationID);
+    } catch (_) {}
+
+    return res.json({ ok: true, updated: upd.matchedCount });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
