@@ -161,16 +161,39 @@ async function fetchInstagramPosts(username) {
         };
     }
 }
+const PROFILE_CACHE = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000;
 
-// Função principal para verificar perfil do Instagram
+function getCachedProfile(username) {
+    const key = String(username || '').toLowerCase();
+    const entry = PROFILE_CACHE.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+        PROFILE_CACHE.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function setCache(username, value, ttlMs) {
+    const key = String(username || '').toLowerCase();
+    PROFILE_CACHE.set(key, { value, expiresAt: Date.now() + (ttlMs || CACHE_TTL_MS) });
+}
+
 async function verifyInstagramProfile(username, userAgent, ip, req, res) {
     console.log(`🔍 Iniciando verificação do perfil: @${username}`);
     console.log(`📊 Total de perfis disponíveis: ${cookieProfiles.length}`);
     
+    const cached = getCachedProfile(username);
+    if (cached) {
+        return cached;
+    }
+
     let selectedProfile = null;
     let attempts = 0;
     const MAX_ATTEMPTS = cookieProfiles.length * 2; // Definir MAX_ATTEMPTS aqui
-    const USAGE_INTERVAL_MS = 30 * 1000; // 30 segundos de intervalo entre usos do mesmo perfil
+    const USAGE_INTERVAL_MS = 10 * 1000; // 10 segundos de intervalo entre usos do mesmo perfil
     const MAX_ERRORS_PER_PROFILE = 5; // Número máximo de erros antes de desativar o perfil
     const DISABLE_TIME_MS = 1 * 60 * 1000; // Tempo de desativação do perfil (1 minuto)
     
@@ -250,7 +273,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             const response = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
                 headers: headers,
                 httpsAgent: proxyAgent,
-                timeout: 15000 // 15 segundos de timeout
+                timeout: 8000
             });
 
             console.log(`📡 Resposta recebida: ${response.status}`);
@@ -258,7 +281,10 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             if (response.status < 200 || response.status >= 300) {
                 if (response.status === 404) {
                     unlockCookie(selectedProfile.ds_user_id); // Liberar cookie em caso de erro 404
-                    return { success: false, status: 404, error: "Perfil não localizado, nome de usuário pode estar incorreto." };
+                    try { await registerUserInControle(userAgent, ip, username, "404"); } catch (_) {}
+                    const result404 = { success: false, status: 404, error: "Perfil não localizado, nome de usuário pode estar incorreto." };
+                    setCache(username, result404, NEGATIVE_CACHE_TTL_MS);
+                    return result404;
                 } else if (response.status === 429 || response.status === 401 || response.status === 403) {
                     console.warn(`⚠️ Erro ${response.status} para o perfil ${selectedProfile.ds_user_id}. Incrementando contador de erros.`);
                     selectedProfile.errorCount++;
@@ -278,7 +304,10 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
             if (!data.data || !data.data.user) {
                 unlockCookie(selectedProfile.ds_user_id); // Liberar cookie
-                return { success: false, status: 404, error: "Perfil não encontrado ou privado. Verifique se o nome de usuário está correto e se o perfil é público." };
+                try { await registerUserInControle(userAgent, ip, username, "404"); } catch (_) {}
+                const resultMissing = { success: false, status: 404, error: "Perfil não encontrado ou privado. Verifique se o nome de usuário está correto e se o perfil é público." };
+                setCache(username, resultMissing, NEGATIVE_CACHE_TTL_MS);
+                return resultMissing;
             }
 
             const user = data.data.user;
@@ -305,7 +334,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     }
                 }
 
-                return { 
+                const privateResult = { 
                     success: false, 
                     status: 200, 
                     error: "Este perfil é privado. Para que o serviço seja realizado, o perfil precisa estar no modo público.",
@@ -320,6 +349,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                         isPrivate: user.is_private
                     }
                 };
+                setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
+                return privateResult;
             }
 
             // Sucesso: Atualizar lastUsed e resetar errorCount
@@ -430,7 +461,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 alreadyTested: instauserExists
             };
             
-            return { success: true, status: 200, profile: responseProfile };
+            const okResult = { success: true, status: 200, profile: responseProfile };
+            setCache(username, okResult, CACHE_TTL_MS);
+            return okResult;
 
         } catch (error) {
             console.error(`❌ Erro na requisição com perfil ${selectedProfile.ds_user_id}:`, error.message);
@@ -454,6 +487,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 } catch (baserowError) {
                     console.error("❌ Erro ao salvar erro no Baserow:", baserowError);
                 }
+                try { setCache(username, { success: false, status: 503, error: "Erro ao verificar perfil após múltiplas tentativas. Tente novamente mais tarde." }, NEGATIVE_CACHE_TTL_MS); } catch (_) {}
                 throw new Error("Erro ao verificar perfil após múltiplas tentativas. Tente novamente mais tarde.");
             }
         }
