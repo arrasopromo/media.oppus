@@ -511,6 +511,9 @@ html, body { overflow-x: hidden; }
     box-shadow: var(--shadow-purple);
 }
 
+.status-green { color: #22c55e; }
+.status-yellow { color: #f59e0b; }
+
 .button-text {
     position: relative;
     z-index: 1;
