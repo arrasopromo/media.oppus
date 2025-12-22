@@ -2284,7 +2284,7 @@
   function markPaymentConfirmed() {
     try {
       if (pixResultado) {
-        pixResultado.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;color:#fff;"><span>Pagamento confirmado</span><span>✅</span></div>';
+        pixResultado.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;color:#22C55E;font-weight:700;font-size:1rem;"><span class="price-new">Pagamento confirmado</span></div>';
       }
     } catch(_) {}
     try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
