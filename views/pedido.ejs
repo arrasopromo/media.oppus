@@ -25,14 +25,14 @@
         <div class="service-card">
           <div class="card-content">
             <h3 class="card-title">Informações do pedido</h3>
-            <div class="card-desc">
+            <div class="card-desc" style="font-size: calc(1rem + 1px);">
               <div style="display:grid; gap:0.5rem;">
                 <div><strong>Status:</strong> <span id="orderStatus"><%= String(order.status || 'pendente') %></span></div>
                 <div><strong>Serviço:</strong> <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
                 <div><strong>Quantidade:</strong> <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div><strong>Instagram:</strong> <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div><strong>Pago em:</strong> <span id="paidAtLocal">-</span></div>
-                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span></div>
+                <div><strong>Número do pedido:</strong> <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> <button id="copyOrderBtn" class="button" style="margin-left:8px;padding:4px 8px;font-weight:700;">📋 Copiar</button></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
@@ -113,6 +113,21 @@
           .catch(function(){});
       }
       setInterval(check, 8000);
+      try { check(); } catch(_) {}
+    })();
+    (function initCopyOrder(){
+      var btn = document.getElementById('copyOrderBtn');
+      var span = document.getElementById('orderNumberId');
+      if (!btn || !span) return;
+      btn.addEventListener('click', function(){
+        try {
+          var val = (span.textContent || '').trim();
+          if (!val) return;
+          navigator.clipboard.writeText(val).then(function(){
+            try { btn.textContent = 'Copiado'; setTimeout(function(){ btn.textContent = '📋 Copiar'; }, 1500); } catch(_) {}
+          });
+        } catch(_) {}
+      });
     })();
     (function initBackButton(){
       var btn = document.getElementById('backToPrevBtn');
