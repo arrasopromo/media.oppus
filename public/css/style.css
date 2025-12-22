@@ -504,6 +504,12 @@ html, body { overflow-x: hidden; }
 .continue-button:active {
     transform: translateY(-1px) scale(1.02);
 }
+.continue-button.small {
+    padding: 0.6rem 1.1rem;
+    font-size: 0.95rem;
+    border-radius: 999px;
+    box-shadow: var(--shadow-purple);
+}
 
 .button-text {
     position: relative;

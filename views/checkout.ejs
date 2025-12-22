@@ -18,6 +18,7 @@
       fbq('init', PIXEL_ID);
       fbq('consent', 'grant');
       fbq('track', 'PageView');
+      window._oppusPixelReady = true;
     })();
   </script>
   <% if (PIXEL_ID) { %>
