@@ -636,6 +636,7 @@
     if (grupoUsername) grupoUsername.classList.remove('tutorial-highlight');
     if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
     if (checkoutPhoneInput) checkoutPhoneInput.classList.remove('tutorial-highlight');
+    if (btnPedido) btnPedido.classList.remove('tutorial-highlight');
   }
 
   function showTutorialStep(step) {
@@ -670,7 +671,7 @@
       case 5:
         const t5 = document.getElementById('tutorial5Pedido');
         if (t5) t5.style.display = 'block';
-        if (grupoPedido) grupoPedido.classList.add('tutorial-highlight');
+        if (btnPedido) btnPedido.classList.add('tutorial-highlight');
         try { positionTutorials(); } catch(_) {}
         setTimeout(() => { try { positionTutorials(); } catch(_) {} }, 120);
         break;
@@ -1423,7 +1424,7 @@
     const suppressTip5 = () => {
       const t = document.getElementById('tutorial5Pedido');
       if (t) { t.style.display = 'none'; t.classList.add('hide'); }
-      if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+      if (btnPedido) btnPedido.classList.remove('tutorial-highlight');
     };
     btnPedido.addEventListener('click', suppressTip5);
     btnPedido.addEventListener('pointerdown', suppressTip5);
