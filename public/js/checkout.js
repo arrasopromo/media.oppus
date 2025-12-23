@@ -1964,7 +1964,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }
           }
@@ -2016,7 +2016,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
+                <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }).join('');
           }
@@ -2061,10 +2061,11 @@
         fetchOrders(v);
       });
     }
-    async function openPedido(orderID) {
+  async function openPedido(orderID) {
       try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID }) }); } catch(_) {}
-      try { window.location.href = '/pedido'; } catch(_) {}
-    }
+      try { window.location.href = '/pedido?orderID=' + encodeURIComponent(String(orderID)); } catch(_) {}
+  }
+  try { window.openPedido = openPedido; } catch(_) {}
     document.addEventListener('click', (ev) => {
       const t = ev.target;
       const btn = t && (t.classList && t.classList.contains('open-pedido-btn')) ? t : (t.closest && t.closest('.open-pedido-btn'));
