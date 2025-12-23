@@ -1494,14 +1494,25 @@
       const valueBRL = Math.round(Number(totalCents)) / 100;
       const fbpCookie = (document.cookie.match(/_fbp=([^;]+)/)?.[1]) || '';
       try {
-        if (typeof fbq === 'function') {
-          fbq('track', 'InitiateCheckout', {
-            value: valueBRL,
-            currency: 'BRL',
-            contents: [{ id: tipo, quantity: qtd }],
-            content_name: `${tipo} - ${qtd} ${getUnitForTipo(tipo)}`,
-          }, { eventID: correlationID });
-        }
+        const sendPixel = (name, params, eid) => {
+          const trySend = () => {
+            try {
+              if (typeof fbq === 'function' && window._oppusPixelReady) {
+                if (eid) fbq('track', name, params, { eventID: eid });
+                else fbq('track', name, params);
+                return true;
+              }
+            } catch (_) {}
+            return false;
+          };
+          if (!trySend()) setTimeout(trySend, 800);
+        };
+        sendPixel('InitiateCheckout', {
+          value: valueBRL,
+          currency: 'BRL',
+          contents: [{ id: tipo, quantity: qtd }],
+          content_name: `${tipo} - ${qtd} ${getUnitForTipo(tipo)}`,
+        }, correlationID);
       } catch (_) { /* silencioso */ }
       try {
         void fetch('/api/meta/track', {

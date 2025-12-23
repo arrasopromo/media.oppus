@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Resumo do Pedido</title>
+  <title>Informações do pedido</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
@@ -26,7 +26,7 @@
         <div class="service-card">
           <div class="card-content">
             <h3 class="card-title">Informações do pedido</h3>
-            <div class="card-desc" style="font-size: calc(1rem + 2px); font-family: var(--font-family);">
+            <div class="card-desc" style="font-size: calc(1rem + 1px); font-family: var(--font-family);">
               <div style="display:grid; gap:0.5rem;">
                 <div>Status: <span id="orderStatus" class="status-text <%= ((String(order.status||order.woovi?.status||'').toLowerCase()==='pago') ? 'status-green' : (String(order.status||order.woovi?.status||'').toLowerCase()==='pendente' ? 'status-yellow' : '')) %>"><%= (String(order.status||order.woovi?.status||'').toLowerCase()==='pago' ? 'pedido pago' : String(order.status || order.woovi?.status || 'pendente')) %></span></div>
                 <div>Serviço: <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
@@ -44,6 +44,14 @@
                 <div>Total do pedido: <span id="orderTotal">-</span></div>
                 <div>Itens adicionais: <span id="orderBumpsBox">-</span></div>
                 <div>Total de adicionais: <span id="orderBumpsTotal">-</span></div>
+                <div>Número do pedido: <span id="orderNumberId" style="font-weight:700;"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span> 
+                  <button id="copyOrderBtn" class="copy-icon-btn" style="margin-left:8px;" aria-label="Copiar número do pedido">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="7" y="7" width="10" height="10" rx="2" stroke="#1d4ed8" stroke-width="2"/>
+                      <rect x="3" y="3" width="10" height="10" rx="2" stroke="#1d4ed8" stroke-width="2" opacity="0.6"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
