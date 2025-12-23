@@ -2394,7 +2394,6 @@
     const url = targetUrl;
     try { window.location.assign(url); } catch(_) {}
     try {
-      localStorage.removeItem('oppus_selected_oid');
       setTimeout(async () => {
         try {
           if (location && location.pathname === '/pedido') return;

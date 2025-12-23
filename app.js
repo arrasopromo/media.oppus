@@ -2467,6 +2467,10 @@ app.get('/pedido', async (req, res) => {
     const phoneRaw = String(req.query.phone || '').trim();
     const col = await getCollection('checkout_orders');
     let doc = null;
+    const hasContext = !!(identifier || correlationID || orderIDRaw || phoneRaw || (req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)));
+    if (!hasContext) {
+      return res.redirect('/cliente');
+    }
     if (req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
       const lpId = String(req.session.lastPaidIdentifier || '').trim();
       const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
