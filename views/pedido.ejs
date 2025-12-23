@@ -79,7 +79,9 @@
         }
       } catch(_) {}
       function check() {
-        var orderIDParam = (orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '';
+        var cachedOid = null;
+        try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
+        var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '');
         var baseUrl = orderIDParam ? ('/api/order?orderID=' + encodeURIComponent(orderIDParam)) : ('/api/order?id=' + encodeURIComponent(String(orderId || '')));
         var url = baseUrl;
         fetch(url)

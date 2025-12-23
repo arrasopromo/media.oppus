@@ -973,6 +973,10 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
 .client-actions { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
 .client-orders { max-width: 720px; margin: 0 auto; }
 
+/* Evitar zoom ao focar em inputs no mobile (iOS) */
+.client-page .select-input, .client-page input[type=tel] { font-size: 16px; }
+.refil-page .select-input, .refil-page input[type=text], .refil-page input[type=tel] { font-size: 16px; }
+
 .price-old { color: #9ca3af; text-decoration: line-through; margin-right: 6px; }
 .price-new { color: #22c55e; font-weight: 700; }
 

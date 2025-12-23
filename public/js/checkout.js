@@ -2377,12 +2377,14 @@
   async function navigateToPedidoOrFallback(identifier, correlationID) {
     let targetUrl = '';
     try {
+      try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
       const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
       const resp = await fetch(apiUrl);
       const data = await resp.json();
       const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || null;
       if (oid) {
         try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
+        try { localStorage.setItem('oppus_selected_oid', String(oid)); } catch(_) {}
         targetUrl = `/pedido`;
       }
     } catch(_) {}
@@ -2392,6 +2394,7 @@
     const url = targetUrl;
     try { window.location.assign(url); } catch(_) {}
     try {
+      localStorage.removeItem('oppus_selected_oid');
       setTimeout(async () => {
         try {
           if (location && location.pathname === '/pedido') return;
