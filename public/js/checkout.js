@@ -1439,6 +1439,21 @@
     try {
       const tipo = tipoSelect.value;
       const qtd = Number(qtdSelect.value);
+      const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
+      const getUpgradeAddQtd = (t, base) => {
+        try {
+          if (!isFollowersTipo(t)) return 0;
+          if ((t === 'brasileiros' || t === 'organicos') && Number(base) === 1000) {
+            return 1000;
+          }
+          const upsellTargets = { 150: 300, 500: 700, 1200: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+          const target = upsellTargets[Number(base)];
+          if (!target) return 0;
+          return Number(target) - Number(base);
+        } catch (_) { return 0; }
+      };
+      const upgradeAdd = upgradeChecked ? getUpgradeAddQtd(tipo, qtd) : 0;
+      const qtdEffective = Number(qtd) + Number(upgradeAdd);
       const opt = qtdSelect.options[qtdSelect.selectedIndex];
       const precoStr = opt ? (opt.dataset.preco || '') : '';
       const valueCents = parsePrecoToCents(precoStr);
@@ -1508,8 +1523,8 @@
         sendPixel('InitiateCheckout', {
           value: valueBRL,
           currency: 'BRL',
-          contents: [{ id: tipo, quantity: qtd }],
-          content_name: `${tipo} - ${qtd} ${getUnitForTipo(tipo)}`,
+          contents: [{ id: tipo, quantity: qtdEffective }],
+          content_name: `${tipo} - ${qtdEffective} ${getUnitForTipo(tipo)}`,
         }, correlationID);
       } catch (_) { /* silencioso */ }
       try {
@@ -1520,8 +1535,8 @@
             eventName: 'InitiateCheckout',
             value: valueBRL,
             currency: 'BRL',
-            contentName: `${tipo} - ${qtd} ${getUnitForTipo(tipo)}`,
-            contents: [{ id: tipo, quantity: qtd }],
+            contentName: `${tipo} - ${qtdEffective} ${getUnitForTipo(tipo)}`,
+            contents: [{ id: tipo, quantity: qtdEffective }],
             phone: phoneFromUrl,
             fbp: fbpCookie,
             correlationID,
@@ -1547,8 +1562,8 @@
         // Sanitiza e evita emojis/Unicode não permitido
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
-          { key: 'quantidade', value: String(qtd) },
-          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${precoStr}` },
+          { key: 'quantidade', value: String(qtdEffective) },
+          { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
           { key: 'instagram_username', value: instagramUsernameFinal },
           { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
@@ -1955,6 +1970,11 @@
                   paidStr = `${dd}/${mm}/${yyyy} as ${hh}:${mn}`;
                 } catch(_) {}
               }
+              const fama = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
+              const rawF = String((fama && (fama.status || fama.Status || fama.status_text || fama.statusText || fama.StatusText)) || '').trim();
+              const tF = rawF.toLowerCase();
+              const stF = tF ? (/cancel/.test(tF) ? 'Cancelado' : (/partial/.test(tF) ? 'Parcial' : (/pend/.test(tF) ? 'Pendente' : (/process|progress|start|running/.test(tF) ? 'Em andamento' : (/complete|success|finished|done/.test(tF) ? 'Concluído' : rawF))))) : '-';
+              const clsF = stF==='Concluído' ? 'status-green' : (stF==='Cancelado' ? 'status-red' : (stF==='Em andamento' ? 'status-yellow' : (stF==='Pendente' ? 'status-blue' : '')));
               ordersBox.innerHTML = `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
                 <div><strong>Status:</strong> <span class="${(String(status).toLowerCase()==='pago'?'status-green':(String(status).toLowerCase()==='pendente'?'status-yellow':''))}">${status}</span></div>
                 <div><strong>Serviço:</strong> <span>${tipo}</span></div>
@@ -1962,6 +1982,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
+                <div><strong>Status do serviço:</strong> <span id="famaStatus_${oid}" class="status-text ${clsF}">${stF}</span></div>
                 <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }
@@ -2007,6 +2028,11 @@
                   paidStr = `${dd}/${mm}/${yyyy} as ${hh}:${mn}`;
                 } catch(_) {}
               }
+              const fama = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
+              const rawF = String((fama && (fama.status || fama.Status || fama.status_text || fama.statusText || fama.StatusText)) || '').trim();
+              const tF = rawF.toLowerCase();
+              const stF = tF ? (/cancel/.test(tF) ? 'Cancelado' : (/partial/.test(tF) ? 'Parcial' : (/pend/.test(tF) ? 'Pendente' : (/process|progress|start|running/.test(tF) ? 'Em andamento' : (/complete|success|finished|done/.test(tF) ? 'Concluído' : rawF))))) : '-';
+              const clsF = stF==='Concluído' ? 'status-green' : (stF==='Cancelado' ? 'status-red' : (stF==='Em andamento' ? 'status-yellow' : (stF==='Pendente' ? 'status-blue' : '')));
               return `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
                 <div><strong>Status:</strong> <span class="${(String(status).toLowerCase()==='pago'?'status-green':(String(status).toLowerCase()==='pendente'?'status-yellow':''))}">${status}</span></div>
                 <div><strong>Serviço:</strong> <span>${tipo}</span></div>
@@ -2014,6 +2040,7 @@
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
                 <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
+                <div><strong>Status do serviço:</strong> <span id="famaStatus_${oid}" class="status-text ${clsF}">${stF}</span></div>
                 <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }).join('');
@@ -2061,6 +2088,7 @@
     }
   async function openPedido(orderID) {
       try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID }) }); } catch(_) {}
+      try { await fetch('/api/fama/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: String(orderID) }) }); } catch(_) {}
       try { window.location.href = '/pedido?orderID=' + encodeURIComponent(String(orderID)); } catch(_) {}
   }
   try { window.openPedido = openPedido; } catch(_) {}

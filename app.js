@@ -1368,10 +1368,25 @@ app.get('/api/woovi/charge-status', async (req, res) => {
           const record = await col.findOne(filter);
           const alreadySent = record?.fama24h?.orderId ? true : false;
           const tipo = record?.tipo || record?.tipoServico || '';
-          const qtd = Number(record?.quantidade || record?.qtd || 0) || 0;
+          const qtdBase = Number(record?.quantidade || record?.qtd || 0) || 0;
           const instaUser = record?.instagramUsername || record?.instauser || '';
           const key = process.env.FAMA24H_API_KEY || '';
           const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+          const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+          const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+          const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+          const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
+          const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+          let upgradeAdd = 0;
+          if (hasUpgrade && isFollowers) {
+            if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) {
+              upgradeAdd = 1000;
+            } else {
+              const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+              upgradeAdd = map[qtdBase] || 0;
+            }
+          }
+          const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
           const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
           if (canSend) {
             const axios = require('axios');
@@ -1421,6 +1436,29 @@ app.get('/api/woovi/charge-status', async (req, res) => {
     };
     console.error('❌ Erro ao consultar status Woovi:', details);
     return res.status(status).json({ error: 'woovi_status_error', details });
+  }
+});
+
+app.post('/api/fama/status', async (req, res) => {
+  try {
+    const key = process.env.FAMA24H_API_KEY || '';
+    const orderParam = String((req.body && (req.body.order || req.body.orderId)) || req.query.order || '').trim();
+    if (!key) return res.status(400).json({ ok: false, error: 'missing_key' });
+    if (!orderParam) return res.status(400).json({ ok: false, error: 'missing_order' });
+    const axios = require('axios');
+    const payload = new URLSearchParams({ key, action: 'status', order: orderParam });
+    try { console.log('🛰️ Fama status request', { order: orderParam, action: 'status' }); } catch(_) {}
+    const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
+    try {
+      const data = resp.data || {};
+      try { console.log('🛰️ Fama status response', { status: resp.status, data }); } catch(_) {}
+      const col = await getCollection('checkout_orders');
+      await col.updateOne({ 'fama24h.orderId': Number(orderParam) }, { $set: { 'fama24h.statusPayload': data, 'fama24h.lastStatusAt': new Date().toISOString() } });
+    } catch (_) {}
+    return res.json({ ok: true, data: resp.data || {} });
+  } catch (e) {
+    try { console.error('🛰️ Fama status error', e?.response?.data || e?.message || String(e)); } catch(_) {}
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
@@ -2273,10 +2311,23 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const record = await col.findOne(filter);
           const alreadySent = record?.fama24h?.orderId ? true : false;
           const tipo = additionalInfoMap['tipo_servico'] || record?.tipo || record?.tipoServico || '';
-          const qtd = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
+          const qtdBase = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
           const instaUser = additionalInfoMap['instagram_username'] || record?.instagramUsername || record?.instauser || '';
           const key = process.env.FAMA24H_API_KEY || '';
           const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+          const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
+          const hasUpgrade = typeof bumpsStr0 === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr0);
+          const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+          let upgradeAdd = 0;
+          if (hasUpgrade && isFollowers) {
+            if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) {
+              upgradeAdd = 1000;
+            } else {
+              const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+              upgradeAdd = map[qtdBase] || 0;
+            }
+          }
+          const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
           const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
           if (canSend) {
             const axios = require('axios');
@@ -2293,7 +2344,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
               await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
             }
           } else {
-            console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd, instaUser, alreadySent });
+            console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd: qtdBase, instaUser, alreadySent, hasUpgrade });
           }
 
           try {
@@ -2478,6 +2529,11 @@ app.get('/pedido', async (req, res) => {
     const correlationID = String(req.query.correlationID || '').trim();
     const orderIDRaw = String(req.query.orderID || req.query.orderid || '').trim();
     const phoneRaw = String(req.query.phone || '').trim();
+    const hasQuery = !!(identifier || correlationID || orderIDRaw || phoneRaw);
+    const hasSessionCtx = !!(req.session && (req.session.selectedOrderID || req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID));
+    if (!hasQuery && !hasSessionCtx) {
+      return res.redirect('/cliente');
+    }
     const col = await getCollection('checkout_orders');
     let doc = null;
     

@@ -513,6 +513,8 @@ html, body { overflow-x: hidden; }
 
 .status-green { color: #22c55e; }
 .status-yellow { color: #f59e0b; }
+.status-red { color: #ef4444; }
+.status-blue { color: #3b82f6; }
 
 .button-text {
     position: relative;
