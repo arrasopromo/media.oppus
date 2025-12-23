@@ -1061,6 +1061,13 @@ app.use((req, res, next) => {
 // Home: renderizar Checkout como página inicial
 app.get('/', (req, res) => {
     console.log('🏠 Acessando rota / (home -> checkout)');
+    try {
+        if (req.session) {
+            req.session.selectedOrderID = undefined;
+            req.session.lastPaidIdentifier = '';
+            req.session.lastPaidCorrelationID = '';
+        }
+    } catch (_) {}
     res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar home/checkout:', err.message);
@@ -1074,6 +1081,12 @@ app.get('/', (req, res) => {
 // Página dedicada de Cliente (consulta de pedidos)
 app.get('/cliente', (req, res) => {
     console.log('👤 Acessando rota /cliente');
+    try {
+        if (req.session) {
+            req.session.lastPaidIdentifier = '';
+            req.session.lastPaidCorrelationID = '';
+        }
+    } catch (_) {}
     res.render('cliente', {}, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar cliente:', err.message);

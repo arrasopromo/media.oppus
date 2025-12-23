@@ -7,6 +7,7 @@
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
   <script>
+    try { localStorage.removeItem('oppus_selected_oid'); } catch(_) {}
     (function(){
       var PIXEL_ID = '<%= PIXEL_ID %>';
       var isValid = !!PIXEL_ID && /^\d+$/.test(PIXEL_ID);
