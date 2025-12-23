@@ -635,6 +635,7 @@
     if (grupoQuantidade) grupoQuantidade.classList.remove('tutorial-highlight');
     if (grupoUsername) grupoUsername.classList.remove('tutorial-highlight');
     if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+    if (checkoutPhoneInput) checkoutPhoneInput.classList.remove('tutorial-highlight');
   }
 
   function showTutorialStep(step) {
@@ -1409,17 +1410,13 @@
     const suppressTip4 = () => {
       const t = document.getElementById('tutorial4Validar');
       if (t) { t.style.display = 'none'; t.classList.add('hide'); }
-      if (grupoPedido) grupoPedido.classList.remove('tutorial-highlight');
+      if (checkoutPhoneInput) checkoutPhoneInput.classList.remove('tutorial-highlight');
     };
     checkoutPhoneInput.addEventListener('focus', suppressTip4);
     checkoutPhoneInput.addEventListener('click', suppressTip4);
     checkoutPhoneInput.addEventListener('paste', suppressTip4);
     checkoutPhoneInput.addEventListener('pointerdown', suppressTip4);
     checkoutPhoneInput.addEventListener('input', suppressTip4);
-    if (grupoPedido) {
-      grupoPedido.addEventListener('focusin', suppressTip4);
-      grupoPedido.addEventListener('pointerdown', suppressTip4);
-    }
   }
 
   if (btnPedido) {
@@ -1462,7 +1459,7 @@
           if (document.activeElement && typeof document.activeElement.blur === 'function') {
             document.activeElement.blur();
           }
-          if (grupoPedido) grupoPedido.classList.add('tutorial-highlight');
+          if (checkoutPhoneInput) checkoutPhoneInput.classList.add('tutorial-highlight');
         } catch (_) {}
         return;
       }
