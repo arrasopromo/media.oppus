@@ -1958,7 +1958,7 @@
                 } catch(_) {}
               }
               ordersBox.innerHTML = `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
-                <div><strong>Status:</strong> <span>${status}</span></div>
+                <div><strong>Status:</strong> <span class="${(String(status).toLowerCase()==='pago'?'status-green':(String(status).toLowerCase()==='pendente'?'status-yellow':''))}">${status}</span></div>
                 <div><strong>Serviço:</strong> <span>${tipo}</span></div>
                 <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
@@ -2010,7 +2010,7 @@
                 } catch(_) {}
               }
               return `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
-                <div><strong>Status:</strong> <span>${status}</span></div>
+                <div><strong>Status:</strong> <span class="${(String(status).toLowerCase()==='pago'?'status-green':(String(status).toLowerCase()==='pendente'?'status-yellow':''))}">${status}</span></div>
                 <div><strong>Serviço:</strong> <span>${tipo}</span></div>
                 <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
