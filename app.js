@@ -2467,8 +2467,16 @@ app.get('/pedido', async (req, res) => {
     const phoneRaw = String(req.query.phone || '').trim();
     const col = await getCollection('checkout_orders');
     let doc = null;
+    if (req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
+      const lpId = String(req.session.lastPaidIdentifier || '').trim();
+      const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
+      const firstConds = [];
+      if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
+      if (lpCorr) firstConds.push({ correlationID: lpCorr });
+      if (firstConds.length) { doc = await col.findOne({ $or: firstConds }); }
+    }
     // Priorizar pedido selecionado em sessão
-    if (req.session && req.session.selectedOrderID) {
+    if (!doc && req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
       doc = await col.findOne({ 'fama24h.orderId': soid });
     }
@@ -2506,6 +2514,20 @@ app.post('/pedido/select', async (req, res) => {
     }
     const maybeNum = Number(orderIDRaw);
     req.session.selectedOrderID = !Number.isNaN(maybeNum) ? maybeNum : orderIDRaw;
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/session/mark-paid', async (req, res) => {
+  try {
+    const identifier = String((req.body && req.body.identifier) || '').trim();
+    const correlationID = String((req.body && req.body.correlationID) || '').trim();
+    if (!identifier && !correlationID) {
+      return res.status(400).json({ ok: false, error: 'missing_keys' });
+    }
+    req.session.lastPaidIdentifier = identifier || req.session.lastPaidIdentifier || '';
+    req.session.lastPaidCorrelationID = correlationID || req.session.lastPaidCorrelationID || '';
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
