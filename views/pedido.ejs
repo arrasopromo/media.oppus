@@ -20,9 +20,11 @@
   </script>
   <div class="container checkout-page">
     <div class="site-brand" aria-label="Marca do site">
-      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
-      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
-      <span class="site-brand-text">Agência Oppus</span>
+      <a href="https://agenciaoppus.site/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;">
+        <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+        <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+        <span class="site-brand-text">Agência Oppus</span>
+      </a>
     </div>
     <header class="header">
       <h1 class="title">Informações do pedido</h1>
@@ -34,17 +36,17 @@
       <section class="section-block">
         <div class="service-card">
           <div class="card-content">
-            <h3 class="card-title">Informações do pedido</h3>
+            <h3 class="card-title" style="font-size: calc(1rem + 2px);">Informações do pedido</h3>
             <div class="card-desc" style="font-size: calc(1rem + 1px); font-family: var(--font-family);">
-              <div style="display:grid; gap:0.5rem;">
+              <div style="display:grid; gap:0.5rem; font-family: 'Poppins', sans-serif;">
                 <div>Status: <span id="orderStatus" class="status-text <%= ((String(order.status||order.woovi?.status||'').toLowerCase()==='pago') ? 'status-green' : (String(order.status||order.woovi?.status||'').toLowerCase()==='pendente' ? 'status-yellow' : '')) %>"><%= (String(order.status||order.woovi?.status||'').toLowerCase()==='pago' ? 'pedido pago' : String(order.status || order.woovi?.status || 'pendente')) %></span></div>
                 <div>Serviço: <span id="orderTipo"><%= String(order.tipo || order.tipoServico || '-') %></span></div>
                 <div>Quantidade: <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div>Instagram: <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
-                <div>Pago em: <span id="paidAtLocal">-</span></div>
-                <div>Itens adicionais: <span id="orderBumpsBox">-</span></div>
-                <div>Total de adicionais: <span id="orderBumpsTotal">-</span></div>
-                <div>Total do pedido: <span id="orderTotal">-</span></div>
+                <div>Pago em: <span id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw) return '-'; try{ var d=new Date(raw); var sp=new Date(d.getTime()-(3*60*60*1000)); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' as '+hh+':'+mn; }catch(_){ return '-'; } })() %></span></div>
+                <div>Itens adicionais: <span id="orderBumpsBox"><%= (function(){ var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var map=order.additionalInfoMapPaid||{}; var bs=(function(){ var fp=arrPaid.find(function(it){return it&&it.key==='order_bumps'}); if(fp&&typeof fp.value==='string'&&fp.value) return fp.value; var f=arr.find(function(it){return it&&it.key==='order_bumps'}); if(f&&typeof f.value==='string'&&f.value) return f.value; if(map&&typeof map['order_bumps']==='string'&&map['order_bumps']) return map['order_bumps']; return ''; })(); if(!bs) return '-'; var parts=bs.split(';').map(function(p){return p.trim();}).filter(Boolean); var labels=parts.map(function(p){ var kv=p.split(':'); var k=kv[0]; var v=kv[1]; if(k==='views') return 'Visualizações ('+v+')'; if(k==='likes') return 'Curtidas ('+v+')'; if(k==='comments') return 'Comentários ('+v+')'; return k+' ('+v+')'; }); return labels.join(', '); })() %></span></div>
+                <div>Total de adicionais: <span id="orderBumpsTotal"><%= (function(){ var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var map=order.additionalInfoMapPaid||{}; var fp=arrPaid.find(function(it){return it&&it.key==='order_bumps_total'}); if(fp&&typeof fp.value==='string'&&fp.value) return fp.value; var f=arr.find(function(it){return it&&it.key==='order_bumps_total'}); if(f&&typeof f.value==='string'&&f.value) return f.value; if(map&&typeof map['order_bumps_total']==='string'&&map['order_bumps_total']) return map['order_bumps_total']; return '-'; })() %></span></div>
+                <div>Total do pedido: <span id="orderTotal"><%= (function(){ var totalCents=0; if(typeof order.valueCents==='number' && order.valueCents>0){ totalCents=order.valueCents; } else { var base=0; try{ var pix=order.woovi&&order.woovi.paymentMethods&&order.woovi.paymentMethods.pix; if(pix&&typeof pix.value==='number') base=pix.value; }catch(_){ } var bt=(function(){ var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var map=order.additionalInfoMapPaid||{}; var fp=arrPaid.find(function(it){return it&&it.key==='order_bumps_total'}); var s=(fp&&typeof fp.value==='string')?fp.value:''; if(!s){ var f=arr.find(function(it){return it&&it.key==='order_bumps_total'}); s=(f&&typeof f.value==='string')?f.value:''; } if(!s && map && typeof map['order_bumps_total']==='string') s=map['order_bumps_total']; if(!s) return 0; var m=s.match(/(\d+)[,\.]?(\d{0,2})/); if(!m) return 0; var whole=Number(m[1]); var frac=String(m[2]||'').padEnd(2,'0').slice(0,2); return (whole*100)+Number(frac); })(); totalCents=base+bt; } if(totalCents>0){ var reais=Math.floor(totalCents/100); var cents=String(totalCents%100).padStart(2,'0'); return 'R$ '+reais+','+cents; } return '-'; })() %></span></div>
                 <div>Número do pedido: <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span>
                   <button id="copyOrderBtn" class="copy-icon-btn" style="margin-left:8px;" aria-label="Copiar número do pedido">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -53,6 +55,8 @@
                     </svg>
                   </button>
                 </div>
+                <% var famaPayload=(order&&order.fama24h&&order.fama24h.statusPayload)||null; var sRaw=String((famaPayload&&(famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText))||'').trim(); var t=sRaw.toLowerCase(); var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running/.test(t)?'Em andamento':(/complete|success|finished|done/.test(t)?'Concluído':sRaw))))):'-'; %>
+                <div>Status do serviço: <span id="famaServicoStatus" class="status-text <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>"><%= stMap %></span></div>
               </div>
             </div>
             <div class="button-container" style="margin-top:0.75rem;">
@@ -72,6 +76,42 @@
       try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
       var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
       var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
+      var lastFamaStatus = '';
+      try {
+        if (hasFama) {
+          localStorage.setItem('oppus_selected_oid', String(orderData.fama24h.orderId));
+        }
+      } catch(_) {}
+      try {
+        var initialFama = (orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null;
+        var elFamaInit = document.getElementById('famaServicoStatus');
+        var mapFamaInit = function(s){
+          var t = String(s || '').toLowerCase();
+          if (!t) return '';
+          if (/cancel/.test(t)) return 'Cancelado';
+          if (/partial/.test(t)) return 'Parcial';
+          if (/pend/.test(t)) return 'Pendente';
+          if (/process|progress|start|running/.test(t)) return 'Em andamento';
+          if (/complete|success|finished|done/.test(t)) return 'Concluído';
+          return s;
+        };
+        if (initialFama && elFamaInit) {
+          var raw0 = String(initialFama.status || initialFama.Status || initialFama.status_text || initialFama.statusText || initialFama.StatusText || '').trim();
+          var st0 = mapFamaInit(raw0);
+          if (st0) {
+            lastFamaStatus = st0;
+            elFamaInit.textContent = st0;
+            try {
+              elFamaInit.classList.remove('status-green','status-yellow','status-red','status-blue');
+              var s0 = st0.toLowerCase();
+              if (/conclu/.test(s0)) elFamaInit.classList.add('status-green');
+              else if (/cancel/.test(s0)) elFamaInit.classList.add('status-red');
+              else if (/andament|process|progress|start|running/.test(s0)) elFamaInit.classList.add('status-yellow');
+              else if (/pend/.test(s0)) elFamaInit.classList.add('status-blue');
+            } catch(_){ }
+          }
+        }
+      } catch(_) {}
       try {
         var paidRaw = (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
         if (paidRaw) {
@@ -91,14 +131,8 @@
         var cachedOid = null;
         try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
         var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '');
-        var url = null;
-        if (orderIDParam) {
-          url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
-        } else if (orderId) {
-          url = '/api/order?id=' + encodeURIComponent(String(orderId));
-        } else {
-          return;
-        }
+        if (!orderIDParam) return;
+        var url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
         fetch(url)
           .then(function(r){return r.json();})
           .then(function(d){
@@ -158,9 +192,10 @@
                 var bumpsStr = getAddVal(o, 'order_bumps');
                 var bumpsTotal = getAddVal(o, 'order_bumps_total');
                 var baseCents = 0;
+                var hasTotal = false;
                 try {
-                  if (typeof o.valueCents === 'number') baseCents = o.valueCents;
-                  else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && typeof o.woovi.paymentMethods.pix.value === 'number') baseCents = o.woovi.paymentMethods.pix.value;
+                  if (typeof o.valueCents === 'number' && o.valueCents > 0) { baseCents = o.valueCents; hasTotal = true; }
+                  else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && typeof o.woovi.paymentMethods.pix.value === 'number') { baseCents = o.woovi.paymentMethods.pix.value; }
                 } catch(_) {}
                 var bumpsCents = 0;
                 if (typeof bumpsTotal === 'string' && bumpsTotal) {
@@ -172,7 +207,7 @@
                     bumpsCents = (whole*100) + Number(frac2);
                   }
                 }
-                var totalCents = baseCents + bumpsCents;
+                var totalCents = hasTotal ? baseCents : (baseCents + bumpsCents);
                 var totalStr = '-';
                 if (totalCents > 0) {
                   var reais = Math.floor(totalCents/100);
@@ -201,6 +236,79 @@
                     elB.textContent = '-';
                   }
                 }
+                try {
+                  var elFama = document.getElementById('famaServicoStatus');
+                  var elLabel = document.getElementById('famaServicoLabel');
+                  var famaPollTimer = null;
+                  var shouldPoll = function(state){
+                    var s = String(state || lastFamaStatus || '').toLowerCase();
+                    return /pend/.test(s) || /andament|process|progress|start|running/.test(s);
+                  };
+                  var schedulePoll = function(){
+                    try { if (famaPollTimer) { clearInterval(famaPollTimer); famaPollTimer = null; } } catch(_){}
+                    if (shouldPoll()) {
+                      try { famaPollTimer = setInterval(check, 120000); } catch(_){}
+                    }
+                  };
+                  var mapFama = function(s){
+                    var t = String(s || '').toLowerCase();
+                    if (!t) return '-';
+                    if (/cancel/.test(t)) return 'Cancelado';
+                    if (/partial/.test(t)) return 'Parcial';
+                    if (/pend/.test(t)) return 'Pendente';
+                    if (/process|progress|start|running/.test(t)) return 'Em andamento';
+                    if (/complete|success|finished|done/.test(t)) return 'Concluído';
+                    return s;
+                  };
+                  var updateFama = function(resp){
+                    if (!elFama || !resp) return;
+                    var raw = String(resp.status || resp.Status || resp.status_text || resp.statusText || resp.StatusText || '').trim();
+                    var st = mapFama(raw);
+                    if (st) { lastFamaStatus = st; }
+                    var show = lastFamaStatus || st || '-';
+                    elFama.textContent = show;
+                    try {
+                      elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
+                      var s1 = show.toLowerCase();
+                      if (/conclu/.test(s1)) elFama.classList.add('status-green');
+                      else if (/cancel/.test(s1)) elFama.classList.add('status-red');
+                      else if (/andament|process|progress|start|running/.test(s1)) elFama.classList.add('status-yellow');
+                      else if (/pend/.test(s1)) elFama.classList.add('status-blue');
+                    } catch(_){ }
+                    if (elLabel) {
+                      elLabel.textContent = show;
+                    }
+                    schedulePoll();
+                  };
+                  try {
+                    var persisted = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
+                    if (persisted) {
+                      var rawPersist = String(persisted.status || persisted.Status || persisted.status_text || persisted.statusText || persisted.StatusText || '').trim();
+                      var stPersist = mapFama(rawPersist);
+                      if (stPersist) {
+                        lastFamaStatus = stPersist;
+                        if (elLabel) elLabel.textContent = stPersist;
+                        if (elFama) elFama.textContent = stPersist;
+                        try {
+                          elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
+                          var s2 = stPersist.toLowerCase();
+                          if (/conclu/.test(s2)) elFama.classList.add('status-green');
+                          else if (/cancel/.test(s2)) elFama.classList.add('status-red');
+                          else if (/andament|process|progress|start|running/.test(s2)) elFama.classList.add('status-yellow');
+                          else if (/pend/.test(s2)) elFama.classList.add('status-blue');
+                        } catch(_){ }
+                        schedulePoll();
+                      }
+                    }
+                  } catch(_){ }
+                  if (oid && shouldPoll()) {
+                    try { console.debug('Fama status request', { order: String(oid) }); } catch(_) {}
+                    fetch('/api/fama/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: String(oid) }) })
+                      .then(function(r){ return r.json(); })
+                      .then(function(x){ try { console.debug('Fama status response', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
+                      .catch(function(){});
+                  }
+                } catch(_) {}
               } catch(_) {}
             } catch(_){}
           })
@@ -210,8 +318,9 @@
       try {
         var cachedOid2 = null;
         try { cachedOid2 = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
-        if (cachedOid2 || orderId) {
-          setInterval(check, 8000);
+        var hasOid = cachedOid2 || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '') || '';
+        if (hasOid && (String(lastFamaStatus || '').toLowerCase().match(/pend/) || String(lastFamaStatus || '').toLowerCase().match(/andament|process|progress|start|running/))) {
+          setInterval(check, 120000);
         }
       } catch(_) {}
     })();
