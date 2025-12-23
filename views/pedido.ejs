@@ -9,6 +9,15 @@
   
 </head>
 <body>
+  <script>
+    (function removeParam(){
+      try {
+        if (location.search && /orderid=/i.test(location.search)) {
+          history.replaceState(null, '', '/pedido');
+        }
+      } catch(_) {}
+    })();
+  </script>
   <div class="container checkout-page">
     <div class="site-brand" aria-label="Marca do site">
       <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
@@ -33,9 +42,9 @@
                 <div>Quantidade: <span id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></span></div>
                 <div>Instagram: <span id="orderInsta"><%= String(order.instagramUsername || order.instauser || '-') %></span></div>
                 <div>Pago em: <span id="paidAtLocal">-</span></div>
-                <div>Total do pedido: <span id="orderTotal">-</span></div>
                 <div>Itens adicionais: <span id="orderBumpsBox">-</span></div>
                 <div>Total de adicionais: <span id="orderBumpsTotal">-</span></div>
+                <div>Total do pedido: <span id="orderTotal">-</span></div>
                 <div>Número do pedido: <span id="orderNumberId"><%= String((order.fama24h && order.fama24h.orderId) || '-') %></span>
                   <button id="copyOrderBtn" class="copy-icon-btn" style="margin-left:8px;" aria-label="Copiar número do pedido">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -82,8 +91,14 @@
         var cachedOid = null;
         try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
         var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '');
-        var baseUrl = orderIDParam ? ('/api/order?orderID=' + encodeURIComponent(orderIDParam)) : ('/api/order?id=' + encodeURIComponent(String(orderId || '')));
-        var url = baseUrl;
+        var url = null;
+        if (orderIDParam) {
+          url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
+        } else if (orderId) {
+          url = '/api/order?id=' + encodeURIComponent(String(orderId));
+        } else {
+          return;
+        }
         fetch(url)
           .then(function(r){return r.json();})
           .then(function(d){
@@ -191,8 +206,14 @@
           })
           .catch(function(){});
       }
-      setInterval(check, 8000);
       try { check(); } catch(_) {}
+      try {
+        var cachedOid2 = null;
+        try { cachedOid2 = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
+        if (cachedOid2 || orderId) {
+          setInterval(check, 8000);
+        }
+      } catch(_) {}
     })();
     (function initCopyOrder(){
       var btn = document.getElementById('copyOrderBtn');
