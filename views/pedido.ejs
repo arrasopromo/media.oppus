@@ -6,6 +6,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="/images/logo.png" />
+  <!-- TRACK COMBO -->
+  <script>
+    (function() {
+      var script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+      var firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+    })();
+  </script>
+  <!-- End TRACK COMBO -->
   
 </head>
 <body>
@@ -127,6 +140,18 @@
           if (el) el.textContent = txt;
         }
       } catch(_) {}
+      try {
+        var tipoServ = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
+        var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
+        var isPaid = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase() === 'pago';
+        var ident = String((orderData && (orderData.identifier || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
+        if (isPaid && tipoServ === 'organicos' && !alreadyFS && ident) {
+          fetch('/api/services/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: ident }) })
+            .then(function(r){ return r.json(); })
+            .then(function(d){ try { console.debug('Dispatch result', d); } catch(_){} })
+            .catch(function(){});
+        }
+      } catch(_) {}
       function check() {
         var cachedOid = null;
         try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
@@ -226,7 +251,7 @@
                       var kv = p.split(':');
                       var k = kv[0];
                       var v = kv[1];
-                      if (k === 'views') return 'Visualizações (' + v + ')';
+                      if (k === 'views') return 'Visualizações Reels (' + v + ')';
                       if (k === 'likes') return 'Curtidas (' + v + ')';
                       if (k === 'comments') return 'Comentários (' + v + ')';
                       return k + ' (' + v + ')';

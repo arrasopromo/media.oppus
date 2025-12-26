@@ -35,8 +35,61 @@ function lockCookie(cookieId) {
 }
 
 function unlockCookie(cookieId) {
-    cookieLocks.delete(cookieId);
+  cookieLocks.delete(cookieId);
 }
+
+// Dispatcher de serviços pendentes (organicos -> Fornecedor Social)
+async function dispatchPendingOrganicos() {
+  try {
+    const col = await getCollection('checkout_orders');
+    const cursor = await col.find({
+      $and: [
+        { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' } ] },
+        { $or: [ { tipo: 'organicos' }, { tipoServico: 'organicos' } ] },
+        { $or: [ { fornecedor_social: { $exists: false } }, { 'fornecedor_social.orderId': { $exists: false } } ] }
+      ]
+    }).sort({ createdAt: -1 }).limit(5);
+    const pending = await cursor.toArray();
+    for (const record of pending) {
+      try {
+        const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
+        const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
+        if (!/^organicos$/i.test(String(tipo))) continue;
+        const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
+        const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
+        const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
+        const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || '';
+        let upgradeAdd = 0;
+        if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000 && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) upgradeAdd = 1000;
+        else if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
+          const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+          upgradeAdd = map[qtdBase] || 0;
+        }
+        const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
+        const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+        if (!keyFS || !instaUser || !qtd) {
+          console.log('ℹ️ Dispatcher FS: ignorando', { hasKeyFS: !!keyFS, instaUser, qtd });
+          continue;
+        }
+        const axios = require('axios');
+        const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+        const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
+        console.log('➡️ Dispatcher enviando FornecedorSocial', { url: 'https://fornecedorsocial.com/api/v2', payload: Object.fromEntries(payloadFS.entries()) });
+        const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        const dataFS = respFS.data || {};
+        const orderIdFS = dataFS.order || dataFS.id || null;
+        await col.updateOne({ _id: record._id }, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+        console.log('✅ Dispatcher FornecedorSocial', { status: respFS.status, orderIdFS });
+      } catch (err) {
+        console.error('❌ Dispatcher FS erro', err?.response?.data || err?.message || String(err));
+      }
+    }
+  } catch (e) {
+    console.error('❌ Dispatcher FS falhou', e?.message || String(e));
+  }
+}
+
+setInterval(dispatchPendingOrganicos, 60000);
 
 let globalIndex = 0; // Variável global para round-robin
 
@@ -1366,7 +1419,8 @@ app.get('/api/woovi/charge-status', async (req, res) => {
         }
         try {
           const record = await col.findOne(filter);
-          const alreadySent = record?.fama24h?.orderId ? true : false;
+          const alreadySentFama = record?.fama24h?.orderId ? true : false;
+          const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
           const tipo = record?.tipo || record?.tipoServico || '';
           const qtdBase = Number(record?.quantidade || record?.qtd || 0) || 0;
           const instaUser = record?.instagramUsername || record?.instauser || '';
@@ -1387,14 +1441,29 @@ app.get('/api/woovi/charge-status', async (req, res) => {
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
-          if (canSend) {
-            const axios = require('axios');
-            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
-            const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const famaData = famaResp.data || {};
-            const orderId = famaData.order || famaData.id || null;
-            await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+          const isOrganicos = /^organicos$/i.test(tipo);
+          if (!isOrganicos) {
+            const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+            if (canSend) {
+              const axios = require('axios');
+              const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+              const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              const famaData = famaResp.data || {};
+              const orderId = famaData.order || famaData.id || null;
+              await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+            }
+          } else {
+            const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+            const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+            const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+            if (canSendFS) {
+              const axios = require('axios');
+              const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
+              const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              const dataFS = respFS.data || {};
+              const orderIdFS = dataFS.order || dataFS.id || null;
+              await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+            }
           }
           try {
             const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
@@ -1409,16 +1478,30 @@ app.get('/api/woovi/charge-status', async (req, res) => {
                 if (!Number.isNaN(num) && num > 0) viewsQty = num;
               }
             }
-            if (viewsQty > 0 && instaUser && (process.env.FAMA24H_API_KEY || '')) {
-              const axios = require('axios');
-              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
-              try {
-                const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataViews = respViews.data || {};
-                const orderIdViews = dataViews.order || dataViews.id || null;
-                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-              } catch (e2) {
-                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            if (viewsQty > 0 && instaUser) {
+              const isOrganicosViews = /^organicos$/i.test(tipo);
+              if (isOrganicosViews && (process.env.FORNECEDOR_SOCIAL_API_KEY || '')) {
+                const axios = require('axios');
+              const payloadViewsFS = new URLSearchParams({ key: String(process.env.FORNECEDOR_SOCIAL_API_KEY), action: 'add', service: String(Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_VIEWS || 312)), link: String(instaUser), quantity: String(viewsQty) });
+                try {
+                  const respViewsFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadViewsFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                  const dataViewsFS = respViewsFS.data || {};
+                  const orderIdViewsFS = dataViewsFS.order || dataViewsFS.id || null;
+                  await col.updateOne(filter, { $set: { fornecedor_social_views: { orderId: orderIdViewsFS, status: orderIdViewsFS ? 'created' : 'unknown', requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, response: dataViewsFS, requestedAt: new Date().toISOString() } } });
+                } catch (e2) {
+                  await col.updateOne(filter, { $set: { fornecedor_social_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                }
+              } else if (process.env.FAMA24H_API_KEY || '') {
+                const axios = require('axios');
+                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
+                try {
+                  const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                  const dataViews = respViews.data || {};
+                  const orderIdViews = dataViews.order || dataViews.id || null;
+                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+                } catch (e2) {
+                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                }
               }
             }
           } catch (_) {}
@@ -2162,12 +2245,12 @@ app.get('/api/debug-baserow-row', async (req, res) => {
   }
 });
 
+/*
 // Meta CAPI: Track InitiateCheckout
 app.post('/api/meta/track', async (req, res) => {
   try {
     const PIXEL_ID = process.env.PIXEL_ID || '1019661457030791';
-    const ACCESS_TOKEN = process.env.META_CAPI_TOKEN || 'EAAbmJnZB6GX8BP0bbQu4rrUk1FrzDQJGJu58NGKq1YIApXxPbDQ9TcZCJTBIWlsri8iG3dL1BTLc6L65LylloIeicHRPj1oxzZAUcLdSHzOOOFJ6NhrbIgZA4l7VqYffK89T4viCdHqBwcBIHLjZAoDhe1N58ZCzblp7kbvrDk6bYgW3eLroywac08SopAnAZDZD';
-
+    const ACCESS_TOKEN = process.env.META_CAPI_TOKEN || '';
     const {
       eventName = 'InitiateCheckout',
       value = 0,
@@ -2179,58 +2262,24 @@ app.post('/api/meta/track', async (req, res) => {
       correlationID = '',
       eventSourceUrl = ''
     } = req.body || {};
-
-    // Normalização e hashing do telefone para CAPI
     const normalizePhone = (p) => (String(p || '').replace(/[^0-9]/g, ''));
     const phoneNorm = normalizePhone(phone);
     const phoneHash = phoneNorm ? crypto.createHash('sha256').update(phoneNorm, 'utf8').digest('hex') : undefined;
-
     const event_time = Math.floor(Date.now() / 1000);
     const userAgent = req.headers['user-agent'] || '';
     const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
-
     const testCode = process.env.META_TEST_EVENT_CODE;
-    const payload = {
-      data: [
-        {
-          event_name: eventName,
-          event_time,
-          action_source: 'website',
-          event_source_url: eventSourceUrl || `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-          event_id: correlationID || undefined,
-          user_data: {
-            fbp: fbp || undefined,
-            client_user_agent: userAgent,
-            client_ip_address: clientIp,
-            ph: phoneHash ? [phoneHash] : undefined,
-          },
-          custom_data: {
-            value: Number(value) || 0,
-            currency,
-            content_name: contentName,
-            contents: Array.isArray(contents) ? contents : [],
-            num_items: Array.isArray(contents) ? contents.reduce((acc, c) => acc + (Number(c.quantity) || 0), 0) : 0,
-          }
-        }
-      ],
-      ...(testCode ? { test_event_code: testCode } : {})
-    };
-
+    const payload = {};
     const url = `https://graph.facebook.com/v18.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await resp.json();
-    if (!resp.ok) {
-      return res.status(resp.status).json({ success: false, error: data?.error || 'meta_error', details: data });
-    }
+    if (!resp.ok) { return res.status(resp.status).json({ success: false, error: data?.error || 'meta_error', details: data }); }
     return res.json({ success: true, result: data });
   } catch (err) {
     return res.status(500).json({ success: false, error: 'exception', details: err?.message || String(err) });
   }
 });
+*/
 
   // Webhook Woovi/OpenPix: CHARGE_CREATED -> enviar InitiateCheckout (CAPI)
 app.post('/api/openpix/webhook', async (req, res) => {
@@ -2309,7 +2358,8 @@ app.post('/api/openpix/webhook', async (req, res) => {
         }
         try {
           const record = await col.findOne(filter);
-          const alreadySent = record?.fama24h?.orderId ? true : false;
+          const alreadySentFama = record?.fama24h?.orderId ? true : false;
+          const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
           const tipo = additionalInfoMap['tipo_servico'] || record?.tipo || record?.tipoServico || '';
           const qtdBase = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
           const instaUser = additionalInfoMap['instagram_username'] || record?.instagramUsername || record?.instauser || '';
@@ -2328,23 +2378,48 @@ app.post('/api/openpix/webhook', async (req, res) => {
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySent;
-          if (canSend) {
-            const axios = require('axios');
-            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
-            console.log('➡️ Enviando pedido Fama24h', { service: serviceId, link: instaUser, quantity: qtd });
-            try {
-              const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-              const famaData = famaResp.data || {};
-              console.log('✅ Fama24h resposta', { status: famaResp.status, data: famaData });
-              const orderId = famaData.order || famaData.id || null;
-              await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
-            } catch (fErr) {
-              console.error('❌ Fama24h erro', fErr?.response?.data || fErr?.message || String(fErr));
-              await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+          const isOrganicos = /^organicos$/i.test(tipo);
+          if (!isOrganicos) {
+            const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+            if (canSend) {
+              const axios = require('axios');
+              const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+              console.log('➡️ Enviando pedido Fama24h', { service: serviceId, link: instaUser, quantity: qtd });
+              try {
+                const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const famaData = famaResp.data || {};
+                console.log('✅ Fama24h resposta', { status: famaResp.status, data: famaData });
+                const orderId = famaData.order || famaData.id || null;
+                await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+              } catch (fErr) {
+                console.error('❌ Fama24h erro', fErr?.response?.data || fErr?.message || String(fErr));
+                await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+              }
+            } else {
+              console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd: qtdBase, instaUser, alreadySentFama, hasUpgrade });
             }
           } else {
-            console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd: qtdBase, instaUser, alreadySent, hasUpgrade });
+            const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+            const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+            const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+            if (canSendFS) {
+              const axios = require('axios');
+              const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+              const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
+              console.log('➡️ Enviando pedido FornecedorSocial', { url: 'https://fornecedorsocial.com/api/v2', payload: Object.fromEntries(payloadFS.entries()) });
+              try {
+                const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataFS = respFS.data || {};
+                console.log('✅ FornecedorSocial resposta', { status: respFS.status, data: dataFS });
+                const orderIdFS = dataFS.order || dataFS.id || null;
+                await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+              } catch (fsErr) {
+                console.error('❌ FornecedorSocial erro', { message: fsErr?.message || String(fsErr), data: fsErr?.response?.data, status: fsErr?.response?.status });
+                await col.updateOne(filter, { $set: { fornecedor_social: { error: fsErr?.response?.data || fsErr?.message || String(fsErr), requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+              }
+            } else {
+              console.log('ℹ️ FornecedorSocial não enviado', { hasKeyFS: !!keyFS, tipo, qtd: qtdBase, instaUser, alreadySentFS, hasUpgrade, reason: (!keyFS ? 'missing_key' : (!instaUser ? 'missing_link' : (!qtd ? 'missing_qty' : (alreadySentFS ? 'already_sent' : 'unknown')))) });
+            }
           }
 
           try {
@@ -2360,16 +2435,31 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 if (!Number.isNaN(num) && num > 0) viewsQty = num;
               }
             }
-            if (viewsQty > 0 && instaUser && (process.env.FAMA24H_API_KEY || '')) {
-              const axios = require('axios');
-              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
-              try {
-                const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataViews = respViews.data || {};
-                const orderIdViews = dataViews.order || dataViews.id || null;
-                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-              } catch (e2) {
-                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            if (viewsQty > 0 && instaUser) {
+              const isOrganicosViews = /^organicos$/i.test(tipo);
+              if (isOrganicosViews && (process.env.FORNECEDOR_SOCIAL_API_KEY || '')) {
+                const axios = require('axios');
+                const linkFSv = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+                const payloadViewsFS = new URLSearchParams({ key: String(process.env.FORNECEDOR_SOCIAL_API_KEY), action: 'add', service: '312', link: linkFSv, quantity: String(viewsQty) });
+                try {
+                  const respViewsFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadViewsFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                  const dataViewsFS = respViewsFS.data || {};
+                  const orderIdViewsFS = dataViewsFS.order || dataViewsFS.id || null;
+                  await col.updateOne(filter, { $set: { fornecedor_social_views: { orderId: orderIdViewsFS, status: orderIdViewsFS ? 'created' : 'unknown', requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, response: dataViewsFS, requestedAt: new Date().toISOString() } } });
+                } catch (e2) {
+                  await col.updateOne(filter, { $set: { fornecedor_social_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                }
+              } else if (process.env.FAMA24H_API_KEY || '') {
+                const axios = require('axios');
+                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
+                try {
+                  const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                  const dataViews = respViews.data || {};
+                  const orderIdViews = dataViews.order || dataViews.id || null;
+                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+                } catch (e2) {
+                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                }
               }
             }
           } catch (_) {}
@@ -2438,6 +2528,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
     const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
     const eventSourceUrl = paymentLinkUrl || `https://agenciaoppus.site/checkout${phoneRaw ? `?phone=${encodeURIComponent(phoneRaw)}` : ''}`;
 
+    /*
     // Reutiliza endpoint de rastreio
     const trackResp = await fetch(`${req.protocol}://${req.get('host')}/api/meta/track`, {
       method: 'POST',
@@ -2458,6 +2549,66 @@ app.post('/api/openpix/webhook', async (req, res) => {
       return res.status(trackResp.status).json({ ok: false, error: trackData?.error || 'capi_error', details: trackData });
     }
     return res.json({ ok: true, capi: trackData });
+    */
+    return res.json({ ok: true, capi: 'disabled' });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'exception', details: err?.message || String(err) });
+  }
+});
+
+// Fallback: Disparar envio de serviço para fornecedor (Fama24h/FornecedorSocial) manualmente
+app.post('/api/services/dispatch', async (req, res) => {
+  try {
+    const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
+    const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
+    if (!identifier && !correlationID) return res.status(400).json({ ok: false, error: 'missing_identifier' });
+    const col = await getCollection('checkout_orders');
+    const filter = identifier ? { $or: [ { identifier }, { 'woovi.identifier': identifier } ] } : { correlationID };
+    const record = await col.findOne(filter);
+    if (!record) return res.status(404).json({ ok: false, error: 'not_found' });
+    const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
+    const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
+    const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
+    const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
+    const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
+    const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
+    const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
+    const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || '';
+    const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+    let upgradeAdd = 0;
+    if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
+      if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
+        const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+        upgradeAdd = map[qtdBase] || 0;
+      }
+    }
+    const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
+    const isOrganicos = /^organicos$/i.test(tipo);
+    if (!isOrganicos) {
+      const key = process.env.FAMA24H_API_KEY || '';
+      const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+      const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+      if (!canSend) return res.status(400).json({ ok: false, error: 'cannot_send_fama', reason: { hasKey: !!key, serviceId, instaUser: !!instaUserRaw, qtd, alreadySentFama } });
+      const axios = require('axios');
+      const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+      const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      const famaData = famaResp.data || {};
+      const orderId = famaData.order || famaData.id || null;
+      await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      return res.json({ ok: true, provider: 'fama24h', orderId, data: famaData });
+    } else {
+      const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+      const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+      const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+      if (!canSendFS) return res.status(400).json({ ok: false, error: 'cannot_send_fs', reason: { hasKeyFS: !!keyFS, instaUser: !!instaUserRaw, qtd, alreadySentFS } });
+      const axios = require('axios');
+      const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
+      const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      const dataFS = respFS.data || {};
+      const orderIdFS = dataFS.order || dataFS.id || null;
+      await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+      return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
+    }
   } catch (err) {
     return res.status(500).json({ ok: false, error: 'exception', details: err?.message || String(err) });
   }

@@ -515,6 +515,10 @@ html, body { overflow-x: hidden; }
 .status-yellow { color: #f59e0b; }
 .status-red { color: #ef4444; }
 .status-blue { color: #3b82f6; }
+.service-card.disabled { opacity: 0.6; pointer-events: none; }
+.status-warning { color: var(--text-secondary); font-weight: 600; }
+.status-maint-icon { width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; color: #fff; filter: grayscale(100%); }
+.theme-light .status-maint-icon { color: #000; }
 
 .button-text {
     position: relative;
@@ -661,6 +665,9 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 .checkout-page #warranty60InfoBtn { background: var(--bg-secondary) !important; border: none !important; color: var(--text-primary) !important; box-shadow: none !important; }
 .checkout-page #warranty60InfoBtn::before { display: none !important; }
 .checkout-page #warranty60InfoBtn:hover { transform: none !important; box-shadow: none !important; }
+.checkout-page #commentsExampleBtn { background: var(--bg-secondary) !important; border: none !important; color: var(--text-primary) !important; box-shadow: none !important; }
+.checkout-page #commentsExampleBtn::before { display: none !important; }
+.checkout-page #commentsExampleBtn:hover { transform: none !important; box-shadow: none !important; }
 .promo-item.warranty60 { background: #232336; border-color: var(--border-color); }
 .promo-desc { color: var(--text-secondary); font-size: 0.95rem; }
 .promo-item.upgrade { background: #232336; border-color: var(--border-color); }
