@@ -318,19 +318,24 @@
                 </label>
                 
                 <label class="promo-item warranty60">
-                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
+                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" checked />
                   <div class="promo-content">
-                    <div class="promo-highlight">+ 60 DIAS DE REPOSIÇÃO</div>
+                    <div id="warrantyHighlight" class="promo-highlight">+ 30 DIAS DE REPOSIÇÃO</div>
                     <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
                       <span>Garantia estendida</span>
                       <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
                     </div>
-                  <div class="promo-desc">Extensão de garantia com reposição por 60 dias.</div>
-                  <div class="promo-prices" data-promo="warranty60">
-                    <span class="old-price">R$ 59,90</span>
-                    <span class="discount-badge">68% OFF</span>
-                    <span class="new-price">R$ 19,90</span>
-                  </div>
+                    <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                    <div class="promo-prices" data-promo="warranty60">
+                      <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
+                      <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
+                      <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
+                    </div>
+                    <div class="likes-control" aria-label="Garantia estendida">
+                      <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
+                      <span id="warrantyModeLabel" class="likes-qty">30 dias</span>
+                      <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
+                    </div>
                   </div>
                 </label>
               </div>
@@ -387,8 +392,8 @@
             <button id="warranty60CloseBtn" class="modal-close" type="button" aria-label="Fechar">✕</button>
           </div>
           <div class="modal-body">
-            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vel augue ut eros fermentum tempus. Suspendisse potenti. Donec non turpis id felis laoreet facilisis.</p>
-            <div class="modal-image-placeholder" style="height:160px; border:1px dashed var(--border-color); border-radius:12px; display:flex; align-items:center; justify-content:center; color: var(--text-secondary); margin-top:0.75rem;">Área para imagem</div>
+            <p style="margin-top:0.75rem; color: var(--text-secondary);">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de seguidores que teve queda.</p>
+            <img src="/images/reposicao.jpeg" alt="Reposição de seguidores" style="width:100%; height: clamp(320px, 60vh, 560px); aspect-ratio: 9 / 16; object-fit: cover; border-radius:12px; margin-top:0.75rem;">
           </div>
           <div class="modal-footer">
             <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>

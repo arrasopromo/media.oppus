@@ -54,13 +54,13 @@ async function dispatchPendingOrganicos() {
       try {
         const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
         const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
-        if (!/^organicos$/i.test(String(tipo))) continue;
+        if (!/organicos/i.test(String(tipo))) continue;
         const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
         const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
         const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
         const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || '';
         let upgradeAdd = 0;
-        if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000 && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) upgradeAdd = 1000;
+        if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000 && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) upgradeAdd = 1000;
         else if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
           const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
           upgradeAdd = map[qtdBase] || 0;
@@ -884,14 +884,27 @@ function removePaymentSubscriber(res) {
   const idx = paymentSubscribers.findIndex((c) => c.res === res);
   if (idx >= 0) paymentSubscribers.splice(idx, 1);
 }
-function broadcastPaymentPaid(identifier, correlationID) {
+async function broadcastPaymentPaid(identifier, correlationID) {
   const ident = String(identifier || '').trim();
   const corr = String(correlationID || '').trim();
+  let orderIdFS = null;
+  let orderIdFama = null;
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
+    if (corr) { conds.push({ correlationID: corr }); }
+    const filter = conds.length ? { $or: conds } : {};
+    const doc = await col.findOne(filter);
+    orderIdFS = doc && doc.fornecedor_social && doc.fornecedor_social.orderId ? doc.fornecedor_social.orderId : null;
+    orderIdFama = doc && doc.fama24h && doc.fama24h.orderId ? doc.fama24h.orderId : null;
+  } catch(_) {}
   paymentSubscribers.forEach(({ identifier: id, correlationID: cid, res }) => {
     if ((ident && id === ident) || (corr && cid === corr)) {
       try {
         res.write(`event: paid\n`);
-        res.write(`data: ${JSON.stringify({ identifier: ident, correlationID: corr })}\n\n`);
+        res.write(`data: ${JSON.stringify({ identifier: ident, correlationID: corr, fornecedor_social_orderId: orderIdFS, fama24h_orderId: orderIdFama })}\n\n`);
       } catch(_) {}
     }
   });
@@ -1430,10 +1443,10 @@ app.get('/api/woovi/charge-status', async (req, res) => {
           const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
           const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
           const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
-          const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+          const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
           let upgradeAdd = 0;
           if (hasUpgrade && isFollowers) {
-            if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) {
+            if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
               upgradeAdd = 1000;
             } else {
               const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
@@ -1441,7 +1454,7 @@ app.get('/api/woovi/charge-status', async (req, res) => {
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const isOrganicos = /^organicos$/i.test(tipo);
+          const isOrganicos = /organicos/i.test(tipo);
           if (!isOrganicos) {
             const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
             if (canSend) {
@@ -1458,7 +1471,8 @@ app.get('/api/woovi/charge-status', async (req, res) => {
             const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
             if (canSendFS) {
               const axios = require('axios');
-              const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
+              const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+              const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
               const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
               const dataFS = respFS.data || {};
               const orderIdFS = dataFS.order || dataFS.id || null;
@@ -1479,19 +1493,7 @@ app.get('/api/woovi/charge-status', async (req, res) => {
               }
             }
             if (viewsQty > 0 && instaUser) {
-              const isOrganicosViews = /^organicos$/i.test(tipo);
-              if (isOrganicosViews && (process.env.FORNECEDOR_SOCIAL_API_KEY || '')) {
-                const axios = require('axios');
-              const payloadViewsFS = new URLSearchParams({ key: String(process.env.FORNECEDOR_SOCIAL_API_KEY), action: 'add', service: String(Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_VIEWS || 312)), link: String(instaUser), quantity: String(viewsQty) });
-                try {
-                  const respViewsFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadViewsFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const dataViewsFS = respViewsFS.data || {};
-                  const orderIdViewsFS = dataViewsFS.order || dataViewsFS.id || null;
-                  await col.updateOne(filter, { $set: { fornecedor_social_views: { orderId: orderIdViewsFS, status: orderIdViewsFS ? 'created' : 'unknown', requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, response: dataViewsFS, requestedAt: new Date().toISOString() } } });
-                } catch (e2) {
-                  await col.updateOne(filter, { $set: { fornecedor_social_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-                }
-              } else if (process.env.FAMA24H_API_KEY || '') {
+              if (process.env.FAMA24H_API_KEY || '') {
                 const axios = require('axios');
                 const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
                 try {
@@ -2367,10 +2369,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
           const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
           const hasUpgrade = typeof bumpsStr0 === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr0);
-          const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+          const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
           let upgradeAdd = 0;
           if (hasUpgrade && isFollowers) {
-            if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) {
+            if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
               upgradeAdd = 1000;
             } else {
               const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
@@ -2378,7 +2380,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const isOrganicos = /^organicos$/i.test(tipo);
+          const isOrganicos = /organicos/i.test(tipo);
           if (!isOrganicos) {
             const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
             if (canSend) {
@@ -2413,6 +2415,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 console.log('✅ FornecedorSocial resposta', { status: respFS.status, data: dataFS });
                 const orderIdFS = dataFS.order || dataFS.id || null;
                 await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
               } catch (fsErr) {
                 console.error('❌ FornecedorSocial erro', { message: fsErr?.message || String(fsErr), data: fsErr?.response?.data, status: fsErr?.response?.status });
                 await col.updateOne(filter, { $set: { fornecedor_social: { error: fsErr?.response?.data || fsErr?.message || String(fsErr), requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
@@ -2436,20 +2439,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
               }
             }
             if (viewsQty > 0 && instaUser) {
-              const isOrganicosViews = /^organicos$/i.test(tipo);
-              if (isOrganicosViews && (process.env.FORNECEDOR_SOCIAL_API_KEY || '')) {
-                const axios = require('axios');
-                const linkFSv = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
-                const payloadViewsFS = new URLSearchParams({ key: String(process.env.FORNECEDOR_SOCIAL_API_KEY), action: 'add', service: '312', link: linkFSv, quantity: String(viewsQty) });
-                try {
-                  const respViewsFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadViewsFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const dataViewsFS = respViewsFS.data || {};
-                  const orderIdViewsFS = dataViewsFS.order || dataViewsFS.id || null;
-                  await col.updateOne(filter, { $set: { fornecedor_social_views: { orderId: orderIdViewsFS, status: orderIdViewsFS ? 'created' : 'unknown', requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, response: dataViewsFS, requestedAt: new Date().toISOString() } } });
-                } catch (e2) {
-                  await col.updateOne(filter, { $set: { fornecedor_social_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 312, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-                }
-              } else if (process.env.FAMA24H_API_KEY || '') {
+              if (process.env.FAMA24H_API_KEY || '') {
                 const axios = require('axios');
                 const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
                 try {
@@ -2490,6 +2480,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
           }
           // Notificar clientes conectados via SSE
           broadcastPaymentPaid(charge?.identifier, charge?.correlationID);
+          try { setTimeout(() => { try { dispatchPendingOrganicos(); } catch(_) {} }, 0); } catch(_) {}
         } catch (sendErr) {
           console.error('⚠️ Falha ao enviar para Fama24h', sendErr?.message || String(sendErr));
         }
@@ -2574,16 +2565,16 @@ app.post('/api/services/dispatch', async (req, res) => {
     const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
     const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
     const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || '';
-    const isFollowers = /^(mistos|brasileiros|organicos|seguidores_tiktok)$/i.test(tipo);
+    const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
     let upgradeAdd = 0;
     if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
-      if ((/^brasileiros$/i.test(tipo) || /^organicos$/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
+      if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
         const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
         upgradeAdd = map[qtdBase] || 0;
       }
     }
     const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-    const isOrganicos = /^organicos$/i.test(tipo);
+    const isOrganicos = /organicos/i.test(tipo);
     if (!isOrganicos) {
       const key = process.env.FAMA24H_API_KEY || '';
       const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
@@ -2607,6 +2598,7 @@ app.post('/api/services/dispatch', async (req, res) => {
       const dataFS = respFS.data || {};
       const orderIdFS = dataFS.order || dataFS.id || null;
       await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+      try { await broadcastPaymentPaid(record?.identifier, record?.correlationID); } catch(_) {}
       return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
     }
   } catch (err) {
@@ -2699,7 +2691,7 @@ app.get('/pedido', async (req, res) => {
     // Priorizar pedido selecionado em sessão
     if (!doc && req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
-      doc = await col.findOne({ 'fama24h.orderId': soid });
+      doc = await col.findOne({ $or: [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ] });
     }
     if (!doc) {
       const conds = [];
@@ -2708,7 +2700,9 @@ app.get('/pedido', async (req, res) => {
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
         if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
+        if (!Number.isNaN(maybeNum)) conds.push({ 'fornecedor_social.orderId': maybeNum });
         conds.push({ 'fama24h.orderId': orderIDRaw });
+        conds.push({ 'fornecedor_social.orderId': orderIDRaw });
       }
       if (phoneRaw) {
         const digits = phoneRaw.replace(/\D/g, '');
@@ -2749,7 +2743,48 @@ app.post('/session/mark-paid', async (req, res) => {
     }
     req.session.lastPaidIdentifier = identifier || req.session.lastPaidIdentifier || '';
     req.session.lastPaidCorrelationID = correlationID || req.session.lastPaidCorrelationID || '';
-    return res.json({ ok: true });
+    res.json({ ok: true });
+    (async () => {
+      try {
+        const col = await getCollection('checkout_orders');
+        const filter = identifier ? { $or: [ { 'woovi.identifier': identifier }, { identifier } ] } : { correlationID };
+        const record = await col.findOne(filter);
+        if (!record) return;
+        const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
+        const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
+        const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
+        const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
+        const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
+        const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
+        const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
+        const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
+        const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
+        let upgradeAdd = 0;
+        if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
+          if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
+            const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            upgradeAdd = map[qtdBase] || 0;
+          }
+        }
+        const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
+        if (/organicos/i.test(tipo) && !alreadySentFS) {
+          const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+          const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+          if (!!keyFS && !!instaUser && qtd > 0) {
+            const axios = require('axios');
+            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
+            try {
+              const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              const dataFS = respFS.data || {};
+              const orderIdFS = dataFS.order || dataFS.id || null;
+              await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+              try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    })();
+    return;
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
