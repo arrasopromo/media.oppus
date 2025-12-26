@@ -668,7 +668,14 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 .checkout-page #commentsExampleBtn { background: var(--bg-secondary) !important; border: none !important; color: var(--text-primary) !important; box-shadow: none !important; }
 .checkout-page #commentsExampleBtn::before { display: none !important; }
 .checkout-page #commentsExampleBtn:hover { transform: none !important; box-shadow: none !important; }
+.checkout-page #warranty30InfoBtn,
+.checkout-page #warrantyLifetimeInfoBtn { background: var(--bg-secondary) !important; border: none !important; color: var(--text-primary) !important; box-shadow: none !important; }
+.checkout-page #warranty30InfoBtn::before,
+.checkout-page #warrantyLifetimeInfoBtn::before { display: none !important; }
+.checkout-page #warranty30InfoBtn:hover,
+.checkout-page #warrantyLifetimeInfoBtn:hover { transform: none !important; box-shadow: none !important; }
 .promo-item.warranty60 { background: #232336; border-color: var(--border-color); }
+.promo-item.warrantyLifetime { background: #232336; border-color: var(--border-color); }
 .promo-desc { color: var(--text-secondary); font-size: 0.95rem; }
 .promo-item.upgrade { background: #232336; border-color: var(--border-color); }
 .promo-item.comments { background: #232336; border-color: var(--border-color); }
@@ -716,6 +723,10 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
   .carousel-item.pos-left, .carousel-item.pos-right { display: none; }
   .testimonials-carousel .prev { transform: translateX(8px); }
   .testimonials-carousel .next { transform: translateX(-8px); }
+  .checkout-page #warranty60InfoBtn,
+  .checkout-page #commentsExampleBtn,
+  .checkout-page #warranty30InfoBtn,
+  .checkout-page #warrantyLifetimeInfoBtn { padding: 0.2rem 0.6rem !important; font-size: 12px !important; line-height: 1 !important; }
 }
 
 /* Footer */

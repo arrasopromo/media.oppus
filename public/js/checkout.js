@@ -166,8 +166,7 @@
     views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
     comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
     warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
-    warranty30: { old: 'R$ 59,90', price: 'R$ 19,90', discount: 68 },
-    warranty60: { old: 'R$ 59,90', price: 'R$ 19,90', discount: 68 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
   };
   try { window.promoPricing = promoPricing; } catch(_) {}
 
@@ -176,7 +175,7 @@
     blocks.forEach(b => {
       const key = b.getAttribute('data-promo');
       // Não sobrescrever preços dinâmicos de likes, views e comments
-      if (key === 'likes' || key === 'views' || key === 'comments') return;
+      if (key === 'likes' || key === 'views' || key === 'comments' || key === 'warranty60') return;
       const conf = promoPricing[key];
       if (!conf) return;
       const oldEl = b.querySelector('.old-price');
@@ -187,6 +186,33 @@
       if (discEl) discEl.textContent = `${conf.discount}% OFF`;
     });
   }
+
+  // Garantia única com slider: 30 dias (R$ 9,90) <-> Vitalícia (R$ 19,90)
+  let warrantyMode = '30';
+  try { window.warrantyMode = warrantyMode; } catch(_) {}
+  const wDec = document.getElementById('warrantyModeDec');
+  const wInc = document.getElementById('warrantyModeInc');
+  const wLabel = document.getElementById('warrantyModeLabel');
+  const wHighlight = document.getElementById('warrantyHighlight');
+  const wOld = document.getElementById('warrantyOldPrice');
+  const wNew = document.getElementById('warrantyNewPrice');
+  const wDisc = document.getElementById('warrantyDiscount');
+  function applyWarrantyMode(){
+    const isLife = warrantyMode === 'life';
+    if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
+    if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
+    if (wOld) wOld.textContent = isLife ? 'R$ 129,90' : 'R$ 39,90';
+    if (wNew) wNew.textContent = isLife ? 'R$ 19,90' : 'R$ 9,90';
+    if (wDisc) wDisc.textContent = isLife ? '85% OFF' : '75% OFF';
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  function stepWarranty(delta){
+    const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
+    if (next !== warrantyMode) { warrantyMode = next; try { window.warrantyMode = warrantyMode; } catch(_) {} applyWarrantyMode(); }
+  }
+  if (wDec) wDec.addEventListener('click', () => stepWarranty(-1));
+  if (wInc) wInc.addEventListener('click', () => stepWarranty(1));
+  applyWarrantyMode();
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
@@ -313,8 +339,12 @@
       try {
         tipoCards.style.placeContent = 'center';
         tipoCards.style.placeItems = 'center';
-        tipoCards.style.gridTemplateColumns = 'minmax(260px, 380px)';
-        tipoCards.style.minHeight = '70vh';
+        tipoCards.style.justifyContent = 'center';
+        tipoCards.style.justifyItems = 'center';
+        tipoCards.style.alignContent = 'start';
+        tipoCards.style.alignItems = 'start';
+        tipoCards.style.gridTemplateColumns = '1fr minmax(260px, 380px) 1fr';
+        tipoCards.style.minHeight = '';
         tipoCards.style.margin = '0 auto';
       } catch(_) {}
     } else {
@@ -332,6 +362,9 @@
       el.dataset.role = 'tipo';
       el.dataset.tipo = t.key;
       el.innerHTML = `<div class="card-content"><div class="card-title" style="text-align:center;">${t.label}</div><div class="card-desc" style="text-align:center;">${selectedPlatform === 'tiktok' ? '<span class="status-warning"><svg class="status-maint-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M3 12a9 9 0 1118 0 9 9 0 01-18 0zm9-4a1 1 0 011 1v3.586l2.293 2.293a1 1 0 11-1.414 1.414l-2.586-2.586A2 2 0 0110 12V9a1 1 0 011-1z"/></svg> Serviço em manutenção</span>' : ''}</div></div>`;
+      if (selectedPlatform === 'tiktok') {
+        try { el.style.gridColumn = '2'; } catch(_) {}
+      }
       if (selectedPlatform !== 'tiktok') {
         el.addEventListener('click', () => selectTipo(t.key));
       }
@@ -526,12 +559,13 @@
     statusCheckoutMessage.textContent = msg;
     statusCheckoutMessage.style.display = 'block';
     statusCheckoutMessage.style.textAlign = 'center';
+    const isLight = document.body.classList.contains('theme-light');
     if (type === 'success') {
       statusCheckoutMessage.style.color = '#22C55E';
     } else if (type === 'error') {
-      statusCheckoutMessage.style.color = '#ffb4b4';
+      statusCheckoutMessage.style.color = isLight ? '#7f1d1d' : '#ffb4b4';
     } else {
-      statusCheckoutMessage.style.color = '#ffffff';
+      statusCheckoutMessage.style.color = isLight ? '#000000' : '#ffffff';
     }
   }
 
@@ -905,12 +939,12 @@
 
   function updateWarrantyVisibility() {
     const tipo = (tipoSelect && tipoSelect.value) || '';
-    const warrantyInput = document.getElementById('promoWarranty60');
-    const warrantyItem = warrantyInput ? warrantyInput.closest('.promo-item') : null;
-    if (!warrantyItem) return;
+    const inp = document.getElementById('promoWarranty60');
+    const item = inp ? inp.closest('.promo-item') : null;
+    if (!item) return;
     const show = (tipo === 'mistos' || tipo === 'brasileiros');
-    warrantyItem.style.display = show ? '' : 'none';
-    if (!show && warrantyInput) { warrantyInput.checked = false; }
+    item.style.display = show ? '' : 'none';
+    if (!show && inp) { inp.checked = false; }
     try { updatePromosSummary(); } catch(_) {}
   }
 
@@ -1273,9 +1307,10 @@
         promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
       if (warrantyChecked) {
-        let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
-        if (!priceStr) priceStr = promoPricing.warranty60?.price || '';
-        promos.push({ key: 'warranty60', qty: 1, label: '+60 dias de reposição', priceCents: parsePrecoToCents(priceStr) });
+        const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
+        const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
+        const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
+        promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -1632,10 +1667,11 @@
            </div>`
         : '';
 
+      const textColor = document.body.classList.contains('theme-light') ? '#000' : '#fff';
       const waitingHtml = `
-        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#fff;">
+        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
           <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="25" cy="25" r="20" stroke="#fff" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
+            <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
               <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
             </circle>
           </svg>
@@ -1965,14 +2001,14 @@
               ordersBox.textContent = 'Pedido não encontrado.';
             } else {
               try {
-                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
                 if (oid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
                   window.location.href = '/pedido';
                   return;
                 }
               } catch (_) {}
-              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
               const status = String(o.status || o.woovi?.status || '-');
               const tipo = String(o.tipo || o.tipoServico || '-');
               const qtd = String(o.quantidade || o.qtd || '-');
@@ -2021,7 +2057,7 @@
             if (list.length === 1) {
               try {
                 const only = list[0];
-                const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : '';
+                const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : ((only && only.fornecedor_social && only.fornecedor_social.orderId) ? String(only.fornecedor_social.orderId) : '');
                 if (onlyOid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
                   window.location.href = '/pedido';
@@ -2030,7 +2066,7 @@
               } catch(_) {}
             }
             ordersBox.innerHTML = list.map((o) => {
-              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
               const status = String(o.status || o.woovi?.status || '-');
               const tipo = String(o.tipo || o.tipoServico || '-');
               const qtd = String(o.quantidade || o.qtd || '-');
@@ -2138,9 +2174,31 @@
   }
   const warrantyModal = document.getElementById('warranty60Modal');
   const warrantyInfoBtn = document.getElementById('warranty60InfoBtn');
+  const warrantyInfoBtn30 = document.getElementById('warranty30InfoBtn');
+  const warrantyInfoBtnLifetime = document.getElementById('warrantyLifetimeInfoBtn');
   const warrantyCloseBtn = document.getElementById('warranty60CloseBtn');
   if (warrantyInfoBtn && warrantyModal) {
     warrantyInfoBtn.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtn30 && warrantyModal) {
+    warrantyInfoBtn30.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtnLifetime && warrantyModal) {
+    warrantyInfoBtnLifetime.addEventListener('click', function(){
       try {
         if (warrantyModal.parentNode !== document.body) {
           document.body.appendChild(warrantyModal);
@@ -2324,9 +2382,10 @@
           promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (warrantyChecked) {
-          let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
-          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.warranty60 ? window.promoPricing.warranty60.price : '') || '';
-          promos.push({ key: 'warranty60', qty: 1, label: '+60 dias de reposição', priceCents: window.parsePrecoToCents(priceStr) });
+          const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
+          const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
+          const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
+          promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -2452,7 +2511,7 @@
       const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
       const resp = await fetch(apiUrl);
       const data = await resp.json();
-      const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || null;
+      const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || (data && data.order && data.order.fornecedor_social && data.order.fornecedor_social.orderId) || null;
       if (oid) {
         try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
         try { localStorage.setItem('oppus_selected_oid', String(oid)); } catch(_) {}
