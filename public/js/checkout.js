@@ -1,5 +1,5 @@
 (() => {
-  try { if (typeof fbq === 'function' && window._oppusPixelReady) fbq('track', 'PageView'); } catch(e) {}
+  /* try { if (typeof fbq === 'function' && window._oppusPixelReady) fbq('track', 'PageView'); } catch(e) {} */
   const tipoSelect = document.getElementById('tipoSelect');
   const qtdSelect = document.getElementById('quantidadeSelect');
   const tipoCards = document.getElementById('tipoCards');
@@ -117,6 +117,7 @@
       { q: 15000, p: 'R$ 399,90' },
     ],
     organicos: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 39,90' },
       { q: 300, p: 'R$ 49,90' },
       { q: 500, p: 'R$ 69,90' },
@@ -301,22 +302,39 @@
     tipoCards.style.display = 'grid';
     const tipos = selectedPlatform === 'tiktok'
       ? [
-          { key: 'seguidores_tiktok', label: 'Seguidores' },
-          { key: 'curtidas_reais', label: 'Curtidas' },
-          { key: 'visualizacoes_reels', label: 'Visualizações' }
+          { key: 'seguidores_tiktok', label: 'Seguidores' }
         ]
       : [
           { key: 'mistos', label: 'Seguidores Mistos (Internacionais)' },
           { key: 'brasileiros', label: 'Seguidores Brasileiros' },
           { key: 'organicos', label: 'Seguidores Brasileiros Orgânicos' }
         ];
+    if (selectedPlatform === 'tiktok') {
+      try {
+        tipoCards.style.placeContent = 'center';
+        tipoCards.style.placeItems = 'center';
+        tipoCards.style.gridTemplateColumns = 'minmax(260px, 380px)';
+        tipoCards.style.minHeight = '70vh';
+        tipoCards.style.margin = '0 auto';
+      } catch(_) {}
+    } else {
+      try {
+        tipoCards.style.placeContent = '';
+        tipoCards.style.placeItems = '';
+        tipoCards.style.gridTemplateColumns = '';
+        tipoCards.style.minHeight = '';
+        tipoCards.style.margin = '';
+      } catch(_) {}
+    }
     for (const t of tipos) {
       const el = document.createElement('div');
-      el.className = 'service-card';
+      el.className = 'service-card' + (selectedPlatform === 'tiktok' ? ' disabled' : '');
       el.dataset.role = 'tipo';
       el.dataset.tipo = t.key;
-      el.innerHTML = `<div class="card-content"><div class="card-title">${t.label}</div><div class="card-desc"></div></div>`;
-      el.addEventListener('click', () => selectTipo(t.key));
+      el.innerHTML = `<div class="card-content"><div class="card-title" style="text-align:center;">${t.label}</div><div class="card-desc" style="text-align:center;">${selectedPlatform === 'tiktok' ? '<span class="status-warning"><svg class="status-maint-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M3 12a9 9 0 1118 0 9 9 0 01-18 0zm9-4a1 1 0 011 1v3.586l2.293 2.293a1 1 0 11-1.414 1.414l-2.586-2.586A2 2 0 0110 12V9a1 1 0 011-1z"/></svg> Serviço em manutenção</span>' : ''}</div></div>`;
+      if (selectedPlatform !== 'tiktok') {
+        el.addEventListener('click', () => selectTipo(t.key));
+      }
       tipoCards.appendChild(el);
     }
   }
@@ -324,6 +342,7 @@
   function renderPlanCards(tipo) {
     if (!planCards) return;
     planCards.innerHTML = '';
+    if (tipo === 'seguidores_tiktok') { planCards.style.display = 'none'; return; }
     let plans = tabela[tipo] || [];
     if (isFollowersTipo(tipo)) {
       const allowed = getAllowedQuantities(tipo);
@@ -1246,7 +1265,7 @@
         const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
         let priceStr = document.querySelector('.promo-prices[data-promo="views"] .new-price')?.textContent || '';
         if (!priceStr) priceStr = promoPricing.views?.price || '';
-        promos.push({ key: 'views', qty, label: `Visualizações (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+        promos.push({ key: 'views', qty, label: `Visualizações Reels (${qty})`, priceCents: parsePrecoToCents(priceStr) });
       }
       if (commentsChecked) {
         const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
@@ -1503,6 +1522,7 @@
       const promos = getSelectedPromos();
       const promosTotalCents = calcPromosTotalCents(promos);
       const totalCents = Math.max(0, Number(valueCents) + Number(promosTotalCents));
+      /*
       // Tracking: Meta Pixel + CAPI (InitiateCheckout)
       const valueBRL = Math.round(Number(totalCents)) / 100;
       const fbpCookie = (document.cookie.match(/_fbp=([^;]+)/)?.[1]) || '';
@@ -1526,7 +1546,7 @@
           contents: [{ id: tipo, quantity: qtdEffective }],
           content_name: `${tipo} - ${qtdEffective} ${getUnitForTipo(tipo)}`,
         }, correlationID);
-      } catch (_) { /* silencioso */ }
+      } catch (_) { }
       try {
         void fetch('/api/meta/track', {
           method: 'POST',
@@ -1543,7 +1563,8 @@
             eventSourceUrl: window.location.href,
           })
         });
-      } catch (_) { /* silencioso */ }
+      } catch (_) { }
+      */
       const phoneValue = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl);
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
       let usernameFromSession = '';
@@ -2137,6 +2158,29 @@
   }
   if (warrantyModal) {
     warrantyModal.addEventListener('click', function(e){ if (e.target === warrantyModal) { warrantyModal.style.display = 'none'; } });
+  }
+  const commentsModal = document.getElementById('commentsExampleModal');
+  const commentsBtn = document.getElementById('commentsExampleBtn');
+  const commentsCloseBtn = document.getElementById('commentsExampleCloseBtn');
+  const commentsCloseBtn2 = document.getElementById('commentsExampleCloseBtn2');
+  if (commentsBtn && commentsModal) {
+    commentsBtn.addEventListener('click', function(){
+      try {
+        if (commentsModal.parentNode !== document.body) {
+          document.body.appendChild(commentsModal);
+        }
+      } catch(_) {}
+      commentsModal.style.display = 'flex';
+    });
+  }
+  if (commentsCloseBtn && commentsModal) {
+    commentsCloseBtn.addEventListener('click', function(){ commentsModal.style.display = 'none'; });
+  }
+  if (commentsCloseBtn2 && commentsModal) {
+    commentsCloseBtn2.addEventListener('click', function(){ commentsModal.style.display = 'none'; });
+  }
+  if (commentsModal) {
+    commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { commentsModal.style.display = 'none'; } });
   }
   })();
   (function initSaleToasts(){
