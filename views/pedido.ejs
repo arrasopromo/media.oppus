@@ -26,7 +26,13 @@
     (function removeParam(){
       try {
         if (location.search && /orderid=/i.test(location.search)) {
-          history.replaceState(null, '', '/pedido');
+          var qs = new URLSearchParams(location.search);
+          qs.delete('orderID');
+          qs.delete('orderid');
+          var parts = [];
+          qs.forEach(function(v, k){ parts.push(k + '=' + encodeURIComponent(v)); });
+          var newSearch = parts.length ? ('?' + parts.join('&')) : '';
+          history.replaceState(null, '', '/pedido' + newSearch);
         }
       } catch(_) {}
     })();
@@ -68,6 +74,7 @@
                     </svg>
                   </button>
                 </div>
+                <div>Pedido curtidas: <span id="orderLikesId"><%= (function(){ var oidL=(order&&order.fama24h_likes&&order.fama24h_likes.orderId)?String(order.fama24h_likes.orderId):''; return String(oidL||'-'); })() %></span></div>
                 <% var famaPayload=(order&&order.fama24h&&order.fama24h.statusPayload)||null; var sRaw=String((famaPayload&&(famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText))||'').trim(); var t=sRaw.toLowerCase(); var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running/.test(t)?'Em andamento':(/complete|success|finished|done/.test(t)?'Concluído':sRaw))))):'-'; %>
                 <div>Status do serviço: <span id="famaServicoStatus" class="status-text <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>"><%= stMap %></span></div>
               </div>
@@ -148,6 +155,44 @@
         var isPaid = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase() === 'pago';
         var ident = String((orderData && (orderData.identifier || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
         try {
+          var qs = new URLSearchParams((location && location.search) || '');
+          var identQ = String(qs.get('identifier') || '').trim();
+          var corrQ = String(qs.get('correlationID') || '').trim();
+          if (!ident && identQ) ident = identQ;
+          if (!corrQ && (orderData && orderData.correlationID)) corrQ = String(orderData.correlationID || '').trim();
+          if (ident) {
+            var es = new EventSource('/api/payment/subscribe?identifier=' + encodeURIComponent(ident));
+            es.addEventListener('paid', function(ev){
+              try {
+                var data = JSON.parse(ev.data || '{}');
+                var oidFS = String(data && data.fornecedor_social_orderId ? data.fornecedor_social_orderId : '');
+                var oidFama = String(data && data.fama24h_orderId ? data.fama24h_orderId : '');
+                var oid = String(oidFS || oidFama || '');
+                if (oid) {
+                  var elNumber = document.getElementById('orderNumberId');
+                  if (elNumber) elNumber.textContent = oid;
+                  try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
+                }
+              } catch(_){}
+            });
+          } else if (corrQ) {
+            var es2 = new EventSource('/api/payment/subscribe?correlationID=' + encodeURIComponent(corrQ));
+            es2.addEventListener('paid', function(ev){
+              try {
+                var data = JSON.parse(ev.data || '{}');
+                var oidFS = String(data && data.fornecedor_social_orderId ? data.fornecedor_social_orderId : '');
+                var oidFama = String(data && data.fama24h_orderId ? data.fama24h_orderId : '');
+                var oid = String(oidFS || oidFama || '');
+                if (oid) {
+                  var elNumber = document.getElementById('orderNumberId');
+                  if (elNumber) elNumber.textContent = oid;
+                  try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
+                }
+              } catch(_){}
+            });
+          }
+        } catch(_){}
+        try {
           if (ident) {
             var es = new EventSource('/api/payment/subscribe?identifier=' + encodeURIComponent(ident));
             es.addEventListener('paid', function(ev){
@@ -165,12 +210,7 @@
             });
           }
         } catch(_){}
-        if (isPaid && tipoServ === 'organicos' && !alreadyFS && ident) {
-          fetch('/api/services/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: ident }) })
-            .then(function(r){ return r.json(); })
-            .then(function(d){ try { console.debug('Dispatch result', d); } catch(_){} })
-            .catch(function(){});
-        }
+        
         (function(){
           var tries = 0;
           var maxTries = 20;

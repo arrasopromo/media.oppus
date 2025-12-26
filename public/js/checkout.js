@@ -275,6 +275,18 @@
       return;
     }
 
+    // Promo específica: organicos 50 -> +50 (total 100) para teste
+    if (tipo === 'organicos' && Number(baseQtd) === 50) {
+      const addQtd = 50;
+      const diffStr = findPrice('organicos', 50) || 'R$ 0,10';
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para 100.`;
+      if (upHighlight) upHighlight.textContent = `+ ${addQtd} seguidores`;
+      if (upOld) upOld.textContent = '—';
+      if (upNew) upNew.textContent = diffStr;
+      if (upDisc) upDisc.textContent = 'OFERTA';
+      return;
+    }
+
     // Upgrade genérico para demais pacotes
     const upsellTargets = { 150: 300, 500: 700, 1200: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
@@ -1253,6 +1265,117 @@
   if (viewsDec) viewsDec.addEventListener('click', () => stepViews(-1));
   if (viewsInc) viewsInc.addEventListener('click', () => stepViews(1));
   if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
+
+  function getPostModalRefs(){
+    return {
+      postModal: document.getElementById('postSelectModal'),
+      postModalGrid: document.getElementById('postModalGrid'),
+      postModalTitle: document.getElementById('postModalTitle'),
+      postModalClose: document.getElementById('postModalClose'),
+    };
+  }
+  let postModalOpenLock = false;
+  let suppressOpenPostModalOnce = false;
+  let cachedPosts = null;
+  let cachedPostsUser = '';
+  const openPostBtns = Array.from(document.querySelectorAll('.open-post-modal-btn'));
+  function openPostModal(kind){
+    if (postModalOpenLock) return;
+    postModalOpenLock = true;
+    setTimeout(function(){ postModalOpenLock = false; }, 600);
+    const refs = getPostModalRefs();
+    if (!refs.postModal || !refs.postModalGrid) return;
+    const user = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+    if (refs.postModalTitle) refs.postModalTitle.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
+    try {
+      if (refs.postModal.parentNode !== document.body) {
+        document.body.appendChild(refs.postModal);
+      }
+    } catch(_) {}
+    try { document.body.style.overflow = 'hidden'; } catch(_) {}
+    refs.postModal.style.display = 'flex';
+    try {
+      const dlg = refs.postModal.querySelector('.modal-dialog');
+      if (dlg && typeof dlg.scrollIntoView === 'function') { dlg.scrollIntoView({ block: 'center', inline: 'center' }); }
+    } catch(_) {}
+    refs.postModalGrid.innerHTML = '';
+    const renderFrom = function(arr){
+      const items = (Array.isArray(arr) ? arr : []).filter(p => {
+        if (kind === 'views') return !!p.isVideo || (String(p.typename||'').toLowerCase().includes('video') || String(p.typename||'').toLowerCase().includes('clip'));
+        return true;
+      }).slice(0, 8);
+      const html = items.map(function(p){
+        const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+        const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
+        const media = (dsrc)
+          ? ('<div class="media-frame"><img src="'+dsrc+'" loading="lazy" decoding="async"/></div>')
+          : (p.isVideo && vsrc
+            ? ('<div class="media-frame"><video data-src="'+vsrc+'" muted playsinline preload="none"></video></div>')
+            : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
+        return '<div class="service-card"><div class="card-content pick-post-card" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="width:100%; text-align:center;" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'">Selecionar</button></div></div></div>';
+      }).join('');
+      refs.postModalGrid.innerHTML = html || '<div style="grid-column:1/-1">Nenhum post encontrado.</div>';
+      const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
+      Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+            .then(r=>r.json())
+            .then(function(){ highlightSelected(k, sc); });
+        });
+      });
+      Array.from(refs.postModalGrid.querySelectorAll('.pick-post-card')).forEach(function(card){
+        card.addEventListener('click', function(){
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+            .then(r=>r.json())
+            .then(function(){ highlightSelected(k, sc); });
+        });
+      });
+      try { fetch('/api/instagram/selected-for').then(r=>r.json()).then(function(d){ const obj = d && d.selectedFor ? d.selectedFor : {}; const cur = obj[kind]; if (cur && cur.shortcode) { highlightSelected(kind, cur.shortcode); } }); } catch(_) {}
+    };
+    const useCache = !!cachedPosts && cachedPostsUser === user;
+    if (useCache) {
+      renderFrom(cachedPosts);
+    } else {
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+      fetch(url).then(r=>r.json()).then(d=>{
+        const arr = Array.isArray(d.posts) ? d.posts : [];
+        cachedPosts = arr; cachedPostsUser = user;
+        renderFrom(arr);
+      }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1">Erro ao carregar posts.</div>'; });
+    }
+  }
+  (function(){ const { postModalClose } = getPostModalRefs(); if (postModalClose) postModalClose.addEventListener('click', function(){ const refs = getPostModalRefs(); if(refs.postModal) { refs.postModal.style.display='none'; try { document.body.style.overflow=''; } catch(_) {} } }); })();
+  (function(){ const refs = getPostModalRefs(); const btn = document.getElementById('postModalClose2'); if (btn) btn.addEventListener('click', function(){ const r = getPostModalRefs(); if(r.postModal) { r.postModal.style.display='none'; try { document.body.style.overflow=''; } catch(_) {} } }); })();
+  (function(){ const refs = getPostModalRefs(); if (refs.postModal) refs.postModal.addEventListener('click', function(e){ if (e.target === refs.postModal) { refs.postModal.style.display = 'none'; try { document.body.style.overflow=''; } catch(_) {} } }); })();
+  (function(){ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') { const refs = getPostModalRefs(); if (refs.postModal && refs.postModal.style.display !== 'none') { refs.postModal.style.display = 'none'; try { document.body.style.overflow=''; } catch(_) {} } } }); })();
+  openPostBtns.forEach(function(btn){ btn.addEventListener('click', function(){ const k = this.getAttribute('data-kind'); openPostModal(k); }); });
+  const promoLikes = document.getElementById('promoLikes');
+  const promoViews = document.getElementById('promoViews');
+  const promoComments = document.getElementById('promoComments');
+  if (promoLikes) promoLikes.addEventListener('change', function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (this.checked) openPostModal('likes'); });
+  if (promoViews) promoViews.addEventListener('change', function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (this.checked) openPostModal('views'); });
+  if (promoComments) promoComments.addEventListener('change', function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (this.checked) openPostModal('comments'); });
+  // Também abrir ao clicar na área do card após marcar
+  ['likes','views','comments'].forEach(function(kind){
+    const label = document.querySelector('label.promo-item.'+kind);
+    if (label) label.addEventListener('click', function(){ const input = document.getElementById(kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments')); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal(kind); }, 0); });
+    const priceBlock = document.querySelector('.promo-prices[data-promo="'+(kind==='likes'?'likes':(kind==='views'?'views':'comments'))+'"]');
+    if (priceBlock) priceBlock.addEventListener('click', function(e){ e.stopPropagation(); const input = document.getElementById(kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments')); if (input && input.checked) openPostModal(kind); });
+  });
+  try {
+    const likesLabel = document.querySelector('label.promo-item.likes');
+    const viewsLabel = document.querySelector('label.promo-item.views');
+    const commentsLabel = document.querySelector('label.promo-item.comments');
+    if (likesLabel) likesLabel.addEventListener('click', function(e){ const input = document.getElementById('promoLikes'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('likes'); }, 0); });
+    if (viewsLabel) viewsLabel.addEventListener('click', function(e){ const input = document.getElementById('promoViews'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('views'); }, 0); });
+    if (commentsLabel) commentsLabel.addEventListener('click', function(e){ const input = document.getElementById('promoComments'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('comments'); }, 0); });
+  } catch(_) {}
   try { updatePromosSummary(); } catch(_) {}
 
   // Quantidade de Comentários (R$ 1,00 cada)
@@ -1392,6 +1515,10 @@
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         // Avança para o passo final
         showTutorialStep(5);
+        try {
+          const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
+          fetch(url).then(r=>r.json()).then(d=>{ cachedPosts = Array.isArray(d.posts) ? d.posts : []; cachedPostsUser = (profile.username || username) || ''; }).catch(function(){});
+        } catch(_) {}
         
       } else {
         const msg = String(data.error || 'Falha ao verificar perfil.');
@@ -1418,6 +1545,10 @@
           try { applyCheckoutFlow(); } catch(_) {}
           showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
           showTutorialStep(5);
+          try {
+            const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
+            fetch(url).then(r=>r.json()).then(d=>{ cachedPosts = Array.isArray(d.posts) ? d.posts : []; cachedPostsUser = (profile.username || username) || ''; }).catch(function(){});
+          } catch(_) {}
         } else {
           showStatusMessageCheckout(msg, 'error');
         }
@@ -1497,6 +1628,7 @@
       const getUpgradeAddQtd = (t, base) => {
         try {
           if (!isFollowersTipo(t)) return 0;
+          if (t === 'organicos' && Number(base) === 50) return 50;
           if ((t === 'brasileiros' || t === 'organicos') && Number(base) === 1000) {
             return 1000;
           }
@@ -1512,7 +1644,19 @@
       const precoStr = opt ? (opt.dataset.preco || '') : '';
       const valueCents = parsePrecoToCents(precoStr);
       if (!tipo || !qtd || !valueCents) {
-        alert('Selecione o tipo e o pacote antes de realizar o pedido.');
+        try {
+          const hasTipo = !!tipo;
+          const hasQtd = !!qtd;
+          alert(!hasTipo ? 'Selecione o tipo do serviço.' : (!hasQtd ? 'Selecione a quantidade/pacote do serviço.' : 'Selecione o tipo e o pacote antes de realizar o pedido.'));
+          hideAllTutorials();
+          if (!hasTipo) {
+            const target = document.getElementById('tipoCards') || document.getElementById('grupoTipo');
+            if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else if (!hasQtd) {
+            const target = document.getElementById('planCards') || document.getElementById('grupoQuantidade');
+            if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        } catch(_) {}
         return;
       }
       // Verificação de telefone
@@ -1626,6 +1770,19 @@
           { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
         ]
       };
+
+      try {
+        const selResp = await fetch('/api/instagram/selected-for');
+        const selData = await selResp.json();
+        const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+        const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
+        const likesLink = mapKind('likes');
+        const viewsLink = mapKind('views');
+        const commentsLink = mapKind('comments');
+        if (likesLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
+        if (viewsLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
+        if (commentsLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+      } catch(_) {}
 
       // sem envio de links de posts
 
@@ -2004,7 +2161,7 @@
                 const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
                 if (oid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
-                  window.location.href = '/pedido';
+                  window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
                   return;
                 }
               } catch (_) {}
@@ -2060,7 +2217,7 @@
                 const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : ((only && only.fornecedor_social && only.fornecedor_social.orderId) ? String(only.fornecedor_social.orderId) : '');
                 if (onlyOid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
-                  window.location.href = '/pedido';
+                  window.location.href = '/pedido?orderID=' + encodeURIComponent(String(onlyOid));
                   return;
                 }
               } catch(_) {}
@@ -2132,10 +2289,10 @@
             const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
             const d = await r.json();
             const o = d && d.order ? d.order : null;
-            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
             if (oid) {
               try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
-              window.location.href = '/pedido';
+              window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
               return;
             }
           } catch(_) {}
@@ -2222,7 +2379,10 @@
   const commentsCloseBtn = document.getElementById('commentsExampleCloseBtn');
   const commentsCloseBtn2 = document.getElementById('commentsExampleCloseBtn2');
   if (commentsBtn && commentsModal) {
-    commentsBtn.addEventListener('click', function(){
+    commentsBtn.addEventListener('click', function(e){
+      try { e.stopPropagation(); } catch(_) {}
+      suppressOpenPostModalOnce = true;
+      setTimeout(function(){ suppressOpenPostModalOnce = false; }, 500);
       try {
         if (commentsModal.parentNode !== document.body) {
           document.body.appendChild(commentsModal);
@@ -2515,19 +2675,21 @@
       if (oid) {
         try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
         try { localStorage.setItem('oppus_selected_oid', String(oid)); } catch(_) {}
-        targetUrl = `/pedido`;
       }
     } catch(_) {}
-    if (!targetUrl) {
-      targetUrl = `/pedido`;
-    }
-    const url = targetUrl;
+    const url = (function(){
+      try {
+        const cached = localStorage.getItem('oppus_selected_oid') || '';
+        if (cached) return `/pedido?orderID=${encodeURIComponent(String(cached))}`;
+      } catch(_) {}
+      return `/pedido`;
+    })();
     try { window.location.assign(url); } catch(_) {}
     try {
       setTimeout(async () => {
+        try { if (location && location.pathname === '/pedido') return; } catch(_) {}
         try {
-          if (location && location.pathname === '/pedido') return;
-          const r = await fetch('/pedido', { method: 'GET', headers: { 'Accept': 'text/html' } });
+          const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
           if (r && r.ok) { window.location.href = url; return; }
         } catch(_) {}
         try { markPaymentConfirmed(); } catch(_) {}
