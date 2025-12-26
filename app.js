@@ -182,27 +182,100 @@ async function fetchInstagramPosts(username) {
             return { success: false, error: 'Erro ao acessar perfil do Instagram' };
         }
 
-        const htmlContent = response.data;
+        let htmlContent = response.data;
         console.log(`📄 HTML recebido (${htmlContent.length} caracteres)`);
 
-        // Extrair IDs dos posts usando regex
-        const regex = /\\\"shortcode\\\"\s*:\s*\\\"([CD][^\\\"]+)\\\"/g;
-        const matches = [];
+        // Extrair IDs dos posts usando regex e filtrar pelo owner
+        const regex = /\"shortcode\"\s*:\s*\"([A-Za-z0-9_-]+)\"/g;
+        let matches = [];
         let match;
-
-        while ((match = regex.exec(htmlContent)) !== null) {
-            matches.push(match[1]);
+        while ((match = regex.exec(htmlContent)) !== null) { matches.push(match[1]); }
+        if (!matches.length) {
+            try {
+                const url2 = `https://www.instagram.com/${username}/`;
+                const resp2 = await axios.get(url2, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Referer': 'https://www.instagram.com/'
+                    },
+                    timeout: 15000
+                });
+                if (resp2.status === 200 && typeof resp2.data === 'string') {
+                    htmlContent = resp2.data;
+                    const regex2 = /\"shortcode\"\s*:\s*\"([A-Za-z0-9_-]+)\"/g;
+                    let m2;
+                    while ((m2 = regex2.exec(htmlContent)) !== null) { matches.push(m2[1]); }
+                    if (matches.length) {
+                        console.log(`📄 HTML perfil recebido (${htmlContent.length} caracteres)`);
+                    }
+                }
+            } catch(_) {}
         }
 
-        console.log(`📊 IDs de posts encontrados: ${matches.length}`);
-        if (matches.length > 0) {
-            console.log(`📋 Primeiros 5 IDs: ${matches.slice(0, 5).join(', ')}`);
+        const codesSet = new Set(matches);
+        try {
+            const p1 = /\/p\/([A-Za-z0-9_-]+)(?:\/?|\?)/g;
+            const p2 = /\/reel\/([A-Za-z0-9_-]+)(?:\/?|\?)/g;
+            const p3 = /\"permalink_url\"\s*:\s*\"https?:\\\/\\\/www\.instagram\.com\\\/(?:p|reel)\\\/([A-Za-z0-9_-]+)(?:\\\/?|\?)/g;
+            let mm;
+            while ((mm = p1.exec(htmlContent)) !== null) { codesSet.add(mm[1]); }
+            while ((mm = p2.exec(htmlContent)) !== null) { codesSet.add(mm[1]); }
+            while ((mm = p3.exec(htmlContent)) !== null) { codesSet.add(mm[1]); }
+        } catch(_) {}
+        matches = Array.from(codesSet);
+        try {
+            const mNext = htmlContent.match(/<script type="application\/json" id="__NEXT_DATA__">([\s\S]*?)<\/script>/i);
+            if (mNext && mNext[1]) {
+                const j = JSON.parse(mNext[1]);
+                const edgesN = (((j.props && j.props.pageProps && j.props.pageProps.graphql && j.props.pageProps.graphql.user && j.props.pageProps.graphql.user.edge_owner_to_timeline_media) ? j.props.pageProps.graphql.user.edge_owner_to_timeline_media.edges : []) || []);
+                if (Array.isArray(edgesN) && edgesN.length) {
+                    for (const e of edgesN) { if (e && e.node && e.node.shortcode) codesSet.add(e.node.shortcode); }
+                }
+            } else {
+                const mAdd = htmlContent.match(/__additionalDataLoaded\([^\)]*?,\s*({[\s\S]*?})\s*\);/i);
+                if (mAdd && mAdd[1]) {
+                    const j2 = JSON.parse(mAdd[1]);
+                    const user2 = j2.graphql && j2.graphql.user;
+                    const edges2 = (user2 && user2.edge_owner_to_timeline_media && user2.edge_owner_to_timeline_media.edges) ? user2.edge_owner_to_timeline_media.edges : [];
+                    if (Array.isArray(edges2) && edges2.length) {
+                        for (const e of edges2) { if (e && e.node && e.node.shortcode) codesSet.add(e.node.shortcode); }
+                    }
+                }
+            }
+        } catch(_) {}
+        matches = Array.from(codesSet);
+        // Reexecuta com acesso ao index para validar owner próximo ao bloco
+        const filtered = [];
+        try {
+            const re2 = /\"shortcode\"\s*:\s*\"([A-Za-z0-9_-]+)\"/g;
+            let m;
+            while ((m = re2.exec(htmlContent)) !== null) {
+                const sc = m[1];
+                const idx = m.index || 0;
+                const windowStr = htmlContent.slice(Math.max(0, idx - 10000), Math.min(htmlContent.length, idx + 10000));
+                const ownerOk = new RegExp(`\\"owner\\"\s*:\s*\{[^}]*?\\"username\\"\s*:\s*\\"${username}\\"`, 'i').test(windowStr)
+                  || new RegExp(`\\"username\\"\s*:\s*\\"${username}\\"`, 'i').test(windowStr);
+                if (ownerOk || new RegExp(`\\"full_name\\"\\s*:\\s*\\"[^\\"]*${username}[^\\"]*\\"`, 'i').test(windowStr)) filtered.push(sc);
+            }
+        } catch(_) {}
+        const resultShortcodes = Array.from(new Set(filtered.length ? filtered : matches));
+        console.log(`📊 IDs de posts encontrados (filtrados): ${resultShortcodes.length}`);
+        if (resultShortcodes.length > 0) {
+            console.log(`📋 Primeiros 5 IDs: ${resultShortcodes.slice(0, 5).join(', ')}`);
         }
 
         return {
             success: true,
-            posts: matches,
-            totalPosts: matches.length
+            posts: resultShortcodes,
+            totalPosts: resultShortcodes.length
         };
 
     } catch (error) {
@@ -1093,7 +1166,7 @@ app.get('/image-proxy', async (req, res) => {
       timeout: 10000,
       headers: {
         'User-Agent': req.get('User-Agent') || 'Mozilla/5.0',
-        'Accept': 'image/*,*/*;q=0.8'
+        'Accept': 'image/*,video/*,*/*;q=0.8'
       }
     });
     const contentType = response.headers['content-type'] || 'image/jpeg';
@@ -2375,7 +2448,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
             if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
               upgradeAdd = 1000;
             } else {
-              const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+              const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
               upgradeAdd = map[qtdBase] || 0;
             }
           }
@@ -2557,19 +2630,19 @@ app.post('/api/services/dispatch', async (req, res) => {
     const filter = identifier ? { $or: [ { identifier }, { 'woovi.identifier': identifier } ] } : { correlationID };
     const record = await col.findOne(filter);
     if (!record) return res.status(404).json({ ok: false, error: 'not_found' });
-    const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
+    const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(record.additionalInfo) ? record.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
     const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
     const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
     const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
     const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
     const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
     const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
-    const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || '';
+    const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
     const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
     let upgradeAdd = 0;
     if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
       if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
-        const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+        const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
         upgradeAdd = map[qtdBase] || 0;
       }
     }
@@ -2679,20 +2752,12 @@ app.get('/pedido', async (req, res) => {
     }
     const col = await getCollection('checkout_orders');
     let doc = null;
-    
-    if (req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
-      const lpId = String(req.session.lastPaidIdentifier || '').trim();
-      const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
-      const firstConds = [];
-      if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
-      if (lpCorr) firstConds.push({ correlationID: lpCorr });
-      if (firstConds.length) { doc = await col.findOne({ $or: firstConds }); }
-    }
-    // Priorizar pedido selecionado em sessão
-    if (!doc && req.session && req.session.selectedOrderID) {
+    // 1) Priorizar pedido selecionado explicitamente em sessão
+    if (req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
       doc = await col.findOne({ $or: [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ] });
     }
+    // 2) Em seguida, tentar pelos parâmetros de consulta
     if (!doc) {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
@@ -2711,13 +2776,148 @@ app.get('/pedido', async (req, res) => {
           conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
         }
       }
-      const filter = conds.length ? { $or: conds } : {};
-      doc = await col.findOne(filter);
+      if (conds.length) {
+        doc = await col.findOne({ $or: conds });
+      }
+    }
+    // 3) Por último, usar último pago guardado em sessão
+    if (!doc && req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
+      const lpId = String(req.session.lastPaidIdentifier || '').trim();
+      const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
+      const firstConds = [];
+      if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
+      if (lpCorr) firstConds.push({ correlationID: lpCorr });
+      if (firstConds.length) { doc = await col.findOne({ $or: firstConds }); }
     }
     const order = doc || {};
     return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
+  }
+});
+
+app.get('/posts', async (req, res) => {
+  try {
+    const usernameParam = String(req.query.username || '').trim();
+    const usernameSession = req.session && req.session.instagramProfile && req.session.instagramProfile.username ? String(req.session.instagramProfile.username) : '';
+    const username = usernameParam || usernameSession || '';
+    return res.render('posts', { username });
+  } catch (e) {
+    return res.status(500).send('Erro ao renderizar posts');
+  }
+});
+
+app.get('/api/instagram/posts', async (req, res) => {
+  try {
+    const usernameParam = String(req.query.username || '').trim();
+    const usernameSession = req.session && req.session.instagramProfile && req.session.instagramProfile.username ? String(req.session.instagramProfile.username) : '';
+    const username = usernameParam || usernameSession || '';
+    if (!username) return res.status(400).json({ success: false, error: 'missing_username' });
+    try {
+      console.log('[API] tentando web_profile_info com cookies');
+      const result = await fetchInstagramRecentPosts(username);
+      if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
+        return res.json(result);
+      }
+    } catch (e) { /* fallback abaixo */ }
+    try {
+      console.log('[API] tentando web_profile_info sem cookies');
+      const headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "X-IG-App-ID": "936619743392459",
+        "Accept": "application/json",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "X-Requested-With": "XMLHttpRequest"
+      };
+      const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { headers, timeout: 8000 });
+      const user = resp.data && resp.data.data && resp.data.data.user;
+      if (resp.status === 200 && user && !user.is_private) {
+        const edges = (user.edge_owner_to_timeline_media && Array.isArray(user.edge_owner_to_timeline_media.edges)) ? user.edge_owner_to_timeline_media.edges : [];
+        const posts = edges.map(e => e && e.node ? ({
+          shortcode: e.node.shortcode,
+          takenAt: e.node.taken_at_timestamp,
+          isVideo: !!e.node.is_video,
+          displayUrl: e.node.display_url || e.node.thumbnail_src || null,
+          videoUrl: e.node.video_url || null,
+          typename: e.node.__typename || ''
+        }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
+        if (posts.length) return res.json({ success: true, username: user.username, posts });
+      }
+    } catch (e3) { /* fallback abaixo */ }
+    try {
+      console.log('[API] tentando fallback HTML');
+      const basic = await fetchInstagramPosts(username);
+      if (basic && basic.success && Array.isArray(basic.posts) && basic.posts.length) {
+        const posts = basic.posts.slice(0, 8).map(sc => ({ shortcode: sc, takenAt: null, isVideo: false, displayUrl: null, videoUrl: null }));
+        return res.json({ success: true, username, posts });
+      }
+    } catch (e2) { /* sem fallback */ }
+    return res.json({ success: false, username, posts: [] });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/instagram/select-post', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    const shortcode = String((req.body && req.body.shortcode) || '').trim();
+    if (!shortcode) {
+      return res.status(400).json({ success: false, error: 'missing_shortcode' });
+    }
+    const link = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`;
+    const prev = Array.isArray(req.session.selectedPosts) ? req.session.selectedPosts : [];
+    const filtered = prev.filter(p => p.shortcode !== shortcode);
+    const selected = { username, shortcode, link, savedAt: new Date().toISOString() };
+    req.session.selectedPosts = [selected, ...filtered].slice(0, 50);
+    return res.json({ success: true, selectedPost: selected, selectedPosts: req.session.selectedPosts });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/instagram/selected-posts', async (req, res) => {
+  try {
+    const list = Array.isArray(req.session.selectedPosts) ? req.session.selectedPosts : [];
+    return res.json({ success: true, posts: list });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/instagram/select-post-for', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    const shortcode = String((req.body && req.body.shortcode) || '').trim();
+    const kind = String((req.body && req.body.kind) || '').trim();
+    if (!shortcode) { return res.status(400).json({ success: false, error: 'missing_shortcode' }); }
+    if (!kind) { return res.status(400).json({ success: false, error: 'missing_kind' }); }
+    const link = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`;
+    if (!req.session.selectedFor) req.session.selectedFor = {};
+    req.session.selectedFor[kind] = { username, shortcode, link, savedAt: new Date().toISOString() };
+    return res.json({ success: true, selected: req.session.selectedFor[kind], selectedFor: req.session.selectedFor });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/instagram/selected-for', async (req, res) => {
+  try {
+    const obj = req.session.selectedFor || {};
+    return res.json({ success: true, selectedFor: obj });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/instagram/selected-posts/clear', async (req, res) => {
+  try {
+    req.session.selectedPosts = [];
+    return res.json({ success: true, cleared: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
   }
 });
 
@@ -2762,7 +2962,7 @@ app.post('/session/mark-paid', async (req, res) => {
         let upgradeAdd = 0;
         if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
           if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
-            const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
             upgradeAdd = map[qtdBase] || 0;
           }
         }
@@ -2803,7 +3003,7 @@ app.get('/api/order', async (req, res) => {
     }
     if (!doc && req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
-      doc = await col.findOne({ 'fama24h.orderId': soid });
+      doc = await col.findOne({ $or: [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ] });
     }
     if (!doc) {
       const conds = [];
@@ -2811,8 +3011,9 @@ app.get('/api/order', async (req, res) => {
       if (correlationID) conds.push({ correlationID });
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
-        if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
+        if (!Number.isNaN(maybeNum)) { conds.push({ 'fama24h.orderId': maybeNum }); conds.push({ 'fornecedor_social.orderId': maybeNum }); }
         conds.push({ 'fama24h.orderId': orderIDRaw });
+        conds.push({ 'fornecedor_social.orderId': orderIDRaw });
       }
       if (phoneRaw) {
         const digits = phoneRaw.replace(/\D/g, '');
@@ -2944,19 +3145,56 @@ app.post('/api/payment/confirm', async (req, res) => {
         const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
         const famaData = famaResp.data || {};
         const orderId = famaData.order || famaData.id || null;
-        await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+    }
+    // Disparo para FornecedorSocial quando for orgânicos
+    try {
+      const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(resolvedTipo);
+      const additionalInfoMap = record?.additionalInfoMapPaid || (Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(record?.additionalInfo) ? record.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
+      const bumpsStr0 = additionalInfoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
+      let upgradeAdd = 0;
+      if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
+        if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && Number(resolvedQtd) === 1000) upgradeAdd = 1000; else {
+          const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+          upgradeAdd = map[Number(resolvedQtd)] || 0;
+        }
       }
+      const finalQtd = Math.max(0, Number(resolvedQtd) + Number(upgradeAdd));
+      const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
+      if (/organicos/i.test(resolvedTipo) && !!resolvedUser && finalQtd > 0 && !alreadySentFS) {
+        const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+        const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+        if (!!keyFS) {
+          const axios = require('axios');
+          const linkFS = (/^https?:\/\//i.test(String(resolvedUser))) ? String(resolvedUser) : `https://instagram.com/${String(resolvedUser)}`;
+          const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(finalQtd) });
+          try {
+            const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const dataFS = respFS.data || {};
+            const orderIdFS = dataFS.order || dataFS.id || null;
+            await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkFS, quantity: finalQtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+            try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+          } catch(_) {}
+        }
+      }
+    } catch(_) {}
       try {
         const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
         const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
         const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
         let viewsQty = 0;
+        let likesQty = 0;
         if (typeof bumpsStr === 'string' && bumpsStr) {
           const parts = bumpsStr.split(';');
           const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+          const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
           if (vPart) {
             const num = Number(vPart.split(':')[1]);
             if (!Number.isNaN(num) && num > 0) viewsQty = num;
+          }
+          if (lPart) {
+            const numL = Number(lPart.split(':')[1]);
+            if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
           }
         }
         if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
@@ -2969,6 +3207,26 @@ app.post('/api/payment/confirm', async (req, res) => {
             await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
           } catch (e2) {
             await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+          }
+        }
+        if (likesQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+          const axios = require('axios');
+          let likesUrl = '';
+          try {
+            const arrPaid2 = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+            const arrOrig2 = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+            const vLike = (arrPaid2.find(it => it && it.key === 'likes_url')?.value) || (arrOrig2.find(it => it && it.key === 'likes_url')?.value) || '';
+            if (typeof vLike === 'string') likesUrl = vLike.trim();
+          } catch(_) {}
+          const linkForLikes = (likesUrl && /^https?:\/\//i.test(likesUrl)) ? likesUrl : String(resolvedUser);
+          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: linkForLikes, quantity: String(likesQty) });
+          try {
+            const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const dataLikes = respLikes.data || {};
+            const orderIdLikes = dataLikes.order || dataLikes.id || null;
+            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: linkForLikes, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+          } catch (e3) {
+            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: linkForLikes, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
           }
         }
       } catch (_) {}
@@ -3039,17 +3297,54 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
         const orderId = famaData.order || famaData.id || null;
         await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
       }
+      // Disparo para FornecedorSocial quando for orgânicos
+      try {
+        const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(resolvedTipo);
+        const additionalInfoMap = record?.additionalInfoMapPaid || (Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(record?.additionalInfo) ? record.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
+        const bumpsStr0 = additionalInfoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
+        let upgradeAdd = 0;
+        if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
+          if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && Number(resolvedQtd) === 1000) upgradeAdd = 1000; else {
+            const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            upgradeAdd = map[Number(resolvedQtd)] || 0;
+          }
+        }
+        const finalQtd = Math.max(0, Number(resolvedQtd) + Number(upgradeAdd));
+        const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
+        if (/organicos/i.test(resolvedTipo) && !!resolvedUser && finalQtd > 0 && !alreadySentFS) {
+          const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+          const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+          if (!!keyFS) {
+            const axios = require('axios');
+            const linkFS = (/^https?:\/\//i.test(String(resolvedUser))) ? String(resolvedUser) : `https://instagram.com/${String(resolvedUser)}`;
+            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(finalQtd) });
+            try {
+              const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              const dataFS = respFS.data || {};
+              const orderIdFS = dataFS.order || dataFS.id || null;
+              await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkFS, quantity: finalQtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+              try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+            } catch(_) {}
+          }
+        }
+      } catch(_) {}
       try {
         const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
         const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
         const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
         let viewsQty = 0;
+        let likesQty = 0;
         if (typeof bumpsStr === 'string' && bumpsStr) {
           const parts = bumpsStr.split(';');
           const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+          const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
           if (vPart) {
             const num = Number(vPart.split(':')[1]);
             if (!Number.isNaN(num) && num > 0) viewsQty = num;
+          }
+          if (lPart) {
+            const numL = Number(lPart.split(':')[1]);
+            if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
           }
         }
         if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
@@ -3064,6 +3359,18 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
             await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
+        if (likesQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+          const axios = require('axios');
+          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(resolvedUser), quantity: String(likesQty) });
+          try {
+            const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const dataLikes = respLikes.data || {};
+            const orderIdLikes = dataLikes.order || dataLikes.id || null;
+            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: resolvedUser, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+          } catch (e3) {
+            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: resolvedUser, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+          }
+        }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
     } catch (_) {}
@@ -3073,4 +3380,85 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
+// Buscar últimos posts com metadados (timestamp, tipo, mídia)
+async function fetchInstagramRecentPosts(username) {
+  const now = Date.now();
+  const MAX_ATTEMPTS = cookieProfiles.length * 2;
+  const USAGE_INTERVAL_MS = 10 * 1000;
+  const MAX_ERRORS_PER_PROFILE = 5;
+  const DISABLE_TIME_MS = 60 * 1000;
+  let attempts = 0;
+  while (attempts < MAX_ATTEMPTS) {
+    const available = cookieProfiles.filter(p => p.disabledUntil <= now && !isCookieLocked(p.ds_user_id)).sort((a,b)=>{
+      if (a.errorCount !== b.errorCount) return a.errorCount - b.errorCount;
+      return a.lastUsed - b.lastUsed;
+    });
+    if (!available.length) throw new Error('Sem cookies disponíveis');
+    const idx = globalIndex % available.length;
+    const selected = available[idx];
+    globalIndex = (globalIndex + 1) % available.length;
+    if (selected.lastUsed && (now - selected.lastUsed < USAGE_INTERVAL_MS)) { attempts++; continue; }
+    if (isCookieLocked(selected.ds_user_id)) { attempts++; continue; }
+    try {
+      console.log(`[IG] Tentando API autenticada com cookie ${selected.ds_user_id}`);
+      const proxyAgent = selected.proxy ? new HttpsProxyAgent(`http://${selected.proxy.auth.username}:${selected.proxy.auth.password}@${selected.proxy.host}:${selected.proxy.port}`, { rejectUnauthorized: false }) : null;
+      const headers = {
+        "User-Agent": selected.userAgent,
+        "X-IG-App-ID": "936619743392459",
+        "Cookie": `sessionid=${selected.sessionid}; ds_user_id=${selected.ds_user_id}`,
+        "Accept": "application/json",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "X-Requested-With": "XMLHttpRequest"
+      };
+      const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { headers, httpsAgent: proxyAgent, timeout: 8000 });
+      if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
+      const user = resp.data && resp.data.data && resp.data.data.user;
+      if (!user || user.is_private) return { success: false, error: 'Perfil privado ou inexistente' };
+      const edges = (user.edge_owner_to_timeline_media && Array.isArray(user.edge_owner_to_timeline_media.edges)) ? user.edge_owner_to_timeline_media.edges : [];
+      const posts = edges.map(e => e && e.node ? ({
+        shortcode: e.node.shortcode,
+        takenAt: e.node.taken_at_timestamp,
+        isVideo: !!e.node.is_video,
+        displayUrl: e.node.display_url || e.node.thumbnail_src || null,
+        videoUrl: e.node.video_url || null,
+        typename: e.node.__typename || ''
+      }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
+      selected.lastUsed = now; selected.errorCount = 0; unlockCookie(selected.ds_user_id);
+      return { success: true, username: user.username, posts };
+    } catch (err) {
+      console.error(`[IG] Falha cookie ${selected.ds_user_id}:`, err?.message || String(err));
+      selected.errorCount++; if (selected.errorCount >= MAX_ERRORS_PER_PROFILE) selected.disabledUntil = now + DISABLE_TIME_MS; unlockCookie(selected.ds_user_id); attempts++;
+      if (attempts === MAX_ATTEMPTS) throw err;
+    }
+  }
+  try {
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "X-IG-App-ID": "936619743392459",
+      "Accept": "application/json",
+      "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
+      "X-Requested-With": "XMLHttpRequest"
+    };
+    const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { headers, timeout: 8000 });
+    if (resp.status === 200 && resp.data && resp.data.data && resp.data.data.user && !resp.data.data.user.is_private) {
+      const user = resp.data.data.user;
+      const edges = (user.edge_owner_to_timeline_media && Array.isArray(user.edge_owner_to_timeline_media.edges)) ? user.edge_owner_to_timeline_media.edges : [];
+      const posts = edges.map(e => e && e.node ? ({
+        shortcode: e.node.shortcode,
+        takenAt: e.node.taken_at_timestamp,
+        isVideo: !!e.node.is_video,
+        displayUrl: e.node.display_url || e.node.thumbnail_src || null,
+        videoUrl: e.node.video_url || null,
+        typename: e.node.__typename || ''
+      }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
+      return { success: true, username: user.username, posts };
+    }
+  } catch (_) {}
+  throw new Error('Falha ao buscar posts');
+}
 
