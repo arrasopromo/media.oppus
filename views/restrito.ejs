@@ -21,6 +21,9 @@
                 <p class="error-message" style="color:#4A5568;font-size:1.1rem;margin-bottom:32px;">Esta página só pode ser acessada através de um link temporário válido.</p>
                 <div class="search-container" style="margin-bottom:24px;"></div>
                 <a href="https://w.app/agoppus" target="_blank" class="whatsapp-btn" style="display:inline-block;background:#25d366;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:1.1em;transition:background 0.2s;">Fale conosco no WhatsApp para adquirir um dos planos</a>
+                <div id="paymentCard" style="display:none;margin-top:16px;">
+                  <div id="pixResultado"></div>
+                </div>
             </div>
         </main>
         <footer class="footer">
@@ -42,6 +45,115 @@
               msgEl.textContent = 'A página de perfil exige um link temporário válido.';
             } else {
               msgEl.textContent = 'Esta página só pode ser acessada através de um link temporário válido.';
+            }
+          }
+          var btnEl = document.querySelector('.whatsapp-btn');
+          if (btnEl && origin.includes('/refil')) {
+            btnEl.outerHTML = '<div class="service-card" id="orderBumpInline" style="display:block;">\
+              <div class="card-content">\
+                <h3 class="card-title">Promoções</h3>\
+                <div class="card-desc promo-list">\
+                  <label class="promo-item upgrade">\
+                    <input type="checkbox" id="orderBumpCheckboxInline" />\
+                    <div class="promo-content">\
+                      <div class="promo-highlight" id="orderBumpHighlight">Extensão de Refil</div>\
+                      <div class="promo-title">30 Dias ou Vitalício</div>\
+                      <div id="orderBumpText" class="promo-desc">Adicione extensão de refil ao seu pedido.</div>\
+                      <div class="promo-prices" data-promo="upgrade">\
+                        <span class="old-price">R$ 99,90</span>\
+                        <span class="discount-badge">50% OFF</span>\
+                        <span class="new-price">R$ 49,90</span>\
+                      </div>\
+                    </div>\
+                  </label>\
+                </div>\
+                <div class="button-container" style="margin-top: 12px;">\
+                  <button id="generateRefilPaymentBtn" class="continue-button"><span class="button-text">Gerar pagamento de extensão</span></button>\
+                </div>\
+              </div>\
+            </div>';
+            var genBtn = document.getElementById('generateRefilPaymentBtn');
+            function parsePrecoToCents(precoStr){
+              if (!precoStr) return 0;
+              var cleaned = String(precoStr).replace(/[^\d,]/g, '').replace(',', '.');
+              var value = Math.round(parseFloat(cleaned) * 100);
+              return isNaN(value) ? 0 : value;
+            }
+            function renderPix(brCode, qrImage){
+              var paymentCardEl = document.getElementById('paymentCard');
+              var pixResultado = document.getElementById('pixResultado');
+              if (!pixResultado || !paymentCardEl) return;
+              var copyButtonId = 'copyPixRefilBtn';
+              var inputId = 'pixBrCodeRefilInput';
+              var imgHtml = qrImage ? ('<img src="'+qrImage+'" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />') : '';
+              var codeFieldHtml = brCode ? ('<div style="margin-bottom: 0.5rem; text-align: center;">\
+                <input id="'+inputId+'" type="text" readonly value="'+brCode+'" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" />\
+              </div>') : '<div style="color:#111827;">Não foi possível exibir o código Pix.</div>';
+              var copyBtnHtml = brCode ? ('<div class="button-container" style="margin-bottom: 0.5rem;">\
+                <button id="'+copyButtonId+'" class="continue-button"><span class="button-text">Copiar código Pix</span></button>\
+              </div>') : '';
+              var textColor = (document.body.classList.contains('theme-light') ? '#000' : '#fff');
+              var waitingHtml = '<div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:'+textColor+';">\
+                <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">\
+                  <circle cx="25" cy="25" r="20" stroke="'+textColor+'" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">\
+                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />\
+                  </circle>\
+                </svg>\
+                <span>Aguardando pagamento...</span>\
+              </div>';
+              pixResultado.innerHTML = imgHtml + codeFieldHtml + copyBtnHtml + waitingHtml;
+              paymentCardEl.style.display = 'block';
+              try {
+                var isMobile = window.innerWidth <= 640;
+                if (isMobile) {
+                  var target = paymentCardEl || pixResultado;
+                  if (target) {
+                    var rect = target.getBoundingClientRect();
+                    var top = (window.scrollY || window.pageYOffset || 0) + rect.top - Math.max(60, rect.height * 0.2);
+                    window.scrollTo({ top: top, behavior: 'smooth' });
+                  }
+                }
+              } catch(_) {}
+              var copyBtn = document.getElementById(copyButtonId);
+              if (copyBtn && brCode) {
+                copyBtn.addEventListener('click', function(){
+                  try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(brCode);
+                    } else {
+                      var input = document.getElementById(inputId);
+                      if (input) { input.select(); document.execCommand('copy'); }
+                    }
+                  } catch(_) {}
+                });
+              }
+            }
+            if (genBtn) {
+              genBtn.addEventListener('click', function(){
+                try {
+                  var priceEl = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price');
+                  var priceStr = priceEl ? priceEl.textContent : '';
+                  var cents = parsePrecoToCents(priceStr);
+                  if (!cents) return;
+                  fetch('/api/woovi/charge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      value: cents,
+                      comment: 'Extensão de refil',
+                      additionalInfo: [ { key: 'tipo_servico', value: 'refil_extensao' } ]
+                    })
+                  }).then(function(r){ return r.json(); }).then(function(data){
+                    try {
+                      var charge = data.charge || data || {};
+                      var pix = charge.paymentMethods ? (charge.paymentMethods.pix || {}) : {};
+                      var brCode = pix.brCode || charge.brCode || '';
+                      var qrImage = pix.qrCodeImage || charge.qrCodeImage || '';
+                      renderPix(brCode, qrImage);
+                    } catch(_) {}
+                  }).catch(function(err){ try { alert('Falha ao criar pagamento: '+(err && err.message ? err.message : String(err))); } catch(_) {} });
+                } catch(_) {}
+              });
             }
           }
         } catch(_) {}

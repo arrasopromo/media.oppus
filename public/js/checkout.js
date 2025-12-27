@@ -82,6 +82,7 @@
   const grupoPedido = document.getElementById('grupoPedido');
   // carrossel removido
   let isInstagramVerified = false;
+  let isInstagramPrivate = false;
   // Captura phone da URL: /checkout?phone=... (default 11111111)
   let phoneFromUrl = new URLSearchParams(window.location.search).get('phone') || '11111111';
 
@@ -662,9 +663,8 @@
 
   function updatePedidoButtonState() {
     if (!btnPedido) return;
-    const hasTipo = !!(tipoSelect && tipoSelect.value);
-    const hasQtd = !!(qtdSelect && qtdSelect.value);
-    btnPedido.disabled = !(hasTipo && hasQtd);
+    // Mantém o botão sempre clicável para exibir alertas de pendência
+    btnPedido.disabled = false;
   }
 
   function setPlatform(p) {
@@ -689,6 +689,21 @@
       showTutorialStep(2);
     }
   }
+
+  (function initBuyFollowersBtn(){
+    const btn = document.getElementById('buyFollowersBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function(e){
+      try { e.preventDefault(); } catch(_) {}
+      try {
+        const targetPlat = document.getElementById('plataformaCard');
+        if (targetPlat && typeof targetPlat.scrollIntoView === 'function') targetPlat.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        showTutorialStep(2);
+        const tutorialPlatform = document.getElementById('tutorialPlatform');
+        if (tutorialPlatform) tutorialPlatform.style.display = 'block';
+      } catch(_) {}
+    });
+  })();
 
   function hideAllTutorials() {
     if (tutorial1Tipo) tutorial1Tipo.style.display = 'none';
@@ -1278,6 +1293,14 @@
   let suppressOpenPostModalOnce = false;
   let cachedPosts = null;
   let cachedPostsUser = '';
+  function ensureSpinnerCSS(){
+    if (document.getElementById('oppusSpinnerStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'oppusSpinnerStyles';
+    style.textContent = "@keyframes oppusSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} .oppus-spinner{width:32px;height:32px;border:4px solid rgba(255,255,255,0.25);border-top-color:#7c3aed;border-radius:50%;animation:oppusSpin 1s linear infinite} .oppus-spinner-wrap{grid-column:1/-1;display:flex;justify-content:center;align-items:center;gap:8px;padding:24px;color:var(--text-secondary)}";
+    document.head.appendChild(style);
+  }
+  function spinnerHTML(){ ensureSpinnerCSS(); return '<div class="oppus-spinner-wrap"><div class="oppus-spinner"></div><span>Carregando...</span></div>'; }
   const openPostBtns = Array.from(document.querySelectorAll('.open-post-modal-btn'));
   function openPostModal(kind){
     if (postModalOpenLock) return;
@@ -1298,7 +1321,11 @@
       const dlg = refs.postModal.querySelector('.modal-dialog');
       if (dlg && typeof dlg.scrollIntoView === 'function') { dlg.scrollIntoView({ block: 'center', inline: 'center' }); }
     } catch(_) {}
-    refs.postModalGrid.innerHTML = '';
+    if (isInstagramPrivate) {
+      refs.postModalGrid.innerHTML = '<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML();
+    } else {
+      refs.postModalGrid.innerHTML = spinnerHTML();
+    }
     const renderFrom = function(arr){
       const items = (Array.isArray(arr) ? arr : []).filter(p => {
         if (kind === 'views') return !!p.isVideo || (String(p.typename||'').toLowerCase().includes('video') || String(p.typename||'').toLowerCase().includes('clip'));
@@ -1314,7 +1341,7 @@
             : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
         return '<div class="service-card"><div class="card-content pick-post-card" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="width:100%; text-align:center;" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'">Selecionar</button></div></div></div>';
       }).join('');
-      refs.postModalGrid.innerHTML = html || '<div style="grid-column:1/-1">Nenhum post encontrado.</div>';
+      refs.postModalGrid.innerHTML = html || (isInstagramPrivate ? '<div style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' : '<div style="grid-column:1/-1">Nenhum post encontrado.</div>');
       const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
       Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
         btn.addEventListener('click', function(){
@@ -1343,11 +1370,12 @@
       renderFrom(cachedPosts);
     } else {
       const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+      refs.postModalGrid.innerHTML = isInstagramPrivate ? ('<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML()) : spinnerHTML();
       fetch(url).then(r=>r.json()).then(d=>{
         const arr = Array.isArray(d.posts) ? d.posts : [];
         cachedPosts = arr; cachedPostsUser = user;
         renderFrom(arr);
-      }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1">Erro ao carregar posts.</div>'; });
+      }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1;color:#ef4444;">'+(isInstagramPrivate?'Deixe o perfil no modo público para selecionar o post':'Erro ao carregar posts.')+'</div>'; });
     }
   }
   (function(){ const { postModalClose } = getPostModalRefs(); if (postModalClose) postModalClose.addEventListener('click', function(){ const refs = getPostModalRefs(); if(refs.postModal) { refs.postModal.style.display='none'; try { document.body.style.overflow=''; } catch(_) {} } }); })();
@@ -1508,6 +1536,7 @@
         if (profilePreview) profilePreview.style.display = 'block';
         try { sessionStorage.setItem('oppus_instagram_username', profile.username || username); } catch(e) {}
         isInstagramVerified = true;
+        try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
         updatePedidoButtonState();
         showResumoIfAllowed();
         try { updatePromosSummary(); } catch(_) {}
@@ -1539,6 +1568,7 @@
           }
           if (profilePreview) profilePreview.style.display = 'block';
           isInstagramVerified = true;
+          isInstagramPrivate = !!isPrivate;
           updatePedidoButtonState();
           showResumoIfAllowed();
           try { updatePromosSummary(); } catch(_) {}
@@ -1647,14 +1677,37 @@
         try {
           const hasTipo = !!tipo;
           const hasQtd = !!qtd;
-          alert(!hasTipo ? 'Selecione o tipo do serviço.' : (!hasQtd ? 'Selecione a quantidade/pacote do serviço.' : 'Selecione o tipo e o pacote antes de realizar o pedido.'));
+          const followersPackMsg = 'Selecione o pacote de seguidores antes de realizar o pedido.';
+          const generalPackMsg = 'Selecione a quantidade/pacote do serviço.';
+          const msg = !hasTipo ? 'Selecione o tipo de seguidores antes de realizar o pedido.' : (!hasQtd ? (isFollowersTipo(tipo)? followersPackMsg : generalPackMsg) : 'Selecione o tipo e o pacote antes de realizar o pedido.');
+          alert(msg);
           hideAllTutorials();
           if (!hasTipo) {
             const target = document.getElementById('tipoCards') || document.getElementById('grupoTipo');
-            if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            if (target) {
+              try {
+                const rect = target.getBoundingClientRect();
+                const top = (window.scrollY || window.pageYOffset || 0) + rect.top - Math.max(80, rect.height * 0.4);
+                window.scrollTo({ top, behavior: 'smooth' });
+              } catch(_) {
+                if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }
+            try { showTutorialStep(2); } catch(_) {}
+            try { const gt = document.getElementById('grupoTipo'); if (gt) gt.classList.add('tutorial-highlight'); } catch(_) {}
           } else if (!hasQtd) {
             const target = document.getElementById('planCards') || document.getElementById('grupoQuantidade');
-            if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            if (target) {
+              try {
+                const rect = target.getBoundingClientRect();
+                const top = (window.scrollY || window.pageYOffset || 0) + rect.top - Math.max(80, rect.height * 0.4);
+                window.scrollTo({ top, behavior: 'smooth' });
+              } catch(_) {
+                if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }
+            try { showTutorialStep(3); } catch(_) {}
+            try { if (grupoQuantidade) grupoQuantidade.classList.add('tutorial-highlight'); } catch(_) {}
           }
         } catch(_) {}
         return;
@@ -1838,6 +1891,19 @@
       pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
       pixResultado.style.display = 'block';
 
+      try {
+        const isMobile = window.innerWidth <= 640;
+        if (isMobile) {
+          const paymentCardEl = document.getElementById('paymentCard');
+          const target = paymentCardEl || pixResultado;
+          if (target) {
+            const rect = target.getBoundingClientRect();
+            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - Math.max(60, rect.height * 0.2);
+            window.scrollTo({ top, behavior: 'smooth' });
+          }
+        }
+      } catch(_) {}
+
       const copyBtn = document.getElementById(copyButtonId);
       if (copyBtn && brCode) {
         copyBtn.addEventListener('click', async () => {
@@ -1967,8 +2033,16 @@
     if (audioSpeed15x) audioSpeed15x.classList.toggle('active', rate === 1.5);
     if (audioSpeed2x) audioSpeed2x.classList.toggle('active', rate === 2);
   }
-  if (audioSpeed15x) audioSpeed15x.addEventListener('click', () => setAudioRate(1.5));
-  if (audioSpeed2x) audioSpeed2x.addEventListener('click', () => setAudioRate(2));
+  if (audioSpeed15x) audioSpeed15x.addEventListener('click', () => {
+    if (!guideAudio) return;
+    const isActive = guideAudio.playbackRate === 1.5;
+    setAudioRate(isActive ? 1 : 1.5);
+  });
+  if (audioSpeed2x) audioSpeed2x.addEventListener('click', () => {
+    if (!guideAudio) return;
+    const isActive = guideAudio.playbackRate === 2;
+    setAudioRate(isActive ? 1 : 2);
+  });
   function fmt(t) { const m = Math.floor(t/60); const s = Math.floor(t%60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; }
   if (guideAudio) {
     guideAudio.addEventListener('loadedmetadata', () => {
@@ -2324,7 +2398,15 @@
   const termsPage = document.getElementById('termsPage');
   const termsCloseBtn = document.getElementById('termsCloseBtn');
   if (termsLink && termsPage) {
-    termsLink.addEventListener('click', (e)=>{ e.preventDefault(); termsPage.style.display='block'; });
+    termsLink.addEventListener('click', (e)=>{
+      try {
+        const href = termsLink.getAttribute('href') || '';
+        if (href === '#' || href === '') {
+          e.preventDefault();
+          termsPage.style.display='block';
+        }
+      } catch (_) {}
+    });
   }
   if (termsCloseBtn && termsPage) {
     termsCloseBtn.addEventListener('click', ()=>{ termsPage.style.display='none'; });
@@ -2469,11 +2551,7 @@
     function makeToast(platform){
       const nome = makeNomeUnico();
       if (platform === 'tiktok') {
-        const tiktokQ = [150, 300, 500, 1000, 2000];
-        const q = tiktokQ[Math.floor(Math.random()*tiktokQ.length)];
-        const unit = getUnitForTipo('seguidores_tiktok');
-        const label = getLabelForTipo('seguidores_tiktok');
-        showToast({ title: `${nome} confirmou compra`, desc: `Adquiriu ${q} ${unit} — ${label}`, platform: 'tiktok' });
+        return;
       } else {
         const c = pickIG();
         const unit = getUnitForTipo(c.tipo);

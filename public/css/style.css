@@ -533,6 +533,17 @@ html, body { overflow-x: hidden; }
     transform: translateX(5px);
 }
 
+/* Ajustes específicos para o botão Comprar seguidores */
+#buyFollowersBtn {
+    text-decoration: none !important;
+    padding: 0.7rem 3rem; /* menor altura, mais largo */
+    min-width: 220px;
+}
+#buyFollowersBtn .button-text {
+    text-decoration: none !important;
+    text-transform: uppercase;
+}
+
 /* Botão de copiar estilo ícone */
 .copy-icon-btn {
     display: inline-flex;

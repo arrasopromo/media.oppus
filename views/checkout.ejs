@@ -85,7 +85,7 @@
               <h3 class="card-title">Guia de áudio</h3>
               <div class="card-desc">
                   <div class="audio-player">
-                  <audio id="guideAudio" class="audio-element" preload="none" src="/images/audio%20inicio.MP3"></audio>
+                  <audio id="guideAudio" class="audio-element" preload="none" src="/images/audio%20site.MP3"></audio>
                   <div class="audio-controls">
                     <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" data-tip-mode="manual" data-tip-top="50" data-tip-left="" data-tip-arrow-left="">
                       <div class="tutorial-pop-step">1/5</div>
@@ -93,7 +93,7 @@
                     </div>
                     <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
                     <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
-                    <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
+                  <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
                   </div>
                   <div class="audio-speed-row">
                     <button type="button" id="audioSpeed15x" class="audio-speed-btn">1.5x</button>
@@ -101,6 +101,13 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+          <div class="service-card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+            <div class="card-content" style="display:flex; justify-content:center; align-items:center; text-align:center;">
+              <a href="#plataformaCard" id="buyFollowersBtn" class="continue-button" style="display:inline-flex; justify-content:center; align-items:center; text-align:center; margin:0 auto;">
+                <span class="button-text">Comprar seguidores</span>
+              </a>
             </div>
           </div>
           <div class="testimonials-section" id="depoimentosCard">
@@ -264,7 +271,7 @@
                   <div class="promo-content">
                     <div class="promo-highlight">+ curtidas</div>
                     <div class="promo-title">Curtidas promocionais</div>
-                    <div class="promo-desc">Adicionar curtidas no último post.</div>
+                    <div class="promo-desc">Adicionar curtidas ao post.</div>
                     <div class="promo-prices" data-promo="likes">
                       <span class="old-price">R$ 49,90</span>
                       <span class="discount-badge">80% OFF</span>
@@ -363,7 +370,7 @@
             <div class="action-container" id="grupoPedido" style="position:relative;">
                 <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
                 <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 10px);">Telefone de contato</label>
-                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 3px);">Usaremos este contato caso precisarmos falar com você.</p>
+                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 3px);">Usaremos este contato caso precisarmos falar com você. Pelo telefone você pode consultar seus pedidos.</p>
                 <input id="checkoutPhoneInput" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
                 <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
                   <div class="tutorial-pop-step">4/5</div>
@@ -443,7 +450,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>
         </a>
         <span class="footer-center">&copy; 2025 Agência OPPUS. Todos os direitos reservados.</span>
-        <a href="#" id="termsLink" class="footer-link">Termos de Uso</a>
+        <a href="/termos" id="termsLink" class="footer-link">Termos de Uso</a>
       </div>
     </footer>
   </div>

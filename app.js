@@ -997,7 +997,10 @@ async function ensureRefilLink(identifier, correlationID, req) {
     if (!doc) return null;
     const tl = await getCollection('temporary_links');
     const existing = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
-    if (existing) return existing;
+    if (existing) {
+      await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existing.id } });
+      return existing;
+    }
     const info = linkManager.generateLink(req);
     const rec = { id: info.id, purpose: 'refil', orderId: String(doc._id), createdAt: new Date().toISOString(), expiresAt: new Date(info.expiresAt).toISOString() };
     await tl.insertOne(rec);
@@ -1245,6 +1248,18 @@ app.get('/', (req, res) => {
     });
 });
 
+// Página de Termos de Uso
+app.get('/termos', (req, res) => {
+  res.render('termos', {}, (err, html) => {
+    if (err) {
+      console.error('Erro ao renderizar termos:', err.message);
+      return res.status(500).send('Erro ao abrir Termos de Uso');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
 // Página dedicada de Cliente (consulta de pedidos)
 app.get('/cliente', (req, res) => {
     console.log('👤 Acessando rota /cliente');
@@ -1303,8 +1318,31 @@ app.get('/checkout', (req, res) => {
 });
 
 // Página de Refil
-app.get('/refil', (req, res) => {
+app.get('/refil', async (req, res) => {
     console.log('🔁 Acessando rota /refil');
+    try {
+        const token = String(req.query.token || '').trim();
+        if (token) {
+            let isValid = false;
+            try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
+            try {
+                const tl = await getCollection('temporary_links');
+                const linkRec = await tl.findOne({ id: token });
+                if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
+                    const nowMs = Date.now();
+                    const expMs = new Date(linkRec.expiresAt).getTime();
+                    if (!Number.isNaN(expMs) && nowMs < expMs) {
+                        isValid = true;
+                        if (req.session) {
+                            req.session.refilAccessAllowed = true;
+                            req.session.linkSlug = token;
+                            req.session.linkAccessTime = Date.now();
+                        }
+                    }
+                }
+            } catch(_) {}
+        }
+    } catch(_) {}
     if (!(req.session && req.session.refilAccessAllowed)) {
         const from = '/refil';
         return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
@@ -1585,8 +1623,8 @@ app.get('/api/woovi/charge-status', async (req, res) => {
               await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
             }
           }
-            try {
-            const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+    try {
+        const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
             const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
             const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
             const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
@@ -1704,6 +1742,18 @@ app.get('/:slug', async (req, res, next) => {
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
     if (slug === 'checkout') {
         return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' });
+    }
+    if (slug === 'termos') {
+        return res.render('termos', {}, (err, html) => {
+            if (err) {
+                try { console.error('❌ Erro ao renderizar termos via slug:', err.message); } catch(_) {}
+                const p = require('path');
+                try { return res.sendFile(p.join(__dirname, 'public', 'termos.html')); } catch(_) {}
+                return res.status(500).send('Erro ao abrir Termos de Uso');
+            }
+            res.type('text/html');
+            res.send(html);
+        });
     }
     if (slug === 'teste123') {
         req.session.perfilAccessAllowed = true;
@@ -3336,6 +3386,7 @@ app.post('/session/mark-paid', async (req, res) => {
         } catch(_) {}
       } catch (_) {}
     })();
+    (async () => { try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {} })();
     return;
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -3588,6 +3639,7 @@ app.post('/api/payment/confirm', async (req, res) => {
         }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
+      try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
     } catch (_) {}
 
     return res.json({ ok: true, updated: upd.matchedCount });
@@ -3738,6 +3790,7 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
         }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
+      try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
     } catch (_) {}
 
     return res.json({ ok: true, updated: upd.matchedCount });
