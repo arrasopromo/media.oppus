@@ -12,7 +12,7 @@ class LinkManager {
         this.maxUsesPerFingerprint = 2; // Permitir 2 usos por IP/User-Agent
         this.exceptionIPs = ['179.0.74.243']; // IPs com acesso ilimitado
         this.cleanupInterval = 5 * 60 * 1000; // Limpeza a cada 5 minutos
-        this.linkDuration = 365 * 24 * 60 * 60 * 1000; // Links válidos por 365 dias (sem expiração curta)
+        this.linkDuration = 10 * 60 * 1000; // 10 minutos
         
         // Iniciar limpeza automática
         this.startCleanupTimer();
