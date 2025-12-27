@@ -983,6 +983,33 @@ async function broadcastPaymentPaid(identifier, correlationID) {
   });
 }
 
+async function ensureRefilLink(identifier, correlationID, req) {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    const ident = String(identifier || '').trim();
+    const corr = String(correlationID || '').trim();
+    if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
+    if (corr) { conds.push({ correlationID: corr }); }
+    const filter = conds.length ? { $or: conds } : {};
+    const doc = await col.findOne(filter, { projection: { _id: 1 } });
+    if (!doc) return null;
+    const tl = await getCollection('temporary_links');
+    const existing = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
+    if (existing) return existing;
+    const info = linkManager.generateLink(req);
+    const rec = { id: info.id, purpose: 'refil', orderId: String(doc._id), createdAt: new Date().toISOString(), expiresAt: new Date(info.expiresAt).toISOString() };
+    await tl.insertOne(rec);
+    await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: info.id } });
+    try { console.log('🔗 Link de refil criado:', info.id); } catch(_) {}
+    return rec;
+  } catch (e) {
+    try { console.warn('⚠️ Falha ao criar link de refil:', e?.message || String(e)); } catch(_) {}
+    return null;
+  }
+}
+
 app.get('/api/payment/subscribe', (req, res) => {
   const identifier = String(req.query.identifier || '').trim();
   const correlationID = String(req.query.correlationID || '').trim();
@@ -1186,7 +1213,8 @@ function perfilAccessGuard(req, res, next) {
     if (req.session && req.session.perfilAccessAllowed) {
         return next();
     }
-    return res.redirect('/');
+    const from = req.originalUrl || '/perfil';
+    return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
 }
 
 // Log global de requisições para diagnosticar roteamento
@@ -1277,6 +1305,10 @@ app.get('/checkout', (req, res) => {
 // Página de Refil
 app.get('/refil', (req, res) => {
     console.log('🔁 Acessando rota /refil');
+    if (!(req.session && req.session.refilAccessAllowed)) {
+        const from = '/refil';
+        return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
+    }
     res.render('refil', {}, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar refil:', err.message);
@@ -1537,6 +1569,7 @@ app.get('/api/woovi/charge-status', async (req, res) => {
               const famaData = famaResp.data || {};
               const orderId = famaData.order || famaData.id || null;
               await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+              try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
             }
           } else {
             const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
@@ -1552,36 +1585,80 @@ app.get('/api/woovi/charge-status', async (req, res) => {
               await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
             }
           }
-          try {
+            try {
             const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
             const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-            const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+            const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+            const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
             let viewsQty = 0;
+            let likesQty = 0;
             if (typeof bumpsStr === 'string' && bumpsStr) {
               const parts = bumpsStr.split(';');
               const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+              const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
               if (vPart) {
                 const num = Number(vPart.split(':')[1]);
                 if (!Number.isNaN(num) && num > 0) viewsQty = num;
               }
+              if (lPart) {
+                const numL = Number(lPart.split(':')[1]);
+                if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
+              }
             }
-            if (viewsQty > 0 && instaUser) {
+            // Links selecionados para orderbumps
+            const mapPaid = record?.additionalInfoMapPaid || {};
+            const viewsLinkRaw = mapPaid['orderbump_post_views'] || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
+            const likesLinkRaw = mapPaid['orderbump_post_likes'] || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
+            try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, viewsQty, likesQty }); } catch(_) {}
+            const sanitizeLink = (s) => {
+              const v = String(s || '').replace(/[`\s]/g, '').trim();
+              const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+              return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+            };
+            const viewsLink = sanitizeLink(viewsLinkRaw);
+            const likesLink = sanitizeLink(likesLinkRaw);
+            try { console.log('🔎 orderbump_links_sanitized', { viewsLink, likesLink }); } catch(_) {}
+
+            if (viewsQty > 0 && viewsLink) {
               if (process.env.FAMA24H_API_KEY || '') {
                 const axios = require('axios');
-                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
+                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
                 try {
                   const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                   const dataViews = respViews.data || {};
                   const orderIdViews = dataViews.order || dataViews.id || null;
-                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
                 } catch (e2) {
-                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                  try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
                 }
               }
+            } else if (viewsQty > 0 && !viewsLink) {
+              try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
+            }
+            if (likesQty > 0 && likesLink) {
+              if (process.env.FAMA24H_API_KEY || '') {
+                const axios = require('axios');
+                const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+                try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLink, quantity: likesQty }); } catch(_) {}
+                try {
+                  const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                  const dataLikes = respLikes.data || {};
+                  const orderIdLikes = dataLikes.order || dataLikes.id || null;
+                  await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+                } catch (e3) {
+                  try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
+                  await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+                }
+              }
+            } else if (likesQty > 0 && !likesLink) {
+              try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
             }
           } catch (_) {}
         } catch (_) {}
         broadcastPaymentPaid(identifier, correlationID);
+        try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
       }
     } catch (_) {}
     return res.status(200).json(respData);
@@ -1650,12 +1727,25 @@ app.get('/:slug', async (req, res, next) => {
     try {
         const validation = linkManager.validateLink(slug, req);
         if (validation.valid) {
-            req.session.perfilAccessAllowed = true;
-            req.session.linkSlug = slug;
-            req.session.linkAccessTime = Date.now();
-            // Atualizar linha do Baserow com IP e User-Agent (mantém igual)
             const userAgent = req.get('User-Agent') || '';
             const ip = req.realIP || req.ip || req.connection.remoteAddress || 'unknown';
+            req.session.linkSlug = slug;
+            req.session.linkAccessTime = Date.now();
+            try {
+              const tl = await getCollection('temporary_links');
+              const linkRec = await tl.findOne({ id: slug });
+              if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
+                req.session.refilAccessAllowed = true;
+                req.session.perfilAccessAllowed = false;
+                return res.render('refil', {}, (err, html) => {
+                  if (err) { console.error('❌ Erro ao renderizar refil via slug:', err.message); return res.status(500).send('Erro ao carregar página de refil'); }
+                  res.type('text/html');
+                  res.send(html);
+                });
+              }
+            } catch(_) {}
+            req.session.perfilAccessAllowed = true;
+            // Atualizar linha do Baserow com IP e User-Agent (mantém igual)
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
                 const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === slug);
@@ -1712,6 +1802,11 @@ app.get('/perfil/:id', perfilAccessGuard, async (req, res) => {
 // Rota para página de erro
 app.get("/used.html", (req, res) => {
     res.render("used");
+});
+
+// Página de acesso restrito (mensagem dinâmica por origem)
+app.get('/restrito', (req, res) => {
+  res.render('restrito');
 });
 
 // Rota para gerar link temporário (mantém POST /generate)
@@ -2466,6 +2561,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 console.log('✅ Fama24h resposta', { status: famaResp.status, data: famaData });
                 const orderId = famaData.order || famaData.id || null;
                 await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
               } catch (fErr) {
                 console.error('❌ Fama24h erro', fErr?.response?.data || fErr?.message || String(fErr));
                 await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
@@ -2501,27 +2597,74 @@ app.post('/api/openpix/webhook', async (req, res) => {
           try {
             const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
             const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+            const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
             const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
             let viewsQty = 0;
+            let likesQtyForStatus = 0;
             if (typeof bumpsStr === 'string' && bumpsStr) {
               const parts = bumpsStr.split(';');
               const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+              const lPartStatus = parts.find(p => /^likes:\d+$/i.test(p.trim()));
               if (vPart) {
                 const num = Number(vPart.split(':')[1]);
                 if (!Number.isNaN(num) && num > 0) viewsQty = num;
               }
+              if (lPartStatus) {
+                const numL = Number(lPartStatus.split(':')[1]);
+                if (!Number.isNaN(numL) && numL > 0) likesQtyForStatus = numL;
+              }
             }
-            if (viewsQty > 0 && instaUser) {
-              if (process.env.FAMA24H_API_KEY || '') {
+            if (viewsQty > 0) {
+              if ((process.env.FAMA24H_API_KEY || '')) {
                 const axios = require('axios');
-                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(instaUser), quantity: String(viewsQty) });
-                try {
-                  const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const dataViews = respViews.data || {};
-                  const orderIdViews = dataViews.order || dataViews.id || null;
-                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-                } catch (e2) {
-                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: instaUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+                const mapPaid2 = record?.additionalInfoMapPaid || {};
+                const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+                const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
+                const viewsLinkRaw = mapPaid2['orderbump_post_views'] || selViews || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
+                try { console.log('🔎 orderbump_views_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, viewsLinkRaw, viewsQty }); } catch(_) {}
+                const viewsLink = sanitizeLink(viewsLinkRaw);
+                try { console.log('🔎 orderbump_views_sanitized', { viewsLink }); } catch(_) {}
+                if (!viewsLink) {
+                  await col.updateOne(filter, { $set: { fama24h_views: { error: 'invalid_link', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                } else {
+                  const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                  try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                  try {
+                    const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataViews = respViews.data || {};
+                    const orderIdViews = dataViews.order || dataViews.id || null;
+                    await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+                  } catch (e2) {
+                    try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                    await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                  }
+                }
+              }
+            }
+            if (likesQtyForStatus > 0) {
+              if ((process.env.FAMA24H_API_KEY || '')) {
+                const axios = require('axios');
+                const sanitizeLinkL = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+                const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
+                const likesLinkRaw = mapPaid2['orderbump_post_likes'] || selLikes || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
+                const likesLinkSel = sanitizeLinkL(likesLinkRaw);
+                try { console.log('🔎 orderbump_likes_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, likesLinkRaw, likesQtyForStatus }); } catch(_) {}
+                try { console.log('🔎 orderbump_likes_sanitized', { likesLinkSel }); } catch(_) {}
+                if (!likesLinkSel) {
+                  await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
+                } else {
+                  const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
+                  try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
+                  try {
+                    const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataLikes = respLikes.data || {};
+                    const orderIdLikes = dataLikes.order || dataLikes.id || null;
+                    await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+                  } catch (e3) {
+                    try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
+                    await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
+                  }
                 }
               }
             }
@@ -2659,6 +2802,8 @@ app.post('/api/services/dispatch', async (req, res) => {
       const famaData = famaResp.data || {};
       const orderId = famaData.order || famaData.id || null;
       await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+      try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
       return res.json({ ok: true, provider: 'fama24h', orderId, data: famaData });
     } else {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
@@ -2672,6 +2817,7 @@ app.post('/api/services/dispatch', async (req, res) => {
       const orderIdFS = dataFS.order || dataFS.id || null;
       await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
       try { await broadcastPaymentPaid(record?.identifier, record?.correlationID); } catch(_) {}
+      try { await ensureRefilLink(record?.identifier, record?.correlationID, req); } catch(_) {}
       return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
     }
   } catch (err) {
@@ -2697,6 +2843,138 @@ app.get('/api/mongo/ping', async (req, res) => {
     res.json({ ok: true, last: one?._id || null });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/orderbump/resend', async (req, res) => {
+  try {
+    const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
+    const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
+    if (!identifier && !correlationID) return res.status(400).json({ ok: false, error: 'missing_identifier' });
+    const col = await getCollection('checkout_orders');
+    const filter = identifier ? { $or: [ { identifier }, { 'woovi.identifier': identifier } ] } : { correlationID };
+    const record = await col.findOne(filter);
+    if (!record) return res.status(404).json({ ok: false, error: 'not_found' });
+    const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+    const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+    const mapPaid = record?.additionalInfoMapPaid || {};
+    const mapArr = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+    const map = Object.assign({}, mapArr, mapPaid);
+    const bumpsStr = map['order_bumps'] || '';
+    const parts = typeof bumpsStr === 'string' ? bumpsStr.split(';') : [];
+    const vPart = parts.find(p => /^views:\d+$/i.test(String(p||'').trim()));
+    const lPart = parts.find(p => /^likes:\d+$/i.test(String(p||'').trim()));
+    const viewsQty = vPart ? Number(String(vPart).split(':')[1]) : 0;
+    const likesQty = lPart ? Number(String(lPart).split(':')[1]) : 0;
+    const sanitize = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+    const viewsLink = sanitize(map['orderbump_post_views']);
+    const likesLink = sanitize(map['orderbump_post_likes']);
+    const key = process.env.FAMA24H_API_KEY || '';
+    const results = { views: null, likes: null };
+    if (key && viewsQty > 0 && viewsLink) {
+      const axios = require('axios');
+      const payload = new URLSearchParams({ key, action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+      try {
+        const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        const data = resp.data || {};
+        const orderIdViews = data.order || data.id || null;
+        await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: data, requestedAt: new Date().toISOString() } } });
+        results.views = { orderId: orderIdViews, data };
+      } catch (e) {
+        await col.updateOne(filter, { $set: { fama24h_views: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+        results.views = { error: e?.message || String(e) };
+      }
+    }
+    if (key && likesQty > 0 && likesLink) {
+      const axios = require('axios');
+      const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+      try {
+        const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        const data = resp.data || {};
+        const orderIdLikes = data.order || data.id || null;
+        await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: data, requestedAt: new Date().toISOString() } } });
+        results.likes = { orderId: orderIdLikes, data };
+      } catch (e) {
+        await col.updateOne(filter, { $set: { fama24h_likes: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+        results.likes = { error: e?.message || String(e) };
+      }
+    }
+    try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+    return res.json({ ok: true, results });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+app.post('/api/orderbump/fix-latest', async (req, res) => {
+  try {
+    const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
+    const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
+    const col = await getCollection('checkout_orders');
+    let records = [];
+    if (identifier || correlationID) {
+      const filter = identifier ? { $or: [ { identifier }, { 'woovi.identifier': identifier } ] } : { correlationID };
+      const one = await col.findOne(filter);
+      records = one ? [one] : [];
+    } else {
+      records = await col.find({ $or: [ { status: 'pago' }, { 'woovi.status': 'pago' } ] }).sort({ _id: -1 }).limit(20).toArray();
+    }
+    const key = process.env.FAMA24H_API_KEY || '';
+    const out = [];
+    for (const record of records) {
+      const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+      const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+      const map = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+      const bumpsStr = map['order_bumps'] || '';
+      const parts = typeof bumpsStr === 'string' ? bumpsStr.split(';') : [];
+      const vPart = parts.find(p => /^views:\d+$/i.test(String(p||'').trim()));
+      const lPart = parts.find(p => /^likes:\d+$/i.test(String(p||'').trim()));
+      const viewsQty = vPart ? Number(String(vPart).split(':')[1]) : 0;
+      const likesQty = lPart ? Number(String(lPart).split(':')[1]) : 0;
+      const sanitize = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+      const viewsLink = sanitize(map['orderbump_post_views']);
+      const likesLink = sanitize(map['orderbump_post_likes']);
+      const filter = { _id: record._id };
+      const resultItem = { id: String(record._id), views: null, likes: null };
+      if (key && viewsQty > 0 && viewsLink) {
+        const currentViewsLink = String(record?.fama24h_views?.requestPayload?.link || '');
+        const isInvalid = !/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(currentViewsLink);
+        if (isInvalid) {
+          const axios = require('axios');
+          const payload = new URLSearchParams({ key, action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+          try {
+            const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const data = resp.data || {};
+            const orderIdViews = data.order || data.id || null;
+            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: data, requestedAt: new Date().toISOString() } } });
+            resultItem.views = { orderId: orderIdViews };
+          } catch (e) {
+            await col.updateOne(filter, { $set: { fama24h_views: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            resultItem.views = { error: e?.message || String(e) };
+          }
+        }
+      }
+      if (key && likesQty > 0 && likesLink) {
+        const currentLikesLink = String(record?.fama24h_likes?.requestPayload?.link || '');
+        const isInvalidLikes = !/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(currentLikesLink);
+        if (isInvalidLikes) {
+          const axios = require('axios');
+          const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+          try {
+            const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const data = resp.data || {};
+            const orderIdLikes = data.order || data.id || null;
+            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: data, requestedAt: new Date().toISOString() } } });
+            resultItem.likes = { orderId: orderIdLikes };
+          } catch (e) {
+            await col.updateOne(filter, { $set: { fama24h_likes: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+            resultItem.likes = { error: e?.message || String(e) };
+          }
+        }
+      }
+      out.push(resultItem);
+    }
+    return res.json({ ok: true, results: out });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
 app.get('/api/orders', async (req, res) => {
@@ -2780,14 +3058,26 @@ app.get('/pedido', async (req, res) => {
         doc = await col.findOne({ $or: conds });
       }
     }
-    // 3) Por último, usar último pago guardado em sessão
+    // 3) Por último, usar último pago guardado em sessão (apenas se recente)
     if (!doc && req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
-      const lpId = String(req.session.lastPaidIdentifier || '').trim();
-      const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
-      const firstConds = [];
-      if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
-      if (lpCorr) firstConds.push({ correlationID: lpCorr });
-      if (firstConds.length) { doc = await col.findOne({ $or: firstConds }); }
+      const markedAt = Number(req.session.lastPaidMarkedAt || 0);
+      const isFresh = markedAt && ((Date.now() - markedAt) <= (30 * 60 * 1000));
+      if (isFresh) {
+        const lpId = String(req.session.lastPaidIdentifier || '').trim();
+        const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
+        const firstConds = [];
+        if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
+        if (lpCorr) firstConds.push({ correlationID: lpCorr });
+        if (firstConds.length) {
+          const paidFilter = { $and: [ { $or: firstConds }, { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' } ] } ] };
+          try {
+            const arr = await col.find(paidFilter).sort({ 'woovi.paidAt': -1, paidAt: -1 }).limit(1).toArray();
+            doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
+          } catch (_) {
+            doc = await col.findOne({ $or: firstConds });
+          }
+        }
+      }
     }
     const order = doc || {};
     return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
@@ -2943,6 +3233,7 @@ app.post('/session/mark-paid', async (req, res) => {
     }
     req.session.lastPaidIdentifier = identifier || req.session.lastPaidIdentifier || '';
     req.session.lastPaidCorrelationID = correlationID || req.session.lastPaidCorrelationID || '';
+    req.session.lastPaidMarkedAt = Date.now();
     res.json({ ok: true });
     (async () => {
       try {
@@ -2950,6 +3241,7 @@ app.post('/session/mark-paid', async (req, res) => {
         const filter = identifier ? { $or: [ { 'woovi.identifier': identifier }, { identifier } ] } : { correlationID };
         const record = await col.findOne(filter);
         if (!record) return;
+        try { console.log('🧩 [mark-paid] record_found', { identifier, correlationID, orderId: String(record?._id || '') }); } catch(_) {}
         const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
         const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
         const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
@@ -2982,6 +3274,66 @@ app.post('/session/mark-paid', async (req, res) => {
             } catch (_) {}
           }
         }
+        try {
+          const axios = require('axios');
+          const mapPaid = record?.additionalInfoMapPaid || {};
+          const bumpsStr = String(bumpsStr0 || '').trim();
+          let viewsQty = 0;
+          let likesQty = 0;
+          if (bumpsStr) {
+            const parts = bumpsStr.split(';').map(p => String(p || '').trim());
+            const vPart = parts.find(p => /^views:\d+$/i.test(p));
+            const lPart = parts.find(p => /^likes:\d+$/i.test(p));
+            if (vPart) { const num = Number(vPart.split(':')[1]); if (!Number.isNaN(num) && num > 0) viewsQty = num; }
+            if (lPart) { const numL = Number(lPart.split(':')[1]); if (!Number.isNaN(numL) && numL > 0) likesQty = numL; }
+          }
+          const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+          const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+          const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
+          const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
+          const viewsLinkRaw = mapPaid['orderbump_post_views'] || selViews || (record?.additionalInfoPaid || []).find(it => it && it.key === 'orderbump_post_views')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'orderbump_post_views')?.value || '';
+          const likesLinkRaw = mapPaid['orderbump_post_likes'] || selLikes || (record?.additionalInfoPaid || []).find(it => it && it.key === 'orderbump_post_likes')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'orderbump_post_likes')?.value || '';
+          const viewsLink = sanitizeLink(viewsLinkRaw);
+          const likesLinkSel = sanitizeLink(likesLinkRaw);
+          try { console.log('🔎 [mark-paid] orderbump_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, selectedFor, viewsQty, likesQty }); } catch(_) {}
+          try { console.log('🔎 [mark-paid] orderbump_sanitized', { viewsLink, likesLinkSel }); } catch(_) {}
+          if ((process.env.FAMA24H_API_KEY || '') && viewsQty > 0) {
+            if (!viewsLink) {
+              try { console.warn('⚠️ [mark-paid] views_link_invalid', { viewsLinkRaw }); } catch(_) {}
+              await col.updateOne(filter, { $set: { fama24h_views: { error: 'invalid_link', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            } else {
+              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+              try { console.log('🚀 [mark-paid] sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
+              try {
+                const respV = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataV = respV.data || {};
+                const orderIdV = dataV.order || dataV.id || null;
+                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdV, status: orderIdV ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataV, requestedAt: new Date().toISOString() } } });
+              } catch (e2) {
+                try { console.error('❌ [mark-paid] fama24h_views_error', e2?.response?.data || e2?.message || String(e2)); } catch(_) {}
+                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+              }
+            }
+          }
+          if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0) {
+            if (!likesLinkSel) {
+              try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
+              await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+            } else {
+              const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
+              try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
+              try {
+                const respL = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataL = respL.data || {};
+                const orderIdL = dataL.order || dataL.id || null;
+                await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdL, status: orderIdL ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, response: dataL, requestedAt: new Date().toISOString() } } });
+              } catch (e3) {
+                try { console.error('❌ [mark-paid] fama24h_likes_error', e3?.response?.data || e3?.message || String(e3)); } catch(_) {}
+                await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+              }
+            }
+          }
+        } catch(_) {}
       } catch (_) {}
     })();
     return;
@@ -3023,7 +3375,14 @@ app.get('/api/order', async (req, res) => {
         }
       }
       const filter = conds.length ? { $or: conds } : {};
-      doc = await col.findOne(filter);
+      if (conds.length) {
+        try {
+          const arr = await col.find(filter).sort({ 'woovi.paidAt': -1, paidAt: -1, _id: -1 }).limit(1).toArray();
+          doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
+        } catch (_) {
+          doc = await col.findOne(filter);
+        }
+      }
     }
     return res.json({ ok: true, order: doc || null });
   } catch (e) {
@@ -3197,36 +3556,34 @@ app.post('/api/payment/confirm', async (req, res) => {
             if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
           }
         }
-        if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+        const arrPaid2 = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+        const arrOrig2 = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+        const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+        const mapPaid3 = record?.additionalInfoMapPaid || {};
+        const viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
+        const likesLinkSel = sanitizeLink(mapPaid3['orderbump_post_likes'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');
+        if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && viewsLink) {
           const axios = require('axios');
-          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(resolvedUser), quantity: String(viewsQty) });
+          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
           try {
             const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
             const dataViews = respViews.data || {};
             const orderIdViews = dataViews.order || dataViews.id || null;
-            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
           } catch (e2) {
-            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
-        if (likesQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLinkSel) {
           const axios = require('axios');
-          let likesUrl = '';
-          try {
-            const arrPaid2 = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
-            const arrOrig2 = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-            const vLike = (arrPaid2.find(it => it && it.key === 'likes_url')?.value) || (arrOrig2.find(it => it && it.key === 'likes_url')?.value) || '';
-            if (typeof vLike === 'string') likesUrl = vLike.trim();
-          } catch(_) {}
-          const linkForLikes = (likesUrl && /^https?:\/\//i.test(likesUrl)) ? likesUrl : String(resolvedUser);
-          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: linkForLikes, quantity: String(likesQty) });
+          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
           try {
             const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
             const dataLikes = respLikes.data || {};
             const orderIdLikes = dataLikes.order || dataLikes.id || null;
-            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: linkForLikes, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
           } catch (e3) {
-            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: linkForLikes, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
           }
         }
       } catch (_) {}
@@ -3296,6 +3653,8 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
         const famaData = famaResp.data || {};
         const orderId = famaData.order || famaData.id || null;
         await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
       }
       // Disparo para FornecedorSocial quando for orgânicos
       try {
@@ -3347,28 +3706,34 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
             if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
           }
         }
-        if (viewsQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+        const sanitizeLink2 = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+        const selectedFor3 = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+        const selViews3 = selectedFor3 && selectedFor3.views && selectedFor3.views.link ? String(selectedFor3.views.link) : '';
+        const selLikes3 = selectedFor3 && selectedFor3.likes && selectedFor3.likes.link ? String(selectedFor3.likes.link) : '';
+        const viewsLink2 = sanitizeLink2(selViews3 || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
+        const likesLink2 = sanitizeLink2(selLikes3 || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');
+        if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && viewsLink2) {
           const axios = require('axios');
-          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(resolvedUser), quantity: String(viewsQty) });
+          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink2), quantity: String(viewsQty) });
           try {
             const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
             const dataViews = respViews.data || {};
             const orderIdViews = dataViews.order || dataViews.id || null;
-            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink2, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
           } catch (e2) {
-            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: resolvedUser, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink2, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
-        if (likesQty > 0 && resolvedUser && (process.env.FAMA24H_API_KEY || '')) {
+        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLink2) {
           const axios = require('axios');
-          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(resolvedUser), quantity: String(likesQty) });
+          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink2), quantity: String(likesQty) });
           try {
             const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
             const dataLikes = respLikes.data || {};
             const orderIdLikes = dataLikes.order || dataLikes.id || null;
-            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: resolvedUser, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink2, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
           } catch (e3) {
-            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: resolvedUser, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLink2, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
           }
         }
       } catch (_) {}

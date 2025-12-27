@@ -27,5 +27,25 @@
             <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
         </footer>
     </div>
+    <script>
+      (function(){
+        try {
+          var params = new URLSearchParams(window.location.search || '');
+          var from = params.get('from') || '';
+          var referrer = document.referrer || '';
+          var msgEl = document.querySelector('.error-message');
+          var origin = String(from || referrer || '').toLowerCase();
+          if (msgEl) {
+            if (origin.includes('/refil')) {
+              msgEl.textContent = 'Acesso ao refil só é permitido com um link temporário válido.';
+            } else if (origin.includes('/perfil')) {
+              msgEl.textContent = 'A página de perfil exige um link temporário válido.';
+            } else {
+              msgEl.textContent = 'Esta página só pode ser acessada através de um link temporário válido.';
+            }
+          }
+        } catch(_) {}
+      })();
+    </script>
 </body>
 </html>

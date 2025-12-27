@@ -1386,8 +1386,8 @@
   function updateCommentsPrice(q) {
     const newEl = commentsPrices ? commentsPrices.querySelector('.new-price') : null;
     const oldEl = commentsPrices ? commentsPrices.querySelector('.old-price') : null;
-    if (newEl) newEl.textContent = formatCurrencyBR(q * 1);
-    if (oldEl) { const oldVal = (q * 1) * 1.7; oldEl.textContent = formatCurrencyBR(oldVal); }
+    if (newEl) newEl.textContent = formatCurrencyBR(q * 1.5);
+    if (oldEl) { const oldVal = (q * 1.5) * 1.7; oldEl.textContent = formatCurrencyBR(oldVal); }
     const hl = document.querySelector('.promo-item.comments .promo-highlight');
     if (hl) hl.textContent = `+ ${q} COMENTÁRIOS`;
   }
@@ -1426,7 +1426,7 @@
       }
       if (commentsChecked) {
         const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
-        const priceCents = qty * 100;
+        const priceCents = qty * 150;
         promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
       if (warrantyChecked) {
@@ -2674,23 +2674,20 @@
       const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || (data && data.order && data.order.fornecedor_social && data.order.fornecedor_social.orderId) || null;
       if (oid) {
         try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
-        try { localStorage.setItem('oppus_selected_oid', String(oid)); } catch(_) {}
+        targetUrl = `/pedido?orderID=${encodeURIComponent(String(oid))}`;
+      } else {
+        targetUrl = `/pedido?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
       }
-    } catch(_) {}
-    const url = (function(){
-      try {
-        const cached = localStorage.getItem('oppus_selected_oid') || '';
-        if (cached) return `/pedido?orderID=${encodeURIComponent(String(cached))}`;
-      } catch(_) {}
-      return `/pedido`;
-    })();
-    try { window.location.assign(url); } catch(_) {}
+    } catch(_) {
+      targetUrl = `/pedido?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+    }
+    try { window.location.assign(targetUrl || '/pedido'); } catch(_) {}
     try {
       setTimeout(async () => {
         try { if (location && location.pathname === '/pedido') return; } catch(_) {}
         try {
-          const r = await fetch(url, { method: 'GET', headers: { 'Accept': 'text/html' } });
-          if (r && r.ok) { window.location.href = url; return; }
+          const r = await fetch(targetUrl || '/pedido', { method: 'GET', headers: { 'Accept': 'text/html' } });
+          if (r && r.ok) { window.location.href = (targetUrl || '/pedido'); return; }
         } catch(_) {}
         try { markPaymentConfirmed(); } catch(_) {}
         try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
