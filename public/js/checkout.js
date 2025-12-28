@@ -868,7 +868,9 @@
         const bubbleWidth = phoneTip.offsetWidth || 220;
         const fieldWidth = phoneField.clientWidth || fieldRect.width;
         const bubbleLeft = Math.max(8, Math.min(fieldWidth - bubbleWidth - 8, leftRel));
-        const bubbleTop = Math.max(0, topRel + inputRect.height + 100);
+        const isMobile = (window.innerWidth || 0) <= 640;
+        const extraOffset = isMobile ? 130 : 100;
+        const bubbleTop = Math.max(0, topRel + inputRect.height + extraOffset);
         phoneTip.style.left = `${bubbleLeft}px`;
         phoneTip.style.top = `${bubbleTop}px`;
         const arrowLeft = Math.max(12, Math.min(bubbleWidth - 12, 14));
