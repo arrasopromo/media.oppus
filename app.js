@@ -2021,9 +2021,11 @@ app.post('/api/ggram-order', async (req, res) => {
             const quantitiesMap = {
                 visualizacoes_reels: '3000',
                 curtidas_brasileiras: '20',
-                curtidas: '20'
+                curtidas: '20',
+                seguidores_mistos: '150',
+                seguidores_brasileiros: '150'
             };
-            const quantity = quantitiesMap[selectedServiceKey] || '50';
+            const quantity = quantitiesMap[selectedServiceKey] || '150';
             const isFollowerService = ['650', '625'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
             const isLikesService = (selectedServiceKey || '').startsWith('curtidas');
             // Preparar campo/valor alvo conforme tipo de serviço
@@ -3457,6 +3459,74 @@ app.get('/api/order', async (req, res) => {
       }
     }
     return res.json({ ok: true, order: doc || null });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/refil/links', async (req, res) => {
+  try {
+    const onlyValid = String(req.query.onlyValid || '').toLowerCase() === 'true';
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50)));
+    const tl = await getCollection('temporary_links');
+    const filter = { purpose: 'refil' };
+    if (onlyValid) {
+      filter.expiresAt = { $gt: new Date().toISOString() };
+    }
+    const cursor = await tl.find(filter).sort({ createdAt: -1 }).limit(limit);
+    const rows = await cursor.toArray();
+    const col = await getCollection('checkout_orders');
+    const enriched = await Promise.all(rows.map(async (r) => {
+      let order = null;
+      try { order = await col.findOne({ _id: new (require('mongodb').ObjectId)(r.orderId) }, { projection: { _id: 1, identifier: 1, correlationID: 1, 'woovi.paidAt': 1 } }); } catch(_) {}
+      return { id: r.id, purpose: r.purpose, orderId: r.orderId, createdAt: r.createdAt, expiresAt: r.expiresAt, order };
+    }));
+    return res.json({ ok: true, links: enriched });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/refil/link-of-order', async (req, res) => {
+  try {
+    const identifier = String(req.query.identifier || '').trim();
+    const correlationID = String(req.query.correlationID || '').trim();
+    const phoneRaw = String(req.query.phone || '').trim();
+    const conds = [];
+    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    if (phoneRaw) {
+      const digits = phoneRaw.replace(/\D/g, '');
+      if (digits) {
+        conds.push({ 'customer.phone': `+55${digits}` });
+        conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
+      }
+    }
+    const filter = conds.length ? { $or: conds } : {};
+    const col = await getCollection('checkout_orders');
+    const doc = await col.findOne(filter);
+    if (!doc) return res.status(404).json({ ok: false, error: 'order_not_found' });
+    if (!doc.refilLinkId) {
+      try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
+    }
+    const tl = await getCollection('temporary_links');
+    const linkRec = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
+    if (!linkRec) return res.status(404).json({ ok: false, error: 'link_not_found' });
+    return res.json({ ok: true, token: linkRec.id, expiresAt: linkRec.expiresAt, orderId: String(doc._id) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/refil/backfill', async (req, res) => {
+  try {
+    const identifier = String((req.body && req.body.identifier) || req.query.identifier || '').trim();
+    const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
+    if (!identifier && !correlationID) {
+      return res.status(400).json({ ok: false, error: 'missing_identifier_or_correlationID' });
+    }
+    const rec = await ensureRefilLink(identifier, correlationID, req);
+    if (!rec || !rec.id) {
+      return res.status(404).json({ ok: false, error: 'order_not_found_or_failed' });
+    }
+    return res.json({ ok: true, token: rec.id, expiresAt: rec.expiresAt });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
