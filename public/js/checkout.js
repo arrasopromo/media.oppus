@@ -217,9 +217,9 @@
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
-    const base = [50, 150, 500, 1200, 3000, 5000, 10000];
+    const base = [150, 500, 1200, 3000, 5000, 10000];
     if (tipo === 'brasileiros' || tipo === 'organicos') {
-      return [50, 150, 500, 1000, 3000, 5000, 10000];
+      return [150, 500, 1000, 3000, 5000, 10000];
     }
     return base;
   }
