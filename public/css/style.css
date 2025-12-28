@@ -656,6 +656,9 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 /* Posicionar tutoriais de usuário e validar acima dos controles */
 #tutorial3Usuario { position: absolute; }
 #tutorial4Validar { position: absolute; }
+@media (max-width: 639px) {
+  #tutorial4Validar { margin-top: 30px; }
+}
 
 /* Posicionar tutorial de finalizar acima do botão */
 .action-container { position: relative; }
