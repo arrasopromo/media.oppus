@@ -657,7 +657,7 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 #tutorial3Usuario { position: absolute; }
 #tutorial4Validar { position: absolute; }
 @media (max-width: 639px) {
-  #tutorial4Validar { margin-top: 30px; }
+  #tutorial4Validar { margin-top: 50px; }
 }
 
 /* Posicionar tutorial de finalizar acima do botão */
