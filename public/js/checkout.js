@@ -1893,20 +1893,19 @@
       pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
       pixResultado.style.display = 'block';
 
+      const copyBtn = document.getElementById(copyButtonId);
       try {
         const isMobile = window.innerWidth <= 640;
         if (isMobile) {
-          const paymentCardEl = document.getElementById('paymentCard');
-          const target = paymentCardEl || pixResultado;
+          const target = copyBtn || document.getElementById('paymentCard') || pixResultado;
           if (target) {
             const rect = target.getBoundingClientRect();
-            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - Math.max(60, rect.height * 0.2);
+            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
             window.scrollTo({ top, behavior: 'smooth' });
           }
         }
       } catch(_) {}
 
-      const copyBtn = document.getElementById(copyButtonId);
       if (copyBtn && brCode) {
         copyBtn.addEventListener('click', async () => {
           try {
@@ -1917,12 +1916,17 @@
               input?.select();
               document.execCommand('copy');
             }
+            const span = copyBtn.querySelector('.button-text');
+            const prev = span ? span.textContent : '';
+            if (span) span.textContent = 'Pix copiado';
+            try { showStatusMessageCheckout('Código Pix copiado', 'success'); } catch(_) {}
             copyBtn.disabled = true;
             copyBtn.classList.add('loading');
             setTimeout(() => {
               copyBtn.disabled = false;
               copyBtn.classList.remove('loading');
-            }, 1000);
+              if (span) span.textContent = prev || 'Copiar código Pix';
+            }, 1200);
           } catch (e) {
             alert('Não foi possível copiar o código Pix.');
           }
