@@ -1468,6 +1468,26 @@ app.post('/api/woovi/charge', async (req, res) => {
                 return acc;
             }, {});
 
+            let utms = {};
+            try {
+                const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                const u = new URL(refUrl);
+                const p = u.searchParams;
+                utms = {
+                    source: p.get('utm_source') || '',
+                    medium: p.get('utm_medium') || '',
+                    campaign: p.get('utm_campaign') || '',
+                    term: p.get('utm_term') || '',
+                    content: p.get('utm_content') || '',
+                    gclid: p.get('gclid') || '',
+                    fbclid: p.get('fbclid') || '',
+                    ref: refUrl
+                };
+            } catch(_) {
+                const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                utms = { ref: refUrl };
+            }
+
             const tipo = addInfo['tipo_servico'] || '';
             const qtd = Number(addInfo['quantidade'] || 0) || 0;
             const instauserFromClient = addInfo['instagram_username'] || '';
@@ -1489,6 +1509,7 @@ app.post('/api/woovi/charge', async (req, res) => {
                 status: 'pendente',
                 qtd,
                 tipo,
+                utms,
 
                 // Demais campos já utilizados pelo app
                 valueCents: value,
@@ -3465,6 +3486,13 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
     const tipo = addInfo['tipo_servico'] || '';
     const qtd = Number(addInfo['quantidade'] || 0) || 0;
     const instauserFromClient = addInfo['instagram_username'] || '';
+    let utms = {};
+    try {
+      const refUrl = req.get('Referer') || req.headers['referer'] || '';
+      const u = new URL(refUrl);
+      const p = u.searchParams;
+      utms = { source: p.get('utm_source') || '', medium: p.get('utm_medium') || '', campaign: p.get('utm_campaign') || '', term: p.get('utm_term') || '', content: p.get('utm_content') || '', gclid: p.get('gclid') || '', fbclid: p.get('fbclid') || '', ref: refUrl };
+    } catch(_) { const refUrl = req.get('Referer') || req.headers['referer'] || ''; utms = { ref: refUrl }; }
     const customerPayload = { name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'), phone: normalizePhone((customer && customer.phone) ? customer.phone : '') };
     const createdIso = new Date().toISOString();
     const record = {
@@ -3477,6 +3505,7 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
       status: 'pendente',
       qtd,
       tipo,
+      utms,
       valueCents: value,
       customer: customerPayload,
       additionalInfo: addInfoArr,
