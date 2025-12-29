@@ -23,16 +23,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Tema escuro/claro com persistência
     const btn = document.getElementById('themeToggleBtn');
-    const getPref = () => localStorage.getItem('oppus_theme') || 'dark';
     const applyTheme = (theme) => {
         const isLight = theme === 'light';
         document.body.classList.toggle('theme-light', isLight);
         if (btn) {
-            btn.textContent = isLight ? 'Tema: Claro' : 'Tema: Escuro';
+            btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
             btn.setAttribute('aria-pressed', String(isLight));
         }
     };
-    applyTheme(getPref());
+    applyTheme('light');
     if (btn) {
         btn.addEventListener('click', () => {
             const next = document.body.classList.contains('theme-light') ? 'dark' : 'light';

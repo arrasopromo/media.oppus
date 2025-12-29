@@ -2682,8 +2682,7 @@
     btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
   };
   try {
-    const pref = localStorage.getItem('oppus_theme') || 'dark';
-    document.body.classList.toggle('theme-light', pref === 'light');
+    document.body.classList.add('theme-light');
   } catch(_) {}
   applyLabel();
   btn.addEventListener('click', () => {

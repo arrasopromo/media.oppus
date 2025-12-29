@@ -21,7 +21,7 @@
   <!-- End TRACK COMBO -->
   
 </head>
-<body>
+<body class="theme-light">
   <script>
     (function removeParam(){
       try {
@@ -468,10 +468,7 @@
         var isLight = document.body.classList.contains('theme-light');
         btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
       };
-      try {
-        var pref = localStorage.getItem('oppus_theme') || 'dark';
-        document.body.classList.toggle('theme-light', pref === 'light');
-      } catch(_) {}
+      try { document.body.classList.add('theme-light'); } catch(_) {}
       applyLabel();
       btn.addEventListener('click', function(){
         var isLight = document.body.classList.contains('theme-light');
