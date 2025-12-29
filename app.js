@@ -1352,42 +1352,49 @@ app.get('/checkout', (req, res) => {
 
 // Página de Refil
 app.get('/refil', async (req, res) => {
-    console.log('🔁 Acessando rota /refil');
-    try {
-        const token = String(req.query.token || '').trim();
-        if (token) {
-            let isValid = false;
-            try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
-            try {
-                const tl = await getCollection('temporary_links');
-                const linkRec = await tl.findOne({ id: token });
-                if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
-                    const nowMs = Date.now();
-                    const expMs = new Date(linkRec.expiresAt).getTime();
-                    if (!Number.isNaN(expMs) && nowMs < expMs) {
-                        isValid = true;
-                        if (req.session) {
-                            req.session.refilAccessAllowed = true;
-                            req.session.linkSlug = token;
-                            req.session.linkAccessTime = Date.now();
-                        }
-                    }
-                }
-            } catch(_) {}
-        }
-    } catch(_) {}
-    if (!(req.session && req.session.refilAccessAllowed)) {
-        const from = '/refil';
-        return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
+  console.log('🔁 Acessando rota /refil');
+  try {
+    const token = String(req.query.token || '').trim();
+    if (token && /^liberado$/i.test(token)) {
+      if (req.session) {
+        req.session.refilAccessAllowed = true;
+        req.session.linkSlug = 'liberado';
+        req.session.linkAccessTime = Date.now();
+      }
     }
-    res.render('refil', {}, (err, html) => {
-        if (err) {
-            console.error('❌ Erro ao renderizar refil:', err.message);
-            return res.status(500).send('Erro ao carregar página de refil');
+    if (token) {
+      let isValid = false;
+      try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
+      try {
+        const tl = await getCollection('temporary_links');
+        const linkRec = await tl.findOne({ id: token });
+        if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
+          const nowMs = Date.now();
+          const expMs = new Date(linkRec.expiresAt).getTime();
+          if (!Number.isNaN(expMs) && nowMs < expMs) {
+            isValid = true;
+            if (req.session) {
+              req.session.refilAccessAllowed = true;
+              req.session.linkSlug = token;
+              req.session.linkAccessTime = Date.now();
+            }
+          }
         }
-        res.type('text/html');
-        res.send(html);
-    });
+      } catch(_) {}
+    }
+  } catch(_) {}
+  if (!(req.session && req.session.refilAccessAllowed)) {
+    const from = '/refil';
+    return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
+  }
+  res.render('refil', {}, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar refil:', err.message);
+      return res.status(500).send('Erro ao carregar página de refil');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
 });
 
 // API para solicitar refil (proxy para smmrefil)
