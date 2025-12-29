@@ -1113,8 +1113,10 @@ async function trackMetaPurchaseForOrder(identifier, correlationID, req) {
     const testCode = process.env.META_TEST_EVENT_CODE || 'TEST10956';
     if (testCode) payload.test_event_code = testCode;
     const url = `https://graph.facebook.com/v18.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
+    try { console.log('📡 CAPI Purchase: sending', { pixel: PIXEL_ID, hasToken: !!ACCESS_TOKEN, identifier: ident || corr, valueBRL, testCode }); } catch(_) {}
     const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await resp.json();
+    try { console.log('📡 CAPI Purchase: response', { status: resp.status, error: data?.error, events_received: data?.events_received }); } catch(_) {}
     await col.updateOne(filter, { $set: { meta_purchase_event: { request: payload, response: data, status: resp.status, sentAt: new Date().toISOString() } } });
     try {
       if (geo && (geo.city || geo.region || geo.country)) {
