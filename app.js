@@ -993,16 +993,24 @@ async function ensureRefilLink(identifier, correlationID, req) {
     if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
     if (corr) { conds.push({ correlationID: corr }); }
     const filter = conds.length ? { $or: conds } : {};
-    const doc = await col.findOne(filter, { projection: { _id: 1 } });
+    const doc = await col.findOne(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1 } });
     if (!doc) return null;
+    const arrPaid = Array.isArray(doc?.additionalInfoPaid) ? doc.additionalInfoPaid : [];
+    const arrOrig = Array.isArray(doc?.additionalInfo) ? doc.additionalInfo : [];
+    const map = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+    const iu = doc.instauser || doc.instagramUsername || map['instagram_username'] || '';
     const tl = await getCollection('temporary_links');
     const existing = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
     if (existing) {
       await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existing.id } });
+      if (!existing.instauser && iu) {
+        await tl.updateOne({ id: existing.id }, { $set: { instauser: iu } });
+        existing.instauser = iu;
+      }
       return existing;
     }
     const info = linkManager.generateLink(req);
-    const rec = { id: info.id, purpose: 'refil', orderId: String(doc._id), createdAt: new Date().toISOString(), expiresAt: new Date(info.expiresAt).toISOString() };
+    const rec = { id: info.id, purpose: 'refil', orderId: String(doc._id), instauser: iu || null, createdAt: new Date().toISOString(), expiresAt: new Date(info.expiresAt).toISOString() };
     await tl.insertOne(rec);
     await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: info.id } });
     try { console.log('🔗 Link de refil criado:', info.id); } catch(_) {}
