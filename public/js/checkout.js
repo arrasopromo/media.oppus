@@ -344,7 +344,7 @@
           { key: 'seguidores_tiktok', label: 'Seguidores' }
         ]
       : [
-          { key: 'mistos', label: 'Seguidores Mistos (Internacionais)' },
+          { key: 'mistos', label: 'Seguidores Mistos' },
           { key: 'brasileiros', label: 'Seguidores Brasileiros' },
           { key: 'organicos', label: 'Seguidores Brasileiros Orgânicos' }
         ];
@@ -367,8 +367,42 @@
         tipoCards.style.gridTemplateColumns = '';
         tipoCards.style.minHeight = '';
         tipoCards.style.margin = '';
-      } catch(_) {}
-    }
+  } catch(_) {}
+  (function initWhyOppusSlider(){
+    try {
+      const cont = document.querySelector('.why-oppus-slider .slider-container');
+      if (!cont) return;
+      const slides = Array.from(cont.querySelectorAll('.slider-slide'));
+      if (!slides.length) return;
+      let activeIdx = 0;
+      function setActive(i){
+        slides.forEach((s,idx) => { if (idx === i) s.classList.add('active'); else s.classList.remove('active'); });
+        activeIdx = i;
+        const el = slides[i];
+        if (el) {
+          const left = el.offsetLeft - (cont.clientWidth - el.clientWidth) / 2;
+          cont.scrollTo({ left, behavior: 'smooth' });
+        }
+      }
+      slides.forEach((s,idx) => s.addEventListener('click', () => setActive(idx)));
+      let t;
+      function snapToCenter(){
+        const cRect = cont.getBoundingClientRect();
+        const cCenter = cRect.left + cRect.width / 2;
+        let best = 0; let bestDist = Infinity;
+        slides.forEach((s,idx) => {
+          const r = s.getBoundingClientRect();
+          const sCenter = r.left + r.width / 2;
+          const d = Math.abs(sCenter - cCenter);
+          if (d < bestDist) { bestDist = d; best = idx; }
+        });
+        setActive(best);
+      }
+      cont.addEventListener('scroll', () => { if (t) clearTimeout(t); t = setTimeout(snapToCenter, 120); });
+      setActive(0);
+    } catch(_) {}
+  })();
+}
     for (const t of tipos) {
       const el = document.createElement('div');
       el.className = 'service-card' + (selectedPlatform === 'tiktok' ? ' disabled' : '');
