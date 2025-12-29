@@ -1042,88 +1042,8 @@ function buildFbcFromFbclid(fbclid) {
 }
 
 async function trackMetaPurchaseForOrder(identifier, correlationID, req) {
-  try {
-    const PIXEL_ID = process.env.PIXEL_ID || '';
-    const ACCESS_TOKEN = process.env.META_CAPI_TOKEN || '';
-    if (!PIXEL_ID || !ACCESS_TOKEN) return;
-    const { getCollection } = require('./mongodbClient');
-    const col = await getCollection('checkout_orders');
-    const conds = [];
-    const ident = String(identifier || '').trim();
-    const corr = String(correlationID || '').trim();
-    if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
-    if (corr) { conds.push({ correlationID: corr }); }
-    const filter = conds.length ? { $or: conds } : {};
-    const record = await col.findOne(filter);
-    if (!record) return;
-    const valueCents = Number((record && record.woovi && record.woovi.paymentMethods && record.woovi.paymentMethods.pix && record.woovi.paymentMethods.pix.value) || record.valueCents || 0) || 0;
-    const valueBRL = valueCents ? (Math.round(valueCents) / 100) : 0;
-    const qty = Number(record.quantidade || record.qtd || 0) || 0;
-    const tipo = String(record.tipo || record.tipoServico || '').trim();
-    const phoneRaw = String((record && record.telefone) || (record && record.customer && record.customer.phone) || '').trim();
-    const phoneDigits = phoneRaw.replace(/\D/g, '');
-    const ph = phoneDigits ? toSha256(phoneDigits) : undefined;
-    const ipStored = String(record.ip || '').trim();
-    const ipHeader = (req && (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress)) || '';
-    const clientIp = String(ipStored || ipHeader || '').split(',')[0].replace('::ffff:', '').trim();
-    const userAgent = String(record.userAgent || (req && req.headers['user-agent']) || '').trim();
-    const utms = record.utms || {};
-    const fbclid = String(utms.fbclid || '').trim();
-    const fbc = buildFbcFromFbclid(fbclid);
-    const eventSourceUrl = String(utms.ref || '').trim();
-    const payerName = String((record && record.payer && record.payer.name) || '').trim();
-    const nameParts = payerName ? payerName.split(/\s+/).filter(Boolean) : [];
-    const firstName = nameParts.length ? nameParts[0].toLowerCase() : '';
-    const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1].toLowerCase() : '';
-    const fn = firstName ? toSha256(firstName) : undefined;
-    const ln = lastName ? toSha256(lastName) : undefined;
-    const cpfRaw = String((record && record.payer && record.payer.taxID) || '').replace(/\D/g, '');
-    const external_id = cpfRaw ? toSha256(cpfRaw) : undefined;
-    const geo = await geoLookupIp(clientIp);
-    const contents = (tipo && qty) ? [{ id: `seguidores_${tipo}`, quantity: qty }] : [];
-    const payload = {
-      data: [
-        {
-          event_name: 'Purchase',
-          event_time: Math.floor(Date.now() / 1000),
-          action_source: 'website',
-          event_source_url: eventSourceUrl || undefined,
-          event_id: ident || corr || undefined,
-          user_data: {
-            client_ip_address: clientIp || undefined,
-            client_user_agent: userAgent || undefined,
-            fbc: fbc || undefined,
-            ph: ph || undefined,
-            fn: fn || undefined,
-            ln: ln || undefined,
-            external_id: external_id || undefined,
-            ct: (geo && geo.city) ? toSha256(String(geo.city || '').toLowerCase()) : undefined,
-            st: (geo && geo.region) ? toSha256(String(geo.region || '').toLowerCase()) : undefined,
-            country: (geo && geo.country) ? toSha256(String(geo.country || '').toLowerCase()) : undefined
-          },
-          custom_data: {
-            currency: 'BRL',
-            value: valueBRL,
-            content_name: tipo ? `Seguidores ${tipo}` : undefined,
-            contents
-          }
-        }
-      ]
-    };
-    const testCode = process.env.META_TEST_EVENT_CODE || 'TEST10956';
-    if (testCode) payload.test_event_code = testCode;
-    const url = `https://graph.facebook.com/v18.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
-    try { console.log('📡 CAPI Purchase: sending', { pixel: PIXEL_ID, hasToken: !!ACCESS_TOKEN, identifier: ident || corr, valueBRL, testCode }); } catch(_) {}
-    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const data = await resp.json();
-    try { console.log('📡 CAPI Purchase: response', { status: resp.status, error: data?.error, events_received: data?.events_received }); } catch(_) {}
-    await col.updateOne(filter, { $set: { meta_purchase_event: { request: payload, response: data, status: resp.status, sentAt: new Date().toISOString() } } });
-    try {
-      if (geo && (geo.city || geo.region || geo.country)) {
-        await col.updateOne(filter, { $set: { geo: { ip: clientIp, city: geo.city || '', region: geo.region || '', country: geo.country || '', source: geo.source || '' } } });
-      }
-    } catch (_) {}
-  } catch (_) {}
+  /* tracking Purchase via Meta CAPI desativado */
+  return;
 }
 
 app.get('/api/payment/subscribe', (req, res) => {
@@ -2881,7 +2801,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
             console.error('⚠️ Falha ao notificar validar-confirmado', tErr?.message || String(tErr));
           }
           broadcastPaymentPaid(charge?.identifier, charge?.correlationID);
-          try { await trackMetaPurchaseForOrder(charge?.identifier, charge?.correlationID, req); } catch(_) {}
+          // try { await trackMetaPurchaseForOrder(charge?.identifier, charge?.correlationID, req); } catch(_) {}
           try { setTimeout(() => { try { dispatchPendingOrganicos(); } catch(_) {} }, 0); } catch(_) {}
         } catch (sendErr) {
           console.error('⚠️ Falha ao enviar para Fama24h', sendErr?.message || String(sendErr));
@@ -3851,7 +3771,7 @@ app.post('/api/payment/confirm', async (req, res) => {
         }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
-      try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
+      // try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
       try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
     } catch (_) {}
 
@@ -4003,7 +3923,7 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
         }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
-      try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
+      // try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
       try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
     } catch (_) {}
 
