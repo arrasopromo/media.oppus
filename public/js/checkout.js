@@ -91,31 +91,31 @@
       { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 14,90' },
-      { q: 500, p: 'R$ 22,90' },
-      { q: 700, p: 'R$ 29,90' },
-      { q: 1200, p: 'R$ 39,90' },
-      { q: 2000, p: 'R$ 49,90' },
-      { q: 3000, p: 'R$ 69,90' },
-      { q: 4000, p: 'R$ 79,90' },
-      { q: 5000, p: 'R$ 99,90' },
-      { q: 7500, p: 'R$ 129,90' },
-      { q: 10000, p: 'R$ 159,90' },
-      { q: 15000, p: 'R$ 219,90' },
+      { q: 500, p: 'R$ 32,90' },
+      { q: 700, p: 'R$ 39,90' },
+      { q: 1000, p: 'R$ 49,90' },
+      { q: 2000, p: 'R$ 79,90' },
+      { q: 3000, p: 'R$ 109,90' },
+      { q: 4000, p: 'R$ 139,90' },
+      { q: 5000, p: 'R$ 159,90' },
+      { q: 7500, p: 'R$ 199,90' },
+      { q: 10000, p: 'R$ 269,90' },
+      { q: 15000, p: 'R$ 399,90' },
     ],
     brasileiros: [
       { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 19,90' },
       { q: 300, p: 'R$ 29,90' },
-      { q: 500, p: 'R$ 39,90' },
-      { q: 700, p: 'R$ 49,90' },
-      { q: 1000, p: 'R$ 59,90' },
-      { q: 2000, p: 'R$ 79,90' },
-      { q: 3000, p: 'R$ 99,90' },
-      { q: 4000, p: 'R$ 129,90' },
-      { q: 5000, p: 'R$ 159,90' },
-      { q: 7500, p: 'R$ 199,90' },
-      { q: 10000, p: 'R$ 299,90' },
-      { q: 15000, p: 'R$ 399,90' },
+      { q: 500, p: 'R$ 54,90' },
+      { q: 700, p: 'R$ 69,90' },
+      { q: 1000, p: 'R$ 99,90' },
+      { q: 2000, p: 'R$ 169,90' },
+      { q: 3000, p: 'R$ 229,90' },
+      { q: 4000, p: 'R$ 299,90' },
+      { q: 5000, p: 'R$ 329,90' },
+      { q: 7500, p: 'R$ 459,90' },
+      { q: 10000, p: 'R$ 599,90' },
+      { q: 15000, p: 'R$ 999,90' },
     ],
     organicos: [
       { q: 50, p: 'R$ 0,10' },
@@ -124,13 +124,13 @@
       { q: 500, p: 'R$ 69,90' },
       { q: 700, p: 'R$ 89,90' },
       { q: 1000, p: 'R$ 129,90' },
-      { q: 2000, p: 'R$ 229,90' },
-      { q: 3000, p: 'R$ 259,90' },
+      { q: 2000, p: 'R$ 199,90' },
+      { q: 3000, p: 'R$ 249,90' },
       { q: 4000, p: 'R$ 329,90' },
-      { q: 5000, p: 'R$ 399,90' },
-      { q: 7500, p: 'R$ 539,90' },
-      { q: 10000, p: 'R$ 699,90' },
-      { q: 15000, p: 'R$ 999,90' },
+      { q: 5000, p: 'R$ 499,90' },
+      { q: 7500, p: 'R$ 599,90' },
+      { q: 10000, p: 'R$ 899,90' },
+      { q: 15000, p: 'R$ 1.299,90' },
     ],
     curtidas_reais: [
       { q: 150, p: 'R$ 4,90' },
@@ -217,7 +217,7 @@
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
-    const base = [150, 500, 1200, 3000, 5000, 10000];
+    const base = [150, 500, 1000, 3000, 5000, 10000];
     if (tipo === 'brasileiros' || tipo === 'organicos') {
       return [150, 500, 1000, 3000, 5000, 10000];
     }
@@ -289,7 +289,7 @@
     }
 
     // Upgrade genérico para demais pacotes
-    const upsellTargets = { 150: 300, 500: 700, 1200: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
       if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
@@ -1257,8 +1257,8 @@
     updateLikesPrice(next);
     try { updatePromosSummary(); } catch(_) {}
   }
-  if (likesDec) likesDec.addEventListener('click', () => stepLikes(-1));
-  if (likesInc) likesInc.addEventListener('click', () => stepLikes(1));
+  if (likesDec) likesDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(-1); });
+  if (likesInc) likesInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(1); });
   if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
 
   // Slider de Visualizações (Order Bump)
@@ -1313,8 +1313,8 @@
     updateViewsPrice(next);
     try { updatePromosSummary(); } catch(_) {}
   }
-  if (viewsDec) viewsDec.addEventListener('click', () => stepViews(-1));
-  if (viewsInc) viewsInc.addEventListener('click', () => stepViews(1));
+  if (viewsDec) viewsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(-1); });
+  if (viewsInc) viewsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(1); });
   if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
 
   function getPostModalRefs(){
@@ -1428,7 +1428,11 @@
   // Também abrir ao clicar na área do card após marcar
   ['likes','views','comments'].forEach(function(kind){
     const label = document.querySelector('label.promo-item.'+kind);
-    if (label) label.addEventListener('click', function(){ const input = document.getElementById(kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments')); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal(kind); }, 0); });
+    if (label) label.addEventListener('click', function(e){
+      if (e && e.target && e.target.closest('.likes-control')) return;
+      const input = document.getElementById(kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments'));
+      setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal(kind); }, 0);
+    });
     const priceBlock = document.querySelector('.promo-prices[data-promo="'+(kind==='likes'?'likes':(kind==='views'?'views':'comments'))+'"]');
     if (priceBlock) priceBlock.addEventListener('click', function(e){ e.stopPropagation(); const input = document.getElementById(kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments')); if (input && input.checked) openPostModal(kind); });
   });
@@ -1436,9 +1440,9 @@
     const likesLabel = document.querySelector('label.promo-item.likes');
     const viewsLabel = document.querySelector('label.promo-item.views');
     const commentsLabel = document.querySelector('label.promo-item.comments');
-    if (likesLabel) likesLabel.addEventListener('click', function(e){ const input = document.getElementById('promoLikes'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('likes'); }, 0); });
-    if (viewsLabel) viewsLabel.addEventListener('click', function(e){ const input = document.getElementById('promoViews'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('views'); }, 0); });
-    if (commentsLabel) commentsLabel.addEventListener('click', function(e){ const input = document.getElementById('promoComments'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('comments'); }, 0); });
+    if (likesLabel) likesLabel.addEventListener('click', function(e){ if (e && e.target && e.target.closest('.likes-control')) return; const input = document.getElementById('promoLikes'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('likes'); }, 0); });
+    if (viewsLabel) viewsLabel.addEventListener('click', function(e){ if (e && e.target && e.target.closest('.likes-control')) return; const input = document.getElementById('promoViews'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('views'); }, 0); });
+    if (commentsLabel) commentsLabel.addEventListener('click', function(e){ if (e && e.target && e.target.closest('.likes-control')) return; const input = document.getElementById('promoComments'); setTimeout(function(){ if (suppressOpenPostModalOnce) { suppressOpenPostModalOnce=false; return; } if (input && input.checked) openPostModal('comments'); }, 0); });
   } catch(_) {}
   try { updatePromosSummary(); } catch(_) {}
 
@@ -1464,8 +1468,8 @@
     updateCommentsPrice(next);
     try { updatePromosSummary(); } catch(_) {}
   }
-  if (commentsDec) commentsDec.addEventListener('click', () => stepComments(-1));
-  if (commentsInc) commentsInc.addEventListener('click', () => stepComments(1));
+  if (commentsDec) commentsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(-1); });
+  if (commentsInc) commentsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(1); });
   if (commentsQtyEl) updateCommentsPrice(Number(commentsQtyEl.textContent || 1));
 
   function getSelectedPromos() {
@@ -2151,6 +2155,34 @@
     function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
     if (prev) prev.addEventListener('click', () => { idx = (idx - 1 + items.length) % items.length; render(); });
     if (next) next.addEventListener('click', () => { idx = (idx + 1) % items.length; render(); });
+    const viewport = testimonialsCarousel.querySelector('.carousel-viewport');
+    if (viewport) {
+      let touchStartX = 0;
+      let touchLastX = 0;
+      viewport.addEventListener('touchstart', (e) => {
+        if (!e.touches || !e.touches.length) return;
+        touchStartX = e.touches[0].clientX;
+        touchLastX = touchStartX;
+        stopAuto();
+      }, { passive: true });
+      viewport.addEventListener('touchmove', (e) => {
+        if (!e.touches || !e.touches.length) return;
+        touchLastX = e.touches[0].clientX;
+      }, { passive: true });
+      viewport.addEventListener('touchend', () => {
+        const delta = touchStartX - touchLastX;
+        const threshold = 40;
+        if (Math.abs(delta) > threshold) {
+          if (delta > 0) {
+            idx = (idx + 1) % items.length;
+          } else {
+            idx = (idx - 1 + items.length) % items.length;
+          }
+          render();
+        }
+        startAuto();
+      });
+    }
     testimonialsCarousel.addEventListener('mouseenter', stopAuto);
     testimonialsCarousel.addEventListener('mouseleave', startAuto);
     render();
@@ -2606,7 +2638,7 @@
       cycleIdx = (cycleIdx + 1) % platformCycle.length;
       setTimeout(cycle, 15000);
     }
-    setTimeout(cycle, 2000);
+    setTimeout(cycle, 7000);
   })();
 })();
 

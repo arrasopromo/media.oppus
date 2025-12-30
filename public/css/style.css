@@ -1138,10 +1138,10 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
  .value-prop-caption .caption-mobile { display: none; }
  .value-prop-caption .caption-desktop { display: inline; }
 @media (max-width: 640px) {
-  .value-prop-icon { width: 72px; height: 72px; }
+  .value-prop-icon { width: 68px; height: 68px; }
   .value-props { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 2rem; row-gap: 0.6rem; justify-items: center; align-items: start; margin-top: 130px; }
-  .value-prop-item { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; max-width: 32vw; }
-  .value-prop-row { display: flex; flex-direction: row; align-items: center; gap: 0.1rem; }
+  .value-prop-item { display: flex; flex-direction: column; align-items: center; gap: 0.14rem; max-width: 32vw; }
+  .value-prop-row { display: flex; flex-direction: row; align-items: center; gap: 0.08rem; }
   .value-prop-item:nth-child(1) .value-prop-row { transform: translateX(-6px); }
   .value-prop-item:nth-child(2) .value-prop-row { transform: translateX(-4px); }
   .value-prop-metric { font-size: 1.8rem; line-height: 1; }
