@@ -217,9 +217,13 @@
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
+    const without50 = [150, 500, 1000, 3000, 5000, 10000];
     const base = [50, 150, 500, 1000, 3000, 5000, 10000];
+    if (tipo === 'mistos' || tipo === 'seguidores_tiktok') {
+      return without50;
+    }
     if (tipo === 'brasileiros' || tipo === 'organicos') {
-      return [150, 500, 1000, 3000, 5000, 10000];
+      return without50;
     }
     return base;
   }
@@ -1582,6 +1586,10 @@
         try { updatePromosSummary(); } catch(_) {}
         try { applyCheckoutFlow(); } catch(_) {}
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+        try {
+          const trackUrl = '/api/instagram/validet-track';
+          await fetch(trackUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: profile.username || username }) });
+        } catch (_) {}
         // Avança para o passo final
         showTutorialStep(5);
         try {
@@ -1614,6 +1622,10 @@
           try { updatePromosSummary(); } catch(_) {}
           try { applyCheckoutFlow(); } catch(_) {}
           showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+          try {
+            const trackUrl = '/api/instagram/validet-track';
+            await fetch(trackUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: profile.username || username }) });
+          } catch (_) {}
           showTutorialStep(5);
           try {
             const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
