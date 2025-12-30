@@ -2917,3 +2917,13 @@
       });
     });
   })();
+  (function disableDoubleTapZoom(){
+    var mq = window.matchMedia('(max-width: 640px)');
+    if (!mq || !mq.matches) return;
+    var last = 0;
+    document.addEventListener('touchend', function(e){
+      var now = Date.now();
+      if (now - last <= 300) { e.preventDefault(); }
+      last = now;
+    }, { passive: false });
+  })();
