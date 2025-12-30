@@ -217,7 +217,7 @@
 
   tabela.seguidores_tiktok = tabela.mistos;
   function getAllowedQuantities(tipo) {
-    const base = [150, 500, 1000, 3000, 5000, 10000];
+    const base = [50, 150, 500, 1000, 3000, 5000, 10000];
     if (tipo === 'brasileiros' || tipo === 'organicos') {
       return [150, 500, 1000, 3000, 5000, 10000];
     }
@@ -289,7 +289,7 @@
     }
 
     // Upgrade genérico para demais pacotes
-    const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
       if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
@@ -1702,7 +1702,7 @@
           if ((t === 'brasileiros' || t === 'organicos') && Number(base) === 1000) {
             return 1000;
           }
-          const upsellTargets = { 150: 300, 500: 700, 1200: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+          const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
           const target = upsellTargets[Number(base)];
           if (!target) return 0;
           return Number(target) - Number(base);
@@ -1863,6 +1863,11 @@
           { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
         ]
       };
+      try {
+        const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
+        const tc = m && m[1] ? m[1] : '';
+        if (tc) { payload.additionalInfo.push({ key: 'tc_code', value: tc }); }
+      } catch(_) {}
 
       try {
         const selResp = await fetch('/api/instagram/selected-for');

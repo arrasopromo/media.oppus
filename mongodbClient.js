@@ -16,6 +16,20 @@ async function connect() {
   db = client.db(dbName);
   try {
     console.log(`✅ MongoDB conectado ao database '${dbName}'`);
+    try {
+      const col = db.collection('validated_insta_users');
+      await col.createIndexes([
+        { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
+        { key: { linkId: 1 }, name: 'linkId_idx' },
+        { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
+      ]);
+      const validet = db.collection('validet');
+      await validet.createIndexes([
+        { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
+        { key: { linkId: 1 }, name: 'linkId_idx' },
+        { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
+      ]);
+    } catch (_) {}
   } catch (_) {}
   return db;
 }

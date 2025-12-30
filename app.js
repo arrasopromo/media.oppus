@@ -475,6 +475,27 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                         isPrivate: user.is_private
                     }
                 };
+                try {
+                    const vu = await getCollection('validated_insta_users');
+                    const validet = await getCollection('validet');
+                    const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
+                    const doc = {
+                        username: String(user.username || '').trim(),
+                        fullName: String(user.full_name || ''),
+                        profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
+                        isVerified: !!user.is_verified,
+                        isPrivate: !!user.is_private,
+                        followersCount: user.edge_followed_by ? Number(user.edge_followed_by.count || 0) : 0,
+                        checkedAt: new Date().toISOString(),
+                        linkId,
+                        ip: String(ip || ''),
+                        userAgent: String(userAgent || ''),
+                        source: 'verifyInstagramProfile'
+                    };
+                    const ins = await vu.insertOne(doc);
+                    try { await validet.insertOne(doc); } catch(_) {}
+                    try { console.log('🗃️ MongoDB: validação PRIVADA registrada em validated_insta_users', { insertedId: ins.insertedId, username: doc.username }); } catch(_) {}
+                } catch(_) {}
                 setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
                 return privateResult;
             }
@@ -572,6 +593,30 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 console.error('❌ Erro ao atualizar/salvar no Baserow:', baserowError);
             }
 
+            try {
+                const vu = await getCollection('validated_insta_users');
+                const validet = await getCollection('validet');
+                const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
+                const doc = {
+                    username: String(user.username || '').trim(),
+                    fullName: String(user.full_name || ''),
+                    profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
+                    isVerified: !!user.is_verified,
+                    isPrivate: !!user.is_private,
+                    followersCount: user.edge_followed_by ? Number(user.edge_followed_by.count || 0) : 0,
+                    checkedAt: new Date().toISOString(),
+                    linkId,
+                    ip: String(ip || ''),
+                    userAgent: String(userAgent || ''),
+                    source: 'verifyInstagramProfile'
+                };
+                const ins = await vu.insertOne(doc);
+                try { await validet.insertOne(doc); } catch(_) {}
+                try { console.log('🗃️ MongoDB: validação registrada em validated_insta_users', { insertedId: ins.insertedId, username: doc.username }); } catch(_) {}
+            } catch (mongoErr) {
+                try { console.error('❌ Falha ao registrar validação em MongoDB:', mongoErr?.message || String(mongoErr)); } catch(_) {}
+            }
+
             // Verificar se o perfil já foi testado anteriormente
             const instauserExists = await checkInstauserExists(username);
             
@@ -636,7 +681,8 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 const linkManager = new LinkManager();
 const driveManager = new GoogleDriveManager();
 const baserowManager = new BaserowManager("https://baserow.atendimento.info", process.env.BASEROW_TOKEN);
-const { getCollection } = require('./mongodbClient');
+const { connect: connectMongo, getCollection } = require('./mongodbClient');
+try { connectMongo(); } catch(_) {}
 
 // Configurar Baserow
 const baserowToken = process.env.BASEROW_TOKEN || "manus";
@@ -1142,6 +1188,71 @@ app.get('/__debug/fama24h-balance', async (req, res) => {
   }
 });
 
+// Admin: Normalizar expiração dos temporary_links para N dias a partir da criação
+app.get('/__admin/temporary-links/normalize-expiration', async (req, res) => {
+  try {
+    const days = Math.max(1, Number(req.query.days || 7) || 7);
+    const ms = days * 24 * 60 * 60 * 1000;
+    const { getCollection } = require('./mongodbClient');
+    const tl = await getCollection('temporary_links');
+    const cursor = tl.find({}, { projection: { id: 1, createdAt: 1, expiresAt: 1 } });
+    const docs = await cursor.toArray();
+    const ops = [];
+    let updated = 0;
+    for (const d of docs) {
+      try {
+        const createdRaw = d?.createdAt;
+        let createdMs = null;
+        if (createdRaw instanceof Date) createdMs = createdRaw.getTime();
+        else if (typeof createdRaw === 'string') createdMs = new Date(createdRaw).getTime();
+        else if (typeof createdRaw === 'number') createdMs = createdRaw;
+        if (!createdMs || Number.isNaN(createdMs)) continue;
+        const targetISO = new Date(createdMs + ms).toISOString();
+        ops.push({ updateOne: { filter: { id: d.id }, update: { $set: { expiresAt: targetISO } } } });
+        updated++;
+      } catch(_) {}
+    }
+    if (ops.length) {
+      await tl.bulkWrite(ops, { ordered: false });
+    }
+    return res.json({ ok: true, total: docs.length, updated, days });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/admin/temporary-links/normalize-expiration', async (req, res) => {
+  try {
+    const days = Math.max(1, Number((req.body && req.body.days) || req.query.days || 7) || 7);
+    const ms = days * 24 * 60 * 60 * 1000;
+    const { getCollection } = require('./mongodbClient');
+    const tl = await getCollection('temporary_links');
+    const cursor = tl.find({}, { projection: { id: 1, createdAt: 1, expiresAt: 1 } });
+    const docs = await cursor.toArray();
+    const ops = [];
+    let updated = 0;
+    for (const d of docs) {
+      try {
+        const createdRaw = d?.createdAt;
+        let createdMs = null;
+        if (createdRaw instanceof Date) createdMs = createdRaw.getTime();
+        else if (typeof createdRaw === 'string') createdMs = new Date(createdRaw).getTime();
+        else if (typeof createdRaw === 'number') createdMs = createdRaw;
+        if (!createdMs || Number.isNaN(createdMs)) continue;
+        const targetISO = new Date(createdMs + ms).toISOString();
+        ops.push({ updateOne: { filter: { id: d.id }, update: { $set: { expiresAt: targetISO } } } });
+        updated++;
+      } catch(_) {}
+    }
+    if (ops.length) {
+      await tl.bulkWrite(ops, { ordered: false });
+    }
+    return res.json({ ok: true, total: docs.length, updated, days });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // Diagnóstico: logar tamanho do corpo enviado para /checkout
 app.use((req, res, next) => {
   if (req.path.startsWith('/checkout')) {
@@ -1378,14 +1489,13 @@ app.get('/refil', async (req, res) => {
         const linkRec = await tl.findOne({ id: token });
         if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
           const nowMs = Date.now();
-          const expMs = new Date(linkRec.expiresAt).getTime();
-          if (!Number.isNaN(expMs) && nowMs < expMs) {
-            isValid = true;
-            if (req.session) {
-              req.session.refilAccessAllowed = true;
-              req.session.linkSlug = token;
-              req.session.linkAccessTime = Date.now();
-            }
+          const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
+          await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+          isValid = true;
+          if (req.session) {
+            req.session.refilAccessAllowed = true;
+            req.session.linkSlug = token;
+            req.session.linkAccessTime = Date.now();
           }
         }
       } catch(_) {}
@@ -1393,7 +1503,8 @@ app.get('/refil', async (req, res) => {
   } catch(_) {}
   if (!(req.session && req.session.refilAccessAllowed)) {
     const from = '/refil';
-    return res.redirect(`/restrito?from=${encodeURIComponent(from)}`);
+    const qs = token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`;
+    return res.redirect(`/restrito?${qs}`);
   }
   res.render('refil', {}, (err, html) => {
     if (err) {
@@ -1458,6 +1569,20 @@ app.post('/api/woovi/charge', async (req, res) => {
         .filter((it) => typeof it.key === 'string' && it.key.trim().length > 0 && typeof it.value === 'string' && it.value.trim().length > 0)
         .map((it) => ({ key: it.key.trim(), value: it.value.trim() }));
 
+    try {
+        const cookieHeader = req.headers['cookie'] || '';
+        const m = cookieHeader && cookieHeader.match(/(?:^|;\s*)tc_code=([^;]+)/);
+        const tc = m && m[1] ? decodeURIComponent(m[1]) : '';
+        if (tc) {
+            for (let i = sanitizedAdditionalFiltered.length - 1; i >= 0; i--) {
+                if (sanitizedAdditionalFiltered[i].key === 'tc_code') {
+                    sanitizedAdditionalFiltered.splice(i, 1);
+                }
+            }
+            sanitizedAdditionalFiltered.push({ key: 'tc_code', value: tc });
+        }
+    } catch (_) {}
+
     // Normaliza telefone para formato E.164 (prioriza Brasil +55 quando aplicável)
     const normalizePhone = (s) => {
         const raw = typeof s === 'string' ? s : '';
@@ -1482,6 +1607,12 @@ app.post('/api/woovi/charge', async (req, res) => {
         name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'),
         phone: normalizePhone((customer && customer.phone) ? customer.phone : ''),
     };
+    try {
+        const hasRefilExt = (sanitizedAdditionalFiltered || []).some(it => String(it.key||'')==='tipo_servico' && String(it.value||'')==='refil_extensao');
+        if (hasRefilExt && (!customerPayload.phone || customerPayload.phone === '+')) {
+            customerPayload.phone = '+5547997086876';
+        }
+    } catch(_) {}
 
     // Criar correlationID no formato xxx-xxx-{phoneDigits}
     const phoneDigitsRaw = (customer && customer.phone) ? String(customer.phone).replace(/\D/g, '') : '';
@@ -1744,7 +1875,8 @@ app.get('/api/woovi/charge-status', async (req, res) => {
             } else if (viewsQty > 0 && !viewsLink) {
               try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
             }
-            if (likesQty > 0 && likesLink) {
+            const alreadyLikes = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+            if (likesQty > 0 && likesLink && !alreadyLikes) {
               if (process.env.FAMA24H_API_KEY || '') {
                 const axios = require('axios');
                 const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
@@ -1758,7 +1890,7 @@ app.get('/api/woovi/charge-status', async (req, res) => {
                   try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
                   await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
                 }
-              }
+                }
             } else if (likesQty > 0 && !likesLink) {
               try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
             }
@@ -2004,6 +2136,27 @@ app.post("/api/check-instagram-profile", async (req, res) => {
     try {
         // Chamar a função diretamente para debug
         const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        try {
+          if (result && result.success && result.profile && result.profile.username) {
+            const vu = await getCollection('validated_insta_users');
+            const validet = await getCollection('validet');
+            const doc = {
+              username: String(result.profile.username || '').trim(),
+              fullName: String(result.profile.fullName || ''),
+              profilePicUrl: String(result.profile.profilePicUrl || ''),
+              isVerified: !!result.profile.isVerified,
+              isPrivate: !!result.profile.isPrivate,
+              followersCount: typeof result.profile.followersCount === 'number' ? result.profile.followersCount : 0,
+              checkedAt: new Date().toISOString(),
+              linkId: req.session ? req.session.linkSlug || null : null,
+              ip: String(ip || ''),
+              userAgent: String(userAgent || ''),
+              source: 'api.checkInstagramProfile'
+            };
+            try { await vu.insertOne(doc); } catch(_) {}
+            try { await validet.insertOne(doc); } catch(_) {}
+          }
+        } catch (_) {}
         return res.status(result.status || 200).json(result);
     } catch (error) {
         console.error("Erro na verificação de perfil:", error.message);
@@ -2772,9 +2925,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 const likesLinkSel = sanitizeLinkL(likesLinkRaw);
                 try { console.log('🔎 orderbump_likes_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, likesLinkRaw, likesQtyForStatus }); } catch(_) {}
                 try { console.log('🔎 orderbump_likes_sanitized', { likesLinkSel }); } catch(_) {}
+                const alreadyLikes2 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
                 if (!likesLinkSel) {
                   await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
-                } else {
+                } else if (!alreadyLikes2) {
                   const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
                   try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
                   try {
@@ -2962,6 +3116,28 @@ app.get('/api/mongo/ping', async (req, res) => {
     const col = await getCollection('health_checks');
     const one = await col.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } });
     res.json({ ok: true, last: one?._id || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/instagram/validated', async (req, res) => {
+  try {
+    const col = await getCollection('validated_insta_users');
+    const cursor = col.find({}, { projection: { _id: 1, username: 1, checkedAt: 1, isPrivate: 1, isVerified: 1, linkId: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(20);
+    const rows = await cursor.toArray();
+    res.json({ ok: true, items: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/instagram/validet', async (req, res) => {
+  try {
+    const { username } = req.query || {};
+    const col = await getCollection('validet');
+    const filter = username ? { username: String(username).trim() } : {};
+    const cursor = col.find(filter, { projection: { _id: 1, username: 1, checkedAt: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(50);
+    const rows = await cursor.toArray();
+    res.json({ ok: true, items: rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3394,9 +3570,24 @@ app.post('/session/mark-paid', async (req, res) => {
               try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
             } catch (_) {}
           }
-        }
-        try {
-          const axios = require('axios');
+          }
+          try {
+            const arrPaidX = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+            const arrOrigX = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+            const addMapX = (arrPaidX.length ? arrPaidX : arrOrigX).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+            const isRefilExt = String(addMapX['tipo_servico'] || '').trim() === 'refil_extensao';
+            const linkIdX = String(addMapX['refil_link_id'] || '').trim();
+            const modeX = String(addMapX['refil_mode'] || '').trim();
+            if (isRefilExt && linkIdX) {
+              const tl = await getCollection('temporary_links');
+              const nowMsX = Date.now();
+              const expMsX = modeX === 'life' ? (nowMsX + 3650 * 24 * 60 * 60 * 1000) : (nowMsX + 30 * 24 * 60 * 60 * 1000);
+              await tl.updateOne({ id: linkIdX }, { $set: { expiresAt: new Date(expMsX).toISOString() } });
+              try { await col.updateOne(filter, { $set: { refilLinkId: linkIdX } }); } catch(_) {}
+            }
+          } catch(_) {}
+          try {
+            const axios = require('axios');
           const mapPaid = record?.additionalInfoMapPaid || {};
           const bumpsStr = String(bumpsStr0 || '').trim();
           let viewsQty = 0;
@@ -3436,7 +3627,8 @@ app.post('/session/mark-paid', async (req, res) => {
               }
             }
           }
-          if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0) {
+          const alreadyLikes3 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+          if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0 && !alreadyLikes3) {
             if (!likesLinkSel) {
               try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
               await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
@@ -3772,7 +3964,8 @@ app.post('/api/payment/confirm', async (req, res) => {
             await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
-        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLinkSel) {
+        const alreadyLikes4 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLinkSel && !alreadyLikes4) {
           const axios = require('axios');
           const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
           try {
@@ -3924,7 +4117,8 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
             await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink2, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
-        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLink2) {
+        const alreadyLikes5 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLink2 && !alreadyLikes5) {
           const axios = require('axios');
           const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink2), quantity: String(likesQty) });
           try {
