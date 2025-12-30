@@ -1120,6 +1120,18 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
 @media (max-width: 640px) {
   .checkout-page #grupoUsername { grid-template-columns: 1fr; justify-items: center; }
   .checkout-page #grupoUsername .continue-button { height: auto; justify-self: center; margin-top: 0.25rem; }
+  .checkout-page #buyFollowersBtn { width: calc(100vw - 20px); max-width: calc(100vw - 20px); }
+  .checkout-page #buyFollowersBtn .button-text { white-space: nowrap; }
+  .audio-player { gap: 0.25rem; }
+  .audio-controls { gap: 0.2rem; }
+  .audio-progress { height: 3px; }
+  .audio-progress::-webkit-slider-runnable-track { height: 3px; }
+  .audio-progress::-webkit-slider-thumb { width: 10px; height: 10px; margin-top: -4px; }
+  .audio-progress::-moz-range-track { height: 3px; }
+  .audio-progress::-moz-range-thumb { width: 10px; height: 10px; }
+  .checkout-page #audioCard .card-content { padding: 0.3rem 0.5rem; }
+  .audio-speed-btn { padding: 0.3rem 0.5rem; }
+  .checkout-page .site-brand { left: 0.5rem; }
 }
 
 .why-oppus-slider { margin: 2rem auto; }
