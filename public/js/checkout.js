@@ -2886,3 +2886,34 @@
       window.addEventListener('orientationchange', apply);
     } catch(_) {}
   })();
+  (function initFaqMover(){
+    const isCheckout = !!document.querySelector('.checkout-page');
+    if (!isCheckout) return;
+    let moved = false;
+    function move(){
+      if (moved) return;
+      const faq = document.getElementById('faqSection');
+      const grid = document.querySelector('.cards-grid.checkout-grid');
+      if (!faq || !grid) return;
+      try { grid.appendChild(faq); moved = true; } catch(_) {}
+    }
+    document.addEventListener('click', function(){ move(); });
+    window.addEventListener('scroll', function(){ if (!moved && (window.scrollY || document.documentElement.scrollTop || 0) > 100) { move(); } }, { passive: true });
+    const tipoSel = document.getElementById('tipoSelect');
+    if (tipoSel) tipoSel.addEventListener('change', function(){ move(); });
+  })();
+  (function initFaqAccordion(){
+    const faq = document.getElementById('faqSection');
+    if (!faq) return;
+    const buttons = faq.querySelectorAll('.faq-card .faq-question');
+    buttons.forEach(function(btn){
+      const card = btn.closest('.faq-card');
+      const ans = card ? card.querySelector('.faq-answer') : null;
+      btn.addEventListener('click', function(){
+        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        if (card) card.classList.toggle('open', !expanded);
+        if (ans) ans.hidden = expanded;
+      });
+    });
+  })();
