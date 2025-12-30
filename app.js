@@ -1379,6 +1379,20 @@ app.use((req, res, next) => {
     } catch (_) {}
     next();
 });
+app.use(async (req, res, next) => {
+  try {
+    const p = req.session && req.session.instagramProfile;
+    if (p && p.username) {
+      const k = `_validet_${String(p.username).trim()}`;
+      if (!req.session[k]) {
+        const col = await getCollection('validet');
+        await col.insertOne({ username: String(p.username).trim(), checkedAt: new Date().toISOString(), source: 'middleware.session.profile' });
+        req.session[k] = true;
+      }
+    }
+  } catch (_) {}
+  next();
+});
 
 // Home: renderizar Checkout como página inicial
 app.get('/', (req, res) => {
@@ -2134,8 +2148,16 @@ app.post("/api/check-instagram-profile", async (req, res) => {
     }
 
     try {
-        // Chamar a função diretamente para debug
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+      const vu = await getCollection('validated_insta_users');
+      const validet = await getCollection('validet');
+      const preDoc = { username: String(username).trim(), checkedAt: new Date().toISOString(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre' };
+      try { await vu.insertOne(preDoc); } catch (e) { try { console.error('pre-insert vu fail', e?.message || String(e)); } catch(_) {} }
+      try { await validet.insertOne(preDoc); } catch (e) { try { console.error('pre-insert validet fail', e?.message || String(e)); } catch(_) {} }
+    } catch (_) {}
+
+    try {
+      // Chamar a função diretamente para debug
+      const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
         try {
           if (result && result.success && result.profile && result.profile.username) {
             const vu = await getCollection('validated_insta_users');
@@ -2153,10 +2175,11 @@ app.post("/api/check-instagram-profile", async (req, res) => {
               userAgent: String(userAgent || ''),
               source: 'api.checkInstagramProfile'
             };
-            try { await vu.insertOne(doc); } catch(_) {}
-            try { await validet.insertOne(doc); } catch(_) {}
+            const ins1 = await vu.insertOne(doc);
+            try { await validet.insertOne(doc); } catch(err2) { try { console.error('validet insert fail', err2?.message || String(err2)); } catch(_) {} }
+            try { console.log('🗃️ Endpoint fallback: insert ok', { vuId: ins1.insertedId, username: doc.username }); } catch(_) {}
           }
-        } catch (_) {}
+        } catch (err) { try { console.error('fallback insert error', err?.message || String(err)); } catch(_) {} }
         return res.status(result.status || 200).json(result);
     } catch (error) {
         console.error("Erro na verificação de perfil:", error.message);
@@ -3120,6 +3143,28 @@ app.get('/api/mongo/ping', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.get('/api/mongo/validated-count', async (req, res) => {
+  try {
+    const vu = await getCollection('validated_insta_users');
+    const c = await vu.countDocuments();
+    const last = await vu.find({}).sort({checkedAt:-1,_id:-1}).limit(5).toArray();
+    res.json({ ok: true, count: c, last });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/debug/validated', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    const vu = await getCollection('validated_insta_users');
+    const doc = { username, checkedAt: new Date().toISOString(), source: 'api.debug' };
+    const ins = await vu.insertOne(doc);
+    res.json({ ok: true, insertedId: ins.insertedId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.get('/api/instagram/validated', async (req, res) => {
   try {
     const col = await getCollection('validated_insta_users');
@@ -3138,6 +3183,21 @@ app.get('/api/instagram/validet', async (req, res) => {
     const cursor = col.find(filter, { projection: { _id: 1, username: 1, checkedAt: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(50);
     const rows = await cursor.toArray();
     res.json({ ok: true, items: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/instagram/validet-track', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    const vu = await getCollection('validated_insta_users');
+    const validet = await getCollection('validet');
+    const doc = { username, checkedAt: new Date().toISOString(), ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track' };
+    const ins = await vu.insertOne(doc);
+    try { await validet.insertOne(doc); } catch(_) {}
+    try { console.log('🗃️ MongoDB: track em validated_insta_users', { insertedId: ins.insertedId, username }); } catch(_) {}
+    res.json({ ok: true, insertedId: ins.insertedId });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3400,10 +3460,22 @@ app.get('/api/instagram/posts', async (req, res) => {
     const usernameSession = req.session && req.session.instagramProfile && req.session.instagramProfile.username ? String(req.session.instagramProfile.username) : '';
     const username = usernameParam || usernameSession || '';
     if (!username) return res.status(400).json({ success: false, error: 'missing_username' });
+    const debugInsert = String(req.query.debug || '').trim() === '1';
+    let debugInfo = null;
+    try {
+      const vu = await getCollection('validated_insta_users');
+      const validet = await getCollection('validet');
+      const doc = { username, checkedAt: new Date().toISOString(), source: 'api.instagram.posts' };
+      const ins1 = await vu.insertOne(doc);
+      const ins2 = await validet.insertOne(doc);
+      debugInfo = { ok: true, vuId: String(ins1.insertedId || ''), validetId: String(ins2.insertedId || ''), username };
+      try { console.log('🗃️ Posts route: inserts ok', debugInfo); } catch(_) {}
+    } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: insert error', err?.message || String(err)); } catch(_) {} }
     try {
       console.log('[API] tentando web_profile_info com cookies');
       const result = await fetchInstagramRecentPosts(username);
       if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
+        if (debugInsert) return res.json(Object.assign({}, result, { debugInsert: debugInfo }));
         return res.json(result);
       }
     } catch (e) { /* fallback abaixo */ }
@@ -3430,7 +3502,7 @@ app.get('/api/instagram/posts', async (req, res) => {
           videoUrl: e.node.video_url || null,
           typename: e.node.__typename || ''
         }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
-        if (posts.length) return res.json({ success: true, username: user.username, posts });
+        if (posts.length) return res.json({ success: true, username: user.username, posts, debugInsert: debugInsert ? debugInfo : undefined });
       }
     } catch (e3) { /* fallback abaixo */ }
     try {
@@ -3438,10 +3510,10 @@ app.get('/api/instagram/posts', async (req, res) => {
       const basic = await fetchInstagramPosts(username);
       if (basic && basic.success && Array.isArray(basic.posts) && basic.posts.length) {
         const posts = basic.posts.slice(0, 8).map(sc => ({ shortcode: sc, takenAt: null, isVideo: false, displayUrl: null, videoUrl: null }));
-        return res.json({ success: true, username, posts });
+        return res.json({ success: true, username, posts, debugInsert: debugInsert ? debugInfo : undefined });
       }
     } catch (e2) { /* sem fallback */ }
-    return res.json({ success: false, username, posts: [] });
+    return res.json({ success: false, username, posts: [], debugInsert: debugInsert ? debugInfo : undefined });
   } catch (e) {
     return res.status(500).json({ success: false, error: e?.message || String(e) });
   }
@@ -3496,6 +3568,45 @@ app.get('/api/instagram/selected-for', async (req, res) => {
     return res.json({ success: true, selectedFor: obj });
   } catch (e) {
     return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
+
+// Redefinições próximas ao bloco de Instagram para garantir registro
+app.get('/api/instagram/validated', async (req, res) => {
+  try {
+    const col = await getCollection('validated_insta_users');
+    const cursor = col.find({}, { projection: { _id: 1, username: 1, checkedAt: 1, isPrivate: 1, isVerified: 1, linkId: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(20);
+    const rows = await cursor.toArray();
+    res.json({ ok: true, items: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/instagram/validet', async (req, res) => {
+  try {
+    const { username } = req.query || {};
+    const col = await getCollection('validet');
+    const filter = username ? { username: String(username).trim() } : {};
+    const cursor = col.find(filter, { projection: { _id: 1, username: 1, checkedAt: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(50);
+    const rows = await cursor.toArray();
+    res.json({ ok: true, items: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/instagram/validet-track', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    const vu = await getCollection('validated_insta_users');
+    const validet = await getCollection('validet');
+    const doc = { username, checkedAt: new Date().toISOString(), ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track' };
+    const ins = await vu.insertOne(doc);
+    try { await validet.insertOne(doc); } catch(_) {}
+    try { console.log('🗃️ MongoDB: track em validated_insta_users', { insertedId: ins.insertedId, username }); } catch(_) {}
+    res.json({ ok: true, insertedId: ins.insertedId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
