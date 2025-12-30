@@ -90,7 +90,7 @@
             <h3 class="card-title">Repor seguidores</h3>
             <div class="card-desc">Se precisar recuperar seguidores deste pedido, acesse o link de refil.</div>
             <div class="button-container" style="margin-top:0.75rem;">
-              <a href="/refil" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem;">
+              <a href="<%= (order && order.refilLinkId) ? ('/refil?token=' + order.refilLinkId) : '/refil' %>" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem;">
                 <span class="button-text">Acessar Refil</span>
               </a>
             </div>

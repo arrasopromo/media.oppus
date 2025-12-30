@@ -54,15 +54,22 @@
                 <h3 class="card-title">Promoções</h3>\
                 <div class="card-desc promo-list">\
                   <label class="promo-item upgrade">\
-                    <input type="checkbox" id="orderBumpCheckboxInline" />\
                     <div class="promo-content">\
                       <div class="promo-highlight" id="orderBumpHighlight">Extensão de Refil</div>\
                       <div class="promo-title">30 Dias ou Vitalício</div>\
                       <div id="orderBumpText" class="promo-desc">Adicione extensão de refil ao seu pedido.</div>\
                       <div class="promo-prices" data-promo="upgrade">\
-                        <span class="old-price">R$ 99,90</span>\
-                        <span class="discount-badge">50% OFF</span>\
-                        <span class="new-price">R$ 49,90</span>\
+                        <div class="price-modes" style="display:flex;gap:8px;justify-content:center;margin-bottom:6px;">\
+                          <label style="display:inline-flex;align-items:center;gap:6px;">\
+                            <input type="radio" name="upgradePriceMode" id="upgradePriceMode30" checked />\
+                            <span>30 dias</span>\
+                          </label>\
+                          <label style="display:inline-flex;align-items:center;gap:6px;">\
+                            <input type="radio" name="upgradePriceMode" id="upgradePriceModeLife" />\
+                            <span>Vitalícia</span>\
+                          </label>\
+                        </div>\
+                        <span class="new-price">R$ 9,90</span>\
                       </div>\
                     </div>\
                   </label>\
@@ -73,6 +80,13 @@
               </div>\
             </div>';
             var genBtn = document.getElementById('generateRefilPaymentBtn');
+            var priceEl = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price');
+            var m30 = document.getElementById('upgradePriceMode30');
+            var life = document.getElementById('upgradePriceModeLife');
+            function setMode(mode){ if (priceEl) priceEl.textContent = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90'; }
+            if (m30) m30.addEventListener('change', function(){ if (m30.checked) setMode('30'); });
+            if (life) life.addEventListener('change', function(){ if (life.checked) setMode('life'); });
+            setMode('30');
             function parsePrecoToCents(precoStr){
               if (!precoStr) return 0;
               var cleaned = String(precoStr).replace(/[^\d,]/g, '').replace(',', '.');
@@ -142,17 +156,23 @@
             if (genBtn) {
               genBtn.addEventListener('click', function(){
                 try {
-                  var priceEl = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price');
-                  var priceStr = priceEl ? priceEl.textContent : '';
+                  var priceEl2 = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price');
+                  var priceStr = priceEl2 ? priceEl2.textContent : '';
                   var cents = parsePrecoToCents(priceStr);
                   if (!cents) return;
+                  var params2 = new URLSearchParams(window.location.search || '');
+                  var phone = params2.get('phone') || '47997086876';
+                  var name = params2.get('name') || 'Cliente Refil';
+                  var token = params2.get('token') || '';
+                  var mode = (document.getElementById('upgradePriceModeLife')?.checked ? 'life' : '30');
                   fetch('/api/woovi/charge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       value: cents,
                       comment: 'Extensão de refil',
-                      additionalInfo: [ { key: 'tipo_servico', value: 'refil_extensao' } ]
+                      customer: { name: name, phone: phone },
+                      additionalInfo: [ { key: 'tipo_servico', value: 'refil_extensao' }, { key: 'refil_link_id', value: token }, { key: 'refil_mode', value: mode } ]
                     })
                   }).then(function(r){ return r.json(); }).then(function(data){
                     try {
