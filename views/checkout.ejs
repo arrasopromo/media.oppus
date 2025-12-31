@@ -45,6 +45,7 @@
   -->
 </head>
 <body class="theme-light">
+  <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
   <div class="container checkout-page">
     <div class="site-brand" aria-label="Marca do site">
       <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
@@ -119,9 +120,9 @@
                 <div class="value-prop-item">
                   <div class="value-prop-row">
                     <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" />
-                    <div class="value-prop-metric">+1</div>
+                    <div class="value-prop-metric">+2</div>
                   </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">seguidores entregues</span><span class="caption-mobile">milhão de<br>seguidores<br>entregues</span></div>
+                  <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
                 </div>
                 <div class="value-prop-item">
                   <div class="value-prop-row">
@@ -344,10 +345,11 @@
                       <span class="discount-badge">80% OFF</span>
                       <span class="new-price">R$ 9,90</span>
                     </div>
-                    <div class="likes-control" aria-label="Quantidade de curtidas">
+                    <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
                       <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">‹</button>
                       <span id="likesQty" class="likes-qty">150</span>
                       <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                      <div id="likesPromoTip" class="tutorial-pop tutorial-pop-check" style="display:none;"><div class="tutorial-pop-text">Pode aumentar a quantidade clicando na seta</div></div>
                     </div>
                     
                   </div>
@@ -367,6 +369,7 @@
                       <button type="button" id="viewsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
                       <span id="viewsQty" class="likes-qty">1000</span>
                       <button type="button" id="viewsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                      
                     </div>
                     
                   </div>

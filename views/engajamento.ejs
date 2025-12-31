@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Engajamento - Plataforma</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link href="/css/style.css" rel="stylesheet" />
+  <link href="/css/perfil.css" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="/images/logo.png" />
+  <script>
+    (function() {
+      var script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+      var firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+    })();
+  </script>
+</head>
+<body class="theme-light">
+  <div class="container checkout-page">
+    <div class="site-brand" aria-label="Marca do site">
+      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+      <span class="site-brand-text">Agência Oppus</span>
+    </div>
+    <header class="header">
+      <h1 class="title">Escolha sua plataforma</h1>
+      <p class="subtitle" style="margin-top:0.25rem;">Selecione a plataforma para continuar a personalizar seu engajamento.</p>
+    </header>
+    <main class="main-content">
+      <section class="section-block">
+        <div class="cards-grid checkout-grid">
+          <div class="service-card" id="plataformaCard">
+            <div class="card-content">
+              <h3 class="card-title">Plataforma</h3>
+              <div class="card-desc">
+                <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
+                <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
+                  <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
+                    </svg>
+                    <span>Instagram</span>
+                  </button>
+                  <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
+                    </svg>
+                    <span>TikTok</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer">
+      <div class="footer-row">
+        <a href="/checkout" class="footer-link">Checkout</a>
+        <span class="footer-center">&copy; 2025 Agência OPPUS. Todos os direitos reservados.</span>
+        <a href="/termos" id="termsLink" class="footer-link">Termos de Uso</a>
+      </div>
+    </footer>
+  </div>
+  <script>
+    (function(){
+      var toggle = document.querySelector('.platform-toggle');
+      if (!toggle) return;
+      toggle.addEventListener('click', function(e){
+        var target = e.target && e.target.closest('.platform-btn');
+        if (!target) return;
+        if (target.classList.contains('instagram')) {
+          try { e.preventDefault(); } catch(_) {}
+          window.location.href = '/servicos';
+        }
+      });
+    })();
+  </script>
+  <script src="/js/main.js"></script>
+</body>
+</html>
