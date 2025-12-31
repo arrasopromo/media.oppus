@@ -480,7 +480,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
       const validet = await getCollection('validet');
                     const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
                     const doc = {
-                        username: String(user.username || '').trim(),
+                        username: String(user.username || '').trim().toLowerCase(),
                         fullName: String(user.full_name || ''),
                         profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
                         isVerified: !!user.is_verified,
@@ -598,7 +598,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 const validet = await getCollection('validet');
                 const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
                 const doc = {
-                    username: String(user.username || '').trim(),
+                    username: String(user.username || '').trim().toLowerCase(),
                     fullName: String(user.full_name || ''),
                     profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
                     isVerified: !!user.is_verified,
@@ -1382,11 +1382,11 @@ app.use((req, res, next) => {
 // Rota crítica para registrar validações (deve estar bem no topo)
 app.post('/api/instagram/track-validated', async (req, res) => {
   try {
-    const username = String((req.body && req.body.username) || '').trim();
+    const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
     const vu = await getCollection('validated_insta_users');
     const validet = await getCollection('validet');
-  const doc = {
+    const doc = {
       username,
       checkedAt: new Date().toISOString(),
       ip: req.headers['x-forwarded-for'] || req.ip || null,
@@ -1406,10 +1406,11 @@ app.use(async (req, res, next) => {
   try {
     const p = req.session && req.session.instagramProfile;
     if (p && p.username) {
-      const k = `_validet_${String(p.username).trim()}`;
+      const uname = String(p.username).trim().toLowerCase();
+      const k = `_validet_${uname}`;
       if (!req.session[k]) {
         const col = await getCollection('validet');
-        await col.insertOne({ username: String(p.username).trim(), checkedAt: new Date().toISOString(), source: 'middleware.session.profile' });
+        try { await col.updateOne({ username: uname }, { $setOnInsert: { username: uname, createdAt: new Date().toISOString() }, $set: { checkedAt: new Date().toISOString(), source: 'middleware.session.profile' } }, { upsert: true }); } catch(_) {}
         req.session[k] = true;
       }
     }
@@ -2165,7 +2166,7 @@ app.post("/api/check-instagram-profile", async (req, res) => {
       const vuPreAlways = await getCollection('validated_insta_users');
       const vuHyphenPreAlways = await getCollection('validated-insta-users');
       const validetPreAlways = await getCollection('validet');
-      const preDocAlways = { username: String(username).trim(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre-always', firstSeenAt: new Date().toISOString() };
+      const preDocAlways = { username: String(username).trim().toLowerCase(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre-always', firstSeenAt: new Date().toISOString() };
       try { await vuPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
       try { await vuHyphenPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
       try { await validetPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
@@ -2186,7 +2187,7 @@ app.post("/api/check-instagram-profile", async (req, res) => {
       const vu = await getCollection('validated_insta_users');
       const vuHyphen = await getCollection('validated-insta-users');
       const validet = await getCollection('validet');
-      const preDoc = { username: String(username).trim(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre', firstSeenAt: new Date().toISOString() };
+      const preDoc = { username: String(username).trim().toLowerCase(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre', firstSeenAt: new Date().toISOString() };
       try { await vu.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
       try { await vuHyphen.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
       try { await validet.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
@@ -2201,7 +2202,7 @@ app.post("/api/check-instagram-profile", async (req, res) => {
             const vuHyphen = await getCollection('validated-insta-users');
             const validet = await getCollection('validet');
             const doc = {
-              username: String(result.profile.username || '').trim(),
+              username: String(result.profile.username || '').trim().toLowerCase(),
               fullName: String(result.profile.fullName || ''),
               profilePicUrl: String(result.profile.profilePicUrl || ''),
               isVerified: !!result.profile.isVerified,
@@ -3193,7 +3194,7 @@ app.get('/api/mongo/validated-count', async (req, res) => {
 });
 app.post('/api/debug/validated', async (req, res) => {
   try {
-    const username = String((req.body && req.body.username) || '').trim();
+    const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
     const vu = await getCollection('validated_insta_users');
     const doc = { username, checkedAt: new Date().toISOString(), source: 'api.debug' };
@@ -3227,7 +3228,7 @@ app.get('/api/instagram/validet', async (req, res) => {
 });
 app.post('/api/instagram/validet-track', async (req, res) => {
   try {
-    const username = String((req.body && req.body.username) || '').trim();
+    const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
     const vu = await getCollection('validated_insta_users');
     const validet = await getCollection('validet');
@@ -3484,7 +3485,7 @@ app.get('/posts', async (req, res) => {
   try {
     const usernameParam = String(req.query.username || '').trim();
     const usernameSession = req.session && req.session.instagramProfile && req.session.instagramProfile.username ? String(req.session.instagramProfile.username) : '';
-    const username = usernameParam || usernameSession || '';
+    const username = (usernameParam || usernameSession || '').toLowerCase();
     return res.render('posts', { username });
   } catch (e) {
     return res.status(500).send('Erro ao renderizar posts');
