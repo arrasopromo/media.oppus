@@ -15,10 +15,19 @@ async function connect() {
   await client.connect();
   db = client.db(dbName);
   try {
-    console.log(`✅ MongoDB conectado ao database '${dbName}'`);
+    try {
+      const host = (() => { try { const m = String(uri).match(/^mongodb(?:\+srv)?:\/\/[^@]*@([^\/]+)/i) || String(uri).match(/^mongodb(?:\+srv)?:\/\/([^\/]+)/i); return m && m[1] ? m[1] : 'unknown'; } catch(_) { return 'unknown'; } })();
+      console.log(`✅ MongoDB conectado ao database '${dbName}' em host '${host}'`);
+    } catch(_) { console.log(`✅ MongoDB conectado ao database '${dbName}'`); }
     try {
       const col = db.collection('validated_insta_users');
       await col.createIndexes([
+        { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
+        { key: { linkId: 1 }, name: 'linkId_idx' },
+        { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
+      ]);
+      const colHyphen = db.collection('validated-insta-users');
+      await colHyphen.createIndexes([
         { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
         { key: { linkId: 1 }, name: 'linkId_idx' },
         { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }

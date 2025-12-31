@@ -476,8 +476,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     }
                 };
                 try {
-                    const vu = await getCollection('validated_insta_users');
-                    const validet = await getCollection('validet');
+      const vu = await getCollection('validated_insta_users');
+      const validet = await getCollection('validet');
                     const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
                     const doc = {
                         username: String(user.username || '').trim(),
@@ -492,9 +492,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                         userAgent: String(userAgent || ''),
                         source: 'verifyInstagramProfile'
                     };
-                    const ins = await vu.insertOne(doc);
-                    try { await validet.insertOne(doc); } catch(_) {}
-                    try { console.log('🗃️ MongoDB: validação PRIVADA registrada em validated_insta_users', { insertedId: ins.insertedId, username: doc.username }); } catch(_) {}
+                    try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+                    try { await validet.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+                    try { console.log('🗃️ MongoDB: validação PRIVADA upsert em validated_insta_users', { username: doc.username }); } catch(_) {}
                 } catch(_) {}
                 setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
                 return privateResult;
@@ -610,9 +610,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     userAgent: String(userAgent || ''),
                     source: 'verifyInstagramProfile'
                 };
-                const ins = await vu.insertOne(doc);
-                try { await validet.insertOne(doc); } catch(_) {}
-                try { console.log('🗃️ MongoDB: validação registrada em validated_insta_users', { insertedId: ins.insertedId, username: doc.username }); } catch(_) {}
+                try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+                try { await validet.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+                try { console.log('🗃️ MongoDB: validação PÚBLICA upsert em validated_insta_users', { username: doc.username }); } catch(_) {}
             } catch (mongoErr) {
                 try { console.error('❌ Falha ao registrar validação em MongoDB:', mongoErr?.message || String(mongoErr)); } catch(_) {}
             }
@@ -1379,6 +1379,29 @@ app.use((req, res, next) => {
     } catch (_) {}
     next();
 });
+// Rota crítica para registrar validações (deve estar bem no topo)
+app.post('/api/instagram/track-validated', async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    const vu = await getCollection('validated_insta_users');
+    const validet = await getCollection('validet');
+  const doc = {
+      username,
+      checkedAt: new Date().toISOString(),
+      ip: req.headers['x-forwarded-for'] || req.ip || null,
+      userAgent: req.get('User-Agent') || '',
+      source: 'api.track.top'
+    };
+    await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+    try { await validet.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true }); } catch(_) {}
+    try { console.log('🗃️ Track TOP: upsert ok', { username }); } catch(_) {}
+    return res.json({ ok: true });
+  } catch (e) {
+    try { console.error('Track TOP error', e?.message || String(e)); } catch(_) {}
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.use(async (req, res, next) => {
   try {
     const p = req.session && req.session.instagramProfile;
@@ -2137,22 +2160,36 @@ app.post("/api/check-instagram-profile", async (req, res) => {
         });
     }
 
+    // Pré-registro idempotente antes de qualquer retorno 409
+    try {
+      const vuPreAlways = await getCollection('validated_insta_users');
+      const vuHyphenPreAlways = await getCollection('validated-insta-users');
+      const validetPreAlways = await getCollection('validet');
+      const preDocAlways = { username: String(username).trim(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre-always', firstSeenAt: new Date().toISOString() };
+      try { await vuPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+      try { await vuHyphenPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+      try { await validetPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+    } catch (_) {}
+
     // Verificar se instauser já foi usado anteriormente
     const instauserExists = await checkInstauserExists(username);
     if (instauserExists) {
         return res.status(409).json({
             success: false,
             error: "Este perfil já foi testado anteriormente. O serviço de teste já foi realizado para este usuário.",
-            code: "INSTAUSER_ALREADY_USED"
+            code: "INSTAUSER_ALREADY_USED",
+            profile: { username }
         });
     }
 
     try {
       const vu = await getCollection('validated_insta_users');
+      const vuHyphen = await getCollection('validated-insta-users');
       const validet = await getCollection('validet');
-      const preDoc = { username: String(username).trim(), checkedAt: new Date().toISOString(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre' };
-      try { await vu.insertOne(preDoc); } catch (e) { try { console.error('pre-insert vu fail', e?.message || String(e)); } catch(_) {} }
-      try { await validet.insertOne(preDoc); } catch (e) { try { console.error('pre-insert validet fail', e?.message || String(e)); } catch(_) {} }
+      const preDoc = { username: String(username).trim(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre', firstSeenAt: new Date().toISOString() };
+      try { await vu.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+      try { await vuHyphen.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+      try { await validet.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
     } catch (_) {}
 
     try {
@@ -2161,6 +2198,7 @@ app.post("/api/check-instagram-profile", async (req, res) => {
         try {
           if (result && result.success && result.profile && result.profile.username) {
             const vu = await getCollection('validated_insta_users');
+            const vuHyphen = await getCollection('validated-insta-users');
             const validet = await getCollection('validet');
             const doc = {
               username: String(result.profile.username || '').trim(),
@@ -2175,9 +2213,9 @@ app.post("/api/check-instagram-profile", async (req, res) => {
               userAgent: String(userAgent || ''),
               source: 'api.checkInstagramProfile'
             };
-            const ins1 = await vu.insertOne(doc);
-            try { await validet.insertOne(doc); } catch(err2) { try { console.error('validet insert fail', err2?.message || String(err2)); } catch(_) {} }
-            try { console.log('🗃️ Endpoint fallback: insert ok', { vuId: ins1.insertedId, username: doc.username }); } catch(_) {}
+            try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+            try { await vuHyphen.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
+            try { await validet.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(err2) { try { console.error('validet upsert fail', err2?.message || String(err2)); } catch(_) {} }
           }
         } catch (err) { try { console.error('fallback insert error', err?.message || String(err)); } catch(_) {} }
         return res.status(result.status || 200).json(result);
@@ -3193,11 +3231,10 @@ app.post('/api/instagram/validet-track', async (req, res) => {
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
     const vu = await getCollection('validated_insta_users');
     const validet = await getCollection('validet');
-    const doc = { username, checkedAt: new Date().toISOString(), ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track' };
-    const ins = await vu.insertOne(doc);
-    try { await validet.insertOne(doc); } catch(_) {}
-    try { console.log('🗃️ MongoDB: track em validated_insta_users', { insertedId: ins.insertedId, username }); } catch(_) {}
-    res.json({ ok: true, insertedId: ins.insertedId });
+    const doc = { username, ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track', lastTrackAt: new Date().toISOString() };
+    await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+    try { await validet.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true }); } catch(_) {}
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3464,13 +3501,15 @@ app.get('/api/instagram/posts', async (req, res) => {
     let debugInfo = null;
     try {
       const vu = await getCollection('validated_insta_users');
+      const vuHyphen = await getCollection('validated-insta-users');
       const validet = await getCollection('validet');
-      const doc = { username, checkedAt: new Date().toISOString(), source: 'api.instagram.posts' };
-      const ins1 = await vu.insertOne(doc);
-      const ins2 = await validet.insertOne(doc);
-      debugInfo = { ok: true, vuId: String(ins1.insertedId || ''), validetId: String(ins2.insertedId || ''), username };
-      try { console.log('🗃️ Posts route: inserts ok', debugInfo); } catch(_) {}
-    } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: insert error', err?.message || String(err)); } catch(_) {} }
+      const doc = { username, source: 'api.instagram.posts', lastPostsAt: new Date().toISOString() };
+      await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+      try { await vuHyphen.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true }); } catch(_) {}
+      const res2 = await validet.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+      debugInfo = { ok: true, upserted: !!(res2 && res2.upsertedId), username };
+      try { console.log('🗃️ Posts route: upsert ok', debugInfo); } catch(_) {}
+    } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: upsert error', err?.message || String(err)); } catch(_) {} }
     try {
       console.log('[API] tentando web_profile_info com cookies');
       const result = await fetchInstagramRecentPosts(username);
@@ -3594,21 +3633,7 @@ app.get('/api/instagram/validet', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/instagram/validet-track', async (req, res) => {
-  try {
-    const username = String((req.body && req.body.username) || '').trim();
-    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
-    const vu = await getCollection('validated_insta_users');
-    const validet = await getCollection('validet');
-    const doc = { username, checkedAt: new Date().toISOString(), ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track' };
-    const ins = await vu.insertOne(doc);
-    try { await validet.insertOne(doc); } catch(_) {}
-    try { console.log('🗃️ MongoDB: track em validated_insta_users', { insertedId: ins.insertedId, username }); } catch(_) {}
-    res.json({ ok: true, insertedId: ins.insertedId });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
+// rota duplicada removida: validet-track já está definida anteriormente
 
 app.post('/api/instagram/selected-posts/clear', async (req, res) => {
   try {

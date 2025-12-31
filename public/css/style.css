@@ -1142,7 +1142,7 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
 .slider-slide img { width: 100%; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: var(--shadow-md); }
 .slider-slide.active img { box-shadow: var(--shadow-lg); }
 .slide-title { margin-top: 0.5rem; font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
-.slide-desc { margin-top: 0.25rem; font-size: 0.95rem; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.slide-desc { margin-top: 0.25rem; font-size: 0.95rem; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 768px) { .slider-slide { width: 80vw; } }
 
 .value-props { display: flex; gap: 2rem; justify-content: center; align-items: flex-start; margin-top: 140px; margin-bottom: 80px; flex-wrap: wrap; }
