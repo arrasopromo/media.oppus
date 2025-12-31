@@ -3974,6 +3974,48 @@ app.listen(port, () => {
   console.log(`Preview disponível: http://localhost:${port}/checkout`);
 });
 
+(async () => {
+  async function consolidateByUsername(colName) {
+    try {
+      const col = await getCollection(colName);
+      const all = await col.find({}).toArray();
+      const groups = all.reduce((acc, d) => { const u = String(d.username||'').trim().toLowerCase(); if (!u) return acc; (acc[u] = acc[u] || []).push(d); return acc; }, {});
+      const keys = Object.keys(groups).filter(k => groups[k].length > 1 || (groups[k][0] && String(groups[k][0].username||'').trim().toLowerCase() !== k));
+      for (const k of keys) {
+        const arr = groups[k];
+        arr.sort((a,b)=>{ const as = String(a.source||''); const bs = String(b.source||''); const aw = /verifyInstagramProfile|api\.checkInstagramProfile|api\.instagram\.posts/.test(as) ? 1 : 0; const bw = /verifyInstagramProfile|api\.checkInstagramProfile|api\.instagram\.posts/.test(bs) ? 1 : 0; if (aw !== bw) return bw - aw; const af = Number(a.followersCount||0); const bf = Number(b.followersCount||0); if (af !== bf) return bf - af; const at = new Date(a.checkedAt||a.createdAt||a.firstSeenAt||0).getTime(); const bt = new Date(b.checkedAt||b.createdAt||b.firstSeenAt||0).getTime(); return bt - at; });
+        const base = Object.assign({}, arr[0]);
+        base.username = k;
+        base.fullName = base.fullName || (arr.find(x=>x.fullName)?.fullName || null);
+        base.profilePicUrl = base.profilePicUrl || (arr.find(x=>x.profilePicUrl)?.profilePicUrl || null);
+        base.isVerified = !!(base.isVerified || arr.some(x=>x.isVerified));
+        base.isPrivate = !!(base.isPrivate || arr.some(x=>x.isPrivate));
+        const fcounts = arr.map(x=>Number(x.followersCount||0)).concat([Number(base.followersCount||0)]);
+        base.followersCount = Math.max.apply(null, fcounts);
+        const dates = arr.map(x=>new Date(x.checkedAt||0).getTime()).concat([new Date(base.checkedAt||0).getTime()]).filter(n=>isFinite(n));
+        const maxChecked = dates.length ? Math.max.apply(null, dates) : null;
+        if (maxChecked !== null) base.checkedAt = new Date(maxChecked).toISOString();
+        const firsts = arr.map(x=>new Date(x.firstSeenAt||0).getTime()).concat([new Date(base.firstSeenAt||0).getTime()]).filter(n=>isFinite(n));
+        const minFirst = firsts.length ? Math.min.apply(null, firsts) : null;
+        if (minFirst !== null) base.firstSeenAt = new Date(minFirst).toISOString();
+        const lasts = arr.map(x=>new Date(x.lastAt||0).getTime()).concat([new Date(base.lastAt||0).getTime()]).filter(n=>isFinite(n));
+        const maxLast = lasts.length ? Math.max.apply(null, lasts) : null;
+        if (maxLast !== null) base.lastAt = new Date(maxLast).toISOString();
+        base.linkId = base.linkId || (arr.find(x=>x.linkId)?.linkId || null);
+        await col.updateOne({ username: k }, { $set: base, $setOnInsert: { username: k } }, { upsert: true });
+        const idsToRemove = arr.slice(1).map(x=>x._id).filter(Boolean);
+        if (idsToRemove.length) await col.deleteMany({ _id: { $in: idsToRemove } });
+        const wrongCaseDocs = arr.filter(x=>String(x.username||'').trim().toLowerCase() !== k);
+        const wrongIds = wrongCaseDocs.map(x=>x._id).filter(Boolean);
+        if (wrongIds.length) await col.deleteMany({ _id: { $in: wrongIds } });
+      }
+    } catch (_) {}
+  }
+  try { await consolidateByUsername('validet'); } catch(_) {}
+  try { await consolidateByUsername('validated_insta_users'); } catch(_) {}
+  try { await consolidateByUsername('validated-insta-users'); } catch(_) {}
+})();
+
 app.post('/api/payment/confirm', async (req, res) => {
   try {
     const body = req.body || {};
