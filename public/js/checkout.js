@@ -1265,6 +1265,25 @@
   if (likesInc) likesInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(1); });
   if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
 
+  // Balão indicativo nas curtidas (mesma estética dos outros balões)
+  (function setupLikesHint(){
+    const likesControl = document.getElementById('likesControl');
+    const likesTip = document.getElementById('likesPromoTip');
+    if (!likesControl || !likesTip) return;
+    let shown = false;
+    function showTip(){
+      if (shown) return;
+      likesTip.style.display = 'flex';
+      shown = true;
+    }
+    const io = new IntersectionObserver((entries)=>{
+      entries.forEach(e=>{ if (e.isIntersecting) showTip(); });
+    }, { threshold: 0.2 });
+    io.observe(likesControl);
+    // Fallback: mostrar após curto atraso ao carregar a página
+    setTimeout(()=>{ if (!shown) showTip(); }, 1500);
+  })();
+
   // Slider de Visualizações (Order Bump)
   const viewsTable = [
     { q: 1000, price: 'R$ 4,90' },
@@ -2132,6 +2151,12 @@
     platformToggle.addEventListener('click', (e) => {
       const target = e.target.closest('.platform-btn');
       if (!target) return;
+      if (window.__ENG_MODE__ && target.classList.contains('instagram')) {
+        try { e.preventDefault(); } catch(_) {}
+        try { e.stopPropagation(); } catch(_) {}
+        window.location.href = '/servicos';
+        return;
+      }
       if (target.classList.contains('instagram')) setPlatform('instagram');
       if (target.classList.contains('tiktok')) setPlatform('tiktok');
       try {

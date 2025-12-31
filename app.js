@@ -1316,6 +1316,33 @@ app.get('/__debug/views-list', (req, res) => {
   }
 });
 
+// Rotas diretas antes de estáticos
+app.use((req, res, next) => {
+  try {
+    if (req.method === 'GET' && req.path === '/engajamento') {
+      return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+    }
+    if (req.method === 'GET' && req.path === '/servicos') {
+      return res.render('servicos');
+    }
+  } catch (_) {}
+  next();
+});
+app.get('/engajamento', (req, res) => {
+  try {
+    return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+  } catch (e) {
+    return res.status(500).send('Erro ao renderizar engajamento');
+  }
+});
+app.get('/servicos', (req, res) => {
+  try {
+    return res.render('servicos');
+  } catch (e) {
+    return res.status(500).send('Erro ao renderizar serviços');
+  }
+});
+
 // Servir arquivos estáticos
 app.use(express.static("public"));
 app.use('/temp-images', express.static(path.join(__dirname, 'temp_images')));
@@ -1505,6 +1532,32 @@ app.get('/checkout', (req, res) => {
         res.type('text/html');
         res.send(html);
     });
+});
+
+// Página Engajamento (duplicada da checkout até plataforma)
+app.get('/engajamento', (req, res) => {
+  console.log('📈 Acessando rota /engajamento');
+  res.render('engajamento', {}, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar engajamento:', err.message);
+      return res.status(500).send('Erro ao renderizar engajamento');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+// Página Serviços (três serviços iguais ao principal)
+app.get('/servicos', (req, res) => {
+  console.log('🧩 Acessando rota /servicos');
+  res.render('servicos', {}, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar servicos:', err.message);
+      return res.status(500).send('Erro ao renderizar serviços');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
 });
 
 // Página de Refil
@@ -1981,6 +2034,12 @@ app.get('/:slug', async (req, res, next) => {
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
     if (slug === 'checkout') {
         return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' });
+    }
+    if (slug === 'engajamento') {
+        return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+    }
+    if (slug === 'servicos') {
+        return res.render('servicos');
     }
     if (slug === 'termos') {
         return res.render('termos', {}, (err, html) => {
