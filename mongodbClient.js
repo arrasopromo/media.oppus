@@ -27,21 +27,9 @@ async function connect() {
         { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
       ]);
       try { await col.createIndex({ username: 1 }, { name: 'username_unique', unique: true }); } catch(_) {}
-      const colHyphen = db.collection('validated-insta-users');
-      await colHyphen.createIndexes([
-        { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
-        { key: { linkId: 1 }, name: 'linkId_idx' },
-        { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
-      ]);
-      try { await colHyphen.createIndex({ username: 1 }, { name: 'username_unique', unique: true }); } catch(_) {}
-      const validet = db.collection('validet');
-      await validet.createIndexes([
-        { key: { username: 1, checkedAt: -1 }, name: 'username_checkedAt_idx' },
-        { key: { linkId: 1 }, name: 'linkId_idx' },
-        { key: { ip: 1, userAgent: 1 }, name: 'ip_userAgent_idx' }
-      ]);
-      try { await validet.createIndex({ username: 1 }, { name: 'username_unique', unique: true }); } catch(_) {}
     } catch (_) {}
+    try { await db.collection('validet').drop(); } catch(_) {}
+    try { await db.collection('validated-insta-users').drop(); } catch(_) {}
   } catch (_) {}
   return db;
 }
