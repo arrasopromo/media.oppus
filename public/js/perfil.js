@@ -270,6 +270,13 @@ function showProfileSuccess(profile) {
     profileUsername.textContent = '@' + profile.username;
     profileStats.textContent = `Seguidores: ${profile.followersCount}`;
     verifiedBadge.style.display = profile.isVerified ? 'block' : 'none';
+    try {
+        fetch('/api/instagram/validet-track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: profile.username })
+        });
+    } catch (_) {}
     
     // Verificar se há pedido realizado na sessão primeiro
     const orderCompleted = localStorage.getItem('oppus_order_completed');
