@@ -599,12 +599,15 @@ html, body { overflow-x: hidden; }
 @media (max-width: 768px) {
   .theme-toggle .theme-label { display: none; }
   .theme-toggle .icon { display: inline; }
-  /* Tema CLARO: ícone lua escura */
-  body.theme-light .theme-toggle .icon-moon { display: inline; color: var(--text-primary); }
+  /* Tema CLARO: ícone lua preta */
+  body.theme-light .theme-toggle .icon-moon { display: inline; color: #000000 !important; }
   body.theme-light .theme-toggle .icon-sun { display: none; }
-  /* Tema ESCURO: ícone sol claro */
-  body:not(.theme-light) .theme-toggle .icon-sun { display: inline; color: var(--text-primary); }
+  /* Tema ESCURO: ícone sol branco */
+  body:not(.theme-light) .theme-toggle .icon-sun { display: inline; color: #ffffff !important; }
   body:not(.theme-light) .theme-toggle .icon-moon { display: none; }
+  /* Garantir cor nos SVGs */
+  .theme-toggle .icon-sun svg { color: #ffffff !important; }
+  .theme-toggle .icon-moon svg { color: #000000 !important; }
   /* Mobile: remover fundo/borda do toggle e mostrar somente ícone */
   .fixed-menu .theme-toggle {
     background: transparent !important;
@@ -873,6 +876,8 @@ body.theme-light .logo-light { display: inline; }
 .footer .footer-bar { display: flex; justify-content: space-between; align-items: center; max-width: 60vw; min-width: 420px; margin: 0 auto; padding: 0.5rem 1rem; }
 @media (max-width: 640px) {
   .footer .footer-bar { max-width: 92vw; min-width: 0; }
+  /* Ocultar link/ícone do Instagram no rodapé no mobile */
+  .footer .instagram-link { display: none !important; }
 }
 .footer .footer-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-secondary); text-decoration: none; }
 .footer .footer-link:hover { color: var(--text-primary); }
