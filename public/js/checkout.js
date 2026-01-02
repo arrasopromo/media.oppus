@@ -2787,7 +2787,9 @@
   if (!btn) return;
   const applyLabel = () => {
     const isLight = document.body.classList.contains('theme-light');
-    btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
+    btn.setAttribute('aria-pressed', String(isLight));
+    const label = btn.querySelector('.theme-label');
+    if (label) label.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
   };
   try {
     document.body.classList.add('theme-light');

@@ -1035,13 +1035,29 @@ async function ensureRefilLink(identifier, correlationID, req) {
     if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
     if (corr) { conds.push({ correlationID: corr }); }
     const filter = conds.length ? { $or: conds } : {};
-    const doc = await col.findOne(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1 } });
+    const doc = await col.findOne(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1, customer: 1 } });
     if (!doc) return null;
     const arrPaid = Array.isArray(doc?.additionalInfoPaid) ? doc.additionalInfoPaid : [];
     const arrOrig = Array.isArray(doc?.additionalInfo) ? doc.additionalInfo : [];
     const map = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
     const iu = doc.instauser || doc.instagramUsername || map['instagram_username'] || '';
+    const phoneFromCustomer = (doc && doc.customer && doc.customer.phone) ? String(doc.customer.phone).replace(/\D/g, '') : '';
+    const phoneFromMap = map['phone'] ? String(map['phone']).replace(/\D/g, '') : '';
+    const phoneDigits = phoneFromCustomer || phoneFromMap || '';
     const tl = await getCollection('temporary_links');
+
+    // Primeiro: tentar reutilizar link existente por telefone (um token único por telefone)
+    if (phoneDigits) {
+      const existingByPhone = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
+      if (existingByPhone) {
+        await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existingByPhone.id } });
+        const sets = { instauser: existingByPhone.instauser || iu || null };
+        await tl.updateOne({ id: existingByPhone.id }, { $set: sets, $addToSet: { orders: String(doc._id) } });
+        return existingByPhone;
+      }
+    }
+
+    // Compatibilidade: verificar se já existe por orderId
     const existing = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
     if (existing) {
       await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existing.id } });
@@ -1049,13 +1065,28 @@ async function ensureRefilLink(identifier, correlationID, req) {
         await tl.updateOne({ id: existing.id }, { $set: { instauser: iu } });
         existing.instauser = iu;
       }
+      // Se houver telefone, vincular para futura reutilização
+      if (phoneDigits) {
+        await tl.updateOne({ id: existing.id }, { $set: { phone: phoneDigits }, $addToSet: { orders: String(doc._id) } });
+      }
       return existing;
     }
+
+    // Criar novo link e vincular ao telefone (se disponível)
     const info = linkManager.generateLink(req);
-    const rec = { id: info.id, purpose: 'refil', orderId: String(doc._id), instauser: iu || null, createdAt: new Date().toISOString(), expiresAt: new Date(info.expiresAt).toISOString() };
+    const rec = {
+      id: info.id,
+      purpose: 'refil',
+      orderId: String(doc._id),
+      phone: phoneDigits || null,
+      orders: [String(doc._id)],
+      instauser: iu || null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(info.expiresAt).toISOString()
+    };
     await tl.insertOne(rec);
     await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: info.id } });
-    try { console.log('🔗 Link de refil criado:', info.id); } catch(_) {}
+    try { console.log('🔗 Link de refil criado:', info.id, '| phone:', phoneDigits || '(none)'); } catch(_) {}
     return rec;
   } catch (e) {
     try { console.warn('⚠️ Falha ao criar link de refil:', e?.message || String(e)); } catch(_) {}
@@ -1244,6 +1275,100 @@ app.post('/api/admin/temporary-links/normalize-expiration', async (req, res) => 
       await tl.bulkWrite(ops, { ordered: false });
     }
     return res.json({ ok: true, total: docs.length, updated, days });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// Admin: Unificar temporary_links por telefone (um ID por número)
+app.get('/__admin/temporary-links/unify-by-phone', async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const tl = await getCollection('temporary_links');
+    const ordersCol = await getCollection('checkout_orders');
+    const refils = await tl.find({ purpose: 'refil' }).toArray();
+    const groups = refils.reduce((acc, d) => {
+      const phone = String(d.phone || '').replace(/\D/g, '');
+      if (!phone) return acc;
+      (acc[phone] = acc[phone] || []).push(d);
+      return acc;
+    }, {});
+    let phones = 0, dups = 0, ordersUpdated = 0, linksDeleted = 0, linksUpdated = 0;
+    for (const [phone, arr] of Object.entries(groups)) {
+      if (arr.length <= 1) continue;
+      phones++;
+      arr.sort((a,b)=> new Date(a.createdAt||0).getTime() - new Date(b.createdAt||0).getTime());
+      const canonical = arr[0];
+      const canonicalId = canonical.id;
+      const setOrders = new Set();
+      arr.forEach(x => {
+        if (x.orderId) setOrders.add(String(x.orderId));
+        (Array.isArray(x.orders) ? x.orders : []).forEach(o => setOrders.add(String(o)));
+      });
+      const allOrderIds = Array.from(setOrders);
+      if (allOrderIds.length) {
+        await tl.updateOne({ id: canonicalId }, { $set: { orders: allOrderIds, phone: phone } });
+        linksUpdated++;
+      }
+      for (let i = 1; i < arr.length; i++) {
+        const dup = arr[i];
+        dups++;
+        const updRes = await ordersCol.updateMany({ refilLinkId: dup.id }, { $set: { refilLinkId: canonicalId } });
+        ordersUpdated += updRes.modifiedCount || 0;
+        if (dup.orderId) {
+          await tl.updateOne({ id: canonicalId }, { $addToSet: { orders: String(dup.orderId) } });
+        }
+        const delRes = await tl.deleteOne({ id: dup.id });
+        linksDeleted += delRes.deletedCount || 0;
+      }
+    }
+    return res.json({ ok: true, phonesProcessed: phones, duplicatesResolved: dups, ordersRepointed: ordersUpdated, linksDeleted, linksUpdated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/admin/temporary-links/unify-by-phone', async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const tl = await getCollection('temporary_links');
+    const ordersCol = await getCollection('checkout_orders');
+    const refils = await tl.find({ purpose: 'refil' }).toArray();
+    const groups = refils.reduce((acc, d) => {
+      const phone = String(d.phone || '').replace(/\D/g, '');
+      if (!phone) return acc;
+      (acc[phone] = acc[phone] || []).push(d);
+      return acc;
+    }, {});
+    let phones = 0, dups = 0, ordersUpdated = 0, linksDeleted = 0, linksUpdated = 0;
+    for (const [phone, arr] of Object.entries(groups)) {
+      if (arr.length <= 1) continue;
+      phones++;
+      arr.sort((a,b)=> new Date(a.createdAt||0).getTime() - new Date(b.createdAt||0).getTime());
+      const canonical = arr[0];
+      const canonicalId = canonical.id;
+      const setOrders = new Set();
+      arr.forEach(x => {
+        if (x.orderId) setOrders.add(String(x.orderId));
+        (Array.isArray(x.orders) ? x.orders : []).forEach(o => setOrders.add(String(o)));
+      });
+      const allOrderIds = Array.from(setOrders);
+      if (allOrderIds.length) {
+        await tl.updateOne({ id: canonicalId }, { $set: { orders: allOrderIds, phone: phone } });
+        linksUpdated++;
+      }
+      for (let i = 1; i < arr.length; i++) {
+        const dup = arr[i];
+        dups++;
+        const updRes = await ordersCol.updateMany({ refilLinkId: dup.id }, { $set: { refilLinkId: canonicalId } });
+        ordersUpdated += updRes.modifiedCount || 0;
+        if (dup.orderId) {
+          await tl.updateOne({ id: canonicalId }, { $addToSet: { orders: String(dup.orderId) } });
+        }
+        const delRes = await tl.deleteOne({ id: dup.id });
+        linksDeleted += delRes.deletedCount || 0;
+      }
+    }
+    return res.json({ ok: true, phonesProcessed: phones, duplicatesResolved: dups, ordersRepointed: ordersUpdated, linksDeleted, linksUpdated });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -3514,6 +3639,16 @@ app.get('/pedido', async (req, res) => {
       }
     }
     const order = doc || {};
+    try {
+      const map = order && order.additionalInfoMapPaid ? order.additionalInfoMapPaid : {};
+      let uname = String(map['instagram_username'] || '').trim();
+      if (!uname) uname = String(order.instagramUsername || order.instauser || '').trim();
+      if (uname) {
+        const vu = await getCollection('validated_insta_users');
+        const row = await vu.findOne({ username: String(uname).trim().toLowerCase() }, { projection: { isPrivate: 1, username: 1, checkedAt: 1 } });
+        order.profilePrivacy = { username: uname, isPrivate: !!(row && row.isPrivate), checkedAt: row && row.checkedAt ? row.checkedAt : null };
+      }
+    } catch (_) {}
     return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
@@ -3920,7 +4055,18 @@ app.get('/api/refil/link-of-order', async (req, res) => {
       try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
     }
     const tl = await getCollection('temporary_links');
-    const linkRec = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
+    let linkRec = await tl.findOne({ orderId: String(doc._id), purpose: 'refil' });
+    if (!linkRec) {
+      const arrPaid = Array.isArray(doc?.additionalInfoPaid) ? doc.additionalInfoPaid : [];
+      const arrOrig = Array.isArray(doc?.additionalInfo) ? doc.additionalInfo : [];
+      const map = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+      const phoneFromCustomer = (doc && doc.customer && doc.customer.phone) ? String(doc.customer.phone).replace(/\D/g, '') : '';
+      const phoneFromMap = map['phone'] ? String(map['phone']).replace(/\D/g, '') : '';
+      const phoneDigits = phoneFromCustomer || phoneFromMap || '';
+      if (phoneDigits) {
+        linkRec = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
+      }
+    }
     if (!linkRec) return res.status(404).json({ ok: false, error: 'link_not_found' });
     return res.json({ ok: true, token: linkRec.id, expiresAt: linkRec.expiresAt, orderId: String(doc._id) });
   } catch (e) {

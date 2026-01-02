@@ -27,8 +27,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const isLight = theme === 'light';
         document.body.classList.toggle('theme-light', isLight);
         if (btn) {
-            btn.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
             btn.setAttribute('aria-pressed', String(isLight));
+            const label = btn.querySelector('.theme-label');
+            if (label) label.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
         }
     };
     applyTheme('light');
