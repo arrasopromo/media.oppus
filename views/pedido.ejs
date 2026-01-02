@@ -48,9 +48,14 @@
     <header class="header">
       <h1 class="title">Informações do pedido</h1>
       <p class="subtitle">Resumo do seu pedido</p>
-      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema">Tema: Escuro</button>
+      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema" aria-pressed="true"><span class="theme-label">Tema: Escuro</span><span class="icon icon-sun" aria-hidden="true">☀️</span><span class="icon icon-moon" aria-hidden="true">🌙</span><span class="sr-only">Alternar tema</span></button>
       <a href="/checkout" id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido" style="text-decoration:none;">Cliente</a>
     </header>
+    <% if (order && order.profilePrivacy && order.profilePrivacy.isPrivate) { %>
+    <div id="privacyAlert" style="margin: 12px 0; padding: 12px; border-radius: 8px; background: #fff3cd; border: 1px solid #ffecb5; color: #664d03; font-family: var(--font-family);">
+      <strong>Perfil privado</strong>: seu perfil do Instagram está no modo privado. Altere para público para receber o serviço corretamente.
+    </div>
+    <% } %>
     <main class="main-content">
       <section class="section-block">
         <div class="service-card">

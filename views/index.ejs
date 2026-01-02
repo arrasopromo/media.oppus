@@ -23,14 +23,27 @@
     </script>
     <!-- End TRACK COMBO -->
   </head>
-<body class="theme-light">
+<body class="theme-light has-fixed-menu">
+    <nav class="fixed-menu" aria-label="Menu fixo">
+      <div class="menu-left site-brand">
+        <a href="/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;">
+          <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+          <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+          <span class="site-brand-text">Agência Oppus</span>
+        </a>
+      </div>
+      <div class="menu-right">
+        <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
+        
+      </div>
+    </nav>
     <div class="container">
         <!-- Landing Page -->
         <div id="landingPage">
             <header class="header">
                 <h1 class="title">Teste nossos serviços</h1>
                 <p class="subtitle">Escolha o serviço que tem interesse em testar</p>
-                <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema">Tema: Escuro</button>
+                <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema" aria-pressed="true"><span class="theme-label">Tema: Escuro</span><span class="icon icon-sun" aria-hidden="true">☀️</span><span class="icon icon-moon" aria-hidden="true">🌙</span><span class="sr-only">Alternar tema</span></button>
             </header>
             <main class="main-content">
                 <!-- Seção: Seguidores -->

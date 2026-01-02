@@ -44,22 +44,26 @@
   <% } %>
   -->
 </head>
-<body class="theme-light">
-  <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
-  <div class="container checkout-page">
-    <div class="site-brand" aria-label="Marca do site">
+<body class="theme-light has-fixed-menu">
+  <nav class="fixed-menu" aria-label="Menu fixo">
+    <div class="menu-left site-brand" aria-label="Marca do site">
       <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
       <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
       <span class="site-brand-text">Agência Oppus</span>
     </div>
+    <div class="menu-right">
+      <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
+      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema" aria-pressed="true"><span class="theme-label">Tema: Escuro</span><span class="icon icon-sun" aria-hidden="true">☀️</span><span class="icon icon-moon" aria-hidden="true">🌙</span></button>
+    </div>
+  </nav>
+  <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
+  <div class="container checkout-page">
     <header class="header">
+      <div id="headerTicker" class="header-ticker" aria-live="polite">
+        <span class="ticker-item enter">Empresa regularizada</span>
+      </div>
       <h1 class="title">Cresça o seu perfil Instagram</h1>
       <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com seguidores que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
-      <div id="headerTicker" class="header-ticker" aria-live="polite">
-        <span class="ticker-item"></span>
-      </div>
-      <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema">Tema: Escuro</button>
-      <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
       <div id="clientTools" class="client-tools" style="display:none;"></div>
     </header>
 
