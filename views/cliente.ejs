@@ -7,15 +7,8 @@
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
 </head>
-<body class="theme-light">
-  <div class="container checkout-page">
-    <div class="site-brand" aria-label="Marca do site">
-      <a href="/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;">
-        <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
-        <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
-        <span class="site-brand-text">Agência Oppus</span>
-      </a>
-    </div>
+<body class="theme-light has-fixed-menu">
+  <%- include('partials/menu') %>
     <main style="padding: 1rem 0; font-family: var(--font-family);">
     <div id="clientPage" class="client-page" style="position: static; display: block;">
       <div class="client-page-inner">
@@ -39,6 +32,7 @@
   </div>
   <script>try{ localStorage.removeItem('oppus_selected_oid'); }catch(_){}</script>
   <script src="/js/checkout.js"></script>
+  <script src="/js/main.js"></script>
   <script>
     (function(){
       try {
