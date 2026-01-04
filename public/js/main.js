@@ -32,10 +32,15 @@ document.addEventListener('DOMContentLoaded', function() {
             if (label) label.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
         }
     };
-    applyTheme('light');
+    
+    // Ler do localStorage ou usar light como default
+    const savedTheme = localStorage.getItem('oppus_theme') || 'light';
+    applyTheme(savedTheme);
+
     if (btn) {
         btn.addEventListener('click', () => {
-            const next = document.body.classList.contains('theme-light') ? 'dark' : 'light';
+            const currentTheme = document.body.classList.contains('theme-light') ? 'light' : 'dark';
+            const next = currentTheme === 'light' ? 'dark' : 'light';
             localStorage.setItem('oppus_theme', next);
             applyTheme(next);
         });

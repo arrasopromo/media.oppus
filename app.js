@@ -311,10 +311,10 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
     console.log(`🔍 Iniciando verificação do perfil: @${username}`);
     console.log(`📊 Total de perfis disponíveis: ${cookieProfiles.length}`);
     
-    const cached = getCachedProfile(username);
-    if (cached) {
-        return cached;
-    }
+    // const cached = getCachedProfile(username);
+    // if (cached) {
+    //     return cached;
+    // }
 
     let selectedProfile = null;
     let attempts = 0;
@@ -1098,13 +1098,17 @@ async function geoLookupIp(ipRaw) {
   try {
     const ip = String(ipRaw || '').split(',')[0].replace('::ffff:', '').trim();
     if (!ip || ip === 'unknown') return null;
-    const url = `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
+    // Use ip-api.com (free, 45 req/min) - more reliable than ipapi.co free tier
+    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}`;
     const resp = await fetch(url);
     const data = await resp.json();
-    const city = String(data && data.city || '').trim();
-    const region = String((data && (data.region || data.region_code)) || '').trim();
-    const country = String((data && (data.country_name || data.country)) || '').trim();
-    return { city, region, country, source: 'ipapi' };
+    
+    if (data.status === 'fail') return null;
+
+    const city = String(data.city || '').trim();
+    const region = String(data.regionName || data.region || '').trim();
+    const country = String(data.country || '').trim();
+    return { city, region, country, source: 'ip-api.com' };
   } catch (_) { return null; }
 }
 
@@ -1642,6 +1646,11 @@ app.get('/teste123', (req, res) => {
 // Página de Checkout (nova slug dedicada)
 app.get('/checkout', (req, res) => {
     console.log('🛒 Acessando rota /checkout');
+    // Limpar dados de posts selecionados na sessão para evitar mistura com navegações antigas
+    if (req.session) {
+        req.session.selectedFor = {};
+        req.session.selectedPosts = [];
+    }
     res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar checkout:', err.message);
@@ -1684,29 +1693,59 @@ app.get('/refil', async (req, res) => {
   console.log('🔁 Acessando rota /refil');
   try {
     const token = String(req.query.token || '').trim();
-    if (token && /^liberado$/i.test(token)) {
-      if (req.session) {
-        req.session.refilAccessAllowed = true;
-        req.session.linkSlug = 'liberado';
-        req.session.linkAccessTime = Date.now();
+    let isValid = false;
+    if (token) {
+      if (/^liberado$/i.test(token)) {
+         isValid = true;
+         if (req.session) {
+            req.session.refilAccessAllowed = true;
+            req.session.linkSlug = 'liberado';
+            req.session.linkAccessTime = Date.now();
+         }
+      } else {
+        try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
+        if (!isValid) {
+            // Tentar recuperar do banco para ver se apenas expirou ou renovar
+            try {
+                const tl = await getCollection('temporary_links');
+                const linkRec = await tl.findOne({ id: token });
+                if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
+                    const nowMs = Date.now();
+                    const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
+                    await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                    isValid = true;
+                    if (req.session) {
+                        req.session.refilAccessAllowed = true;
+                        req.session.linkSlug = token;
+                        req.session.linkAccessTime = Date.now();
+                    }
+                }
+            } catch(_) {}
+        }
       }
     }
-    if (token) {
-      let isValid = false;
-      try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
+
+    // Fallback: se o token fornecido não funcionou (ou não veio), mas temos telefone
+    if (!isValid && phoneRaw) {
       try {
-        const tl = await getCollection('temporary_links');
-        const linkRec = await tl.findOne({ id: token });
-        if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
-          const nowMs = Date.now();
-          const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
-          await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
-          isValid = true;
-          if (req.session) {
-            req.session.refilAccessAllowed = true;
-            req.session.linkSlug = token;
-            req.session.linkAccessTime = Date.now();
-          }
+        const digits = phoneRaw.replace(/\D/g, '');
+        if (digits) {
+           const tl = await getCollection('temporary_links');
+           const linkRec = await tl.findOne({ purpose: 'refil', phone: digits });
+           if (linkRec && linkRec.id) {
+             token = linkRec.id; // Atualizar token para o válido encontrado
+             // Renovar e logar
+             const nowMs = Date.now();
+             const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
+             await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+             isValid = true;
+             if (req.session) {
+                req.session.refilAccessAllowed = true;
+                req.session.linkSlug = token;
+                req.session.linkAccessTime = Date.now();
+             }
+             console.log('🔁 Refil: Acesso recuperado via telefone:', digits);
+           }
         }
       } catch(_) {}
     }
@@ -1753,7 +1792,8 @@ app.post('/api/woovi/charge', async (req, res) => {
         value,
         comment,
         customer,
-        additionalInfo
+        additionalInfo,
+        profile_is_private
     } = req.body || {};
 
     if (!value || typeof value !== 'number') {
@@ -1883,6 +1923,13 @@ app.post('/api/woovi/charge', async (req, res) => {
             const userAgent = req.get('User-Agent') || '';
             const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
             const slug = req.session?.linkSlug || '';
+            const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfo['profile_is_private'] === 'true';
+
+            // Geolocalization
+            let geolocation = null;
+            try {
+                geolocation = await geoLookupIp(ip);
+            } catch(_) {}
 
             const pix = charge?.paymentMethods?.pix || {};
             const createdIso = new Date().toISOString();
@@ -1893,12 +1940,15 @@ app.post('/api/woovi/charge', async (req, res) => {
                 telefone: customerPayload.phone || '',
                 correlationID: chargeCorrelationID,
                 instauser: instauserFromClient,
+                profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
+                isPrivate: isPrivate,
                 criado: createdIso,
                 identifier,
                 status: 'pendente',
                 qtd,
                 tipo,
                 utms,
+                geolocation,
 
                 // Demais campos já utilizados pelo app
                 valueCents: value,
@@ -1934,6 +1984,254 @@ app.post('/api/woovi/charge', async (req, res) => {
     console.error('❌ Erro ao criar charge Woovi:', details);
     res.status(status).json({ error: 'woovi_error', details });
   }
+});
+
+// Função auxiliar para processar o envio de pedidos (Fama24h/FornecedorSocial)
+async function processOrderFulfillment(record, col, req) {
+    if (!record) return;
+    const filter = { _id: record._id };
+    
+    const instaUser = record?.instagramUsername || record?.instauser || '';
+    const identifier = record?.identifier;
+    
+    // Check privacy before dispatch
+    let isPriv = record.isPrivate === true || record.profilePrivacy?.isPrivate === true;
+    
+    if (!isPriv && instaUser) {
+        try {
+            // Live privacy check
+            const check = await verifyInstagramProfile(instaUser, 'ProcessFulfillment-Check', '127.0.0.1', { session: {} }, null);
+            if (check && (check.code === 'INSTAUSER_PRIVATE' || (check.profile && check.profile.isPrivate))) {
+                isPriv = true;
+                await col.updateOne(filter, { 
+                    $set: { 
+                        isPrivate: true, 
+                        'profilePrivacy.isPrivate': true, 
+                        'profilePrivacy.updatedAt': new Date().toISOString() 
+                    } 
+                });
+                console.log('🔒 Profile detected as PRIVATE during fulfillment:', instaUser);
+            }
+        } catch (e) {
+            console.error('⚠️ Live privacy check warning:', e.message);
+        }
+    }
+    
+    if (isPriv) {
+        console.log('ℹ️ Fulfillment deferred: Profile is private', { identifier: record.identifier });
+        try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
+        return;
+    }
+
+    const alreadySentFama = record?.fama24h?.orderId ? true : false;
+    const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
+    const tipo = record?.tipo || record?.tipoServico || '';
+    const qtdBase = Number(record?.quantidade || record?.qtd || 0) || 0;
+    const correlationID = record?.correlationID;
+    
+    const key = process.env.FAMA24H_API_KEY || '';
+    const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+    const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+    const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+    const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+    const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
+    const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
+    let upgradeAdd = 0;
+    if (hasUpgrade && isFollowers) {
+        if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
+            upgradeAdd = 1000;
+        } else {
+            const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            upgradeAdd = map[qtdBase] || 0;
+        }
+    }
+    let qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
+    
+    // Ajuste: O provedor (Fama24h - serviço 659) exige mínimo de 100.
+    if (serviceId === 659 && qtd > 0 && qtd < 100) {
+        qtd = 100;
+    }
+
+    const isOrganicos = /organicos/i.test(tipo);
+    if (!isOrganicos) {
+        const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+        if (canSend) {
+            const axios = require('axios');
+            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+            try {
+                const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const famaData = famaResp.data || {};
+                const orderId = famaData.order || famaData.id || null;
+                await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+            } catch (err) {
+                console.error('Erro ao enviar para Fama24h:', err.message);
+            }
+        }
+    } else {
+        const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
+        const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+        const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+        if (canSendFS) {
+            const axios = require('axios');
+            const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
+            try {
+                const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataFS = respFS.data || {};
+                const orderIdFS = dataFS.order || dataFS.id || null;
+                await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+            } catch (err) {
+                console.error('Erro ao enviar para FornecedorSocial:', err.message);
+            }
+        }
+    }
+    
+    // Order Bumps (Views/Likes)
+    try {
+        const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+        let viewsQty = 0;
+        let likesQty = 0;
+        if (typeof bumpsStr === 'string' && bumpsStr) {
+            const parts = bumpsStr.split(';');
+            const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+            const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
+            if (vPart) {
+                const num = Number(vPart.split(':')[1]);
+                if (!Number.isNaN(num) && num > 0) viewsQty = num;
+            }
+            if (lPart) {
+                const numL = Number(lPart.split(':')[1]);
+                if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
+            }
+        }
+        // Links selecionados para orderbumps
+        const mapPaid = record?.additionalInfoMapPaid || {};
+        const viewsLinkRaw = mapPaid['orderbump_post_views'] || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
+        const likesLinkRaw = mapPaid['orderbump_post_likes'] || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
+        
+        try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, viewsQty, likesQty }); } catch(_) {}
+        const sanitizeLink = (s) => {
+            const v = String(s || '').replace(/[`\s]/g, '').trim();
+            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+            return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+        };
+        const viewsLink = sanitizeLink(viewsLinkRaw);
+        const likesLink = sanitizeLink(likesLinkRaw);
+        try { console.log('🔎 orderbump_links_sanitized', { viewsLink, likesLink }); } catch(_) {}
+
+        if (viewsQty > 0 && viewsLink) {
+            if (process.env.FAMA24H_API_KEY || '') {
+                const axios = require('axios');
+                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                try {
+                    const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataViews = respViews.data || {};
+                    const orderIdViews = dataViews.order || dataViews.id || null;
+                    await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
+                } catch (e2) {
+                    try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                    await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                }
+            }
+        } else if (viewsQty > 0 && !viewsLink) {
+            try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
+        }
+        
+        const alreadyLikes = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
+        if (likesQty > 0 && likesLink && !alreadyLikes) {
+            if (process.env.FAMA24H_API_KEY || '') {
+                const lockUpdate = await col.updateOne(
+                    { ...filter, 'fama24h_likes.status': { $exists: false } },
+                    { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                );
+                if (lockUpdate.modifiedCount > 0) {
+                    const axios = require('axios');
+                    const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+                    try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLink, quantity: likesQty }); } catch(_) {}
+                    try {
+                        const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const dataLikes = respLikes.data || {};
+                        const orderIdLikes = dataLikes.order || dataLikes.id || null;
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+                    } catch (e3) {
+                        try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+                    }
+                }
+            }
+        } else if (likesQty > 0 && !likesLink) {
+            try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
+        }
+    } catch (_) {}
+    
+    broadcastPaymentPaid(identifier, correlationID);
+    try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
+}
+
+app.post('/api/order/retry-fulfillment', async (req, res) => {
+    try {
+        const { identifier, orderID } = req.body;
+        const id = identifier || orderID;
+        if (!id) return res.status(400).json({ error: 'Missing identifier' });
+        
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('checkout_orders');
+        
+        const conds = [];
+        conds.push({ identifier: id });
+        conds.push({ 'woovi.identifier': id });
+        conds.push({ correlationID: id });
+        
+        // Add check for ObjectId to support finding by _id
+        if (/^[0-9a-fA-F]{24}$/.test(id)) {
+            try { conds.push({ _id: new (require('mongodb').ObjectId)(id) }); } catch(_) {}
+        }
+        
+        const record = await col.findOne({ $or: conds });
+        
+        if (!record) return res.status(404).json({ error: 'Order not found' });
+        
+        // Update privacy to public in checkout_orders
+        await col.updateOne({ _id: record._id }, { 
+            $set: { 
+                isPrivate: false, 
+                'profilePrivacy.isPrivate': false, 
+                'profilePrivacy.updatedAt': new Date().toISOString() 
+            } 
+        });
+        
+        // Also update validated_insta_users if username is present
+        const instaUser = record.instagramUsername || record.instauser || '';
+        if (instaUser) {
+            try {
+                const vu = await getCollection('validated_insta_users');
+                await vu.updateOne(
+                    { username: String(instaUser).trim().toLowerCase() },
+                    { 
+                        $set: { 
+                            isPrivate: false, 
+                            checkedAt: new Date().toISOString() 
+                        } 
+                    }
+                );
+                console.log('✅ validated_insta_users updated for:', instaUser);
+            } catch (vuErr) {
+                console.error('❌ Failed to update validated_insta_users:', vuErr.message);
+            }
+        }
+        
+        const updatedRecord = await col.findOne({ _id: record._id });
+        
+        // Dispatch services
+        await processOrderFulfillment(updatedRecord, col, req);
+        
+        res.json({ success: true, message: 'Fulfillment retry initiated' });
+    } catch (err) {
+        console.error('Error in retry-fulfillment:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // API: consultar status de cobrança PIX via Woovi
@@ -1985,129 +2283,10 @@ app.get('/api/woovi/charge-status', async (req, res) => {
         }
         try {
           const record = await col.findOne(filter);
-          const alreadySentFama = record?.fama24h?.orderId ? true : false;
-          const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
-          const tipo = record?.tipo || record?.tipoServico || '';
-          const qtdBase = Number(record?.quantidade || record?.qtd || 0) || 0;
-          const instaUser = record?.instagramUsername || record?.instauser || '';
-          const key = process.env.FAMA24H_API_KEY || '';
-          const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
-          const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
-          const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-          const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
-          const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
-          const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
-          let upgradeAdd = 0;
-          if (hasUpgrade && isFollowers) {
-            if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
-              upgradeAdd = 1000;
-            } else {
-              const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
-              upgradeAdd = map[qtdBase] || 0;
-            }
-          }
-          const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const isOrganicos = /organicos/i.test(tipo);
-          if (!isOrganicos) {
-            const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
-            if (canSend) {
-              const axios = require('axios');
-              const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
-              const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-              const famaData = famaResp.data || {};
-              const orderId = famaData.order || famaData.id || null;
-              await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
-              try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
-            }
-          } else {
-            const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-            const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
-            const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
-            if (canSendFS) {
-              const axios = require('axios');
-              const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
-              const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
-              const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-              const dataFS = respFS.data || {};
-              const orderIdFS = dataFS.order || dataFS.id || null;
-              await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
-            }
-          }
-    try {
-        const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
-            const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-            const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
-            const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
-            let viewsQty = 0;
-            let likesQty = 0;
-            if (typeof bumpsStr === 'string' && bumpsStr) {
-              const parts = bumpsStr.split(';');
-              const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
-              const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
-              if (vPart) {
-                const num = Number(vPart.split(':')[1]);
-                if (!Number.isNaN(num) && num > 0) viewsQty = num;
-              }
-              if (lPart) {
-                const numL = Number(lPart.split(':')[1]);
-                if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
-              }
-            }
-            // Links selecionados para orderbumps
-            const mapPaid = record?.additionalInfoMapPaid || {};
-            const viewsLinkRaw = mapPaid['orderbump_post_views'] || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
-            const likesLinkRaw = mapPaid['orderbump_post_likes'] || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
-            try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, viewsQty, likesQty }); } catch(_) {}
-            const sanitizeLink = (s) => {
-              const v = String(s || '').replace(/[`\s]/g, '').trim();
-              const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
-              return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
-            };
-            const viewsLink = sanitizeLink(viewsLinkRaw);
-            const likesLink = sanitizeLink(likesLinkRaw);
-            try { console.log('🔎 orderbump_links_sanitized', { viewsLink, likesLink }); } catch(_) {}
-
-            if (viewsQty > 0 && viewsLink) {
-              if (process.env.FAMA24H_API_KEY || '') {
-                const axios = require('axios');
-                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
-                try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                try {
-                  const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const dataViews = respViews.data || {};
-                  const orderIdViews = dataViews.order || dataViews.id || null;
-                  await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-                } catch (e2) {
-                  try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                  await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-                }
-              }
-            } else if (viewsQty > 0 && !viewsLink) {
-              try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
-            }
-            const alreadyLikes = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
-            if (likesQty > 0 && likesLink && !alreadyLikes) {
-              if (process.env.FAMA24H_API_KEY || '') {
-                const axios = require('axios');
-                const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
-                try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLink, quantity: likesQty }); } catch(_) {}
-                try {
-                  const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const dataLikes = respLikes.data || {};
-                  const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                  await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
-                } catch (e3) {
-                  try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
-                  await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
-                }
-                }
-            } else if (likesQty > 0 && !likesLink) {
-              try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
-            }
-          } catch (_) {}
-        } catch (_) {}
-        broadcastPaymentPaid(identifier, correlationID);
-        try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
+          await processOrderFulfillment(record, col, req);
+        } catch (e) {
+          console.error('Error processing fulfillment in charge-status:', e);
+        }
       }
     } catch (_) {}
     return res.status(200).json(respData);
@@ -2326,6 +2505,40 @@ app.delete("/admin/link/:id", (req, res) => {
     }
 });
 
+// API para verificar privacidade do perfil (sem bloqueio de uso)
+app.post("/api/check-privacy", async (req, res) => {
+    const { username } = req.body;
+    const userAgent = req.get("User-Agent") || "";
+    const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
+
+    if (!username || username.length < 1) {
+        return res.status(400).json({
+            success: false,
+            error: "Nome de usuário é obrigatório"
+        });
+    }
+
+    try {
+        // Usa verifyInstagramProfile mas ignora a verificação de "já usado" do endpoint principal
+        // A função verifyInstagramProfile em si não bloqueia, apenas retorna os dados
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        
+        // Retornar apenas o status de privacidade e sucesso
+        return res.json({
+            success: true,
+            isPrivate: !!(result.profile && result.profile.isPrivate),
+            profile: result.profile
+        });
+
+    } catch (error) {
+        console.error("Erro na verificação de privacidade:", error.message);
+        return res.status(500).json({
+            success: false,
+            error: "Erro ao verificar privacidade. Tente novamente."
+        });
+    }
+});
+
 // API para verificar perfil do Instagram (usando API interna)
 app.post("/api/check-instagram-profile", async (req, res) => {
     const { username } = req.body;
@@ -2346,22 +2559,8 @@ app.post("/api/check-instagram-profile", async (req, res) => {
       try { await vuPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
     } catch (_) {}
 
-    // Verificar se instauser já foi usado anteriormente
-    const instauserExists = await checkInstauserExists(username);
-    if (instauserExists) {
-        return res.status(409).json({
-            success: false,
-            error: "Este perfil já foi testado anteriormente. O serviço de teste já foi realizado para este usuário.",
-            code: "INSTAUSER_ALREADY_USED",
-            profile: { username }
-        });
-    }
-
-    try {
-      const vu = await getCollection('validated_insta_users');
-      const preDoc = { username: String(username).trim().toLowerCase(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre', firstSeenAt: new Date().toISOString() };
-      try { await vu.updateOne({ username: preDoc.username }, { $setOnInsert: preDoc, $set: { lastEvent: 'pre', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
-    } catch (_) {}
+    // (Verificação antecipada de uso removida para garantir atualização de dados do perfil)
+    // A verificação será feita dentro de verifyInstagramProfile e retornada no objeto result
 
     try {
       // Chamar a função diretamente para debug
@@ -2385,6 +2584,17 @@ app.post("/api/check-instagram-profile", async (req, res) => {
             try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
           }
         } catch (err) { try { console.error('fallback insert error', err?.message || String(err)); } catch(_) {} }
+
+        // Se o perfil já foi testado, retornar 409 mas com os dados atualizados do perfil
+        if (result && result.success && result.profile && result.profile.alreadyTested) {
+             return res.status(409).json({
+                success: false,
+                error: "Este perfil já foi testado anteriormente. O serviço de teste já foi realizado para este usuário.",
+                code: "INSTAUSER_ALREADY_USED",
+                profile: result.profile
+            });
+        }
+
         return res.status(result.status || 200).json(result);
     } catch (error) {
         console.error("Erro na verificação de perfil:", error.message);
@@ -3030,7 +3240,49 @@ app.post('/api/openpix/webhook', async (req, res) => {
         }
         try {
           const record = await col.findOne(filter);
-          const alreadySentFama = record?.fama24h?.orderId ? true : false;
+        
+        // Check LIVE privacy before dispatch if not already marked as private
+        let isPriv = record && (
+            record.isPrivate === true || 
+            String(record.isPrivate) === 'true' || 
+            record.profilePrivacy?.isPrivate === true || 
+            String(record.profilePrivacy?.isPrivate) === 'true'
+        );
+
+        // If not marked private in DB, check live to be safe (prevent API dispatch for private)
+        if (!isPriv) {
+            const instaUser = additionalInfoMap['instagram_username'] || record?.instagramUsername || record?.instauser || '';
+            if (instaUser) {
+                try {
+                    // Check privacy (timeout 5s)
+                    const mockReq = { session: {}, query: {}, body: {} };
+                    const check = await verifyInstagramProfile(instaUser, 'Webhook-LiveCheck', '127.0.0.1', mockReq, null);
+                    if (check && !check.success && /privado/i.test(check.error || '')) {
+                         isPriv = true;
+                         // Update DB immediately
+                         await col.updateOne(filter, { 
+                             $set: { 
+                                 isPrivate: true, 
+                                 'profilePrivacy.isPrivate': true, 
+                                 'profilePrivacy.updatedAt': new Date().toISOString() 
+                             } 
+                         });
+                         console.log('🔒 Profile detected as PRIVATE during payment webhook (Live Check):', instaUser);
+                    }
+                } catch (e) {
+                    console.error('⚠️ Live privacy check failed in webhook:', e.message);
+                }
+            }
+        }
+        
+        if (isPriv) {
+            console.log('ℹ️ Service dispatch blocked: Profile is private', { identifier: charge?.identifier });
+            try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
+            
+            return res.status(200).json({ ok: true, status: 'paid_private_deferred', message: 'Service dispatch blocked because profile is private' });
+        }
+
+        const alreadySentFama = record?.fama24h?.orderId ? true : false;
           const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
           const tipo = additionalInfoMap['tipo_servico'] || record?.tipo || record?.tipoServico || '';
           const qtdBase = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
@@ -3153,20 +3405,26 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 const likesLinkSel = sanitizeLinkL(likesLinkRaw);
                 try { console.log('🔎 orderbump_likes_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, likesLinkRaw, likesQtyForStatus }); } catch(_) {}
                 try { console.log('🔎 orderbump_likes_sanitized', { likesLinkSel }); } catch(_) {}
-                const alreadyLikes2 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+                const alreadyLikes2 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
                 if (!likesLinkSel) {
                   await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
                 } else if (!alreadyLikes2) {
-                  const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
-                  try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
-                  try {
-                    const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                    const dataLikes = respLikes.data || {};
-                    const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                    await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, response: dataLikes, requestedAt: new Date().toISOString() } } });
-                  } catch (e3) {
-                    try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
-                    await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
+                  const lockUpdate = await col.updateOne(
+                    { ...filter, 'fama24h_likes.status': { $exists: false } },
+                    { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                  );
+                  if (lockUpdate.modifiedCount > 0) {
+                      const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
+                      try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
+                      try {
+                        const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const dataLikes = respLikes.data || {};
+                        const orderIdLikes = dataLikes.order || dataLikes.id || null;
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes } });
+                      } catch (e3) {
+                        try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQtyForStatus } } });
+                      }
                   }
                 }
               }
@@ -3444,17 +3702,30 @@ app.post('/api/orderbump/resend', async (req, res) => {
       }
     }
     if (key && likesQty > 0 && likesLink) {
-      const axios = require('axios');
-      const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
-      try {
-        const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-        const data = resp.data || {};
-        const orderIdLikes = data.order || data.id || null;
-        await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: data, requestedAt: new Date().toISOString() } } });
-        results.likes = { orderId: orderIdLikes, data };
-      } catch (e) {
-        await col.updateOne(filter, { $set: { fama24h_likes: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
-        results.likes = { error: e?.message || String(e) };
+      const alreadyLikes = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
+      if (!alreadyLikes) {
+        const lockUpdate = await col.updateOne(
+          { ...filter, 'fama24h_likes.status': { $nin: ['processing', 'created'] }, 'fama24h_likes.orderId': { $exists: false } },
+          { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+        );
+        if (lockUpdate.modifiedCount > 0) {
+          const axios = require('axios');
+          const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+          try {
+            const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            const data = resp.data || {};
+            const orderIdLikes = data.order || data.id || null;
+            await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
+            results.likes = { orderId: orderIdLikes, data };
+          } catch (e) {
+            await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+            results.likes = { error: e?.message || String(e) };
+          }
+        } else {
+           results.likes = { error: 'already_processing_or_created' };
+        }
+      } else {
+         results.likes = { error: 'already_exists' };
       }
     }
     try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
@@ -3514,18 +3785,25 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
       if (key && likesQty > 0 && likesLink) {
         const currentLikesLink = String(record?.fama24h_likes?.requestPayload?.link || '');
         const isInvalidLikes = !/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(currentLikesLink);
-        if (isInvalidLikes) {
-          const axios = require('axios');
-          const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
-          try {
-            const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const data = resp.data || {};
-            const orderIdLikes = data.order || data.id || null;
-            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink, quantity: likesQty }, response: data, requestedAt: new Date().toISOString() } } });
-            resultItem.likes = { orderId: orderIdLikes };
-          } catch (e) {
-            await col.updateOne(filter, { $set: { fama24h_likes: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 666, link: likesLink, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
-            resultItem.likes = { error: e?.message || String(e) };
+        const isProcessing = record?.fama24h_likes?.status === 'processing';
+        if (isInvalidLikes && !isProcessing) {
+          const lockUpdate = await col.updateOne(
+             { ...filter, 'fama24h_likes.status': { $ne: 'processing' } },
+             { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestedAt': new Date().toISOString() } }
+          );
+          if (lockUpdate.modifiedCount > 0) {
+              const axios = require('axios');
+              const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+              try {
+                const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const data = resp.data || {};
+                const orderIdLikes = data.order || data.id || null;
+                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
+                resultItem.likes = { orderId: orderIdLikes };
+              } catch (e) {
+                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+                resultItem.likes = { error: e?.message || String(e) };
+              }
           }
         }
       }
@@ -3592,7 +3870,12 @@ app.get('/pedido', async (req, res) => {
     // 1) Priorizar pedido selecionado explicitamente em sessão
     if (req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
-      doc = await col.findOne({ $or: [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ] });
+      const { ObjectId } = require('mongodb');
+      const orConds = [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ];
+      if (typeof soid === 'string' && /^[0-9a-fA-F]{24}$/.test(soid)) {
+        try { orConds.push({ _id: new ObjectId(soid) }); } catch(_) {}
+      }
+      doc = await col.findOne({ $or: orConds });
     }
     // 2) Em seguida, tentar pelos parâmetros de consulta
     if (!doc) {
@@ -3605,6 +3888,10 @@ app.get('/pedido', async (req, res) => {
         if (!Number.isNaN(maybeNum)) conds.push({ 'fornecedor_social.orderId': maybeNum });
         conds.push({ 'fama24h.orderId': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
+        const { ObjectId } = require('mongodb');
+        if (/^[0-9a-fA-F]{24}$/.test(orderIDRaw)) {
+             try { conds.push({ _id: new ObjectId(orderIDRaw) }); } catch(_) {}
+        }
       }
       if (phoneRaw) {
         const digits = phoneRaw.replace(/\D/g, '');
@@ -3638,15 +3925,56 @@ app.get('/pedido', async (req, res) => {
         }
       }
     }
+    
+    // Garantir que o link de refil exista para este pedido (para o botão "Acessar ferramenta")
+    if (doc) {
+      try {
+        if (!doc.refilLinkId) {
+            // Tentar gerar/recuperar link se não existir
+            const rLink = await ensureRefilLink(doc.identifier || doc['woovi.identifier'] || '', doc.correlationID || '', req);
+            if (rLink && rLink.id) {
+                doc.refilLinkId = rLink.id;
+            }
+        }
+      } catch (errLink) {
+        try { console.warn('Falha ao garantir refilLink em /pedido', errLink.message); } catch(_) {}
+      }
+    }
+
     const order = doc || {};
     try {
       const map = order && order.additionalInfoMapPaid ? order.additionalInfoMapPaid : {};
       let uname = String(map['instagram_username'] || '').trim();
       if (!uname) uname = String(order.instagramUsername || order.instauser || '').trim();
+      
+      // Sempre verificar status mais recente no banco de validação
       if (uname) {
         const vu = await getCollection('validated_insta_users');
-        const row = await vu.findOne({ username: String(uname).trim().toLowerCase() }, { projection: { isPrivate: 1, username: 1, checkedAt: 1 } });
-        order.profilePrivacy = { username: uname, isPrivate: !!(row && row.isPrivate), checkedAt: row && row.checkedAt ? row.checkedAt : null };
+        const vUser = await vu.findOne({ username: String(uname).trim().toLowerCase() });
+        
+        // Atualizar em background se não existir ou se for antigo (> 1 hora)
+        const nowMs = Date.now();
+        const lastCheck = vUser && vUser.checkedAt ? new Date(vUser.checkedAt).getTime() : 0;
+        const isOld = (nowMs - lastCheck) > (60 * 60 * 1000);
+        
+        if (!vUser || isOld) {
+             const mockReq = { session: {}, query: {}, body: {} };
+             // Disparar verificação sem aguardar (fire-and-forget) para não travar o carregamento
+             verifyInstagramProfile(uname, 'Background-Pedido', req.ip || '127.0.0.1', mockReq, null)
+                 .catch(err => { try { console.error('❌ [pedido] Falha ao atualizar perfil Instagram em background:', err.message); } catch(_) {} });
+        }
+
+        if (vUser) {
+            // Se o banco diz que é privado, forçar status privado
+            // Se o banco diz que é público, atualizar também (caso o usuário tenha aberto)
+            order.profilePrivacy = { 
+                username: uname, 
+                isPrivate: !!vUser.isPrivate, 
+                checkedAt: vUser.checkedAt,
+                source: 'db_fresh_check' 
+            };
+            if (typeof vUser.followersCount === 'number') order.followersCount = vUser.followersCount;
+        }
       }
     } catch (_) {}
     return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
@@ -3934,23 +4262,29 @@ app.post('/session/mark-paid', async (req, res) => {
               }
             }
           }
-          const alreadyLikes3 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+          const alreadyLikes3 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
           if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0 && !alreadyLikes3) {
             if (!likesLinkSel) {
               try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
               await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
             } else {
-              const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
-              try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
-              try {
-                const respL = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataL = respL.data || {};
-                const orderIdL = dataL.order || dataL.id || null;
-                await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdL, status: orderIdL ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, response: dataL, requestedAt: new Date().toISOString() } } });
-              } catch (e3) {
-                try { console.error('❌ [mark-paid] fama24h_likes_error', e3?.response?.data || e3?.message || String(e3)); } catch(_) {}
-                await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
-              }
+               const lockUpdate = await col.updateOne(
+                  { ...filter, 'fama24h_likes.status': { $exists: false } },
+                  { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+               );
+               if (lockUpdate.modifiedCount > 0) {
+                  const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
+                  try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
+                  try {
+                    const respL = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataL = respL.data || {};
+                    const orderIdL = dataL.order || dataL.id || null;
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdL, 'fama24h_likes.status': orderIdL ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataL } });
+                  } catch (e3) {
+                    try { console.error('❌ [mark-paid] fama24h_likes_error', e3?.response?.data || e3?.message || String(e3)); } catch(_) {}
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty } } });
+                  }
+               }
             }
           }
         } catch(_) {}
@@ -3987,6 +4321,10 @@ app.get('/api/order', async (req, res) => {
         if (!Number.isNaN(maybeNum)) { conds.push({ 'fama24h.orderId': maybeNum }); conds.push({ 'fornecedor_social.orderId': maybeNum }); }
         conds.push({ 'fama24h.orderId': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
+        const { ObjectId } = require('mongodb');
+        if (/^[0-9a-fA-F]{24}$/.test(orderIDRaw)) {
+             try { conds.push({ _id: new ObjectId(orderIDRaw) }); } catch(_) {}
+        }
       }
       if (phoneRaw) {
         const digits = phoneRaw.replace(/\D/g, '');
@@ -4246,10 +4584,18 @@ app.post('/api/payment/confirm', async (req, res) => {
       const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
       const key = process.env.FAMA24H_API_KEY || '';
       const serviceId = (/^mistos$/i.test(resolvedTipo)) ? 659 : (/^brasileiros$/i.test(resolvedTipo)) ? 23 : null;
-      const canSend = !!key && !!serviceId && !!resolvedUser && resolvedQtd > 0 && !alreadySent;
+      
+      // Ajuste: O provedor (Fama24h - serviço 659) exige mínimo de 100.
+      // Se o pedido for de 50 (teste), enviamos 100 para garantir o processamento.
+      let finalQtdFama = resolvedQtd;
+      if (serviceId === 659 && finalQtdFama > 0 && finalQtdFama < 100) {
+        finalQtdFama = 100;
+      }
+
+      const canSend = !!key && !!serviceId && !!resolvedUser && finalQtdFama > 0 && !alreadySent;
       if (canSend) {
         const axios = require('axios');
-        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(resolvedUser), quantity: String(resolvedQtd) });
+        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(resolvedUser), quantity: String(finalQtdFama) });
         const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
         const famaData = famaResp.data || {};
         const orderId = famaData.order || famaData.id || null;
@@ -4323,23 +4669,40 @@ app.post('/api/payment/confirm', async (req, res) => {
             await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
           }
         }
-        const alreadyLikes4 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
+        const alreadyLikes4 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
         if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLinkSel && !alreadyLikes4) {
-          const axios = require('axios');
-          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
-          try {
-            const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const dataLikes = respLikes.data || {};
-            const orderIdLikes = dataLikes.order || dataLikes.id || null;
-            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
-          } catch (e3) {
-            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+          const lockUpdate = await col.updateOne(
+            { ...filter, 'fama24h_likes.status': { $exists: false } },
+            { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+          );
+          if (lockUpdate.modifiedCount > 0) {
+              const axios = require('axios');
+              const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
+              try {
+                const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                const dataLikes = respLikes.data || {};
+                const orderIdLikes = dataLikes.order || dataLikes.id || null;
+                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+              } catch (e3) {
+                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty } } });
+              }
           }
         }
       } catch (_) {}
       broadcastPaymentPaid(identifier, correlationID);
       // try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
       try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
+
+      
+      // Atualizar status do perfil no banco de validação (isPrivate, etc)
+      if (instaUser) {
+        try {
+          const mockReq = { session: {}, query: {}, body: {} };
+          // Executar em background para não travar o webhook
+          verifyInstagramProfile(instaUser, 'Webhook-Payment', req.ip || '127.0.0.1', mockReq, null)
+            .catch(err => console.error('❌ [webhook] Falha ao atualizar perfil Instagram:', err.message));
+        } catch (_) {}
+      }
     } catch (_) {}
 
     return res.json({ ok: true, updated: upd.matchedCount });
@@ -4391,109 +4754,10 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
 
     try {
       const record = await col.findOne(filter);
-      const alreadySent = record?.fama24h?.orderId ? true : false;
-      const resolvedTipo = tipo || record?.tipo || record?.tipoServico || '';
-      const resolvedQtd = qtd || record?.quantidade || record?.qtd || 0;
-      const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
-      const key = process.env.FAMA24H_API_KEY || '';
-      const serviceId = (/^mistos$/i.test(resolvedTipo)) ? 659 : (/^brasileiros$/i.test(resolvedTipo)) ? 23 : null;
-      const canSend = !!key && !!serviceId && !!resolvedUser && resolvedQtd > 0 && !alreadySent;
-      if (canSend) {
-        const axios = require('axios');
-        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(resolvedUser), quantity: String(resolvedQtd) });
-        const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-        const famaData = famaResp.data || {};
-        const orderId = famaData.order || famaData.id || null;
-        await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: resolvedUser, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
-        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
-        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
-      }
-      // Disparo para FornecedorSocial quando for orgânicos
-      try {
-        const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(resolvedTipo);
-        const additionalInfoMap = record?.additionalInfoMapPaid || (Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(record?.additionalInfo) ? record.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
-        const bumpsStr0 = additionalInfoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
-        let upgradeAdd = 0;
-        if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
-          if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && Number(resolvedQtd) === 1000) upgradeAdd = 1000; else {
-            const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
-            upgradeAdd = map[Number(resolvedQtd)] || 0;
-          }
-        }
-        const finalQtd = Math.max(0, Number(resolvedQtd) + Number(upgradeAdd));
-        const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
-        if (/organicos/i.test(resolvedTipo) && !!resolvedUser && finalQtd > 0 && !alreadySentFS) {
-          const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-          const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
-          if (!!keyFS) {
-            const axios = require('axios');
-            const linkFS = (/^https?:\/\//i.test(String(resolvedUser))) ? String(resolvedUser) : `https://instagram.com/${String(resolvedUser)}`;
-            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(finalQtd) });
-            try {
-              const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-              const dataFS = respFS.data || {};
-              const orderIdFS = dataFS.order || dataFS.id || null;
-              await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkFS, quantity: finalQtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
-              try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
-            } catch(_) {}
-          }
-        }
-      } catch(_) {}
-      try {
-        const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
-        const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-        const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
-        let viewsQty = 0;
-        let likesQty = 0;
-        if (typeof bumpsStr === 'string' && bumpsStr) {
-          const parts = bumpsStr.split(';');
-          const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
-          const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
-          if (vPart) {
-            const num = Number(vPart.split(':')[1]);
-            if (!Number.isNaN(num) && num > 0) viewsQty = num;
-          }
-          if (lPart) {
-            const numL = Number(lPart.split(':')[1]);
-            if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
-          }
-        }
-        const sanitizeLink2 = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
-        const selectedFor3 = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
-        const selViews3 = selectedFor3 && selectedFor3.views && selectedFor3.views.link ? String(selectedFor3.views.link) : '';
-        const selLikes3 = selectedFor3 && selectedFor3.likes && selectedFor3.likes.link ? String(selectedFor3.likes.link) : '';
-        const viewsLink2 = sanitizeLink2(selViews3 || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
-        const likesLink2 = sanitizeLink2(selLikes3 || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');
-        if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && viewsLink2) {
-          const axios = require('axios');
-          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink2), quantity: String(viewsQty) });
-          try {
-            const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const dataViews = respViews.data || {};
-            const orderIdViews = dataViews.order || dataViews.id || null;
-            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink2, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-          } catch (e2) {
-            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink2, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-          }
-        }
-        const alreadyLikes5 = !!(record && record.fama24h_likes && record.fama24h_likes.orderId);
-        if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLink2 && !alreadyLikes5) {
-          const axios = require('axios');
-          const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink2), quantity: String(likesQty) });
-          try {
-            const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const dataLikes = respLikes.data || {};
-            const orderIdLikes = dataLikes.order || dataLikes.id || null;
-            await col.updateOne(filter, { $set: { fama24h_likes: { orderId: orderIdLikes, status: orderIdLikes ? 'created' : 'unknown', requestPayload: { service: 666, link: likesLink2, quantity: likesQty }, response: dataLikes, requestedAt: new Date().toISOString() } } });
-          } catch (e3) {
-            await col.updateOne(filter, { $set: { fama24h_likes: { error: e3?.response?.data || e3?.message || String(e3), requestPayload: { service: 666, link: likesLink2, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
-          }
-        }
-      } catch (_) {}
-      broadcastPaymentPaid(identifier, correlationID);
-      // try { await trackMetaPurchaseForOrder(identifier, correlationID, req); } catch(_) {}
-      try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
-    } catch (_) {}
+      await processOrderFulfillment(record, col, req);
+    } catch (e) {
+      console.error('Error processing fulfillment in payment/confirm:', e);
+    }
 
     return res.json({ ok: true, updated: upd.matchedCount });
   } catch (e) {

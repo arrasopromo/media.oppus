@@ -219,7 +219,10 @@
   function getAllowedQuantities(tipo) {
     const without50 = [150, 500, 1000, 3000, 5000, 10000];
     const base = [50, 150, 500, 1000, 3000, 5000, 10000];
-    if (tipo === 'mistos' || tipo === 'seguidores_tiktok') {
+    if (tipo === 'mistos') {
+      return base;
+    }
+    if (tipo === 'seguidores_tiktok') {
       return without50;
     }
     if (tipo === 'brasileiros' || tipo === 'organicos') {
@@ -1892,7 +1895,8 @@
           { key: 'instagram_username', value: instagramUsernameFinal },
           { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
           { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
-        ]
+        ],
+        profile_is_private: isInstagramPrivate
       };
       try {
         const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
@@ -1908,9 +1912,14 @@
         const likesLink = mapKind('likes');
         const viewsLink = mapKind('views');
         const commentsLink = mapKind('comments');
-        if (likesLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
-        if (viewsLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
-        if (commentsLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+        
+        const hasLikes = promos.some(p => p.key === 'likes');
+        const hasViews = promos.some(p => p.key === 'views');
+        const hasComments = promos.some(p => p.key === 'comments');
+
+        if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
+        if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
+        if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
       } catch(_) {}
 
       // sem envio de links de posts
@@ -2346,14 +2355,14 @@
               ordersBox.textContent = 'Pedido não encontrado.';
             } else {
               try {
-                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
+                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
                 if (oid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
                   window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
                   return;
                 }
               } catch (_) {}
-              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
+              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
               const status = String(o.status || o.woovi?.status || '-');
               const tipo = String(o.tipo || o.tipoServico || '-');
               const qtd = String(o.quantidade || o.qtd || '-');
@@ -2363,7 +2372,7 @@
               if (paid) {
                 try {
                   const d0 = new Date(paid);
-                  const sp = new Date(d0.getTime() - (3*60*60*1000));
+                  const sp = d0;
                   const dd = String(sp.getUTCDate()).padStart(2,'0');
                   const mm = String(sp.getUTCMonth()+1).padStart(2,'0');
                   const yyyy = sp.getUTCFullYear();
@@ -2411,7 +2420,11 @@
               } catch(_) {}
             }
             ordersBox.innerHTML = list.map((o) => {
-              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
+              const providerOid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : null);
+              const functionalOid = providerOid || String(o._id || '');
+              let displayOid = providerOid || '';
+
+
               const status = String(o.status || o.woovi?.status || '-');
               const tipo = String(o.tipo || o.tipoServico || '-');
               const qtd = String(o.quantidade || o.qtd || '-');
@@ -2421,7 +2434,7 @@
               if (paid) {
                 try {
                   const d0 = new Date(paid);
-                  const sp = new Date(d0.getTime() - (3*60*60*1000));
+                  const sp = d0;
                   const dd = String(sp.getUTCDate()).padStart(2,'0');
                   const mm = String(sp.getUTCMonth()+1).padStart(2,'0');
                   const yyyy = sp.getUTCFullYear();
@@ -2441,9 +2454,9 @@
                 <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
                 <div><strong>Instagram:</strong> <span>${user}</span></div>
                 <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
-                <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div><strong>Status do serviço:</strong> <span id="famaStatus_${oid}" class="status-text ${clsF}">${stF}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
+                <div><strong>Número do pedido:</strong> <span>${displayOid}</span></div>
+                <div><strong>Status do serviço:</strong> <span id="famaStatus_${functionalOid}" class="status-text ${clsF}">${stF}</span></div>
+                <div style="margin-top:8px;">${functionalOid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(functionalOid)}">Detalhes do pedido</button>` : ''}</div>
               </div>`;
             }).join('');
           }
@@ -2455,14 +2468,26 @@
     function showClientPage(){ if (clientPage) { clientPage.style.display = 'block'; } }
     function hideClientPage(){ if (clientPage) { clientPage.style.display = 'none'; } }
     if (fetchBtn) {
-      fetchBtn.addEventListener('click', () => { window.location.href = '/cliente'; });
+      fetchBtn.addEventListener('click', (e) => {
+        if (clientPage) {
+          e.preventDefault();
+          showClientPage();
+        } else {
+          window.location.href = '/cliente';
+        }
+      });
     }
     attachPhoneMask(phoneInputPage);
     // Fallback de delegação caso o botão não esteja disponível no momento do carregamento
     document.addEventListener('click', (ev) => {
       const t = ev.target;
       if (t && (t.id === 'clientFetchBtn' || (t.closest && t.closest('#clientFetchBtn')))) {
-        window.location.href = '/cliente';
+        if (clientPage) {
+          ev.preventDefault();
+          showClientPage();
+        } else {
+          window.location.href = '/cliente';
+        }
       }
     });
     if (backBtn) backBtn.addEventListener('click', hideClientPage);
@@ -2477,7 +2502,7 @@
             const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
             const d = await r.json();
             const o = d && d.order ? d.order : null;
-            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '');
+            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
             if (oid) {
               try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
               window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
@@ -2782,40 +2807,6 @@
     phoneEl.addEventListener('focus', ()=>{ showTutorialStep(5); });
     phoneEl.addEventListener('input', ()=>{ showTutorialStep(5); });
   })();
-(function initThemeToggle(){
-  const btn = document.getElementById('themeToggleBtn');
-  if (!btn) return;
-  const applyLabel = () => {
-    const isLight = document.body.classList.contains('theme-light');
-    btn.setAttribute('aria-pressed', String(isLight));
-    const label = btn.querySelector('.theme-label');
-    if (label) label.textContent = isLight ? 'Tema: Escuro' : 'Tema: Claro';
-  };
-  try {
-    document.body.classList.add('theme-light');
-  } catch(_) {}
-  applyLabel();
-  btn.addEventListener('click', () => {
-    const isLight = document.body.classList.contains('theme-light');
-    const next = isLight ? 'dark' : 'light';
-    try { localStorage.setItem('oppus_theme', next); } catch(_) {}
-    document.body.classList.toggle('theme-light', next === 'light');
-    applyLabel();
-  });
-  // Delegação defensiva caso o listener seja perdido
-  document.addEventListener('click', (ev) => {
-    const t = ev.target;
-    if (!t) return;
-    const match = (t.id === 'themeToggleBtn') || (t.closest && t.closest('#themeToggleBtn'));
-    if (match) {
-      const isLight = document.body.classList.contains('theme-light');
-      const next = isLight ? 'dark' : 'light';
-      try { localStorage.setItem('oppus_theme', next); } catch(_) {}
-      document.body.classList.toggle('theme-light', next === 'light');
-      applyLabel();
-    }
-  });
-})();
   
   function showResumoIfAllowed(){
     try {

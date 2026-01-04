@@ -661,12 +661,31 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
 
 /* Mobile: padronizar tamanho dos botões e reduzir fonte da marca */
 @media (max-width: 768px) {
+  .fixed-menu .menu-left {
+    min-width: 0;
+    flex: 1;
+    margin-right: 4px;
+    display: flex;
+    align-items: center;
+  }
+  .fixed-menu .site-logo {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    margin-right: 6px;
+  }
   .fixed-menu .site-brand-text {
-    font-size: 1.05rem;
+    font-size: 0.9rem;
     letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    max-width: 100%;
   }
   .fixed-menu .menu-right {
     gap: 8px;
+    flex-shrink: 0;
   }
   /* Cliente: menor e com borda mais arredondada */
   .fixed-menu .client-btn {
