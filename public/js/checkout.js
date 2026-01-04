@@ -88,7 +88,6 @@
 
   const tabela = {
     mistos: [
-      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 14,90' },
       { q: 500, p: 'R$ 32,90' },
@@ -103,7 +102,6 @@
       { q: 15000, p: 'R$ 399,90' },
     ],
     brasileiros: [
-      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 19,90' },
       { q: 300, p: 'R$ 29,90' },
       { q: 500, p: 'R$ 54,90' },
@@ -118,7 +116,6 @@
       { q: 15000, p: 'R$ 999,90' },
     ],
     organicos: [
-      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 39,90' },
       { q: 300, p: 'R$ 49,90' },
       { q: 500, p: 'R$ 69,90' },
@@ -284,7 +281,7 @@
     }
 
     // Promo específica: organicos 50 -> +50 (total 100) para teste
-    if (tipo === 'organicos' && Number(baseQtd) === 50) {
+    /* if (tipo === 'organicos' && Number(baseQtd) === 50) {
       const addQtd = 50;
       const diffStr = findPrice('organicos', 50) || 'R$ 0,10';
       if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para 100.`;
@@ -293,7 +290,7 @@
       if (upNew) upNew.textContent = diffStr;
       if (upDisc) upDisc.textContent = 'OFERTA';
       return;
-    }
+    } */
 
     // Upgrade genérico para demais pacotes
     const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
