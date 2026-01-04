@@ -615,17 +615,21 @@ html, body { overflow-x: hidden; }
     box-shadow: none !important;
     padding: 0;
   }
-  /* Mobile + Tema CLARO: botão Cliente escuro */
+  /* Mobile + Tema CLARO: botão Cliente gradient */
    body.theme-light .fixed-menu .client-btn {
-     background: #0f172a;
+     background: var(--instagram-gradient);
      color: #ffffff;
-     border-color: #0f172a;
+     border: none !important;
+     box-shadow: none !important;
+     outline: none !important;
    }
-   /* Mobile + Tema ESCURO: botão Cliente claro */
+   /* Mobile + Tema ESCURO: botão Cliente gradient */
    body:not(.theme-light) .fixed-menu .client-btn {
-     background: #ffffff;
-     color: #0f172a;
-     border-color: var(--border-color);
+     background: var(--instagram-gradient);
+     color: #ffffff;
+     border: none !important;
+     box-shadow: none !important;
+     outline: none !important;
    }
    /* Mobile: reduzir padding-top para aproximar conteúdo do topo */
    body.has-fixed-menu { padding-top: 52px; }
@@ -633,8 +637,8 @@ html, body { overflow-x: hidden; }
 /* Tema claro: deixar theme-toggle e client-btn com paleta escura para combinar com toasts */
 body.theme-light .theme-toggle { background: #0f172a; color: #ffffff; border-color: #0f172a; }
 body.theme-light .theme-toggle:hover { border-color: #6B46C1; }
-body.theme-light .client-btn { background: #0f172a; color: #ffffff; border-color: #0f172a; }
-body.theme-light .client-btn:hover { border-color: #6B46C1; }
+body.theme-light .client-btn { background: var(--instagram-gradient); color: #ffffff; border: none !important; }
+body.theme-light .client-btn:hover { border: none !important; }
 
 /* Menu fixo no topo */
 .fixed-menu {
@@ -697,6 +701,9 @@ body.theme-light .client-btn:hover { border-color: #6B46C1; }
     align-items: center;
     justify-content: center;
     font-size: 0.9rem;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
   /* Toggle de tema: mantém dimensões padrão */
   .fixed-menu .theme-toggle {
