@@ -2596,6 +2596,8 @@
   const commentsBtn = document.getElementById('commentsExampleBtn');
   const commentsCloseBtn = document.getElementById('commentsExampleCloseBtn');
   const commentsCloseBtn2 = document.getElementById('commentsExampleCloseBtn2');
+  const commentsVideo = document.getElementById('commentsVideoPlayer');
+
   if (commentsBtn && commentsModal) {
     commentsBtn.addEventListener('click', function(e){
       try { e.stopPropagation(); } catch(_) {}
@@ -2607,16 +2609,60 @@
         }
       } catch(_) {}
       commentsModal.style.display = 'flex';
+      if (commentsVideo) {
+        commentsVideo.currentTime = 0;
+        try { commentsVideo.play(); } catch(e) { console.log('Video play failed', e); }
+      }
     });
   }
+  function closeCommentsModal() {
+    if (commentsModal) commentsModal.style.display = 'none';
+    if (commentsVideo) commentsVideo.pause();
+  }
   if (commentsCloseBtn && commentsModal) {
-    commentsCloseBtn.addEventListener('click', function(){ commentsModal.style.display = 'none'; });
+    commentsCloseBtn.addEventListener('click', closeCommentsModal);
   }
   if (commentsCloseBtn2 && commentsModal) {
-    commentsCloseBtn2.addEventListener('click', function(){ commentsModal.style.display = 'none'; });
+    commentsCloseBtn2.addEventListener('click', closeCommentsModal);
   }
   if (commentsModal) {
-    commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { commentsModal.style.display = 'none'; } });
+    commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { closeCommentsModal(); } });
+  }
+
+  // Novo modal: Explicação da Ferramenta
+  const toolModal = document.getElementById('toolExplanationModal');
+  const toolBtn = document.getElementById('toolExplanationBtn');
+  const toolCloseBtn = document.getElementById('toolExplanationCloseBtn');
+  const toolCloseBtn2 = document.getElementById('toolExplanationCloseBtn2');
+  const toolVideo = document.getElementById('toolVideoPlayer');
+
+  if (toolBtn && toolModal) {
+    toolBtn.addEventListener('click', function(e){
+      try { e.stopPropagation(); } catch(_) {}
+      try {
+        if (toolModal.parentNode !== document.body) {
+          document.body.appendChild(toolModal);
+        }
+      } catch(_) {}
+      toolModal.style.display = 'flex';
+      if (toolVideo) {
+        toolVideo.currentTime = 0;
+        try { toolVideo.play(); } catch(e) { console.log('Video play failed', e); }
+      }
+    });
+  }
+  function closeToolModal() {
+    if (toolModal) toolModal.style.display = 'none';
+    if (toolVideo) toolVideo.pause();
+  }
+  if (toolCloseBtn && toolModal) {
+    toolCloseBtn.addEventListener('click', closeToolModal);
+  }
+  if (toolCloseBtn2 && toolModal) {
+    toolCloseBtn2.addEventListener('click', closeToolModal);
+  }
+  if (toolModal) {
+    toolModal.addEventListener('click', function(e){ if (e.target === toolModal) { closeToolModal(); } });
   }
   })();
   (function initSaleToasts(){
@@ -2918,22 +2964,8 @@
       window.addEventListener('orientationchange', apply);
     } catch(_) {}
   })();
-  (function initFaqMover(){
-    const isCheckout = !!document.querySelector('.checkout-page');
-    if (!isCheckout) return;
-    let moved = false;
-    function move(){
-      if (moved) return;
-      const faq = document.getElementById('faqSection');
-      const grid = document.querySelector('.cards-grid.checkout-grid');
-      if (!faq || !grid) return;
-      try { grid.appendChild(faq); moved = true; } catch(_) {}
-    }
-    document.addEventListener('click', function(){ move(); });
-    window.addEventListener('scroll', function(){ if (!moved && (window.scrollY || document.documentElement.scrollTop || 0) > 100) { move(); } }, { passive: true });
-    const tipoSel = document.getElementById('tipoSelect');
-    if (tipoSel) tipoSel.addEventListener('change', function(){ move(); });
-  })();
+  /* initFaqMover disabled */
+  /* (function initFaqMover(){ ... })(); */
   (function initFaqAccordion(){
     const faq = document.getElementById('faqSection');
     if (!faq) return;

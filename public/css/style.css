@@ -1332,8 +1332,14 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
  .faq-card.open .faq-toggle { transform: rotate(180deg); }
  .faq-answer { color: var(--text-secondary); font-size: 1rem; line-height: 1.5; }
  .faq-card.open .faq-answer { display: block; }
- #faqSection .testimonials-title { font-size: calc(1rem + 11px); font-family: var(--font-family); font-weight: 700; }
- #faqSection { margin-top: 350px; font-family: var(--font-family); }
- @media (min-width: 1024px) { #faqSection { max-width: 600px; margin: 350px auto 0; } }
- .faq-label { font-size: 1.05rem; }
+ #faqSection .testimonials-title { font-size: calc(1rem + 11px); font-family: var(--font-family); font-weight: 700; width: 100%; box-sizing: border-box; padding: 0 1rem; word-wrap: break-word; }
+#faqSection { margin-top: 3rem; font-family: var(--font-family); width: 100%; box-sizing: border-box; }
+@media (min-width: 1024px) { #faqSection { max-width: 600px; margin: 5rem auto 0; } }
+@media (max-width: 767px) {
+  #faqSection { margin-top: 3rem; padding: 0 1rem; }
+  .faq-grid { grid-template-columns: 1fr; gap: 0.8rem; }
+  .faq-card { width: 100%; max-width: 100%; }
+  .faq-question { font-weight: 500; }
+}
+.faq-label { font-size: 1.05rem; }
 
