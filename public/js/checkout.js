@@ -69,6 +69,20 @@
   const checkoutFollowersCount = document.getElementById('checkoutFollowersCount');
   const checkoutFollowingCount = document.getElementById('checkoutFollowingCount');
   const checkoutPostsCount = document.getElementById('checkoutPostsCount');
+
+  // Âncora suave para botão "Comprar Seguidores Agora"
+  const buyFollowersBtn = document.getElementById('buyFollowersBtn');
+  if (buyFollowersBtn) {
+    buyFollowersBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      const target = document.getElementById('plataformaCard');
+      if (target) {
+         const rect = target.getBoundingClientRect();
+         const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 120;
+         window.scrollTo({ top, behavior: 'smooth' });
+      }
+    });
+  }
   // Tutoriais sequenciais
   const tutorial1Tipo = document.getElementById('tutorial1Tipo');
   const tutorial2Pacote = document.getElementById('tutorial2Pacote');
