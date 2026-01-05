@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Gerenciamento</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+    .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin-bottom: 20px; }
+    .filters { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+    .filters a { text-decoration: none; padding: 8px 16px; background: #eee; color: #333; border-radius: 4px; }
+    .filters a.active { background: #007bff; color: #fff; }
+    table { width: 1000px; border-collapse: collapse; width: 100%; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background: #f9f9f9; }
+    .total-box { font-size: 1.2em; font-weight: bold; margin-top: 20px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Painel de Gerenciamento de Custos</h1>
+    
+    <div class="filters">
+      <a href="/painel?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="/painel?period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+      <a href="/painel?period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+      <a href="/painel?period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      <a href="/painel?period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
+    </div>
+
+    <div class="total-box">
+      Total de Vendas: R$ <%= totalRevenue.toFixed(2).replace('.', ',') %>
+      <br>
+      Custo Total no Período: R$ <%= totalCost.toFixed(2).replace('.', ',') %>
+      <br>
+      Total de Transações: <%= totalTransactions %>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Data (SP)</th>
+          <th>Serviço</th>
+          <th>Qtd</th>
+          <th>Custo/1k</th>
+          <th>Taxa</th>
+          <th>Total Item</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% orders.forEach(order => { %>
+          <% 
+             // Convert date to SP string for display
+             // order.createdAt is usually ISO string or Date object
+             let d;
+             if (order.createdAt instanceof Date) {
+                d = new Date(order.createdAt);
+             } else {
+                d = new Date(order.createdAt || new Date());
+             }
+             // Apply offset manually to get SP hours
+             d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+             
+             const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
+                             (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
+                             d.getUTCFullYear() + ' ' + 
+                             d.getUTCHours().toString().padStart(2, '0') + ':' + 
+                             d.getUTCMinutes().toString().padStart(2, '0');
+          %>
+          <tr>
+            <td><%= dateStr %></td>
+            <td><%= order.type %></td>
+            <td><%= order.qty %></td>
+            <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
+            <td>R$ 0,85</td>
+            <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

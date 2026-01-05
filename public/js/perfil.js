@@ -190,12 +190,20 @@ async function checkProfile() {
     clearProfileState();
     checkButton.disabled = true;
     try {
+        const params = new URLSearchParams(window.location.search);
+        const utms = {
+            source: params.get('utm_source') || '',
+            medium: params.get('utm_medium') || '',
+            campaign: params.get('utm_campaign') || '',
+            term: params.get('utm_term') || '',
+            content: params.get('utm_content') || ''
+        };
         const response = await fetch('/api/check-instagram-profile', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ username })
+            body: JSON.stringify({ username, utms })
         });
         const data = await response.json();
         hideLoading();

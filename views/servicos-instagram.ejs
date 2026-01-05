@@ -49,207 +49,29 @@
 </head>
 <body class="theme-light has-fixed-menu">
   <%- include('partials/menu') %>
-  <script>
-    window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);
-    // Redirecionamento específico para Engajamento -> Instagram
-    document.addEventListener('DOMContentLoaded', function() {
-      if (window.__ENG_MODE__) {
-        var toggle = document.querySelector('.platform-toggle');
-        if (toggle) {
-          toggle.addEventListener('click', function(e) {
-            var target = e.target.closest('.platform-btn');
-            if (target && target.classList.contains('instagram')) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
-              window.location.href = '/servicos-instagram';
-            }
-          }, true); // Captura o evento antes que outros scripts o processem
-        }
-      }
-    });
-  </script>
+  <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
   <div class="container checkout-page">
-    <header class="header">
-      <div id="headerTicker" class="header-ticker" aria-live="polite">
-        <span class="ticker-item enter">Empresa regularizada</span>
-      </div>
-      <h1 class="title">Cresça o seu perfil Instagram</h1>
-      <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com seguidores que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
-      <div id="clientTools" class="client-tools" style="display:none;"></div>
-    </header>
-
-
-
+    
     <main class="main-content">
       <section class="section-block">
         <div class="cards-grid checkout-grid">
-          <div class="service-card" id="audioCard">
-            <div class="card-content">
-              <h3 class="card-title">Guia de áudio</h3>
-              <div class="card-desc">
-                  <div class="audio-player">
-                  <audio id="guideAudio" class="audio-element" preload="none" src="/images/audio%20site.MP3"></audio>
-                  <div class="audio-controls">
-                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" data-tip-mode="manual" data-tip-top="50" data-tip-left="" data-tip-arrow-left="">
-                      <div class="tutorial-pop-step">1/5</div>
-                      <div class="tutorial-pop-text">Ouça o áudio primeiro</div>
-                    </div>
-                    <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
-                    <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
-                  <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
-                  </div>
-                  <div class="audio-speed-row">
-                    <button type="button" id="audioSpeed15x" class="audio-speed-btn">1.5x</button>
-                    <button type="button" id="audioSpeed2x" class="audio-speed-btn">2x</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="service-card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
-            <div class="card-content" style="display:flex; justify-content:center; align-items:center; text-align:center;">
-              <a href="#plataformaCard" id="buyFollowersBtn" class="continue-button" style="display:inline-flex; justify-content:center; align-items:center; text-align:center; margin:34px auto 0;">
-                <span class="button-text">COMPRAR SEGUIDORES AGORA</span>
-              </a>
-              <div class="value-props">
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" />
-                    <div class="value-prop-metric">+3</div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">anos de operação</span><span class="caption-mobile">anos de<br>operação</span></div>
-                </div>
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" />
-                    <div class="value-prop-metric">+2</div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
-                </div>
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" />
-                    <div class="value-prop-metric">R$<span class="value-prop-arrow">↓</span></div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">melhores preços do mercado</span><span class="caption-mobile">melhores<br>preços do<br>mercado</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="testimonials-section" id="depoimentosCard" style="display: flex; flex-direction: column; align-items: center;">
-            <div class="why-us-pill">O que as pessoas estão falando?</div>
-            <h2 class="why-us-title">Veja depoimentos de quem <span class="why-us-gradient-text">comprou conosco</span></h2>
-            <p class="why-us-subtitle" style="margin-bottom: 1.5rem;">Junte-se a milhares de clientes satisfeitos que impulsionaram suas redes sociais.</p>
-            <div id="testimonialsCarousel" class="testimonials-carousel">
-              <button type="button" class="carousel-btn prev" aria-label="Anterior">‹</button>
-              <div class="carousel-viewport">
-              <div class="carousel-track">
-                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" /></div>
-                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" /></div>
-                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" /></div>
-              </div>
-              </div>
-              <button type="button" class="carousel-btn next" aria-label="Próximo">›</button>
-            </div>
-          </div>
-
-          <div class="why-choose-us-section">
-            <div class="why-us-pill">Por que escolher a Agência Oppus?</div>
-            <h2 class="why-us-title">Sabemos o que está <span class="why-us-gradient-text">funcionando</span></h2>
-            <p class="why-us-subtitle">Nossa metodologia comprovada entrega crescimento sustentável para sua presença digital</p>
-            <div class="why-us-slider-container">
-              <div class="why-us-track" id="whyUsTrack">
-                <div class="why-us-card">
-                  <div class="why-us-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M12 16V12M12 8H12.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </div>
-                  <h3>100% Seguro</h3>
-                  <p>Sem riscos de banimento. Metodologia aprovada pelos algoritmos das plataformas.</p>
-                </div>
-                <div class="why-us-card">
-                  <div class="why-us-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M16 21V19C16 17.9391 15.5786 16.9217 14.8284 16.1716C14.0783 15.4214 13.0609 15 12 15C10.9391 15 9.92172 15.4214 9.17157 16.1716C8.42143 16.9217 8 17.9391 8 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M12 13C13.6569 13 15 11.6569 15 10C15 8.34315 13.6569 7 12 7C10.3431 7 9 8.34315 9 10C9 11.6569 10.3431 13 12 13Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M4 7C4 9.20914 5.79086 11 8 11H16C18.2091 11 20 9.20914 20 7C20 4.79086 18.2091 3 16 3H8C5.79086 3 4 4.79086 4 7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </div>
-                  <h3>Seguidores Reais</h3>
-                  <p>Trabalhamos com pacote de seguidores brasileiros reais e ativos</p>
-                </div>
-                <div class="why-us-card">
-                  <div class="why-us-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M18.5 11.5L12 5L5.5 11.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M12 12.5V19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </div>
-                  <h3>Entrega Rápida</h3>
-                  <p>Pacotes com resultados visiveis em até 5 minutos com crescimento de autoridade rápido</p>
-                </div>
-                <div class="why-us-card">
-                  <div class="why-us-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </div>
-                  <h3>Ferramenta Exclusiva</h3>
-                  <p>Ferramenta de reposição de seguidores perdido, exclusiva da Agência Oppus</p>
-                </div>
-                <div class="why-us-card">
-                  <div class="why-us-icon-box">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <line x1="12" y1="22.08" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </div>
-                  <h3>Integrações únicas</h3>
-                  <p>Sistema de integrações únicas que permite escolhas de estratégias mais dinâmicas como seleção de post e mais</p>
-                </div>
-              </div>
-              <div class="why-us-dots">
-                <div class="why-us-dot active" data-index="0"></div>
-                <div class="why-us-dot" data-index="1"></div>
-                <div class="why-us-dot" data-index="2"></div>
-                <div class="why-us-dot" data-index="3"></div>
-                <div class="why-us-dot" data-index="4"></div>
-              </div>
-            </div>
-          </div>
           
-          <!-- Toggle de plataforma: colocar antes dos cards de seguidores -->
-          <div class="service-card" id="plataformaCard">
+          <!-- Toggle de plataforma (Oculto, apenas para manter a lógica do JS funcionando) -->
+          <div class="service-card" id="plataformaCard" style="display:none;">
             <div class="card-content">
               <h3 class="card-title">Plataforma</h3>
               <div class="card-desc">
-                  <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
-                  <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
+                  <div class="platform-toggle" aria-label="Selecionar plataforma">
                   <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                      <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
-                    </svg>
                     <span>Instagram</span>
                   </button>
                   <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                      <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
-                    </svg>
                     <span>TikTok</span>
                   </button>
-                  <div id="tutorialPlatform" class="tutorial-pop tutorial-pop-input" style="display:block;">
-                    <div class="tutorial-pop-step">2/5</div>
-                    <div class="tutorial-pop-text">Escolha a rede social</div>
-                  </div>
                 </div>
               </div>
             </div>
           </div>
-
 
           <!-- Desktop: seleção por cards de tipo -->
           <div id="tipoCards" class="option-cards" style="display:none;"></div>
@@ -500,16 +322,7 @@
       </section>
       <section class="section-block">
         <div class="checkout-container" style="display: flex; flex-direction: column;">
-          <div class="why-choose-us-section" style="margin-top: 10rem;">
-            <div class="why-us-pill">Exclusividade</div>
-            <h2 class="why-us-title">Ferramenta <span class="why-us-gradient-text">Exclusiva</span></h2>
-            <p class="why-us-subtitle">Conheça nossa tecnologia exclusiva de reposição automática de seguidores.</p>
-            <div class="why-us-image-container">
-              <img src="/images/refil%20(1).png" alt="Ferramenta de Reposição" style="width: 100%; max-width: 500px !important; display: block; margin: 0 auto;" />
-            </div>
-            <!-- <button id="toolExplanationBtn" class="continue-button" type="button" style="margin-top: 1rem; padding: 0.5rem 1.5rem;">Entenda mais</button> -->
-          </div>
-
+          
           <div id="faqSection" class="faq-section">
             <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 0.5rem;">Perguntas frequentes</h3>
             <div class="faq-grid">
@@ -822,5 +635,17 @@
     @media (max-width: 640px) { #postSelectModal.modal-overlay { align-items: flex-start; } #postSelectModal .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } .media-frame { aspect-ratio: 9/16; max-height: 200px; } #postModalGrid.post-grid .inline-msg { font-size: 11px; } }
   </style>
   
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Forçar plataforma Instagram para carregar os cards corretos
+      if (typeof setPlatform === 'function') {
+        setPlatform('instagram');
+      } else {
+        setTimeout(function(){
+          if (typeof setPlatform === 'function') setPlatform('instagram');
+        }, 300);
+      }
+    });
+  </script>
 </body>
 </html>
