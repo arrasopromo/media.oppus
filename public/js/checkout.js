@@ -78,7 +78,9 @@
       const target = document.getElementById('plataformaCard');
       if (target) {
          const rect = target.getBoundingClientRect();
-         const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 120;
+         const isMobile = window.matchMedia('(max-width: 767px)').matches;
+         const offset = isMobile ? 340 : 220;
+         const top = (window.scrollY || window.pageYOffset || 0) + rect.top - offset;
          window.scrollTo({ top, behavior: 'smooth' });
       }
     });
@@ -498,9 +500,11 @@
           if (isMobile) {
             if (perfilCard) perfilCard.style.display = 'block';
             const target = document.getElementById('grupoUsername') || perfilCard;
-            if (target && typeof target.scrollIntoView === 'function') {
-              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
+        if (target) {
+           const rect = target.getBoundingClientRect();
+            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 280;
+            window.scrollTo({ top, behavior: 'smooth' });
+        }
           }
         } catch(_) {}
       });
@@ -749,7 +753,13 @@
       try { e.preventDefault(); } catch(_) {}
       try {
         const targetPlat = document.getElementById('plataformaCard');
-        if (targetPlat && typeof targetPlat.scrollIntoView === 'function') targetPlat.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (targetPlat) {
+          const rect = targetPlat.getBoundingClientRect();
+          const isMobile = window.matchMedia('(max-width: 767px)').matches;
+          const offset = isMobile ? 340 : 220;
+          const top = (window.scrollY || window.pageYOffset || 0) + rect.top - offset;
+          window.scrollTo({ top, behavior: 'smooth' });
+        }
         showTutorialStep(2);
         const tutorialPlatform = document.getElementById('tutorialPlatform');
         if (tutorialPlatform) tutorialPlatform.style.display = 'block';
@@ -1231,7 +1241,8 @@
         if (target) {
           try {
              const rect = target.getBoundingClientRect();
-             const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 120; // Offset para não descer muito
+             const offset = 340;
+             const top = (window.scrollY || window.pageYOffset || 0) + rect.top - offset;
              window.scrollTo({ top, behavior: 'smooth' });
           } catch(_) {
              if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
