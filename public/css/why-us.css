@@ -232,8 +232,10 @@ body.theme-light .why-us-card {
         overflow: hidden; /* Prevent horizontal scroll on the section itself */
         width: 100%;
         margin-top: 1.5rem; /* Reduced margin between testimonials and this section title on mobile */
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
     }
     .why-us-image-container {
-        max-width: 450px; /* Increased image size on mobile */
+        max-width: 100%; /* Increased image size on mobile */
     }
 }

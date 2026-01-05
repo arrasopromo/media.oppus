@@ -1336,7 +1336,7 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
 #faqSection { margin-top: 3rem; font-family: var(--font-family); width: 100%; box-sizing: border-box; }
 @media (min-width: 1024px) { #faqSection { max-width: 600px; margin: 5rem auto 0; } }
 @media (max-width: 767px) {
-  #faqSection { margin-top: 3rem; padding: 0 1rem; }
+  #faqSection { margin-top: 3rem; padding: 0 0.25rem; }
   .faq-grid { grid-template-columns: 1fr; gap: 0.8rem; }
   .faq-card { width: 100%; max-width: 100%; }
   .faq-question { font-weight: 500; }

@@ -1214,8 +1214,14 @@
       if (isMobile) {
         if (perfilCard) perfilCard.style.display = 'block';
         const target = document.getElementById('grupoUsername') || perfilCard;
-        if (target && typeof target.scrollIntoView === 'function') {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (target) {
+          try {
+             const rect = target.getBoundingClientRect();
+             const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 120; // Offset para não descer muito
+             window.scrollTo({ top, behavior: 'smooth' });
+          } catch(_) {
+             if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
         }
       }
     } catch(_) {}
