@@ -316,6 +316,13 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
     //     return cached;
     // }
 
+    // Re-enable caching for performance
+    const cached = getCachedProfile(username);
+    if (cached) {
+        console.log(`✅ Perfil @${username} retornado do cache`);
+        return cached;
+    }
+
     let selectedProfile = null;
     let attempts = 0;
     const MAX_ATTEMPTS = cookieProfiles.length * 2; // Definir MAX_ATTEMPTS aqui
@@ -399,7 +406,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             const response = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
                 headers: headers,
                 httpsAgent: proxyAgent,
-                timeout: 8000
+                timeout: 5000 // Reduced from 8000 to 5000 to failover faster
             });
 
             console.log(`📡 Resposta recebida: ${response.status}`);
@@ -513,23 +520,26 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     const localImageUrl = await downloadAndServeImage(originalImageUrl, user.username, proxyAgent);
                     driveImageUrl = localImageUrl || originalImageUrl;
 
-                    // Upload opcional ao Google Drive (se configurado), sem afetar a URL usada
+                    // Upload opcional ao Google Drive (se configurado), sem afetar a URL usada (NON-BLOCKING)
                     if (driveManager.isReady()) {
-                        try {
-                            const imageResponse = await axios.get(originalImageUrl, {
-                                responseType: 'arraybuffer',
-                                timeout: 10000
-                            });
-                            const fileName = `${user.username}_profile_${Date.now()}.jpg`;
-                            await driveManager.uploadBuffer(
-                                imageResponse.data,
-                                fileName,
-                                'image/jpeg',
-                                driveManager.profileImagesFolderId
-                            );
-                        } catch (driveErr) {
-                            console.warn('Falha ao enviar imagem ao Google Drive:', driveErr.message);
-                        }
+                        axios.get(originalImageUrl, {
+                            responseType: 'arraybuffer',
+                            timeout: 10000
+                        }).then(async (imageResponse) => {
+                            try {
+                                const fileName = `${user.username}_profile_${Date.now()}.jpg`;
+                                await driveManager.uploadBuffer(
+                                    imageResponse.data,
+                                    fileName,
+                                    'image/jpeg',
+                                    driveManager.profileImagesFolderId
+                                );
+                            } catch (driveErr) {
+                                console.warn('Falha ao enviar imagem ao Google Drive (async):', driveErr.message);
+                            }
+                        }).catch(err => {
+                            // Ignorar erros de download async
+                        });
                     }
                 } catch (error) {
                     // Em caso de erro ao baixar, usar URL original do Instagram
@@ -549,46 +559,54 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
             console.log(`✅ Perfil verificado com sucesso: @${user.username} (Cookie ID: ${selectedProfile.ds_user_id})`);
 
-            try {
-                const linkId = req.session.linkSlug || req.query.id || req.body.id;
-                if (linkId) {
-                    const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
-                    if (result.success) {
-                        const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
-                        if (row) {
-                            const fingerprint = generateFingerprint(ip, userAgent);
-                            const updateData = {
-                                'user-agent': fingerprint,
-                                'ip': ip,
-                                'instauser': user.username,
-                                'statushttp': '200',
-                                'teste': ''
-                            };
-                            await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
-                            console.log(`📊 Linha do Baserow atualizada para link=${linkId}, id=${row.id}`);
-                        } else {
-                            // Fallback: criar nova linha (não deve acontecer normalmente)
-                            console.warn(`⚠️ Nenhuma linha encontrada para link=${linkId}. Criando nova linha como fallback.`);
-                            const fingerprint = generateFingerprint(ip, userAgent);
-                            const data = {
-                                'user-agent': fingerprint || '',
-                                'ip': ip || '',
-                                'instauser': user.username || '',
-                                'link': linkId,
-                                'teste': '',
-                                'statushttp': '200',
-                                'criado': new Date().toISOString()
-                            };
-                            await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
+            // Atualização do Baserow em background (NON-BLOCKING)
+            const linkId = req.session.linkSlug || req.query.id || req.body.id;
+            if (linkId) {
+                (async () => {
+                    try {
+                        // Otimização: Filtrar por link no Baserow em vez de baixar tudo
+                        const fieldName = CONTROLE_FIELDS.LINK || 'link';
+                        const filters = {};
+                        filters[`filter__${fieldName}__equal`] = linkId;
+                        filters['user_field_names'] = 'true';
+
+                        const result = await baserowManager.getTableRows(BASEROW_TABLES.CONTROLE, {
+                            filters,
+                            size: 1
+                        });
+
+                        if (result.success) {
+                            const row = result.rows.length > 0 ? result.rows[0] : null;
+                            if (row) {
+                                const fingerprint = generateFingerprint(ip, userAgent);
+                                const updateData = {
+                                    'user-agent': fingerprint,
+                                    'ip': ip,
+                                    'instauser': user.username,
+                                    'statushttp': '200',
+                                    'teste': ''
+                                };
+                                await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
+                                console.log(`📊 Linha do Baserow atualizada para link=${linkId}, id=${row.id}`);
+                            } else {
+                                // Fallback: criar nova linha
+                                const fingerprint = generateFingerprint(ip, userAgent);
+                                const data = {
+                                    'user-agent': fingerprint || '',
+                                    'ip': ip || '',
+                                    'instauser': user.username || '',
+                                    'link': linkId,
+                                    'teste': '',
+                                    'statushttp': '200',
+                                    'criado': new Date().toISOString()
+                                };
+                                await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
+                            }
                         }
-                    } else {
-                        console.error('❌ Erro ao buscar linhas do Baserow:', result.error);
+                    } catch (err) {
+                        console.error('❌ Erro background Baserow:', err.message);
                     }
-                } else {
-                    console.warn('⚠️ Nenhum linkId encontrado na sessão ou request. Não foi possível atualizar o Baserow.');
-                }
-            } catch (baserowError) {
-                console.error('❌ Erro ao atualizar/salvar no Baserow:', baserowError);
+                })();
             }
 
             try {
@@ -770,7 +788,22 @@ function mapControleData(data) {
 // Verificar se usuário já existe na tabela controle
 async function checkUserInControle(userAgent, ip, instauser) {
     try {
-        const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
+        // Otimização: Filtrar por instauser no Baserow
+        const fieldName = CONTROLE_FIELDS.INSTAUSER || 'instauser';
+        const filters = {};
+        if (instauser) {
+            filters[`filter__${fieldName}__equal`] = instauser;
+        } else {
+            // Se não tiver instauser, tentar por IP
+             const ipField = CONTROLE_FIELDS.IP || 'ip';
+             filters[`filter__${ipField}__equal`] = ip;
+        }
+        filters['user_field_names'] = 'true';
+
+        const result = await baserowManager.getTableRows(BASEROW_TABLES.CONTROLE, {
+            filters,
+            size: 20 // Um pouco maior pois pode haver vários checks do mesmo user/ip
+        });
         
         if (!result.success) {
             console.error("Erro ao buscar linhas da tabela controle:", result.error);
@@ -860,24 +893,32 @@ async function updateTesteStatus(recordId, testeStatus) {
 async function checkInstauserExists(instauser) {
     try {
         console.log(`🔍 Verificando se instauser '${instauser}' já foi usado...`);
-        const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
+        // Otimização: Usar filtro do Baserow em vez de baixar tudo
+        // Assumindo que o campo se chama 'instauser' ou o valor de CONTROLE_FIELDS.INSTAUSER
+        const fieldName = CONTROLE_FIELDS.INSTAUSER || 'instauser';
+        const filters = {};
+        filters[`filter__${fieldName}__equal`] = instauser;
+        filters['user_field_names'] = 'true'; // Garantir uso de nomes de campo
+
+        const result = await baserowManager.getTableRows(BASEROW_TABLES.CONTROLE, {
+            filters,
+            size: 5 // Pegar alguns para garantir
+        });
+
         if (!result.success) {
-            console.error("❌ Erro ao buscar linhas:", result.error);
-            return false; // Em caso de erro, permitir continuar
+            console.error("❌ Erro ao buscar linhas (checkInstauserExists):", result.error);
+            return false;
         }
-        // Verificar se alguma linha tem o mesmo instauser E teste === 'OK'
+
+        // Verificar se alguma linha retornada tem teste === 'OK'
         const existingUser = result.rows.find(row => {
-            const iu = row[CONTROLE_FIELDS.INSTAUSER];
-            return (iu && iu.toLowerCase() === instauser.toLowerCase());
+            const testeValue = row[CONTROLE_FIELDS.TESTE];
+            return testeValue === 'OK';
         });
         
         if (existingUser) {
-            // Verificar se o teste está como 'OK'
-            const testeValue = existingUser[CONTROLE_FIELDS.TESTE];
-            if (testeValue === 'OK') {
-                console.log(`❌ Instauser '${instauser}' já foi usado na linha ${existingUser.id} (teste=OK)`);
-                return true;
-            }
+            console.log(`❌ Instauser '${instauser}' já foi usado na linha ${existingUser.id} (teste=OK)`);
+            return true;
         }
         console.log(`✅ Instauser '${instauser}' está disponível`);
         return false;
@@ -890,22 +931,34 @@ async function checkInstauserExists(instauser) {
 // Função para atualizar o campo 'teste' para 'OK' na linha correta do Baserow
 async function updateBaserowTesteStatus(instauser) {
   try {
-    // Buscar a linha pelo instauser usando o baserowManager
-    const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
+    // Buscar a linha pelo instauser usando filtro
+    const fieldName = CONTROLE_FIELDS.INSTAUSER || 'instauser';
+    const filters = {};
+    filters[`filter__${fieldName}__equal`] = instauser;
+    filters['user_field_names'] = 'true';
+
+    const result = await baserowManager.getTableRows(BASEROW_TABLES.CONTROLE, {
+        filters,
+        order_by: '-id', // Tentar pegar o mais recente pelo ID (assumindo auto-increment ou cronológico)
+        size: 5
+    });
+
     if (!result.success) {
       console.error('Erro ao buscar linhas do Baserow:', result.error);
       return;
     }
     
-    // Encontrar a linha mais recente pelo instauser (última linha criada)
+    // Encontrar a linha mais recente pelo instauser (primeira do array pois ordenamos por -id)
+    // Se order_by não funcionar como esperado, filtramos em memória
     const matchingRows = result.rows.filter(r => 
       (r.instauser && r.instauser.toLowerCase() === instauser.toLowerCase())
     );
     
     console.log(`🔍 Encontradas ${matchingRows.length} linhas para instauser: ${instauser}`);
     
-    // Pegar a linha mais recente (última criada)
-    const row = matchingRows[matchingRows.length - 1];
+    // Pegar a linha mais recente (primeira da lista filtrada se a API ordenou, ou sort manual)
+    // Baserow retorna na ordem pedida.
+    const row = matchingRows[0];
     
     if (row) {
       console.log(`📋 Linha encontrada: ID ${row.id}, instauser: ${row.instauser}, teste atual: ${row.teste}`);
@@ -1665,7 +1718,7 @@ app.get('/checkout', (req, res) => {
 // Página Engajamento (duplicada da checkout até plataforma)
 app.get('/engajamento', (req, res) => {
   console.log('📈 Acessando rota /engajamento');
-  res.render('engajamento', {}, (err, html) => {
+  res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
       return res.status(500).send('Erro ao renderizar engajamento');
@@ -1682,6 +1735,19 @@ app.get('/servicos', (req, res) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos:', err.message);
       return res.status(500).send('Erro ao renderizar serviços');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+// Página Serviços Instagram (cópia do checkout)
+app.get('/servicos-instagram', (req, res) => {
+  console.log('📸 Acessando rota /servicos-instagram');
+  res.render('servicos-instagram', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar servicos-instagram:', err.message);
+      return res.status(500).send('Erro ao renderizar servicos-instagram');
     }
     res.type('text/html');
     res.send(html);
@@ -2334,7 +2400,10 @@ app.get('/:slug', async (req, res, next) => {
         return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' });
     }
     if (slug === 'engajamento') {
-        return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+        return res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+    }
+    if (slug === 'servicos-instagram') {
+        return res.render('servicos-instagram', { PIXEL_ID: process.env.PIXEL_ID || '' });
     }
     if (slug === 'servicos') {
         return res.render('servicos');
@@ -2541,7 +2610,7 @@ app.post("/api/check-privacy", async (req, res) => {
 
 // API para verificar perfil do Instagram (usando API interna)
 app.post("/api/check-instagram-profile", async (req, res) => {
-    const { username } = req.body;
+    const { username, utms } = req.body;
     const userAgent = req.get("User-Agent") || "";
     const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
 
@@ -2555,7 +2624,14 @@ app.post("/api/check-instagram-profile", async (req, res) => {
     // Pré-registro idempotente antes de qualquer retorno 409
     try {
       const vuPreAlways = await getCollection('validated_insta_users');
-      const preDocAlways = { username: String(username).trim().toLowerCase(), ip: String(ip || ''), userAgent: String(userAgent || ''), source: 'api.check.pre-always', firstSeenAt: new Date().toISOString() };
+      const preDocAlways = { 
+          username: String(username).trim().toLowerCase(), 
+          ip: String(ip || ''), 
+          userAgent: String(userAgent || ''), 
+          source: 'api.check.pre-always', 
+          firstSeenAt: new Date().toISOString(),
+          utms: utms || {}
+      };
       try { await vuPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
     } catch (_) {}
 
@@ -2579,7 +2655,8 @@ app.post("/api/check-instagram-profile", async (req, res) => {
               linkId: req.session ? req.session.linkSlug || null : null,
               ip: String(ip || ''),
               userAgent: String(userAgent || ''),
-              source: 'api.checkInstagramProfile'
+              source: 'api.checkInstagramProfile',
+              utms: utms || {}
             };
             try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
           }
@@ -4487,6 +4564,132 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.get('/painel', async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    // Filter by paid status
+    const query = {
+      $or: [
+        { status: 'pago' },
+        { 'woovi.status': 'pago' }
+      ]
+    };
+
+    const orders = await col.find(query).sort({ createdAt: -1 }).toArray();
+
+    // Timezone correction (-3 hours) helper
+    // Returns a Date object shifted by -3 hours so that UTC methods return SP components
+    const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
+
+    // Filter logic
+    const period = req.query.period || 'today';
+    const nowUTC = new Date();
+    const nowSP = toSP(nowUTC);
+    
+    // Start of today in SP (00:00 SP time)
+    const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
+
+    let filteredOrders = orders.filter(o => {
+      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      if (!dateStr) return false;
+      
+      const orderDateUTC = new Date(dateStr);
+      const orderDateSP = toSP(orderDateUTC);
+
+      if (period === 'today') {
+        return orderDateSP >= startOfTodaySP;
+      } else if (period === 'last3days') {
+        const start = new Date(startOfTodaySP);
+        start.setUTCDate(start.getUTCDate() - 2); 
+        return orderDateSP >= start;
+      } else if (period === 'last7days') {
+        const start = new Date(startOfTodaySP);
+        start.setUTCDate(start.getUTCDate() - 6);
+        return orderDateSP >= start;
+      } else if (period === 'thismonth') {
+        const start = new Date(startOfTodaySP);
+        start.setUTCDate(1);
+        return orderDateSP >= start;
+      } else if (period === 'lastmonth') {
+        const start = new Date(startOfTodaySP);
+        start.setUTCMonth(start.getUTCMonth() - 1);
+        start.setUTCDate(1);
+        const end = new Date(startOfTodaySP);
+        end.setUTCDate(1);
+        return orderDateSP >= start && orderDateSP < end;
+      }
+      return true;
+    });
+
+    // Cost calculation
+    let totalCost = 0;
+    let totalRevenue = 0;
+    const report = filteredOrders.map(o => {
+      // Determine quantity
+      let qty = 0;
+      if (o.quantidade) qty = Number(o.quantidade);
+      else if (o.qtd) qty = Number(o.qtd);
+      else if (o.additionalInfoPaid) {
+         const qItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i.key === 'quantidade') : null;
+         if (qItem) qty = Number(qItem.value);
+      } else if (o.additionalInfoMap && o.additionalInfoMap.quantidade) {
+          qty = Number(o.additionalInfoMap.quantidade);
+      }
+
+      // Determine type
+      let type = o.tipo || o.tipoServico;
+      if (!type && o.additionalInfoPaid) {
+         const tItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i.key === 'tipo_servico') : null;
+         if (tItem) type = tItem.value;
+      } else if (!type && o.additionalInfoMap && o.additionalInfoMap.tipo_servico) {
+          type = o.additionalInfoMap.tipo_servico;
+      }
+      type = String(type || '').toLowerCase();
+
+      // Determine cost per 1000
+      let costPer1000 = 0;
+      // Per user rules:
+       // mistos=5.40, brasileiros=15.48, organicos=35, curtidas=2, comentarios=0.3, visualizacao=0.01
+       if (type.includes('mistos')) costPer1000 = 5.40;
+       else if (type.includes('brasileiros') && !type.includes('curtidas') && !type.includes('comentarios') && !type.includes('visualiza')) costPer1000 = 15.48;
+       else if (type.includes('organicos')) costPer1000 = 35.0;
+      else if (type.includes('curtidas')) costPer1000 = 2.0;
+      else if (type.includes('comentarios')) costPer1000 = 0.3;
+      else if (type.includes('visualiza')) costPer1000 = 0.01;
+      else if (type.includes('views')) costPer1000 = 0.01; // Alias
+
+      const serviceCost = (qty / 1000) * costPer1000;
+      const totalItemCost = 0.85 + serviceCost;
+      totalCost += totalItemCost;
+
+      // Revenue calculation
+      let revenue = 0;
+      if (o.valueCents) {
+          revenue = Number(o.valueCents) / 100;
+      } else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && o.woovi.paymentMethods.pix.value) {
+          revenue = Number(o.woovi.paymentMethods.pix.value) / 100;
+      }
+      totalRevenue += revenue;
+
+      return {
+        _id: o._id,
+        createdAt: o.createdAt,
+        type,
+        qty,
+        costPer1000,
+        cost: totalItemCost,
+        revenue
+      };
+    });
+
+    res.render('painel', { orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length });
+  } catch (e) {
+    res.status(500).send(e.toString());
+  }
+});
+
 app.listen(port, () => {
   console.log("🗄️ Baserow configurado com sucesso");
   console.log(`Servidor rodando na porta ${port}`);

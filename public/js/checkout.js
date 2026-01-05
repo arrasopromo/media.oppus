@@ -745,6 +745,7 @@
       showTutorialStep(2);
     }
   }
+  window.setPlatform = setPlatform;
 
   (function initBuyFollowersBtn(){
     const btn = document.getElementById('buyFollowersBtn');
@@ -1603,10 +1604,18 @@
     clearProfilePreview();
     showLoadingCheckout();
     try {
+      const params = new URLSearchParams(window.location.search);
+      const utms = {
+          source: params.get('utm_source') || '',
+          medium: params.get('utm_medium') || '',
+          campaign: params.get('utm_campaign') || '',
+          term: params.get('utm_term') || '',
+          content: params.get('utm_content') || ''
+      };
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username })
+        body: JSON.stringify({ username, utms })
       });
       const data = await resp.json();
       hideLoadingCheckout();
@@ -2191,7 +2200,7 @@
       if (window.__ENG_MODE__ && target.classList.contains('instagram')) {
         try { e.preventDefault(); } catch(_) {}
         try { e.stopPropagation(); } catch(_) {}
-        window.location.href = '/servicos';
+        window.location.href = '/servicos-instagram';
         return;
       }
       if (target.classList.contains('instagram')) setPlatform('instagram');
