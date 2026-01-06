@@ -38,6 +38,8 @@ function unlockCookie(cookieId) {
   cookieLocks.delete(cookieId);
 }
 
+
+
 // Dispatcher de serviços pendentes (organicos -> Fornecedor Social)
 async function dispatchPendingOrganicos() {
   try {
@@ -46,12 +48,30 @@ async function dispatchPendingOrganicos() {
       $and: [
         { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' } ] },
         { $or: [ { tipo: 'organicos' }, { tipoServico: 'organicos' } ] },
-        { $or: [ { fornecedor_social: { $exists: false } }, { 'fornecedor_social.orderId': { $exists: false } } ] }
+        { 
+          $and: [
+            { 'fornecedor_social.orderId': { $exists: false } },
+            { 'fornecedor_social.status': { $ne: 'processing' } },
+            { 'fornecedor_social.status': { $ne: 'created' } }
+          ]
+        }
       ]
     }).sort({ createdAt: -1 }).limit(5);
     const pending = await cursor.toArray();
     for (const record of pending) {
       try {
+        // Atomic lock attempt
+        const lockUpdate = await col.updateOne(
+            { 
+                _id: record._id, 
+                'fornecedor_social.status': { $ne: 'processing' },
+                'fornecedor_social.orderId': { $exists: false }
+            },
+            { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString() } }
+        );
+        
+        if (lockUpdate.modifiedCount === 0) continue;
+
         const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
         const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
         if (!/organicos/i.test(String(tipo))) continue;
@@ -69,6 +89,8 @@ async function dispatchPendingOrganicos() {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         if (!keyFS || !instaUser || !qtd) {
           console.log('ℹ️ Dispatcher FS: ignorando', { hasKeyFS: !!keyFS, instaUser, qtd });
+          // Unlock if invalid
+          await col.updateOne({ _id: record._id }, { $set: { 'fornecedor_social.status': 'invalid_data' } });
           continue;
         }
         const axios = require('axios');
@@ -82,6 +104,7 @@ async function dispatchPendingOrganicos() {
         console.log('✅ Dispatcher FornecedorSocial', { status: respFS.status, orderIdFS });
       } catch (err) {
         console.error('❌ Dispatcher FS erro', err?.response?.data || err?.message || String(err));
+        await col.updateOne({ _id: record._id }, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || String(err) } });
       }
     }
   } catch (e) {
@@ -93,7 +116,7 @@ setInterval(dispatchPendingOrganicos, 60000);
 
 let globalIndex = 0; // Variável global para round-robin
 
-const instagramQueue = new PQueue({ concurrency: 3 }); // Concorrência 1 para evitar problemas com cookies
+const instagramQueue = new PQueue({ concurrency: cookieProfiles.length > 0 ? cookieProfiles.length : 3 }); // Concorrência dinâmica baseada no número de perfis
 
 // Função para agendar exclusão da imagem do Google Drive após 5 minutos
 function scheduleDeleteGoogleDriveImage(fileId) {
@@ -311,12 +334,6 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
     console.log(`🔍 Iniciando verificação do perfil: @${username}`);
     console.log(`📊 Total de perfis disponíveis: ${cookieProfiles.length}`);
     
-    // const cached = getCachedProfile(username);
-    // if (cached) {
-    //     return cached;
-    // }
-
-    // Re-enable caching for performance
     const cached = getCachedProfile(username);
     if (cached) {
         console.log(`✅ Perfil @${username} retornado do cache`);
@@ -325,13 +342,19 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
     let selectedProfile = null;
     let attempts = 0;
-    const MAX_ATTEMPTS = cookieProfiles.length * 2; // Definir MAX_ATTEMPTS aqui
-    const USAGE_INTERVAL_MS = 10 * 1000; // 10 segundos de intervalo entre usos do mesmo perfil
-    const MAX_ERRORS_PER_PROFILE = 5; // Número máximo de erros antes de desativar o perfil
-    const DISABLE_TIME_MS = 1 * 60 * 1000; // Tempo de desativação do perfil (1 minuto)
+    const MAX_ATTEMPTS = Math.min(cookieProfiles.length, 6);
+    const USAGE_INTERVAL_MS = 2 * 1000;
+    const MAX_ERRORS_PER_PROFILE = 5;
+    const DISABLE_TIME_MS = 1 * 60 * 1000;
+    const REQUEST_BUDGET_MS = 12 * 1000;
+    const startedAt = Date.now();
     
     while (attempts < MAX_ATTEMPTS) {
         const now = Date.now();
+        if (now - startedAt > REQUEST_BUDGET_MS) {
+            try { setCache(username, { success: false, status: 503, error: "Tempo excedido ao verificar perfil. Tente novamente mais tarde." }, NEGATIVE_CACHE_TTL_MS); } catch (_) {}
+            throw new Error("Tempo excedido ao verificar perfil");
+        }
         const availableProfiles = cookieProfiles
             .filter(profile => {
                 // Não desativado e não bloqueado
@@ -374,6 +397,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             continue; // Este continue está dentro do while
         }
 
+        // Bloquear o cookie imediatamente para evitar race condition
+        lockCookie(selectedProfile.ds_user_id);
+
         console.log(`🔄 Tentando perfil ${selectedProfile.ds_user_id}. Tentativa ${attempts + 1}/${MAX_ATTEMPTS}`);
 
         try {
@@ -406,7 +432,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             const response = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
                 headers: headers,
                 httpsAgent: proxyAgent,
-                timeout: 5000 // Reduced from 8000 to 5000 to failover faster
+                timeout: 3000
             });
 
             console.log(`📡 Resposta recebida: ${response.status}`);
@@ -684,6 +710,57 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
 const app = express();
 app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
+
+app.get('/teste-embed', (req, res) => {
+  res.render('teste-embed');
+});
+
+app.get('/api/test-embed-data', async (req, res) => {
+  try {
+    const username = String(req.query.username || '').trim();
+    if (!username) return res.json({ ok: false, error: 'Username missing' });
+
+    // Use verifyInstagramProfile instead of scraping embed
+    // This function handles cookies, proxies, and rotation automatically
+    const userAgent = req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    const ip = req.ip || '127.0.0.1';
+
+    // Reuse the robust verification logic
+    const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+
+    if (result.success && result.profile) {
+      // Adapt the output to match what might be expected by consumers of this endpoint
+      // mimicking the structure found in scraping attempts where possible
+      const adaptedUser = {
+          username: result.profile.username,
+          full_name: result.profile.fullName,
+          profile_pic_url: result.profile.profilePicUrl,
+          edge_followed_by: { count: result.profile.followersCount },
+          edge_follow: { count: result.profile.followingCount || 0 },
+          edge_owner_to_timeline_media: { count: result.profile.postsCount || 0 },
+          is_private: result.profile.isPrivate,
+          is_verified: result.profile.isVerified
+      };
+
+      return res.json({ 
+          ok: true, 
+          source: 'web_profile_info_via_proxy', 
+          user: adaptedUser 
+      });
+    } else {
+      return res.json({ 
+          ok: false, 
+          error: result.error || 'Erro desconhecido ao verificar perfil',
+          details: result
+      });
+    }
+
+  } catch (e) {
+    console.error('[TEST-EMBED] Erro fatal:', e);
+    return res.json({ ok: false, error: e.message || String(e) });
+  }
+});
+
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 // (Removido) Handler ASAP de /checkout antes do view engine
@@ -1839,7 +1916,7 @@ app.post('/api/refil/create', async (req, res) => {
         const axios = require('axios');
         const payload = { order_id: String(order_id).trim(), username: String(username || 'arraso') };
         console.log('🔁 [Refil] Solicitando:', payload);
-        const response = await axios.post('https://smmrefil.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
+        const response = await axios.post('https://refilfama24h.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
         console.log('✅ [Refil] OK status:', response.status);
         return res.status(200).json(response.data);
     } catch (err) {
@@ -2120,35 +2197,62 @@ async function processOrderFulfillment(record, col, req) {
 
     const isOrganicos = /organicos/i.test(tipo);
     if (!isOrganicos) {
-        const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+        const canSend = !!key && !!serviceId && !!instaUser && qtd > 0;
         if (canSend) {
-            const axios = require('axios');
-            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
-            try {
-                const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const famaData = famaResp.data || {};
-                const orderId = famaData.order || famaData.id || null;
-                await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
-                try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
-            } catch (err) {
-                console.error('Erro ao enviar para Fama24h:', err.message);
+            // Atomic lock for Fama24h
+            const lockUpdate = await col.updateOne(
+                { 
+                    _id: record._id, 
+                    'fama24h.orderId': { $exists: false },
+                    'fama24h.status': { $ne: 'processing' }
+                },
+                { $set: { 'fama24h.status': 'processing', 'fama24h.attemptedAt': new Date().toISOString() } }
+            );
+
+            if (lockUpdate.modifiedCount > 0) {
+                const axios = require('axios');
+                const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+                try {
+                    const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const famaData = famaResp.data || {};
+                    const orderId = famaData.order || famaData.id || null;
+                    await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                    try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+                } catch (err) {
+                    console.error('Erro ao enviar para Fama24h:', err.message);
+                    await col.updateOne(filter, { $set: { 'fama24h.status': 'error', 'fama24h.error': err.message } });
+                }
             }
         }
     } else {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
-        const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+        const canSendFS = !!keyFS && !!instaUser && qtd > 0;
+        
         if (canSendFS) {
-            const axios = require('axios');
-            const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
-            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
-            try {
-                const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataFS = respFS.data || {};
-                const orderIdFS = dataFS.order || dataFS.id || null;
-                await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
-            } catch (err) {
-                console.error('Erro ao enviar para FornecedorSocial:', err.message);
+            // Atomic lock for FornecedorSocial
+            const lockUpdate = await col.updateOne(
+                { 
+                    _id: record._id, 
+                    'fornecedor_social.orderId': { $exists: false },
+                    'fornecedor_social.status': { $ne: 'processing' }
+                },
+                { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString() } }
+            );
+
+            if (lockUpdate.modifiedCount > 0) {
+                const axios = require('axios');
+                const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+                const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
+                try {
+                    const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataFS = respFS.data || {};
+                    const orderIdFS = dataFS.order || dataFS.id || null;
+                    await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                } catch (err) {
+                    console.error('Erro ao enviar para FornecedorSocial:', err.message);
+                    await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err.message } });
+                }
             }
         }
     }
@@ -2639,8 +2743,8 @@ app.post("/api/check-instagram-profile", async (req, res) => {
     // A verificação será feita dentro de verifyInstagramProfile e retornada no objeto result
 
     try {
-      // Chamar a função diretamente para debug
-      const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+      // Chamar a função através da fila para limitar concorrência e evitar sobrecarga
+      const result = await instagramQueue.add(() => verifyInstagramProfile(username, userAgent, ip, req, res));
         try {
           if (result && result.success && result.profile && result.profile.username) {
             const vu = await getCollection('validated_insta_users');
@@ -4619,6 +4723,19 @@ app.get('/painel', async (req, res) => {
         const end = new Date(startOfTodaySP);
         end.setUTCDate(1);
         return orderDateSP >= start && orderDateSP < end;
+      } else if (period === 'custom') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = startStr.split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+          
+          const [eY, eM, eD] = endStr.split('-').map(Number);
+          const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
+          
+          return orderDateSP >= start && orderDateSP <= end;
+        }
+        return true;
       }
       return true;
     });

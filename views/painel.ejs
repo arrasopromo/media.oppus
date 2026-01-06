@@ -31,6 +31,32 @@
       <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
     </div>
 
+    <div style="margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #ddd; display: flex; align-items: center; gap: 10px;">
+        <strong>Filtrar por data:</strong>
+        <input type="date" id="startDate" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+        <span>até</span>
+        <input type="date" id="endDate" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+        <button onclick="applyCustomFilter()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Filtrar</button>
+    </div>
+
+    <script>
+        function applyCustomFilter() {
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            if (!start || !end) {
+                alert('Por favor, selecione as datas de início e fim.');
+                return;
+            }
+            window.location.href = `/painel?period=custom&startDate=${start}&endDate=${end}`;
+        }
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('period') === 'custom') {
+            document.getElementById('startDate').value = urlParams.get('startDate') || '';
+            document.getElementById('endDate').value = urlParams.get('endDate') || '';
+        }
+    </script>
+
     <div class="total-box">
       Total de Vendas: R$ <%= totalRevenue.toFixed(2).replace('.', ',') %>
       <br>
