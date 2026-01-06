@@ -47,7 +47,7 @@
   <% } %>
   -->
 </head>
-<body class="theme-light has-fixed-menu">
+<body class="theme-light has-fixed-menu page-instagram-services">
   <%- include('partials/menu') %>
   <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
   <div class="container checkout-page">
@@ -130,44 +130,87 @@
       <section class="section-block">
         <div class="service-card" id="perfilCard" style="display:none;">
           <div class="card-content">
-            <h3 class="card-title">Perfil do Instagram</h3>
+            <h3 class="card-title">Dados do Pedido</h3>
             <div class="card-desc">
-              <div class="input-group" id="grupoUsername" style="position:relative;">
-                <input type="text" id="usernameCheckoutInput" placeholder="Digite o nome de usuário ou URL do Instagram..." class="select-input" maxlength="100" />
-                <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem; padding:0.35rem 0.6rem; font-size:13px;">
-                  <span class="button-text">Validar</span>
+              
+              <!-- 1. Validação do Instagram -->
+              <div style="margin-bottom: 1.5rem;">
+                <label style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Perfil do Instagram</label>
+                <div class="input-group" id="grupoUsername" style="position:relative;">
+                  <input type="text" id="usernameCheckoutInput" placeholder="@usuario" class="select-input" maxlength="100" />
+                  <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem; padding:0.35rem 0.6rem; font-size:13px;">
+                    <span class="button-text">Validar</span>
+                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                  <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                    <div class="tutorial-pop-step">3/5</div>
+                    <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
+                  </div>
+                </div>
+                <div id="perfilHints" style="margin-top:0.4rem; color: var(--text-secondary); font-size: 0.9rem;">
+                  <div class="perfil-hint strong">• Não precisamos da sua senha</div>
+                </div>
+                <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                  <div class="spinner"></div>
+                  <p>Verificando perfil...</p>
+                </div>
+                
+                <!-- Preview do Perfil -->
+                <div id="profilePreview" style="display:none; margin-top:1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color);">
+                  <div style="display:flex; align-items:center; gap:1rem;">
+                    <img id="checkoutProfileImage" alt="Foto" style="width:64px; height:64px; border-radius:50%; object-fit:cover; background:#fff;" />
+                    <div>
+                      <div style="font-weight:700; font-size:1.1rem; color: var(--text-primary);">@<span id="checkoutProfileUsername"></span></div>
+                      <div id="checkoutProfileStats" style="display:flex; gap:0.8rem; font-size:0.9rem; color: var(--text-secondary); margin-top:0.2rem;">
+                        <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
+                        <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Hidden stats -->
+                  <span id="checkoutPostsCount" style="display:none;"></span>
+                </div>
+              </div>
+
+              <!-- 2. Dados de Contato (Email e Telefone) -->
+              <div id="contactFieldsArea" style="display:none; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                
+                <div class="info-tooltip" style="background: rgba(59, 130, 246, 0.1); padding: 0.8rem; border-radius: 8px; margin-bottom: 1.5rem; font-size: 0.85rem; color: var(--text-secondary); border-left: 3px solid #3b82f6;">
+                  <strong>Por que pedimos isso?</strong><br>
+                  Caso precisarmos entrar em contato ou houver algum problema com o pedido.
+                </div>
+
+                <div class="input-group" style="margin-bottom: 1rem;">
+                   <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">E-mail</label>
+                   <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" />
+                </div>
+
+                <div class="input-group" style="margin-bottom: 1.5rem;">
+                   <label for="checkoutPhoneInput" style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Telefone (WhatsApp)</label>
+                   <!-- Usamos o ID checkoutPhoneInput para manter compatibilidade com checkout.js -->
+                   <div class="phone-field">
+                     <input type="tel" id="contactPhoneInput" class="select-input" placeholder="(DDD) 99999-9999" />
+                   </div>
+                </div>
+
+                <button id="confirmContactDataBtn" class="continue-button" type="button" style="width:100%;">
+                  <span class="button-text">Confirmar e Continuar</span>
                   <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-                <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                  <div class="tutorial-pop-step">3/5</div>
-                  <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
-                </div>
               </div>
-              <div id="perfilHints" style="margin-top:0.8rem; color: var(--text-secondary);">
-                <div class="perfil-hint strong">• Não precisamos da sua senha</div>
-              </div>
-              <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
-              <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
-                <div class="spinner"></div>
-                <p>Verificando perfil...</p>
-              </div>
-              <div id="profilePreview" style="display:none; margin-top:0.75rem; text-align:center;">
-                <img id="checkoutProfileImage" alt="Foto do perfil" style="width:72px; height:72px; border-radius:50%; object-fit:cover; background:#fff; display:block; margin:0 auto 0.5rem;" />
-                <div style="color:#fff; margin-bottom:0.5rem;">
-                  <strong>@<span id="checkoutProfileUsername"></span></strong>
-                </div>
-                <div id="checkoutProfileStats" style="display:flex; gap:1rem; justify-content:center; color:#fff;">
-                  <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
-                  <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
-                  <div><strong>Posts:</strong> <span id="checkoutPostsCount">-</span></div>
-                </div>
-              </div>
+
             </div>
           </div>
         </div>
       </section>
+
+      <!-- Seção removida: contactStepSection foi integrada acima -->
+
       <section class="section-block">
         <div class="cards-grid checkout-grid">
         <!-- Promoções -->
@@ -422,7 +465,7 @@
         </div>
       </div>
       <!-- Modal: Seleção de post (curtidas/visualizações/comentários) -->
-      <div id="postSelectModal" class="modal-overlay" style="display:none;">
+      <div id="postSelectModalCustom" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">
           <div class="modal-header">
             <h3 id="postModalTitle" class="modal-title">Selecionar post</h3>
@@ -451,6 +494,360 @@
    <script src="/js/main.js"></script>
    <script src="/js/checkout.js?v=5"></script>
    <script src="/js/why-us.js"></script>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Flag de controle local
+      window.isContactConfirmed = false;
+
+      // 1. Interceptar checkInstagramProfileCheckout para exibir o passo de contato
+      const originalCheck = window.checkInstagramProfileCheckout;
+      window.checkInstagramProfileCheckout = async function() {
+        // Reseta estado ao iniciar nova validação
+        window.isContactConfirmed = false;
+        // contactArea reset removed to allow immediate visibility in Step 2
+
+        // Executa a função original
+        if (originalCheck) await originalCheck.apply(this, arguments);
+
+        // Se o perfil foi validado com sucesso (verificamos se a preview está visível)
+        const profilePreview = document.getElementById('profilePreview');
+        if (profilePreview && profilePreview.style.display !== 'none') {
+          // Limpa a tela (oculta cards de seleção)
+          const cardsToHide = ['tipoSelectCard', 'quantidadeSelectCard', 'tipoCards', 'planCards', 'plataformaCard', 'tipoDescCard'];
+          cardsToHide.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+          });
+          
+          // Ocultar também o campo de input do username para ficar "limpo", mantendo apenas o preview?
+          // Se ocultarmos o grupoUsername, o usuário não pode trocar o perfil facilmente sem recarregar.
+          // Mas o usuário pediu "limpa a tela". Vamos manter o preview e ocultar o input de busca se desejar.
+          // Por segurança de UX, vamos manter o input visível ou pelo menos o preview.
+          // O user disse "vai para outra tela... para pegar o instagram e os dados".
+          // Se já pegou o instagram (validou), agora é contato.
+          
+          // Ocultar input de username para focar no contato
+          const grupoUsername = document.getElementById('grupoUsername');
+          const checkBtn = document.getElementById('checkCheckoutButton');
+          const perfilHints = document.getElementById('perfilHints');
+          if(grupoUsername) grupoUsername.style.display = 'none';
+          if(checkBtn) checkBtn.style.display = 'none'; // checkBtn is inside grupoUsername usually? No, next to input.
+          // Check HTML: button is inside grupoUsername?
+          // Line 141: button is inside grupoUsername div. So hiding grupoUsername hides button.
+          if(perfilHints) perfilHints.style.display = 'none';
+
+          // Popula o preview do passo de contato
+          const img = document.getElementById('checkoutProfileImage').src;
+          const user = document.getElementById('checkoutProfileUsername').innerText;
+          
+          // --- FETCH POSTS SILENTLY FOR CACHE ---
+          try {
+             const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+             fetch(url).then(r=>r.json()).then(d=>{
+                window._myCachedPosts = Array.isArray(d.posts) ? d.posts : [];
+                window._myCachedPostsUser = user;
+             }).catch(()=>{});
+          } catch(_){}
+          // --------------------------------------
+
+          // Exibe a seção de contato
+          if (contactArea) {
+            contactArea.style.display = 'block';
+            setTimeout(() => {
+              // Scroll suave para garantir visibilidade
+              const card = document.getElementById('perfilCard');
+              if(card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 100);
+          }
+
+          // Esconde o resumo e pagamento até confirmar contato
+          const resumo = document.getElementById('resumo');
+          if (resumo) resumo.style.display = 'none';
+          const payment = document.getElementById('paymentCard');
+          if (payment) payment.style.display = 'none';
+        }
+      };
+
+      // 2. Interceptar showResumoIfAllowed para exigir confirmação de contato
+      const originalShowResumo = window.showResumoIfAllowed;
+      window.showResumoIfAllowed = function() {
+        // Se a seção de contato estiver visível e não confirmada, impede o resumo
+        const contactArea = document.getElementById('contactFieldsArea');
+        if (contactArea && contactArea.style.display !== 'none' && !window.isContactConfirmed) {
+          const resumo = document.getElementById('resumo');
+          if (resumo) {
+            resumo.hidden = true;
+            resumo.style.display = 'none';
+          }
+          const payment = document.getElementById('paymentCard');
+          if (payment) payment.style.display = 'none';
+          return;
+        }
+        
+        // Caso contrário, segue o fluxo normal
+        if (originalShowResumo) originalShowResumo.apply(this, arguments);
+      };
+
+      // 3. Lógica do botão "Confirmar dados"
+      const confirmBtn = document.getElementById('confirmContactDataBtn');
+      if (confirmBtn) {
+        confirmBtn.addEventListener('click', function() {
+          const emailInput = document.getElementById('contactEmailInput');
+          const phoneInput = document.getElementById('contactPhoneInput');
+          const email = emailInput.value.trim();
+          const phone = phoneInput.value.replace(/\D/g, '');
+
+          // Validação simples
+          if (!email || !email.includes('@')) {
+            alert('Por favor, insira um e-mail válido.');
+            emailInput.focus();
+            return;
+          }
+          if (phone.length < 10) {
+            alert('Por favor, insira um telefone válido com DDD.');
+            phoneInput.focus();
+            return;
+          }
+
+          // Sucesso
+          window.isContactConfirmed = true;
+          
+          // Sincroniza telefone com input do checkout e oculta campo duplicado
+          const checkoutPhone = document.getElementById('checkoutPhoneInput');
+          if (checkoutPhone) {
+              checkoutPhone.value = phoneInput.value;
+              checkoutPhone.dispatchEvent(new Event('input', {bubbles:true}));
+              const parent = checkoutPhone.closest('.phone-field');
+              if (parent) parent.style.display = 'none';
+          }
+          
+          // Atualiza visibilidade do resumo
+          if (window.showResumoIfAllowed) window.showResumoIfAllowed();
+          
+          // Rola para o próximo passo (Resumo ou Promoções se houver)
+          setTimeout(() => {
+             // Tenta rolar para o orderBumpInline se visível, ou resumo
+             const orderBump = document.getElementById('orderBumpInline');
+             const resumo = document.getElementById('resumo');
+             if (orderBump && orderBump.style.display !== 'none') {
+               orderBump.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             } else if (resumo && resumo.style.display !== 'none') {
+               resumo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             }
+          }, 200);
+        });
+      }
+
+      // 4. Resetar confirmação ao editar campos
+      const emailInput = document.getElementById('contactEmailInput');
+      const phoneInput = document.getElementById('contactPhoneInput');
+      
+      if (emailInput) {
+        emailInput.addEventListener('input', function() {
+           if (window.isContactConfirmed) {
+             window.isContactConfirmed = false;
+             window.showResumoIfAllowed();
+           }
+        });
+      }
+      if (phoneInput) {
+        // Máscara de telefone simples e reset de estado
+        phoneInput.addEventListener('input', function(e) {
+           if (window.isContactConfirmed) {
+             window.isContactConfirmed = false;
+             window.showResumoIfAllowed();
+           }
+           
+           let v = e.target.value.replace(/\D/g, '');
+           if (v.length > 11) v = v.substring(0, 11);
+           if (v.length > 10) {
+               v = v.replace(/^(\d\d)(\d{5})(\d{4}).*/, '($1) $2-$3');
+           } else if (v.length > 5) {
+               v = v.replace(/^(\d\d)(\d{4})(\d{0,4}).*/, '($1) $2-$3');
+           } else if (v.length > 2) {
+               v = v.replace(/^(\d\d)(\d{0,5}).*/, '($1) $2');
+           }
+           e.target.value = v;
+        });
+      }
+
+      // 5. Override openPostModal to fix post loading (Custom Implementation)
+      window.openPostModal = function(kind) {
+         // Use custom modal ID to avoid conflict with checkout.js
+         const getRefs = () => ({
+            modal: document.getElementById('postSelectModalCustom'),
+            grid: document.getElementById('postModalGrid'),
+            title: document.getElementById('postModalTitle'),
+            closeBtn: document.getElementById('postModalClose'),
+            closeBtn2: document.getElementById('postModalClose2')
+         });
+         const refs = getRefs();
+         if (!refs.modal) return;
+         
+         if (refs.title) refs.title.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
+         
+         // Move modal to body if needed
+         if (refs.modal.parentNode !== document.body) document.body.appendChild(refs.modal);
+         
+         refs.modal.style.display = 'flex';
+         try { document.body.style.overflow = 'hidden'; } catch(_){}
+         
+         // Close handlers
+         const close = () => {
+             refs.modal.style.display = 'none';
+             document.body.style.overflow = '';
+         };
+         if(refs.closeBtn) refs.closeBtn.onclick = close;
+         if(refs.closeBtn2) refs.closeBtn2.onclick = close;
+         refs.modal.onclick = (e) => { if(e.target === refs.modal) close(); };
+         
+         let user = '';
+         const uEl = document.getElementById('checkoutProfileUsername');
+         if (uEl) user = uEl.innerText.trim().replace('@','');
+         if (!user && window._myCachedPostsUser) user = window._myCachedPostsUser;
+         
+         if (!refs.grid) return;
+         
+         const render = (arr) => {
+             if (!arr || arr.length === 0) {
+                 refs.grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-secondary);">Nenhum post encontrado. Verifique se o perfil é público.</div>';
+                 return;
+             }
+             const items = arr.slice(0, 12);
+             refs.grid.innerHTML = items.map(p => {
+                const img = p.displayUrl ? `/image-proxy?url=${encodeURIComponent(p.displayUrl)}` : '';
+                return `
+                <div class="service-card">
+                  <div class="card-content pick-post-card" data-shortcode="${p.shortcode}">
+                    <div class="media-frame" style="aspect-ratio:1; overflow:hidden; border-radius:8px; background:#000; display:flex; align-items:center; justify-content:center;">
+                      <img src="${img}" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
+                    </div>
+                    <button class="continue-button select-post-btn" style="width:100%; margin-top:0.5rem;" data-shortcode="${p.shortcode}" data-kind="${kind}">Selecionar</button>
+                  </div>
+                </div>`;
+             }).join('');
+             
+             // Add click listeners to buttons and cards
+             const handleSelect = async (sc) => {
+                 // Visual feedback
+                 const btn = refs.grid.querySelector(`.select-post-btn[data-shortcode="${sc}"]`);
+                 if(btn) btn.textContent = 'Salvando...';
+                 
+                 try {
+                     await fetch('/api/instagram/select', {
+                         method: 'POST',
+                         headers: {'Content-Type':'application/json'},
+                         body: JSON.stringify({ kind: kind, shortcode: sc })
+                     });
+                     
+                     close();
+                     
+                     // Toast
+                     const toast = document.createElement('div');
+                     toast.textContent = 'Post selecionado!';
+                     toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#22c55e; color:#fff; padding:10px 20px; border-radius:8px; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15);';
+                     document.body.appendChild(toast);
+                     setTimeout(() => toast.remove(), 3000);
+                     
+                     // Highlight promo item
+                     const promoInput = document.getElementById(kind === 'likes' ? 'promoLikes' : (kind === 'views' ? 'promoViews' : 'promoComments'));
+                     if (promoInput) {
+                         const item = promoInput.closest('.promo-item');
+                         if (item) {
+                             item.style.borderColor = '#22c55e';
+                             setTimeout(() => item.style.borderColor = '', 2000);
+                         }
+                     }
+                 } catch(e) {
+                     if(btn) btn.textContent = 'Erro';
+                 }
+             };
+
+             refs.grid.querySelectorAll('.select-post-btn').forEach(btn => {
+                btn.onclick = () => handleSelect(btn.getAttribute('data-shortcode'));
+             });
+             refs.grid.querySelectorAll('.pick-post-card').forEach(card => {
+                card.onclick = (e) => {
+                    if(e.target.tagName === 'BUTTON') return; // let button handle it
+                    handleSelect(card.getAttribute('data-shortcode'));
+                }
+             });
+         };
+         
+         if (window._myCachedPosts && window._myCachedPosts.length > 0 && window._myCachedPostsUser === user) {
+             render(window._myCachedPosts);
+         } else {
+             refs.grid.innerHTML = '<div style="padding:2rem; text-align:center; grid-column:1/-1; color:var(--text-secondary);">Carregando posts...</div>';
+             fetch('/api/instagram/posts?username=' + encodeURIComponent(user))
+             .then(r=>r.json())
+             .then(d => {
+                 const arr = d.posts || [];
+                 window._myCachedPosts = arr;
+                 window._myCachedPostsUser = user;
+                 render(arr);
+             })
+             .catch(() => {
+                 refs.grid.innerHTML = '<div style="color:#ef4444; padding:2rem; text-align:center; grid-column:1/-1;">Erro ao carregar posts. Tente novamente.</div>';
+             });
+         }
+      };
+      
+      // 6. Bind Custom Listeners and Observers
+      const bindCustomListeners = () => {
+          // CAPTURE PHASE for Buttons: Block checkout.js broken modal
+          document.addEventListener('click', function(e) {
+              const btn = e.target.closest('.open-post-modal-btn');
+              if (btn) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                  const k = btn.getAttribute('data-kind');
+                  window.openPostModal(k);
+              }
+          }, true);
+          
+          // Checkboxes: Trigger modal on check (allow bubbling for price update)
+          ['likes','views','comments'].forEach(kind => {
+              const id = kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments');
+              const el = document.getElementById(id);
+              if(el) {
+                  el.addEventListener('change', function() {
+                      if (this.checked) window.openPostModal(kind);
+                  });
+              }
+          });
+
+          // CLEAN SCREEN: Observer for Perfil Card visibility (Step 2 Trigger)
+          const perfilCard = document.getElementById('perfilCard');
+          if (perfilCard) {
+            const observer = new MutationObserver((mutations) => {
+              mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                  if (perfilCard.style.display !== 'none') {
+                    // Perfil Card became visible -> Clean Screen (Hide Plan Selection)
+                    const cardsToHide = ['tipoSelectCard', 'quantidadeSelectCard', 'tipoCards', 'planCards', 'plataformaCard', 'tipoDescCard'];
+                    cardsToHide.forEach(id => {
+                      const el = document.getElementById(id);
+                      if (el) el.style.display = 'none';
+                    });
+                    
+                    // Show Contact Fields immediately (Step 2 = Instagram + Contact)
+                    const contactArea = document.getElementById('contactFieldsArea');
+                    if (contactArea) contactArea.style.display = 'block';
+                    
+                    // Scroll to Perfil Card
+                    perfilCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }
+              });
+            });
+            observer.observe(perfilCard, { attributes: true });
+          }
+      };
+      bindCustomListeners();
+    });
+  </script>
    <div id="toastContainer" class="toast-container"></div>
   <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
     <div class="client-page-inner">
@@ -633,6 +1030,46 @@
     @media (min-width: 1024px) { #postModalGrid.post-grid .inline-msg { font-size: 12px; } }
     .media-frame > img, .media-frame > video, .media-frame > iframe { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border: none; }
     @media (max-width: 640px) { #postSelectModal.modal-overlay { align-items: flex-start; } #postSelectModal .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } .media-frame { aspect-ratio: 9/16; max-height: 200px; } #postModalGrid.post-grid .inline-msg { font-size: 11px; } }
+
+    /* Estilos específicos para a página de serviços do Instagram (Fonte Maior) */
+    .page-instagram-services .plan-quantity {
+      font-size: 3.5rem !important;
+      font-weight: 800;
+      color: #1e293b;
+      line-height: 1;
+      margin-top: 0.5rem;
+    }
+    .page-instagram-services .plan-service-type {
+      font-size: 1.25rem !important;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .page-instagram-services .plan-price {
+      font-size: 2.5rem !important;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.1;
+    }
+    .page-instagram-services .plan-old-price {
+      font-size: 1rem;
+      text-decoration: line-through;
+      color: #94a3b8;
+      margin-right: 0.5rem;
+    }
+    .page-instagram-services .plan-icon {
+        font-size: 3.5rem;
+        margin-bottom: 0.5rem;
+    }
+    /* Custom Modal Styles (copied from #postSelectModal) */
+    #postSelectModalCustom.modal-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.92); z-index: 1000; }
+    #postSelectModalCustom .modal-dialog { width: 98vw; max-width: 1600px; max-height: calc(100vh - 2rem); overflow: auto; aspect-ratio: 16 / 9; height: auto; }
+    @media (max-width: 640px) { 
+      #postSelectModalCustom.modal-overlay { align-items: flex-start; } 
+      #postSelectModalCustom .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } 
+    }
   </style>
   
   <script>

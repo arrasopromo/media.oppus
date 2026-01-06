@@ -1,83 +1,45 @@
 const axios = require('axios');
 
-const profiles = [
-    'marcos', 
-    'caio', 
-    'junior', 
-    'preto', 
-    'azul', 
-    'Dsrssilv', 
-    'Romildo_rs7', 
-    'mariaantonia_advogada', 
-    'Everaldo.rosa.12', 
-    'Josuedls7', 
-    'ide_africa_mocambique', 
-    'apnhoficial', 
-    'donizetimoreira.88', 
-    'Christianterapeutasistemica', 
-    'zeladestrador', 
-    'jorois', 
-    'Ta.logisticaoficial', 
-    'elietecontadora',
-    'marcos', // Duplicate 1
-    'caio'    // Duplicate 2
+const usernames = [
+    'instagram', 'cristiano', 'leomessi', 'neymarjr', 'anitta',
+    'beyonce', 'taylorswift', 'justinbieber', 'kimkardashian', 'kyliejenner'
 ];
 
-const URL = 'http://localhost:3000/api/check-instagram-profile';
-
-async function checkProfile(username) {
-    const start = Date.now();
-    try {
-        const response = await axios.post(URL, { username }, { timeout: 60000 }); // 60s timeout just in case
-        const duration = Date.now() - start;
-        return {
-            username,
-            status: response.status,
-            success: response.data.success,
-            duration,
-            error: null
-        };
-    } catch (error) {
-        const duration = Date.now() - start;
-        return {
-            username,
-            status: error.response ? error.response.status : 'ERR',
-            success: false,
-            duration,
-            error: error.message
-        };
-    }
-}
+const API_URL = 'http://localhost:3000/api/check-instagram-profile';
 
 async function runBenchmark() {
-    console.log(`🚀 Iniciando benchmark com ${profiles.length} requisições simultâneas...`);
-    console.log(`🎯 Endpoint: ${URL}`);
-    
-    const startTime = Date.now();
-    const promises = profiles.map(p => checkProfile(p));
-    const results = await Promise.all(promises);
-    const totalBenchmarkTime = Date.now() - startTime;
+    console.log(`🚀 Iniciando benchmark com ${usernames.length} requisições simultâneas...`);
+    const startTotal = Date.now();
 
-    console.log('\n📊 Resultados do Benchmark:');
-    console.table(results.map(r => ({
-        Username: r.username,
-        Status: r.status,
-        Success: r.success ? '✅ OK' : '❌ FAIL',
-        'Time (ms)': r.duration,
-        Error: r.error ? r.error.substring(0, 30) : ''
-    })));
+    const promises = usernames.map(async (username) => {
+        const start = Date.now();
+        try {
+            const response = await axios.post(API_URL, { username }, {
+                timeout: 60000 // 60s timeout for client
+            });
+            const duration = (Date.now() - start) / 1000;
+            console.log(`✅ [${username}] Sucesso em ${duration.toFixed(2)}s - Status: ${response.status}`);
+            return { username, success: true, duration };
+        } catch (error) {
+            const duration = (Date.now() - start) / 1000;
+            console.log(`❌ [${username}] Falha em ${duration.toFixed(2)}s - Erro: ${error.message}`);
+            return { username, success: false, duration, error: error.message };
+        }
+    });
+
+    const results = await Promise.all(promises);
+    const endTotal = Date.now();
+    const totalDuration = (endTotal - startTotal) / 1000;
 
     const successCount = results.filter(r => r.success).length;
     const avgTime = results.reduce((acc, r) => acc + r.duration, 0) / results.length;
 
-    console.log('\n📈 Resumo:');
+    console.log('\n📊 Resultados do Benchmark:');
     console.log(`Total de Requisições: ${results.length}`);
     console.log(`Sucessos: ${successCount}`);
     console.log(`Falhas: ${results.length - successCount}`);
-    console.log(`Tempo Médio de Resposta: ${avgTime.toFixed(2)} ms`);
-    console.log(`Tempo Máximo: ${Math.max(...results.map(r => r.duration))} ms`);
-    console.log(`Tempo Mínimo: ${Math.min(...results.map(r => r.duration))} ms`);
-    console.log(`Tempo Total do Benchmark: ${totalBenchmarkTime} ms`);
+    console.log(`Tempo Total (parede): ${totalDuration.toFixed(2)}s`);
+    console.log(`Tempo Médio por Requisição: ${avgTime.toFixed(2)}s`);
 }
 
 runBenchmark();
