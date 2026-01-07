@@ -697,6 +697,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (headerQty && resQtd && resQtd.textContent) {
       headerQty.textContent = resQtd.textContent;
     }
+    
+    try { updateReviewMath(); } catch(_) {}
 
     let baseCents = basePriceCents || 0;
     
@@ -1146,11 +1148,49 @@ document.addEventListener('DOMContentLoaded', function() {
             const unit = getUnitForTipo(tipo);
             headerQty.textContent = `+ ${qtdSelect.value} ${unit}`;
         }
+        
+        // Atualiza a matemática de seguidores (Atuais + Selecionados = Total)
+        updateReviewMath();
+
     } else {
         if (orderInline) orderInline.style.display = 'none';
         if (grupoPedido) grupoPedido.style.display = 'none';
         if (paymentCard) paymentCard.style.display = 'none';
     }
+  }
+
+  function updateReviewMath() {
+      const reviewSelectedQty = document.getElementById('reviewSelectedQty');
+      const reviewTotalFollowers = document.getElementById('reviewTotalFollowers');
+      const reviewProfileFollowers = document.getElementById('reviewProfileFollowers');
+      const qtdSelect = document.getElementById('quantidadeSelect');
+      
+      try {
+          // Get current followers
+          const currentText = reviewProfileFollowers ? reviewProfileFollowers.textContent : '0';
+          const current = (currentText === '-' || !currentText) ? 0 : parseInt(currentText.replace(/\D/g, '') || '0', 10);
+          
+          // Get selected quantity
+          let selected = 0;
+          if (qtdSelect && qtdSelect.value) {
+             selected = parseInt(qtdSelect.value.replace(/\D/g, '') || '0', 10);
+          }
+          
+          const total = current + selected;
+          
+          // Format numbers
+          const fmt = (n) => n.toLocaleString('pt-BR');
+
+          if (reviewSelectedQty) reviewSelectedQty.textContent = `+${fmt(selected)}`;
+          if (reviewTotalFollowers) reviewTotalFollowers.textContent = fmt(total);
+          
+          // Ensure current is formatted too if it's a number
+          if (reviewProfileFollowers && current > 0 && reviewProfileFollowers.textContent !== fmt(current)) {
+              reviewProfileFollowers.textContent = fmt(current);
+          }
+      } catch (e) {
+          console.error('Error updating review math:', e);
+      }
   }
 
   // --- Funções de Pagamento (PIX) ---
@@ -1552,11 +1592,18 @@ document.addEventListener('DOMContentLoaded', function() {
           const email = contactEmailInput ? contactEmailInput.value.trim() : '';
           const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
           
+          const emailErrorMsg = document.getElementById('emailErrorMsg');
+          
           if (!email || !email.includes('@')) {
-              showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+              if (emailErrorMsg) emailErrorMsg.style.display = 'block';
+              else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+              
               if (contactEmailInput) contactEmailInput.focus();
               return;
+          } else {
+              if (emailErrorMsg) emailErrorMsg.style.display = 'none';
           }
+          
           if (!phone || phone.length < 10) {
               showStatusMessageCheckout('Por favor, informe um telefone válido.', 'error');
               if (contactPhoneInput) contactPhoneInput.focus();

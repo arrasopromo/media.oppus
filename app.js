@@ -231,8 +231,7 @@ function setCache(username, value, ttlMs) {
 }
 
 async function verifyInstagramProfile(username, userAgent, ip, req, res) {
-    console.log(`🔍 Iniciando verificação do perfil (PARALELO): @${username}`);
-    console.log(`📊 Total de perfis disponíveis: ${cookieProfiles.length}`);
+    console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username}`);
     
     const cached = getCachedProfile(username);
     if (cached) {
@@ -240,461 +239,112 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         return cached;
     }
 
-    const BATCH_SIZE = 6;
-    const MAX_TOTAL_ATTEMPTS = 12;
-    const REQUEST_BUDGET_MS = 15 * 1000;
-    const startedAt = Date.now();
-    const usedProfileIds = new Set();
-    const MAX_ERRORS_PER_PROFILE = 5;
-    
-    // Helper function for single profile attempt
-    const tryProfile = async (profile) => {
-        if (isCookieLocked(profile.ds_user_id)) throw new Error('Locked');
-        lockCookie(profile.ds_user_id);
-        usedProfileIds.add(profile.ds_user_id);
-
-        try {
-            const proxyAgent = profile.proxy ? new HttpsProxyAgent(`http://${profile.proxy.auth.username}:${profile.proxy.auth.password}@${profile.proxy.host}:${profile.proxy.port}`, { rejectUnauthorized: false }) : null;
-            
-            const headers = {
-                "User-Agent": profile.userAgent,
-                "X-IG-App-ID": "936619743392459",
-                "Cookie": `sessionid=${profile.sessionid}; ds_user_id=${profile.ds_user_id}`,
-                "Accept": "*/*",
-                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "Sec-Ch-Ua": `"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"`,
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": `"Windows"`,
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "X-Asbd-Id": "129477",
-                "X-Csrftoken": "missing",
-                "X-Ig-Www-Claim": "0",
-                "X-Instagram-Ajax": "1010394699",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": `https://www.instagram.com/${username}/`,
-                "Origin": "https://www.instagram.com"
-            };
-
-            const response = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
-                headers,
-                httpsAgent: proxyAgent,
-                timeout: 2000,
-                validateStatus: status => true 
-            });
-
-            if (response.status === 404) {
-                return { is404: true, profile };
-            }
-
-            // Validar Content-Type para evitar falsos positivos com HTML (login page)
-            const contentType = response.headers['content-type'] || '';
-            if (!contentType.includes('application/json')) {
-                // Se receber HTML 200 OK, provavelmente é login page ou soft block
-                throw new Error(`Resposta não é JSON (Content-Type: ${contentType})`);
-            }
-
-            if (response.status < 200 || response.status >= 300) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const data = response.data;
-            if (!data.data || !data.data.user) {
-                 return { is404: true, profile };
-            }
-
-            return { user: data.data.user, profile, originalResponse: response };
-
-        } catch (error) {
-            const status = error.response?.status || 500;
-            if (status === 404) return { is404: true, profile };
-            
-            console.warn(`⚠️ Erro ${status} no perfil ${profile.ds_user_id}`);
-            profile.errorCount++;
-            if (profile.errorCount >= MAX_ERRORS_PER_PROFILE) {
-                profile.disabledUntil = Date.now() + (60 * 1000);
-            }
-            throw error;
-        } finally {
-            unlockCookie(profile.ds_user_id);
-        }
-    };
-
-    let attempts = 0;
-    while (attempts < MAX_TOTAL_ATTEMPTS) {
-        if (Date.now() - startedAt > REQUEST_BUDGET_MS) break;
-
-        const available = cookieProfiles.filter(p => 
-            !usedProfileIds.has(p.ds_user_id) && 
-            !isCookieLocked(p.ds_user_id) && 
-            p.disabledUntil <= Date.now()
-        ).sort((a, b) => a.errorCount - b.errorCount || a.lastUsed - b.lastUsed);
-
-        if (available.length === 0) break;
-
-        const batch = available.slice(0, BATCH_SIZE);
-        console.log(`🚀 [Parallel] Iniciando lote de ${batch.length} requisições para @${username}...`);
-
-        try {
-            const result = await Promise.any(batch.map(p => tryProfile(p)));
-            
-            // Handle 404
-            if (result.is404) {
-                 try { await registerUserInControle(userAgent, ip, username, "404"); } catch (_) {}
-                 const result404 = { success: false, status: 404, error: "Perfil não localizado, nome de usuário pode estar incorreto." };
-                 setCache(username, result404, NEGATIVE_CACHE_TTL_MS);
-                 return result404;
-            }
-
-            // Handle Success
-            const { user, profile } = result;
-            profile.lastUsed = Date.now();
-            profile.errorCount = 0;
-            
-            console.log(`✅ Perfil encontrado: @${user.username} (Privado: ${user.is_private})`);
-
-            if (user.is_private) {
-                const originalImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
-                let driveImageUrl = null;
-
-                if (user.profile_pic_url_hd || user.profile_pic_url) {
-                    try {
-                        if (driveManager.isReady()) {
-                            try {
-                                console.log(`📸 Usando URL original do Instagram: ${originalImageUrl}`);
-                            } catch (driveError) {
-                                console.warn("Erro ao processar imagem:", driveError.message);
-                            }
-                        }
-                    } catch (imageError) {
-                        console.warn("Erro ao processar imagem:", imageError.message);
-                    }
-                }
-
-                const privateResult = { 
-                    success: false, 
-                    status: 200, 
-                    error: "Este perfil é privado. Para que o serviço seja realizado, o perfil precisa estar no modo público.",
-                    code: 'INSTAUSER_PRIVATE',
-                    profile: {
-                        username: user.username,
-                        fullName: user.full_name,
-                        profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
-                        driveImageUrl: driveImageUrl,
-                        isVerified: user.is_verified,
-                        followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
-                        isPrivate: user.is_private
-                    }
-                };
-                try {
-                    const vu = await getCollection('validated_insta_users');
-                    const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
-                    const doc = {
-                        username: String(user.username || '').trim().toLowerCase(),
-                        fullName: String(user.full_name || ''),
-                        profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
-                        isVerified: !!user.is_verified,
-                        isPrivate: !!user.is_private,
-                        followersCount: user.edge_followed_by ? Number(user.edge_followed_by.count || 0) : 0,
-                        checkedAt: new Date().toISOString(),
-                        linkId,
-                        ip: String(ip || ''),
-                        userAgent: String(userAgent || ''),
-                        source: 'verifyInstagramProfile'
-                    };
-                    try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
-                    try { console.log('🗃️ MongoDB: validação PRIVADA upsert em validated_insta_users', { username: doc.username }); } catch(_) {}
-                } catch(_) {}
-                setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
-                return privateResult;
-            }
-
-            // Public Profile Success
-            let driveImageUrl = null;
-            const originalImageUrl = user.profile_pic_url_hd || user.profile_pic_url;
-            if (originalImageUrl) {
-                try {
-                    const proxyAgentForImage = profile.proxy ? new HttpsProxyAgent(`http://${profile.proxy.auth.username}:${profile.proxy.auth.password}@${profile.proxy.host}:${profile.proxy.port}`, { rejectUnauthorized: false }) : null;
-                    
-                    const localImageUrl = await downloadAndServeImage(originalImageUrl, user.username, proxyAgentForImage);
-                    driveImageUrl = localImageUrl || originalImageUrl;
-
-                    if (driveManager.isReady()) {
-                        axios.get(originalImageUrl, {
-                            responseType: 'arraybuffer',
-                            timeout: 10000
-                        }).then(async (imageResponse) => {
-                            try {
-                                const fileName = `${user.username}_profile_${Date.now()}.jpg`;
-                                await driveManager.uploadBuffer(
-                                    imageResponse.data,
-                                    fileName,
-                                    'image/jpeg',
-                                    driveManager.profileImagesFolderId
-                                );
-                            } catch (driveErr) {
-                                console.warn('Falha ao enviar imagem ao Google Drive (async):', driveErr.message);
-                            }
-                        }).catch(err => {});
-                    }
-                } catch (error) {
-                    driveImageUrl = originalImageUrl;
-                }
-            }
-
-            req.session.instagramProfile = {
-                username: user.username,
-                fullName: user.full_name,
-                profilePicUrl: driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url,
-                isVerified: user.is_verified,
-                followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
-                checkedAt: new Date().toISOString(),
-                cookieUsed: profile.ds_user_id
-            };
-
-            console.log(`✅ Perfil verificado com sucesso: @${user.username} (Cookie ID: ${profile.ds_user_id})`);
-
-            // Baserow Update
-            const linkId = req.session.linkSlug || req.query.id || req.body.id;
-            if (linkId) {
-                (async () => {
-                    try {
-                        const fieldName = CONTROLE_FIELDS.LINK || 'link';
-                        const filters = {};
-                        filters[`filter__${fieldName}__equal`] = linkId;
-                        filters['user_field_names'] = 'true';
-
-                        const result = await baserowManager.getTableRows(BASEROW_TABLES.CONTROLE, {
-                            filters,
-                            size: 1
-                        });
-
-                        if (result.success) {
-                            const row = result.rows.length > 0 ? result.rows[0] : null;
-                            if (row) {
-                                const fingerprint = generateFingerprint(ip, userAgent);
-                                const updateData = {
-                                    'user-agent': fingerprint,
-                                    'ip': ip,
-                                    'instauser': user.username,
-                                    'statushttp': '200',
-                                    'teste': ''
-                                };
-                                await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
-                                console.log(`📊 Linha do Baserow atualizada para link=${linkId}, id=${row.id}`);
-                            } else {
-                                const fingerprint = generateFingerprint(ip, userAgent);
-                                const data = {
-                                    'user-agent': fingerprint || '',
-                                    'ip': ip || '',
-                                    'instauser': user.username || '',
-                                    'link': linkId,
-                                    'teste': '',
-                                    'statushttp': '200',
-                                    'criado': new Date().toISOString()
-                                };
-                                await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
-                            }
-                        }
-                    } catch (err) {
-                        console.error('❌ Erro background Baserow:', err.message);
-                    }
-                })();
-            }
-
-            try {
-                const vu = await getCollection('validated_insta_users');
-                const linkId = req.session.linkSlug || req.query.id || req.body.id || null;
-                const doc = {
-                    username: String(user.username || '').trim().toLowerCase(),
-                    fullName: String(user.full_name || ''),
-                    profilePicUrl: String(driveImageUrl || user.profile_pic_url_hd || user.profile_pic_url || ''),
-                    isVerified: !!user.is_verified,
-                    isPrivate: !!user.is_private,
-                    followersCount: user.edge_followed_by ? Number(user.edge_followed_by.count || 0) : 0,
-                    checkedAt: new Date().toISOString(),
-                    linkId,
-                    ip: String(ip || ''),
-                    userAgent: String(userAgent || ''),
-                    source: 'verifyInstagramProfile'
-                };
-                try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
-                try { console.log('🗃️ MongoDB: validação PÚBLICA upsert em validated_insta_users', { username: doc.username }); } catch(_) {}
-            } catch (mongoErr) {
-                try { console.error('❌ Falha ao registrar validação em MongoDB:', mongoErr?.message || String(mongoErr)); } catch(_) {}
-            }
-
-            const instauserExists = await checkInstauserExists(username);
-            
-            const responseProfile = {
-                username: user.username,
-                fullName: user.full_name,
-                profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
-                driveImageUrl: driveImageUrl,
-                originalProfilePicUrl: originalImageUrl,
-                isVerified: user.is_verified,
-                followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
-                followingCount: user.edge_follow ? user.edge_follow.count : 0,
-                postsCount: (user.edge_owner_to_timeline_media && user.edge_owner_to_timeline_media.count) ? user.edge_owner_to_timeline_media.count : 0,
-                isPrivate: user.is_private,
-                alreadyTested: instauserExists
-            };
-            
-            const okResult = { success: true, status: 200, profile: responseProfile };
-            setCache(username, okResult, CACHE_TTL_MS);
-            return okResult;
-
-        } catch (err) {
-            attempts += batch.length;
-            console.warn("⚠️ Lote falhou, tentando próximo...");
-        }
-    }
-    
-    // Fallback error
-    // FALLBACK: Tentar scraping público HTML (sem proxy/cookies)
-    console.log(`⚠️ Todas as tentativas com cookies falharam para @${username}. Tentando fallback público HTML...`);
     try {
-        const publicHeaders = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-User": "?1",
-            "Sec-Fetch-Dest": "document"
+        const apifyToken = process.env.APIFY_TOKEN;
+        if (!apifyToken) {
+            console.error("❌ Erro: APIFY_TOKEN não configurado");
+            throw new Error("APIFY_TOKEN_MISSING");
+        }
+        
+        const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
+        const payload = { 
+            usernames: [username],
+            resultsLimit: 1
         };
-        
-        // Try direct connection (no proxy) - 1st attempt
-        // Adicionando timestamp para evitar cache local
-        const htmlResponse = await axios.get(`https://www.instagram.com/${username}/?__a=1&__d=dis`, {
-             headers: { ...publicHeaders, "X-Requested-With": "XMLHttpRequest" },
-             timeout: 5000,
-             validateStatus: status => status < 400
-        }).catch(async () => {
-             // 2nd attempt: pure HTML scrape
-             return await axios.get(`https://www.instagram.com/${username}/`, {
-                headers: publicHeaders,
-                timeout: 6000,
-                validateStatus: status => status < 400
-            });
+
+        console.log(`🚀 Enviando requisição para Apify: @${username}`);
+        const response = await axios.post(apifyUrl, payload, { 
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000 
         });
-        
-        const data = htmlResponse.data;
 
-        // Se retornou JSON (API pública não oficial)
-        if (typeof data === 'object' && data.graphql && data.graphql.user) {
-             const user = data.graphql.user;
-             const profile = {
-                username: user.username,
-                fullName: user.full_name || user.username,
-                profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
-                isVerified: user.is_verified,
-                followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
-                followingCount: user.edge_follow ? user.edge_follow.count : 0,
-                postsCount: user.edge_owner_to_timeline_media ? user.edge_owner_to_timeline_media.count : 0,
-                isPrivate: user.is_private,
-                alreadyTested: await checkInstauserExists(username)
+        const items = response.data;
+        
+        if (!Array.isArray(items) || items.length === 0 || (items[0] && items[0].error)) {
+             console.warn(`⚠️ Apify não encontrou @${username} ou retornou erro.`);
+             const result404 = { success: false, status: 404, error: "Perfil não localizado." };
+             setCache(username, result404, NEGATIVE_CACHE_TTL_MS);
+             return result404;
+        }
+
+        const item = items[0];
+        console.log(`✅ Apify retornou dados para @${username}`);
+
+        const isPrivate = typeof item.private !== 'undefined' ? item.private : (typeof item.isPrivate !== 'undefined' ? item.isPrivate : false);
+        const isVerified = typeof item.verified !== 'undefined' ? item.verified : (typeof item.isVerified !== 'undefined' ? item.isVerified : false);
+        
+        // Mapeamento compatível com o formato esperado pelo app
+        const profileData = {
+            username: item.username || username,
+            fullName: item.fullName || "",
+            profilePicUrl: item.profilePicUrlHD || item.profilePicUrl || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
+            originalProfilePicUrl: item.profilePicUrlHD || item.profilePicUrl, 
+            driveImageUrl: null, // Apify retorna URLs públicas, não precisamos (por enquanto) do drive proxy aqui
+            followersCount: item.followersCount || 0,
+            followingCount: item.followsCount || 0,
+            postsCount: item.postsCount || 0,
+            isPrivate: isPrivate,
+            isVerified: isVerified,
+            alreadyTested: false // Será preenchido abaixo
+        };
+
+        // Check if already tested
+        try {
+            profileData.alreadyTested = await checkInstauserExists(username);
+        } catch (e) {}
+
+        // Persist to MongoDB
+        try {
+            const vu = await getCollection('validated_insta_users');
+            const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
+            const doc = {
+                username: String(profileData.username).toLowerCase(),
+                fullName: profileData.fullName,
+                profilePicUrl: profileData.profilePicUrl,
+                isVerified: profileData.isVerified,
+                isPrivate: profileData.isPrivate,
+                followersCount: profileData.followersCount,
+                checkedAt: new Date().toISOString(),
+                linkId: linkId || null,
+                ip: String(ip || ''),
+                userAgent: String(userAgent || ''),
+                source: 'verifyInstagramProfile_APIFY'
             };
-            const okResult = { success: true, status: 200, profile: profile };
-            setCache(username, okResult, CACHE_TTL_MS);
-            return okResult;
+            await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
+            console.log('🗃️ MongoDB: validação Apify salva em validated_insta_users');
+        } catch (dbErr) {
+            console.error('Erro mongo:', dbErr.message);
         }
-        
-        if (typeof data === 'string') {
-            const html = data;
-            // Regex para extrair metadados
-            const ogTitle = (html.match(/<meta property="og:title" content="([^"]+)"/i) || [])[1];
-            const ogDescription = (html.match(/<meta property="og:description" content="([^"]+)"/i) || [])[1];
-            const ogImage = (html.match(/<meta property="og:image" content="([^"]+)"/i) || [])[1];
-            
-            if (ogDescription) {
-                console.log(`✅ Fallback HTML sucesso: ${ogDescription}`);
-                // Ex: "100 Followers, 50 Following, 20 Posts - See Instagram photos..."
-                const descParts = ogDescription.split(' - ')[0];
-                const stats = descParts.split(', ');
-                
-                const parseCount = (s) => {
-                    if (!s) return 0;
-                    s = s.replace(/,/g, '').trim();
-                    let m = 1;
-                    if (s.toLowerCase().includes('k')) m = 1000;
-                    if (s.toLowerCase().includes('m')) m = 1000000;
-                    return parseFloat(s) * m;
-                };
 
-                let followers = 0;
-                let following = 0;
-                let posts = 0;
-                
-                stats.forEach(stat => {
-                    if (stat.includes('Followers')) followers = parseCount(stat.replace('Followers', ''));
-                    if (stat.includes('Following')) following = parseCount(stat.replace('Following', ''));
-                    if (stat.includes('Posts')) posts = parseCount(stat.replace('Posts', ''));
-                });
-                
-                let fullName = '';
-                if (ogTitle) {
-                    // Ex: "Name (@username) • Instagram..."
-                    const titleParts = ogTitle.split(' (@')[0];
-                    fullName = titleParts;
-                }
-                
-                const isPrivate = html.includes('"is_private":true') || html.includes('This account is private');
-                const isVerified = html.includes('"is_verified":true');
-                
-                const profile = {
-                    username: username,
-                    fullName: fullName || username,
-                    profilePicUrl: ogImage || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
-                    isVerified: isVerified,
-                    followersCount: followers,
-                    followingCount: following,
-                    postsCount: posts,
-                    isPrivate: isPrivate,
-                    alreadyTested: await checkInstauserExists(username)
-                };
-                
-                const okResult = { success: true, status: 200, profile: profile };
-                setCache(username, okResult, CACHE_TTL_MS);
-                return okResult;
-            } else {
-                 console.warn(`⚠️ Fallback HTML: ogDescription não encontrado. Title: ${ogTitle || 'N/A'}. HTML length: ${html.length}`);
-             }
+        // PROXY: Modificar a URL para usar o proxy se for do Instagram
+        // Isso é feito APÓS salvar no banco (para o banco ter a URL original)
+        // e ANTES de retornar ao frontend/cache
+        if (profileData.profilePicUrl && isAllowedImageHost(profileData.profilePicUrl)) {
+             profileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(profileData.profilePicUrl)}`;
         }
-    } catch (fallbackErr) {
-        console.error(`❌ Fallback HTML falhou: ${fallbackErr.message}`);
+
+        if (isPrivate) {
+             const privateResult = { 
+                success: false, 
+                status: 200, 
+                error: "Este perfil é privado. Para que o serviço seja realizado, o perfil precisa estar no modo público.",
+                code: 'INSTAUSER_PRIVATE',
+                profile: profileData
+            };
+            setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
+            return privateResult;
+        }
+
+        const okResult = { success: true, status: 200, profile: profileData };
+        setCache(username, okResult, CACHE_TTL_MS);
+        return okResult;
+
+    } catch (error) {
+        console.error(`❌ Erro Apify: ${error.message}`);
+        // Fallback genérico
+        const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente." };
+        return errorResult;
     }
-
-    try {
-        console.log("📊 Tentando registrar erro no Baserow...");
-        await registerUserInControle(userAgent, ip, username, "error");
-    } catch (_) {}
-    
-    // LAST RESORT: Return a dummy profile to allow the user to proceed
-    console.warn(`⚠️ Verificação falhou totalmente para @${username}. Retornando perfil provisório.`);
-    const dummyProfile = {
-        username: username,
-        fullName: username,
-        profilePicUrl: "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
-        isVerified: false,
-        followersCount: 0,
-        followingCount: 0,
-        postsCount: 0,
-        isPrivate: false,
-        alreadyTested: await checkInstauserExists(username),
-        isProvisional: true
-    };
-    const okResult = { success: true, status: 200, profile: dummyProfile, warning: "Perfil não verificado completamente" };
-    setCache(username, okResult, 30 * 1000); // 30 seconds cache
-    return okResult;
-
-    // try { setCache(username, { success: false, status: 503, error: "Erro ao verificar perfil após múltiplas tentativas. Tente novamente mais tarde." }, NEGATIVE_CACHE_TTL_MS); } catch (_) {}
-    // throw new Error("Não foi possível verificar o perfil com os perfis de cookie disponíveis. Tente novamente mais tarde.");
 }
 
 const app = express();
@@ -853,6 +503,8 @@ function mapControleData(data) {
 
 // Verificar se usuário já existe na tabela controle
 async function checkUserInControle(userAgent, ip, instauser) {
+    return null; // DISABLED: Baserow validation removed
+    /*
     try {
         // Otimização: Filtrar por instauser no Baserow
         const fieldName = CONTROLE_FIELDS.INSTAUSER || 'instauser';
@@ -888,10 +540,13 @@ async function checkUserInControle(userAgent, ip, instauser) {
         console.error("Erro ao verificar usuário na tabela controle:", error);
         return null;
     }
+    */
 }
 
 // Registrar usuário na tabela controle
 async function registerUserInControle(userAgent, ip, instauser, statushttp) {
+    return null; // DISABLED
+    /*
     try {
         const fingerprint = generateFingerprint(ip, userAgent);
         
@@ -917,10 +572,13 @@ async function registerUserInControle(userAgent, ip, instauser, statushttp) {
         console.error("❌ Erro ao registrar usuário na tabela controle:", error);
         return null;
     }
+    */
 }
 
 // Atualizar status do serviço na tabela controle
 async function updateTesteStatus(recordId, testeStatus) {
+    return null; // DISABLED
+    /*
     try {
         // Primeiro fazer GET para verificar se a linha existe
         console.log(`📋 Buscando linha ${recordId} no Baserow...`);
@@ -953,10 +611,13 @@ async function updateTesteStatus(recordId, testeStatus) {
         console.error("Erro ao atualizar status do serviço:", error);
         return null;
     }
+    */
 }
 
 // Verificar se instauser já foi usado
 async function checkInstauserExists(instauser) {
+    return false; // DISABLED: Always return false to skip validation
+    /*
     try {
         console.log(`🔍 Verificando se instauser '${instauser}' já foi usado...`);
         // Otimização: Usar filtro do Baserow em vez de baixar tudo
@@ -992,10 +653,13 @@ async function checkInstauserExists(instauser) {
         console.error("Erro ao verificar instauser:", error);
         return false; // Em caso de erro, permitir continuar
     }
+    */
 }
 
 // Função para atualizar o campo 'teste' para 'OK' na linha correta do Baserow
 async function updateBaserowTesteStatus(instauser) {
+    return; // DISABLED
+    /*
   try {
     // Buscar a linha pelo instauser usando filtro
     const fieldName = CONTROLE_FIELDS.INSTAUSER || 'instauser';
@@ -1047,6 +711,7 @@ async function updateBaserowTesteStatus(instauser) {
   } catch (err) {
     console.error('Erro ao atualizar campo teste no Baserow:', err.message || err);
   }
+  */
 }
 
 // Lista de fingerprints bloqueados manualmente
@@ -2553,7 +2218,8 @@ app.get('/:slug', async (req, res, next) => {
               }
             } catch(_) {}
             req.session.perfilAccessAllowed = true;
-            // Atualizar linha do Baserow com IP e User-Agent (mantém igual)
+            // Atualizar linha do Baserow com IP e User-Agent (DISABLED)
+            /*
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
                 const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === slug);
@@ -2565,6 +2231,7 @@ app.get('/:slug', async (req, res, next) => {
                     await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                 }
             }
+            */
             return res.render('index');
         }
         console.log('⛔ Link inválido/expirado para slug:', slug);
@@ -2728,49 +2395,25 @@ app.post("/api/check-instagram-profile", async (req, res) => {
       try { await vuPreAlways.updateOne({ username: preDocAlways.username }, { $setOnInsert: preDocAlways, $set: { lastEvent: 'pre-always', lastAt: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
     } catch (_) {}
 
-    // (Verificação antecipada de uso removida para garantir atualização de dados do perfil)
-    // A verificação será feita dentro de verifyInstagramProfile e retornada no objeto result
-
+    // Verificação via Apify (Delegando para função centralizada verifyInstagramProfile)
     try {
-      // Chamar a função através da fila para limitar concorrência e evitar sobrecarga
-      const result = await instagramQueue.add(() => verifyInstagramProfile(username, userAgent, ip, req, res));
-        try {
-          if (result && result.success && result.profile && result.profile.username) {
-            const vu = await getCollection('validated_insta_users');
-            const doc = {
-              username: String(result.profile.username || '').trim().toLowerCase(),
-              fullName: String(result.profile.fullName || ''),
-              profilePicUrl: String(result.profile.profilePicUrl || ''),
-              isVerified: !!result.profile.isVerified,
-              isPrivate: !!result.profile.isPrivate,
-              followersCount: typeof result.profile.followersCount === 'number' ? result.profile.followersCount : 0,
-              checkedAt: new Date().toISOString(),
-              linkId: req.session ? req.session.linkSlug || null : null,
-              ip: String(ip || ''),
-              userAgent: String(userAgent || ''),
-              source: 'api.checkInstagramProfile',
-              utms: utms || {}
-            };
-            try { await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }); } catch(_) {}
-          }
-        } catch (err) { try { console.error('fallback insert error', err?.message || String(err)); } catch(_) {} }
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
 
-        // Se o perfil já foi testado, retornar 409 mas com os dados atualizados do perfil
-        if (result && result.success && result.profile && result.profile.alreadyTested) {
-             return res.status(409).json({
-                success: false,
-                error: "Este perfil já foi testado anteriormente. O serviço de teste já foi realizado para este usuário.",
-                code: "INSTAUSER_ALREADY_USED",
-                profile: result.profile
-            });
+        // Adaptar o retorno para o formato esperado por este endpoint se necessário
+        // verifyInstagramProfile já retorna { success, status, profile, error }
+        // Se verifyInstagramProfile retornar erro (success: false), devemos repassar o status code apropriado
+        
+        if (!result.success) {
+            return res.status(result.status || 500).json(result);
         }
 
-        return res.status(result.status || 200).json(result);
+        return res.json(result);
+
     } catch (error) {
-        console.error("Erro na verificação de perfil:", error.message);
+        console.error("❌ Erro no handler check-instagram-profile:", error.message);
         return res.status(500).json({
             success: false,
-            error: "Erro ao verificar perfil. Tente novamente."
+            error: "Erro interno ao verificar perfil."
         });
     }
 });
@@ -2933,6 +2576,7 @@ app.post('/api/ggram-order', async (req, res) => {
         }
         
         // BLOQUEIO POR LINK TEMPORÁRIO: Verificar se este link já foi usado para um pedido
+        /* DISABLED
         const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
         if (result.success) {
             const existingOrder = result.rows.find(row =>
@@ -2948,6 +2592,7 @@ app.post('/api/ggram-order', async (req, res) => {
                 });
             }
         }
+        */
         // Impedir serviço orgânico via backend
         if (servico === 'seguidores_organicos') {
             return res.status(403).json({ error: 'service_unavailable', message: 'Serviço disponível para teste somente após primeira compra.' });
@@ -3094,6 +2739,7 @@ app.post('/api/ggram-order', async (req, res) => {
         }
         if (response?.data?.order) {
             // Buscar a linha correta no Baserow pelo campo 'link' igual ao linkId
+            /* DISABLED
             const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
             if (result.success) {
                 const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
@@ -3111,6 +2757,7 @@ app.post('/api/ggram-order', async (req, res) => {
                     await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
                 }
             }
+            */
             
             // INVALIDAR O LINK TEMPORÁRIO após pedido bem-sucedido
             if (linkId && linkId !== 'teste123') {
@@ -3151,6 +2798,8 @@ app.post('/api/check-usage', async (req, res) => {
     return res.json({ used: false });
   }
   try {
+    return res.json({ used: false }); // DISABLED
+    /*
     const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
     if (!result.success) {
       return res.json({ used: false });
@@ -3167,6 +2816,7 @@ app.post('/api/check-usage', async (req, res) => {
       }
     }
     return res.json({ used: false });
+    */
   } catch (err) {
     return res.json({ used: false });
   }
@@ -3180,6 +2830,8 @@ app.post('/api/check-link-status', async (req, res) => {
     return res.json({ blocked: false });
   }
   
+  return res.json({ blocked: false }); // DISABLED: Baserow validation removed
+  /*
   try {
     const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
     if (!result.success) {
@@ -3201,6 +2853,7 @@ app.post('/api/check-link-status', async (req, res) => {
     console.error('Erro ao verificar status do link:', err);
     return res.json({ blocked: false });
   }
+  */
 });
 
 app.post('/api/webhook-phone', async (req, res) => {
@@ -3223,6 +2876,18 @@ app.post('/api/webhook-phone', async (req, res) => {
 
   // Criar linha no Baserow
   try {
+    // DISABLED: Baserow validation removed
+    const fakeRowId = 'disabled_' + Date.now();
+    console.log("✅ Webhook processado (Baserow desativado):", fakeRowId);
+    
+    res.json({ 
+      success: true, 
+      link: `https://agenciaoppus.site/${linkInfo.id}`,
+      rowId: fakeRowId,
+      confirmed: true
+    });
+    
+    /*
     const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
     if (result.success) {
       console.log("✅ Webhook registrado na tabela controle:", result.row.id);
@@ -3243,6 +2908,7 @@ app.post('/api/webhook-phone', async (req, res) => {
       console.error("❌ Erro ao registrar webhook na tabela controle:", result.error);
       res.status(500).json({ error: 'Erro ao criar linha no Baserow', details: result.error });
     }
+    */
   } catch (err) {
     console.error("❌ Erro ao registrar webhook:", err);
     res.status(500).json({ error: 'Erro ao criar linha no Baserow', details: err.message });
@@ -3267,12 +2933,18 @@ app.post('/api/webhook-phone-bulk', async (req, res) => {
     for (const tel of normalized) {
       const data = { tel, criado: new Date().toISOString() };
       if (link) data.link = link;
+      
+      // DISABLED: Baserow validation removed
+      createdIds.push('disabled_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
+      
+      /*
       const result = await baserowManager.createRow(BASEROW_TABLES.CONTROLE, mapControleData(data));
       if (result.success) {
         createdIds.push(result.row.id);
       } else {
         errors.push({ tel, error: result.error });
       }
+      */
     }
     console.log(`📦 Importação bulk de telefones concluída: ${createdIds.length} criados, ${errors.length} erros.`);
     return res.json({ success: true, total: normalized.length, createdCount: createdIds.length, errorCount: errors.length, createdIds, errors });
@@ -3284,6 +2956,8 @@ app.post('/api/webhook-phone-bulk', async (req, res) => {
 
 // Endpoint de diagnóstico: ler linha do Baserow por ID
 app.get('/api/debug-baserow-row', async (req, res) => {
+  return res.json({ success: false, error: 'Baserow integration disabled' });
+  /*
   const id = Number(req.query.id);
   if (!id) return res.status(400).json({ error: 'Informe ?id=<rowId>' });
   try {
@@ -3295,6 +2969,7 @@ app.get('/api/debug-baserow-row', async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: 'Exceção ao ler linha', details: err.message });
   }
+  */
 });
 
 /*
