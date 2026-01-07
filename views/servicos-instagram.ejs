@@ -220,6 +220,11 @@
                    
                    <!-- Email -->
                    <div style="margin-bottom: 1rem;">
+                      <div id="emailErrorMsg" style="color:#ef4444; font-size: 0.85rem; display:none; margin-bottom: 0.2rem;">Por favor, informe um e-mail válido</div>
+                      <div style="background-color: #eff6ff; padding: 0.75rem; border-radius: 8px; border: 1px solid #dbeafe; margin-bottom: 0.8rem;">
+                          <span style="color: #1e40af; font-weight: 700; font-size: 0.95rem; display: block; margin-bottom: 0.3rem;">Por que pedimos esses dados?</span>
+                          <p style="font-size: 0.85rem; color: #1e3a8a; margin: 0; line-height: 1.4;">Para entrar em contato com você e para consulta dos dados do seu pedido.</p>
+                      </div>
                       <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Email <span style="color:#ef4444">*</span></label>
                       <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" style="width:100%; border-radius: 8px;" />
                    </div>
@@ -275,27 +280,23 @@
                     </div>
                   </div>
                   <div style="font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">@<span id="reviewProfileUsername"></span></div>
-                  <div style="font-size: 0.9rem; color: var(--text-secondary);">
-                    <span id="reviewProfileFollowers">-</span> seguidores atuais
+                  <div style="display: flex; flex-direction: column; align-items: center; font-size: 0.95rem; color: var(--text-secondary); gap: 0.25rem;">
+                    <div><span id="reviewProfileFollowers" style="font-weight: 600; color: var(--text-primary);">0</span> seguidores atuais</div>
+                    <div><span id="reviewSelectedQty" style="font-weight: 700; color: var(--primary-purple);">+0</span> (pacote que escolhi)</div>
+                    <div style="border-top: 1px solid var(--border-color); width: 60%; margin: 0.25rem 0;"></div>
+                    <div style="font-size: 1.05rem; font-weight: 700; color: var(--text-primary);"><span id="reviewTotalFollowers">0</span> seguidores totais</div>
                   </div>
                </div>
 
-               <!-- Selected Quantity Highlight -->
-               <div style="text-align: center; margin-bottom: 0.5rem;">
-                 <h3 class="card-title" style="margin-bottom: 0; font-size: 1.6rem; color: var(--primary-color);">
-                    <span id="headerSelectedQty"></span>
-                 </h3>
-               </div>
-               
-               <div style="margin-top: 1rem; text-align: center; font-size: 0.9rem; background: #0f172a; color: #fbbf24; padding: 0.6rem; border-radius: 8px; font-weight: 600; box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.1);">
-                  ⚡ Finalize o pagamento e alcance a fama 🏆
+               <div style="margin-top: 1rem; text-align: center; font-size: 0.95rem; color: white; background: #000000; padding: 0.8rem; border-radius: 12px; font-weight: 600;">
+                  Finalize o pagamento e conquiste os seguidores acima
                </div>
             </div>
 
             <!-- PROMOTIONS SECTION (Merged) -->
             <div class="service-card" id="orderBumpInline" style="display:none;">
               <div class="card-content">
-                <h3 class="card-title">Promoções</h3>
+                <h3 class="card-title" style="background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: transparent; display: block; text-align: center; width: 100%;">Oferta exclusivas para você</h3>
                 <div class="card-desc promo-list">
                     <!-- Upgrade dinâmico -->
                     <label class="promo-item upgrade">
