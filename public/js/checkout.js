@@ -1690,7 +1690,18 @@
         const step3Posts = document.getElementById('checkoutPostsCountFinal');
         const step3Followers = document.getElementById('checkoutFollowersCountFinal');
         const step3Following = document.getElementById('checkoutFollowingCountFinal');
-        if (step3Img && (profile.profilePicUrl || profile.driveImageUrl)) step3Img.src = profile.profilePicUrl || profile.driveImageUrl;
+        
+        if (step3Img) {
+             const mainUrl = profile.driveImageUrl || profile.profilePicUrl;
+             if (mainUrl) {
+                 step3Img.src = mainUrl;
+                 step3Img.onerror = function() {
+                     const fallback = profile.profilePicUrl || profile.originalProfilePicUrl;
+                     if (this.src !== fallback && fallback) this.src = fallback;
+                 };
+             }
+        }
+        
         if (step3User) step3User.textContent = profile.username || username;
         if (step3Posts && typeof profile.postsCount === 'number') step3Posts.textContent = String(profile.postsCount);
         if (step3Followers && typeof profile.followersCount === 'number') step3Followers.textContent = String(profile.followersCount);
