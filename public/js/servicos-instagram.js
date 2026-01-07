@@ -1,0 +1,1667 @@
+
+document.addEventListener('DOMContentLoaded', function() {
+  // --- Configurações e Variáveis Globais ---
+  const tabela = {
+    mistos: [
+      { q: 150, p: 'R$ 7,90' },
+      { q: 300, p: 'R$ 14,90' },
+      { q: 500, p: 'R$ 32,90' },
+      { q: 700, p: 'R$ 39,90' },
+      { q: 1000, p: 'R$ 49,90' },
+      { q: 2000, p: 'R$ 79,90' },
+      { q: 3000, p: 'R$ 109,90' },
+      { q: 4000, p: 'R$ 139,90' },
+      { q: 5000, p: 'R$ 159,90' },
+      { q: 7500, p: 'R$ 199,90' },
+      { q: 10000, p: 'R$ 269,90' },
+      { q: 15000, p: 'R$ 399,90' },
+    ],
+    brasileiros: [
+      { q: 150, p: 'R$ 19,90' },
+      { q: 300, p: 'R$ 29,90' },
+      { q: 500, p: 'R$ 54,90' },
+      { q: 700, p: 'R$ 69,90' },
+      { q: 1000, p: 'R$ 99,90' },
+      { q: 2000, p: 'R$ 169,90' },
+      { q: 3000, p: 'R$ 229,90' },
+      { q: 4000, p: 'R$ 299,90' },
+      { q: 5000, p: 'R$ 329,90' },
+      { q: 7500, p: 'R$ 459,90' },
+      { q: 10000, p: 'R$ 599,90' },
+      { q: 15000, p: 'R$ 999,90' },
+    ],
+    organicos: [
+      { q: 150, p: 'R$ 39,90' },
+      { q: 300, p: 'R$ 49,90' },
+      { q: 500, p: 'R$ 69,90' },
+      { q: 700, p: 'R$ 89,90' },
+      { q: 1000, p: 'R$ 129,90' },
+      { q: 2000, p: 'R$ 199,90' },
+      { q: 3000, p: 'R$ 249,90' },
+      { q: 4000, p: 'R$ 329,90' },
+      { q: 5000, p: 'R$ 499,90' },
+      { q: 7500, p: 'R$ 599,90' },
+      { q: 10000, p: 'R$ 899,90' },
+      { q: 15000, p: 'R$ 1.299,90' },
+    ],
+  };
+
+  const promoPricing = {
+    likes: { old: 'R$ 49,90', price: 'R$ 9,90', discount: 80 },
+    views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
+    comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
+    warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
+  };
+  try { window.promoPricing = promoPricing; } catch(_) {}
+
+  let selectedPlatform = 'instagram';
+  let basePriceCents = 0;
+  let isInstagramVerified = false;
+  let isInstagramPrivate = false;
+  let warrantyMode = '30';
+  try { window.warrantyMode = warrantyMode; } catch(_) {}
+
+  let paymentPollInterval = null;
+  let paymentEventSource = null;
+
+  // Elementos UI Principais
+  const tipoSelect = document.getElementById('tipoSelect');
+  const qtdSelect = document.getElementById('quantidadeSelect');
+  const tipoCards = document.getElementById('tipoCards');
+  const planCards = document.getElementById('planCards');
+  const perfilCard = document.getElementById('perfilCard');
+  const grupoPedido = document.getElementById('grupoPedido'); // Pode não existir
+  const orderInline = document.getElementById('orderBumpInline');
+  const paymentCard = document.getElementById('paymentCard'); // Pode não existir
+  const resumo = document.getElementById('resumo');
+  const resTipo = document.getElementById('resTipo');
+  const resQtd = document.getElementById('resQtd');
+  const resPreco = document.getElementById('resPreco');
+  const resTotalFinal = document.getElementById('resTotalFinal');
+  const btnPedido = document.getElementById('realizarPedidoBtn');
+
+  // Perfil UI
+  const usernameCheckoutInput = document.getElementById('usernameCheckoutInput');
+  const checkCheckoutButton = document.getElementById('checkCheckoutButton');
+  const statusCheckoutMessage = document.getElementById('statusCheckoutMessage');
+  const loadingCheckoutSpinner = document.getElementById('loadingCheckoutSpinner');
+  const profilePreview = document.getElementById('profilePreview');
+  const checkoutProfileImage = document.getElementById('checkoutProfileImage');
+  const checkoutProfileUsername = document.getElementById('checkoutProfileUsername');
+  const checkoutFollowersCount = document.getElementById('checkoutFollowersCount');
+  const checkoutFollowingCount = document.getElementById('checkoutFollowingCount');
+  const checkoutPostsCount = document.getElementById('checkoutPostsCount');
+
+  // Inputs de contato
+  const contactPhoneInput = document.getElementById('contactPhoneInput');
+  const contactEmailInput = document.getElementById('contactEmailInput');
+
+  // --- Helpers ---
+  function parsePrecoToCents(precoStr) {
+    if (!precoStr) return 0;
+    const cleaned = precoStr.replace(/[^\d,]/g, '').replace(',', '.');
+    const value = Math.round(parseFloat(cleaned) * 100);
+    return isNaN(value) ? 0 : value;
+  }
+
+  function formatCentsToBRL(cents) {
+    const valor = Math.max(0, Number(cents) || 0);
+    const reais = Math.floor(valor / 100);
+    const centavos = valor % 100;
+    return `R$ ${reais.toLocaleString('pt-BR')},${String(centavos).padStart(2, '0')}`;
+  }
+
+  function onlyDigits(v) { return String(v || '').replace(/\D+/g, ''); }
+
+  function maskBrPhone(v) {
+    const s = onlyDigits(v).slice(0, 11);
+    if (!s) return '';
+    const ddd = s.slice(0, 2);
+    const first = s.slice(2, 3);
+    const mid = s.slice(3, 7);
+    const end = s.slice(7, 11);
+    let out = '';
+    if (ddd.length < 2) {
+      out = `(${ddd}`;
+    } else {
+      out = `(${ddd})`;
+    }
+    if (first) out += ` ${first}`;
+    if (mid) out += mid;
+    if (end) out += `-${end}`;
+    return out;
+  }
+
+  function attachPhoneMask(input) {
+    if (!input) return;
+    input.addEventListener('input', () => { input.value = maskBrPhone(input.value); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        const selStart = input.selectionStart, selEnd = input.selectionEnd;
+        const hasSelection = selStart !== selEnd;
+        if (!hasSelection) {
+          const digits = onlyDigits(input.value);
+          if (digits.length > 0) {
+            e.preventDefault();
+            input.value = maskBrPhone(digits.slice(0, -1));
+          }
+        }
+      }
+    });
+    input.addEventListener('paste', (e) => {
+      const txt = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (txt) { e.preventDefault(); input.value = maskBrPhone(txt); }
+    });
+  }
+
+  function normalizeInstagramUsername(input) {
+    let username = input.trim();
+    if (username.includes('instagram.com/')) {
+      const parts = username.split('instagram.com/');
+      if (parts[1]) {
+        username = parts[1].split(/[/?#]/)[0];
+      }
+    }
+    username = username.replace(/^@/, '');
+    username = username.replace(/[^a-zA-Z0-9_.]/g, '');
+    return username;
+  }
+
+  function isValidInstagramUsername(username) {
+    const regex = /^[a-zA-Z0-9._]{1,30}$/;
+    return regex.test(username) && !username.startsWith('.') && !username.endsWith('.');
+  }
+
+  function getLabelForTipo(tipo) {
+    const map = {
+      'mistos': 'Seguidores Mistos',
+      'brasileiros': 'Seguidores Brasileiros',
+      'organicos': 'Seguidores Orgânicos'
+    };
+    return map[tipo] || tipo;
+  }
+
+  function getUnitForTipo(tipo) {
+    return 'seguidores';
+  }
+
+  function isFollowersTipo(tipo) {
+    return ['mistos', 'brasileiros', 'organicos'].includes(tipo);
+  }
+
+  function findPrice(tipo, qtd) {
+    const arr = tabela[tipo] || [];
+    const item = arr.find(i => Number(i.q) === Number(qtd));
+    return item ? item.p : null;
+  }
+
+  // --- Stepper Logic (Checkout Reference) ---
+
+  window.goToStep = function(step) {
+    // UI Elements
+    const step1Container = document.getElementById('step1Container');
+    const step2Container = document.getElementById('perfilCard');
+    const step3Container = document.getElementById('step3Container');
+
+    // Stepper Indicators
+    document.querySelectorAll('.step').forEach((el, idx) => {
+        if (idx + 1 === step) el.classList.add('active');
+        else if (idx + 1 < step) el.classList.add('completed');
+        else el.classList.remove('active', 'completed');
+    });
+
+    // Visibility
+    if (step === 1) {
+        if (step1Container) step1Container.style.display = 'grid'; // or block/flex depending on css
+        if (step2Container) step2Container.style.display = 'none';
+        if (step3Container) step3Container.style.display = 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (step === 2) {
+        if (step1Container) step1Container.style.display = 'none';
+        if (step2Container) step2Container.style.display = 'block';
+        if (step3Container) step3Container.style.display = 'none';
+        
+        // Focus on username input
+        if (usernameCheckoutInput && !usernameCheckoutInput.value) {
+            setTimeout(() => usernameCheckoutInput.focus(), 100);
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (step === 3) {
+        if (step1Container) step1Container.style.display = 'none';
+        if (step2Container) step2Container.style.display = 'none';
+        if (step3Container) step3Container.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        try { updatePromosSummary(); } catch(_) {}
+    }
+  };
+
+  // --- Renderização dos Cards ---
+
+  function renderTipoCards() {
+    if (!tipoCards) return;
+    tipoCards.innerHTML = '';
+    const tipos = Object.keys(tabela).filter(t => t !== 'seguidores_tiktok');
+    
+    tipos.forEach(tipo => {
+      const card = document.createElement('div');
+      card.className = 'service-card option-card';
+      card.setAttribute('data-role', 'tipo'); // Alinhado com checkout
+      card.setAttribute('data-tipo', tipo);
+      
+      const label = getLabelForTipo(tipo);
+      // Layout idêntico ao checkout.js (centralizado)
+      card.innerHTML = `<div class="card-content"><div class="card-title" style="text-align:center;">${label}</div></div>`;
+      
+      card.addEventListener('click', () => {
+        // Atualizar select oculto
+        if (tipoSelect) {
+          tipoSelect.value = tipo;
+          tipoSelect.dispatchEvent(new Event('change'));
+        }
+        // Atualizar UI visual
+        const all = tipoCards.querySelectorAll('.option-card');
+        all.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+      });
+      
+      tipoCards.appendChild(card);
+    });
+  }
+
+  function getAllowedQuantities(tipo) {
+    const without50 = [150, 500, 1000, 3000, 5000, 10000];
+    const base = [50, 150, 500, 1000, 3000, 5000, 10000];
+    if (tipo === 'mistos') return base;
+    if (tipo === 'brasileiros' || tipo === 'organicos') return without50;
+    return base;
+  }
+
+  function renderPlanCards(tipo) {
+    if (!planCards) return;
+    planCards.innerHTML = '';
+    let arr = tabela[tipo] || [];
+    const unit = getUnitForTipo(tipo);
+    
+    // Filtrar quantidades permitidas (checkout logic)
+    if (isFollowersTipo(tipo)) {
+      const allowed = getAllowedQuantities(tipo);
+      arr = arr.filter(x => allowed.includes(Number(x.q)));
+    }
+    
+    arr.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'service-card plan-card';
+      card.setAttribute('data-role', 'plano');
+      card.setAttribute('data-qtd', item.q);
+      card.setAttribute('data-preco', item.p);
+      
+      // Cálculo de preço "antigo" (estética checkout)
+      const baseText = String(item.p);
+      const baseStr = baseText.replace(/[^0-9,\.]/g, '');
+      let base = 0;
+      try { base = parseFloat(baseStr.replace('.', '').replace(',', '.')); } catch(_) {}
+      const inc = base * 1.15;
+      const ceilInt = Math.ceil(inc);
+      const increasedRounded = (ceilInt - 0.10);
+      const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
+
+      // Layout idêntico ao checkout.js
+      card.innerHTML = `<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+      
+      card.addEventListener('click', () => {
+        // Atualizar estado
+        const baseText = item.p;
+        
+        // Atualizar select oculto
+        const opt = Array.from(qtdSelect.options).find(o => o.value === String(item.q));
+        if (opt) opt.selected = true;
+        
+        // Atualizar resumo
+        if (resTipo) resTipo.textContent = getLabelForTipo(tipo);
+        if (resQtd) resQtd.textContent = `${item.q} ${unit}`;
+        if (resPreco) resPreco.textContent = baseText;
+        try { basePriceCents = parsePrecoToCents(baseText); } catch(_) { basePriceCents = 0; }
+        
+        // Update Order Bump e Promos
+        updateOrderBump(tipo, Number(item.q));
+        updatePromosSummary();
+        
+        // Marcar ativo
+        const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
+        cards.forEach(c => c.classList.toggle('active', c === card));
+        
+        // Ir para Step 2
+        if (window.goToStep) window.goToStep(2);
+      });
+      planCards.appendChild(card);
+    });
+  }
+
+  function getTipoDescription(tipo) {
+    switch (tipo) {
+      case 'mistos':
+        return `
+          <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
+          <ul>
+            <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços bons e estáveis, que não ficam caindo.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; caso ocorra — nós repomos tudo gratuitamente.</li>
+            <li>✅ <strong>Vantagem:</strong> Melhor custo-benefício para quem quer crescer rápido.</li>
+            <li>ℹ️ <strong>Observação:</strong> Parte dos seguidores pode ser internacional.</li>
+          </ul>
+        `;
+      case 'brasileiros':
+        return `
+          <p>🇧🇷 Entrega composta exclusivamente por perfis com nomes brasileiros, garantindo uma base com aparência nacional. Perfis com nomes e características locais, podendo variar em frequência de postagem ou interação. Perfeito para quem busca credibilidade nacional, com serviço estável e de qualidade.</p>
+          <ul>
+            <li>✨ <strong>Qualidade garantida:</strong> Todos os nossos serviços são bons e estáveis, não caem facilmente, e têm suporte completo de reposição.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; repomos automaticamente caso aconteça.</li>
+            <li>✅ <strong>Vantagem:</strong> Perfis brasileiros com nomes e fotos locais.</li>
+            <li>ℹ️ <strong>Observação:</strong> Interações e stories podem variar entre os perfis.</li>
+          </ul>
+        `;
+      case 'organicos':
+        return `
+          <p>Serviço premium com seguidores 100% brasileiros, ativos e filtrados, com interações, stories recentes e até perfis verificados. Os seguidores são cuidadosamente selecionados para entregar credibilidade máxima e engajamento real. Perfeito para quem busca autoridade e resultados duradouros, com a melhor estabilidade do mercado.</p>
+          <ul>
+            <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços premium, estáveis e seguros, que não sofrem quedas significativas.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 1% a 2%; caso ocorra — garantimos a reposição total.</li>
+            <li>✅ <strong>Vantagem:</strong> Seguidores reais, engajados e 100% brasileiros.</li>
+            <li>ℹ️ <strong>Observação:</strong> A entrega é gradual para manter a naturalidade e segurança do perfil.</li>
+          </ul>
+        `;
+      default:
+        return '';
+    }
+  }
+
+  function renderTipoDescription(tipo) {
+    const descCard = document.getElementById('tipoDescCard');
+    const titleEl = document.getElementById('tipoDescTitle');
+    const contentEl = document.getElementById('tipoDescContent');
+    if (!descCard || !titleEl || !contentEl) return;
+
+    titleEl.textContent = 'Descrição do serviço';
+    contentEl.innerHTML = getTipoDescription(tipo);
+    descCard.style.display = 'block';
+  }
+
+  // --- Lógica de Promoções (Checkout Reference) ---
+
+  function renderPromoPrices() {
+    const blocks = document.querySelectorAll('.promo-prices');
+    blocks.forEach(b => {
+      const key = b.getAttribute('data-promo');
+      if (key === 'likes' || key === 'views' || key === 'comments' || key === 'warranty60') return;
+      const conf = promoPricing[key];
+      if (!conf) return;
+      const oldEl = b.querySelector('.old-price');
+      const newEl = b.querySelector('.new-price');
+      const discEl = b.querySelector('.discount-badge');
+      if (oldEl) oldEl.textContent = conf.old;
+      if (newEl) newEl.textContent = conf.price;
+      if (discEl) discEl.textContent = `${conf.discount}% OFF`;
+    });
+  }
+
+  function applyWarrantyMode() {
+    const isLife = warrantyMode === 'life';
+    const wLabel = document.getElementById('warrantyModeLabel');
+    const wHighlight = document.getElementById('warrantyHighlight');
+    const wOld = document.getElementById('warrantyOldPrice');
+    const wNew = document.getElementById('warrantyNewPrice');
+    const wDisc = document.getElementById('warrantyDiscount');
+
+    if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
+    if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
+    if (wOld) wOld.textContent = isLife ? 'R$ 129,90' : 'R$ 39,90';
+    if (wNew) wNew.textContent = isLife ? 'R$ 19,90' : 'R$ 9,90';
+    if (wDisc) wDisc.textContent = isLife ? '85% OFF' : '75% OFF';
+    updatePromosSummary();
+  }
+
+  function stepWarranty(delta) {
+    const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
+    if (next !== warrantyMode) { 
+        warrantyMode = next; 
+        try { window.warrantyMode = warrantyMode; } catch(_) {} 
+        applyWarrantyMode(); 
+    }
+  }
+
+  const wDec = document.getElementById('warrantyModeDec');
+  const wInc = document.getElementById('warrantyModeInc');
+  if (wDec) wDec.addEventListener('click', () => stepWarranty(-1));
+  if (wInc) wInc.addEventListener('click', () => stepWarranty(1));
+
+  function updateOrderBump(tipo, baseQtd) {
+    if (!orderInline) return;
+    const labelSpan = document.getElementById('orderBumpText');
+    const checkbox = document.getElementById('orderBumpCheckboxInline');
+    const upgradePrices = document.querySelector('.promo-prices[data-promo="upgrade"]');
+    const upOld = upgradePrices ? upgradePrices.querySelector('.old-price') : null;
+    const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
+    const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
+    const upHighlight = document.getElementById('orderBumpHighlight');
+    if (!isFollowersTipo(tipo) || !baseQtd) { orderInline.style.display = 'none'; return; }
+    // Sempre mostrar o card de Promoções para serviços de seguidores
+    orderInline.style.display = 'block';
+    if (checkbox) checkbox.checked = false;
+
+    // Promos específicas: 1000 -> 2000 com extras para brasileiros/organicos
+    if ((tipo === 'brasileiros' || tipo === 'organicos') && Number(baseQtd) === 1000) {
+      const targetQtd = 2000;
+      const basePrice = findPrice(tipo, 1000);
+      const targetPrice = findPrice(tipo, 2000);
+      const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
+      const diffStr = formatCentsToBRL(diffCents);
+      const extras = '(+400 Curtidas e 15.000 visualizações)';
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${getUnitForTipo(tipo)} ${extras}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} seguidores`;
+      if (upOld) upOld.textContent = targetPrice || '—';
+      if (upNew) upNew.textContent = diffStr;
+      if (upDisc) {
+        const targetCents = parsePrecoToCents(targetPrice);
+        const pct = targetCents ? Math.round(((targetCents - diffCents) / targetCents) * 100) : 0;
+        upDisc.textContent = `${pct}% OFF`;
+      }
+      return;
+    }
+
+    // Upgrade genérico para demais pacotes
+    const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const targetQtd = upsellTargets[Number(baseQtd)];
+    if (!targetQtd) {
+      if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+      if (upOld) upOld.textContent = '—';
+      if (upNew) upNew.textContent = '—';
+      if (upDisc) upDisc.textContent = 'OFERTA';
+      return;
+    }
+    const basePrice = findPrice(tipo, baseQtd);
+    const targetPrice = findPrice(tipo, targetQtd);
+    const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
+    const addQtd = targetQtd - baseQtd;
+    const diffStr = formatCentsToBRL(diffCents);
+    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para ${targetQtd}.`;
+    if (upHighlight) upHighlight.textContent = `+ ${addQtd} seguidores`;
+    if (upOld) upOld.textContent = targetPrice || '—';
+    if (upNew) upNew.textContent = diffStr;
+    if (upDisc) {
+      const targetCents = parsePrecoToCents(targetPrice);
+      const pct = targetCents ? Math.round(((targetCents - diffCents) / targetCents) * 100) : 0;
+      upDisc.textContent = `${pct}% OFF`;
+    }
+  }
+
+  const likesTable = [
+    { q: 150, price: 'R$ 4,90' },
+    { q: 300, price: 'R$ 9,90' },
+    { q: 500, price: 'R$ 14,90' },
+    { q: 700, price: 'R$ 19,90' },
+    { q: 1000, price: 'R$ 24,90' },
+    { q: 2000, price: 'R$ 34,90' },
+    { q: 3000, price: 'R$ 49,90' },
+    { q: 4000, price: 'R$ 59,90' },
+    { q: 5000, price: 'R$ 69,90' },
+    { q: 7500, price: 'R$ 89,90' },
+    { q: 10000, price: 'R$ 109,90' },
+    { q: 15000, price: 'R$ 159,90' }
+  ];
+  const likesQtyEl = document.getElementById('likesQty');
+  const likesDec = document.getElementById('likesDec');
+  const likesInc = document.getElementById('likesInc');
+  const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
+  function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
+  function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
+  function updateLikesPrice(q) {
+    const entry = likesTable.find(e => e.q === q);
+    const newEl = likesPrices ? likesPrices.querySelector('.new-price') : null;
+    const oldEl = likesPrices ? likesPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
+    const hl = document.querySelector('.promo-item.likes .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} CURTIDAS`;
+  }
+  function stepLikes(dir) {
+    const current = Number(likesQtyEl?.textContent || 150);
+    const idx = likesTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= likesTable.length) nextIdx = likesTable.length - 1;
+    const next = likesTable[nextIdx].q;
+    if (likesQtyEl) likesQtyEl.textContent = String(next);
+    updateLikesPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  if (likesDec) likesDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(-1); });
+  if (likesInc) likesInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(1); });
+  if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
+
+  const viewsTable = [
+    { q: 1000, price: 'R$ 4,90' },
+    { q: 2500, price: 'R$ 9,90' },
+    { q: 5000, price: 'R$ 14,90' },
+    { q: 10000, price: 'R$ 19,90' },
+    { q: 25000, price: 'R$ 24,90' },
+    { q: 50000, price: 'R$ 34,90' },
+    { q: 100000, price: 'R$ 49,90' },
+    { q: 150000, price: 'R$ 59,90' },
+    { q: 200000, price: 'R$ 69,90' },
+    { q: 250000, price: 'R$ 89,90' },
+    { q: 500000, price: 'R$ 109,90' },
+    { q: 1000000, price: 'R$ 159,90' }
+  ];
+  const viewsQtyEl = document.getElementById('viewsQty');
+  const viewsDec = document.getElementById('viewsDec');
+  const viewsInc = document.getElementById('viewsInc');
+  const viewsPrices = document.querySelector('.promo-prices[data-promo="views"]');
+  function updateViewsPrice(q) {
+    const entry = viewsTable.find(e => e.q === q);
+    const newEl = viewsPrices ? viewsPrices.querySelector('.new-price') : null;
+    const oldEl = viewsPrices ? viewsPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    if (oldEl && entry) {
+      const newVal = parseCurrencyBR(entry.price);
+      const oldVal = newVal / 0.7;
+      oldEl.textContent = formatCurrencyBR(oldVal);
+    }
+    const hl = document.querySelector('.promo-item.views .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} VISUALIZAÇÕES`;
+  }
+  function stepViews(dir) {
+    const current = Number(viewsQtyEl?.textContent || 1000);
+    const idx = viewsTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= viewsTable.length) nextIdx = viewsTable.length - 1;
+    const next = viewsTable[nextIdx].q;
+    if (viewsQtyEl) viewsQtyEl.textContent = String(next);
+    updateViewsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  if (viewsDec) viewsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(-1); });
+  if (viewsInc) viewsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(1); });
+  if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
+
+  const commentsQtyEl = document.getElementById('commentsQty');
+  const commentsDec = document.getElementById('commentsDec');
+  const commentsInc = document.getElementById('commentsInc');
+  const commentsPrices = document.querySelector('.promo-prices[data-promo="comments"]');
+
+  function updateCommentsPrice(q) {
+    const newEl = commentsPrices ? commentsPrices.querySelector('.new-price') : null;
+    const oldEl = commentsPrices ? commentsPrices.querySelector('.old-price') : null;
+    
+    // Formatação BRL direta com toFixed(2)
+    const format = (cents) => {
+        const val = cents / 100;
+        return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+
+    if (newEl) newEl.textContent = format(q * 150); // q * 1.50 * 100
+    if (oldEl) { const oldCents = (q * 150) * 1.7; oldEl.textContent = format(oldCents); }
+    const hl = document.querySelector('.promo-item.comments .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} COMENTÁRIOS`;
+  }
+
+  function stepComments(dir) {
+    const current = Number(commentsQtyEl?.textContent || 1);
+    let next = current + dir;
+    if (next < 1) next = 1;
+    if (next > 100) next = 100;
+    if (commentsQtyEl) commentsQtyEl.textContent = String(next);
+    updateCommentsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+
+  if (commentsDec) commentsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(-1); });
+  if (commentsInc) commentsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(1); });
+  if (commentsQtyEl) updateCommentsPrice(Number(commentsQtyEl.textContent || 1));
+
+  function getSelectedPromos() {
+    const promos = [];
+    try {
+      const likesChecked = !!document.getElementById('promoLikes')?.checked;
+      const viewsChecked = !!document.getElementById('promoViews')?.checked;
+      const commentsChecked = !!document.getElementById('promoComments')?.checked;
+      const warrantyChecked = !!document.getElementById('promoWarranty60')?.checked;
+      const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
+      
+      if (likesChecked) {
+        const qty = Number(document.getElementById('likesQty')?.textContent || 150);
+        let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.likes?.price || '';
+        promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (viewsChecked) {
+        const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
+        let priceStr = document.querySelector('.promo-prices[data-promo="views"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.views?.price || '';
+        promos.push({ key: 'views', qty, label: `Visualizações Reels (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (commentsChecked) {
+        const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
+        const priceCents = qty * 150; // R$ 1,50 (150 cents)
+        promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
+      }
+      if (warrantyChecked) {
+        const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
+        const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
+        const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
+        promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (upgradeChecked) {
+        let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
+        const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
+        promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
+      }
+    } catch (_) {}
+    return promos;
+  }
+
+  function calcPromosTotalCents(promos) {
+    try { return (Array.isArray(promos) ? promos : []).reduce((acc, p) => acc + (Number(p.priceCents) || 0), 0); } catch (_) { return 0; }
+  }
+
+  function updatePromosSummary() {
+    showResumoIfAllowed();
+    
+    // Atualiza header de quantidade (Bug fix)
+    const headerQty = document.getElementById('headerSelectedQty');
+    if (headerQty && resQtd && resQtd.textContent) {
+      headerQty.textContent = resQtd.textContent;
+    }
+
+    let baseCents = basePriceCents || 0;
+    
+    // Calcula preço base original (com margem para dar desconto)
+    // No renderPlanCards usamos base * 1.15. Vamos recalcular.
+    const baseVal = baseCents / 100;
+    const inc = baseVal * 1.15;
+    const ceilInt = Math.ceil(inc);
+    const increasedRounded = (ceilInt - 0.10);
+    let baseOriginalCents = Math.round(increasedRounded * 100);
+
+    const promos = getSelectedPromos();
+    
+    // Renderiza lista de order bumps
+    const resPromosContainer = document.getElementById('resPromosContainer');
+    const resPromos = document.getElementById('resPromos');
+    if (resPromos && resPromosContainer) {
+        if (promos.length > 0) {
+            resPromosContainer.style.display = 'block';
+            
+            // Header "Promoções selecionadas:"
+            let html = '<div style="font-weight:600; margin-bottom:-4px; padding-bottom:0; color:var(--text-primary); line-height:1.2; margin-top:0.5rem;">Promoções selecionadas:</div>';
+            
+            html += promos.map((p, index) => {
+                // Tenta achar preço original do promo
+                let oldPriceCents = 0;
+                if (p.key === 'upgrade') {
+                    // Tenta pegar do DOM
+                    const upOld = document.querySelector('.promo-prices[data-promo="upgrade"] .old-price');
+                    if (upOld) oldPriceCents = parsePrecoToCents(upOld.textContent);
+                    else oldPriceCents = p.priceCents * 1.5; 
+                } else if (p.key === 'comments') {
+                   // Comments old = current * 1.7
+                   oldPriceCents = p.priceCents * 1.7;
+                } else {
+                   // Likes, Views, Warranty
+                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : p.key)];
+                   if (conf) oldPriceCents = parsePrecoToCents(conf.old);
+                   else if (p.key === 'warranty_lifetime') oldPriceCents = 12990; // R$ 129,90
+                   else if (p.key === 'warranty30') oldPriceCents = 3990; // R$ 39,90
+                }
+                // Adiciona ao total original
+                baseOriginalCents += (oldPriceCents || p.priceCents);
+                
+                const marginTop = index === 0 ? '0' : '0.1rem';
+                return `
+                <div class="resumo-row" style="margin-top:${marginTop}; margin-bottom:0.1rem; line-height:1.4; display: flex; justify-content: space-between; align-items: center;">
+                    <span>• ${p.label}</span>
+                    <span>${formatCentsToBRL(p.priceCents)}</span>
+                </div>`;
+            }).join('');
+            
+            resPromos.innerHTML = html;
+        } else {
+            resPromosContainer.style.display = 'none';
+            resPromos.innerHTML = '';
+        }
+    }
+
+    const promosTotal = calcPromosTotalCents(promos);
+    const totalCents = Math.max(0, Number(baseCents) + promosTotal);
+    
+    // Atualiza Total Final com Desconto
+    if (resTotalFinal) {
+        const totalOriginal = baseOriginalCents; // Soma de todos os originais
+        const totalCurrent = totalCents;
+        
+        let discountPct = 0;
+        if (totalOriginal > totalCurrent) {
+            discountPct = Math.round(((totalOriginal - totalCurrent) / totalOriginal) * 100);
+        }
+        
+        // HTML Rico
+        const isMobile = window.innerWidth <= 640;
+        const totalOriginalBrl = formatCentsToBRL(totalOriginal);
+        const totalCurrentBrl = formatCentsToBRL(totalCurrent);
+        
+        if (isMobile) {
+            // Mobile: Alinhado à esquerda, em duas linhas
+            resTotalFinal.innerHTML = `
+                <div class="promo-prices" style="flex-direction: column; align-items: flex-start; gap: 0;">
+                    <div style="display:flex; gap: 0.5rem; align-items: center;">
+                        <span class="old-price" style="text-decoration: line-through; color: #9ca3af;">${totalOriginalBrl}</span>
+                        <span class="discount-badge">${discountPct}% OFF</span>
+                    </div>
+                    <span class="new-price">${totalCurrentBrl}</span>
+                </div>
+            `;
+        } else {
+            // Desktop: Layout original (uma linha, flex-end)
+            resTotalFinal.innerHTML = `
+                <div class="promo-prices" style="justify-content: flex-end; display: flex; align-items: center; gap: 0.5rem;">
+                    <span class="old-price">${totalOriginalBrl}</span>
+                    <span class="discount-badge">${discountPct}% OFF</span>
+                    <span class="new-price">${totalCurrentBrl}</span>
+                </div>
+            `;
+        }
+    }
+  }
+
+  // --- Funções de Post Select Modal ---
+
+  function getPostModalRefs() {
+    return {
+      postModal: document.getElementById('postSelectModal'),
+      postModalGrid: document.getElementById('postModalGrid'),
+      postModalTitle: document.getElementById('postModalTitle'),
+      postModalClose: document.getElementById('postModalClose'),
+    };
+  }
+
+  function ensureSpinnerCSS() {
+    if (document.getElementById('oppusSpinnerStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'oppusSpinnerStyles';
+    style.textContent = "@keyframes oppusSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} .oppus-spinner{width:32px;height:32px;border:4px solid rgba(255,255,255,0.25);border-top-color:#7c3aed;border-radius:50%;animation:oppusSpin 1s linear infinite} .oppus-spinner-wrap{grid-column:1/-1;display:flex;justify-content:center;align-items:center;gap:8px;padding:24px;color:var(--text-secondary)}";
+    document.head.appendChild(style);
+  }
+
+  function spinnerHTML() { ensureSpinnerCSS(); return '<div class="oppus-spinner-wrap"><div class="oppus-spinner"></div><span>Carregando...</span></div>'; }
+
+  let cachedPosts = null;
+  let cachedPostsUser = '';
+  let postModalOpenLock = false;
+  let suppressOpenPostModalOnce = false;
+
+  function openPostModal(kind) {
+    if (postModalOpenLock) return;
+    postModalOpenLock = true;
+    setTimeout(function(){ postModalOpenLock = false; }, 600);
+    const refs = getPostModalRefs();
+    if (!refs.postModal || !refs.postModalGrid) return;
+    
+    const user = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+    if (!user) {
+        showStatusMessageCheckout('Valide seu perfil primeiro.', 'error');
+        return;
+    }
+
+    if (refs.postModalTitle) refs.postModalTitle.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
+    try {
+      if (refs.postModal.parentNode !== document.body) {
+        document.body.appendChild(refs.postModal);
+      }
+    } catch(_) {}
+    try { document.body.style.overflow = 'hidden'; } catch(_) {}
+    refs.postModal.style.display = 'flex';
+    try {
+      const dlg = refs.postModal.querySelector('.modal-dialog');
+      if (dlg && typeof dlg.scrollIntoView === 'function') { dlg.scrollIntoView({ block: 'center', inline: 'center' }); }
+    } catch(_) {}
+
+    if (isInstagramPrivate) {
+      refs.postModalGrid.innerHTML = '<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML();
+    } else {
+      refs.postModalGrid.innerHTML = spinnerHTML();
+    }
+
+    const renderFrom = function(arr) {
+      const items = (Array.isArray(arr) ? arr : []).filter(p => {
+        // Relax filter for views to allow any video-like content
+        if (kind === 'views') {
+             const isVid = !!p.isVideo || (String(p.typename||'').toLowerCase().includes('video') || String(p.typename||'').toLowerCase().includes('clip'));
+             // Fallback: se não tiver isVideo mas tiver media_type == 2 (GraphVideo)
+             const isMediaTypeVideo = (p.media_type === 2);
+             return isVid || isMediaTypeVideo;
+        }
+        return true;
+      }).slice(0, 8); // Checkout uses 8
+
+      const html = items.map(function(p){
+        const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+        const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
+        const isVid = p.isVideo || (p.media_type === 2);
+        
+        const media = (dsrc)
+          ? ('<div class="media-frame"><img src="'+dsrc+'" loading="lazy" decoding="async"/></div>')
+          : (isVid && vsrc
+            ? ('<div class="media-frame"><video data-src="'+vsrc+'" muted playsinline preload="none"></video></div>')
+            : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
+        return '<div class="service-card"><div class="card-content pick-post-card" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="width:100%; text-align:center;" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'">Selecionar</button></div></div></div>';
+      }).join('');
+      
+      if (!html) {
+          const manualHtml = `
+            <div style="grid-column:1/-1; text-align:center; padding: 1rem;">
+                <p style="margin-bottom:0.5rem; color:var(--text-secondary);">Não encontramos posts recentes compatíveis automaticamente.</p>
+                <div style="display:flex; gap:0.5rem; max-width:400px; margin:0 auto;">
+                    <input type="text" id="manualPostLinkInput" placeholder="${kind === 'views' ? 'Cole o link do Reels/Vídeo aqui...' : 'Cole o link do post aqui...'}" style="flex:1; padding:0.6rem; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-primary); color:var(--text-primary);" />
+                    <button type="button" id="manualPostLinkBtn" class="continue-button" style="padding:0.6rem 1rem;">Usar Link</button>
+                </div>
+                <div id="manualLinkMsg" style="margin-top:0.5rem; font-size:0.9rem;"></div>
+            </div>
+          `;
+          refs.postModalGrid.innerHTML = manualHtml;
+          setTimeout(() => {
+              const btn = document.getElementById('manualPostLinkBtn');
+              const inp = document.getElementById('manualPostLinkInput');
+              const msg = document.getElementById('manualLinkMsg');
+              if(btn && inp) {
+                  btn.addEventListener('click', () => {
+                      const val = inp.value.trim();
+                      if(!val || !val.includes('instagram.com/')) {
+                          if(msg) { msg.textContent = 'Link inválido'; msg.style.color = '#ff4444'; }
+                          return;
+                      }
+                      let sc = '';
+                      const m = val.match(/\/(?:p|reel)\/([A-Za-z0-9_-]+)/);
+                      if(m) sc = m[1];
+                      if(!sc) {
+                           if(msg) { msg.textContent = 'Link inválido (não foi possível extrair ID)'; msg.style.color = '#ff4444'; }
+                           return;
+                      }
+                      const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+                      fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind }) })
+                        .then(r=>r.json())
+                        .then(function(){ 
+                            if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
+                            setTimeout(() => {
+                                const refs = getPostModalRefs(); 
+                                if(refs.postModal) refs.postModal.style.display='none';
+                                try { document.body.style.overflow=''; } catch(_) {}
+                            }, 500);
+                        });
+                  });
+              }
+          }, 100);
+      } else {
+          refs.postModalGrid.innerHTML = html;
+      }
+
+      const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
+      
+      Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+            .then(r=>r.json())
+            .then(function(){ highlightSelected(k, sc); });
+        });
+      });
+      
+      Array.from(refs.postModalGrid.querySelectorAll('.pick-post-card')).forEach(function(card){
+        card.addEventListener('click', function(){
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+            .then(r=>r.json())
+            .then(function(){ highlightSelected(k, sc); });
+        });
+      });
+      
+      try { fetch('/api/instagram/selected-for').then(r=>r.json()).then(function(d){ const obj = d && d.selectedFor ? d.selectedFor : {}; const cur = obj[kind]; if (cur && cur.shortcode) { highlightSelected(kind, cur.shortcode); } }); } catch(_) {}
+    };
+
+    const useCache = !!cachedPosts && cachedPostsUser === user;
+    if (useCache) {
+      renderFrom(cachedPosts);
+    } else {
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+      refs.postModalGrid.innerHTML = isInstagramPrivate ? ('<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML()) : spinnerHTML();
+      fetch(url).then(r=>r.json()).then(d=>{
+        const arr = Array.isArray(d.posts) ? d.posts : [];
+        cachedPosts = arr; cachedPostsUser = user;
+        renderFrom(arr);
+      }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1;color:#ef4444;">'+(isInstagramPrivate?'Deixe o perfil no modo público para selecionar o post':'Erro ao carregar posts.')+'</div>'; });
+    }
+  }
+
+  // --- Inicialização de Listeners de Promos e Modal ---
+
+  function initPromoListeners() {
+    const promoLikes = document.getElementById('promoLikes');
+    const promoViews = document.getElementById('promoViews');
+    const promoComments = document.getElementById('promoComments');
+    
+    if (promoLikes) promoLikes.addEventListener('change', function() { if (this.checked) openPostModal('likes'); updatePromosSummary(); });
+    if (promoViews) promoViews.addEventListener('change', function() { if (this.checked) openPostModal('views'); updatePromosSummary(); });
+    if (promoComments) promoComments.addEventListener('change', function() { if (this.checked) openPostModal('comments'); updatePromosSummary(); });
+
+    // Step Controls - REMOVIDO PARA EVITAR CONFLITO COM LISTENERS DE TABELA
+    // Os listeners de stepLikes, stepViews e stepComments já foram definidos anteriormente
+    
+    // Modal Close
+    const refs = getPostModalRefs();
+    if (refs.postModalClose) refs.postModalClose.addEventListener('click', () => { if(refs.postModal) refs.postModal.style.display = 'none'; });
+    if (document.getElementById('postModalClose2')) document.getElementById('postModalClose2').addEventListener('click', () => { if(refs.postModal) refs.postModal.style.display = 'none'; });
+    
+    // Checkbox Order Bump
+    const obCheck = document.getElementById('orderBumpCheckboxInline');
+    if (obCheck) obCheck.addEventListener('change', updatePromosSummary);
+    
+    // Checkbox Warranty
+    const wCheck = document.getElementById('promoWarranty60');
+    if (wCheck) wCheck.addEventListener('change', updatePromosSummary);
+  }
+
+  // --- Lógica de Verificação de Perfil ---
+
+  async function checkInstagramProfileCheckout() {
+    if (!usernameCheckoutInput) return;
+    const rawInput = usernameCheckoutInput.value.trim();
+    if (!rawInput) {
+      showStatusMessageCheckout('Digite o usuário ou URL do Instagram.', 'error');
+      return;
+    }
+    
+    const username = normalizeInstagramUsername(rawInput);
+    if (!isValidInstagramUsername(username)) {
+      showStatusMessageCheckout('Nome de usuário inválido.', 'error');
+      return;
+    }
+    if (username !== rawInput) usernameCheckoutInput.value = username;
+    
+    hideStatusMessageCheckout();
+    clearProfilePreview();
+    showLoadingCheckout();
+    
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const utms = {
+          source: params.get('utm_source') || '',
+          medium: params.get('utm_medium') || '',
+          campaign: params.get('utm_campaign') || '',
+          term: params.get('utm_term') || '',
+          content: params.get('utm_content') || ''
+      };
+      
+      const resp = await fetch('/api/check-instagram-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, utms })
+      });
+      const data = await resp.json();
+      hideLoadingCheckout();
+      
+      if (data.success) {
+        const profile = data.profile || {};
+        if (checkoutProfileImage && profile.profilePicUrl) checkoutProfileImage.src = profile.profilePicUrl;
+        if (checkoutProfileUsername) checkoutProfileUsername.textContent = profile.username || username;
+        if (checkoutFollowersCount) checkoutFollowersCount.textContent = String(profile.followersCount || '-');
+        if (checkoutFollowingCount) checkoutFollowingCount.textContent = String(profile.followingCount || '-');
+        if (checkoutPostsCount) checkoutPostsCount.textContent = String(profile.postsCount || '-');
+        
+        if (profilePreview) profilePreview.style.display = 'block';
+        
+        // Show contact fields
+        const contactArea = document.getElementById('contactFieldsArea');
+        if (contactArea) contactArea.style.display = 'block';
+        
+        // Update Step 3 Review Data
+        const revImg = document.getElementById('reviewProfileImage');
+        const revUser = document.getElementById('reviewProfileUsername');
+        const revFoll = document.getElementById('reviewProfileFollowers');
+        if (revImg) revImg.src = profile.profilePicUrl || '';
+        if (revUser) revUser.textContent = profile.username || username;
+        if (revFoll) revFoll.textContent = String(profile.followersCount || '-');
+        
+        isInstagramVerified = true;
+        try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
+        
+        updatePedidoButtonState();
+        showResumoIfAllowed();
+        updatePromosSummary();
+        applyCheckoutFlow();
+        showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+        
+      } else {
+        showStatusMessageCheckout(data.error || 'Falha ao verificar perfil.', 'error');
+      }
+    } catch (e) {
+      hideLoadingCheckout();
+      showStatusMessageCheckout('Erro ao conectar com o servidor.', 'error');
+    }
+  }
+
+  // --- Funções Auxiliares UI ---
+
+  function showStatusMessageCheckout(msg, type) {
+    if (!statusCheckoutMessage) return;
+    statusCheckoutMessage.textContent = msg;
+    statusCheckoutMessage.className = 'status-message ' + (type === 'error' ? 'error' : 'success');
+    statusCheckoutMessage.style.display = 'block';
+  }
+
+  function hideStatusMessageCheckout() {
+    if (!statusCheckoutMessage) return;
+    statusCheckoutMessage.style.display = 'none';
+  }
+
+  function showLoadingCheckout() {
+    if (loadingCheckoutSpinner) loadingCheckoutSpinner.style.display = 'block';
+  }
+
+  function hideLoadingCheckout() {
+    if (loadingCheckoutSpinner) loadingCheckoutSpinner.style.display = 'none';
+  }
+
+  function clearProfilePreview() {
+    if (profilePreview) profilePreview.style.display = 'none';
+    isInstagramVerified = false;
+  }
+
+  function updatePedidoButtonState() {
+    if (btnPedido) btnPedido.disabled = false;
+  }
+
+  function showResumoIfAllowed() {
+    const isFollowers = isFollowersTipo(tipoSelect.value);
+    const allow = (!isFollowers) || !!isInstagramVerified;
+    if (resumo) {
+        resumo.hidden = !allow;
+        resumo.style.display = allow ? 'block' : 'none';
+    }
+  }
+
+  function updatePerfilVisibility() {
+    // Controlled by goToStep
+  }
+  
+  function updateWarrantyVisibility() {
+    const tipo = tipoSelect.value;
+    const inp = document.getElementById('promoWarranty60');
+    if (!inp) return;
+    const item = inp.closest('.promo-item');
+    if (item) item.style.display = (tipo === 'mistos' || tipo === 'brasileiros') ? '' : 'none';
+  }
+
+  function applyCheckoutFlow() {
+    const tipo = tipoSelect.value;
+    const isFollowers = isFollowersTipo(tipo);
+    const verified = !!isInstagramVerified;
+    
+    // Controlled by goToStep. We only manage internal visibility of Step 3 elements here if needed.
+    if (verified || !isFollowers) {
+        if (orderInline) orderInline.style.display = 'block';
+        if (grupoPedido) grupoPedido.style.display = 'block';
+        if (paymentCard) paymentCard.style.display = 'block';
+        
+        // Atualiza header do Step 3
+        const headerQty = document.getElementById('headerSelectedQty');
+        if (headerQty && qtdSelect.value) {
+            const unit = getUnitForTipo(tipo);
+            headerQty.textContent = `+ ${qtdSelect.value} ${unit}`;
+        }
+    } else {
+        if (orderInline) orderInline.style.display = 'none';
+        if (grupoPedido) grupoPedido.style.display = 'none';
+        if (paymentCard) paymentCard.style.display = 'none';
+    }
+  }
+
+  // --- Funções de Pagamento (PIX) ---
+
+  function markPaymentConfirmed() {
+    const pixResultado = document.getElementById('pixResultado');
+    try {
+      if (pixResultado) {
+        pixResultado.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;color:#22C55E;font-weight:700;font-size:1rem;"><span class="price-new">Pagamento confirmado</span></div>';
+      }
+    } catch(_) {}
+    try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
+    try { showResumoIfAllowed(); } catch(_) {}
+  }
+
+  async function navigateToPedidoOrFallback(identifier, correlationID) {
+    try {
+      try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
+      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+      const resp = await fetch(apiUrl);
+      const data = await resp.json();
+      
+      if (data && data.order && data.order.numeroPedido) {
+         window.location.href = `/pedido/${data.order.numeroPedido}`;
+      } else {
+         // Fallback se não tiver número do pedido ainda
+         showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
+         setTimeout(async () => {
+             try {
+                const resp2 = await fetch(apiUrl);
+                const data2 = await resp2.json();
+                if (data2 && data2.order && data2.order.numeroPedido) {
+                    window.location.href = `/pedido/${data2.order.numeroPedido}`;
+                } else {
+                    showResumoIfAllowed();
+                }
+             } catch(_) { showResumoIfAllowed(); }
+         }, 3000);
+      }
+    } catch(_) {
+        showStatusMessageCheckout('Pagamento confirmado! Verifique seu email.', 'success');
+    }
+  }
+
+  async function criarPixWoovi() {
+    if (btnPedido) {
+        btnPedido.disabled = true;
+        btnPedido.classList.add('loading');
+    }
+    
+    // Ocultar elementos estáticos do PIX se existirem, para usar o render dinâmico
+    const staticPixElements = ['pixQrcode', 'pixLoader', 'pixCopiaCola', 'copyPixBtn'];
+    staticPixElements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.parentElement.style.display = 'none'; // Oculta o container pai desses elementos
+    });
+    // Garantir que pixResultado esteja visível e limpo
+    const pixResultado = document.getElementById('pixResultado');
+    if (pixResultado) {
+        pixResultado.innerHTML = '';
+        pixResultado.style.display = 'block';
+        // Se o pai estava oculto (caso dos elementos estáticos estarem no mesmo container), reexibir o container principal
+        const pixContainer = document.getElementById('pixContainer');
+        if (pixContainer) {
+            pixContainer.style.display = 'block'; // Ensure container is visible
+            // Reexibir apenas o necessário
+            Array.from(pixContainer.children).forEach(c => {
+                if (c.id === 'pixResultado' || c.tagName === 'H4' || c.tagName === 'P') c.style.display = 'block';
+                else if (staticPixElements.includes(c.id) || c.querySelector('#pixQrcode')) c.style.display = 'none';
+            });
+        }
+    }
+
+    try {
+      const tipo = tipoSelect ? tipoSelect.value : 'mistos';
+      const qtdSelectVal = qtdSelect ? qtdSelect.value : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      const precoText = resPreco ? resPreco.textContent : '';
+      const precoStr = precoText; 
+      
+      // Calcular total com promos
+      let baseCents = basePriceCents || 0;
+      const promos = getSelectedPromos();
+      const promosTotalCents = calcPromosTotalCents(promos);
+      const totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
+      const valueBRL = totalCents / 100;
+      
+      // Quantidade efetiva (considerando upgrade)
+      const upgradeItem = promos.find(p => p.key === 'upgrade');
+      // Se tiver upgrade, a quantidade base já foi dobrada visualmente? 
+      // Não, no servicos-instagram.js o updateOrderBump apenas mostra o texto.
+      // A lógica de quantidade real deve ser ajustada aqui.
+      // Se houver upgrade, a quantidade entregue é maior, mas para o checkout (registro)
+      // usamos a quantidade base + info de upgrade.
+      const qtdEffective = qtd; 
+
+      const correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      
+      // Phone
+      const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
+      const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+      
+      // Username
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+
+      if (!instagramUsernameFinal) {
+        throw new Error('Nome de usuário do Instagram não identificado.');
+      }
+
+      const payload = {
+        correlationID,
+        value: totalCents,
+        comment: 'Checkout OPPUS Instagram',
+        customer: {
+          name: 'Cliente Instagram',
+          phone: phoneValue
+        },
+        additionalInfo: [
+          { key: 'tipo_servico', value: tipo },
+          { key: 'quantidade', value: String(qtdEffective) },
+          { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
+        ],
+        profile_is_private: isInstagramPrivate
+      };
+
+      // Tentar pegar posts selecionados (simulado ou via cache/session se tivesse implementado full)
+      // Aqui vamos apenas verificar se tem promos que precisam de posts
+      // No código anterior do modal, não salvamos no backend. 
+      // Se for necessário, deveríamos ter salvo. 
+      // Assumindo que o modal apenas seleciona visualmente por enquanto ou falta implementar a persistência.
+      // Vou manter simplificado como no checkout.js que busca de /api/instagram/selected-for
+      
+      try {
+        const selResp = await fetch('/api/instagram/selected-for');
+        if (selResp.ok) {
+            const selData = await selResp.json();
+            const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+            const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
+            
+            const likesLink = mapKind('likes');
+            const viewsLink = mapKind('views');
+            const commentsLink = mapKind('comments');
+            
+            const hasLikes = promos.some(p => p.key === 'likes');
+            const hasViews = promos.some(p => p.key === 'views');
+            const hasComments = promos.some(p => p.key === 'comments');
+
+            if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
+            if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
+            if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+        }
+      } catch(_) {}
+
+      const resp = await fetch('/api/woovi/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data?.details?.message || 'Falha ao criar cobrança');
+      }
+
+      // Renderização do PIX
+      const charge = data?.charge || {};
+      const pix = charge?.paymentMethods?.pix || {};
+      const brCode = pix?.brCode || charge?.brCode || data?.brCode || '';
+      const qrImage = pix?.qrCodeImage || charge?.qrCodeImage || data?.qrCodeImage || '';
+
+      const copyButtonId = 'copyPixBtnDynamic';
+      const inputId = 'pixBrCodeInputDynamic';
+
+      const imgHtml = qrImage
+        ? `<img src="${qrImage}" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />`
+        : '';
+
+      const codeFieldHtml = brCode
+        ? `<div style="margin-bottom: 0.5rem; text-align: center;">
+             <input id="${inputId}" type="text" readonly value="${brCode}" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" />
+           </div>`
+        : '<div style="color:#fff;">Não foi possível exibir o código Pix.</div>';
+
+      const copyBtnHtml = brCode
+        ? `<div class="button-container" style="margin-bottom: 0.5rem;">
+             <button id="${copyButtonId}" class="continue-button">
+               <span class="button-text">Copiar código Pix</span>
+             </button>
+           </div>`
+        : '';
+
+      const textColor = (document.body.classList.contains('theme-light') || true) ? '#000' : '#fff'; // Forçando escuro se necessário ou detectando tema
+      const waitingHtml = `
+        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
+          <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
+              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <span>Aguardando pagamento...</span>
+        </div>`;
+
+      if (pixResultado) {
+          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
+          pixResultado.style.display = 'block';
+      }
+
+      // Scroll para o PIX
+      try {
+        const isMobile = window.innerWidth <= 640;
+        if (isMobile && pixResultado) {
+            const rect = pixResultado.getBoundingClientRect();
+            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
+            window.scrollTo({ top, behavior: 'smooth' });
+        }
+      } catch(_) {}
+
+      // Listener do botão copiar
+      setTimeout(() => {
+          const copyBtn = document.getElementById(copyButtonId);
+          if (copyBtn && brCode) {
+            copyBtn.addEventListener('click', async () => {
+              try {
+                if (navigator.clipboard?.writeText) {
+                  await navigator.clipboard.writeText(brCode);
+                } else {
+                  const input = document.getElementById(inputId);
+                  input?.select();
+                  document.execCommand('copy');
+                }
+                const span = copyBtn.querySelector('.button-text');
+                const prev = span ? span.textContent : '';
+                if (span) span.textContent = 'Pix copiado';
+                try { showStatusMessageCheckout('Código Pix copiado', 'success'); } catch(_) {}
+                copyBtn.disabled = true;
+                setTimeout(() => {
+                  copyBtn.disabled = false;
+                  if (span) span.textContent = prev || 'Copiar código Pix';
+                }, 1200);
+              } catch (e) {
+                alert('Não foi possível copiar o código Pix.');
+              }
+            });
+          }
+      }, 100);
+
+      // Polling de Status
+      const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
+      const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
+      const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
+      
+      if (paymentPollInterval) {
+        clearInterval(paymentPollInterval);
+        paymentPollInterval = null;
+      }
+      
+      if (chargeId) {
+        const checkPaid = async () => {
+          try {
+            const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
+            const stData = await stResp.json();
+            const status = stData?.charge?.status || stData?.status || '';
+            const paidFlag = stData?.charge?.paid || stData?.paid || false;
+            const isPaid = paidFlag === true || /paid/i.test(String(status));
+            
+            if (isPaid) {
+              clearInterval(paymentPollInterval);
+              paymentPollInterval = null;
+              markPaymentConfirmed();
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            }
+          } catch (e) {}
+        };
+        // Executa imediatamente e depois a cada 5s
+        checkPaid();
+        paymentPollInterval = setInterval(checkPaid, 5000);
+      }
+
+    } catch (err) {
+      alert('Erro ao criar PIX: ' + (err?.message || err));
+    } finally {
+      if (btnPedido) {
+        btnPedido.disabled = false;
+        btnPedido.classList.remove('loading');
+      }
+    }
+  }
+
+  // --- Inicialização ---
+
+  if (tipoSelect) {
+    tipoSelect.addEventListener('change', () => {
+      const tipo = tipoSelect.value;
+      popularQuantidades(tipo);
+      renderPlanCards(tipo);
+      renderTipoDescription(tipo);
+      updatePerfilVisibility();
+      updateWarrantyVisibility();
+    });
+  }
+
+  function popularQuantidades(tipo) {
+    if (!qtdSelect) return;
+    qtdSelect.innerHTML = '';
+    const arr = tabela[tipo] || [];
+    arr.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.q;
+      opt.textContent = `${item.q} - ${item.p}`;
+      qtdSelect.appendChild(opt);
+    });
+    qtdSelect.disabled = false;
+  }
+
+  if (checkCheckoutButton) {
+    checkCheckoutButton.addEventListener('click', checkInstagramProfileCheckout);
+  }
+
+  if (btnPedido) {
+    btnPedido.addEventListener('click', criarPixWoovi);
+  }
+  
+  if (usernameCheckoutInput) {
+    usernameCheckoutInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            checkInstagramProfileCheckout();
+        }
+    });
+
+    // Hide tutorial balloon on focus, click, touch, or input (Aggressive hide)
+    const hideBalloon = () => {
+        const balloon = document.getElementById('tutorial3Usuario');
+        if (balloon) {
+            balloon.style.display = 'none';
+            balloon.style.setProperty('display', 'none', 'important');
+            balloon.classList.add('hidden-force');
+        }
+    };
+    
+    // Listeners on the input
+    usernameCheckoutInput.addEventListener('focus', hideBalloon);
+    usernameCheckoutInput.addEventListener('click', hideBalloon);
+    usernameCheckoutInput.addEventListener('mousedown', hideBalloon);
+    usernameCheckoutInput.addEventListener('touchstart', hideBalloon);
+    usernameCheckoutInput.addEventListener('input', hideBalloon);
+
+    // Listener on the balloon itself
+    const balloonElement = document.getElementById('tutorial3Usuario');
+    if (balloonElement) {
+        balloonElement.addEventListener('click', hideBalloon);
+    }
+    
+    // Global listener for safety
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.id === 'usernameCheckoutInput') {
+            hideBalloon();
+        }
+        // Also hide if clicking the balloon wrapper if it exists
+        if (e.target && (e.target.id === 'tutorial3Usuario' || e.target.closest('#tutorial3Usuario'))) {
+            hideBalloon();
+        }
+    });
+  }
+
+  if (contactPhoneInput) attachPhoneMask(contactPhoneInput);
+  if (document.getElementById('checkoutPhoneInput')) attachPhoneMask(document.getElementById('checkoutPhoneInput'));
+
+  // --- Step Navigation Listeners ---
+  const backToStep1Btn = document.getElementById('backToStep1Btn');
+  if (backToStep1Btn) {
+      backToStep1Btn.addEventListener('click', () => {
+          if (window.goToStep) window.goToStep(1);
+      });
+  }
+
+  const confirmContactDataBtn = document.getElementById('confirmContactDataBtn');
+  if (confirmContactDataBtn) {
+      confirmContactDataBtn.addEventListener('click', () => {
+          const email = contactEmailInput ? contactEmailInput.value.trim() : '';
+          const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
+          
+          if (!email || !email.includes('@')) {
+              showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+              if (contactEmailInput) contactEmailInput.focus();
+              return;
+          }
+          if (!phone || phone.length < 10) {
+              showStatusMessageCheckout('Por favor, informe um telefone válido.', 'error');
+              if (contactPhoneInput) contactPhoneInput.focus();
+              return;
+          }
+          
+          if (window.goToStep) window.goToStep(3);
+      });
+  }
+
+  // Init
+  renderPromoPrices();
+  applyWarrantyMode();
+  renderTipoCards();
+  initPromoListeners();
+  
+  // Default selection (Mistos)
+  if (tipoSelect && !tipoSelect.value) {
+    tipoSelect.value = 'mistos';
+    tipoSelect.dispatchEvent(new Event('change'));
+  }
+
+  // Initial Step
+  if (window.goToStep) window.goToStep(1);
+  
+  // Expor função para o EJS se necessário (mas tentamos evitar scripts inline)
+  window.checkInstagramProfileCheckout = checkInstagramProfileCheckout;
+
+  // --- Modals Logic (Warranty, Comments, Tools) ---
+  const warrantyModal = document.getElementById('warranty60Modal');
+  const warrantyInfoBtn = document.getElementById('warranty60InfoBtn');
+  const warrantyInfoBtn30 = document.getElementById('warranty30InfoBtn');
+  const warrantyInfoBtnLifetime = document.getElementById('warrantyLifetimeInfoBtn');
+  const warrantyCloseBtn = document.getElementById('warranty60CloseBtn');
+  if (warrantyInfoBtn && warrantyModal) {
+    warrantyInfoBtn.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtn30 && warrantyModal) {
+    warrantyInfoBtn30.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtnLifetime && warrantyModal) {
+    warrantyInfoBtnLifetime.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyCloseBtn && warrantyModal) {
+    warrantyCloseBtn.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  const warrantyCloseBtn2 = document.getElementById('warranty60CloseBtn2');
+  if (warrantyCloseBtn2 && warrantyModal) {
+    warrantyCloseBtn2.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  if (warrantyModal) {
+    warrantyModal.addEventListener('click', function(e){ if (e.target === warrantyModal) { warrantyModal.style.display = 'none'; } });
+  }
+
+  const commentsModal = document.getElementById('commentsExampleModal');
+  const commentsBtn = document.getElementById('commentsExampleBtn');
+  const commentsCloseBtn = document.getElementById('commentsExampleCloseBtn');
+  const commentsCloseBtn2 = document.getElementById('commentsExampleCloseBtn2');
+  const commentsVideo = document.getElementById('commentsVideoPlayer');
+
+  if (commentsBtn && commentsModal) {
+    commentsBtn.addEventListener('click', function(e){
+      try { e.stopPropagation(); } catch(_) {}
+      suppressOpenPostModalOnce = true;
+      setTimeout(function(){ suppressOpenPostModalOnce = false; }, 500);
+      try {
+        if (commentsModal.parentNode !== document.body) {
+          document.body.appendChild(commentsModal);
+        }
+      } catch(_) {}
+      commentsModal.style.display = 'flex';
+      if (commentsVideo) {
+        commentsVideo.currentTime = 0;
+        try { commentsVideo.play(); } catch(e) { console.log('Video play failed', e); }
+      }
+    });
+  }
+  function closeCommentsModal() {
+    if (commentsModal) commentsModal.style.display = 'none';
+    if (commentsVideo) commentsVideo.pause();
+  }
+  if (commentsCloseBtn && commentsModal) {
+    commentsCloseBtn.addEventListener('click', closeCommentsModal);
+  }
+  if (commentsCloseBtn2 && commentsModal) {
+    commentsCloseBtn2.addEventListener('click', closeCommentsModal);
+  }
+  if (commentsModal) {
+    commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { closeCommentsModal(); } });
+  }
+
+  const toolModal = document.getElementById('toolExplanationModal');
+  const toolBtn = document.getElementById('toolExplanationBtn');
+  const toolCloseBtn = document.getElementById('toolExplanationCloseBtn');
+  const toolCloseBtn2 = document.getElementById('toolExplanationCloseBtn2');
+  const toolVideo = document.getElementById('toolVideoPlayer');
+  
+  if (toolBtn && toolModal) {
+      toolBtn.addEventListener('click', function(e){
+        try { e.preventDefault(); e.stopPropagation(); } catch(_) {}
+        suppressOpenPostModalOnce = true;
+        setTimeout(function(){ suppressOpenPostModalOnce = false; }, 500);
+        try {
+            if (toolModal.parentNode !== document.body) {
+                document.body.appendChild(toolModal);
+            }
+        } catch(_) {}
+        toolModal.style.display = 'flex';
+        if (toolVideo) {
+            toolVideo.currentTime = 0;
+            try { toolVideo.play(); } catch(e) { console.log('Video play failed', e); }
+        }
+      });
+  }
+  function closeToolModal() {
+      if (toolModal) toolModal.style.display = 'none';
+      if (toolVideo) toolVideo.pause();
+  }
+  if (toolCloseBtn && toolModal) toolCloseBtn.addEventListener('click', closeToolModal);
+  if (toolCloseBtn2 && toolModal) toolCloseBtn2.addEventListener('click', closeToolModal);
+  if (toolModal) {
+      toolModal.addEventListener('click', function(e){ if (e.target === toolModal) closeToolModal(); });
+  }
+});
