@@ -240,9 +240,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         return cached;
     }
 
-    const BATCH_SIZE = 3;
-    const MAX_TOTAL_ATTEMPTS = 6;
-    const REQUEST_BUDGET_MS = 12 * 1000;
+    const BATCH_SIZE = 6;
+    const MAX_TOTAL_ATTEMPTS = 12;
+    const REQUEST_BUDGET_MS = 15 * 1000;
     const startedAt = Date.now();
     const usedProfileIds = new Set();
     const MAX_ERRORS_PER_PROFILE = 5;
@@ -283,7 +283,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             const response = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
                 headers,
                 httpsAgent: proxyAgent,
-                timeout: 8000,
+                timeout: 2000,
                 validateStatus: status => true 
             });
 

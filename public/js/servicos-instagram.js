@@ -286,6 +286,15 @@ document.addEventListener('DOMContentLoaded', function() {
     return base;
   }
 
+  const quantityBadges = {
+    150: 'TESTE',
+    500: 'PACOTE BÁSICO',
+    1000: 'MAIS PEDIDO',
+    3000: 'EXCLUSIVO',
+    5000: 'VIP',
+    10000: 'ELITE'
+  };
+
   function renderPlanCards(tipo) {
     if (!planCards) return;
     planCards.innerHTML = '';
@@ -315,8 +324,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const increasedRounded = (ceilInt - 0.10);
       const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
 
+      // Badge logic
+       const qNum = Number(item.q);
+       let badgeHtml = '';
+       if (isFollowersTipo(tipo) && quantityBadges[qNum]) {
+         badgeHtml = `<div class="plan-badge">${quantityBadges[qNum]}</div>`;
+       }
+
       // Layout idêntico ao checkout.js
-      card.innerHTML = `<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
       
       card.addEventListener('click', () => {
         // Atualizar estado
@@ -1440,6 +1456,18 @@ document.addEventListener('DOMContentLoaded', function() {
       renderTipoDescription(tipo);
       updatePerfilVisibility();
       updateWarrantyVisibility();
+      
+      // Update visual active state of type cards
+      if (tipoCards) {
+        const all = tipoCards.querySelectorAll('.option-card');
+        all.forEach(c => {
+          if (c.getAttribute('data-tipo') === tipo) {
+            c.classList.add('active');
+          } else {
+            c.classList.remove('active');
+          }
+        });
+      }
     });
   }
 
