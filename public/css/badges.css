@@ -1,0 +1,35 @@
+/* Badges para os cards de planos */
+.plan-card {
+    position: relative;
+    overflow: visible !important;
+}
+
+.plan-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #8B5CF6; /* Roxo claro */
+    color: #ffffff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    box-shadow: 0 4px 6px rgba(139, 92, 246, 0.25);
+    white-space: nowrap;
+    z-index: 10;
+    border: 2px solid #1A1A2E; /* Cor do fundo para "recortar" visualmente */
+}
+
+/* Ajuste para tema claro se necessário */
+body.theme-light .plan-badge {
+    border-color: #ffffff;
+    background: #7C3AED; /* Roxo um pouco mais forte para contraste */
+}
+
+/* Borda roxa para estado ativo */
+.service-card.active {
+    border: 2px solid #8B5CF6 !important;
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.3) !important;
+}
