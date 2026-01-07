@@ -199,6 +199,15 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- Stepper Logic (Checkout Reference) ---
 
   window.goToStep = function(step) {
+    // Validação: Impedir ir para Step 2 sem selecionar plano
+    if (step === 2) {
+      const activePlan = planCards ? planCards.querySelector('.service-card[data-role="plano"].active') : null;
+      if (!activePlan) {
+        alert('Por favor, selecione um pacote antes de prosseguir.');
+        return;
+      }
+    }
+
     // UI Elements
     const step1Container = document.getElementById('step1Container');
     const step2Container = document.getElementById('perfilCard');

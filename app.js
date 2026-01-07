@@ -534,6 +534,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 username: user.username,
                 fullName: user.full_name,
                 profilePicUrl: driveImageUrl || (originalImageUrl ? `/image-proxy?url=${encodeURIComponent(originalImageUrl)}` : null),
+                driveImageUrl: driveImageUrl,
+                originalProfilePicUrl: originalImageUrl,
                 isVerified: user.is_verified,
                 followersCount: user.edge_followed_by ? user.edge_followed_by.count : 0,
                 followingCount: user.edge_follow ? user.edge_follow.count : 0,
@@ -2701,7 +2703,7 @@ app.post("/api/check-privacy", async (req, res) => {
 
 // API para verificar perfil do Instagram (usando API interna)
 app.post("/api/check-instagram-profile", async (req, res) => {
-    const { username, utms } = req.body;
+    const { username, utms, bypassCache } = req.body;
     const userAgent = req.get("User-Agent") || "";
     const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
 
