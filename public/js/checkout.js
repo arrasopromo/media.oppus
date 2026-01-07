@@ -1432,7 +1432,53 @@
             : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
         return '<div class="service-card"><div class="card-content pick-post-card" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="width:100%; text-align:center;" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'">Selecionar</button></div></div></div>';
       }).join('');
-      refs.postModalGrid.innerHTML = html || (isInstagramPrivate ? '<div style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' : '<div style="grid-column:1/-1">Nenhum post encontrado.</div>');
+      if (!html) {
+          const manualHtml = `
+            <div style="grid-column:1/-1; text-align:center; padding: 1rem;">
+                <p style="margin-bottom:0.5rem; color:var(--text-secondary);">Não conseguimos carregar os posts automaticamente.</p>
+                <div style="display:flex; gap:0.5rem; max-width:400px; margin:0 auto;">
+                    <input type="text" id="manualPostLinkInput" placeholder="Cole o link do post aqui..." style="flex:1; padding:0.6rem; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-primary); color:var(--text-primary);" />
+                    <button type="button" id="manualPostLinkBtn" class="continue-button" style="padding:0.6rem 1rem;">Usar Link</button>
+                </div>
+                <div id="manualLinkMsg" style="margin-top:0.5rem; font-size:0.9rem;"></div>
+            </div>
+          `;
+          refs.postModalGrid.innerHTML = manualHtml;
+          setTimeout(() => {
+              const btn = document.getElementById('manualPostLinkBtn');
+              const inp = document.getElementById('manualPostLinkInput');
+              const msg = document.getElementById('manualLinkMsg');
+              if(btn && inp) {
+                  btn.addEventListener('click', () => {
+                      const val = inp.value.trim();
+                      if(!val || !val.includes('instagram.com/')) {
+                          if(msg) { msg.textContent = 'Link inválido'; msg.style.color = '#ff4444'; }
+                          return;
+                      }
+                      let sc = '';
+                      const m = val.match(/\/(?:p|reel)\/([A-Za-z0-9_-]+)/);
+                      if(m) sc = m[1];
+                      if(!sc) {
+                           if(msg) { msg.textContent = 'Link inválido (não foi possível extrair ID)'; msg.style.color = '#ff4444'; }
+                           return;
+                      }
+                      const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+                      fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind }) })
+                        .then(r=>r.json())
+                        .then(function(){ 
+                            if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
+                            setTimeout(() => {
+                                const refs = getPostModalRefs(); 
+                                if(refs.postModal) refs.postModal.style.display='none';
+                                try { document.body.style.overflow=''; } catch(_) {}
+                            }, 500);
+                        });
+                  });
+              }
+          }, 100);
+      } else {
+          refs.postModalGrid.innerHTML = html;
+      }
       const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
       Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
         btn.addEventListener('click', function(){
@@ -1637,6 +1683,18 @@
           checkoutPostsCount.textContent = String(profile.postsCount);
         }
         if (profilePreview) profilePreview.style.display = 'block';
+        
+        // Atualiza perfil na Etapa 3 (Final)
+        const step3Img = document.getElementById('checkoutProfileImageFinal');
+        const step3User = document.getElementById('checkoutProfileUsernameFinal');
+        const step3Posts = document.getElementById('checkoutPostsCountFinal');
+        const step3Followers = document.getElementById('checkoutFollowersCountFinal');
+        const step3Following = document.getElementById('checkoutFollowingCountFinal');
+        if (step3Img && (profile.profilePicUrl || profile.driveImageUrl)) step3Img.src = profile.profilePicUrl || profile.driveImageUrl;
+        if (step3User) step3User.textContent = profile.username || username;
+        if (step3Posts && typeof profile.postsCount === 'number') step3Posts.textContent = String(profile.postsCount);
+        if (step3Followers && typeof profile.followersCount === 'number') step3Followers.textContent = String(profile.followersCount);
+        if (step3Following && typeof profile.followingCount === 'number') step3Following.textContent = String(profile.followingCount);
         try { sessionStorage.setItem('oppus_instagram_username', profile.username || username); } catch(e) {}
         isInstagramVerified = true;
         try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
@@ -1674,6 +1732,19 @@
             checkoutPostsCount.textContent = String(profile.postsCount);
           }
           if (profilePreview) profilePreview.style.display = 'block';
+          
+          // Atualiza perfil na Etapa 3 (Final)
+          const step3Img = document.getElementById('checkoutProfileImageFinal');
+          const step3User = document.getElementById('checkoutProfileUsernameFinal');
+          const step3Posts = document.getElementById('checkoutPostsCountFinal');
+          const step3Followers = document.getElementById('checkoutFollowersCountFinal');
+          const step3Following = document.getElementById('checkoutFollowingCountFinal');
+          if (step3Img && (profile.profilePicUrl || profile.driveImageUrl)) step3Img.src = profile.profilePicUrl || profile.driveImageUrl;
+          if (step3User) step3User.textContent = profile.username || username;
+          if (step3Posts && typeof profile.postsCount === 'number') step3Posts.textContent = String(profile.postsCount);
+          if (step3Followers && typeof profile.followersCount === 'number') step3Followers.textContent = String(profile.followersCount);
+          if (step3Following && typeof profile.followingCount === 'number') step3Following.textContent = String(profile.followingCount);
+          
           isInstagramVerified = true;
           isInstagramPrivate = !!isPrivate;
           updatePedidoButtonState();
@@ -2902,7 +2973,8 @@
 
   function updatePromosSummary() {
     const resPromos = document.getElementById('resPromos');
-    if (!resPromos) return;
+    const resPromosContainer = document.getElementById('resPromosContainer');
+    
     showResumoIfAllowed();
     // Base: prioriza o card de plano ativo; depois texto do resumo; por fim base armazenada
     let baseCents = 0;
@@ -2913,23 +2985,195 @@
       }
     } catch(_) {}
     if (!baseCents) {
-      const resTxt = document.getElementById('resPreco')?.textContent || '';
-      baseCents = parsePrecoToCents(resTxt);
-    }
-    if (!baseCents) {
+      // Se não achou no card ativo, tenta pegar do resPreco (mas cuidado pois pode ser o total antigo)
+      // Melhor usar basePriceCents global
       baseCents = basePriceCents || 0;
     }
+    
     const promos = (typeof window.getSelectedPromos === 'function') ? window.getSelectedPromos() : [];
-    const labels = promos.map(p => {
-      const val = formatCentsToBRL(Number(p.priceCents) || 0);
-      return `${p.label} (${val})`;
-    }).filter(Boolean);
+    
+    // Renderiza lista de promoções
+    if (resPromos) {
+        if (promos.length > 0) {
+            const html = promos.map(p => {
+                const val = formatCentsToBRL(Number(p.priceCents) || 0);
+                return `<div style="display:flex; justify-content:space-between; margin-bottom:0.2rem;">
+                          <span>+ ${p.label}</span>
+                          <span style="font-weight:600;">${val}</span>
+                        </div>`;
+            }).join('');
+            resPromos.innerHTML = html;
+            if (resPromosContainer) resPromosContainer.style.display = 'block';
+        } else {
+            resPromos.innerHTML = '';
+            if (resPromosContainer) resPromosContainer.style.display = 'none';
+        }
+    }
+
     const resPrecoEl = document.getElementById('resPreco');
-    const totalCents = Math.max(0, Number(baseCents) + Number(window.calcPromosTotalCents ? window.calcPromosTotalCents(promos) : 0));
-    const bullets = labels.length ? labels.map(s => `• ${s}`).join('\n') : 'Nenhuma';
-    if (resPromos) resPromos.textContent = bullets;
-    if (resPrecoEl) resPrecoEl.textContent = formatCentsToBRL(totalCents);
+    const resTotalFinal = document.getElementById('resTotalFinal');
+    const promosTotal = Number(window.calcPromosTotalCents ? window.calcPromosTotalCents(promos) : 0);
+    const totalCents = Math.max(0, Number(baseCents) + promosTotal);
+    
+    // Atualiza preço do item principal (sem promos)
+    if (resPrecoEl) resPrecoEl.textContent = formatCentsToBRL(baseCents);
+    
+    // Atualiza Total Final
+    if (resTotalFinal) resTotalFinal.textContent = formatCentsToBRL(totalCents);
+    
+    // Atualiza metas no card de perfil (Etapa 3)
+    const step3TargetGain = document.getElementById('checkoutTargetGain');
+    const step3TargetTotal = document.getElementById('checkoutTargetTotal');
+    const step3Followers = document.getElementById('checkoutFollowersCountFinal');
+    
+    if (step3TargetGain && step3TargetTotal) {
+       let gain = 0;
+       try { 
+          // Re-fetch element to ensure freshness
+          const freshQtdSelect = document.getElementById('quantidadeSelect');
+          if (freshQtdSelect) gain = parseInt(freshQtdSelect.value) || 0; 
+       } catch(_) {}
+
+       // Adicionar ganho do upgrade se selecionado
+       try {
+         const upgradePromo = promos.find(p => p.key === 'upgrade');
+         if (upgradePromo) {
+             // Tenta extrair do texto de destaque ou usar lógica do tipo
+             const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
+             const match = highlight.match(/\+\s*([\d\.]+)/);
+             if (match && match[1]) {
+                 gain += parseInt(match[1].replace(/\./g, '')) || 0;
+             }
+         }
+       } catch(_) {}
+       
+       let current = 0;
+       if (step3Followers && step3Followers.textContent && step3Followers.textContent !== '-') {
+          current = parseInt(step3Followers.textContent.replace(/\./g, '').replace(/,/g, '')) || 0;
+       }
+       
+       step3TargetGain.textContent = gain.toLocaleString('pt-BR');
+       step3TargetTotal.textContent = (current + gain).toLocaleString('pt-BR');
+       
+       // Update New Header Fields (Step 3)
+       const headerQty = document.getElementById('headerSelectedQty');
+       
+       // Campos de Review (Novo - Etapa 3)
+       const revImg = document.getElementById('reviewProfileImage');
+       const revUser = document.getElementById('reviewProfileUsername');
+       const revFoll = document.getElementById('reviewProfileFollowers');
+       
+       const srcImg = document.getElementById('checkoutProfileImage');
+       const srcUser = document.getElementById('checkoutProfileUsername');
+       const srcFoll = document.getElementById('checkoutFollowersCount');
+       
+       if (revImg) {
+           // Tenta pegar a imagem do perfil validado, fallback para placeholder
+           let finalSrc = "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg";
+           if (srcImg && srcImg.src && srcImg.src !== '' && !srcImg.src.endsWith('undefined')) {
+               finalSrc = srcImg.src;
+           }
+           revImg.src = finalSrc;
+       }
+       if (revUser && srcUser) revUser.textContent = srcUser.textContent;
+       if (revFoll && srcFoll) revFoll.textContent = srcFoll.textContent;
+
+       if (headerQty) headerQty.textContent = `+ ${gain.toLocaleString('pt-BR')} Seguidores`;
+       
+       /* Antigo headerUser removido da visualização principal mas mantido lógica se necessário */
+       const headerUser = document.getElementById('headerSelectedUsername');
+       if (headerUser) {
+           // Prefer validated username from profile preview, fallback to input
+           const validatedUser = document.getElementById('checkoutProfileUsername');
+           const inputUser = document.getElementById('usernameCheckoutInput');
+           let userTxt = (validatedUser && validatedUser.textContent) ? validatedUser.textContent : (inputUser ? inputUser.value : '');
+           // Clean @ if present
+           userTxt = userTxt.replace('@', '').trim();
+           headerUser.textContent = userTxt;
+       }
+    }
   }
+
+  window.goToStep = function(step) {
+    // Esconder todos os containers principais
+    // Identificar containers
+    const grid1 = document.getElementById('tipoSelectCard')?.closest('.cards-grid'); // Step 1 container
+    const card2 = document.getElementById('perfilCard');
+    const container3 = document.getElementById('step3Container');
+
+    // Atualizar stepper UI
+    document.querySelectorAll('.step').forEach((el, idx) => {
+        if (idx + 1 === step) el.classList.add('active');
+        else if (idx + 1 < step) el.classList.add('completed'); // Opcional, se tiver estilo
+        else el.classList.remove('active');
+    });
+
+    // Mostrar/Esconder
+    if (step === 1) {
+        if (grid1) {
+             grid1.parentElement.style.display = 'block';
+             // Forçar visibilidade do grid caso tenha sido alterado
+             if (grid1.style.display === 'none') grid1.style.display = 'grid';
+             
+             // Forçar visibilidade dos cards internos
+             const cards = grid1.querySelectorAll('.service-card');
+             cards.forEach(c => c.style.display = 'block');
+
+             // RESTAURAR ESTADO VISUAL
+             try {
+                 const tipoCardsContainer = document.getElementById('tipoCards');
+                 // Se os cards de tipo sumiram ou precisam ser re-marcados
+                 if (tipoCardsContainer && (!tipoCardsContainer.innerHTML.trim() || tipoCardsContainer.style.display === 'none')) {
+                    if (typeof renderTipoCards === 'function') renderTipoCards();
+                 }
+                 
+                 if (tipoSelect && tipoSelect.value) {
+                    // Marcar tipo ativo
+                    const tCards = tipoCardsContainer?.querySelectorAll('.service-card[data-role="tipo"]');
+                    tCards?.forEach(c => c.classList.toggle('active', c.dataset.tipo === tipoSelect.value));
+                    
+                    // Restaurar descrição
+                    if (typeof renderTipoDescription === 'function') renderTipoDescription(tipoSelect.value);
+                    
+                    // Restaurar planos
+                    if (typeof renderPlanCards === 'function') {
+                       // Verifica se precisa renderizar (se estiver vazio) ou se forçamos para garantir o estado
+                       const planCardsContainer = document.getElementById('planCards');
+                       renderPlanCards(tipoSelect.value); // Recria os cards
+                       
+                       // Marcar plano ativo
+                       if (qtdSelect && qtdSelect.value) {
+                          const pCards = planCardsContainer?.querySelectorAll('.service-card[data-role="plano"]');
+                          pCards?.forEach(c => {
+                             const isActive = String(c.dataset.qtd) === String(qtdSelect.value);
+                             c.classList.toggle('active', isActive);
+                          });
+                       }
+                    }
+                 }
+             } catch(e) { console.error('Erro ao restaurar step 1:', e); }
+        }
+        if (card2) card2.style.display = 'none';
+        if (container3) container3.style.display = 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (step === 2) {
+        if (grid1) grid1.parentElement.style.display = 'none';
+        if (card2) {
+            card2.style.display = 'block';
+            // Garante que o input de username esteja visível
+            const usernameInput = document.getElementById('usernameCheckoutInput');
+            if (usernameInput && !usernameInput.value) usernameInput.focus();
+        }
+        if (container3) container3.style.display = 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (step === 3) {
+        if (grid1) grid1.parentElement.style.display = 'none';
+        if (card2) card2.style.display = 'none';
+        if (container3) container3.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        try { updatePromosSummary(); } catch(_) {}
+    }
+  };
 
   async function navigateToPedidoOrFallback(identifier, correlationID) {
     let targetUrl = '';

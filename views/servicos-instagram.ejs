@@ -4,12 +4,17 @@
   <meta charset="utf-8" />
   <title>Checkout - Seguidores</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link href="/css/style.css?v=2" rel="stylesheet" />
+  <link href="/css/style.css?v=6" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
-  <!-- Testimonials CSS -->
-  <link href="/css/testimonials.css" rel="stylesheet" />
   <link href="/css/why-us.css?v=5" rel="stylesheet" />
   <link rel="icon" type="image/png" href="/images/logo.png" />
+  <!-- Google Tag Manager --> 
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': 
+  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0], 
+  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src= 
+  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f); 
+  })(window,document,'script','dataLayer','GTM-MZD45RKD');</script> 
+  <!-- End Google Tag Manager -->
   <!-- TRACK COMBO -->
   <script>
     (function() {
@@ -53,8 +58,26 @@
   <div class="container checkout-page">
     
     <main class="main-content">
+      <!-- Stepper -->
+      <div class="stepper-container">
+        <div class="step active" id="step1" onclick="window.goToStep && window.goToStep(1)" style="cursor: pointer;">
+          <div class="step-circle">1</div>
+          <div class="step-label">Serviço</div>
+        </div>
+        <div class="step-line" id="line1"></div>
+        <div class="step" id="step2" onclick="window.goToStep && window.goToStep(2)" style="cursor: pointer;">
+          <div class="step-circle">2</div>
+          <div class="step-label">Dados</div>
+        </div>
+        <div class="step-line" id="line2"></div>
+        <div class="step" id="step3">
+          <div class="step-circle">3</div>
+          <div class="step-label">Pagamento</div>
+        </div>
+      </div>
+
       <section class="section-block">
-        <div class="cards-grid checkout-grid">
+        <div id="step1Container" class="cards-grid checkout-grid">
           
           <!-- Toggle de plataforma (Oculto, apenas para manter a lógica do JS funcionando) -->
           <div class="service-card" id="plataformaCard" style="display:none;">
@@ -95,8 +118,6 @@
                   <option value="mistos">Seguidores Mistos</option>
                   <option value="brasileiros">Seguidores Brasileiros</option>
                   <option value="organicos">Seguidores Orgânicos</option>
-                  <option value="curtidas_reais">Curtidas reais</option>
-                  <option value="visualizacoes_reels">Visualizações Reels</option>
                 </select>
                 <!-- Tutorial: 2/4 (selecionar rede social) -->
                 <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:none;">
@@ -128,82 +149,95 @@
       </section>
 
       <section class="section-block">
-        <div class="service-card" id="perfilCard" style="display:none;">
-          <div class="card-content">
-            <h3 class="card-title">Dados do Pedido</h3>
-            <div class="card-desc">
+        <!-- Container da Etapa 2 (Dados do Pedido) -->
+        <div id="perfilCard" style="display:none;">
+          
+          <!-- Card Visual Unificado -->
+          <div class="service-card">
+            <div class="card-content">
+              <div style="text-align: center; margin-bottom: 1.5rem; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
+                <button id="backToStep1Btn" type="button" style="background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9;">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <h3 class="card-title" style="margin-bottom: 0; font-size: 1.5rem;">Dados do Pedido</h3>
+              </div>
+              <div class="card-desc">
               
               <!-- 1. Validação do Instagram -->
-              <div style="margin-bottom: 1.5rem;">
-                <label style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Perfil do Instagram</label>
-                <div class="input-group" id="grupoUsername" style="position:relative;">
-                  <input type="text" id="usernameCheckoutInput" placeholder="@usuario" class="select-input" maxlength="100" />
-                  <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem; padding:0.35rem 0.6rem; font-size:13px;">
-                    <span class="button-text">Validar</span>
-                    <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  </button>
-                  <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                    <div class="tutorial-pop-step">3/5</div>
-                    <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
+                <div style="margin-bottom: 0.5rem;">
+                  <label style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Usuário do Instagram <span style="color:#ef4444">*</span></label>
+                  <div class="input-group username-group" id="grupoUsername" style="position:relative; display: flex; gap: 0.5rem;">
+                    <input type="text" id="usernameCheckoutInput" placeholder="Ex: @usuario" class="select-input" maxlength="100" style="flex: 1; border-radius: 8px;" />
+                    <button id="checkCheckoutButton" class="continue-button validate-btn" type="button" style="padding: 0 1.5rem; border-radius: 8px; font-weight: 600; background: var(--instagram-gradient);">
+                      <span class="button-text">Buscar</span>
+                      <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-left: 0.4rem;">
+                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                    <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                      <div class="tutorial-pop-step">3/5</div>
+                      <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
+                    </div>
                   </div>
-                </div>
-                <div id="perfilHints" style="margin-top:0.4rem; color: var(--text-secondary); font-size: 0.9rem;">
-                  <div class="perfil-hint strong">• Não precisamos da sua senha</div>
-                </div>
-                <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
-                <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
-                  <div class="spinner"></div>
-                  <p>Verificando perfil...</p>
-                </div>
-                
-                <!-- Preview do Perfil -->
-                <div id="profilePreview" style="display:none; margin-top:1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color);">
-                  <div style="display:flex; align-items:center; gap:1rem;">
-                    <img id="checkoutProfileImage" alt="Foto" style="width:64px; height:64px; border-radius:50%; object-fit:cover; background:#fff;" />
-                    <div>
-                      <div style="font-weight:700; font-size:1.1rem; color: var(--text-primary);">@<span id="checkoutProfileUsername"></span></div>
-                      <div id="checkoutProfileStats" style="display:flex; gap:0.8rem; font-size:0.9rem; color: var(--text-secondary); margin-top:0.2rem;">
-                        <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
-                        <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
+                  <!-- Mobile styles for search input/button -->
+                  <style>
+                    @media (max-width: 640px) {
+                        #grupoUsername { flex-direction: column; }
+                        #checkCheckoutButton { width: 100%; height: 40px; min-height: 40px; margin-top: 0.5rem; }
+                        #usernameCheckoutInput { width: 100%; }
+                    }
+                  </style>
+                  <div id="perfilHints" style="margin-top:0.4rem; color: var(--text-secondary); font-size: 0.85rem;">
+                    Pode inserir com ou sem @ (Ex: @usuario ou usuario). Acentos serão removidos automaticamente.
+                  </div>
+                  <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                  <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                    <div class="spinner"></div>
+                    <p>Verificando perfil...</p>
+                  </div>
+                  
+                  <!-- Preview do Perfil -->
+                  <div id="profilePreview" style="display:none; margin-top:1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color);">
+                    <div style="display:flex; align-items:center; gap:1rem;">
+                      <img id="checkoutProfileImage" alt="Foto" style="width:64px; height:64px; border-radius:50%; object-fit:cover; background:#fff;" />
+                      <div>
+                        <div style="font-weight:700; font-size:1.1rem; color: var(--text-primary);">@<span id="checkoutProfileUsername"></span></div>
+                        <div id="checkoutProfileStats" style="display:flex; gap:0.8rem; font-size:0.9rem; color: var(--text-secondary); margin-top:0.2rem;">
+                          <div><strong><span id="checkoutPostsCount"></span></strong> posts</div>
+                          <div><strong><span id="checkoutFollowersCount">-</span></strong> seguidores</div>
+                          <div><strong><span id="checkoutFollowingCount">-</span></strong> seguindo</div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <!-- Hidden stats -->
-                  <span id="checkoutPostsCount" style="display:none;"></span>
-                </div>
-              </div>
-
-              <!-- 2. Dados de Contato (Email e Telefone) -->
-              <div id="contactFieldsArea" style="display:none; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
-                
-                <div class="info-tooltip" style="background: rgba(59, 130, 246, 0.1); padding: 0.8rem; border-radius: 8px; margin-bottom: 1.5rem; font-size: 0.85rem; color: var(--text-secondary); border-left: 3px solid #3b82f6;">
-                  <strong>Por que pedimos isso?</strong><br>
-                  Caso precisarmos entrar em contato ou houver algum problema com o pedido.
                 </div>
 
-                <div class="input-group" style="margin-bottom: 1rem;">
-                   <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">E-mail</label>
-                   <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" />
-                </div>
-
-                <div class="input-group" style="margin-bottom: 1.5rem;">
-                   <label for="checkoutPhoneInput" style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Telefone (WhatsApp)</label>
-                   <!-- Usamos o ID checkoutPhoneInput para manter compatibilidade com checkout.js -->
-                   <div class="phone-field">
-                     <input type="tel" id="contactPhoneInput" class="select-input" placeholder="(DDD) 99999-9999" />
+                <!-- 2. Campos de Contato (Unificados no Card) -->
+                <div id="contactFieldsArea" style="display:none; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+                   
+                   <!-- Email -->
+                   <div style="margin-bottom: 1rem;">
+                      <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Email <span style="color:#ef4444">*</span></label>
+                      <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" style="width:100%; border-radius: 8px;" />
                    </div>
+
+                   <!-- Telefone -->
+                   <div style="margin-bottom: 2rem;">
+                      <label for="contactPhoneInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Telefone <span style="color:#ef4444">*</span></label>
+                      <div class="phone-field" style="width:100%;">
+                         <input type="tel" id="contactPhoneInput" class="select-input" placeholder="(00) 00000-0000" maxlength="15" style="width:100%; border-radius: 8px;" />
+                      </div>
+                   </div>
+
+                   <!-- Botão Continuar Largo -->
+                   <button id="confirmContactDataBtn" type="button" class="continue-button contact-continue-btn" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center; background: var(--instagram-gradient);">
+                      <span class="button-text">Continuar</span>
+                   </button>
                 </div>
 
-                <button id="confirmContactDataBtn" class="continue-button" type="button" style="width:100%;">
-                  <span class="button-text">Confirmar e Continuar</span>
-                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </button>
               </div>
-
             </div>
           </div>
         </div>
@@ -212,205 +246,233 @@
       <!-- Seção removida: contactStepSection foi integrada acima -->
 
       <section class="section-block">
-        <div class="cards-grid checkout-grid">
-        <!-- Promoções -->
-        <div class="service-card" id="orderBumpInline" style="display:none;">
-          <div class="card-content">
-            <h3 class="card-title">Promoções</h3>
-            <div class="card-desc promo-list">
-                <!-- Upgrade dinâmico -->
-                <label class="promo-item upgrade">
-                  <input type="checkbox" id="orderBumpCheckboxInline" />
-                  <div class="promo-content">
-                    <div class="promo-highlight" id="orderBumpHighlight">Upgrade de seguidores</div>
-                    <div class="promo-title">Upgrade de pacote</div>
-                    <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
-                    <div class="promo-prices" data-promo="upgrade">
-                      <span class="old-price">—</span>
-                      <span class="discount-badge">OFERTA</span>
-                      <span class="new-price">—</span>
+        
+        <!-- Container Etapa 3: Promoções e Pagamento -->
+        <div id="step3Container" style="display:none;">
+
+          <!-- Unified Card: Profile + Promotions -->
+          <div class="service-card" id="step3ProfileCard" style="overflow: hidden; max-width: 960px; margin: 0 auto;">
+            
+            <!-- HEADER SECTION: Profile Info + Quantity -->
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color);">
+               
+               <!-- Botão Voltar (Absolute) -->
+               <button onclick="window.goToStep && window.goToStep(2)" type="button" style="position: absolute; left: 1rem; top: 1.5rem; background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9; z-index: 10;">
+                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                     <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                   </svg>
+               </button>
+
+               <!-- Perfil Review (Centralizado) -->
+               <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 1rem;">
+                  <div style="position: relative; margin-bottom: 0.5rem;">
+                    <img id="reviewProfileImage" src="" alt="Perfil" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);" />
+                    <div style="position: absolute; bottom: 0; right: 0; background: #fff; border-radius: 50%; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="#2563eb" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
                     </div>
                   </div>
-                </label>
-                <!-- Demais promoções -->
-                <label class="promo-item likes">
-                  <input type="checkbox" id="promoLikes" data-promo="likes" />
-                  <div class="promo-content">
-                    <div class="promo-highlight">+ curtidas</div>
-                    <div class="promo-title">Curtidas promocionais</div>
-                    <div class="promo-desc">Adicionar curtidas ao post.</div>
-                    <div class="promo-prices" data-promo="likes">
-                      <span class="old-price">R$ 49,90</span>
-                      <span class="discount-badge">80% OFF</span>
-                      <span class="new-price">R$ 9,90</span>
-                    </div>
-                    <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
-                      <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">‹</button>
-                      <span id="likesQty" class="likes-qty">150</span>
-                      <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">›</button>
-                      <div id="likesPromoTip" class="tutorial-pop tutorial-pop-check" style="display:none;"><div class="tutorial-pop-text">Pode aumentar a quantidade clicando na seta</div></div>
-                    </div>
+                  <div style="font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">@<span id="reviewProfileUsername"></span></div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">
+                    <span id="reviewProfileFollowers">-</span> seguidores atuais
+                  </div>
+               </div>
+
+               <!-- Selected Quantity Highlight -->
+               <div style="text-align: center; margin-bottom: 0.5rem;">
+                 <h3 class="card-title" style="margin-bottom: 0; font-size: 1.6rem; color: var(--primary-color);">
+                    <span id="headerSelectedQty"></span>
+                 </h3>
+               </div>
+               
+               <div style="margin-top: 1rem; text-align: center; font-size: 0.9rem; background: #0f172a; color: #fbbf24; padding: 0.6rem; border-radius: 8px; font-weight: 600; box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.1);">
+                  ⚡ Finalize o pagamento e alcance a fama 🏆
+               </div>
+            </div>
+
+            <!-- PROMOTIONS SECTION (Merged) -->
+            <div class="service-card" id="orderBumpInline" style="display:none;">
+              <div class="card-content">
+                <h3 class="card-title">Promoções</h3>
+                <div class="card-desc promo-list">
+                    <!-- Upgrade dinâmico -->
+                    <label class="promo-item upgrade">
+                      <input type="checkbox" id="orderBumpCheckboxInline" />
+                      <div class="promo-content">
+                        <div class="promo-highlight" id="orderBumpHighlight">Upgrade de seguidores</div>
+                        <div class="promo-title">Upgrade de pacote</div>
+                        <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
+                        <div class="promo-prices" data-promo="upgrade">
+                          <span class="old-price">—</span>
+                          <span class="discount-badge">OFERTA</span>
+                          <span class="new-price">—</span>
+                        </div>
+                      </div>
+                    </label>
+                    <!-- Demais promoções -->
+                    <label class="promo-item likes">
+                      <input type="checkbox" id="promoLikes" data-promo="likes" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ curtidas</div>
+                        <div class="promo-title">Curtidas promocionais</div>
+                        <div class="promo-desc">Adicionar curtidas ao post.</div>
+                        <div class="promo-prices" data-promo="likes">
+                          <span class="old-price">R$ 49,90</span>
+                          <span class="discount-badge">80% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
+                          <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="likesQty" class="likes-qty">150</span>
+                          <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                          <div id="likesPromoTip" class="tutorial-pop tutorial-pop-check" style="display:none;"><div class="tutorial-pop-text">Pode aumentar a quantidade clicando na seta</div></div>
+                        </div>
+                        
+                      </div>
+                    </label>
+                    <label class="promo-item views">
+                      <input type="checkbox" id="promoViews" data-promo="views" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ visualizações</div>
+                        <div class="promo-title">Visualizações promocionais</div>
+                        <div class="promo-desc">Adicionar visualizações em Reels.</div>
+                        <div class="promo-prices" data-promo="views">
+                          <span class="old-price">R$ 89,90</span>
+                          <span class="discount-badge">78% OFF</span>
+                          <span class="new-price">R$ 19,90</span>
+                        </div>
+                        <div class="likes-control" aria-label="Quantidade de visualizações">
+                          <button type="button" id="viewsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="viewsQty" class="likes-qty">1000</span>
+                          <button type="button" id="viewsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                          
+                        </div>
+                        
+                      </div>
+                    </label>
+                    <label class="promo-item comments">
+                      <input type="checkbox" id="promoComments" data-promo="comments" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ COMENTÁRIOS</div>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Comentário promocional</span>
+                          <button id="commentsExampleBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Exemplo comentários</button>
+                        </div>
+                        <div class="promo-desc">1 comentário = R$ 1,50 cada.</div>
+                        <div class="promo-prices" data-promo="comments">
+                          <span class="old-price">R$ 29,90</span>
+                          <span class="discount-badge">67% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" aria-label="Quantidade de comentários">
+                          <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="commentsQty" class="likes-qty">1</span>
+                          <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                        </div>
+                        
+                      </div>
+                    </label>
                     
-                  </div>
-                </label>
-                <label class="promo-item views">
-                  <input type="checkbox" id="promoViews" data-promo="views" />
-                  <div class="promo-content">
-                    <div class="promo-highlight">+ visualizações</div>
-                    <div class="promo-title">Visualizações promocionais</div>
-                    <div class="promo-desc">Adicionar visualizações em Reels.</div>
-                    <div class="promo-prices" data-promo="views">
-                      <span class="old-price">R$ 89,90</span>
-                      <span class="discount-badge">78% OFF</span>
-                      <span class="new-price">R$ 19,90</span>
-                    </div>
-                    <div class="likes-control" aria-label="Quantidade de visualizações">
-                      <button type="button" id="viewsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
-                      <span id="viewsQty" class="likes-qty">1000</span>
-                      <button type="button" id="viewsInc" class="likes-arrow" aria-label="Aumentar">›</button>
-                      
-                    </div>
-                    
-                  </div>
-                </label>
-                <label class="promo-item comments">
-                  <input type="checkbox" id="promoComments" data-promo="comments" />
-                  <div class="promo-content">
-                    <div class="promo-highlight">+ COMENTÁRIOS</div>
-                    <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
-                      <span>Comentário promocional</span>
-                      <button id="commentsExampleBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Exemplo comentários</button>
-                    </div>
-                    <div class="promo-desc">1 comentário = R$ 1,50 cada.</div>
-                    <div class="promo-prices" data-promo="comments">
-                      <span class="old-price">R$ 29,90</span>
-                      <span class="discount-badge">67% OFF</span>
-                      <span class="new-price">R$ 9,90</span>
-                    </div>
-                    <div class="likes-control" aria-label="Quantidade de comentários">
-                      <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
-                      <span id="commentsQty" class="likes-qty">1</span>
-                      <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">›</button>
-                    </div>
-                    
-                  </div>
-                </label>
-                
-                <label class="promo-item warranty60">
-                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" checked />
+                    <label class="promo-item warranty60">
+                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
                   <div class="promo-content">
                     <div id="warrantyHighlight" class="promo-highlight">+ 30 DIAS DE REPOSIÇÃO</div>
-                    <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
-                      <span>Garantia estendida</span>
-                      <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
-                    </div>
-                    <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
-                    <div class="promo-prices" data-promo="warranty60">
-                      <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
-                      <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
-                      <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
-                    </div>
-                    <div class="likes-control" aria-label="Garantia estendida">
-                      <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
-                      <span id="warrantyModeLabel" class="likes-qty">30 dias</span>
-                      <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
-                    </div>
-                  </div>
-                </label>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Garantia estendida</span>
+                          <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
+                        </div>
+                        <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                        <div class="promo-prices" data-promo="warranty60">
+                          <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
+                          <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
+                          <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" aria-label="Garantia estendida">
+                          <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
+                          <span id="warrantyModeLabel" class="likes-qty">30 dias</span>
+                          <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
+                        </div>
+                      </div>
+                    </label>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Resumo do pedido (após promoções e antes do finalizar) -->
-          <div class="service-card" id="resumo" hidden>
+          <!-- RESUMO DO PEDIDO (Unified) -->
+          <div class="service-card" id="resumo" style="display:none; margin-top: 1rem; max-width: 960px; margin-left: auto; margin-right: auto;">
             <div class="card-content">
-              <h3 class="card-title">Resumo</h3>
-              <div class="card-desc">
-                <div><strong>Tipo:</strong> <span id="resTipo"></span></div>
-                <div><strong>Quantidade:</strong> <span id="resQtd"></span></div>
-                <div><strong>Preço:</strong> <span id="resPreco"></span></div>
-                <div><strong>Promoções:</strong> <span id="resPromos"></span></div>
+              <h3 class="card-title">Resumo do pedido</h3>
+              
+              <div class="resumo-row">
+                <span>Serviço</span>
+                <span id="resTipo">-</span>
               </div>
-            </div>
-          </div>
+              <div class="resumo-row">
+                <span>Quantidade</span>
+                <span id="resQtd">-</span>
+              </div>
+              <div class="resumo-row">
+                <span>Valor do pacote</span>
+                <span id="resPreco">-</span>
+              </div>
+              
+              <div id="resPromosContainer" style="display:none;">
+                 <div id="resPromos"></div>
+              </div>
+              
+              <div class="resumo-total">
+                <span>Total</span>
+                <span id="resTotalFinal" style="color: #22c55e;">-</span>
+              </div>
 
-          <!-- Campo Finalizar -->
-          <div id="paymentCard" style="display:none;">
-            <div class="action-container" id="grupoPedido" style="position:relative;">
-                <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
-                <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 10px);">Telefone de contato</label>
-                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 3px);">Usaremos este contato caso precisarmos falar com você. Pelo telefone você pode consultar seus pedidos.</p>
-                <input id="checkoutPhoneInput" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
-                <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                  <div class="tutorial-pop-step">4/5</div>
-                  <div class="tutorial-pop-text">Digite seu telefone</div>
-                </div>
-              </div>
-              <div class="button-container">
-                <button id="realizarPedidoBtn" class="continue-button">
-                  <span class="button-text">Realizar pedido</span>
-                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
+              <div id="grupoPedido" style="margin-top: 1.5rem; display:none;">
+                <button id="realizarPedidoBtn" class="continue-button pulse-animation" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center;">
+                    <span class="button-text">Realizar Pagamento</span>
+                    <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; margin-left: 10px; display: none;"></div>
                 </button>
-                <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
-                  <div class="tutorial-pop-step">5/5</div>
-                  <div class="tutorial-pop-text">Crie seu pedido</div>
-                </div>
+                <p style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+                    Ambiente 100% seguro. Liberação imediata.
+                </p>
               </div>
-            </div>
-            <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
-          </div>
-        </div>
-      </section>
-      <section class="section-block">
-        <div class="checkout-container" style="display: flex; flex-direction: column;">
-          
-          <div id="faqSection" class="faq-section">
-            <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 0.5rem;">Perguntas frequentes</h3>
-            <div class="faq-grid">
-              <div class="service-card faq-card">
-                <div class="card-content">
-                  <button type="button" class="faq-question" aria-expanded="false">
-                    <span class="faq-label">Qual prazo de entrega do serviço?</span>
-                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                  </button>
-                  <div class="faq-answer" hidden>Após a confirmação do pagamento, a entrega inicia automaticamente e os seguidores começam a chegar rapidamente.</div>
-                </div>
+
+              <!-- PIX PAYMENT SECTION (Integrated) -->
+              <div id="pixContainer" style="display:none; margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                 <div style="text-align: center; margin-bottom: 1rem;">
+                    <h4 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Pagamento via PIX</h4>
+                    <p style="font-size: 0.9rem; color: var(--text-secondary);">Aprovação imediata e liberada automaticamente.</p>
+                 </div>
+                 
+                 <!-- QR Code Area -->
+                 <div style="background: #fff; padding: 1rem; border-radius: 12px; display: inline-block; margin: 0 auto 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <img id="pixQrcode" src="" alt="QR Code PIX" style="width: 200px; height: 200px; display: none;" />
+                    <div id="pixLoader" style="width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; background: #f8fafc;">
+                       <div class="spinner" style="border-color: #cbd5e1; border-top-color: var(--primary-purple);"></div>
+                    </div>
+                 </div>
+                 
+                 <!-- Copy Paste -->
+                 <div class="input-group" style="margin-bottom: 1rem;">
+                    <input type="text" id="pixCopiaCola" class="select-input" readonly placeholder="Aguardando código PIX..." style="text-overflow: ellipsis;" />
+                    <button id="copyPixBtn" class="continue-button" style="padding: 0 1rem;">
+                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                 </div>
+                 
+                 <div id="pixResultado" style="margin-top: 1rem; min-height: 24px;"></div>
               </div>
-              <div class="service-card faq-card">
-                <div class="card-content">
-                  <button type="button" class="faq-question" aria-expanded="false">
-                    <span class="faq-label">Os seguidores são reais?</span>
-                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                  </button>
-                  <div class="faq-answer" hidden>Sim. Trabalhamos com pacotes de seguidores brasileiros e reais.</div>
-                </div>
+
+              <div id="checkoutAudioContainer" style="margin-top:1.5rem; border-top: 1px solid var(--border-color); padding-top:1rem;">
+                 <!-- Audio player injected by JS -->
               </div>
-              <div class="service-card faq-card">
-                <div class="card-content">
-                  <button type="button" class="faq-question" aria-expanded="false">
-                    <span class="faq-label">Existe garantia?</span>
-                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                  </button>
-                  <div class="faq-answer" hidden>Sim. Temos sistema exclusivo onde você informa seu pedido e recuperar os seguidores que caíram.</div>
-                </div>
-              </div>
-              <div class="service-card faq-card">
-                <div class="card-content">
-                  <button type="button" class="faq-question" aria-expanded="false">
-                    <span class="faq-label">Se o perfil é privado posso receber os serviços?</span>
-                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                  </button>
-                  <div class="faq-answer" hidden>Não. É necessário ter o perfil publico na plataforma para recebimento do serviço.</div>
-                </div>
-              </div>
+              
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Modal: Garantia 60 dias (conteúdo simples) -->
+      <!-- Modal: Garantia 60 dias (Estilo Modal Overlay) -->
       <div id="warranty60Modal" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">
           <div class="modal-header">
@@ -419,16 +481,19 @@
           </div>
           <div class="modal-body">
             <p style="margin-top:0.75rem; color: var(--text-secondary);">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de seguidores que teve queda.</p>
-            <img src="/images/reposicao.jpeg" alt="Reposição de seguidores" style="width:100%; height: clamp(420px, 70vh, 720px); aspect-ratio: 9 / 16; object-fit: cover; border-radius:12px; margin-top:0.75rem;">
+            <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px; margin-top: 1rem;">
+               <img src="/images/reposicao.jpeg" alt="Garantia de Reposição" style="max-width:100%; border-radius:8px;">
+            </div>
           </div>
           <div class="modal-footer">
             <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>
           </div>
         </div>
       </div>
-      <!-- Modal: Exemplo de comentários -->
+
+      <!-- Modal: Exemplo de comentários (Estilo Modal Overlay) -->
       <div id="commentsExampleModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
-        <div class="modal-dialog" style="max-width:400px; width:90%; background: #1e1e1e; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
+        <div class="modal-dialog" style="max-width:400px; width:90%; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
           <div class="modal-header" style="border:none; padding-bottom:0;">
             <h3 class="modal-title" style="margin:0 auto;">Exemplo de Comentários</h3>
             <button id="commentsExampleCloseBtn" class="modal-close" type="button" aria-label="Fechar" style="position:absolute; right:1rem; top:1rem;">✕</button>
@@ -445,7 +510,7 @@
         </div>
       </div>
 
-      <!-- Modal: Explicação da Ferramenta (Novo) -->
+      <!-- Modal: Explicação da Ferramenta (Estilo Modal Overlay) -->
       <div id="toolExplanationModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
         <div class="modal-dialog" style="max-width:400px; width:90%; background: #1e1e1e; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
           <div class="modal-header" style="border:none; padding-bottom:0;">
@@ -465,7 +530,7 @@
         </div>
       </div>
       <!-- Modal: Seleção de post (curtidas/visualizações/comentários) -->
-      <div id="postSelectModalCustom" class="modal-overlay" style="display:none;">
+      <div id="postSelectModal" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">
           <div class="modal-header">
             <h3 id="postModalTitle" class="modal-title">Selecionar post</h3>
@@ -479,6 +544,7 @@
           </div>
         </div>
       </div>
+
     </main>
     <footer class="footer">
       <div class="footer-bar">
@@ -492,362 +558,8 @@
   </div>
 
    <script src="/js/main.js"></script>
-   <script src="/js/checkout.js?v=5"></script>
    <script src="/js/why-us.js"></script>
-  
-  <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Flag de controle local
-      window.isContactConfirmed = false;
-
-      // 1. Interceptar checkInstagramProfileCheckout para exibir o passo de contato
-      const originalCheck = window.checkInstagramProfileCheckout;
-      window.checkInstagramProfileCheckout = async function() {
-        // Reseta estado ao iniciar nova validação
-        window.isContactConfirmed = false;
-        // contactArea reset removed to allow immediate visibility in Step 2
-
-        // Executa a função original
-        if (originalCheck) await originalCheck.apply(this, arguments);
-
-        // Se o perfil foi validado com sucesso (verificamos se a preview está visível)
-        const profilePreview = document.getElementById('profilePreview');
-        if (profilePreview && profilePreview.style.display !== 'none') {
-          // Limpa a tela (oculta cards de seleção)
-          const cardsToHide = ['tipoSelectCard', 'quantidadeSelectCard', 'tipoCards', 'planCards', 'plataformaCard', 'tipoDescCard'];
-          cardsToHide.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.style.display = 'none';
-          });
-          
-          // Ocultar também o campo de input do username para ficar "limpo", mantendo apenas o preview?
-          // Se ocultarmos o grupoUsername, o usuário não pode trocar o perfil facilmente sem recarregar.
-          // Mas o usuário pediu "limpa a tela". Vamos manter o preview e ocultar o input de busca se desejar.
-          // Por segurança de UX, vamos manter o input visível ou pelo menos o preview.
-          // O user disse "vai para outra tela... para pegar o instagram e os dados".
-          // Se já pegou o instagram (validou), agora é contato.
-          
-          // Ocultar input de username para focar no contato
-          const grupoUsername = document.getElementById('grupoUsername');
-          const checkBtn = document.getElementById('checkCheckoutButton');
-          const perfilHints = document.getElementById('perfilHints');
-          if(grupoUsername) grupoUsername.style.display = 'none';
-          if(checkBtn) checkBtn.style.display = 'none'; // checkBtn is inside grupoUsername usually? No, next to input.
-          // Check HTML: button is inside grupoUsername?
-          // Line 141: button is inside grupoUsername div. So hiding grupoUsername hides button.
-          if(perfilHints) perfilHints.style.display = 'none';
-
-          // Popula o preview do passo de contato
-          const img = document.getElementById('checkoutProfileImage').src;
-          const user = document.getElementById('checkoutProfileUsername').innerText;
-          
-          // --- FETCH POSTS SILENTLY FOR CACHE ---
-          try {
-             const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
-             fetch(url).then(r=>r.json()).then(d=>{
-                window._myCachedPosts = Array.isArray(d.posts) ? d.posts : [];
-                window._myCachedPostsUser = user;
-             }).catch(()=>{});
-          } catch(_){}
-          // --------------------------------------
-
-          // Exibe a seção de contato
-          if (contactArea) {
-            contactArea.style.display = 'block';
-            setTimeout(() => {
-              // Scroll suave para garantir visibilidade
-              const card = document.getElementById('perfilCard');
-              if(card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 100);
-          }
-
-          // Esconde o resumo e pagamento até confirmar contato
-          const resumo = document.getElementById('resumo');
-          if (resumo) resumo.style.display = 'none';
-          const payment = document.getElementById('paymentCard');
-          if (payment) payment.style.display = 'none';
-        }
-      };
-
-      // 2. Interceptar showResumoIfAllowed para exigir confirmação de contato
-      const originalShowResumo = window.showResumoIfAllowed;
-      window.showResumoIfAllowed = function() {
-        // Se a seção de contato estiver visível e não confirmada, impede o resumo
-        const contactArea = document.getElementById('contactFieldsArea');
-        if (contactArea && contactArea.style.display !== 'none' && !window.isContactConfirmed) {
-          const resumo = document.getElementById('resumo');
-          if (resumo) {
-            resumo.hidden = true;
-            resumo.style.display = 'none';
-          }
-          const payment = document.getElementById('paymentCard');
-          if (payment) payment.style.display = 'none';
-          return;
-        }
-        
-        // Caso contrário, segue o fluxo normal
-        if (originalShowResumo) originalShowResumo.apply(this, arguments);
-      };
-
-      // 3. Lógica do botão "Confirmar dados"
-      const confirmBtn = document.getElementById('confirmContactDataBtn');
-      if (confirmBtn) {
-        confirmBtn.addEventListener('click', function() {
-          const emailInput = document.getElementById('contactEmailInput');
-          const phoneInput = document.getElementById('contactPhoneInput');
-          const email = emailInput.value.trim();
-          const phone = phoneInput.value.replace(/\D/g, '');
-
-          // Validação simples
-          if (!email || !email.includes('@')) {
-            alert('Por favor, insira um e-mail válido.');
-            emailInput.focus();
-            return;
-          }
-          if (phone.length < 10) {
-            alert('Por favor, insira um telefone válido com DDD.');
-            phoneInput.focus();
-            return;
-          }
-
-          // Sucesso
-          window.isContactConfirmed = true;
-          
-          // Sincroniza telefone com input do checkout e oculta campo duplicado
-          const checkoutPhone = document.getElementById('checkoutPhoneInput');
-          if (checkoutPhone) {
-              checkoutPhone.value = phoneInput.value;
-              checkoutPhone.dispatchEvent(new Event('input', {bubbles:true}));
-              const parent = checkoutPhone.closest('.phone-field');
-              if (parent) parent.style.display = 'none';
-          }
-          
-          // Atualiza visibilidade do resumo
-          if (window.showResumoIfAllowed) window.showResumoIfAllowed();
-          
-          // Rola para o próximo passo (Resumo ou Promoções se houver)
-          setTimeout(() => {
-             // Tenta rolar para o orderBumpInline se visível, ou resumo
-             const orderBump = document.getElementById('orderBumpInline');
-             const resumo = document.getElementById('resumo');
-             if (orderBump && orderBump.style.display !== 'none') {
-               orderBump.scrollIntoView({ behavior: 'smooth', block: 'center' });
-             } else if (resumo && resumo.style.display !== 'none') {
-               resumo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-             }
-          }, 200);
-        });
-      }
-
-      // 4. Resetar confirmação ao editar campos
-      const emailInput = document.getElementById('contactEmailInput');
-      const phoneInput = document.getElementById('contactPhoneInput');
-      
-      if (emailInput) {
-        emailInput.addEventListener('input', function() {
-           if (window.isContactConfirmed) {
-             window.isContactConfirmed = false;
-             window.showResumoIfAllowed();
-           }
-        });
-      }
-      if (phoneInput) {
-        // Máscara de telefone simples e reset de estado
-        phoneInput.addEventListener('input', function(e) {
-           if (window.isContactConfirmed) {
-             window.isContactConfirmed = false;
-             window.showResumoIfAllowed();
-           }
-           
-           let v = e.target.value.replace(/\D/g, '');
-           if (v.length > 11) v = v.substring(0, 11);
-           if (v.length > 10) {
-               v = v.replace(/^(\d\d)(\d{5})(\d{4}).*/, '($1) $2-$3');
-           } else if (v.length > 5) {
-               v = v.replace(/^(\d\d)(\d{4})(\d{0,4}).*/, '($1) $2-$3');
-           } else if (v.length > 2) {
-               v = v.replace(/^(\d\d)(\d{0,5}).*/, '($1) $2');
-           }
-           e.target.value = v;
-        });
-      }
-
-      // 5. Override openPostModal to fix post loading (Custom Implementation)
-      window.openPostModal = function(kind) {
-         // Use custom modal ID to avoid conflict with checkout.js
-         const getRefs = () => ({
-            modal: document.getElementById('postSelectModalCustom'),
-            grid: document.getElementById('postModalGrid'),
-            title: document.getElementById('postModalTitle'),
-            closeBtn: document.getElementById('postModalClose'),
-            closeBtn2: document.getElementById('postModalClose2')
-         });
-         const refs = getRefs();
-         if (!refs.modal) return;
-         
-         if (refs.title) refs.title.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
-         
-         // Move modal to body if needed
-         if (refs.modal.parentNode !== document.body) document.body.appendChild(refs.modal);
-         
-         refs.modal.style.display = 'flex';
-         try { document.body.style.overflow = 'hidden'; } catch(_){}
-         
-         // Close handlers
-         const close = () => {
-             refs.modal.style.display = 'none';
-             document.body.style.overflow = '';
-         };
-         if(refs.closeBtn) refs.closeBtn.onclick = close;
-         if(refs.closeBtn2) refs.closeBtn2.onclick = close;
-         refs.modal.onclick = (e) => { if(e.target === refs.modal) close(); };
-         
-         let user = '';
-         const uEl = document.getElementById('checkoutProfileUsername');
-         if (uEl) user = uEl.innerText.trim().replace('@','');
-         if (!user && window._myCachedPostsUser) user = window._myCachedPostsUser;
-         
-         if (!refs.grid) return;
-         
-         const render = (arr) => {
-             if (!arr || arr.length === 0) {
-                 refs.grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-secondary);">Nenhum post encontrado. Verifique se o perfil é público.</div>';
-                 return;
-             }
-             const items = arr.slice(0, 12);
-             refs.grid.innerHTML = items.map(p => {
-                const img = p.displayUrl ? `/image-proxy?url=${encodeURIComponent(p.displayUrl)}` : '';
-                return `
-                <div class="service-card">
-                  <div class="card-content pick-post-card" data-shortcode="${p.shortcode}">
-                    <div class="media-frame" style="aspect-ratio:1; overflow:hidden; border-radius:8px; background:#000; display:flex; align-items:center; justify-content:center;">
-                      <img src="${img}" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
-                    </div>
-                    <button class="continue-button select-post-btn" style="width:100%; margin-top:0.5rem;" data-shortcode="${p.shortcode}" data-kind="${kind}">Selecionar</button>
-                  </div>
-                </div>`;
-             }).join('');
-             
-             // Add click listeners to buttons and cards
-             const handleSelect = async (sc) => {
-                 // Visual feedback
-                 const btn = refs.grid.querySelector(`.select-post-btn[data-shortcode="${sc}"]`);
-                 if(btn) btn.textContent = 'Salvando...';
-                 
-                 try {
-                     await fetch('/api/instagram/select', {
-                         method: 'POST',
-                         headers: {'Content-Type':'application/json'},
-                         body: JSON.stringify({ kind: kind, shortcode: sc })
-                     });
-                     
-                     close();
-                     
-                     // Toast
-                     const toast = document.createElement('div');
-                     toast.textContent = 'Post selecionado!';
-                     toast.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#22c55e; color:#fff; padding:10px 20px; border-radius:8px; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15);';
-                     document.body.appendChild(toast);
-                     setTimeout(() => toast.remove(), 3000);
-                     
-                     // Highlight promo item
-                     const promoInput = document.getElementById(kind === 'likes' ? 'promoLikes' : (kind === 'views' ? 'promoViews' : 'promoComments'));
-                     if (promoInput) {
-                         const item = promoInput.closest('.promo-item');
-                         if (item) {
-                             item.style.borderColor = '#22c55e';
-                             setTimeout(() => item.style.borderColor = '', 2000);
-                         }
-                     }
-                 } catch(e) {
-                     if(btn) btn.textContent = 'Erro';
-                 }
-             };
-
-             refs.grid.querySelectorAll('.select-post-btn').forEach(btn => {
-                btn.onclick = () => handleSelect(btn.getAttribute('data-shortcode'));
-             });
-             refs.grid.querySelectorAll('.pick-post-card').forEach(card => {
-                card.onclick = (e) => {
-                    if(e.target.tagName === 'BUTTON') return; // let button handle it
-                    handleSelect(card.getAttribute('data-shortcode'));
-                }
-             });
-         };
-         
-         if (window._myCachedPosts && window._myCachedPosts.length > 0 && window._myCachedPostsUser === user) {
-             render(window._myCachedPosts);
-         } else {
-             refs.grid.innerHTML = '<div style="padding:2rem; text-align:center; grid-column:1/-1; color:var(--text-secondary);">Carregando posts...</div>';
-             fetch('/api/instagram/posts?username=' + encodeURIComponent(user))
-             .then(r=>r.json())
-             .then(d => {
-                 const arr = d.posts || [];
-                 window._myCachedPosts = arr;
-                 window._myCachedPostsUser = user;
-                 render(arr);
-             })
-             .catch(() => {
-                 refs.grid.innerHTML = '<div style="color:#ef4444; padding:2rem; text-align:center; grid-column:1/-1;">Erro ao carregar posts. Tente novamente.</div>';
-             });
-         }
-      };
-      
-      // 6. Bind Custom Listeners and Observers
-      const bindCustomListeners = () => {
-          // CAPTURE PHASE for Buttons: Block checkout.js broken modal
-          document.addEventListener('click', function(e) {
-              const btn = e.target.closest('.open-post-modal-btn');
-              if (btn) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.stopImmediatePropagation();
-                  const k = btn.getAttribute('data-kind');
-                  window.openPostModal(k);
-              }
-          }, true);
-          
-          // Checkboxes: Trigger modal on check (allow bubbling for price update)
-          ['likes','views','comments'].forEach(kind => {
-              const id = kind==='likes'?'promoLikes':(kind==='views'?'promoViews':'promoComments');
-              const el = document.getElementById(id);
-              if(el) {
-                  el.addEventListener('change', function() {
-                      if (this.checked) window.openPostModal(kind);
-                  });
-              }
-          });
-
-          // CLEAN SCREEN: Observer for Perfil Card visibility (Step 2 Trigger)
-          const perfilCard = document.getElementById('perfilCard');
-          if (perfilCard) {
-            const observer = new MutationObserver((mutations) => {
-              mutations.forEach((mutation) => {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
-                  if (perfilCard.style.display !== 'none') {
-                    // Perfil Card became visible -> Clean Screen (Hide Plan Selection)
-                    const cardsToHide = ['tipoSelectCard', 'quantidadeSelectCard', 'tipoCards', 'planCards', 'plataformaCard', 'tipoDescCard'];
-                    cardsToHide.forEach(id => {
-                      const el = document.getElementById(id);
-                      if (el) el.style.display = 'none';
-                    });
-                    
-                    // Show Contact Fields immediately (Step 2 = Instagram + Contact)
-                    const contactArea = document.getElementById('contactFieldsArea');
-                    if (contactArea) contactArea.style.display = 'block';
-                    
-                    // Scroll to Perfil Card
-                    perfilCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }
-                }
-              });
-            });
-            observer.observe(perfilCard, { attributes: true });
-          }
-      };
-      bindCustomListeners();
-    });
-  </script>
+   <script src="/js/servicos-instagram.js?v=<%= Date.now() %>"></script>
    <div id="toastContainer" class="toast-container"></div>
   <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
     <div class="client-page-inner">
@@ -864,18 +576,7 @@
       </div>
     </div>
   </div>
-  <div id="warranty60Modal" class="client-page" aria-label="Garantia 60 dias" style="display:none;">
-    <div class="client-page-inner">
-      <h2 class="client-title">+60 dias de reposição</h2>
-      <p class="client-desc">Garantia estendida: caso haja queda no período de 60 dias, nós repomos sem custo. A reposição segue as regras do serviço contratado.</p>
-      <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px;">
-        
-      </div>
-      <div class="client-actions" style="margin-top: 1rem;">
-        <button id="warranty60CloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
-      </div>
-    </div>
-  </div>
+
   <style>
     /* Título do Checkout com especificações fornecidas */
     .checkout-page .title {
@@ -1064,25 +765,136 @@
         margin-bottom: 0.5rem;
     }
     /* Custom Modal Styles (copied from #postSelectModal) */
+    
+    /* Stepper Styles */
+    .stepper-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 2rem;
+      width: 100%;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 0 1rem;
+    }
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      position: relative;
+      z-index: 2;
+    }
+    .step-circle {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--bg-secondary);
+      border: 2px solid var(--border-color);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      transition: all 0.3s ease;
+    }
+    .step.active .step-circle {
+      background: var(--primary-purple);
+      border-color: var(--primary-purple);
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(107, 70, 193, 0.2);
+    }
+    .step.completed .step-circle {
+      background: #22c55e;
+      border-color: #22c55e;
+      color: #fff;
+    }
+    .step-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      transition: color 0.3s ease;
+    }
+    .step.active .step-label { color: var(--text-primary); }
+    .step-line {
+      flex: 1;
+      height: 2px;
+      background: var(--border-color);
+      margin: 0 10px;
+      margin-bottom: 1.4rem;
+      transition: background 0.3s ease;
+    }
+    .step.active + .step-line,
+    .step.completed + .step-line {
+      background: var(--primary-purple); /* ou verde se completed */
+    }
     #postSelectModalCustom.modal-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.92); z-index: 1000; }
     #postSelectModalCustom .modal-dialog { width: 98vw; max-width: 1600px; max-height: calc(100vh - 2rem); overflow: auto; aspect-ratio: 16 / 9; height: auto; }
     @media (max-width: 640px) { 
       #postSelectModalCustom.modal-overlay { align-items: flex-start; } 
       #postSelectModalCustom .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } 
     }
+    /* Estilos de layout solicitados (Mobile/Desktop) */
+    
+    /* Novos estilos para campos de contato (Estilo "Linha/Box") */
+    .field-box-container {
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 0.2rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      transition: border-color 0.2s;
+    }
+    .field-box-container:focus-within {
+      border-color: var(--primary-purple);
+      box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.1);
+    }
+    .field-icon {
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+    }
+    .field-input-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .field-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      margin-bottom: 0px;
+    }
+    .field-input {
+      border: none;
+      background: transparent;
+      padding: 0.2rem 0;
+      font-size: 1rem;
+      color: var(--text-primary);
+      width: 100%;
+      outline: none;
+    }
+    .field-input::placeholder {
+      color: #94a3b8;
+    }
+    
+    .contact-continue-btn {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.3), 0 2px 4px -1px rgba(16, 185, 129, 0.15);
+      border: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .contact-continue-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.4), 0 4px 6px -2px rgba(16, 185, 129, 0.2);
+    }
+    .contact-continue-btn:active {
+      transform: translateY(0);
+    }
   </style>
-  
-  <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Forçar plataforma Instagram para carregar os cards corretos
-      if (typeof setPlatform === 'function') {
-        setPlatform('instagram');
-      } else {
-        setTimeout(function(){
-          if (typeof setPlatform === 'function') setPlatform('instagram');
-        }, 300);
-      }
-    });
-  </script>
 </body>
 </html>

@@ -269,6 +269,27 @@ html, body { overflow-x: hidden; }
   .checkout-page .client-tools.active { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
   .checkout-page .client-tools .select-input { max-width: 220px; }
   .checkout-page #clientFetchBtn { display: block; margin: 0.5rem auto 0; }
+  
+  /* Ajuste de largura para cards de promoção e resumo na página de serviços do Instagram */
+  #step3ProfileCard,
+  #resumo { 
+      width: calc(100vw - 20px) !important; 
+      max-width: none !important; 
+      margin-left: calc(50% - 50vw + 10px) !important; 
+      margin-right: calc(50% - 50vw + 10px) !important; 
+      box-sizing: border-box !important; 
+  }
+  /* Remove estilos de card do orderBumpInline quando dentro do step3ProfileCard no mobile para evitar 'overlap' visual */
+  @media (max-width: 640px) {
+      #step3ProfileCard #orderBumpInline {
+          box-shadow: none !important;
+          border: none !important;
+          background: transparent !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          width: 100% !important;
+      }
+  }
 }
 
 /* Blocos de seção e cards de serviços */
@@ -400,10 +421,17 @@ html, body { overflow-x: hidden; }
 }
 
 .card-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  overflow: visible;
+}
+
+.card-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  color: var(--primary-color);
+  text-align: center;
 }
 
 .card-title {
@@ -1084,9 +1112,12 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
   .checkout-page .cards-grid.checkout-grid { padding-left: 10px; padding-right: 10px; }
   .checkout-page.container { justify-content: center; align-items: center; }
   /* Mobile: cards especiais ocupam 100% de largura */
-  .checkout-page #perfilCard, .checkout-page #orderBumpInline, .checkout-page #resumo { width: calc(100vw - 20px) !important; max-width: none !important; margin-left: calc(50% - 50vw + 10px) !important; margin-right: calc(50% - 50vw + 10px) !important; }
-  .checkout-page #perfilCard .card-content, .checkout-page #orderBumpInline .card-content, .checkout-page #resumo .card-content { align-items: stretch; width: 100%; padding-left: 0; padding-right: 0; }
-  .checkout-page #orderBumpInline, .checkout-page #resumo { padding-left: 10px; padding-right: 10px; }
+  .checkout-page #perfilCard, .checkout-page #orderBumpInline, .checkout-page #resumo,
+  .page-instagram-services #orderBumpInline, .page-instagram-services #resumo { width: calc(100vw - 20px) !important; max-width: none !important; margin-left: calc(50% - 50vw + 10px) !important; margin-right: calc(50% - 50vw + 10px) !important; box-sizing: border-box !important; }
+  .checkout-page #perfilCard .card-content, .checkout-page #orderBumpInline .card-content, .checkout-page #resumo .card-content,
+  .page-instagram-services #orderBumpInline .card-content, .page-instagram-services #resumo .card-content { align-items: stretch; width: 100%; padding-left: 0; padding-right: 0; }
+  .checkout-page #orderBumpInline, .checkout-page #resumo,
+  .page-instagram-services #orderBumpInline, .page-instagram-services #resumo { padding-left: 10px; padding-right: 10px; }
   .checkout-page #grupoUsername #checkCheckoutButton { margin-left: 0 !important; }
   .checkout-page #grupoUsername { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0.2rem; width: 100%; align-items: stretch; }
   .checkout-page #grupoUsername .continue-button { height: 100%; display: flex; align-items: center; justify-content: center; }
