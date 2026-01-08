@@ -3133,6 +3133,49 @@ app.get('/api/debug-baserow-row', async (req, res) => {
   */
 });
 
+// Audio Tracking Routes
+app.post('/api/track-audio-3s', async (req, res) => {
+    try {
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('audio_logs');
+        // Capture IP
+        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+        if (ip.includes(',')) ip = ip.split(',')[0].trim();
+        // Normalize IPv6
+        if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+        
+        await col.insertOne({
+            ip: ip,
+            userAgent: req.get('User-Agent') || '',
+            event: 'played_3s',
+            createdAt: new Date()
+        });
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Audio 3s track error:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+app.post('/api/track-audio-10p', async (req, res) => {
+    try {
+        const { username } = req.body;
+        if (!username) return res.status(400).json({ error: 'Username required' });
+        
+        const { getCollection } = require('./mongodbClient');
+        const vu = await getCollection('validated_insta_users');
+        
+        await vu.updateOne(
+            { username: username.toLowerCase() },
+            { $set: { audio_listened_10_percent: true } }
+        );
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Audio 10% track error:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
 /*
 // Meta CAPI: Track InitiateCheckout
 app.post('/api/meta/track', async (req, res) => {

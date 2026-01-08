@@ -690,6 +690,24 @@ body.theme-light .client-btn:hover { border: none !important; }
 .fixed-menu .site-brand-text { font-weight: 700; font-size: 1.2rem; letter-spacing: 0.01em; color: var(--text-primary); white-space: nowrap; }
 .fixed-menu .theme-toggle { position: static; top: auto; right: auto; }
 .fixed-menu .client-btn { position: static; }
+.fixed-menu .whatsapp-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #25D366;
+  color: #ffffff;
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+body.theme-light .fixed-menu .whatsapp-btn { border: 1px solid rgba(15, 23, 42, 0.18); }
+body:not(.theme-light) .fixed-menu .whatsapp-btn { border: 1px solid rgba(255, 255, 255, 0.18); }
+.fixed-menu .whatsapp-btn:hover { filter: brightness(0.95); transform: translateY(-1px); }
+.fixed-menu .whatsapp-btn:active { transform: translateY(0); filter: brightness(0.92); }
+.fixed-menu .whatsapp-btn:focus-visible { outline: 3px solid rgba(107, 70, 193, 0.45); outline-offset: 2px; }
 
 /* Mobile: padronizar tamanho dos botões e reduzir fonte da marca */
 @media (max-width: 768px) {
@@ -718,6 +736,10 @@ body.theme-light .client-btn:hover { border: none !important; }
   .fixed-menu .menu-right {
     gap: 8px;
     flex-shrink: 0;
+  }
+  .fixed-menu .whatsapp-btn {
+    width: 36px;
+    height: 36px;
   }
   /* Cliente: menor e com borda mais arredondada */
   .fixed-menu .client-btn {

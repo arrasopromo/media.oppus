@@ -1,12 +1,15 @@
 <nav class="fixed-menu" aria-label="Menu fixo">
   <div class="menu-left site-brand" aria-label="Marca do site">
     <a href="/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;color:inherit;">
-      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
-      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+      <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" width="70" height="70" />
+      <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" width="70" height="70" />
       <span class="site-brand-text">Agência Oppus</span>
     </a>
   </div>
   <div class="menu-right">
+    <a href="https://wa.me/+5515981546392" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" class="whatsapp-btn">
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12.0117 2.00586C6.53001 2.00586 2.05273 6.46788 2.05273 11.9678C2.05273 13.7251 2.50893 15.3789 3.31348 16.8281L2.00586 21.6055L6.89062 20.3242C8.28827 21.0854 9.8856 21.5039 11.5723 21.5039H11.5762C17.054 21.5039 21.5117 17.0428 21.5117 11.542C21.5085 6.4716 17.2612 2.23541 12.0117 2.00586ZM12.0117 19.8652C10.5134 19.8652 9.06649 19.4627 7.79102 18.7051L7.48828 18.5254L4.35742 19.3457L5.19336 16.291L5.00391 15.9883C4.19792 14.7075 3.77246 13.2075 3.77441 11.6855C3.77441 7.14234 7.47041 3.44434 12.0156 3.44434C14.2152 3.44528 16.2844 4.30141 17.8379 5.85645C19.3923 7.41148 20.2471 9.47959 20.2471 11.6826C20.2471 16.2258 16.5511 19.8652 12.0117 19.8652ZM16.5215 14.1621C16.2744 14.0381 15.0605 13.4434 14.834 13.3604C14.6074 13.2773 14.4424 13.2354 14.2773 13.4834C14.1123 13.7314 13.6387 14.2881 13.4941 14.4531C13.3496 14.6182 13.2051 14.6387 12.958 14.5146C12.7109 14.3906 11.9143 14.1292 10.9702 13.2871C10.2285 12.6256 9.72754 11.8086 9.58301 11.5605C9.43848 11.3125 9.56762 11.1786 9.69164 11.0555C9.80309 10.9449 9.93895 10.7686 10.063 10.624C10.187 10.4795 10.2285 10.376 10.3115 10.2109C10.3945 10.0459 10.3525 9.90137 10.291 9.77734C10.2295 9.65332 9.73437 8.43555 9.52832 7.94043C9.32758 7.45893 9.12523 7.52441 8.97461 7.53125C8.83594 7.53754 8.6709 7.53754 8.50586 7.53754C8.34082 7.53754 8.07227 7.59961 7.8457 7.84766C7.61914 8.0957 6.97949 8.69434 6.97949 9.91309C6.97949 11.1318 7.86621 12.3096 7.99023 12.4746C8.11426 12.6396 9.73973 15.1481 12.2295 16.2236C12.8219 16.4795 13.2844 16.6321 13.6455 16.7469C14.2372 16.9351 14.7818 16.9082 15.2139 16.8438C15.6943 16.7722 16.6865 16.2422 16.8926 15.6641C17.0986 15.0859 17.0986 14.5908 17.0371 14.4873C16.9756 14.3838 16.8105 14.3223 16.5635 14.1982H16.5215Z"/></svg>
+    </a>
     <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
     <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema" aria-pressed="true"><span class="theme-label">Tema: Escuro</span><span class="icon icon-sun" aria-hidden="true"><svg class="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/></g></svg></span><span class="icon icon-moon" aria-hidden="true"><svg class="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></span></button>
   </div>
@@ -26,6 +29,12 @@
         // But if checkout.js prevents default, then we are good.
         // If checkout.js is NOT present, we redirect.
         var clientPage = document.getElementById('clientPage');
+        // Se estiver na página de detalhes do pedido, força o redirecionamento
+        if (window.location.pathname.indexOf('/pedido') === 0) {
+            e.preventDefault();
+            window.location.href = '/cliente';
+            return;
+        }
         if (!clientPage) {
           e.preventDefault(); // Just in case it was a submit button (it's type=submit by default in some browsers if in form, though here it is button)
           window.location.href = '/cliente';

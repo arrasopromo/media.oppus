@@ -264,11 +264,13 @@
       var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
       var lastFamaStatus = '';
       try {
-        if (hasFama) {
-          localStorage.setItem('oppus_selected_oid', String(orderData.fama24h.orderId));
-        } else if (orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) {
-          localStorage.setItem('oppus_selected_oid', String(orderData.fornecedor_social.orderId));
-        }
+        var oidToSave = null;
+        if (hasFama) oidToSave = String(orderData.fama24h.orderId);
+        else if (orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) oidToSave = String(orderData.fornecedor_social.orderId);
+        else if (orderId) oidToSave = String(orderId);
+        else if (orderData && orderData.identifier) oidToSave = String(orderData.identifier);
+
+        if (oidToSave) localStorage.setItem('oppus_selected_oid', oidToSave);
       } catch(_) {}
       try {
         var initialFama = (orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null;
@@ -446,7 +448,7 @@
       function check() {
         var cachedOid = null;
         try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
-        var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : ((orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) ? String(orderData.fornecedor_social.orderId) : ''));
+        var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : ((orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) ? String(orderData.fornecedor_social.orderId) : ((orderData && orderData._id) ? String(orderData._id) : '')));
         if (!orderIDParam) return;
         var url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
         fetch(url)

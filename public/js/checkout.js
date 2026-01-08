@@ -1725,6 +1725,16 @@
           fetch(url).then(r=>r.json()).then(d=>{ cachedPosts = Array.isArray(d.posts) ? d.posts : []; cachedPostsUser = (profile.username || username) || ''; }).catch(function(){});
         } catch(_) {}
         
+        // Retry tracking audio 10% if it was listened before validation
+        if (typeof audioTracked10p !== 'undefined' && audioTracked10p) {
+             const trackUser = profile.username || username;
+             fetch('/api/track-audio-10p', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: trackUser })
+             }).catch(e => console.error('Retry audio 10% track error:', e));
+        }
+        
       } else {
         const msg = String(data.error || 'Falha ao verificar perfil.');
         const isAlreadyTested = (data.code === 'INSTAUSER_ALREADY_USED') || /já foi testado|teste já foi realizado/i.test(msg);
@@ -2228,6 +2238,41 @@
     checkCheckoutButton.addEventListener('click', checkInstagramProfileCheckout);
   }
 
+  // Tracking: Audio 3s (IP based) and 10% (User based)
+  let audioTracked3s = false;
+  let audioTracked10p = false;
+
+  async function trackAudio3s() {
+    if (audioTracked3s) return;
+    audioTracked3s = true;
+    try {
+      await fetch('/api/track-audio-3s', { method: 'POST' });
+    } catch (e) { console.error('Audio 3s track error:', e); }
+  }
+
+  async function trackAudio10p() {
+    // Mark as tracked locally so we know they listened
+    audioTracked10p = true;
+    
+    // Only send to backend if we have a username (validated or being typed)
+    const username = document.getElementById('usernameCheckoutInput')?.value;
+    if (!username) return;
+
+    try {
+      await fetch('/api/track-audio-10p', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+    } catch (e) { console.error('Audio 10% track error:', e); }
+  }
+
+  // Hook into validation success to retry sending 10% track if it happened before validation
+  const originalCheckProfile = window.checkInstagramProfileCheckout; // If defined globally, or we just rely on the event listener
+  // Since checkInstagramProfileCheckout is defined in this scope or globally? 
+  // It seems defined in this file (line 63 listener adds it). 
+  // I need to find where checkInstagramProfileCheckout is defined to hook into it.
+  
   const guideAudio = document.getElementById('guideAudio');
   const audioSpeed15x = document.getElementById('audioSpeed15x');
   const audioSpeed2x = document.getElementById('audioSpeed2x');
@@ -2259,11 +2304,21 @@
     guideAudio.addEventListener('timeupdate', () => {
       if (audioCurrent) audioCurrent.textContent = fmt(guideAudio.currentTime || 0);
       if (audioProgress && guideAudio.duration) audioProgress.value = String(Math.floor((guideAudio.currentTime / guideAudio.duration) * 100));
+      
+      // Tracking logic
+      if (guideAudio.currentTime >= 3) trackAudio3s();
+      if (guideAudio.duration > 0 && (guideAudio.currentTime / guideAudio.duration) >= 0.10) trackAudio10p();
     });
   }
   if (audioPlayBtn) audioPlayBtn.addEventListener('click', async () => {
     if (!guideAudio) return;
-    if (guideAudio.paused) { await guideAudio.play(); audioPlayBtn.textContent = 'Pause'; } else { guideAudio.pause(); audioPlayBtn.textContent = 'Ouvir Áudio'; }
+    if (guideAudio.paused) { 
+      await guideAudio.play(); 
+      audioPlayBtn.textContent = 'Pause'; 
+    } else { 
+      guideAudio.pause(); 
+      audioPlayBtn.textContent = 'Ouvir Áudio'; 
+    }
     try { const ta = document.getElementById('tutorialAudio'); if (ta) ta.style.display = 'none'; } catch(_) {}
     showTutorialStep(2);
   });
