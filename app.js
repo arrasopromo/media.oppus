@@ -3144,13 +3144,30 @@ app.post('/api/track-audio-3s', async (req, res) => {
         // Normalize IPv6
         if (ip.startsWith('::ffff:')) ip = ip.substring(7);
         
+        const { username } = req.body;
+
+        if (username) {
+            // Try to link to existing recent log
+            const recentLog = await col.findOne({ 
+                ip, 
+                event: 'played_3s',
+                createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // 24h window
+            }, { sort: { createdAt: -1 } });
+
+            if (recentLog) {
+                await col.updateOne({ _id: recentLog._id }, { $set: { username } });
+                return res.json({ success: true, updated: true });
+            }
+        }
+        
         await col.insertOne({
             ip: ip,
             userAgent: req.get('User-Agent') || '',
             event: 'played_3s',
+            username: username || null,
             createdAt: new Date()
         });
-        res.json({ success: true });
+        res.json({ success: true, inserted: true });
     } catch (e) {
         console.error('Audio 3s track error:', e);
         res.status(500).json({ error: 'Internal error' });
