@@ -1086,6 +1086,26 @@ document.addEventListener('DOMContentLoaded', function() {
         isInstagramVerified = true;
         try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
         
+        // Pré-carregar posts se vierem na verificação ou buscar em background
+        if (profile.latestPosts && Array.isArray(profile.latestPosts) && profile.latestPosts.length > 0) {
+            cachedPosts = profile.latestPosts;
+            cachedPostsUser = profile.username || username;
+        } else {
+             // Tentar buscar em background para agilizar o modal
+             try {
+                // Verificar se já não estamos buscando para este usuário
+                if (cachedPostsUser !== (profile.username || username)) {
+                    const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
+                    fetch(url).then(r=>r.json()).then(d=>{ 
+                        if(d.posts && Array.isArray(d.posts)) {
+                            cachedPosts = d.posts; 
+                            cachedPostsUser = (profile.username || username); 
+                        }
+                    }).catch(function(){});
+                }
+             } catch(_) {}
+        }
+        
         updatePedidoButtonState();
         showResumoIfAllowed();
         updatePromosSummary();
