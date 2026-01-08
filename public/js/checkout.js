@@ -1734,6 +1734,16 @@
                 body: JSON.stringify({ username: trackUser })
              }).catch(e => console.error('Retry audio 10% track error:', e));
         }
+
+        // Update audio 3s track with username if it was listened before validation
+        if (typeof audioTracked3s !== 'undefined' && audioTracked3s) {
+             const trackUser = profile.username || username;
+             fetch('/api/track-audio-3s', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: trackUser })
+             }).catch(e => console.error('Update audio 3s track error:', e));
+        }
         
       } else {
         const msg = String(data.error || 'Falha ao verificar perfil.');
@@ -2245,8 +2255,13 @@
   async function trackAudio3s() {
     if (audioTracked3s) return;
     audioTracked3s = true;
+    const username = document.getElementById('usernameCheckoutInput')?.value;
     try {
-      await fetch('/api/track-audio-3s', { method: 'POST' });
+      await fetch('/api/track-audio-3s', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }) 
+      });
     } catch (e) { console.error('Audio 3s track error:', e); }
   }
 
