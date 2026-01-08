@@ -240,6 +240,124 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
     }
 
     try {
+        // ---------------------------------------------------------
+        // TENTATIVA 1: ROCKETAPI (Rápido: ~2-5s)
+        // ---------------------------------------------------------
+        if (process.env.ROCKETAPI_TOKEN) {
+            try {
+                console.log(`🚀 Tentando RocketAPI para @${username}`);
+                const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
+                const rocketResp = await axios.post(rocketUrl, { username }, { 
+                    headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                    timeout: 15000 
+                });
+                
+                const rData = rocketResp.data;
+                // RocketAPI pode retornar "ok" ou "done" dependendo do endpoint/versão
+                const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
+                
+                if (isRocketOk && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) {
+                    const rUser = rData.response.body.data.user;
+                    console.log(`✅ RocketAPI retornou dados para @${username}`);
+
+                    // Tentar extrair posts de edges (se vierem)
+                    let rExtractedPosts = [];
+                    const rEdges = (rUser.edge_owner_to_timeline_media && rUser.edge_owner_to_timeline_media.edges) ? rUser.edge_owner_to_timeline_media.edges : [];
+                    
+                    if (rEdges.length > 0) {
+                        rExtractedPosts = rEdges.map(e => e.node ? ({
+                            shortcode: e.node.shortcode,
+                            takenAt: e.node.taken_at_timestamp,
+                            isVideo: !!e.node.is_video,
+                            displayUrl: e.node.display_url || e.node.thumbnail_src,
+                            videoUrl: e.node.video_url,
+                            typename: e.node.__typename
+                        }) : null).filter(Boolean).slice(0, 12);
+                    }
+
+                    // Se não vieram posts e o perfil não é privado, buscar via get_media (segunda chamada)
+                    if (rExtractedPosts.length === 0 && !rUser.is_private && rUser.id) {
+                         try {
+                            console.log(`🚀 Buscando posts extras (RocketAPI) para ID: ${rUser.id}`);
+                            const mediaUrl = 'https://v1.rocketapi.io/instagram/user/get_media';
+                            const mediaResp = await axios.post(mediaUrl, { id: rUser.id, count: 12 }, { 
+                                headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                                timeout: 10000 
+                            });
+                            const mItems = mediaResp.data?.response?.body?.items || [];
+                            if (mItems.length > 0) {
+                                rExtractedPosts = mItems.map(item => ({
+                                    shortcode: item.code,
+                                    takenAt: item.taken_at,
+                                    isVideo: item.media_type === 2 || !!item.video_versions, // 2=Video, 8=Album, 1=Image
+                                    displayUrl: item.image_versions2?.candidates?.[0]?.url,
+                                    videoUrl: item.video_versions?.[0]?.url,
+                                    typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
+                                }));
+                                console.log(`✅ RocketAPI trouxe ${rExtractedPosts.length} posts via get_media.`);
+                            }
+                        } catch (eMedia) {
+                            console.warn('⚠️ Falha ao buscar media RocketAPI:', eMedia.message);
+                        }
+                    }
+
+                    const rProfileData = {
+                        username: rUser.username,
+                        fullName: rUser.full_name || "",
+                        profilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
+                        originalProfilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url,
+                        driveImageUrl: null,
+                        followersCount: (rUser.edge_followed_by ? rUser.edge_followed_by.count : 0),
+                        followingCount: (rUser.edge_follow ? rUser.edge_follow.count : 0),
+                        postsCount: (rUser.edge_owner_to_timeline_media ? rUser.edge_owner_to_timeline_media.count : 0),
+                        isPrivate: !!rUser.is_private,
+                        isVerified: !!rUser.is_verified,
+                        alreadyTested: false,
+                        latestPosts: rExtractedPosts
+                    };
+
+                    try { rProfileData.alreadyTested = await checkInstauserExists(username); } catch (e) {}
+
+                    try {
+                        const vu = await getCollection('validated_insta_users');
+                        const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
+                        const doc = {
+                            username: String(rProfileData.username).toLowerCase(),
+                            fullName: rProfileData.fullName,
+                            profilePicUrl: rProfileData.profilePicUrl,
+                            isVerified: rProfileData.isVerified,
+                            isPrivate: rProfileData.isPrivate,
+                            followersCount: rProfileData.followersCount,
+                            checkedAt: new Date().toISOString(),
+                            linkId: linkId || null,
+                            ip: String(ip || ''),
+                            userAgent: String(userAgent || ''),
+                            source: 'verifyInstagramProfile_ROCKETAPI',
+                            latestPosts: rExtractedPosts
+                        };
+                        await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
+                    } catch (dbErr) { console.error('Erro mongo ROCKET:', dbErr.message); }
+
+                    // Proxy check
+                    if (typeof isAllowedImageHost === 'function' && rProfileData.profilePicUrl && isAllowedImageHost(rProfileData.profilePicUrl)) {
+                         rProfileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(rProfileData.profilePicUrl)}`;
+                    }
+
+                    if (rProfileData.isPrivate) {
+                         console.log(`⚠️ Perfil @${username} é privado (RocketAPI), mas será permitido.`);
+                    }
+
+                    const resultRocket = { success: true, status: 200, profile: rProfileData };
+                    setCache(username, resultRocket, CACHE_TTL_MS);
+                    return resultRocket;
+                } else {
+                    console.warn(`⚠️ RocketAPI retornou status inválido ou dados incompletos para @${username}:`, JSON.stringify(rData).substring(0, 200));
+                }
+            } catch (eRocket) {
+                console.error('❌ Erro RocketAPI (fallback p/ Apify):', eRocket.message, eRocket.response?.data || '');
+            }
+        }
+
         const apifyToken = process.env.APIFY_TOKEN;
         if (!apifyToken) {
             console.error("❌ Erro: APIFY_TOKEN não configurado");
@@ -255,7 +373,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         console.log(`🚀 Enviando requisição para Apify: @${username}`);
         const response = await axios.post(apifyUrl, payload, { 
             headers: { 'Content-Type': 'application/json' },
-            timeout: 10000 
+            timeout: 15000 // Reduzido para 15s a pedido (pode gerar mais falhas se o Apify demorar)
         });
 
         const items = response.data;
@@ -353,15 +471,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         }
 
         if (isPrivate) {
-             const privateResult = { 
-                success: false, 
-                status: 200, 
-                error: "Este perfil é privado. Para que o serviço seja realizado, o perfil precisa estar no modo público.",
-                code: 'INSTAUSER_PRIVATE',
-                profile: profileData
-            };
-            setCache(username, privateResult, NEGATIVE_CACHE_TTL_MS);
-            return privateResult;
+             console.log(`⚠️ Perfil @${username} é privado, mas será permitido.`);
+             // Permitir fluxo normal mesmo se for privado
+             // O frontend exibirá os dados e avisará se necessário no modal de posts
         }
 
         const okResult = { success: true, status: 200, profile: profileData };
@@ -1970,7 +2082,27 @@ async function processOrderFulfillment(record, col, req) {
             return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
         };
         const viewsLink = sanitizeLink(viewsLinkRaw);
-        const likesLink = sanitizeLink(likesLinkRaw);
+        let likesLink = sanitizeLink(likesLinkRaw);
+        
+        // [FIX] Se não veio link para likes (bump), tentar pegar o post mais recente do perfil validado
+        if (likesQty > 0 && !likesLink && instaUser) {
+             try {
+                 const { getCollection } = require('./mongodbClient');
+                 const vu = await getCollection('validated_insta_users');
+                 const vUser = await vu.findOne({ username: String(instaUser).toLowerCase() });
+                 if (vUser && vUser.latestPosts && Array.isArray(vUser.latestPosts) && vUser.latestPosts.length > 0) {
+                     const lp = vUser.latestPosts[0];
+                     const code = lp.shortcode || lp.code;
+                     if (code) {
+                         likesLink = `https://www.instagram.com/p/${code}/`;
+                         console.log('🔄 [OrderBump] Recuperado link do post via cache para:', instaUser, likesLink);
+                     }
+                 }
+             } catch (eFallback) {
+                  console.error('⚠️ [OrderBump] Erro ao recuperar post cache:', eFallback.message);
+             }
+        }
+
         try { console.log('🔎 orderbump_links_sanitized', { viewsLink, likesLink }); } catch(_) {}
 
         if (viewsQty > 0 && viewsLink) {
