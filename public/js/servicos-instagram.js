@@ -1051,7 +1051,20 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Show contact fields
         const contactArea = document.getElementById('contactFieldsArea');
-        if (contactArea) contactArea.style.display = 'block';
+        if (contactArea) {
+            contactArea.style.display = 'block';
+            // Scroll automático para a parte de digitar o email
+            setTimeout(() => {
+                const emailInput = document.getElementById('contactEmailInput');
+                if (emailInput) {
+                    emailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Opcional: focar no campo
+                    // emailInput.focus(); 
+                } else {
+                    contactArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 300);
+        }
         
         // Update Step 3 Review Data
         const revImg = document.getElementById('reviewProfileImage');
@@ -1488,6 +1501,24 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Inicialização ---
 
+  function scrollToCardsMobile() {
+    try {
+      const isMobile = window.innerWidth <= 640;
+      if (isMobile) {
+        setTimeout(() => {
+          const pCards = document.getElementById('planCards');
+          if (pCards && pCards.style.display !== 'none') {
+            const rect = pCards.getBoundingClientRect();
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            // Deixa uma beirada da descrição (aprox 120px acima do topo dos cards)
+            const targetTop = (rect.top + scrollTop) - 120;
+            window.scrollTo({ top: targetTop, behavior: 'smooth' });
+          }
+        }, 500);
+      }
+    } catch (_) {}
+  }
+
   if (tipoSelect) {
     tipoSelect.addEventListener('change', () => {
       const tipo = tipoSelect.value;
@@ -1508,6 +1539,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         });
       }
+
+      // Scroll Mobile para os cards (deixando beirada da descrição)
+      scrollToCardsMobile();
     });
   }
 
@@ -1621,9 +1655,14 @@ document.addEventListener('DOMContentLoaded', function() {
   initPromoListeners();
   
   // Default selection (Mistos)
-  if (tipoSelect && !tipoSelect.value) {
-    tipoSelect.value = 'mistos';
-    tipoSelect.dispatchEvent(new Event('change'));
+  if (tipoSelect) {
+    if (!tipoSelect.value) {
+      tipoSelect.value = 'mistos';
+    }
+    // Always dispatch change to ensure cards are rendered and scroll logic runs
+    setTimeout(() => {
+        tipoSelect.dispatchEvent(new Event('change'));
+    }, 100);
   }
 
   // Initial Step

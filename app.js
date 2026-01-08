@@ -3864,32 +3864,6 @@ app.get('/api/instagram/posts', async (req, res) => {
       }
     } catch (e) { /* fallback abaixo */ }
     try {
-      console.log('[API] tentando web_profile_info sem cookies');
-      const headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "X-IG-App-ID": "936619743392459",
-        "Accept": "application/json",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "X-Requested-With": "XMLHttpRequest"
-      };
-      const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { headers, timeout: 8000 });
-      const user = resp.data && resp.data.data && resp.data.data.user;
-      if (resp.status === 200 && user && !user.is_private) {
-        const edges = (user.edge_owner_to_timeline_media && Array.isArray(user.edge_owner_to_timeline_media.edges)) ? user.edge_owner_to_timeline_media.edges : [];
-        const posts = edges.map(e => e && e.node ? ({
-          shortcode: e.node.shortcode,
-          takenAt: e.node.taken_at_timestamp,
-          isVideo: !!e.node.is_video,
-          displayUrl: e.node.display_url || e.node.thumbnail_src || null,
-          videoUrl: e.node.video_url || null,
-          typename: e.node.__typename || ''
-        }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
-        if (posts.length) return res.json({ success: true, username: user.username, posts, debugInsert: debugInsert ? debugInfo : undefined });
-      }
-    } catch (e3) { /* fallback abaixo */ }
-    try {
       console.log('[API] tentando fallback HTML');
       const basic = await fetchInstagramPosts(username);
       if (basic && basic.success && Array.isArray(basic.posts) && basic.posts.length) {
@@ -4836,38 +4810,10 @@ async function fetchInstagramRecentPosts(username) {
       // Se todas rejeitarem (erro de rede/auth), lança AggregateError
       return await Promise.any(candidates.map(p => tryProfile(p)));
     } catch (err) {
-      console.log('Todas as tentativas autenticadas falharam, tentando fallback anônimo.');
+      console.log('Todas as tentativas autenticadas falharam.');
     }
   }
 
-  // Fallback: Sem cookies ou todos falharam
-  try {
-    console.log('[IG] Tentando fallback anônimo...');
-    const headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-      "X-IG-App-ID": "936619743392459",
-      "Accept": "application/json",
-      "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-      "Cache-Control": "no-cache",
-      "Pragma": "no-cache",
-      "X-Requested-With": "XMLHttpRequest"
-    };
-    const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { headers, timeout: REQUEST_TIMEOUT });
-    if (resp.status === 200 && resp.data && resp.data.data && resp.data.data.user && !resp.data.data.user.is_private) {
-      const user = resp.data.data.user;
-      const edges = (user.edge_owner_to_timeline_media && Array.isArray(user.edge_owner_to_timeline_media.edges)) ? user.edge_owner_to_timeline_media.edges : [];
-      const posts = edges.map(e => e && e.node ? ({
-        shortcode: e.node.shortcode,
-        takenAt: e.node.taken_at_timestamp,
-        isVideo: !!e.node.is_video,
-        displayUrl: e.node.display_url || e.node.thumbnail_src || null,
-        videoUrl: e.node.video_url || null,
-        typename: e.node.__typename || ''
-      }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
-      return { success: true, username: user.username, posts };
-    }
-  } catch (_) {}
-  
   throw new Error('Falha ao buscar posts (timeout ou erro)');
 }
 
