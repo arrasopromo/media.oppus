@@ -207,6 +207,15 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
     }
+    
+    // Validação: Impedir ir para Step 3 sem verificar perfil
+    if (step === 3) {
+      if (!isInstagramVerified) {
+        alert('Por favor, verifique o perfil na etapa 2 antes de prosseguir.');
+        if (window.goToStep) window.goToStep(2);
+        return;
+      }
+    }
 
     // UI Elements
     const step1Container = document.getElementById('step1Container');
@@ -480,8 +489,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const targetPrice = findPrice(tipo, 2000);
       const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
       const diffStr = formatCentsToBRL(diffCents);
-      const extras = '(+400 Curtidas e 15.000 visualizações)';
-      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${getUnitForTipo(tipo)} ${extras}.`;
+      // const extras = '(+400 Curtidas e 15.000 visualizações)';
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${getUnitForTipo(tipo)}.`;
       if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} seguidores`;
       if (upOld) upOld.textContent = targetPrice || '—';
       if (upNew) upNew.textContent = diffStr;
