@@ -235,6 +235,16 @@ document.addEventListener('DOMContentLoaded', function() {
         if (step2Container) step2Container.style.display = 'none';
         if (step3Container) step3Container.style.display = 'none';
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        
+        // Remove hash when leaving checkout step
+         if (window.location.hash === '#checkout') {
+              const cleanUrl = window.location.pathname + window.location.search;
+              history.replaceState(null, null, cleanUrl);
+              // Dispatch events for GTM
+              try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+              try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+         }
+
     } else if (step === 2) {
         if (step1Container) step1Container.style.display = 'none';
         if (step2Container) step2Container.style.display = 'block';
@@ -245,12 +255,30 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => usernameCheckoutInput.focus(), 100);
         }
         window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        // Remove hash when leaving checkout step
+        if (window.location.hash === '#checkout') {
+             const cleanUrl = window.location.pathname + window.location.search;
+             history.replaceState(null, null, cleanUrl);
+             // Dispatch events for GTM
+             try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+             try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+        }
+
     } else if (step === 3) {
         if (step1Container) step1Container.style.display = 'none';
         if (step2Container) step2Container.style.display = 'none';
         if (step3Container) step3Container.style.display = 'block';
         window.scrollTo({ top: 0, behavior: 'smooth' });
         try { updatePromosSummary(); } catch(_) {}
+
+        // Add URL hash for GTM tracking (Initiate Checkout)
+        if (window.location.hash !== '#checkout') {
+             history.pushState(null, null, '#checkout');
+             // Dispatch explicit event for GTM as backup
+             try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+             try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+        }
     }
   };
 
