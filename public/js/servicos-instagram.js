@@ -1677,7 +1677,7 @@ document.addEventListener('DOMContentLoaded', function() {
       });
   }
 
-  const confirmContactDataBtn = document.getElementById('buyFollowersBtn');
+  const confirmContactDataBtn = document.getElementById('btnActionProceed');
   if (confirmContactDataBtn) {
       confirmContactDataBtn.addEventListener('click', (e) => {
           if (e) e.preventDefault(); // Prevent link navigation
