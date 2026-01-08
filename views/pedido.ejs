@@ -110,37 +110,10 @@
   </style>
 </head>
 <body class="theme-light has-fixed-menu">
-  <script>
-    (function removeParam(){
-      try {
-        if (location.search && /orderid=/i.test(location.search)) {
-          var qs = new URLSearchParams(location.search);
-          qs.delete('orderID');
-          qs.delete('orderid');
-          var parts = [];
-          qs.forEach(function(v, k){ parts.push(k + '=' + encodeURIComponent(v)); });
-          var newSearch = parts.length ? ('?' + parts.join('&')) : '';
-          history.replaceState(null, '', '/pedido' + newSearch);
-        }
-      } catch(_) {}
-    })();
-  </script>
+  <!-- Script de remoção de parâmetros removido para permitir F5 (refresh) -->
   <%- include('partials/menu') %>
   <div class="container checkout-page">
-    <div id="clientPage" class="client-page" aria-label="Consulta de pedidos" style="display:none;">
-      <div class="client-page-inner">
-        <h2 class="client-title">Consultar Pedido</h2>
-        <p class="client-desc">Digite seu número de telefone para localizar seu pedido.</p>
-        <div class="client-form">
-          <input id="clientPhoneInputPage" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
-          <div class="client-actions">
-            <button id="clientPageConsultBtn" class="continue-button"><span class="button-text">Consultar</span></button>
-            <button id="clientPageBackBtn" class="continue-button" style="background: transparent; border-color: var(--border-color); color: var(--text-primary);"><span class="button-text">Voltar</span></button>
-          </div>
-        </div>
-        <div id="clientPageOrders" class="client-orders"></div>
-      </div>
-    </div>
+    <!-- clientPage removido para forçar redirecionamento para /cliente -->
 
     <main class="main-content">
       <section class="section-block">
