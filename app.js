@@ -3133,47 +3133,63 @@ app.get('/api/debug-baserow-row', async (req, res) => {
   */
 });
 
-// Audio Tracking Routes
-app.post('/api/track-audio-3s', async (req, res) => {
+// Audio Tracking Routes - Progressive
+app.post('/api/track-audio-progress', async (req, res) => {
     try {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('audio_logs');
-        // Capture IP
+        
+        // Capture IP and force IPv4 format if mapped
         let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
         if (ip.includes(',')) ip = ip.split(',')[0].trim();
-        // Normalize IPv6
-        if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+        if (ip.startsWith('::ffff:')) ip = ip.substring(7); // Normalize to IPv4
         
-        const { username } = req.body;
+        const { username, seconds, percentage, milestone } = req.body;
+        const now = new Date();
 
-        if (username) {
-            // Try to link to existing recent log
-            const recentLog = await col.findOne({ 
-                ip, 
-                event: 'played_3s',
-                createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // 24h window
-            }, { sort: { createdAt: -1 } });
+        // Check for existing recent log (24h window)
+        const recentLog = await col.findOne({ 
+            ip, 
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } 
+        }, { sort: { createdAt: -1 } });
 
-            if (recentLog) {
-                await col.updateOne({ _id: recentLog._id }, { $set: { username } });
-                return res.json({ success: true, updated: true });
+        if (recentLog) {
+            // Update existing record
+            const updateFields = { 
+                updatedAt: now,
+                // Only update max values if current is higher
+                max_seconds: Math.max(recentLog.max_seconds || 0, Number(seconds) || 0),
+                max_percentage: Math.max(recentLog.max_percentage || 0, Number(percentage) || 0),
+                current_milestone: milestone || recentLog.current_milestone
+            };
+            
+            if (username && !recentLog.username) {
+                updateFields.username = username;
             }
+
+            await col.updateOne({ _id: recentLog._id }, { $set: updateFields });
+            return res.json({ success: true, updated: true });
         }
         
+        // Create new record
         await col.insertOne({
             ip: ip,
             userAgent: req.get('User-Agent') || '',
-            event: 'played_3s',
             username: username || null,
-            createdAt: new Date()
+            max_seconds: Number(seconds) || 0,
+            max_percentage: Number(percentage) || 0,
+            current_milestone: milestone || 'started',
+            createdAt: now,
+            updatedAt: now
         });
         res.json({ success: true, inserted: true });
     } catch (e) {
-        console.error('Audio 3s track error:', e);
+        console.error('Audio progress track error:', e);
         res.status(500).json({ error: 'Internal error' });
     }
 });
 
+// Legacy/Specific 10% route for User Profile validation logic (keeps existing behavior for validated_insta_users)
 app.post('/api/track-audio-10p', async (req, res) => {
     try {
         const { username } = req.body;

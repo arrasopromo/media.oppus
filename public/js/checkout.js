@@ -817,6 +817,11 @@
         if (btnPedido) btnPedido.classList.add('tutorial-highlight');
         try { positionTutorials(); } catch(_) {}
         setTimeout(() => { try { positionTutorials(); } catch(_) {} }, 120);
+
+        // Add URL hash for GTM tracking (Initiate Checkout) - ONLY for /servicos-instagram
+        if (window.location.pathname.includes('/servicos-instagram') && window.location.hash !== '#checkout') {
+          history.pushState(null, null, '#checkout');
+        }
         break;
       default:
         break;
@@ -1720,6 +1725,7 @@
         } catch (_) {}
         // Avança para o passo final
         showTutorialStep(5);
+
         try {
           const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
           fetch(url).then(r=>r.json()).then(d=>{ cachedPosts = Array.isArray(d.posts) ? d.posts : []; cachedPostsUser = (profile.username || username) || ''; }).catch(function(){});
@@ -1735,14 +1741,21 @@
              }).catch(e => console.error('Retry audio 10% track error:', e));
         }
 
-        // Update audio 3s track with username if it was listened before validation
-        if (typeof audioTracked3s !== 'undefined' && audioTracked3s) {
+        // Update audio progress with username if already tracked
+        if (trackedMilestones.size > 0) {
              const trackUser = profile.username || username;
-             fetch('/api/track-audio-3s', {
+             // Send a "sync" update with the latest tracked state
+             const lastMilestone = Array.from(trackedMilestones).pop(); // Simple last one
+             fetch('/api/track-audio-progress', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: trackUser })
-             }).catch(e => console.error('Update audio 3s track error:', e));
+                body: JSON.stringify({ 
+                    username: trackUser,
+                    milestone: lastMilestone,
+                    // We don't have exact seconds here easily without global state, 
+                    // but the backend will just update the username if it matches IP
+                })
+             }).catch(e => console.error('Update audio progress username error:', e));
         }
         
       } else {
@@ -2248,31 +2261,41 @@
     checkCheckoutButton.addEventListener('click', checkInstagramProfileCheckout);
   }
 
-  // Tracking: Audio 3s (IP based) and 10% (User based)
-  let audioTracked3s = false;
-  let audioTracked10p = false;
-
-  async function trackAudio3s() {
-    if (audioTracked3s) return;
-    audioTracked3s = true;
+  // Tracking: Audio Progress (3s, 10%, 50%, 75%, 100%)
+  const audioMilestones = [
+    { pct: 0, sec: 3, id: '3s' },
+    { pct: 0.10, sec: 0, id: '10%' },
+    { pct: 0.50, sec: 0, id: '50%' },
+    { pct: 0.75, sec: 0, id: '75%' },
+    { pct: 1.00, sec: 0, id: '100%' }
+  ];
+  let trackedMilestones = new Set();
+  
+  async function trackAudioProgress(milestoneId, seconds, percentage) {
+    if (trackedMilestones.has(milestoneId)) return;
+    trackedMilestones.add(milestoneId);
+    
     const username = document.getElementById('usernameCheckoutInput')?.value;
     try {
-      await fetch('/api/track-audio-3s', { 
+      await fetch('/api/track-audio-progress', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }) 
+        body: JSON.stringify({ 
+          username,
+          seconds,
+          percentage: Math.floor(percentage * 100),
+          milestone: milestoneId
+        }) 
       });
-    } catch (e) { console.error('Audio 3s track error:', e); }
+    } catch (e) { console.error('Audio progress track error:', e); }
   }
 
+  // Legacy/Specific 10% tracking for User Profile
+  let audioTracked10p = false;
   async function trackAudio10p() {
-    // Mark as tracked locally so we know they listened
     audioTracked10p = true;
-    
-    // Only send to backend if we have a username (validated or being typed)
     const username = document.getElementById('usernameCheckoutInput')?.value;
     if (!username) return;
-
     try {
       await fetch('/api/track-audio-10p', {
         method: 'POST',
@@ -2321,8 +2344,19 @@
       if (audioProgress && guideAudio.duration) audioProgress.value = String(Math.floor((guideAudio.currentTime / guideAudio.duration) * 100));
       
       // Tracking logic
-      if (guideAudio.currentTime >= 3) trackAudio3s();
-      if (guideAudio.duration > 0 && (guideAudio.currentTime / guideAudio.duration) >= 0.10) trackAudio10p();
+      const current = guideAudio.currentTime;
+      const duration = guideAudio.duration;
+      const pct = (duration > 0) ? (current / duration) : 0;
+      
+      // Progress Tracking (Milestones)
+      audioMilestones.forEach(m => {
+        if ((m.sec > 0 && current >= m.sec) || (m.pct > 0 && pct >= m.pct)) {
+           trackAudioProgress(m.id, current, pct);
+        }
+      });
+      
+      // Specific 10% Profile tracking
+      if (pct >= 0.10) trackAudio10p();
     });
   }
   if (audioPlayBtn) audioPlayBtn.addEventListener('click', async () => {
