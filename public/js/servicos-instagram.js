@@ -1677,9 +1677,10 @@ document.addEventListener('DOMContentLoaded', function() {
       });
   }
 
-  const confirmContactDataBtn = document.getElementById('confirmContactDataBtn');
+  const confirmContactDataBtn = document.getElementById('buyFollowersBtn');
   if (confirmContactDataBtn) {
-      confirmContactDataBtn.addEventListener('click', () => {
+      confirmContactDataBtn.addEventListener('click', (e) => {
+          if (e) e.preventDefault(); // Prevent link navigation
           const email = contactEmailInput ? contactEmailInput.value.trim() : '';
           const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
           
