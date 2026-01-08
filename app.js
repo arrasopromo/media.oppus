@@ -273,6 +273,33 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         const isPrivate = typeof item.private !== 'undefined' ? item.private : (typeof item.isPrivate !== 'undefined' ? item.isPrivate : false);
         const isVerified = typeof item.verified !== 'undefined' ? item.verified : (typeof item.isVerified !== 'undefined' ? item.isVerified : false);
         
+        // Extrair posts do Apify se disponíveis
+        let extractedPosts = [];
+        if (item.latestPosts && Array.isArray(item.latestPosts)) {
+            console.log(`✅ Apify trouxe ${item.latestPosts.length} posts para @${username}`);
+            extractedPosts = item.latestPosts.map(p => {
+                let ts = null;
+                if (p.timestamp) {
+                    ts = new Date(p.timestamp).getTime() / 1000;
+                } else if (p.date) {
+                    ts = new Date(p.date).getTime() / 1000;
+                } else if (p.takenAtTimestamp) {
+                    ts = Number(p.takenAtTimestamp);
+                }
+                
+                return {
+                    shortcode: p.shortCode || p.shortcode,
+                    takenAt: ts, // Sempre timestamp em segundos
+                    isVideo: p.type === 'Video' || p.isVideo,
+                    displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
+                    videoUrl: p.videoUrl || p.videoURL,
+                    typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
+                };
+            }).slice(0, 12);
+        } else {
+            console.log(`⚠️ Apify NÃO trouxe posts para @${username}. Campos disponíveis: ${Object.keys(item).join(', ')}`);
+        }
+
         // Mapeamento compatível com o formato esperado pelo app
         const profileData = {
             username: item.username || username,
@@ -285,7 +312,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
             postsCount: item.postsCount || 0,
             isPrivate: isPrivate,
             isVerified: isVerified,
-            alreadyTested: false // Será preenchido abaixo
+            alreadyTested: false, // Será preenchido abaixo
+            latestPosts: extractedPosts // Inclui posts retornados
         };
 
         // Check if already tested
@@ -308,10 +336,11 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 linkId: linkId || null,
                 ip: String(ip || ''),
                 userAgent: String(userAgent || ''),
-                source: 'verifyInstagramProfile_APIFY'
+                source: 'verifyInstagramProfile_APIFY',
+                latestPosts: extractedPosts // Salvar posts no banco
             };
             await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
-            console.log('🗃️ MongoDB: validação Apify salva em validated_insta_users');
+            console.log('🗃️ MongoDB: validação Apify salva em validated_insta_users com posts');
         } catch (dbErr) {
             console.error('Erro mongo:', dbErr.message);
         }
@@ -3849,20 +3878,85 @@ app.get('/api/instagram/posts', async (req, res) => {
     let debugInfo = null;
     try {
       const vu = await getCollection('validated_insta_users');
+      // Tentar buscar do banco primeiro se tiver posts recentes (ex: < 1h)
+      // Se acabou de validar o perfil, os posts estarão lá
+      const cachedDoc = await vu.findOne({ username });
+      if (cachedDoc && cachedDoc.latestPosts && Array.isArray(cachedDoc.latestPosts) && cachedDoc.latestPosts.length > 0) {
+          // Verificar idade do cache (opcional, mas bom pra não retornar post velho)
+          // Mas se o usuário acabou de validar, é novo.
+          const lastCheck = cachedDoc.checkedAt || cachedDoc.lastPostsAt;
+          const isFresh = lastCheck && (Date.now() - new Date(lastCheck).getTime() < 3600000); // 1h
+          
+          if (isFresh) {
+               console.log('[API] Retornando posts do banco (validated_insta_users)');
+               return res.json({ success: true, username, posts: cachedDoc.latestPosts });
+          }
+      }
+
       const doc = { source: 'api.instagram.posts', lastPostsAt: new Date().toISOString() };
       // Remove username from $setOnInsert to avoid conflict if it's already in the filter
       await vu.updateOne({ username }, { $setOnInsert: { firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
       debugInfo = { ok: true, username };
       try { console.log('🗃️ Posts route: upsert ok', debugInfo); } catch(_) {}
     } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: upsert error', err?.message || String(err)); } catch(_) {} }
+    
+    // Otimização: Se cookies estão falhando muito, pular direto pro Apify/Fallback
+    // Mas vamos manter a tentativa rápida (timeout reduzido)
     try {
       console.log('[API] tentando web_profile_info com cookies');
+      // Reduzir timeout implícito na chamada se possível ou assumir que fetchInstagramRecentPosts foi otimizado
       const result = await fetchInstagramRecentPosts(username);
       if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
         if (debugInsert) return res.json(Object.assign({}, result, { debugInsert: debugInfo }));
         return res.json(result);
       }
     } catch (e) { /* fallback abaixo */ }
+
+    // Fallback: Tentar Apify (via verifyInstagramProfile que agora retorna posts)
+    try {
+        console.log('[API] tentando fallback APIFY');
+        // Simulando req/res para verifyInstagramProfile ou chamando lógica direta
+        // Vamos usar verifyInstagramProfile mas precisamos adaptar pois ele espera req, res e retorna cache/json
+        // Melhor chamar a lógica de Apify diretamente ou usar uma função extraída.
+        // Como verifyInstagramProfile já faz cache e tudo, podemos chamá-lo passando mocks ou extrair.
+        // Para simplificar e manter DRY, vamos chamar verifyInstagramProfile se não tiver em cache
+        
+        // Hack: verificar cache primeiro
+        const cached = getCachedProfile(username);
+        let apifyData = cached;
+        
+        if (!apifyData || !apifyData.latestPosts) {
+             // Se não tem cache ou cache sem posts, força verificação (que usa apify)
+             // Precisamos de um jeito de chamar a lógica do Apify sem depender de req/res do express
+             // Vamos duplicar a chamada do Apify aqui ou refatorar verifyInstagramProfile?
+             // Refatorar é arriscado agora. Vamos duplicar a chamada do Apify para garantir posts.
+             
+             const apifyToken = process.env.APIFY_TOKEN;
+             if (apifyToken) {
+                 const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
+                 const payload = { usernames: [username], resultsLimit: 1 };
+                 const respA = await axios.post(apifyUrl, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+                 const itemsA = respA.data;
+                 if (Array.isArray(itemsA) && itemsA.length > 0 && itemsA[0] && !itemsA[0].error) {
+                     const item = itemsA[0];
+                     if (item.latestPosts && Array.isArray(item.latestPosts)) {
+                         const posts = item.latestPosts.map(p => ({
+                             shortcode: p.shortCode || p.shortcode,
+                             takenAt: p.timestamp || (p.date ? new Date(p.date).getTime()/1000 : null),
+                             isVideo: p.type === 'Video' || p.isVideo,
+                             displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
+                             videoUrl: p.videoUrl || p.videoURL,
+                             typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
+                         })).slice(0, 12);
+                         return res.json({ success: true, username, posts, debugInsert: debugInsert ? debugInfo : undefined });
+                     }
+                 }
+             }
+        } else if (apifyData && apifyData.latestPosts) {
+             return res.json({ success: true, username, posts: apifyData.latestPosts, debugInsert: debugInsert ? debugInfo : undefined });
+        }
+    } catch (eApify) { console.error('[API] Fallback Apify error:', eApify.message); }
+
     try {
       console.log('[API] tentando fallback HTML');
       const basic = await fetchInstagramPosts(username);
@@ -4730,7 +4824,7 @@ async function fetchInstagramRecentPosts(username) {
   const USAGE_INTERVAL_MS = 5000;
   const MAX_ERRORS_PER_PROFILE = 5;
   const DISABLE_TIME_MS = 60 * 1000;
-  const REQUEST_TIMEOUT = 5000;
+  const REQUEST_TIMEOUT = 3000; // REDUZIDO DE 5000 PARA 3000 PARA FALHAR MAIS RÁPIDO
 
   // Selecionar candidatos
   const available = cookieProfiles.filter(p => p.disabledUntil <= now && !isCookieLocked(p.ds_user_id))
