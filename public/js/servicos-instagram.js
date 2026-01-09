@@ -272,13 +272,15 @@ document.addEventListener('DOMContentLoaded', function() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
         try { updatePromosSummary(); } catch(_) {}
 
-        // Add URL hash for GTM tracking (Initiate Checkout)
+        // URL hash removed per request
+        /*
         if (window.location.hash !== '#checkout') {
              history.pushState(null, null, '#checkout');
              // Dispatch explicit event for GTM as backup
              try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
              try { window.dispatchEvent(new Event('popstate')); } catch(e){}
         }
+        */
     }
   };
 
@@ -1463,6 +1465,15 @@ document.addEventListener('DOMContentLoaded', function() {
         : '';
 
       const textColor = (document.body.classList.contains('theme-light') || true) ? '#000' : '#fff'; // Forçando escuro se necessário ou detectando tema
+      
+      const checkBtnId = 'checkPaidBtnDynamic';
+      const checkBtnHtml = `
+           <div class="button-container" style="margin-bottom: 0.5rem;">
+             <button id="${checkBtnId}" class="continue-button" style="background: #28a745 !important;">
+               <span class="button-text">Já fiz o pagamento</span>
+             </button>
+           </div>`;
+
       const waitingHtml = `
         <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
           <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
@@ -1474,7 +1485,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>`;
 
       if (pixResultado) {
-          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
+          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${checkBtnHtml}${waitingHtml}`;
           pixResultado.style.display = 'block';
       }
 
@@ -1488,8 +1499,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       } catch(_) {}
 
-      // Listener do botão copiar
+      // Listener do botão copiar e verificar
       setTimeout(() => {
+          const checkBtn = document.getElementById(checkBtnId);
+          if (checkBtn) {
+            checkBtn.addEventListener('click', () => {
+                 checkBtn.disabled = true;
+                 const span = checkBtn.querySelector('.button-text');
+                 const originalText = span ? span.textContent : '';
+                 if (span) span.textContent = 'Verificando...';
+                 
+                 // Força verificação imediata
+                 checkPaid().finally(() => {
+                     setTimeout(() => {
+                        checkBtn.disabled = false;
+                        if (span) span.textContent = originalText;
+                     }, 2000);
+                 });
+            });
+          }
+
           const copyBtn = document.getElementById(copyButtonId);
           if (copyBtn && brCode) {
             copyBtn.addEventListener('click', async () => {
