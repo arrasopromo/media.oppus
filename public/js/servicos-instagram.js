@@ -1439,8 +1439,8 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Renderização do PIX
-      const charge = data?.charge || {};
-      const pix = charge?.paymentMethods?.pix || {};
+      const charge = data?.charge || data || {};
+      const pix = charge?.paymentMethods?.pix || charge?.pix || {};
       const brCode = pix?.brCode || charge?.brCode || data?.brCode || '';
       const qrImage = pix?.qrCodeImage || charge?.qrCodeImage || data?.qrCodeImage || '';
 
