@@ -1582,30 +1582,48 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         // Fallback Polling (DB Check)
-        const checkPaidDb = async () => {
-          try {
-            const url = `/api/checkout/payment-state?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
-            const stResp = await fetch(url);
-            const stData = await stResp.json();
-            const isPaid = stData?.paid === true;
-            if (isPaid) {
-              clearInterval(paymentPollInterval);
-              paymentPollInterval = null;
-              try { markPaymentConfirmed(); } catch(_) {}
-              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
-            }
-          } catch (e) {}
-        };
+         const checkPaidDb = async () => {
+           try {
+             const url = `/api/checkout/payment-state?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+             const stResp = await fetch(url);
+             const stData = await stResp.json();
+             const isPaid = stData?.paid === true;
+             if (isPaid) {
+               clearInterval(paymentPollInterval);
+               paymentPollInterval = null;
+               if (window.paymentEventSource) { try { window.paymentEventSource.close(); } catch(_) {} window.paymentEventSource = null; }
+               try { markPaymentConfirmed(); } catch(_) {}
+               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+             }
+           } catch (e) {}
+         };
+ 
+         // Inicia polling primário
+         checkPaid();
+         paymentPollInterval = setInterval(checkPaidDb, 12000); 
+         
+         // SSE Listener (Real-time)
+         try {
+             if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+             const sseUrl = `/api/payment/subscribe?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+             window.paymentEventSource = new EventSource(sseUrl);
+             window.paymentEventSource.addEventListener('paid', async (ev) => {
+               try {
+                 if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+                 if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+                 try { markPaymentConfirmed(); } catch(_) {}
+                 await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+               } catch(_) {}
+             });
+         } catch(_) {}
+         
+         // Polling Woovi a cada 30s como backup
+         const checkPaidWoovi = async () => {
+            await checkPaid();
+         };
+         setInterval(checkPaidWoovi, 30000);
 
-        // Inicia polling primário
-        checkPaid();
-        paymentPollInterval = setInterval(checkPaid, 5000); 
-        
-        // Inicia polling secundário (DB) intercalado
-        setTimeout(() => {
-             if (paymentPollInterval) setInterval(checkPaidDb, 12000);
-        }, 2500);
-      }
+       }
 
     } catch (err) {
       alert('Erro ao criar PIX: ' + (err?.message || err));
