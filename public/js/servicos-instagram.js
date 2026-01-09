@@ -1283,23 +1283,23 @@ document.addEventListener('DOMContentLoaded', function() {
       const resp = await fetch(apiUrl);
       const data = await resp.json();
       
-      if (data && data.order && data.order.numeroPedido) {
-         window.location.href = `/pedido/${data.order.numeroPedido}`;
-      } else {
-         // Fallback se não tiver número do pedido ainda
-         showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
-         setTimeout(async () => {
-             try {
-                const resp2 = await fetch(apiUrl);
-                const data2 = await resp2.json();
-                if (data2 && data2.order && data2.order.numeroPedido) {
-                    window.location.href = `/pedido/${data2.order.numeroPedido}`;
-                } else {
-                    showResumoIfAllowed();
-                }
-             } catch(_) { showResumoIfAllowed(); }
-         }, 3000);
-      }
+      if (data && data.order) {
+          window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}`;
+       } else {
+          // Fallback se não tiver número do pedido ainda
+          showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
+          setTimeout(async () => {
+              try {
+                 const resp2 = await fetch(apiUrl);
+                 const data2 = await resp2.json();
+                 if (data2 && data2.order) {
+                     window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}`;
+                 } else {
+                     showResumoIfAllowed();
+                 }
+              } catch(_) { showResumoIfAllowed(); }
+          }, 3000);
+       }
     } catch(_) {
         showStatusMessageCheckout('Pagamento confirmado! Verifique seu email.', 'success');
     }
@@ -1362,6 +1362,8 @@ document.addEventListener('DOMContentLoaded', function() {
       // Phone
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
       const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+
+      const emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
       
       // Username
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
@@ -1379,7 +1381,8 @@ document.addEventListener('DOMContentLoaded', function() {
         comment: 'Checkout OPPUS Instagram',
         customer: {
           name: 'Cliente Instagram',
-          phone: phoneValue
+          phone: phoneValue,
+          email: emailValue
         },
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
@@ -1527,11 +1530,33 @@ document.addEventListener('DOMContentLoaded', function() {
       if (chargeId) {
         const checkPaid = async () => {
           try {
-            const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
-            const stData = await stResp.json();
-            const status = stData?.charge?.status || stData?.status || '';
-            const paidFlag = stData?.charge?.paid || stData?.paid || false;
-            const isPaid = paidFlag === true || /paid/i.test(String(status));
+            let isPaid = false;
+            
+            // Check 1: Woovi Status
+            try {
+                const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
+                const stData = await stResp.json();
+                const status = stData?.charge?.status || stData?.status || '';
+                const paidFlag = stData?.charge?.paid || stData?.paid || false;
+                // Aceita PAID ou COMPLETED
+                isPaid = paidFlag === true || /paid|completed/i.test(String(status));
+            } catch(e) { console.error('CheckPaid Woovi Error:', e); }
+
+            // Check 2: Internal Order Status (Backup se o webhook já processou)
+            if (!isPaid && (identifier || serverCorrelationID || correlationID)) {
+                try {
+                    const idParam = identifier ? `identifier=${encodeURIComponent(identifier)}` : '';
+                    const corrParam = (serverCorrelationID || correlationID) ? `&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}` : '';
+                    const orderResp = await fetch(`/api/order?${idParam}${corrParam}`);
+                    const orderData = await orderResp.json();
+                    if (orderData && orderData.order) {
+                        const s = String(orderData.order.status || '').toLowerCase();
+                        if (s === 'pago' || s === 'completed' || s === 'approved') {
+                            isPaid = true;
+                        }
+                    }
+                } catch(e) { console.error('CheckPaid Internal Error:', e); }
+            }
             
             if (isPaid) {
               clearInterval(paymentPollInterval);

@@ -2637,7 +2637,7 @@
                 const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : ((only && only.fornecedor_social && only.fornecedor_social.orderId) ? String(only.fornecedor_social.orderId) : '');
                 if (onlyOid) {
                   try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
-                  window.location.href = '/pedido?orderID=' + encodeURIComponent(String(onlyOid));
+                  window.location.href = '/pedido?oid=' + encodeURIComponent(String(onlyOid));
                   return;
                 }
               } catch(_) {}
@@ -3300,12 +3300,12 @@
       const oid = (data && data.order && data.order.fama24h && data.order.fama24h.orderId) || (data && data.order && data.order.fornecedor_social && data.order.fornecedor_social.orderId) || null;
       if (oid) {
         try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: String(oid) }) }); } catch(_) {}
-        targetUrl = `/pedido?orderID=${encodeURIComponent(String(oid))}`;
+        targetUrl = `/pedido?oid=${encodeURIComponent(String(oid))}`;
       } else {
-        targetUrl = `/pedido?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+        targetUrl = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID)}`;
       }
     } catch(_) {
-      targetUrl = `/pedido?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+      targetUrl = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID)}`;
     }
     try { window.location.assign(targetUrl || '/pedido'); } catch(_) {}
     try {

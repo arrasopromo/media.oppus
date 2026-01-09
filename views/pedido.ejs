@@ -364,8 +364,8 @@
         var ident = String((orderData && (orderData.identifier || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
         try {
           var qs = new URLSearchParams((location && location.search) || '');
-          var identQ = String(qs.get('identifier') || '').trim();
-          var corrQ = String(qs.get('correlationID') || '').trim();
+          var identQ = String(qs.get('identifier') || qs.get('t') || '').trim();
+          var corrQ = String(qs.get('correlationID') || qs.get('ref') || '').trim();
           if (!ident && identQ) ident = identQ;
           if (!corrQ && (orderData && orderData.correlationID)) corrQ = String(orderData.correlationID || '').trim();
           if (ident) {
