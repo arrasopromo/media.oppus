@@ -1791,10 +1791,22 @@ app.post('/api/woovi/charge', async (req, res) => {
         return `+${digits}`;
     };
 
+    const normalizeEmail = (s) => {
+        const raw = typeof s === 'string' ? s.trim() : '';
+        if (!raw) return '';
+        const email = raw.toLowerCase();
+        const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        return isValid ? email : '';
+    };
+
     const customerPayload = {
         name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'),
         phone: normalizePhone((customer && customer.phone) ? customer.phone : ''),
     };
+    const customerEmail = normalizeEmail((customer && customer.email) ? customer.email : '');
+    if (customerEmail) {
+        customerPayload.email = sanitizeText(customerEmail);
+    }
     try {
         const hasRefilExt = (sanitizedAdditionalFiltered || []).some(it => String(it.key||'')==='tipo_servico' && String(it.value||'')==='refil_extensao');
         if (hasRefilExt && (!customerPayload.phone || customerPayload.phone === '+')) {
@@ -3938,10 +3950,10 @@ app.get('/api/checkout/payment-state', async (req, res) => {
 });
 app.get('/pedido', async (req, res) => {
   try {
-    const identifier = String(req.query.identifier || '').trim();
-    const correlationID = String(req.query.correlationID || '').trim();
-    const orderIDRaw = String(req.query.orderID || req.query.orderid || '').trim();
-    const phoneRaw = String(req.query.phone || '').trim();
+    const identifier = String(req.query.identifier || req.query.t || '').trim();
+     const correlationID = String(req.query.correlationID || req.query.ref || '').trim();
+     const orderIDRaw = String(req.query.orderID || req.query.orderid || req.query.oid || '').trim();
+     const phoneRaw = String(req.query.phone || '').trim();
     const hasQuery = !!(identifier || correlationID || orderIDRaw || phoneRaw);
     const hasSessionCtx = !!(req.session && (req.session.selectedOrderID || req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID));
     if (!hasQuery && !hasSessionCtx) {
@@ -4421,10 +4433,10 @@ app.post('/session/mark-paid', async (req, res) => {
 app.get('/api/order', async (req, res) => {
   try {
     const id = req.query.id ? String(req.query.id).trim() : '';
-    const identifier = String(req.query.identifier || '').trim();
-    const correlationID = String(req.query.correlationID || '').trim();
-    const orderIDRaw = String(req.query.orderID || req.query.orderid || '').trim();
-    const phoneRaw = String(req.query.phone || '').trim();
+    const identifier = String(req.query.identifier || req.query.t || '').trim();
+     const correlationID = String(req.query.correlationID || req.query.ref || '').trim();
+     const orderIDRaw = String(req.query.orderID || req.query.orderid || req.query.oid || '').trim();
+     const phoneRaw = String(req.query.phone || '').trim();
     const col = await getCollection('checkout_orders');
     let doc = null;
     if (id) {
