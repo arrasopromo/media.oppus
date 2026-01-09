@@ -1466,14 +1466,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const textColor = (document.body.classList.contains('theme-light') || true) ? '#000' : '#fff'; // Forçando escuro se necessário ou detectando tema
       
-      const checkBtnId = 'checkPaidBtnDynamic';
-      const checkBtnHtml = `
-           <div class="button-container" style="margin-bottom: 0.5rem;">
-             <button id="${checkBtnId}" class="continue-button" style="background: #28a745 !important;">
-               <span class="button-text">Já fiz o pagamento</span>
-             </button>
-           </div>`;
-
       const waitingHtml = `
         <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
           <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
@@ -1485,7 +1477,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>`;
 
       if (pixResultado) {
-          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${checkBtnHtml}${waitingHtml}`;
+          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
           pixResultado.style.display = 'block';
       }
 
@@ -1546,7 +1538,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
       }, 100);
 
-      // Polling de Status
+      // Polling de Status (Lógica idêntica ao checkout.js)
       const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
       const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
       const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
@@ -1559,45 +1551,60 @@ document.addEventListener('DOMContentLoaded', function() {
       if (chargeId) {
         const checkPaid = async () => {
           try {
-            let isPaid = false;
-            
-            // Check 1: Woovi Status
-            try {
-                const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
-                const stData = await stResp.json();
-                const status = stData?.charge?.status || stData?.status || '';
-                const paidFlag = stData?.charge?.paid || stData?.paid || false;
-                // Aceita PAID ou COMPLETED
-                isPaid = paidFlag === true || /paid|completed/i.test(String(status));
-            } catch(e) { console.error('CheckPaid Woovi Error:', e); }
-
-            // Check 2: Internal Order Status (Backup se o webhook já processou)
-            if (!isPaid && (identifier || serverCorrelationID || correlationID)) {
-                try {
-                    const idParam = identifier ? `identifier=${encodeURIComponent(identifier)}` : '';
-                    const corrParam = (serverCorrelationID || correlationID) ? `&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}` : '';
-                    const orderResp = await fetch(`/api/order?${idParam}${corrParam}`);
-                    const orderData = await orderResp.json();
-                    if (orderData && orderData.order) {
-                        const s = String(orderData.order.status || '').toLowerCase();
-                        if (s === 'pago' || s === 'completed' || s === 'approved') {
-                            isPaid = true;
-                        }
-                    }
-                } catch(e) { console.error('CheckPaid Internal Error:', e); }
-            }
+            const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
+            const stData = await stResp.json();
+            const status = stData?.charge?.status || stData?.status || '';
+            const paidFlag = stData?.charge?.paid || stData?.paid || false;
+            const isPaid = paidFlag === true || /paid/i.test(String(status));
             
             if (isPaid) {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
-              markPaymentConfirmed();
+              try { markPaymentConfirmed(); } catch(_) {}
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            }
+            
+            if (!isPaid) {
+               // Check DB State via checkout API as backup
+               try {
+                const dbUrl = `/api/checkout/payment-state?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+                const dbResp = await fetch(dbUrl);
+                const dbData = await dbResp.json();
+                if (dbData?.paid === true) {
+                  clearInterval(paymentPollInterval);
+                  paymentPollInterval = null;
+                  try { markPaymentConfirmed(); } catch(_) {}
+                  await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+                }
+              } catch(_) {}
+            }
+          } catch (e) {}
+        };
+
+        // Fallback Polling (DB Check)
+        const checkPaidDb = async () => {
+          try {
+            const url = `/api/checkout/payment-state?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+            const stResp = await fetch(url);
+            const stData = await stResp.json();
+            const isPaid = stData?.paid === true;
+            if (isPaid) {
+              clearInterval(paymentPollInterval);
+              paymentPollInterval = null;
+              try { markPaymentConfirmed(); } catch(_) {}
               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
             }
           } catch (e) {}
         };
-        // Executa imediatamente e depois a cada 5s
+
+        // Inicia polling primário
         checkPaid();
-        paymentPollInterval = setInterval(checkPaid, 5000);
+        paymentPollInterval = setInterval(checkPaid, 5000); 
+        
+        // Inicia polling secundário (DB) intercalado
+        setTimeout(() => {
+             if (paymentPollInterval) setInterval(checkPaidDb, 12000);
+        }, 2500);
       }
 
     } catch (err) {
