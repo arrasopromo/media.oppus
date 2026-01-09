@@ -1279,15 +1279,15 @@ document.addEventListener('DOMContentLoaded', function() {
     try { showResumoIfAllowed(); } catch(_) {}
   }
 
-  async function navigateToPedidoOrFallback(identifier, correlationID) {
+  async function navigateToPedidoOrFallback(identifier, correlationID, chargeId) {
     try {
       try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
-      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
+      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}&id=${encodeURIComponent(chargeId||'')}`;
       const resp = await fetch(apiUrl);
       const data = await resp.json();
       
       if (data && data.order) {
-          window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}`;
+          window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(chargeId||'')}`;
        } else {
           // Fallback se não tiver número do pedido ainda
           showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
@@ -1296,7 +1296,7 @@ document.addEventListener('DOMContentLoaded', function() {
                  const resp2 = await fetch(apiUrl);
                  const data2 = await resp2.json();
                  if (data2 && data2.order) {
-                     window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}`;
+                     window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(chargeId||'')}`;
                  } else {
                      showResumoIfAllowed();
                  }
@@ -1540,15 +1540,16 @@ document.addEventListener('DOMContentLoaded', function() {
              clearInterval(paymentPollInterval);
              paymentPollInterval = null;
              try { markPaymentConfirmed(); } catch(_) {}
-             await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+             await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
              return true;
            }
          } catch(e) { console.error('DB Check error:', e); }
          return false;
       };
 
-      if (chargeId) {
+      if (chargeId || identifier || serverCorrelationID) {
         const checkPaid = async () => {
+          if (!chargeId) { await doCheckDb(); return; }
           try {
             const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
             const stData = await stResp.json();
@@ -1560,7 +1561,7 @@ document.addEventListener('DOMContentLoaded', function() {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               try { markPaymentConfirmed(); } catch(_) {}
-              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
             } else {
                // Fallback imediato ao DB
                await doCheckDb();
@@ -1577,7 +1578,9 @@ document.addEventListener('DOMContentLoaded', function() {
          };
  
          // Inicia polling primário
-         checkPaid();
+         if (chargeId) checkPaid();
+         else checkPaidDb();
+
          paymentPollInterval = setInterval(checkPaidDb, 5000); 
          
          // SSE Listener (Real-time)
@@ -1590,17 +1593,18 @@ document.addEventListener('DOMContentLoaded', function() {
                  if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
                  if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
                  try { markPaymentConfirmed(); } catch(_) {}
-                 await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+                 await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
                } catch(_) {}
              });
          } catch(_) {}
          
-         // Polling Woovi a cada 15s como backup
-         const checkPaidWoovi = async () => {
-            await checkPaid();
-         };
-         setInterval(checkPaidWoovi, 15000);
-
+         // Polling Woovi a cada 15s como backup (apenas se tiver chargeId)
+         if (chargeId) {
+             const checkPaidWoovi = async () => {
+                await checkPaid();
+             };
+             setInterval(checkPaidWoovi, 15000);
+         }
        }
 
     } catch (err) {
