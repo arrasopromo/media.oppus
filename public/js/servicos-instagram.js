@@ -1548,6 +1548,22 @@ document.addEventListener('DOMContentLoaded', function() {
         paymentPollInterval = null;
       }
       
+      const doCheckDb = async () => {
+         try {
+           const dbUrl = `/api/checkout/payment-state?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+           const dbResp = await fetch(dbUrl);
+           const dbData = await dbResp.json();
+           if (dbData?.paid === true) {
+             clearInterval(paymentPollInterval);
+             paymentPollInterval = null;
+             try { markPaymentConfirmed(); } catch(_) {}
+             await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+             return true;
+           }
+         } catch(e) { console.error('DB Check error:', e); }
+         return false;
+      };
+
       if (chargeId) {
         const checkPaid = async () => {
           try {
@@ -1555,52 +1571,31 @@ document.addEventListener('DOMContentLoaded', function() {
             const stData = await stResp.json();
             const status = stData?.charge?.status || stData?.status || '';
             const paidFlag = stData?.charge?.paid || stData?.paid || false;
-            const isPaid = paidFlag === true || /paid/i.test(String(status));
+            const isPaid = paidFlag === true || /paid/i.test(String(status)) || /completed/i.test(String(status));
             
             if (isPaid) {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;
               try { markPaymentConfirmed(); } catch(_) {}
               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            } else {
+               // Fallback imediato ao DB
+               await doCheckDb();
             }
-            
-            if (!isPaid) {
-               // Check DB State via checkout API as backup
-               try {
-                const dbUrl = `/api/checkout/payment-state?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
-                const dbResp = await fetch(dbUrl);
-                const dbData = await dbResp.json();
-                if (dbData?.paid === true) {
-                  clearInterval(paymentPollInterval);
-                  paymentPollInterval = null;
-                  try { markPaymentConfirmed(); } catch(_) {}
-                  await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
-                }
-              } catch(_) {}
-            }
-          } catch (e) {}
+          } catch (e) {
+            // Se falhar Woovi, tenta DB
+            await doCheckDb();
+          }
         };
 
         // Fallback Polling (DB Check)
          const checkPaidDb = async () => {
-           try {
-             const url = `/api/checkout/payment-state?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
-             const stResp = await fetch(url);
-             const stData = await stResp.json();
-             const isPaid = stData?.paid === true;
-             if (isPaid) {
-               clearInterval(paymentPollInterval);
-               paymentPollInterval = null;
-               if (window.paymentEventSource) { try { window.paymentEventSource.close(); } catch(_) {} window.paymentEventSource = null; }
-               try { markPaymentConfirmed(); } catch(_) {}
-               await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
-             }
-           } catch (e) {}
+           await doCheckDb();
          };
  
          // Inicia polling primário
          checkPaid();
-         paymentPollInterval = setInterval(checkPaidDb, 12000); 
+         paymentPollInterval = setInterval(checkPaidDb, 5000); 
          
          // SSE Listener (Real-time)
          try {
@@ -1617,11 +1612,11 @@ document.addEventListener('DOMContentLoaded', function() {
              });
          } catch(_) {}
          
-         // Polling Woovi a cada 30s como backup
+         // Polling Woovi a cada 15s como backup
          const checkPaidWoovi = async () => {
             await checkPaid();
          };
-         setInterval(checkPaidWoovi, 30000);
+         setInterval(checkPaidWoovi, 15000);
 
        }
 

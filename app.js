@@ -3937,12 +3937,31 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     const correlationID = String(req.query.correlationID || '').trim();
     const col = await getCollection('checkout_orders');
     const conds = [];
-    if (id) conds.push({ 'woovi.chargeId': id });
-    if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+    
+    if (id) {
+        conds.push({ 'woovi.chargeId': id });
+        conds.push({ 'woovi.id': id });
+        // Try as ObjectId if valid
+        if (/^[0-9a-fA-F]{24}$/.test(id)) {
+            const { ObjectId } = require('mongodb');
+            try { conds.push({ _id: new ObjectId(id) }); } catch(_) {}
+        }
+    }
+    if (identifier) { 
+        conds.push({ 'woovi.identifier': identifier }); 
+        conds.push({ identifier: identifier }); 
+    }
     if (correlationID) conds.push({ correlationID });
+    
     const filter = conds.length ? { $or: conds } : {};
     const doc = await col.findOne(filter, { projection: { status: 1, woovi: 1 } });
-    const paid = !!doc && (String(doc.status).toLowerCase() === 'pago' || String(doc.woovi?.status || '').toLowerCase() === 'pago');
+    
+    const paid = !!doc && (
+        String(doc.status).toLowerCase() === 'pago' || 
+        String(doc.woovi?.status || '').toLowerCase() === 'pago' ||
+        String(doc.woovi?.status || '').toLowerCase() === 'completed'
+    );
+    
     return res.json({ ok: true, paid, order: doc || null });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
