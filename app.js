@@ -1922,7 +1922,7 @@ app.post('/api/woovi/charge', async (req, res) => {
 
             const col = await getCollection('checkout_orders');
             const insertResult = await col.insertOne(record);
-            console.log('🗃️ MongoDB: pedido do checkout persistido (insertedId=', insertResult.insertedId, ')');
+            console.log('🗃️ MongoDB: pedido do checkout persistido (insertedId=', insertResult.insertedId, ')', 'CorrID:', chargeCorrelationID, 'WooviChargeID:', charge?.id);
         } catch (saveErr) {
             console.error('⚠️ Falha ao persistir pedido no MongoDB:', saveErr?.message || saveErr);
         }
@@ -4001,6 +4001,10 @@ app.get('/pedido', async (req, res) => {
         if (!Number.isNaN(maybeNum)) conds.push({ 'fornecedor_social.orderId': maybeNum });
         conds.push({ 'fama24h.orderId': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
+        // Support woovi.chargeId
+        conds.push({ 'woovi.chargeId': orderIDRaw });
+        conds.push({ 'woovi.id': orderIDRaw });
+        
         const { ObjectId } = require('mongodb');
         if (/^[0-9a-fA-F]{24}$/.test(orderIDRaw)) {
              try { conds.push({ _id: new ObjectId(orderIDRaw) }); } catch(_) {}
@@ -4459,7 +4463,16 @@ app.get('/api/order', async (req, res) => {
     const col = await getCollection('checkout_orders');
     let doc = null;
     if (id) {
-      try { doc = await col.findOne({ _id: new (require('mongodb').ObjectId)(id) }); } catch(_) {}
+      try { 
+          if (/^[0-9a-fA-F]{24}$/.test(id)) {
+             doc = await col.findOne({ _id: new (require('mongodb').ObjectId)(id) }); 
+          }
+      } catch(_) {}
+      if (!doc) {
+         // Also check woovi.chargeId if id provided
+         try { doc = await col.findOne({ 'woovi.chargeId': id }); } catch(_) {}
+         if (!doc) try { doc = await col.findOne({ 'woovi.id': id }); } catch(_) {}
+      }
     }
     if (!doc && req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
