@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- Configurações e Variáveis Globais ---
   const tabela = {
     mistos: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 14,90' },
       { q: 500, p: 'R$ 32,90' },
@@ -1493,24 +1494,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
       // Listener do botão copiar e verificar
       setTimeout(() => {
-          const checkBtn = document.getElementById(checkBtnId);
-          if (checkBtn) {
-            checkBtn.addEventListener('click', () => {
-                 checkBtn.disabled = true;
-                 const span = checkBtn.querySelector('.button-text');
-                 const originalText = span ? span.textContent : '';
-                 if (span) span.textContent = 'Verificando...';
-                 
-                 // Força verificação imediata
-                 checkPaid().finally(() => {
-                     setTimeout(() => {
-                        checkBtn.disabled = false;
-                        if (span) span.textContent = originalText;
-                     }, 2000);
-                 });
-            });
-          }
-
           const copyBtn = document.getElementById(copyButtonId);
           if (copyBtn && brCode) {
             copyBtn.addEventListener('click', async () => {
