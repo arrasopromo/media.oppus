@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- Configurações e Variáveis Globais ---
   const tabela = {
     mistos: [
-      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 14,90' },
       { q: 500, p: 'R$ 32,90' },
