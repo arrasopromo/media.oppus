@@ -1849,19 +1849,24 @@ app.post('/api/woovi/charge', async (req, res) => {
 
             let utms = {};
             try {
-                const refUrl = req.get('Referer') || req.headers['referer'] || '';
-                const u = new URL(refUrl);
-                const p = u.searchParams;
-                utms = {
-                    source: p.get('utm_source') || '',
-                    medium: p.get('utm_medium') || '',
-                    campaign: p.get('utm_campaign') || '',
-                    term: p.get('utm_term') || '',
-                    content: p.get('utm_content') || '',
-                    gclid: p.get('gclid') || '',
-                    fbclid: p.get('fbclid') || '',
-                    ref: refUrl
-                };
+                if (req.body && req.body.utms && Object.keys(req.body.utms).length > 0) {
+                    utms = req.body.utms;
+                    if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+                } else {
+                    const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                    const u = new URL(refUrl);
+                    const p = u.searchParams;
+                    utms = {
+                        source: p.get('utm_source') || '',
+                        medium: p.get('utm_medium') || '',
+                        campaign: p.get('utm_campaign') || '',
+                        term: p.get('utm_term') || '',
+                        content: p.get('utm_content') || '',
+                        gclid: p.get('gclid') || '',
+                        fbclid: p.get('fbclid') || '',
+                        ref: refUrl
+                    };
+                }
             } catch(_) {
                 const refUrl = req.get('Referer') || req.headers['referer'] || '';
                 utms = { ref: refUrl };
@@ -3748,9 +3753,31 @@ app.post('/api/instagram/validet-track', async (req, res) => {
   try {
     const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    
     const vu = await getCollection('validated_insta_users');
     const doc = { username, ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track', lastTrackAt: new Date().toISOString() };
     await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+
+    // Link audio_logs to username
+    try {
+        const al = await getCollection('audio_logs');
+        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+        if (ip.includes(',')) ip = ip.split(',')[0].trim();
+        if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+
+        const recentLog = await al.findOne({ 
+            ip, 
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } 
+        }, { sort: { createdAt: -1 } });
+
+        if (recentLog) {
+            await al.updateOne({ _id: recentLog._id }, { $set: { username, updatedAt: new Date() } });
+            // console.log('✅ Linked audio_log to username:', { id: recentLog._id, username, ip });
+        }
+    } catch (eLog) {
+        console.error('Failed to link audio_log in validet-track:', eLog);
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });

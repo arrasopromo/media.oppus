@@ -62,7 +62,8 @@
               e.preventDefault();
               e.stopPropagation();
               e.stopImmediatePropagation();
-              window.location.href = '/servicos-instagram';
+              const currentSearch = window.location.search || '';
+              window.location.href = '/servicos-instagram' + currentSearch;
             }
           }, true); // Captura o evento antes que outros scripts o processem
         }
