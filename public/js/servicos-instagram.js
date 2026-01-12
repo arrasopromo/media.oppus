@@ -65,6 +65,19 @@ document.addEventListener('DOMContentLoaded', function() {
   let paymentPollInterval = null;
   let paymentEventSource = null;
 
+  // --- UTM Tracking Persistence ---
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const utms = {};
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+       const v = p.get(k);
+       if(v) utms[k] = v;
+    });
+    if (Object.keys(utms).length > 0) {
+        sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+    }
+  } catch(_) {}
+
   // Elementos UI Principais
   const tipoSelect = document.getElementById('tipoSelect');
   const qtdSelect = document.getElementById('quantidadeSelect');
@@ -1141,6 +1154,14 @@ document.addEventListener('DOMContentLoaded', function() {
         updatePromosSummary();
         applyCheckoutFlow();
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+        
+        try {
+          fetch('/api/instagram/validet-track', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: profile.username || username })
+          }).catch(() => {});
+        } catch (_) {}
         
       } else {
         showStatusMessageCheckout(data.error || 'Falha ao verificar perfil.', 'error');
