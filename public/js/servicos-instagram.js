@@ -242,6 +242,43 @@ document.addEventListener('DOMContentLoaded', function() {
         if (window.goToStep) window.goToStep(2);
         return;
       }
+
+      // Validação: Impedir ir para Step 3 sem preencher email e telefone
+      const email = contactEmailInput ? contactEmailInput.value.trim() : '';
+      const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
+      const emailErrorMsg = document.getElementById('emailErrorMsg');
+
+      if (!email || !email.includes('@')) {
+        if (emailErrorMsg) emailErrorMsg.style.display = 'block';
+        else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+        
+        // Se estiver tentando ir para step 3 via clique no stepper, volta para o 2
+        // para garantir que o usuário veja os campos
+        if (window.goToStep) window.goToStep(2);
+
+        setTimeout(() => {
+             if (contactEmailInput) {
+                 contactEmailInput.focus();
+                 contactEmailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             }
+        }, 300);
+        return;
+      } else {
+        if (emailErrorMsg) emailErrorMsg.style.display = 'none';
+      }
+
+      if (!phone || phone.length < 10) {
+        showStatusMessageCheckout('Por favor, informe um telefone válido.', 'error');
+        if (window.goToStep) window.goToStep(2);
+
+        setTimeout(() => {
+             if (contactPhoneInput) {
+                 contactPhoneInput.focus();
+                 contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             }
+        }, 300);
+        return;
+      }
     }
 
     // UI Elements
@@ -353,7 +390,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   const quantityBadges = {
-    150: 'TESTE',
+    150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',
     3000: 'EXCLUSIVO',
@@ -393,8 +430,25 @@ document.addEventListener('DOMContentLoaded', function() {
       // Badge logic
        const qNum = Number(item.q);
        let badgeHtml = '';
-       if (isFollowersTipo(tipo) && quantityBadges[qNum]) {
-         badgeHtml = `<div class="plan-badge">${quantityBadges[qNum]}</div>`;
+       let badgeText = '';
+
+       // Lógica customizada de badges e destaque
+       if (tipo === 'mistos') {
+         if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+         if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+       } else if (tipo === 'brasileiros') {
+         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+       } else if (tipo === 'organicos') {
+         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+       }
+
+       // Fallback para quantityBadges se não houver override específico
+       if (!badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
+           badgeText = quantityBadges[qNum];
+       }
+
+       if (badgeText) {
+         badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
        }
 
       // Layout idêntico ao checkout.js
@@ -1933,38 +1987,5 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   if (commentsModal) {
     commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { closeCommentsModal(); } });
-  }
-
-  const toolModal = document.getElementById('toolExplanationModal');
-  const toolBtn = document.getElementById('toolExplanationBtn');
-  const toolCloseBtn = document.getElementById('toolExplanationCloseBtn');
-  const toolCloseBtn2 = document.getElementById('toolExplanationCloseBtn2');
-  const toolVideo = document.getElementById('toolVideoPlayer');
-  
-  if (toolBtn && toolModal) {
-      toolBtn.addEventListener('click', function(e){
-        try { e.preventDefault(); e.stopPropagation(); } catch(_) {}
-        suppressOpenPostModalOnce = true;
-        setTimeout(function(){ suppressOpenPostModalOnce = false; }, 500);
-        try {
-            if (toolModal.parentNode !== document.body) {
-                document.body.appendChild(toolModal);
-            }
-        } catch(_) {}
-        toolModal.style.display = 'flex';
-        if (toolVideo) {
-            toolVideo.currentTime = 0;
-            try { toolVideo.play(); } catch(e) { console.log('Video play failed', e); }
-        }
-      });
-  }
-  function closeToolModal() {
-      if (toolModal) toolModal.style.display = 'none';
-      if (toolVideo) toolVideo.pause();
-  }
-  if (toolCloseBtn && toolModal) toolCloseBtn.addEventListener('click', closeToolModal);
-  if (toolCloseBtn2 && toolModal) toolCloseBtn2.addEventListener('click', closeToolModal);
-  if (toolModal) {
-      toolModal.addEventListener('click', function(e){ if (e.target === toolModal) closeToolModal(); });
   }
 });
