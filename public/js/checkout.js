@@ -1,5 +1,18 @@
 (() => {
   /* try { if (typeof fbq === 'function' && window._oppusPixelReady) fbq('track', 'PageView'); } catch(e) {} */
+  // Helper to get persistent browser/session ID
+  function getBrowserSessionId() {
+      let bid = '';
+      try { bid = localStorage.getItem('oppus_browser_id'); } catch(_) {}
+      if (!bid) {
+          bid = 'bid_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+          try { localStorage.setItem('oppus_browser_id', bid); } catch(_) {}
+      }
+      return bid;
+  }
+  // Initialize browser ID immediately
+  try { getBrowserSessionId(); } catch(_) {}
+
   const tipoSelect = document.getElementById('tipoSelect');
   const qtdSelect = document.getElementById('quantidadeSelect');
   const tipoCards = document.getElementById('tipoCards');
@@ -105,31 +118,31 @@
   const tabela = {
     mistos: [
       { q: 150, p: 'R$ 7,90' },
-      { q: 300, p: 'R$ 14,90' },
-      { q: 500, p: 'R$ 32,90' },
-      { q: 700, p: 'R$ 39,90' },
-      { q: 1000, p: 'R$ 49,90' },
-      { q: 2000, p: 'R$ 79,90' },
-      { q: 3000, p: 'R$ 109,90' },
-      { q: 4000, p: 'R$ 139,90' },
-      { q: 5000, p: 'R$ 159,90' },
-      { q: 7500, p: 'R$ 199,90' },
-      { q: 10000, p: 'R$ 269,90' },
-      { q: 15000, p: 'R$ 399,90' },
+      { q: 300, p: 'R$ 12,90' },
+      { q: 500, p: 'R$ 24,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 59,90' },
+      { q: 3000, p: 'R$ 79,90' },
+      { q: 4000, p: 'R$ 99,90' },
+      { q: 5000, p: 'R$ 129,90' },
+      { q: 7500, p: 'R$ 169,90' },
+      { q: 10000, p: 'R$ 199,90' },
+      { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
-      { q: 150, p: 'R$ 19,90' },
-      { q: 300, p: 'R$ 29,90' },
-      { q: 500, p: 'R$ 54,90' },
-      { q: 700, p: 'R$ 69,90' },
-      { q: 1000, p: 'R$ 99,90' },
-      { q: 2000, p: 'R$ 169,90' },
-      { q: 3000, p: 'R$ 229,90' },
-      { q: 4000, p: 'R$ 299,90' },
-      { q: 5000, p: 'R$ 329,90' },
-      { q: 7500, p: 'R$ 459,90' },
-      { q: 10000, p: 'R$ 599,90' },
-      { q: 15000, p: 'R$ 999,90' },
+      { q: 150, p: 'R$ 9,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 39,90' },
+      { q: 700, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 69,90' },
+      { q: 2000, p: 'R$ 129,90' },
+      { q: 3000, p: 'R$ 179,90' },
+      { q: 4000, p: 'R$ 249,90' },
+      { q: 5000, p: 'R$ 279,90' },
+      { q: 7500, p: 'R$ 399,90' },
+      { q: 10000, p: 'R$ 499,90' },
+      { q: 15000, p: 'R$ 799,90' },
     ],
     organicos: [
       { q: 150, p: 'R$ 39,90' },
@@ -531,7 +544,7 @@
           <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços bons e estáveis, que não ficam caindo.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; caso ocorra — nós repomos tudo gratuitamente.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; caso ocorra — nós repomos tudo gratuitamente.</li>
             <li>✅ <strong>Vantagem:</strong> Melhor custo-benefício para quem quer crescer rápido.</li>
             <li>ℹ️ <strong>Observação:</strong> Parte dos seguidores pode ser internacional.</li>
           </ul>
@@ -541,7 +554,7 @@
           <p>🇧🇷 Entrega composta exclusivamente por perfis com nomes brasileiros, garantindo uma base com aparência nacional. Perfis com nomes e características locais, podendo variar em frequência de postagem ou interação. Perfeito para quem busca credibilidade nacional, com serviço estável e de qualidade.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Todos os nossos serviços são bons e estáveis, não caem facilmente, e têm suporte completo de reposição.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; repomos automaticamente caso aconteça.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; repomos automaticamente caso aconteça.</li>
             <li>✅ <strong>Vantagem:</strong> Perfis brasileiros com nomes e fotos locais.</li>
             <li>ℹ️ <strong>Observação:</strong> Interações e stories podem variar entre os perfis.</li>
           </ul>
@@ -551,7 +564,7 @@
           <p>Serviço premium com seguidores 100% brasileiros, ativos e filtrados, com interações, stories recentes e até perfis verificados. Os seguidores são cuidadosamente selecionados para entregar credibilidade máxima e engajamento real. Perfeito para quem busca autoridade e resultados duradouros, com a melhor estabilidade do mercado.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços premium, estáveis e seguros, que não sofrem quedas significativas.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 1% a 2%; caso ocorra — garantimos a reposição total.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 1%; caso ocorra — garantimos a reposição total.</li>
             <li>✅ <strong>Vantagem:</strong> Seguidores reais, engajados e 100% brasileiros.</li>
             <li>ℹ️ <strong>Observação:</strong> A entrega é gradual para manter a naturalidade e segurança do perfil.</li>
           </ul>
@@ -1721,7 +1734,13 @@
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         try {
           const trackUrl = '/api/instagram/validet-track';
-          await fetch(trackUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: profile.username || username }) });
+          let bid = '';
+          try { bid = getBrowserSessionId(); } catch(_) {}
+          await fetch(trackUrl, { 
+              method: 'POST', 
+              headers: { 'Content-Type': 'application/json' }, 
+              body: JSON.stringify({ username: profile.username || username, browserId: bid }) 
+          });
         } catch (_) {}
         // Avança para o passo final
         showTutorialStep(5);
@@ -1798,7 +1817,15 @@
           showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
           try {
             const trackUrl = '/api/instagram/validet-track';
-            await fetch(trackUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: profile.username || username }) });
+            // Use same browserId helper
+            let bid = '';
+            try { bid = getBrowserSessionId(); } catch(_) {}
+            
+            await fetch(trackUrl, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ username: profile.username || username, browserId: bid }) 
+            });
           } catch (_) {}
           showTutorialStep(5);
           try {
@@ -2270,12 +2297,13 @@
     { pct: 1.00, sec: 0, id: '100%' }
   ];
   let trackedMilestones = new Set();
-  
+
   async function trackAudioProgress(milestoneId, seconds, percentage) {
     if (trackedMilestones.has(milestoneId)) return;
     trackedMilestones.add(milestoneId);
     
     const username = document.getElementById('usernameCheckoutInput')?.value;
+    const browserId = getBrowserSessionId();
     try {
       await fetch('/api/track-audio-progress', { 
         method: 'POST', 
@@ -2284,7 +2312,8 @@
           username,
           seconds,
           percentage: Math.floor(percentage * 100),
-          milestone: milestoneId
+          milestone: milestoneId,
+          browserId
         }) 
       });
     } catch (e) { console.error('Audio progress track error:', e); }
