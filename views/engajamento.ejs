@@ -50,6 +50,19 @@
 <body class="theme-light has-fixed-menu">
   <%- include('partials/menu') %>
   <script>
+    // Persist UTMs to sessionStorage immediately
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const utms = {};
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+         const v = p.get(k);
+         if(v) utms[k] = v;
+      });
+      if (Object.keys(utms).length > 0) {
+          sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+      }
+    } catch(_) {}
+
     window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);
     // Redirecionamento específico para Engajamento -> Instagram (com persistência de UTMs)
     document.addEventListener('DOMContentLoaded', function() {

@@ -131,11 +131,11 @@
       { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
-      { q: 150, p: 'R$ 9,90' },
-      { q: 300, p: 'R$ 19,90' },
+      { q: 150, p: 'R$ 12,90' },
+      { q: 300, p: 'R$ 24,90' },
       { q: 500, p: 'R$ 39,90' },
       { q: 700, p: 'R$ 49,90' },
-      { q: 1000, p: 'R$ 69,90' },
+      { q: 1000, p: 'R$ 79,90' },
       { q: 2000, p: 'R$ 129,90' },
       { q: 3000, p: 'R$ 179,90' },
       { q: 4000, p: 'R$ 249,90' },
@@ -1676,6 +1676,19 @@
           term: params.get('utm_term') || '',
           content: params.get('utm_content') || ''
       };
+
+      // Merge with sessionStorage if empty (Persistence fix)
+      try {
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (!utms.source && parsed.utm_source) utms.source = parsed.utm_source;
+            if (!utms.medium && parsed.utm_medium) utms.medium = parsed.utm_medium;
+            if (!utms.campaign && parsed.utm_campaign) utms.campaign = parsed.utm_campaign;
+            if (!utms.term && parsed.utm_term) utms.term = parsed.utm_term;
+            if (!utms.content && parsed.utm_content) utms.content = parsed.utm_content;
+        }
+      } catch(_) {}
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
