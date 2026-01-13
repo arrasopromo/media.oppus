@@ -1,6 +1,6 @@
 <nav class="fixed-menu" aria-label="Menu fixo">
   <div class="menu-left site-brand" aria-label="Marca do site">
-    <a href="/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;color:inherit;">
+    <a href="<%= typeof logoLink !== 'undefined' ? logoLink : '/' %>" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;color:inherit;">
       <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" width="70" height="70" />
       <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" width="70" height="70" />
       <span class="site-brand-text">Agência Oppus</span>

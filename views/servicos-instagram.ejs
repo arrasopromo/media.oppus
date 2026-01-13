@@ -54,7 +54,7 @@
   -->
 </head>
 <body class="theme-light has-fixed-menu page-instagram-services">
-  <%- include('partials/menu') %>
+  <%- include('partials/menu', { logoLink: 'https://agenciaoppus.site/engajamento' }) %>
   <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
   <div class="container checkout-page">
     
@@ -145,6 +145,22 @@
             </div>
           </div>
 
+          <!-- Seção Ferramenta Exclusiva (Estilo Visual Novo) -->
+          <div class="service-card" id="ferramentaExclusivaSection" style="margin-top: 3rem; text-align: center; background: transparent; box-shadow: none; border: none;">
+            <div style="display: inline-block; background: rgba(139, 92, 246, 0.1); color: #8B5CF6; padding: 0.35rem 1rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1rem;">
+              Exclusividade
+            </div>
+            <h3 class="card-title" style="font-size: 2rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+              Ferramenta <span style="background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Exclusiva</span>
+            </h3>
+            <p class="card-desc" style="max-width: 600px; margin: 0 auto 2rem; font-size: 1.1rem; color: var(--text-secondary);">
+              Conheça nossa tecnologia exclusiva de reposição automática de seguidores.
+            </p>
+            <div style="max-width: 320px; margin: 0 auto;">
+              <img src="/images/refil%20(1).png" alt="Ferramenta Exclusiva" style="width: 100%; height: auto; display: block; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
+            </div>
+          </div>
+
 
         </div>
       </section>
@@ -168,7 +184,7 @@
               
               <!-- 1. Validação do Instagram -->
                 <div style="margin-bottom: 0.5rem;">
-                  <label style="display:block; margin-bottom:0.5rem; font-weight:600; color:#334155;">Usuário do Instagram <span style="color:#ef4444">*</span></label>
+                  <label class="input-label" style="display:block; margin-bottom:0.5rem; font-weight:600;">Usuário do Instagram <span style="color:#ef4444">*</span></label>
                   <div class="input-group username-group" id="grupoUsername" style="position:relative; display: flex; gap: 0.5rem;">
                     <input type="text" id="usernameCheckoutInput" placeholder="Ex: @usuario" class="select-input" maxlength="100" style="flex: 1; border-radius: 8px;" />
                     <button id="checkCheckoutButton" class="continue-button validate-btn" type="button" style="padding: 0 1.5rem; border-radius: 8px; font-weight: 600; background: var(--instagram-gradient);">

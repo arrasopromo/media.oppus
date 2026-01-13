@@ -476,7 +476,41 @@
       const ceilInt = Math.ceil(inc);
       const increasedRounded = (ceilInt - 0.10);
       const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
-      card.innerHTML = `<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+
+      // Badge logic e Destaque (Gold Card)
+      const qNum = Number(item.q);
+      let badgeHtml = '';
+      let badgeText = '';
+
+      // Mapa base de badges (copiado de servicos-instagram.js para consistência, se não existir globalmente)
+      const quantityBadges = {
+        150: 'PACOTE INICIAL',
+        500: 'PACOTE BÁSICO',
+        1000: 'MAIS PEDIDO',
+        3000: 'EXCLUSIVO',
+        5000: 'VIP',
+        10000: 'ELITE'
+      };
+
+      if (tipo === 'mistos') {
+        if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+        if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'brasileiros') {
+        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'organicos') {
+        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      }
+
+      // Fallback
+      if (!badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
+          badgeText = quantityBadges[qNum];
+      }
+
+      if (badgeText) {
+        badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
+      }
+
+      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
       card.dataset.qtd = String(item.q);
       card.dataset.preco = baseText;
       card.addEventListener('click', () => {
