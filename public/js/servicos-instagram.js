@@ -1,34 +1,48 @@
 
 document.addEventListener('DOMContentLoaded', function() {
   // --- Configurações e Variáveis Globais ---
+  
+  // Helper to get persistent browser/session ID
+  function getBrowserSessionId() {
+      let bid = '';
+      try { bid = localStorage.getItem('oppus_browser_id'); } catch(_) {}
+      if (!bid) {
+          bid = 'bid_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+          try { localStorage.setItem('oppus_browser_id', bid); } catch(_) {}
+      }
+      return bid;
+  }
+  // Initialize browser ID immediately
+  try { getBrowserSessionId(); } catch(_) {}
+
   const tabela = {
     mistos: [
       { q: 150, p: 'R$ 7,90' },
-      { q: 300, p: 'R$ 14,90' },
-      { q: 500, p: 'R$ 32,90' },
-      { q: 700, p: 'R$ 39,90' },
-      { q: 1000, p: 'R$ 49,90' },
-      { q: 2000, p: 'R$ 79,90' },
-      { q: 3000, p: 'R$ 109,90' },
-      { q: 4000, p: 'R$ 139,90' },
-      { q: 5000, p: 'R$ 159,90' },
-      { q: 7500, p: 'R$ 199,90' },
-      { q: 10000, p: 'R$ 269,90' },
-      { q: 15000, p: 'R$ 399,90' },
+      { q: 300, p: 'R$ 12,90' },
+      { q: 500, p: 'R$ 24,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 59,90' },
+      { q: 3000, p: 'R$ 79,90' },
+      { q: 4000, p: 'R$ 99,90' },
+      { q: 5000, p: 'R$ 129,90' },
+      { q: 7500, p: 'R$ 169,90' },
+      { q: 10000, p: 'R$ 199,90' },
+      { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
-      { q: 150, p: 'R$ 19,90' },
-      { q: 300, p: 'R$ 29,90' },
-      { q: 500, p: 'R$ 54,90' },
-      { q: 700, p: 'R$ 69,90' },
-      { q: 1000, p: 'R$ 99,90' },
-      { q: 2000, p: 'R$ 169,90' },
-      { q: 3000, p: 'R$ 229,90' },
-      { q: 4000, p: 'R$ 299,90' },
-      { q: 5000, p: 'R$ 329,90' },
-      { q: 7500, p: 'R$ 459,90' },
-      { q: 10000, p: 'R$ 599,90' },
-      { q: 15000, p: 'R$ 999,90' },
+      { q: 150, p: 'R$ 9,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 39,90' },
+      { q: 700, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 69,90' },
+      { q: 2000, p: 'R$ 129,90' },
+      { q: 3000, p: 'R$ 179,90' },
+      { q: 4000, p: 'R$ 249,90' },
+      { q: 5000, p: 'R$ 279,90' },
+      { q: 7500, p: 'R$ 399,90' },
+      { q: 10000, p: 'R$ 499,90' },
+      { q: 15000, p: 'R$ 799,90' },
     ],
     organicos: [
       { q: 150, p: 'R$ 39,90' },
@@ -422,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços bons e estáveis, que não ficam caindo.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; caso ocorra — nós repomos tudo gratuitamente.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; caso ocorra — nós repomos tudo gratuitamente.</li>
             <li>✅ <strong>Vantagem:</strong> Melhor custo-benefício para quem quer crescer rápido.</li>
             <li>ℹ️ <strong>Observação:</strong> Parte dos seguidores pode ser internacional.</li>
           </ul>
@@ -432,7 +446,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <p>🇧🇷 Entrega composta exclusivamente por perfis com nomes brasileiros, garantindo uma base com aparência nacional. Perfis com nomes e características locais, podendo variar em frequência de postagem ou interação. Perfeito para quem busca credibilidade nacional, com serviço estável e de qualidade.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Todos os nossos serviços são bons e estáveis, não caem facilmente, e têm suporte completo de reposição.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 5% a 10%; repomos automaticamente caso aconteça.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; repomos automaticamente caso aconteça.</li>
             <li>✅ <strong>Vantagem:</strong> Perfis brasileiros com nomes e fotos locais.</li>
             <li>ℹ️ <strong>Observação:</strong> Interações e stories podem variar entre os perfis.</li>
           </ul>
@@ -442,7 +456,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <p>Serviço premium com seguidores 100% brasileiros, ativos e filtrados, com interações, stories recentes e até perfis verificados. Os seguidores são cuidadosamente selecionados para entregar credibilidade máxima e engajamento real. Perfeito para quem busca autoridade e resultados duradouros, com a melhor estabilidade do mercado.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços premium, estáveis e seguros, que não sofrem quedas significativas.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 1% a 2%; caso ocorra — garantimos a reposição total.</li>
+            <li>📉 <strong>Queda estimada:</strong> Em média 1%; caso ocorra — garantimos a reposição total.</li>
             <li>✅ <strong>Vantagem:</strong> Seguidores reais, engajados e 100% brasileiros.</li>
             <li>ℹ️ <strong>Observação:</strong> A entrega é gradual para manter a naturalidade e segurança do perfil.</li>
           </ul>
@@ -1075,13 +1089,26 @@ document.addEventListener('DOMContentLoaded', function() {
     
     try {
       const params = new URLSearchParams(window.location.search);
-      const utms = {
+      let utms = {
           source: params.get('utm_source') || '',
           medium: params.get('utm_medium') || '',
           campaign: params.get('utm_campaign') || '',
           term: params.get('utm_term') || '',
           content: params.get('utm_content') || ''
       };
+
+      // Merge with sessionStorage if empty
+      try {
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (!utms.source && parsed.utm_source) utms.source = parsed.utm_source;
+            if (!utms.medium && parsed.utm_medium) utms.medium = parsed.utm_medium;
+            if (!utms.campaign && parsed.utm_campaign) utms.campaign = parsed.utm_campaign;
+            if (!utms.term && parsed.utm_term) utms.term = parsed.utm_term;
+            if (!utms.content && parsed.utm_content) utms.content = parsed.utm_content;
+        }
+      } catch(_) {}
       
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
@@ -1156,10 +1183,11 @@ document.addEventListener('DOMContentLoaded', function() {
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         
         try {
+          const bid = getBrowserSessionId();
           fetch('/api/instagram/validet-track', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username: profile.username || username })
+              body: JSON.stringify({ username: profile.username || username, browserId: bid })
           }).catch(() => {});
         } catch (_) {}
         

@@ -3161,14 +3161,22 @@ app.post('/api/track-audio-progress', async (req, res) => {
         if (ip.includes(',')) ip = ip.split(',')[0].trim();
         if (ip.startsWith('::ffff:')) ip = ip.substring(7); // Normalize to IPv4
         
-        const { username, seconds, percentage, milestone } = req.body;
+        const { username, seconds, percentage, milestone, browserId } = req.body;
         const now = new Date();
 
         // Check for existing recent log (24h window)
-        const recentLog = await col.findOne({ 
-            ip, 
-            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } 
-        }, { sort: { createdAt: -1 } });
+        // Match by browserId (stronger) OR ip (fallback)
+        let filter = {
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        };
+        
+        if (browserId) {
+            filter.$or = [ { browserId }, { ip } ];
+        } else {
+            filter.ip = ip;
+        }
+
+        const recentLog = await col.findOne(filter, { sort: { createdAt: -1 } });
 
         if (recentLog) {
             // Update existing record
@@ -3180,6 +3188,9 @@ app.post('/api/track-audio-progress', async (req, res) => {
                 current_milestone: milestone || recentLog.current_milestone
             };
             
+            if (browserId && !recentLog.browserId) {
+                updateFields.browserId = browserId;
+            }
             if (username && !recentLog.username) {
                 updateFields.username = username;
             }
@@ -3191,6 +3202,7 @@ app.post('/api/track-audio-progress', async (req, res) => {
         // Create new record
         await col.insertOne({
             ip: ip,
+            browserId: browserId || null,
             userAgent: req.get('User-Agent') || '',
             username: username || null,
             max_seconds: Number(seconds) || 0,
@@ -3765,15 +3777,45 @@ app.post('/api/instagram/validet-track', async (req, res) => {
         if (ip.includes(',')) ip = ip.split(',')[0].trim();
         if (ip.startsWith('::ffff:')) ip = ip.substring(7);
 
-        const recentLog = await al.findOne({ 
-            ip, 
-            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } 
-        }, { sort: { createdAt: -1 } });
+        // Normalize ::1 to 127.0.0.1 if needed, or query both to be safe
+        const ips = [ip];
+        if (ip === '::1') ips.push('127.0.0.1');
+        if (ip === '127.0.0.1') ips.push('::1');
 
-        if (recentLog) {
-            await al.updateOne({ _id: recentLog._id }, { $set: { username, updatedAt: new Date() } });
-            // console.log('✅ Linked audio_log to username:', { id: recentLog._id, username, ip });
+        let { browserId } = req.body;
+        if (browserId === 'null' || browserId === 'undefined') browserId = null;
+
+        console.log(`[ValidEt-Track] Linking audio_logs for username=${username}, IPs=${JSON.stringify(ips)}, browserId=${browserId}`);
+
+        // Construct filter: priority to browserId, fallback to IP
+        let matchQuery = {
+            createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        };
+
+        const emptyUserClause = { $or: [ { username: null }, { username: '' }, { username: { $exists: false } } ] };
+
+        if (browserId) {
+             // If browserId matches, we update regardless of existing username (overwrite)
+             // If only IP matches, we only update if username is empty
+             matchQuery.$or = [
+                 { browserId: browserId },
+                 { 
+                     ip: { $in: ips },
+                     ...emptyUserClause
+                 }
+             ];
+        } else {
+             // No browserId: match IP only if username is empty
+             matchQuery.ip = { $in: ips };
+             matchQuery.$and = [ emptyUserClause ];
         }
+
+        console.log(`[ValidEt-Track] Query:`, JSON.stringify(matchQuery, null, 2));
+
+        const recentLog = await al.updateMany(matchQuery, { $set: { username, updatedAt: new Date() } });
+
+        console.log(`[ValidEt-Track] Updated ${recentLog.modifiedCount} audio_logs. Matched ${recentLog.matchedCount}.`);
+
     } catch (eLog) {
         console.error('Failed to link audio_log in validet-track:', eLog);
     }

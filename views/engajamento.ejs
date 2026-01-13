@@ -51,22 +51,40 @@
   <%- include('partials/menu') %>
   <script>
     window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);
-    // Redirecionamento específico para Engajamento -> Instagram
+    // Redirecionamento específico para Engajamento -> Instagram (com persistência de UTMs)
     document.addEventListener('DOMContentLoaded', function() {
       if (window.__ENG_MODE__) {
-        var toggle = document.querySelector('.platform-toggle');
-        if (toggle) {
-          toggle.addEventListener('click', function(e) {
-            var target = e.target.closest('.platform-btn');
-            if (target && target.classList.contains('instagram')) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
-              const currentSearch = window.location.search || '';
-              window.location.href = '/servicos-instagram' + currentSearch;
+        document.addEventListener('click', function(e) {
+          // 1. Botão Toggle da Plataforma
+          var toggleBtn = e.target.closest('.platform-btn');
+          if (toggleBtn && toggleBtn.classList.contains('instagram')) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            const currentSearch = window.location.search || '';
+            window.location.href = '/servicos-instagram' + currentSearch;
+            return;
+          }
+
+          // 2. Qualquer link <a> apontando para /servicos-instagram
+          var link = e.target.closest('a');
+          if (link) {
+            var href = link.getAttribute('href');
+            if (href && (href === '/servicos-instagram' || href.indexOf('/servicos-instagram?') === 0)) {
+               e.preventDefault();
+               e.stopPropagation();
+               const currentSearch = window.location.search || '';
+               if (!currentSearch) {
+                 window.location.href = href;
+               } else {
+                 const hasQuery = href.indexOf('?') !== -1;
+                 const separator = hasQuery ? '&' : '?';
+                 const extra = currentSearch.replace('?', '');
+                 window.location.href = href + separator + extra;
+               }
             }
-          }, true); // Captura o evento antes que outros scripts o processem
-        }
+          }
+        }, true);
       }
     });
   </script>
@@ -637,7 +655,7 @@
   </div>
 
    <script src="/js/main.js"></script>
-   <script src="/js/checkout.js?v=5"></script>
+   <script src="/js/checkout.js?v=<%= Date.now() %>"></script>
    <script src="/js/why-us.js"></script>
    <div id="toastContainer" class="toast-container"></div>
   <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
