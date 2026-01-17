@@ -2054,6 +2054,17 @@
       const promos = getSelectedPromos();
       const promosTotalCents = calcPromosTotalCents(promos);
       const totalCents = Math.max(0, Number(valueCents) + Number(promosTotalCents));
+      let sckValue = '';
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        sckValue = params.get('sck') || '';
+      } catch (_) {}
+      if (!sckValue) {
+        try {
+          const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+          sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+        } catch (_) {}
+      }
       /*
       // Tracking: Meta Pixel + CAPI (InitiateCheckout)
       const valueBRL = Math.round(Number(totalCents)) / 100;
@@ -2128,6 +2139,9 @@
         const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
         const tc = m && m[1] ? m[1] : '';
         if (tc) { payload.additionalInfo.push({ key: 'tc_code', value: tc }); }
+      } catch(_) {}
+      try {
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
       } catch(_) {}
 
       try {
