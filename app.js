@@ -1366,32 +1366,7 @@ app.get('/__debug/views-list', (req, res) => {
   }
 });
 
-// Rotas diretas antes de estáticos
-app.use((req, res, next) => {
-  try {
-    if (req.method === 'GET' && req.path === '/engajamento') {
-      return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
-    }
-    if (req.method === 'GET' && req.path === '/servicos') {
-      return res.render('servicos');
-    }
-  } catch (_) {}
-  next();
-});
-app.get('/engajamento', (req, res) => {
-  try {
-    return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
-  } catch (e) {
-    return res.status(500).send('Erro ao renderizar engajamento');
-  }
-});
-app.get('/servicos', (req, res) => {
-  try {
-    return res.render('servicos');
-  } catch (e) {
-    return res.status(500).send('Erro ao renderizar serviços');
-  }
-});
+// Rotas diretas antes de estáticos (mantidas apenas para depuração, se necessário)
 
 // Servir arquivos estáticos
 app.use(express.static("public"));
@@ -1590,7 +1565,10 @@ app.get('/checkout', (req, res) => {
 // Página Engajamento (duplicada da checkout até plataforma)
 app.get('/engajamento', (req, res) => {
   console.log('📈 Acessando rota /engajamento');
-  res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+  res.render('engajamento', { 
+    PIXEL_ID: process.env.PIXEL_ID || '', 
+    queryParams: req.query 
+  }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
       return res.status(500).send('Erro ao renderizar engajamento');
@@ -1603,7 +1581,7 @@ app.get('/engajamento', (req, res) => {
 // Página Serviços (três serviços iguais ao principal)
 app.get('/servicos', (req, res) => {
   console.log('🧩 Acessando rota /servicos');
-  res.render('servicos', {}, (err, html) => {
+  res.render('servicos', { queryParams: req.query }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos:', err.message);
       return res.status(500).send('Erro ao renderizar serviços');
@@ -1616,10 +1594,29 @@ app.get('/servicos', (req, res) => {
 // Página Serviços Instagram (cópia do checkout)
 app.get('/servicos-instagram', (req, res) => {
   console.log('📸 Acessando rota /servicos-instagram');
-  res.render('servicos-instagram', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+  res.render('servicos-instagram', { 
+    PIXEL_ID: process.env.PIXEL_ID || '', 
+    queryParams: req.query 
+  }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos-instagram:', err.message);
       return res.status(500).send('Erro ao renderizar servicos-instagram');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+// Página Serviços Curtidas (estrutura similar à de serviços Instagram)
+app.get('/servicos-curtidas', (req, res) => {
+  console.log('❤️ Acessando rota /servicos-curtidas');
+  res.render('servicos-curtidas', { 
+    PIXEL_ID: process.env.PIXEL_ID || '', 
+    queryParams: req.query 
+  }, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar servicos-curtidas:', err.message);
+      return res.status(500).send('Erro ao renderizar servicos-curtidas');
     }
     res.type('text/html');
     res.send(html);

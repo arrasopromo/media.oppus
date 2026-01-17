@@ -15,7 +15,9 @@ document.addEventListener('DOMContentLoaded', function() {
   // Initialize browser ID immediately
   try { getBrowserSessionId(); } catch(_) {}
 
-  const tabela = {
+  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
+
+  const tabelaSeguidores = {
     mistos: [
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
@@ -59,6 +61,40 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 15000, p: 'R$ 1.299,90' },
     ],
   };
+
+  const tabelaCurtidas = {
+    mistos: [
+      { q: 150, p: 'R$ 3,90' },
+      { q: 300, p: 'R$ 6,90' },
+      { q: 500, p: 'R$ 9,90' },
+      { q: 700, p: 'R$ 14,90' },
+      { q: 1000, p: 'R$ 19,90' },
+      { q: 2000, p: 'R$ 24,90' },
+      { q: 3000, p: 'R$ 29,90' },
+      { q: 4000, p: 'R$ 34,90' },
+      { q: 5000, p: 'R$ 39,90' },
+      { q: 7500, p: 'R$ 49,90' },
+      { q: 10000, p: 'R$ 69,90' },
+      { q: 15000, p: 'R$ 89,90' },
+    ],
+    brasileiros: tabelaSeguidores.brasileiros,
+    organicos: [
+      { q: 150, p: 'R$ 4,90' },
+      { q: 300, p: 'R$ 9,90' },
+      { q: 500, p: 'R$ 14,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 59,90' },
+      { q: 4000, p: 'R$ 69,90' },
+      { q: 5000, p: 'R$ 79,90' },
+      { q: 7500, p: 'R$ 109,90' },
+      { q: 10000, p: 'R$ 139,90' },
+      { q: 15000, p: 'R$ 199,90' },
+    ],
+  };
+
+  const tabela = isCurtidasContext ? tabelaCurtidas : tabelaSeguidores;
 
   const promoPricing = {
     likes: { old: 'R$ 49,90', price: 'R$ 9,90', discount: 80 },
@@ -201,6 +237,14 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getLabelForTipo(tipo) {
+    if (isCurtidasContext) {
+        const map = {
+          'mistos': 'Curtidas Mistas',
+          'brasileiros': 'Curtidas Brasileiras',
+          'organicos': 'Curtidas Orgânicas'
+        };
+        return map[tipo] || tipo;
+    }
     const map = {
       'mistos': 'Seguidores Mistos',
       'brasileiros': 'Seguidores Brasileiros',
@@ -210,7 +254,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getUnitForTipo(tipo) {
-    return 'seguidores';
+    return isCurtidasContext ? 'curtidas' : 'seguidores';
   }
 
   function isFollowersTipo(tipo) {
@@ -226,7 +270,6 @@ document.addEventListener('DOMContentLoaded', function() {
   // --- Stepper Logic (Checkout Reference) ---
 
   window.goToStep = function(step) {
-    // Validação: Impedir ir para Step 2 sem selecionar plano
     if (step === 2) {
       const activePlan = planCards ? planCards.querySelector('.service-card[data-role="plano"].active') : null;
       if (!activePlan) {
@@ -235,7 +278,6 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
     
-    // Validação: Impedir ir para Step 3 sem verificar perfil
     if (step === 3) {
       if (!isInstagramVerified) {
         alert('Por favor, verifique o perfil na etapa 2 antes de prosseguir.');
@@ -243,7 +285,6 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      // Validação: Impedir ir para Step 3 sem preencher email e telefone
       const email = contactEmailInput ? contactEmailInput.value.trim() : '';
       const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
       const emailErrorMsg = document.getElementById('emailErrorMsg');
@@ -251,9 +292,6 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!email || !email.includes('@')) {
         if (emailErrorMsg) emailErrorMsg.style.display = 'block';
         else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
-        
-        // Se estiver tentando ir para step 3 via clique no stepper, volta para o 2
-        // para garantir que o usuário veja os campos
         if (window.goToStep) window.goToStep(2);
 
         setTimeout(() => {
@@ -278,6 +316,14 @@ document.addEventListener('DOMContentLoaded', function() {
              }
         }, 300);
         return;
+      }
+
+      if (isCurtidasContext) {
+        if (!window.curtidasSelectedPost || !curtidasSelectedPost || !curtidasSelectedPost.shortcode) {
+          alert('Por favor, selecione o post que vai receber as curtidas antes de prosseguir.');
+          if (window.goToStep) window.goToStep(2);
+          return;
+        }
       }
     }
 
@@ -353,7 +399,11 @@ document.addEventListener('DOMContentLoaded', function() {
   function renderTipoCards() {
     if (!tipoCards) return;
     tipoCards.innerHTML = '';
-    const tipos = Object.keys(tabela).filter(t => t !== 'seguidores_tiktok');
+    const tipos = Object.keys(tabela).filter(t => {
+      if (t === 'seguidores_tiktok') return false;
+      if (isCurtidasContext && t === 'brasileiros') return false;
+      return true;
+    });
     
     tipos.forEach(tipo => {
       const card = document.createElement('div');
@@ -382,10 +432,13 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getAllowedQuantities(tipo) {
-    const without50 = [150, 500, 1000, 3000, 5000, 10000];
-    const base = [50, 150, 500, 1000, 3000, 5000, 10000];
-    if (tipo === 'mistos') return base;
-    if (tipo === 'brasileiros' || tipo === 'organicos') return without50;
+    const base = [150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
+      if (isCurtidasContext) {
+        return base.slice(0, 6);
+      }
+      return base;
+    }
     return base;
   }
 
@@ -404,10 +457,19 @@ document.addEventListener('DOMContentLoaded', function() {
     let arr = tabela[tipo] || [];
     const unit = getUnitForTipo(tipo);
     
-    // Filtrar quantidades permitidas (checkout logic)
+    // Filtrar quantidades permitidas e exibir apenas pacotes com badge na grade principal
     if (isFollowersTipo(tipo)) {
       const allowed = getAllowedQuantities(tipo);
-      arr = arr.filter(x => allowed.includes(Number(x.q)));
+      if (isCurtidasContext) {
+        // No contexto de curtidas, mostrar apenas os cards que possuem badge (quantityBadges)
+        // Os demais (300, 700, 2000...) ficarão ocultos na grade principal
+        arr = arr.filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
+      } else {
+        // Na página /servicos-instagram, também exibir apenas pacotes com badge
+        arr = arr
+          .filter(x => allowed.includes(Number(x.q)))
+          .filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
+      }
     }
     
     arr.forEach(item => {
@@ -484,9 +546,10 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getTipoDescription(tipo) {
+    let html = '';
     switch (tipo) {
       case 'mistos':
-        return `
+        html = `
           <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços bons e estáveis, que não ficam caindo.</li>
@@ -495,8 +558,9 @@ document.addEventListener('DOMContentLoaded', function() {
             <li>ℹ️ <strong>Observação:</strong> Parte dos seguidores pode ser internacional.</li>
           </ul>
         `;
+        break;
       case 'brasileiros':
-        return `
+        html = `
           <p>🇧🇷 Entrega composta exclusivamente por perfis com nomes brasileiros, garantindo uma base com aparência nacional. Perfis com nomes e características locais, podendo variar em frequência de postagem ou interação. Perfeito para quem busca credibilidade nacional, com serviço estável e de qualidade.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Todos os nossos serviços são bons e estáveis, não caem facilmente, e têm suporte completo de reposição.</li>
@@ -505,8 +569,9 @@ document.addEventListener('DOMContentLoaded', function() {
             <li>ℹ️ <strong>Observação:</strong> Interações e stories podem variar entre os perfis.</li>
           </ul>
         `;
+        break;
       case 'organicos':
-        return `
+        html = `
           <p>Serviço premium com seguidores 100% brasileiros, ativos e filtrados, com interações, stories recentes e até perfis verificados. Os seguidores são cuidadosamente selecionados para entregar credibilidade máxima e engajamento real. Perfeito para quem busca autoridade e resultados duradouros, com a melhor estabilidade do mercado.</p>
           <ul>
             <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços premium, estáveis e seguros, que não sofrem quedas significativas.</li>
@@ -515,9 +580,19 @@ document.addEventListener('DOMContentLoaded', function() {
             <li>ℹ️ <strong>Observação:</strong> A entrega é gradual para manter a naturalidade e segurança do perfil.</li>
           </ul>
         `;
+        break;
       default:
         return '';
     }
+
+    if (isCurtidasContext) {
+        if (tipo === 'organicos') {
+          const withoutDrop = html.replace(/<li>📉[\s\S]*?<\/li>/, '');
+          return withoutDrop.replace(/seguidores/g, 'curtidas').replace(/Seguidores/g, 'Curtidas');
+        }
+        return html.replace(/seguidores/g, 'curtidas').replace(/Seguidores/g, 'Curtidas');
+    }
+    return html;
   }
 
   function renderTipoDescription(tipo) {
@@ -581,6 +656,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateOrderBump(tipo, baseQtd) {
     if (!orderInline) return;
+    const unit = getUnitForTipo(tipo);
     const labelSpan = document.getElementById('orderBumpText');
     const checkbox = document.getElementById('orderBumpCheckboxInline');
     const upgradePrices = document.querySelector('.promo-prices[data-promo="upgrade"]');
@@ -589,7 +665,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
     const upHighlight = document.getElementById('orderBumpHighlight');
     if (!isFollowersTipo(tipo) || !baseQtd) { orderInline.style.display = 'none'; return; }
-    // Sempre mostrar o card de Promoções para serviços de seguidores
     orderInline.style.display = 'block';
     if (checkbox) checkbox.checked = false;
 
@@ -600,9 +675,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const targetPrice = findPrice(tipo, 2000);
       const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
       const diffStr = formatCentsToBRL(diffCents);
-      // const extras = '(+400 Curtidas e 15.000 visualizações)';
-      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${getUnitForTipo(tipo)}.`;
-      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} seguidores`;
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${unit}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} ${unit}`;
       if (upOld) upOld.textContent = targetPrice || '—';
       if (upNew) upNew.textContent = diffStr;
       if (upDisc) {
@@ -628,8 +702,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
     const addQtd = targetQtd - baseQtd;
     const diffStr = formatCentsToBRL(diffCents);
-    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para ${targetQtd}.`;
-    if (upHighlight) upHighlight.textContent = `+ ${addQtd} seguidores`;
+    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} ${unit} e atualize para ${targetQtd}.`;
+    if (upHighlight) upHighlight.textContent = `+ ${addQtd} ${unit}`;
     if (upOld) upOld.textContent = targetPrice || '—';
     if (upNew) upNew.textContent = diffStr;
     if (upDisc) {
@@ -1037,6 +1111,9 @@ document.addEventListener('DOMContentLoaded', function() {
                       fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind }) })
                         .then(r=>r.json())
                         .then(function(){ 
+                            if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+                                try { updateSelectedPostPreview(kind, sc); } catch(_) {}
+                            }
                             if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
                             setTimeout(() => {
                                 const refs = getPostModalRefs(); 
@@ -1060,7 +1137,17 @@ document.addEventListener('DOMContentLoaded', function() {
           const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
           fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
             .then(r=>r.json())
-            .then(function(){ highlightSelected(k, sc); });
+            .then(function(){ 
+              highlightSelected(k, sc); 
+              if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+                  try { updateSelectedPostPreview(k, sc); } catch(_) {}
+                  try { 
+                      const refs2 = getPostModalRefs();
+                      if (refs2.postModal) refs2.postModal.style.display = 'none';
+                      document.body.style.overflow = '';
+                  } catch(_) {}
+              }
+            });
         });
       });
       
@@ -1071,7 +1158,17 @@ document.addEventListener('DOMContentLoaded', function() {
           const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
           fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
             .then(r=>r.json())
-            .then(function(){ highlightSelected(k, sc); });
+            .then(function(){ 
+              highlightSelected(k, sc); 
+              if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+                  try { updateSelectedPostPreview(k, sc); } catch(_) {}
+                  try { 
+                      const refs2 = getPostModalRefs();
+                      if (refs2.postModal) refs2.postModal.style.display = 'none';
+                      document.body.style.overflow = '';
+                  } catch(_) {}
+              }
+            });
         });
       });
       
@@ -1121,6 +1218,53 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // --- Lógica de Verificação de Perfil ---
+
+  // --- Post Modal & Preview Logic for Curtidas ---
+
+  let curtidasSelectedPost = null;
+
+  function updateSelectedPostPreview(kind, sc) {
+      if (!isCurtidasContext) return;
+      const container = document.getElementById('selectedPostPreview');
+      const slot = document.getElementById('selectedPostPreviewContent');
+      if (!container || !slot) return;
+      
+      const arr = Array.isArray(cachedPosts) ? cachedPosts : [];
+      let p = arr.find(x => x && x.shortcode === sc);
+      
+      if (!p) {
+        if (!sc) {
+          container.style.display = 'none';
+          return;
+        }
+        const media = '<iframe src="https://www.instagram.com/p/'+sc+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;border-radius:12px;"></iframe>';
+        slot.innerHTML = '<div style="background:var(--bg-secondary);border-radius:12px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;"><div style="width:100%;max-width:260px;margin:0 auto;">'+media+'</div></div>';
+        container.style.display = 'block';
+        curtidasSelectedPost = { kind, shortcode: sc };
+        return;
+      }
+
+      const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+      const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
+      const isVid = p.isVideo || (p.media_type === 2);
+      
+      let media = '';
+      if (dsrc) {
+        media = '<img src="'+dsrc+'" style="width:100%;height:auto;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>';
+      } else if (isVid && vsrc) {
+        media = '<video src="'+vsrc+'" style="width:100%;border-radius:12px;" muted playsinline preload="none"></video>';
+      } else {
+        media = '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;border-radius:12px;"></iframe>';
+      }
+      
+      const dateText = p.takenAt ? new Date(Number(p.takenAt) * 1000).toLocaleString('pt-BR') : '';
+      let extra = '';
+      if (dateText) extra = '<div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;">'+dateText+'</div>';
+
+      slot.innerHTML = '<div style="background:var(--bg-secondary);border-radius:12px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;"><div style="width:100%;max-width:260px;margin:0 auto;">'+media+'</div>'+extra+'</div>';
+      container.style.display = 'block';
+      curtidasSelectedPost = { kind, shortcode: p.shortcode };
+  }
 
   async function checkInstagramProfileCheckout() {
     if (!usernameCheckoutInput) return;
@@ -1187,6 +1331,11 @@ document.addEventListener('DOMContentLoaded', function() {
       
       if (data.success) {
         const profile = data.profile || {};
+
+        if (isCurtidasContext) {
+             openPostModal('likes');
+        }
+
         if (checkoutProfileImage && profile.profilePicUrl) checkoutProfileImage.src = profile.profilePicUrl;
         if (checkoutProfileUsername) checkoutProfileUsername.textContent = profile.username || username;
         if (checkoutFollowersCount) checkoutFollowersCount.textContent = String(profile.followersCount || '-');

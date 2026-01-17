@@ -1,6 +1,17 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
+<%
+  let serverQueryString = '';
+  if (typeof queryParams !== 'undefined' && queryParams) {
+     const p = new URLSearchParams();
+     ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+        if (queryParams[k]) p.set(k, queryParams[k]);
+     });
+     const s = p.toString();
+     if (s) serverQueryString = '?' + s;
+  }
+%>
   <meta charset="utf-8" />
   <title>Checkout - Seguidores</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
@@ -50,51 +61,134 @@
 <body class="theme-light has-fixed-menu">
   <%- include('partials/menu') %>
   <script>
+    // Server-side UTMs passed to client
+    window.SERVER_UTMS_QUERY = '<%- serverQueryString %>';
+
     // Persist UTMs to sessionStorage immediately
     try {
-      const p = new URLSearchParams(window.location.search);
+      // Merge Server UTMs into URL if missing (visual only, mostly)
+      // But more importantly, merge into sessionStorage
+      const currentParams = new URLSearchParams(window.location.search);
+      const serverParams = new URLSearchParams(window.SERVER_UTMS_QUERY);
+      
       const utms = {};
+      
+      // 1. From Server (Priority)
+      serverParams.forEach((v, k) => { utms[k] = v; });
+      
+      // 2. From Client URL (Overwrites server if present? usually same)
       ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
-         const v = p.get(k);
+         const v = currentParams.get(k);
          if(v) utms[k] = v;
       });
+
       if (Object.keys(utms).length > 0) {
-          sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+          // Merge with existing storage
+          try {
+             const existing = JSON.parse(sessionStorage.getItem('oppus_utms') || '{}');
+             Object.assign(existing, utms);
+             sessionStorage.setItem('oppus_utms', JSON.stringify(existing));
+          } catch(e) {
+             sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+          }
       }
     } catch(_) {}
 
     window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);
     // Redirecionamento específico para Engajamento -> Instagram (com persistência de UTMs)
     document.addEventListener('DOMContentLoaded', function() {
+      
+      // Helper para recuperar UTMs da URL ou do Storage
+      function getStoredUTMsQuery() {
+        const currentParams = new URLSearchParams(window.location.search);
+        // Ensure server params are considered if not in URL yet (e.g. if rewritten)
+        const serverParams = new URLSearchParams(window.SERVER_UTMS_QUERY);
+        serverParams.forEach((v, k) => {
+            if (!currentParams.has(k)) currentParams.set(k, v);
+        });
+
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            try {
+                const utms = JSON.parse(stored);
+                Object.keys(utms).forEach(k => {
+                    if (!currentParams.has(k)) {
+                        currentParams.set(k, utms[k]);
+                    }
+                });
+            } catch(e) {}
+        }
+        const qs = currentParams.toString();
+        return qs ? ('?' + qs) : '';
+    }
+
       if (window.__ENG_MODE__) {
+        // Update links on load
+        const fullQuery = getStoredUTMsQuery();
+        
+        // Update Instagram Button/Link
+        const instaBtn = document.querySelector('.platform-btn.instagram');
+        if (instaBtn) {
+            // Se for link <a>
+            if (instaBtn.tagName === 'A') {
+                const base = instaBtn.getAttribute('href').split('?')[0];
+                instaBtn.setAttribute('href', base + fullQuery);
+            }
+        }
+
         document.addEventListener('click', function(e) {
           // 1. Botão Toggle da Plataforma
           var toggleBtn = e.target.closest('.platform-btn');
-          if (toggleBtn && toggleBtn.classList.contains('instagram')) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            const currentSearch = window.location.search || '';
-            window.location.href = '/servicos-instagram' + currentSearch;
-            return;
+          if (toggleBtn) {
+             e.preventDefault();
+             e.stopPropagation();
+
+             var cardsDiv = document.getElementById('engajamentoServiceCards');
+             var tiktokCard = document.getElementById('tiktokMaintenanceCard');
+             var tutorialPlatform = document.getElementById('tutorialPlatform');
+             if (tutorialPlatform) tutorialPlatform.style.display = 'none';
+
+             if (toggleBtn.classList.contains('instagram')) {
+                // Show Service Cards
+                if (cardsDiv) {
+                    if (cardsDiv.style.display === 'none') {
+                        cardsDiv.style.display = 'grid';
+                        setTimeout(() => {
+                            cardsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }, 100);
+                    } else {
+                        cardsDiv.style.display = 'none';
+                    }
+                }
+                // Hide TikTok Card
+                if (tiktokCard) tiktokCard.style.display = 'none';
+
+             } else if (toggleBtn.classList.contains('tiktok')) {
+                // Show TikTok Card
+                if (tiktokCard) {
+                    tiktokCard.style.display = 'block';
+                    setTimeout(() => {
+                        tiktokCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }, 100);
+                }
+                // Hide Service Cards
+                if (cardsDiv) cardsDiv.style.display = 'none';
+             }
+             return;
           }
 
           // 2. Qualquer link <a> apontando para /servicos-instagram
           var link = e.target.closest('a');
           if (link) {
             var href = link.getAttribute('href');
-            if (href && (href === '/servicos-instagram' || href.indexOf('/servicos-instagram?') === 0)) {
-               e.preventDefault();
-               e.stopPropagation();
-               const currentSearch = window.location.search || '';
-               if (!currentSearch) {
-                 window.location.href = href;
-               } else {
-                 const hasQuery = href.indexOf('?') !== -1;
-                 const separator = hasQuery ? '&' : '?';
-                 const extra = currentSearch.replace('?', '');
-                 window.location.href = href + separator + extra;
-               }
+            if (href && href.includes('servicos-instagram')) {
+               // Atualiza href dinamicamente antes de navegar
+               const baseUrl = href.split('?')[0];
+               const qs = getStoredUTMsQuery();
+               // Se o link já tem query, a gente preserva?
+               // A lógica getStoredUTMsQuery já pega tudo.
+               // Vamos apenas substituir para garantir consistência
+               link.setAttribute('href', baseUrl + qs);
             }
           }
         }, true);
@@ -261,12 +355,12 @@
               <div class="card-desc">
                   <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
                   <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
-                  <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram">
+                  <a href="/servicos-instagram<%= serverQueryString %>" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram" style="text-decoration:none;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                       <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
                     </svg>
                     <span>Instagram</span>
-                  </button>
+                  </a>
                   <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                       <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
@@ -277,6 +371,60 @@
                     <div class="tutorial-pop-step">2/5</div>
                     <div class="tutorial-pop-text">Escolha a rede social</div>
                   </div>
+                </div>
+                
+                <!-- Cards de Serviços (Estilo Premium) -->
+                <div id="engajamentoServiceCards" style="display: none;">
+                    
+                    <!-- Card Seguidores -->
+                    <div class="service-card premium-card card-seguidores" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-instagram'+qs; } catch(_){ return '/servicos-instagram'; } })()">
+                      <div class="card-content">
+                        <img src="/images/icone-seguidores.png" alt="Seguidores" class="card-icon-3d" onerror="this.style.display='none'">
+                        <div class="card-title">Seguidores</div>
+                        <div class="card-subtitle">Seguidores brasileiros e reais</div>
+                        <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 9,90</span></div>
+                        <div class="card-security">
+                          Não precisamos da sua senha
+                        </div>
+                        <button class="card-btn btn-gradient-seguidores">Ver Pacote</button>
+                      </div>
+                    </div>
+
+                    <!-- Card Curtidas -->
+                    <div class="service-card premium-card card-curtidas" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,v); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-curtidas'+qs; } catch(_){ return '/servicos-curtidas'; } })()">
+                      <div class="card-content">
+                        <img src="/images/curtidas-icone.png" alt="Curtidas" class="card-icon-3d" onerror="this.style.display='none'">
+                        <div class="card-title">Curtidas</div>
+                        <div class="card-subtitle">Curtidas brasileiras e reais</div>
+                        <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 3,90</span></div>
+                        <div class="card-security">
+                          Não precisamos da sua senha
+                        </div>
+                        <button class="card-btn btn-gradient-curtidas">Ver Pacote</button>
+                      </div>
+                    </div>
+
+                    <!-- Card Visualizações -->
+                    <div class="service-card premium-card card-visualizacoes" onclick="window.navigateToService('visualizacoes_reels')">
+                      <div class="card-content">
+                        <img src="/images/visualizacao-icon.png" alt="Visualizações" class="card-icon-3d" onerror="this.style.display='none'">
+                        <div class="card-title">Visualizações</div>
+                        <div class="card-subtitle">Visualizações no Reels</div>
+                        <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 4,90</span></div>
+                        <div class="card-security">
+                          Não precisamos da sua senha
+                        </div>
+                        <button class="card-btn btn-gradient-visualizacoes">Ver Pacote</button>
+                      </div>
+                    </div>
+                </div>
+
+                <!-- Card de Manutenção TikTok -->
+                <div id="tiktokMaintenanceCard" class="service-card" style="display:none; margin-top: 40px; text-align: center; padding: 2rem;">
+                    <div class="card-content">
+                        <div class="card-title" style="color: #ef4444; font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;">Em Manutenção</div>
+                        <div class="card-desc" style="font-size: 1rem;">O serviço de TikTok está temporariamente indisponível.</div>
+                    </div>
                 </div>
               </div>
             </div>
@@ -333,14 +481,19 @@
             </div>
           </div>
 
-          <!-- Seção Ferramenta Exclusiva (Movida do Modal) -->
-          <div class="service-card" id="ferramentaExclusivaSection" style="margin-top: 1.5rem;">
-            <div class="card-content" style="text-align: center;">
-              <h3 class="card-title">Como funciona?</h3>
-              <div style="position:relative; aspect-ratio: 9 / 16; height: clamp(320px, 60vh, 560px); max-width: 100%; margin: 1rem auto; border-radius:12px; overflow:hidden; box-shadow: var(--shadow); background: #000;">
-                <video src="/images/comentarios.mp4" controls muted playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit: cover;"></video>
-              </div>
-              <p class="card-desc" style="margin-top:0.75rem;">Entenda como nossa tecnologia exclusiva garante a reposição automática.</p>
+          <!-- Seção Ferramenta Exclusiva (Estilo Visual Novo - igual à página de serviços Instagram) -->
+          <div class="service-card" id="ferramentaExclusivaSection" style="margin-top: 3rem; text-align: center; background: transparent; box-shadow: none; border: none;">
+            <div style="display: inline-block; background: rgba(139, 92, 246, 0.1); color: #8B5CF6; padding: 0.35rem 1rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1.25rem;">
+              Exclusividade
+            </div>
+            <h3 class="card-title" style="font-size: 2rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+              <span style="font-weight: 700;">Ferramenta</span> <span style="background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">Exclusiva</span>
+            </h3>
+            <p class="card-desc" style="max-width: 600px; margin: 0 auto 2rem; font-size: 1.1rem; color: var(--text-secondary);">
+              Conheça nossa tecnologia exclusiva de reposição automática de seguidores.
+            </p>
+            <div style="max-width: 500px; margin: 0 auto;">
+              <img src="/images/refil%20(1).png" alt="Ferramenta de Reposição" style="width: 100%; max-width: 500px !important; display: block; margin: 0 auto; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
             </div>
           </div>
 
@@ -787,14 +940,238 @@
     .checkout-page .select-input { width: 100%; }
     .cards-grid.checkout-grid { gap: 1.25rem; grid-template-columns: 1fr; }
     @media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
-      /* Subtitle unified style */
-      .checkout-page .subtitle { 
-        text-align: center;
-        color: var(--text-secondary);
-        font-size: 1rem;
-        line-height: 1.5;
-        margin-bottom: 0.4rem; 
+    #engajamentoServiceCards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr) !important;
+      gap: 1.25rem;
+      margin-top: 6rem;
+      max-width: 1080px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 1rem 0.75rem;
+    }
+    #engajamentoServiceCards,
+    #engajamentoServiceCards .service-card,
+    #engajamentoServiceCards .card-content {
+      font-family: var(--font-family);
+    }
+
+    #engajamentoServiceCards .service-card {
+      background: #ffffff;
+      border: 1px solid rgba(243, 244, 246, 0.6);
+      border-radius: 24px; /* iOS Style */
+      padding: 1.75rem 1.4rem !important;
+      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.1); /* Sombra suave premium */
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      min-height: 340px;
+      position: relative;
+      overflow: visible;
+    }
+    #engajamentoServiceCards .service-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 30px 60px -12px rgba(0,0,0,0.15);
+    }
+    
+    /* Ícone 3D */
+    #engajamentoServiceCards .card-icon-3d {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+      margin-bottom: 0.5rem;
+      display: block;
+      filter: drop-shadow(0 12px 12px rgba(0,0,0,0.15));
+      transition: transform 0.3s ease;
+    }
+    #engajamentoServiceCards .service-card:hover .card-icon-3d {
+      transform: scale(1.05) translateY(-2px);
+    }
+
+    #engajamentoServiceCards .card-content {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #engajamentoServiceCards .card-title {
+      font-size: 1.5rem !important;
+      font-weight: 800;
+      color: #0F172A; /* Azul escuro quase preto */
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    #engajamentoServiceCards .card-subtitle {
+      font-size: 1rem;
+      color: #64748B;
+      margin-bottom: 0.6rem;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
+    #engajamentoServiceCards .card-price {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      justify-content: center;
+      gap: 0.35rem;
+      margin-bottom: 0.25rem;
+      margin-top: auto;
+      padding: 0.25rem 0;
+    }
+    /* Seguidores e Visualizações: valor em linha abaixo de "A partir de" */
+    #engajamentoServiceCards .service-card.card-seguidores .card-price,
+    #engajamentoServiceCards .service-card.card-visualizacoes .card-price {
+      flex-direction: column;
+      align-items: center;
+      gap: 0.1rem;
+    }
+    #engajamentoServiceCards .card-price span:first-child {
+      font-size: 1rem;
+      color: #64748B;
+      font-weight: 400;
+      margin-bottom: 0;
+    }
+    #engajamentoServiceCards .card-price .price-value {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #22C55E;
+    }
+    
+    #engajamentoServiceCards .card-security {
+      font-size: 1rem;
+      color: #64748B;
+      margin-top: 0.25rem;
+      margin-bottom: 0.75rem;
+      line-height: 1.4;
+    }
+
+    /* Botões */
+    #engajamentoServiceCards .card-btn {
+      width: 100%;
+      padding: 0.9rem 1rem;
+      border-radius: 10px;
+      color: white;
+      font-family: var(--font-family);
+      font-size: 1.1rem !important;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-transform: none;
+      margin-top: auto;
+      position: relative;
+      overflow: hidden;
+      background: var(--instagram-gradient) !important;
+      box-shadow: 0 10px 25px -5px rgba(220, 39, 67, 0.4);
+    }
+    
+    #engajamentoServiceCards .card-btn:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.05) saturate(1.1);
+      box-shadow: 0 15px 30px -5px rgba(220, 39, 67, 0.5);
+    }
+
+    /* Cores de Texto Específicas (Gradient Text) */
+    .text-gradient-seguidores {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-curtidas {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-visualizacoes {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* Sombra colorida na base do card - Mantendo sutil */
+    .service-card.card-seguidores { box-shadow: 0 20px 40px -12px rgba(255, 165, 0, 0.1) !important; }
+    .service-card.card-curtidas { box-shadow: 0 20px 40px -12px rgba(255, 46, 147, 0.1) !important; }
+    .service-card.card-visualizacoes { box-shadow: 0 20px 40px -12px rgba(122, 44, 255, 0.1) !important; }
+
+    /* Ajustes Mobile */
+    @media (max-width: 639px) {
+      #engajamentoServiceCards {
+        grid-template-columns: 1fr !important;
+        gap: 0.6rem;
+        padding: 0.75rem;
+        margin-top: 2.25rem;
       }
+      
+      #engajamentoServiceCards > .service-card:nth-child(1) {
+        grid-column: auto !important;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+      }
+
+      #engajamentoServiceCards .service-card {
+        padding: 1.2rem 1rem !important;
+        min-height: auto;
+        border-radius: 20px;
+      }
+
+      #engajamentoServiceCards .card-icon-3d {
+        width: 60px;
+        height: 60px;
+        margin-bottom: 0.8rem;
+      }
+
+      #engajamentoServiceCards .card-title {
+        font-size: 1.2rem !important;
+        margin-bottom: 0.3rem;
+      }
+      
+      /* Unificação de tamanho e cor preta para textos internos */
+      #engajamentoServiceCards .card-subtitle,
+      #engajamentoServiceCards .card-security,
+      #engajamentoServiceCards .card-price span:first-child,
+      #engajamentoServiceCards .card-price .price-value {
+        font-size: calc(0.9rem + 1px) !important;
+        color: #000000 !important;
+        font-weight: 400 !important;
+      }
+
+      /* Valor em verde e negrito, igual aos cards de planos */
+      #engajamentoServiceCards .card-price .price-value {
+        color: #22C55E !important;
+        font-weight: 700 !important;
+      }
+      
+      /* Preço na mesma linha no mobile */
+      #engajamentoServiceCards .card-price {
+        flex-direction: row !important;
+        align-items: baseline;
+        justify-content: center;
+        gap: 0.25rem;
+      }
+      
+      #engajamentoServiceCards .card-subtitle {
+        margin-bottom: 0.4rem;
+        line-height: 1.3;
+      }
+      
+      #engajamentoServiceCards .card-security {
+        margin-bottom: 0.5rem;
+      }
+      
+      #engajamentoServiceCards .card-btn {
+        padding: 0.75rem;
+        font-size: 0.95rem !important;
+        margin-top: 0.5rem;
+      }
+    }
     /* Notificação de venda (toast) um pouco maior na Home */
     .toast-container .toast-item { font-size: 1.05rem; padding: 0.8rem 1.05rem; }
     .checkout-page .select-input option { color: #111827; }
