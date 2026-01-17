@@ -1608,12 +1608,22 @@ document.addEventListener('DOMContentLoaded', function() {
       const precoText = resPreco ? resPreco.textContent : '';
       const precoStr = precoText; 
       
-      // Calcular total com promos
       let baseCents = basePriceCents || 0;
       const promos = getSelectedPromos();
       const promosTotalCents = calcPromosTotalCents(promos);
       const totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
       const valueBRL = totalCents / 100;
+      let sckValue = '';
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        sckValue = params.get('sck') || '';
+      } catch (_) {}
+      if (!sckValue) {
+        try {
+          const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+          sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+        } catch (_) {}
+      }
       
       // Quantidade efetiva (considerando upgrade)
       const upgradeItem = promos.find(p => p.key === 'upgrade');
@@ -1662,6 +1672,9 @@ document.addEventListener('DOMContentLoaded', function() {
         ],
         profile_is_private: isInstagramPrivate
       };
+      try {
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
+      } catch (_) {}
 
       // Tentar pegar posts selecionados (simulado ou via cache/session se tivesse implementado full)
       // Aqui vamos apenas verificar se tem promos que precisam de posts
