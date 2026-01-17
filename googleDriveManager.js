@@ -61,8 +61,12 @@ class GoogleDriveManager {
     }
     
     async initializeProfileImagesFolder() {
+        if (!this.drive) {
+            console.warn('Google Drive não inicializado, pulando pasta de imagens');
+            return;
+        }
+        
         try {
-            // Verificar se a pasta "Instagram Profile Images" já existe
             const response = await this.drive.files.list({
                 q: "name='Instagram Profile Images' and mimeType='application/vnd.google-apps.folder'",
                 fields: 'files(id, name)'
@@ -72,7 +76,6 @@ class GoogleDriveManager {
                 this.profileImagesFolderId = response.data.files[0].id;
                 console.log('📁 Pasta de imagens de perfil encontrada:', this.profileImagesFolderId);
             } else {
-                // Criar a pasta
                 const folderMetadata = {
                     name: 'Instagram Profile Images',
                     mimeType: 'application/vnd.google-apps.folder'
@@ -86,7 +89,6 @@ class GoogleDriveManager {
                 this.profileImagesFolderId = folder.data.id;
                 console.log('📁 Pasta de imagens de perfil criada:', this.profileImagesFolderId);
                 
-                // Tornar a pasta pública
                 await this.drive.permissions.create({
                     fileId: this.profileImagesFolderId,
                     resource: {
@@ -96,7 +98,30 @@ class GoogleDriveManager {
                 });
             }
         } catch (error) {
-            console.error('Erro ao inicializar pasta de imagens:', error);
+            const unauthorized = error && (
+                error.code === 401 ||
+                error.status === 401 ||
+                (error.response && error.response.status === 401) ||
+                (typeof error.message === 'string' && error.message.toLowerCase().includes('unauthorized_client'))
+            );
+            
+            if (unauthorized) {
+                console.error('Credenciais do Google Drive inválidas (401/unauthorized_client), desativando integração');
+                this.isConfigured = false;
+                this.profileImagesFolderId = null;
+                
+                try {
+                    const tokenPath = path.join(__dirname, 'google-tokens.json');
+                    if (fs.existsSync(tokenPath)) {
+                        fs.unlinkSync(tokenPath);
+                        console.log('Tokens inválidos do Google Drive removidos (google-tokens.json)');
+                    }
+                } catch (cleanupError) {
+                    console.error('Erro ao remover tokens inválidos do Google Drive:', cleanupError);
+                }
+            } else {
+                console.error('Erro ao inicializar pasta de imagens:', error);
+            }
         }
     }
     

@@ -3104,10 +3104,9 @@
           promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (warrantyChecked) {
-          const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
-          const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
-          const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
-          promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
+          const priceStr = 'R$ 9,90';
+          const label = 'Garantia Vitalícia';
+          promos.push({ key: 'garantia', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
