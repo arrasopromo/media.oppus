@@ -2115,6 +2115,18 @@
       const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
       const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
       const instagramUsernameFinal = usernamePreview || usernameFromSession || usernameInputNorm || '';
+      const serviceCategory = (function(){
+        if (window.__ENG_MODE__ && typeof window.__ENG_MODE__ === 'boolean') {
+          return 'seguidores';
+        }
+        try {
+          const path = window.location && window.location.pathname ? window.location.pathname : '';
+          if (path.indexOf('/servicos-curtidas') === 0) return 'curtidas';
+          if (path.indexOf('/servicos-visualizacoes') === 0) return 'visualizacoes';
+        } catch(_) {}
+        return 'seguidores';
+      })();
+
       const payload = {
         correlationID,
         value: totalCents,
@@ -2123,9 +2135,9 @@
           name: 'Cliente Checkout',
           phone: phoneValue
         },
-        // Sanitiza e evita emojis/Unicode não permitido
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtdEffective) },
           { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
@@ -2469,16 +2481,10 @@
   setAudioRate(1);
 
   const platformToggle = document.querySelector('.platform-toggle');
-  if (platformToggle) {
+  if (platformToggle && !window.__ENG_MODE__) {
     platformToggle.addEventListener('click', (e) => {
       const target = e.target.closest('.platform-btn');
       if (!target) return;
-      if (window.__ENG_MODE__ && target.classList.contains('instagram')) {
-        try { e.preventDefault(); } catch(_) {}
-        try { e.stopPropagation(); } catch(_) {}
-        window.location.href = '/servicos-instagram';
-        return;
-      }
       if (target.classList.contains('instagram')) setPlatform('instagram');
       if (target.classList.contains('tiktok')) setPlatform('tiktok');
       try {

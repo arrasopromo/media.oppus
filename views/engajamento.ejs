@@ -43,7 +43,7 @@
 
 </head>
 <body class="theme-light has-fixed-menu">
-  <%- include('partials/menu') %>
+  <%- include('partials/menu', { logoLink: 'https://agenciaoppus.site/engajamento' }) %>
   <script>
     // Server-side UTMs passed to client
     window.SERVER_UTMS_QUERY = '<%- serverQueryString %>';
@@ -125,7 +125,6 @@
           var toggleBtn = e.target.closest('.platform-btn');
           if (toggleBtn) {
              e.preventDefault();
-             e.stopPropagation();
 
              var cardsDiv = document.getElementById('engajamentoServiceCards');
              var tiktokCard = document.getElementById('tiktokMaintenanceCard');
@@ -339,12 +338,12 @@
               <div class="card-desc">
                   <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
                   <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
-                  <a href="/servicos-instagram<%= serverQueryString %>" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram" style="text-decoration:none;">
+                  <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram" style="text-decoration:none;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                       <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
                     </svg>
                     <span>Instagram</span>
-                  </a>
+                  </button>
                   <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                       <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
@@ -389,7 +388,7 @@
                     </div>
 
                     <!-- Card Visualizações -->
-                    <div class="service-card premium-card card-visualizacoes" onclick="window.navigateToService('visualizacoes_reels')">
+                    <div class="service-card premium-card card-visualizacoes" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-visualizacoes'+qs; } catch(_){ return '/servicos-visualizacoes'; } })()">
                       <div class="card-content">
                         <img src="/images/visualizacao-icon.png" alt="Visualizações" class="card-icon-3d" onerror="this.style.display='none'">
                         <div class="card-title">Visualizações</div>

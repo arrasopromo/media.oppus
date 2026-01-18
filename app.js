@@ -373,7 +373,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         console.log(`🚀 Enviando requisição para Apify: @${username}`);
         const response = await axios.post(apifyUrl, payload, { 
             headers: { 'Content-Type': 'application/json' },
-            timeout: 15000 // Reduzido para 15s a pedido (pode gerar mais falhas se o Apify demorar)
+            timeout: 30000
         });
 
         const items = response.data;
@@ -1607,6 +1607,22 @@ app.get('/servicos-instagram', (req, res) => {
   });
 });
 
+// Página Serviços Visualizações (baseada em servicos-curtidas)
+app.get('/servicos-visualizacoes', (req, res) => {
+  console.log('▶️ Acessando rota /servicos-visualizacoes');
+  res.render('servicos-visualizacoes', { 
+    PIXEL_ID: process.env.PIXEL_ID || '', 
+    queryParams: req.query 
+  }, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar servicos-visualizacoes:', err.message);
+      return res.status(500).send('Erro ao renderizar servicos-visualizacoes');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
 // Página Serviços Curtidas (estrutura similar à de serviços Instagram)
 app.get('/servicos-curtidas', (req, res) => {
   console.log('❤️ Acessando rota /servicos-curtidas');
@@ -1982,10 +1998,30 @@ async function processOrderFulfillment(record, col, req) {
     const correlationID = record?.correlationID;
     
     const key = process.env.FAMA24H_API_KEY || '';
-    const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
     const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
     const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-    const bumpsStr = (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
+    const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => {
+        const k = String(it?.key || '').trim();
+        if (k) acc[k] = String(it?.value || '').trim();
+        return acc;
+    }, {});
+    const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
+    const isCurtidasBase = pacoteStr.includes('curtida');
+    let serviceId = null;
+    if (isCurtidasBase) {
+        if (/^mistos$/i.test(tipo)) {
+            serviceId = 671;
+        } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
+            serviceId = 670;
+        }
+    } else {
+        if (/^mistos$/i.test(tipo)) {
+            serviceId = 659;
+        } else if (/^brasileiros$/i.test(tipo)) {
+            serviceId = 23;
+        }
+    }
+    const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
     const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
     const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
     let upgradeAdd = 0;
@@ -2003,8 +2039,8 @@ async function processOrderFulfillment(record, col, req) {
     if (serviceId === 659 && qtd > 0 && qtd < 100) {
         qtd = 100;
     }
-
-    const isOrganicos = /organicos/i.test(tipo);
+    
+    const isOrganicos = /organicos/i.test(tipo) && !isCurtidasBase;
     if (!isOrganicos) {
         const canSend = !!key && !!serviceId && !!instaUser && qtd > 0;
         if (canSend) {
@@ -2068,7 +2104,6 @@ async function processOrderFulfillment(record, col, req) {
     
     // Order Bumps (Views/Likes)
     try {
-        const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
         let viewsQty = 0;
         let likesQty = 0;
         if (typeof bumpsStr === 'string' && bumpsStr) {
@@ -4241,10 +4276,10 @@ app.get('/api/instagram/posts', async (req, res) => {
              // Refatorar é arriscado agora. Vamos duplicar a chamada do Apify para garantir posts.
              
              const apifyToken = process.env.APIFY_TOKEN;
-             if (apifyToken) {
+                if (apifyToken) {
                  const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
                  const payload = { usernames: [username], resultsLimit: 1 };
-                 const respA = await axios.post(apifyUrl, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+                 const respA = await axios.post(apifyUrl, payload, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
                  const itemsA = respA.data;
                  if (Array.isArray(itemsA) && itemsA.length > 0 && itemsA[0] && !itemsA[0].error) {
                      const item = itemsA[0];
