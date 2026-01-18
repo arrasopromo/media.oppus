@@ -1,8 +1,8 @@
 
 document.addEventListener('DOMContentLoaded', function() {
-  // --- Configurações e Variáveis Globais ---
-  
-  // Helper to get persistent browser/session ID
+  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
+  const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
+
   function getBrowserSessionId() {
       let bid = '';
       try { bid = localStorage.getItem('oppus_browser_id'); } catch(_) {}
@@ -12,10 +12,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       return bid;
   }
-  // Initialize browser ID immediately
   try { getBrowserSessionId(); } catch(_) {}
-
-  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
 
   const tabelaSeguidores = {
     mistos: [
@@ -94,7 +91,24 @@ document.addEventListener('DOMContentLoaded', function() {
     ],
   };
 
-  const tabela = isCurtidasContext ? tabelaCurtidas : tabelaSeguidores;
+  const tabelaVisualizacoes = {
+    visualizacoes_reels: [
+      { q: 1000, p: 'R$ 4,90' },
+      { q: 2500, p: 'R$ 9,90' },
+      { q: 5000, p: 'R$ 14,90' },
+      { q: 10000, p: 'R$ 19,90' },
+      { q: 25000, p: 'R$ 24,90' },
+      { q: 50000, p: 'R$ 34,90' },
+      { q: 100000, p: 'R$ 49,90' },
+      { q: 150000, p: 'R$ 59,90' },
+      { q: 200000, p: 'R$ 69,90' },
+      { q: 250000, p: 'R$ 89,90' },
+      { q: 500000, p: 'R$ 109,90' },
+      { q: 1000000, p: 'R$ 159,90' }
+    ]
+  };
+
+  const tabela = isViewsContext ? tabelaVisualizacoes : (isCurtidasContext ? tabelaCurtidas : tabelaSeguidores);
 
   const promoPricing = {
     likes: { old: 'R$ 49,90', price: 'R$ 9,90', discount: 80 },
@@ -237,6 +251,12 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getLabelForTipo(tipo) {
+    if (isViewsContext) {
+      const mapViews = {
+        visualizacoes_reels: 'Visualizações Reels'
+      };
+      return mapViews[tipo] || tipo;
+    }
     if (isCurtidasContext) {
         const map = {
           'mistos': 'Curtidas Mistas',
@@ -254,6 +274,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getUnitForTipo(tipo) {
+    if (isViewsContext || tipo === 'visualizacoes_reels') return 'visualizações';
     return isCurtidasContext ? 'curtidas' : 'seguidores';
   }
 
@@ -318,10 +339,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      if (isCurtidasContext) {
-        if (!window.curtidasSelectedPost || !curtidasSelectedPost || !curtidasSelectedPost.shortcode) {
-          alert('Por favor, selecione o post que vai receber as curtidas antes de prosseguir.');
-          if (window.goToStep) window.goToStep(2);
+      if (isCurtidasContext && !isInstagramPrivate) {
+        if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode) {
+          openPostModal('likes');
           return;
         }
       }
@@ -381,6 +401,23 @@ document.addEventListener('DOMContentLoaded', function() {
         if (step3Container) step3Container.style.display = 'block';
         window.scrollTo({ top: 0, behavior: 'smooth' });
         try { updatePromosSummary(); } catch(_) {}
+
+        if (isCurtidasContext || isViewsContext) {
+          const srcContainer = document.getElementById('selectedPostPreview');
+          const srcContent = document.getElementById('selectedPostPreviewContent');
+          const dst = document.getElementById('step3PostPreview');
+          const dstContent = document.getElementById('step3PostPreviewContent');
+          const hasPreview = srcContainer && srcContent && srcContainer.style.display !== 'none' && srcContent.innerHTML.trim();
+          if (dst && dstContent) {
+            if (hasPreview && !isInstagramPrivate) {
+              dst.style.display = 'block';
+              dstContent.innerHTML = srcContent.innerHTML;
+            } else {
+              dst.style.display = 'none';
+              dstContent.innerHTML = '';
+            }
+          }
+        }
 
         // URL hash removed per request
         /*
@@ -457,19 +494,20 @@ document.addEventListener('DOMContentLoaded', function() {
     let arr = tabela[tipo] || [];
     const unit = getUnitForTipo(tipo);
     
-    // Filtrar quantidades permitidas e exibir apenas pacotes com badge na grade principal
     if (isFollowersTipo(tipo)) {
       const allowed = getAllowedQuantities(tipo);
       if (isCurtidasContext) {
-        // No contexto de curtidas, mostrar apenas os cards que possuem badge (quantityBadges)
-        // Os demais (300, 700, 2000...) ficarão ocultos na grade principal
         arr = arr.filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
       } else {
-        // Na página /servicos-instagram, também exibir apenas pacotes com badge
         arr = arr
           .filter(x => allowed.includes(Number(x.q)))
           .filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
       }
+    }
+
+    if (isViewsContext && tipo === 'visualizacoes_reels') {
+      const allowedViews = [1000, 5000, 25000, 100000, 200000, 500000];
+      arr = arr.filter(x => allowedViews.includes(Number(x.q)));
     }
     
     arr.forEach(item => {
@@ -489,32 +527,36 @@ document.addEventListener('DOMContentLoaded', function() {
       const increasedRounded = (ceilInt - 0.10);
       const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
 
-      // Badge logic
-       const qNum = Number(item.q);
-       let badgeHtml = '';
-       let badgeText = '';
+      const qNum = Number(item.q);
+      let badgeHtml = '';
+      let badgeText = '';
 
-       // Lógica customizada de badges e destaque
-       if (tipo === 'mistos') {
-         if (qNum === 1000) badgeText = 'MELHOR PREÇO';
-         if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-       } else if (tipo === 'brasileiros') {
-         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-       } else if (tipo === 'organicos') {
-         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-       }
+      if (tipo === 'mistos') {
+        if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+        if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'brasileiros') {
+        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'organicos') {
+        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'visualizacoes_reels') {
+        if (qNum === 1000) badgeText = 'PACOTE INICIAL';
+        if (qNum === 5000) badgeText = 'PACOTE BÁSICO';
+        if (qNum === 25000) badgeText = 'MELHOR PREÇO';
+        if (qNum === 100000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        if (qNum === 200000) badgeText = 'VIP';
+        if (qNum === 500000) badgeText = 'ELITE';
+      }
 
-       // Fallback para quantityBadges se não houver override específico
-       if (!badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
-           badgeText = quantityBadges[qNum];
-       }
+      if (!badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
+        badgeText = quantityBadges[qNum];
+      }
 
-       if (badgeText) {
-         badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
-       }
+      if (badgeText) {
+        badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
+      }
 
-      // Layout idêntico ao checkout.js
-      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+      const qtyFormatted = qNum.toLocaleString('pt-BR');
+      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${qtyFormatted} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
       
       card.addEventListener('click', () => {
         // Atualizar estado
@@ -548,6 +590,16 @@ document.addEventListener('DOMContentLoaded', function() {
   function getTipoDescription(tipo) {
     let html = '';
     switch (tipo) {
+      case 'visualizacoes_reels':
+        html = `
+          <p>Pacotes de visualizações reais para impulsionar o alcance dos seus vídeos e Reels. Ideal para quem quer ganhar mais entrega, engajamento e prova social em conteúdos estratégicos.</p>
+          <ul>
+            <li>🚀 <strong>Mais alcance:</strong> aumenta as visualizações dos seus Reels de forma rápida.</li>
+            <li>🎯 <strong>Foco em resultados:</strong> pensado para ajudar vídeos a performarem melhor no algoritmo.</li>
+            <li>✅ <strong>Entrega segura:</strong> serviço estável, com acompanhamento e suporte.</li>
+          </ul>
+        `;
+        break;
       case 'mistos':
         html = `
           <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
@@ -664,6 +716,57 @@ document.addEventListener('DOMContentLoaded', function() {
     const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
     const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
     const upHighlight = document.getElementById('orderBumpHighlight');
+
+    // Upgrades específicos para visualizações de Reels
+    if (tipo === 'visualizacoes_reels' && baseQtd) {
+      orderInline.style.display = 'block';
+      if (checkbox) checkbox.checked = false;
+
+      const upsellViewsTargets = {
+        1000: 2500,
+        5000: 10000,
+        25000: 50000,
+        100000: 150000,
+        200000: 250000,
+        500000: 1000000
+      };
+
+      const targetQtdViews = upsellViewsTargets[Number(baseQtd)];
+      if (!targetQtdViews) {
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const basePriceViews = findPrice(tipo, baseQtd);
+      const targetPriceViews = findPrice(tipo, targetQtdViews);
+
+      if (!basePriceViews || !targetPriceViews) {
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const diffCentsViews = parsePrecoToCents(targetPriceViews) - parsePrecoToCents(basePriceViews);
+      const addQtdViews = targetQtdViews - baseQtd;
+      const diffStrViews = formatCentsToBRL(diffCentsViews);
+
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStrViews}, adicione ${addQtdViews} ${unit} e atualize para ${targetQtdViews}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${addQtdViews} ${unit}`;
+      if (upOld) upOld.textContent = targetPriceViews || '—';
+      if (upNew) upNew.textContent = diffStrViews;
+      if (upDisc) {
+        const targetCentsViews = parsePrecoToCents(targetPriceViews);
+        const pctViews = targetCentsViews ? Math.round(((targetCentsViews - diffCentsViews) / targetCentsViews) * 100) : 0;
+        upDisc.textContent = `${pctViews}% OFF`;
+      }
+      return;
+    }
+
     if (!isFollowersTipo(tipo) || !baseQtd) { orderInline.style.display = 'none'; return; }
     orderInline.style.display = 'block';
     if (checkbox) checkbox.checked = false;
@@ -1022,6 +1125,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function openPostModal(kind) {
     if (postModalOpenLock) return;
+    if (isInstagramPrivate && ((isCurtidasContext && kind === 'likes') || (isViewsContext && kind === 'views'))) return;
     postModalOpenLock = true;
     setTimeout(function(){ postModalOpenLock = false; }, 600);
     const refs = getPostModalRefs();
@@ -1046,11 +1150,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (dlg && typeof dlg.scrollIntoView === 'function') { dlg.scrollIntoView({ block: 'center', inline: 'center' }); }
     } catch(_) {}
 
-    if (isInstagramPrivate) {
-      refs.postModalGrid.innerHTML = '<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML();
-    } else {
-      refs.postModalGrid.innerHTML = spinnerHTML();
-    }
+    refs.postModalGrid.innerHTML = spinnerHTML();
 
     const renderFrom = function(arr) {
       const items = (Array.isArray(arr) ? arr : []).filter(p => {
@@ -1063,6 +1163,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return true;
       }).slice(0, 8); // Checkout uses 8
+
+      let headerHtml = '';
+      if (isCurtidasContext && kind === 'likes') {
+        headerHtml = '<div style="grid-column:1/-1; text-align:center; padding:0.5rem 0 1rem; font-weight:600; color:var(--text-primary);">Selecione o post que deseja receber as curtidas</div>';
+      } else if (isViewsContext && kind === 'views') {
+        headerHtml = '<div style="grid-column:1/-1; text-align:center; padding:0.5rem 0 1rem; font-weight:600; color:var(--text-primary);">Selecione o Reels que deseja receber as visualizações</div>';
+      }
 
       const html = items.map(function(p){
         const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
@@ -1088,7 +1195,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div id="manualLinkMsg" style="margin-top:0.5rem; font-size:0.9rem;"></div>
             </div>
           `;
-          refs.postModalGrid.innerHTML = manualHtml;
+          refs.postModalGrid.innerHTML = headerHtml + manualHtml;
           setTimeout(() => {
               const btn = document.getElementById('manualPostLinkBtn');
               const inp = document.getElementById('manualPostLinkInput');
@@ -1111,7 +1218,7 @@ document.addEventListener('DOMContentLoaded', function() {
                       fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind }) })
                         .then(r=>r.json())
                         .then(function(){ 
-                            if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+                            if (typeof updateSelectedPostPreview === 'function') {
                                 try { updateSelectedPostPreview(kind, sc); } catch(_) {}
                             }
                             if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
@@ -1125,7 +1232,7 @@ document.addEventListener('DOMContentLoaded', function() {
               }
           }, 100);
       } else {
-          refs.postModalGrid.innerHTML = html;
+          refs.postModalGrid.innerHTML = headerHtml + html;
       }
 
       const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
@@ -1139,7 +1246,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(r=>r.json())
             .then(function(){ 
               highlightSelected(k, sc); 
-              if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+              if (typeof updateSelectedPostPreview === 'function') {
                   try { updateSelectedPostPreview(k, sc); } catch(_) {}
                   try { 
                       const refs2 = getPostModalRefs();
@@ -1160,7 +1267,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(r=>r.json())
             .then(function(){ 
               highlightSelected(k, sc); 
-              if (typeof updateSelectedPostPreview === 'function' && isCurtidasContext) {
+              if (typeof updateSelectedPostPreview === 'function') {
                   try { updateSelectedPostPreview(k, sc); } catch(_) {}
                   try { 
                       const refs2 = getPostModalRefs();
@@ -1180,12 +1287,14 @@ document.addEventListener('DOMContentLoaded', function() {
       renderFrom(cachedPosts);
     } else {
       const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
-      refs.postModalGrid.innerHTML = isInstagramPrivate ? ('<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML()) : spinnerHTML();
+      refs.postModalGrid.innerHTML = spinnerHTML();
       fetch(url).then(r=>r.json()).then(d=>{
         const arr = Array.isArray(d.posts) ? d.posts : [];
         cachedPosts = arr; cachedPostsUser = user;
         renderFrom(arr);
-      }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1;color:#ef4444;">'+(isInstagramPrivate?'Deixe o perfil no modo público para selecionar o post':'Erro ao carregar posts.')+'</div>'; });
+      }).catch(function(){
+        renderFrom([]);
+      });
     }
   }
 
@@ -1219,12 +1328,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Lógica de Verificação de Perfil ---
 
-  // --- Post Modal & Preview Logic for Curtidas ---
+  // --- Post Modal & Preview Logic ---
 
   let curtidasSelectedPost = null;
 
   function updateSelectedPostPreview(kind, sc) {
-      if (!isCurtidasContext) return;
       const container = document.getElementById('selectedPostPreview');
       const slot = document.getElementById('selectedPostPreviewContent');
       if (!container || !slot) return;
@@ -1332,10 +1440,6 @@ document.addEventListener('DOMContentLoaded', function() {
       if (data.success) {
         const profile = data.profile || {};
 
-        if (isCurtidasContext) {
-             openPostModal('likes');
-        }
-
         if (checkoutProfileImage && profile.profilePicUrl) checkoutProfileImage.src = profile.profilePicUrl;
         if (checkoutProfileUsername) checkoutProfileUsername.textContent = profile.username || username;
         if (checkoutFollowersCount) checkoutFollowersCount.textContent = String(profile.followersCount || '-');
@@ -1361,7 +1465,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 300);
         }
         
-        // Update Step 3 Review Data
         const revImg = document.getElementById('reviewProfileImage');
         const revUser = document.getElementById('reviewProfileUsername');
         const revFoll = document.getElementById('reviewProfileFollowers');
@@ -1390,6 +1493,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     }).catch(function(){});
                 }
              } catch(_) {}
+        }
+
+        if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+          openPostModal(isCurtidasContext ? 'likes' : 'views');
         }
         
         updatePedidoButtonState();
@@ -1479,16 +1586,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (grupoPedido) grupoPedido.style.display = 'block';
         if (paymentCard) paymentCard.style.display = 'block';
         
-        // Atualiza header do Step 3
         const headerQty = document.getElementById('headerSelectedQty');
         if (headerQty && qtdSelect.value) {
             const unit = getUnitForTipo(tipo);
             headerQty.textContent = `+ ${qtdSelect.value} ${unit}`;
         }
         
-        // Atualiza a matemática de seguidores (Atuais + Selecionados = Total)
-        updateReviewMath();
-
+        if (!isCurtidasContext && !isViewsContext) {
+            updateReviewMath();
+        }
     } else {
         if (orderInline) orderInline.style.display = 'none';
         if (grupoPedido) grupoPedido.style.display = 'none';
@@ -1652,6 +1758,8 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Nome de usuário do Instagram não identificado.');
       }
 
+      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+
       const payload = {
         correlationID,
         value: totalCents,
@@ -1663,6 +1771,7 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtdEffective) },
           { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },

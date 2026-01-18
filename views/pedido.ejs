@@ -161,7 +161,22 @@
         </div>
         <% } %>
         
-        <% if (order && order.profilePrivacy && order.profilePrivacy.isPrivate) { %>
+        <%
+          var catServ = null;
+          if (order && order.additionalInfoMapPaid && order.additionalInfoMapPaid['categoria_servico']) {
+            catServ = String(order.additionalInfoMapPaid['categoria_servico']).toLowerCase();
+          } else if (order && Array.isArray(order.additionalInfoPaid)) {
+            var fCatPaid = order.additionalInfoPaid.find(function(i){ return i && i.key === 'categoria_servico'; });
+            if (fCatPaid && fCatPaid.value) catServ = String(fCatPaid.value).toLowerCase();
+          }
+          if (!catServ && order && Array.isArray(order.additionalInfo)) {
+            var fCat = order.additionalInfo.find(function(i){ return i && i.key === 'categoria_servico'; });
+            if (fCat && fCat.value) catServ = String(fCat.value).toLowerCase();
+          }
+          var isPostCategory = (catServ === 'curtidas' || catServ === 'visualizacoes');
+          var showPrivacyAlert = (order && order.profilePrivacy && order.profilePrivacy.isPrivate && !isPostCategory);
+        %>
+        <% if (showPrivacyAlert) { %>
         <div class="service-card" id="privacyAlertCard" style="border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.5); backdrop-filter: blur(8px); margin-bottom: 2rem;">
           <div class="card-content" style="display: flex; gap: 1rem; align-items: flex-start;">
             <div style="flex-shrink: 0; color: #d97706;">
@@ -732,25 +747,37 @@
 (function() {
   var orderData = {};
   try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
-  
-  // DEBUG: Verificar dados de privacidade no console
+  var serviceCategory = null;
+  try {
+    if (orderData.additionalInfoMapPaid && orderData.additionalInfoMapPaid['categoria_servico']) {
+      serviceCategory = String(orderData.additionalInfoMapPaid['categoria_servico']).toLowerCase();
+    } else if (Array.isArray(orderData.additionalInfoPaid)) {
+      var fCatPaid = orderData.additionalInfoPaid.find(function(i){ return i && i.key === 'categoria_servico'; });
+      if (fCatPaid && fCatPaid.value) serviceCategory = String(fCatPaid.value).toLowerCase();
+    }
+    if (!serviceCategory && Array.isArray(orderData.additionalInfo)) {
+      var fCat = orderData.additionalInfo.find(function(i){ return i && i.key === 'categoria_servico'; });
+      if (fCat && fCat.value) serviceCategory = String(fCat.value).toLowerCase();
+    }
+  } catch(_) {}
+  var isPostCategory = (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes');
+  if (isPostCategory) {
+    return;
+  }
+
   console.log('OrderData Privacy Check:', {
       username: orderData.instagramUsername || orderData.instauser,
       profilePrivacy: orderData.profilePrivacy,
       isPrivate: orderData.profilePrivacy && orderData.profilePrivacy.isPrivate
   });
 
-  // Verifica se o perfil está marcado como privado
   if (orderData && orderData.profilePrivacy && orderData.profilePrivacy.isPrivate) {
     var modal = document.getElementById('privacyModal');
     if (modal) {
       modal.style.display = 'flex';
-      // Prevenir scroll do body
       document.body.style.overflow = 'hidden';
     }
   } else {
-    // FALLBACK: Se o card de alerta existir no DOM (renderizado pelo EJS),
-    // ENTÃO o perfil É privado, não importa o que o JSON diga.
     var alertCard = document.getElementById('privacyAlertCard');
     if (alertCard) {
         var modal = document.getElementById('privacyModal');
@@ -759,11 +786,6 @@
             document.body.style.overflow = 'hidden';
         }
     } else {
-        // Se o sistema acha que é público (ou não sabe), mas queremos garantir:
-        // Fazemos uma checagem "silenciosa" na API ao carregar.
-        // Se a API retornar que é privado, abrimos o modal.
-        
-        // --- Reutilizando lógica de username robusta ---
         var uname = '';
         if (orderData.additionalInfoMapPaid && orderData.additionalInfoMapPaid['instagram_username']) {
             uname = orderData.additionalInfoMapPaid['instagram_username'];
@@ -779,7 +801,6 @@
         if (!uname) {
             uname = orderData.instagramUsername || orderData.instauser || orderData.link || '';
         }
-        // FALLBACK DOM
         if (!uname) {
             var elInsta = document.getElementById('orderInsta');
             if (elInsta) {
@@ -793,7 +814,6 @@
             uname = parts[parts.length - 1];
             uname = uname.replace('@', '').trim();
         }
-        // -----------------------------------------------
         
         if (uname) {
             fetch('/api/check-privacy', {
