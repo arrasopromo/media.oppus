@@ -1492,3 +1492,136 @@ body:not(.theme-light) button[id^="backToStep"] svg {
     stroke: #000000 !important;
 }
 
+
+/* =========================================
+   Styles ported from servicos-instagram.ejs for consistency
+   ========================================= */
+
+/* Título do Checkout com especificações fornecidas */
+.checkout-page .title {
+  font-size: clamp(2.75rem, 5.2vw, 4rem);
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 0.6rem;
+  letter-spacing: -0.02em;
+}
+.checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
+
+/* Ampliar área de conteúdo e larguras dos cards no desktop */
+@media (min-width: 1024px) {
+  .checkout-page.container { max-width: 100%; width: 100%; }
+  .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
+  .checkout-page .subtitle { 
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.5;
+    margin-bottom: 0.4rem; 
+  }
+  .checkout-page .service-card { width: 100%; padding: 0.55rem 0.7rem; }
+  .checkout-page .card-content { gap: 0.2rem; }
+  /* Desktop: reduzir levemente os cards de planos (quantidade/preço) */
+  .checkout-page #planCards .service-card { min-height: 130px; }
+  .checkout-page #planCards .card-title { font-size: 1.15rem; }
+  .checkout-page #planCards .card-desc { font-size: 1.05rem; }
+  /* Desktop: aumentar título e botões da plataforma */
+  .checkout-page #plataformaCard .card-title { font-size: calc(clamp(2.75rem, 5.2vw, 3.75rem) - 2px); }
+  .checkout-page #plataformaCard .card-desc { font-size: calc(1.25rem - 2px); }
+  .checkout-page .platform-btn { padding: 1.2rem 1.6rem; font-size: 1.15rem; }
+  .checkout-page .select-input {
+    background: rgba(255, 255, 255, 0.95);
+    color: #111827;
+    width: 100%;
+    margin-top: 0.1rem; /* mais rente às bordas do card */
+    /* aumenta área útil horizontal no desktop */
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+  .checkout-page .input-group { width: 100%; }
+  .checkout-page .input-group { max-width: 820px; }
+
+  /* Desktop-only: esconder selects de tipo/quantidade e usar cards */
+  #grupoTipo, #grupoQuantidade { display: none; }
+  #tipoCards, #planCards { display: grid !important; }
+  #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+  #planCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+  #tipoCards .card-title { font-size: 1.1rem; }
+  #tipoCards .card-desc { font-size: 1rem; }
+  .option-card, .plan-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.6rem 0.8rem;
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    flex-direction: column;
+  }
+  .option-card .card-content, .plan-card .card-content { display: flex; align-items: center; justify-content: center; flex-direction: column; width: 100%; height: 100%; text-align: center; }
+  .option-card:hover, .plan-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: #6B46C1; }
+  .option-card.active, .plan-card.active { border-color: #6B46C1; box-shadow: var(--shadow-md); }
+  .plan-card .plan-title { font-weight: 600; }
+  .plan-card .plan-sub { color: var(--text-secondary); font-size: 0.95rem; }
+  .site-brand { left: 16rem; }
+  #audioCard .card-content { align-items: stretch; }
+  #audioCard .audio-player { width: 100%; }
+  #audioCard .audio-controls { width: 100%; }
+  #audioCard .audio-progress { height: 6px; }
+  #tipoDescCard .card-desc { font-size: calc(1rem + 2px); }
+  #resumo .card-desc { font-size: calc(1rem + 2px); }
+  .phone-label { font-size: calc(1rem + 2px); }
+  .phone-hint { font-size: calc(0.875rem + 2px); }
+}
+/* Garantir largura total dos inputs no mobile e desktop */
+.checkout-page .input-group { width: 100%; }
+@media (min-width: 1024px) { .checkout-page .input-group { max-width: 700px; } }
+.checkout-page .select-input { width: 100%; }
+.cards-grid.checkout-grid { gap: 1.25rem; grid-template-columns: 1fr; }
+@media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
+  /* Subtitle unified style */
+  .checkout-page .subtitle { 
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.5;
+    margin-bottom: 0.4rem; 
+  }
+/* Notificação de venda (toast) um pouco maior na Home */
+.toast-container .toast-item { font-size: 1.05rem; padding: 0.8rem 1.05rem; }
+.checkout-page .select-input option { color: #111827; }
+/* Centralizar área de resultado PIX */
+#pixResultado { text-align: center; }
+
+/* Cards do checkout: usar cards em todas as visões e esconder selects originais */
+#tipoSelectCard, #quantidadeSelectCard { display: none; }
+#grupoTipo, #grupoQuantidade { display: none !important; }
+  #tipoCards, #planCards { display: grid !important; gap: 0.75rem; grid-template-columns: 1fr; }
+  #tipoCards .service-card, #planCards .service-card { min-height: 50px; }
+@media (min-width: 640px) { #tipoCards, #planCards { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { #tipoCards, #planCards { grid-template-columns: repeat(3, 1fr); } }
+  .service-card.active { border-color: var(--primary-purple); box-shadow: 0 0 0 3px rgba(107,70,193,0.35); }
+
+@media (max-width: 639px) {
+  #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.5rem; }
+  #planCards { grid-template-columns: 1fr !important; gap: 0.5rem; }
+  #tipoCards .option-card, #planCards .plan-card { width: 100%; min-height: 90px; }
+  #tipoCards .card-title, #planCards .card-title { font-size: 0.9rem; line-height: 1.2; }
+  #tipoCards .card-desc, #planCards .card-desc { font-size: 0.85rem; }
+}
+@media (min-width: 1024px) {
+  #tipoCards .service-card { min-height: 120px; }
+}
+/* Card de descrição do tipo */
+#tipoDescCard .card-desc p { margin: 0.4rem 0; }
+#tipoDescCard .card-desc ul { margin: 0.5rem 0 0.25rem; padding-left: 1rem; }
+#tipoDescCard .card-desc li { margin: 0.2rem 0; }
+
+/* Centralizar texto nos cards de seguidores (tipo) */
+#tipoCards .card-content { text-align: center; }
+#tipoCards .card-title { text-align: center; }
+#tipoCards .card-desc { text-align: center; }
