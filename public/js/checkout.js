@@ -436,12 +436,18 @@
     } catch(_) {}
   })();
 }
+    if (tipoCards) tipoCards.style.display = 'grid';
     for (const t of tipos) {
       const el = document.createElement('div');
-      el.className = 'service-card' + (selectedPlatform === 'tiktok' ? ' disabled' : '');
+      el.className = 'service-card option-card' + (selectedPlatform === 'tiktok' ? ' disabled' : '');
       el.dataset.role = 'tipo';
       el.dataset.tipo = t.key;
-      el.innerHTML = `<div class="card-content"><div class="card-title" style="text-align:center;">${t.label}</div><div class="card-desc" style="text-align:center;">${selectedPlatform === 'tiktok' ? '<span class="status-warning"><svg class="status-maint-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M3 12a9 9 0 1118 0 9 9 0 01-18 0zm9-4a1 1 0 011 1v3.586l2.293 2.293a1 1 0 11-1.414 1.414l-2.586-2.586A2 2 0 0110 12V9a1 1 0 011-1z"/></svg> Serviço em manutenção</span>' : ''}</div></div>`;
+      
+      const content = selectedPlatform === 'tiktok' ? 
+          `<div class="card-title" style="text-align:center;">${t.label}</div><div class="card-desc" style="text-align:center;"><span class="status-warning"><svg class="status-maint-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M3 12a9 9 0 1118 0 9 9 0 01-18 0zm9-4a1 1 0 011 1v3.586l2.293 2.293a1 1 0 11-1.414 1.414l-2.586-2.586A2 2 0 0110 12V9a1 1 0 011-1z"/></svg> Serviço em manutenção</span></div>` :
+          `<div class="card-title" style="text-align:center;">${t.label}</div>`;
+
+      el.innerHTML = `<div class="card-content">${content}</div>`;
       if (selectedPlatform === 'tiktok') {
         try { el.style.gridColumn = '2'; } catch(_) {}
       }
@@ -499,6 +505,13 @@
         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
       } else if (tipo === 'organicos') {
         if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+      } else if (tipo === 'visualizacoes_reels') {
+        if (qNum === 1000) badgeText = 'PACOTE INICIAL';
+        if (qNum === 5000) badgeText = 'PACOTE BÁSICO';
+        if (qNum === 25000) badgeText = 'MELHOR PREÇO';
+        if (qNum === 100000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        if (qNum === 200000) badgeText = 'VIP';
+        if (qNum === 500000) badgeText = 'ELITE';
       }
 
       // Fallback
@@ -510,7 +523,8 @@
         badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
       }
 
-      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${item.q} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+      const qtyFormatted = qNum.toLocaleString('pt-BR');
+      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${qtyFormatted} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
       card.dataset.qtd = String(item.q);
       card.dataset.preco = baseText;
       card.addEventListener('click', () => {
