@@ -2012,11 +2012,11 @@ async function processOrderFulfillment(record, col, req) {
         if (/^mistos$/i.test(tipo)) {
             serviceId = 671;
         } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
-            serviceId = 670;
+            serviceId = 679;
         }
     } else {
         if (/^mistos$/i.test(tipo)) {
-            serviceId = 659;
+            serviceId = 663;
         } else if (/^brasileiros$/i.test(tipo)) {
             serviceId = 23;
         }
@@ -2035,8 +2035,8 @@ async function processOrderFulfillment(record, col, req) {
     }
     let qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
     
-    // Ajuste: O provedor (Fama24h - serviço 659) exige mínimo de 100.
-    if (serviceId === 659 && qtd > 0 && qtd < 100) {
+    // Ajuste: O provedor (Fama24h - serviço 663) exige mínimo de 100.
+    if (serviceId === 663 && qtd > 0 && qtd < 100) {
         qtd = 100;
     }
     
@@ -2679,7 +2679,7 @@ app.post('/api/ggram-order', async (req, res) => {
                 curtidas: 'LIKES_BRS'
             };
             const selectedServiceKey = (servico || 'seguidores_mistos');
-            const selectedServiceId = serviceMap[selectedServiceKey] || '659';
+            const selectedServiceId = serviceMap[selectedServiceKey] || '663';
             const quantitiesMap = {
                 visualizacoes_reels: '3000',
                 curtidas_brasileiras: '20',
@@ -2815,7 +2815,7 @@ app.post('/api/ggram-order', async (req, res) => {
             curtidas: '1810'
         };
         const selectedServiceKey = (servico || 'seguidores_mistos');
-        const selectedServiceId = serviceMap[selectedServiceKey] || '659';
+        const selectedServiceId = serviceMap[selectedServiceKey] || '663';
         const quantitiesMap = {
             visualizacoes_reels: '3000',
             curtidas_brasileiras: '20',
@@ -3431,7 +3431,24 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const qtdBase = Number(additionalInfoMap['quantidade'] || record?.quantidade || record?.qtd || 0) || 0;
           const instaUser = additionalInfoMap['instagram_username'] || record?.instagramUsername || record?.instauser || '';
           const key = process.env.FAMA24H_API_KEY || '';
-          const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+          
+          const pacoteStr = String(additionalInfoMap['pacote'] || record?.additionalInfoMapPaid?.['pacote'] || '').toLowerCase();
+          const isCurtidasBase = pacoteStr.includes('curtida');
+          let serviceId = null;
+          if (isCurtidasBase) {
+              if (/^mistos$/i.test(tipo)) {
+                  serviceId = 671;
+              } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
+                  serviceId = 679;
+              }
+          } else {
+              if (/^mistos$/i.test(tipo)) {
+                  serviceId = 663;
+              } else if (/^brasileiros$/i.test(tipo)) {
+                  serviceId = 23;
+              }
+          }
+
           const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
           const hasUpgrade = typeof bumpsStr0 === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr0);
           const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
@@ -3697,7 +3714,23 @@ app.post('/api/services/dispatch', async (req, res) => {
     const isOrganicos = /organicos/i.test(tipo);
     if (!isOrganicos) {
       const key = process.env.FAMA24H_API_KEY || '';
-      const serviceId = (/^mistos$/i.test(tipo)) ? 659 : (/^brasileiros$/i.test(tipo)) ? 23 : null;
+      
+      const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
+      const isCurtidasBase = pacoteStr.includes('curtida');
+      let serviceId = null;
+      if (isCurtidasBase) {
+          if (/^mistos$/i.test(tipo)) {
+              serviceId = 671;
+          } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
+              serviceId = 679;
+          }
+      } else {
+          if (/^mistos$/i.test(tipo)) {
+              serviceId = 663;
+          } else if (/^brasileiros$/i.test(tipo)) {
+              serviceId = 23;
+          }
+      }
       const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
       if (!canSend) return res.status(400).json({ ok: false, error: 'cannot_send_fama', reason: { hasKey: !!key, serviceId, instaUser: !!instaUserRaw, qtd, alreadySentFama } });
       const axios = require('axios');
@@ -4989,12 +5022,36 @@ app.post('/api/payment/confirm', async (req, res) => {
       const resolvedQtd = qtd || record?.quantidade || record?.qtd || 0;
       const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
       const key = process.env.FAMA24H_API_KEY || '';
-      const serviceId = (/^mistos$/i.test(resolvedTipo)) ? 659 : (/^brasileiros$/i.test(resolvedTipo)) ? 23 : null;
       
-      // Ajuste: O provedor (Fama24h - serviço 659) exige mínimo de 100.
+      const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
+      const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
+      const infoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => {
+          const k = String(it?.key || '').trim();
+          if (k) acc[k] = String(it?.value || '').trim();
+          return acc;
+      }, {});
+      const pacoteStr = String(infoMap['pacote'] || '').toLowerCase();
+      const isCurtidasBase = pacoteStr.includes('curtida');
+      
+      let serviceId = null;
+      if (isCurtidasBase) {
+          if (/^mistos$/i.test(resolvedTipo)) {
+              serviceId = 671;
+          } else if (/^(brasileiros|organicos)$/i.test(resolvedTipo)) {
+              serviceId = 679;
+          }
+      } else {
+          if (/^mistos$/i.test(resolvedTipo)) {
+              serviceId = 663;
+          } else if (/^brasileiros$/i.test(resolvedTipo)) {
+              serviceId = 23;
+          }
+      }
+      
+      // Ajuste: O provedor (Fama24h - serviço 663) exige mínimo de 100.
       // Se o pedido for de 50 (teste), enviamos 100 para garantir o processamento.
       let finalQtdFama = resolvedQtd;
-      if (serviceId === 659 && finalQtdFama > 0 && finalQtdFama < 100) {
+      if (serviceId === 663 && finalQtdFama > 0 && finalQtdFama < 100) {
         finalQtdFama = 100;
       }
 
