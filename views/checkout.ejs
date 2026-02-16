@@ -40,8 +40,11 @@
       <div id="headerTicker" class="header-ticker" aria-live="polite">
         <span class="ticker-item enter">Empresa regularizada</span>
       </div>
-      <h1 class="title">Cresça o seu perfil Instagram</h1>
-      <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com seguidores que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
+      <h1 class="title">
+        Cresça o seu perfil Instagram com<br>
+        <span class="title-highlight-gradient">seguidores brasileiros e reais</span>
+      </h1>
+      <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com seguidores brasileiros, reais e ativos que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
       <div id="clientTools" class="client-tools" style="display:none;"></div>
     </header>
 
@@ -590,6 +593,134 @@
         </div>
       </div>
     </main>
+
+    <!-- Tela de Pagamento (Hidden by default) -->
+    <div id="paymentSuccessScreen" style="display: none; max-width: 1440px; width: 100%; margin: 2rem auto; gap: 2rem; padding: 1rem; align-items: flex-start;">
+      <!-- Left Column: Payment Info -->
+      <div class="payment-main-card" style="background: #fff; border-radius: 12px; padding: 2.5rem; flex: 1; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); width: 100%;">
+        <div style="text-align: center; margin-bottom: 2.5rem;">
+            <div style="width: 72px; height: 72px; background: #d1fae5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </div>
+            <h2 style="font-size: 1.75rem; font-weight: 700; color: #111827; margin-bottom: 0.5rem;">Realize o Pagamento</h2>
+            <p style="color: #6b7280; font-size: 1.1rem;">Realize o pagamento do <strong>Pix</strong> para garantir a sua compra.</p>
+            <div style="display: inline-block; background: #f3f4f6; padding: 0.6rem 1.2rem; border-radius: 99px; margin-top: 1.25rem; font-weight: 500; font-size: 1.05rem;">
+                O Pix será expirado em <span id="pixTimer" style="color: #db2777;">29:59</span>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 2.5rem;">
+            <p style="margin-bottom: 1.25rem; font-size: 1.1rem;">Acesse o aplicativo que você utiliza o <strong>Pix</strong><br>e escolha a opção <strong>Ler QR code</strong>.</p>
+            <div id="paymentQrImage" style="background: #f9fafb; padding: 1.5rem; border-radius: 12px; display: inline-block; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <!-- QR Code Img injected here -->
+            </div>
+            <p style="font-size: 0.85rem; color: #6b7280; margin-top: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">ESCANEIE O QR CODE PARA PAGAR</p>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 1rem;">
+            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1.5rem;">
+                Valor do Pix: <span id="paymentValue" style="color: #db2777;">R$ 0,00</span>
+            </div>
+            
+            <p style="color: #6b7280; font-size: 18px; margin-bottom: 1.25rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+                Também é possível realizar o pagamento através do código abaixo. Basta copiar e realizar o pagamento no seu aplicativo ou Internet Banking escolhendo a opção <strong>Pix Copia e Cola</strong>.
+            </p>
+
+            <div style="position: relative; max-width: 600px; margin: 0 auto;">
+                <textarea id="paymentCopyCode" readonly style="width: 100%; height: 90px; padding: 1rem; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; font-family: inherit; resize: none; font-size: 0.95rem; color: #374151;"></textarea>
+                <button id="paymentCopyBtn" class="continue-button" style="margin-top: 1.25rem; width: 100%; display: flex; justify-content: center; align-items: center; padding: 1rem;">
+                    <span class="button-text" style="text-align: center; width: 100%;">Copiar Código</span>
+                </button>
+            </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Summary -->
+      <div class="payment-summary-card" style="width: 100%; max-width: 420px; align-self: start; position: sticky; top: 2rem;">
+         <!-- Header -->
+         <div style="background: #db2777; color: white; padding: 1.25rem; border-top-left-radius: 12px; border-top-right-radius: 12px; font-weight: 700; display: flex; align-items: center; gap: 0.75rem; font-size: 1.1rem;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+            Resumo do Pedido
+         </div>
+         <div style="background: #fff; padding: 1.5rem; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; border: 1px solid #e5e7eb; border-top: none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+            <!-- Item -->
+            <div style="display: flex; gap: 1rem; padding-bottom: 1.5rem; border-bottom: 1px solid #f3f4f6; margin-bottom: 1.5rem;">
+                <div id="summaryItemImage" style="width: 72px; height: 72px; background: #f3f4f6; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; overflow: hidden; flex-shrink: 0;">📦</div>
+                <div style="flex: 1;">
+                    <div id="summaryItemName" style="font-weight: 600; color: #111827; font-size: 1.05rem; line-height: 1.3;">Produto</div>
+                    <div id="summaryItemPrice" style="font-size: 0.95rem; color: #374151; margin-top: 0.25rem;">R$ 0,00</div>
+                    <div id="summaryItemQty" style="font-size: 0.9rem; color: #6b7280;">Quantidade: 1</div>
+                </div>
+                <div id="summaryItemTotal" style="font-weight: 700; font-size: 1.05rem;">R$ 0,00</div>
+            </div>
+
+            <!-- Totals -->
+            <div style="margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid #f3f4f6;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem;">
+                    <span style="color: #374151; font-size: 1rem;">Subtotal</span>
+                    <span id="summarySubtotal" style="font-weight: 500;">R$ 0,00</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-weight: 800; font-size: 1.25rem; color: #db2777;">
+                    <span>Total</span>
+                    <span id="summaryTotal">R$ 0,00</span>
+                </div>
+            </div>
+
+            <!-- Payment Method -->
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem;">Forma de pagamento</h4>
+                <div style="display: flex; gap: 0.75rem; align-items: center; background: #f9fafb; padding: 0.75rem; border-radius: 8px;">
+                    <div style="width: 36px; height: 36px; background: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; border: 1px solid #e5e7eb;">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                    </div>
+                    <div>
+                        <div style="font-weight: 700; font-size: 0.95rem;">PIX</div>
+                        <div id="summaryPaymentValue" style="font-size: 0.85rem; color: #6b7280;">Valor: R$ 0,00</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Info -->
+            <div>
+                <h4 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; color: #db2777; display: flex; align-items: center; gap: 0.5rem;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                    Informações do cliente
+                </h4>
+                <div style="border: 1px solid #e5e7eb; padding: 1.25rem; border-radius: 8px; background: #f9fafb;">
+                    <div id="summaryCustomerName" style="font-size: 0.9rem; color: #374151; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; font-weight: 500;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                        -
+                    </div>
+                    <div id="summaryCustomerPhone" style="font-size: 0.9rem; color: #374151; display: flex; align-items: center; gap: 0.5rem;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                        -
+                    </div>
+                    <div id="summaryCustomerEmail" style="display:none;"></div>
+                </div>
+            </div>
+         </div>
+      </div>
+    </div>
+    <style>
+    @media (max-width: 900px) {
+        #paymentSuccessScreen {
+            flex-direction: column;
+            padding: 0 !important;
+            width: 100% !important;
+            margin: 1rem 0 !important;
+        }
+        .payment-summary-card {
+            max-width: 100% !important;
+            position: static !important;
+            border-radius: 12px;
+        }
+        .payment-main-card {
+            padding: 1.5rem !important;
+            width: 100% !important;
+            border-radius: 12px;
+        }
+    }
+    </style>
     <footer class="footer">
       <div class="footer-bar">
         <a href="https://instagram.com/agencia.oppus" target="_blank" rel="noopener" class="footer-link instagram-link" aria-label="Instagram Agência OPPUS">
@@ -633,14 +764,6 @@
     </div>
   </div>
   <style>
-    /* Título do Checkout com especificações fornecidas */
-    .checkout-page .title {
-      font-size: clamp(2.75rem, 5.2vw, 4rem);
-      font-weight: 700;
-      color: #FFFFFF;
-      margin-bottom: 0.6rem;
-      letter-spacing: -0.02em;
-    }
     .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
 
     /* Ampliar área de conteúdo e larguras dos cards no desktop */

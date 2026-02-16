@@ -2207,79 +2207,127 @@
       const brCode = pix?.brCode || charge?.brCode || data?.brCode || '';
       const qrImage = pix?.qrCodeImage || charge?.qrCodeImage || data?.qrCodeImage || '';
 
-      const copyButtonId = 'copyPixBtn';
-      const inputId = 'pixBrCodeInput';
+      // Ocultar seções anteriores e Header
+      document.querySelectorAll('.section-block').forEach(el => el.style.display = 'none');
+      if (document.querySelector('.header')) document.querySelector('.header').style.display = 'none';
 
-      const imgHtml = qrImage
-        ? `<img src="${qrImage}" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />`
-        : '';
-
-      const codeFieldHtml = brCode
-        ? `<div style="margin-bottom: 0.5rem; text-align: center;">
-             <input id="${inputId}" type="text" readonly value="${brCode}" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" />
-           </div>`
-        : '<div style="color:#fff;">Não foi possível exibir o código Pix.</div>';
-
-      const copyBtnHtml = brCode
-        ? `<div class="button-container" style="margin-bottom: 0.5rem;">
-             <button id="${copyButtonId}" class="continue-button">
-               <span class="button-text">Copiar código Pix</span>
-             </button>
-           </div>`
-        : '';
-
-      const textColor = document.body.classList.contains('theme-light') ? '#000' : '#fff';
-      const waitingHtml = `
-        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
-          <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
-              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
-            </circle>
-          </svg>
-          <span>Aguardando pagamento...</span>
-        </div>`;
-
-      pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
-      pixResultado.style.display = 'block';
-
-      const copyBtn = document.getElementById(copyButtonId);
-      try {
-        const isMobile = window.innerWidth <= 640;
-        if (isMobile) {
-          const target = copyBtn || document.getElementById('paymentCard') || pixResultado;
-          if (target) {
-            const rect = target.getBoundingClientRect();
-            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
-            window.scrollTo({ top, behavior: 'smooth' });
+      const screen = document.getElementById('paymentSuccessScreen');
+      if (screen) {
+          screen.style.display = 'flex';
+          
+          // QR Code
+          const qrContainer = document.getElementById('paymentQrImage');
+          if (qrContainer && qrImage) {
+              qrContainer.innerHTML = `<img src="${qrImage}" alt="QR Code" style="width: 100%; max-width: 200px; display: block; margin: 0 auto;" />`;
           }
-        }
-      } catch(_) {}
 
-      if (copyBtn && brCode) {
-        copyBtn.addEventListener('click', async () => {
-          try {
-            if (navigator.clipboard?.writeText) {
-              await navigator.clipboard.writeText(brCode);
-            } else {
-              const input = document.getElementById(inputId);
-              input?.select();
-              document.execCommand('copy');
-            }
-            const span = copyBtn.querySelector('.button-text');
-            const prev = span ? span.textContent : '';
-            if (span) span.textContent = 'Pix copiado';
-            try { showStatusMessageCheckout('Código Pix copiado', 'success'); } catch(_) {}
-            copyBtn.disabled = true;
-            copyBtn.classList.add('loading');
-            setTimeout(() => {
-              copyBtn.disabled = false;
-              copyBtn.classList.remove('loading');
-              if (span) span.textContent = prev || 'Copiar código Pix';
-            }, 1200);
-          } catch (e) {
-            alert('Não foi possível copiar o código Pix.');
+          // Values
+          const totalFormatted = formatCentsToBRL(totalCents);
+          const valEl = document.getElementById('paymentValue');
+          if (valEl) valEl.textContent = totalFormatted;
+
+          // Copy Code
+          const copyArea = document.getElementById('paymentCopyCode');
+          if (copyArea) copyArea.value = brCode;
+
+          // Copy Button Logic
+          const copyBtn = document.getElementById('paymentCopyBtn');
+          if (copyBtn) {
+              copyBtn.replaceWith(copyBtn.cloneNode(true)); // remove old listeners
+              const newBtn = document.getElementById('paymentCopyBtn');
+              newBtn.addEventListener('click', async () => {
+                  try {
+                      if (navigator.clipboard?.writeText) {
+                          await navigator.clipboard.writeText(brCode);
+                      } else {
+                          copyArea.select();
+                          document.execCommand('copy');
+                      }
+                      const span = newBtn.querySelector('.button-text');
+                      const prev = span ? span.textContent : '';
+                      if (span) span.textContent = 'Pix Copiado!';
+                      newBtn.classList.add('success');
+                      setTimeout(() => {
+                          if (span) span.textContent = prev;
+                          newBtn.classList.remove('success');
+                      }, 2000);
+                  } catch(e) { alert('Erro ao copiar'); }
+              });
           }
-        });
+
+          // Timer
+          const timerEl = document.getElementById('pixTimer');
+          if (timerEl) {
+              let timeLeft = 29 * 60 + 59; // 29:59
+              const updateTimer = () => {
+                  const m = Math.floor(timeLeft / 60);
+                  const s = timeLeft % 60;
+                  timerEl.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+                  if (timeLeft > 0) timeLeft--;
+              };
+              updateTimer();
+              setInterval(updateTimer, 1000);
+          }
+
+          // Summary
+          const sImg = document.getElementById('summaryItemImage');
+          const profileImg = document.getElementById('checkoutProfileImage');
+          if (sImg) {
+             if (profileImg && profileImg.src && profileImg.style.display !== 'none') {
+                 sImg.innerHTML = `<img src="${profileImg.src}" style="width:100%; height:100%; object-fit:cover;" />`;
+             } else {
+                 sImg.textContent = '📦';
+             }
+          }
+          
+          const sName = document.getElementById('summaryItemName');
+          if (sName) {
+             const tipoLabel = (tipo === 'seguidores_tiktok') ? 'Seguidores TikTok' : 
+                               (tipo === 'curtidas_reais' ? 'Curtidas Reais' : 
+                               (tipo === 'visualizacoes_reels' ? 'Visualizações Reels' : 'Seguidores Instagram'));
+             sName.textContent = tipoLabel;
+          }
+
+          const sQty = document.getElementById('summaryItemQty');
+          if (sQty) sQty.textContent = `Quantidade: ${qtdEffective}`;
+
+          
+          const sPrice = document.getElementById('summaryItemPrice');
+          if (sPrice) sPrice.textContent = totalFormatted;
+          
+          const sTotal = document.getElementById('summaryItemTotal');
+          if (sTotal) sTotal.textContent = totalFormatted;
+          
+          const sSub = document.getElementById('summarySubtotal');
+          if (sSub) sSub.textContent = totalFormatted;
+          
+          const sGrand = document.getElementById('summaryTotal');
+          if (sGrand) sGrand.textContent = totalFormatted;
+          
+          const sPayVal = document.getElementById('summaryPaymentValue');
+          if (sPayVal) sPayVal.textContent = `Valor: ${totalFormatted}`;
+
+          const sCustName = document.getElementById('summaryCustomerName');
+          if (sCustName) {
+              sCustName.innerHTML = `
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  ${instagramUsernameFinal || 'Cliente'}`;
+          }
+
+          const sCustPhone = document.getElementById('summaryCustomerPhone');
+          if (sCustPhone) {
+             sCustPhone.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                ${phoneValue}`;
+          }
+
+          const sCustEmail = document.getElementById('summaryCustomerEmail');
+          if (sCustEmail) {
+              sCustEmail.style.display = 'none';
+          }
+          
+          // Scroll to top
+          window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
       const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';

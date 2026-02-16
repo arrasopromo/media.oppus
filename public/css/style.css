@@ -445,6 +445,42 @@ html, body { overflow-x: hidden; }
     color: var(--text-secondary);
 }
 
+.badge-seguidores-br {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: var(--instagram-gradient);
+    color: #ffffff;
+}
+
+.title-highlight-gradient {
+    background: var(--instagram-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+
+.checkout-page .title {
+    line-height: 1.12;
+}
+
+@media (max-width: 640px) {
+    .checkout-page .header { margin-top: 0.5rem; }
+    .checkout-page .title {
+        font-size: clamp(1.7rem, 5.8vw, 2.3rem);
+        line-height: 1.02;
+        max-width: 20ch;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .checkout-page .subtitle { margin-top: 0.15rem !important; margin-bottom: 0.3rem !important; }
+    .section-block { margin: 1.25rem auto; }
+    #buyFollowersBtn { margin-top: 20px !important; }
+}
+
 /* Inputs de seleção com estética de card */
 .select-input {
     width: 100%;
