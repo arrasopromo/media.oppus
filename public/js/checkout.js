@@ -379,7 +379,7 @@
       : [
           { key: 'mistos', label: 'Seguidores Mistos' },
           { key: 'brasileiros', label: 'Seguidores Brasileiros' },
-          { key: 'organicos', label: 'Seguidores Brasileiros Orgânicos' }
+          { key: 'organicos', label: 'Seguidores brasileiros e reais' }
         ];
     if (selectedPlatform === 'tiktok') {
       try {
@@ -577,7 +577,7 @@
     switch (t) {
       case 'mistos': return 'Seguidores Mistos';
       case 'brasileiros': return 'Seguidores Brasileiros';
-      case 'organicos': return 'Seguidores Brasileiros Orgânicos';
+      case 'organicos': return 'Seguidores brasileiros e reais';
       case 'seguidores_tiktok': return 'Seguidores';
       case 'curtidas_reais': return 'Curtidas reais';
       case 'visualizacoes_reels': return 'Visualizações Reels';
@@ -589,32 +589,29 @@
     switch (tipo) {
       case 'mistos':
         return `
-          <p>Este serviço entrega seguidores mistos, podendo conter tanto brasileiros quanto estrangeiros. Perfis de diversas regiões do mundo, com nomes variados e níveis diferentes de atividade. Alguns perfis internacionais são reais. Ideal para quem busca crescimento rápido, com ótima estabilidade e excelente custo-benefício.</p>
+          <p>Perfis variados com entrega rápida e estável, com seguidores reais de vários países.</p>
           <ul>
-            <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços bons e estáveis, que não ficam caindo.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; caso ocorra — nós repomos tudo gratuitamente.</li>
-            <li>✅ <strong>Vantagem:</strong> Melhor custo-benefício para quem quer crescer rápido.</li>
-            <li>ℹ️ <strong>Observação:</strong> Parte dos seguidores pode ser internacional.</li>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🌍 Seguidores reais de vários países para crescer sua base.</li>
+            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
           </ul>
         `;
       case 'brasileiros':
         return `
-          <p>🇧🇷 Entrega composta exclusivamente por perfis com nomes brasileiros, garantindo uma base com aparência nacional. Perfis com nomes e características locais, podendo variar em frequência de postagem ou interação. Perfeito para quem busca credibilidade nacional, com serviço estável e de qualidade.</p>
+          <p>Base nacional com nomes locais e seguidores brasileiros reais.</p>
           <ul>
-            <li>✨ <strong>Qualidade garantida:</strong> Todos os nossos serviços são bons e estáveis, não caem facilmente, e têm suporte completo de reposição.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 3% a 5%; repomos automaticamente caso aconteça.</li>
-            <li>✅ <strong>Vantagem:</strong> Perfis brasileiros com nomes e fotos locais.</li>
-            <li>ℹ️ <strong>Observação:</strong> Interações e stories podem variar entre os perfis.</li>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🇧🇷 Foco total no público brasileiro e mais credibilidade.</li>
+            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
           </ul>
         `;
       case 'organicos':
         return `
-          <p>Serviço premium com seguidores 100% brasileiros, ativos e filtrados, com interações, stories recentes e até perfis verificados. Os seguidores são cuidadosamente selecionados para entregar credibilidade máxima e engajamento real. Perfeito para quem busca autoridade e resultados duradouros, com a melhor estabilidade do mercado.</p>
+          <p>Brasileiros e reais: perfis ativos e selecionados, com maior credibilidade.</p>
           <ul>
-            <li>✨ <strong>Qualidade garantida:</strong> Trabalhamos somente com serviços premium, estáveis e seguros, que não sofrem quedas significativas.</li>
-            <li>📉 <strong>Queda estimada:</strong> Em média 1%; caso ocorra — garantimos a reposição total.</li>
-            <li>✅ <strong>Vantagem:</strong> Seguidores reais, engajados e 100% brasileiros.</li>
-            <li>ℹ️ <strong>Observação:</strong> A entrega é gradual para manter a naturalidade e segurança do perfil.</li>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>✨ Perfis mais qualificados para reforçar autoridade do perfil.</li>
+            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
           </ul>
         `;
       default:

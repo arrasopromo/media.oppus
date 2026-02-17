@@ -468,17 +468,18 @@ html, body { overflow-x: hidden; }
 }
 
 @media (max-width: 640px) {
-    .checkout-page .header { margin-top: 0.5rem; }
+    .checkout-page .header { margin-top: -0.5rem; }
     .checkout-page .title {
-        font-size: clamp(1.7rem, 5.8vw, 2.3rem);
-        line-height: 1.02;
+        font-size: clamp(2.1rem, 7vw, 2.6rem);
+        line-height: 1;
         max-width: 20ch;
         margin-left: auto;
         margin-right: auto;
     }
-    .checkout-page .subtitle { margin-top: 0.15rem !important; margin-bottom: 0.3rem !important; }
-    .section-block { margin: 1.25rem auto; }
-    #buyFollowersBtn { margin-top: 20px !important; }
+    .checkout-page .subtitle { margin-top: 0.1rem !important; margin-bottom: 0.25rem !important; }
+    .section-block { margin: 0.75rem auto; }
+    #buyFollowersBtn { margin-top: 12px !important; }
+    body.has-fixed-menu { padding-top: 32px; }
 }
 
 /* Inputs de seleção com estética de card */
@@ -696,8 +697,8 @@ html, body { overflow-x: hidden; }
      box-shadow: none !important;
      outline: none !important;
    }
-   /* Mobile: reduzir padding-top para aproximar conteúdo do topo */
-   body.has-fixed-menu { padding-top: 52px; }
+  /* Mobile: reduzir padding-top para aproximar conteúdo do topo */
+   body.has-fixed-menu { padding-top: 32px; }
  }
 /* Tema claro: deixar theme-toggle e client-btn com paleta escura para combinar com toasts */
 body.theme-light .theme-toggle { background: #0f172a; color: #ffffff; border-color: #0f172a; }
@@ -1163,7 +1164,7 @@ body.theme-light .promo-prices .new-price { color: #22C55E; }
 
 .checkout-page .client-tools { display: none; }
 @media (max-width: 640px) {
-  .checkout-page .header { margin-top: 1.2rem; }
+  .checkout-page .header { margin-top: -0.5rem; }
   .checkout-page .header-ticker { margin-top: -12px; margin-bottom: 4px; }
   .checkout-page .client-tools { display: flex; gap: 0.5rem; justify-content: center; margin-top: 0.5rem; }
   .checkout-page .client-tools .select-input { max-width: 220px; }
@@ -1534,12 +1535,14 @@ body:not(.theme-light) button[id^="backToStep"] svg {
    ========================================= */
 
 /* Título do Checkout com especificações fornecidas */
-.checkout-page .title {
-  font-size: clamp(2.75rem, 5.2vw, 4rem);
-  font-weight: 700;
-  color: #FFFFFF;
-  margin-bottom: 0.6rem;
-  letter-spacing: -0.02em;
+@media (min-width: 641px) {
+  .checkout-page .title {
+    font-size: clamp(2.75rem, 5.2vw, 4rem);
+    font-weight: 700;
+    color: #FFFFFF;
+    margin-bottom: 0.6rem;
+    letter-spacing: -0.02em;
+  }
 }
 .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
 
@@ -1666,13 +1669,15 @@ body:not(.theme-light) button[id^="backToStep"] svg {
    Styles ported from servicos-instagram.ejs for consistency
    ========================================= */
 
-/* Título do Checkout com especificações fornecidas */
-.checkout-page .title {
-  font-size: clamp(2.75rem, 5.2vw, 4rem);
-  font-weight: 700;
-  color: #FFFFFF;
-  margin-bottom: 0.6rem;
-  letter-spacing: -0.02em;
+/* Título do Checkout com especificações fornecidas (apenas telas maiores que mobile) */
+@media (min-width: 641px) {
+  .checkout-page .title {
+    font-size: clamp(2.75rem, 5.2vw, 4rem);
+    font-weight: 700;
+    color: #FFFFFF;
+    margin-bottom: 0.6rem;
+    letter-spacing: -0.02em;
+  }
 }
 .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
 
