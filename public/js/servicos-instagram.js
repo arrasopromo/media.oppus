@@ -2071,15 +2071,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Hide tutorial balloon — apenas quando o usuário realmente interagir (digitar ou clicar no balão)
     const hideBalloon = () => {
-        const balloon = document.getElementById('tutorial3Usuario');
-        if (balloon) {
-            balloon.style.display = 'none';
-            balloon.classList.add('hidden-force');
-        }
+      const balloon = document.getElementById('tutorial3Usuario');
+      if (balloon) {
+        balloon.style.display = 'none';
+        balloon.classList.add('hide');
+      }
     };
     
-    // Listeners mínimos no input: esconder quando o usuário começa a digitar
+    // Esconder somente quando começar a digitar ou colar
     usernameCheckoutInput.addEventListener('input', hideBalloon);
+    usernameCheckoutInput.addEventListener('paste', hideBalloon);
 
     // Listener no próprio balão: permitir fechar com um toque/clique
     const balloonElement = document.getElementById('tutorial3Usuario');

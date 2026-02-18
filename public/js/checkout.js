@@ -813,9 +813,22 @@
       try {
         const targetPlat = document.getElementById('plataformaCard');
         if (targetPlat) {
-          const rect = targetPlat.getBoundingClientRect();
           const isMobile = window.matchMedia('(max-width: 767px)').matches;
-          const offset = isMobile ? 340 : 220;
+          const isEngPage = !!(window.__ENG_MODE__);
+
+          // Em /engajamento no mobile, ancora mais embaixo, na altura dos cards
+          let targetEl = targetPlat;
+          let offset = isMobile ? 340 : 220;
+
+          if (isMobile && isEngPage) {
+            const cardsDiv = document.getElementById('engajamentoServiceCards');
+            if (cardsDiv) {
+              targetEl = cardsDiv;
+              offset = 160;
+            }
+          }
+
+          const rect = targetEl.getBoundingClientRect();
           const top = (window.scrollY || window.pageYOffset || 0) + rect.top - offset;
           window.scrollTo({ top, behavior: 'smooth' });
         }
