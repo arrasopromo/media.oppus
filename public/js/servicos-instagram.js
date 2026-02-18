@@ -2069,39 +2069,25 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Hide tutorial balloon on focus, click, touch, or input (Aggressive hide)
+    // Hide tutorial balloon — apenas quando o usuário realmente interagir (digitar ou clicar no balão)
     const hideBalloon = () => {
         const balloon = document.getElementById('tutorial3Usuario');
         if (balloon) {
             balloon.style.display = 'none';
-            balloon.style.setProperty('display', 'none', 'important');
             balloon.classList.add('hidden-force');
         }
     };
     
-    // Listeners on the input
-    usernameCheckoutInput.addEventListener('focus', hideBalloon);
-    usernameCheckoutInput.addEventListener('click', hideBalloon);
-    usernameCheckoutInput.addEventListener('mousedown', hideBalloon);
-    usernameCheckoutInput.addEventListener('touchstart', hideBalloon);
+    // Listeners mínimos no input: esconder quando o usuário começa a digitar
     usernameCheckoutInput.addEventListener('input', hideBalloon);
 
-    // Listener on the balloon itself
+    // Listener no próprio balão: permitir fechar com um toque/clique
     const balloonElement = document.getElementById('tutorial3Usuario');
     if (balloonElement) {
         balloonElement.addEventListener('click', hideBalloon);
     }
     
-    // Global listener for safety
-    document.addEventListener('click', function(e) {
-        if (e.target && e.target.id === 'usernameCheckoutInput') {
-            hideBalloon();
-        }
-        // Also hide if clicking the balloon wrapper if it exists
-        if (e.target && (e.target.id === 'tutorial3Usuario' || e.target.closest('#tutorial3Usuario'))) {
-            hideBalloon();
-        }
-    });
+    // Removido: esconder em cliques/focus globais para evitar sumir imediatamente ao carregar
   }
 
   if (contactPhoneInput) attachPhoneMask(contactPhoneInput);
