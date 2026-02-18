@@ -360,7 +360,7 @@
                 </div>
                 
                 <!-- Cards de Serviços (Estilo Premium) -->
-                <div id="engajamentoServiceCards" style="display: none;">
+                <div id="engajamentoServiceCards" style="display: grid;">
                     
                     <!-- Card Seguidores -->
                     <div class="service-card premium-card card-seguidores" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-instagram'+qs; } catch(_){ return '/servicos-instagram'; } })()">

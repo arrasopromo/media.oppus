@@ -2553,6 +2553,10 @@
     });
   }
 
+  if (!window.__ENG_MODE__ && btnInstagram) {
+    try { setPlatform('instagram'); } catch(_) {}
+  }
+
   
 
   const testimonialsCarousel = document.getElementById('testimonialsCarousel');
