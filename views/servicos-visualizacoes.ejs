@@ -156,13 +156,13 @@
               Exclusividade
             </div>
             <h3 class="card-title" style="font-size: 2rem; margin-bottom: 0.5rem; color: var(--text-primary);">
-              <span style="font-weight: 700;">Visualizações</span> <span style="font-weight: 700; background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">no Reels</span>
+              <span style="font-weight: 700;">Ferramenta</span> <span style="font-weight: 700; background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Exclusiva</span>
             </h3>
             <p class="card-desc" style="max-width: 600px; margin: 0 auto 2rem; font-size: 1.1rem; color: var(--text-secondary);">
-              Pacotes de visualizações reais para impulsionar o alcance dos seus vídeos e Reels.
+              Conheça nossa tecnologia exclusiva de reposição automática de visualizações.
             </p>
             <div style="max-width: 320px; margin: 0 auto;">
-              <img src="/images/visualizacao-icon.png" alt="Visualizações" style="width: 100%; height: auto; display: block; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
+              <img src="/images/refil%20(1).png" alt="Ferramenta Exclusiva" style="width: 100%; height: auto; display: block; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
             </div>
           </div>
         </div>
@@ -275,6 +275,69 @@
                   <div id="step3PostPreviewContent"></div>
                </div>
             </div>
+
+            <div class="service-card" id="orderBumpInline" style="display:none;">
+              <div class="card-content">
+                <h3 class="card-title" style="background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: transparent; display: block; text-align: center; width: 100%;">Oferta exclusivas para você</h3>
+                <div class="card-desc promo-list">
+                    <label class="promo-item upgrade">
+                      <input type="checkbox" id="orderBumpCheckboxInline" />
+                      <div class="promo-content">
+                        <div class="promo-highlight" id="orderBumpHighlight">Upgrade de visualizações</div>
+                        <div class="promo-title">Upgrade de pacote</div>
+                        <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
+                        <div class="promo-prices" data-promo="upgrade">
+                          <span class="old-price">—</span>
+                          <span class="discount-badge">OFERTA</span>
+                          <span class="new-price">—</span>
+                        </div>
+                      </div>
+                    </label>
+                    <label class="promo-item comments">
+                      <input type="checkbox" id="promoComments" data-promo="comments" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ COMENTÁRIOS</div>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Comentário promocional</span>
+                          <button id="commentsExampleBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Exemplo comentários</button>
+                        </div>
+                        <div class="promo-desc">1 comentário = R$ 1,50 cada.</div>
+                        <div class="promo-prices" data-promo="comments">
+                          <span class="old-price">R$ 29,90</span>
+                          <span class="discount-badge">67% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" aria-label="Quantidade de comentários">
+                          <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="commentsQty" class="likes-qty">1</span>
+                          <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                        </div>
+                      </div>
+                    </label>
+                    <label class="promo-item warranty60">
+                      <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
+                      <div class="promo-content">
+                        <div id="warrantyHighlight" class="promo-highlight">GARANTIA VITALÍCIA</div>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Garantia Vitalícia</span>
+                          <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
+                        </div>
+                        <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                        <div class="promo-prices" data-promo="warranty60">
+                          <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
+                          <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
+                          <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" style="display:none;" aria-label="Garantia estendida">
+                          <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
+                          <span id="warrantyModeLabel" class="likes-qty">Vitalícia</span>
+                          <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
+                        </div>
+                      </div>
+                    </label>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="service-card" id="resumo" style="display:none; margin-top: 1rem; max-width: 960px; margin-left: auto; margin-right: auto;">
@@ -307,6 +370,57 @@
           </div>
         </div>
       </section>
+
+      <div id="postSelectModal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 id="postModalTitle" class="modal-title">Selecionar reels</h3>
+            <button id="postModalClose" class="modal-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div class="modal-body">
+            <div id="postModalGrid" class="post-grid"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="postModalClose2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="warranty60Modal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">Garantia estendida</h3>
+            <button id="warranty60CloseBtn" class="modal-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div class="modal-body">
+            <p style="margin-top:0.75rem; color: var(--text-secondary);">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de curtidas que teve queda.</p>
+            <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px; margin-top: 1rem;">
+               <img src="/images/reposicao.jpeg" alt="Garantia de Reposição" style="max-width:100%; border-radius:8px;">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="commentsExampleModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
+        <div class="modal-dialog" style="max-width:400px; width:90%; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
+          <div class="modal-header" style="border:none; padding-bottom:0;">
+            <h3 class="modal-title" style="margin:0 auto;">Exemplo de Comentários</h3>
+            <button id="commentsExampleCloseBtn" class="modal-close" type="button" aria-label="Fechar" style="position:absolute; right:1rem; top:1rem;">✕</button>
+          </div>
+          <div class="modal-body" style="text-align:center;">
+            <div style="position:relative; aspect-ratio: 9 / 16; height: clamp(320px, 60vh, 560px); max-width: 100%; margin: 0.75rem auto 0; border-radius:12px; overflow:hidden; box-shadow: var(--shadow); background: #000;">
+              <video id="commentsVideoPlayer" src="/images/comentarios.mp4" controls muted playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit: cover;"></video>
+            </div>
+            <p style="margin-top:0.75rem; color: var(--text-secondary);">Comentários de perfis brasileiros, alta qualidade, comentários positivos e sem queda.</p>
+          </div>
+          <div class="modal-footer">
+            <button id="commentsExampleCloseBtn2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
 
     </main>
     <footer class="footer">
