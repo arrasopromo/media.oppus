@@ -2182,16 +2182,16 @@ async function processOrderFulfillment(record, col, req) {
                 );
                 if (lockUpdate.modifiedCount > 0) {
                     const axios = require('axios');
-                    const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
-                    try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLink, quantity: likesQty }); } catch(_) {}
+                    const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
+                    try { console.log('🚀 sending_fama24h_likes', { service: 671, link: likesLink, quantity: likesQty }); } catch(_) {}
                     try {
                         const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                         const dataLikes = respLikes.data || {};
                         const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
                     } catch (e3) {
                         try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
                     }
                 }
             }
@@ -3567,23 +3567,23 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 try { console.log('🔎 orderbump_likes_sanitized', { likesLinkSel }); } catch(_) {}
                 const alreadyLikes2 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
                 if (!likesLinkSel) {
-                  await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
+                  await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
                 } else if (!alreadyLikes2) {
                   const lockUpdate = await col.updateOne(
                     { ...filter, 'fama24h_likes.status': { $exists: false } },
                     { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
                   );
                   if (lockUpdate.modifiedCount > 0) {
-                      const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
-                      try { console.log('🚀 sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
+                      const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
+                      try { console.log('🚀 sending_fama24h_likes', { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
                       try {
                         const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                         const dataLikes = respLikes.data || {};
                         const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes } });
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes } });
                       } catch (e3) {
                         try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQtyForStatus } } });
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus } } });
                       }
                   }
                 }
@@ -3938,15 +3938,15 @@ app.post('/api/orderbump/resend', async (req, res) => {
         );
         if (lockUpdate.modifiedCount > 0) {
           const axios = require('axios');
-          const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+          const payload = new URLSearchParams({ key, action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
           try {
             const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
             const data = resp.data || {};
             const orderIdLikes = data.order || data.id || null;
-            await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
+            await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
             results.likes = { orderId: orderIdLikes, data };
           } catch (e) {
-            await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+            await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
             results.likes = { error: e?.message || String(e) };
           }
         } else {
@@ -4021,15 +4021,15 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
           );
           if (lockUpdate.modifiedCount > 0) {
               const axios = require('axios');
-              const payload = new URLSearchParams({ key, action: 'add', service: '666', link: String(likesLink), quantity: String(likesQty) });
+              const payload = new URLSearchParams({ key, action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
               try {
                 const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                 const data = resp.data || {};
                 const orderIdLikes = data.order || data.id || null;
-                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
+                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
                 resultItem.likes = { orderId: orderIdLikes };
               } catch (e) {
-                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLink, quantity: likesQty } } });
+                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
                 resultItem.likes = { error: e?.message || String(e) };
               }
           }
@@ -4557,23 +4557,23 @@ app.post('/session/mark-paid', async (req, res) => {
           if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0 && !alreadyLikes3) {
             if (!likesLinkSel) {
               try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
-              await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 666, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+              await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 671, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
             } else {
                const lockUpdate = await col.updateOne(
                   { ...filter, 'fama24h_likes.status': { $exists: false } },
                   { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
                );
                if (lockUpdate.modifiedCount > 0) {
-                  const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
-                  try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 666, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
+                  const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQty) });
+                  try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 671, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
                   try {
                     const respL = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                     const dataL = respL.data || {};
                     const orderIdL = dataL.order || dataL.id || null;
-                    await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdL, 'fama24h_likes.status': orderIdL ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataL } });
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdL, 'fama24h_likes.status': orderIdL ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataL } });
                   } catch (e3) {
                     try { console.error('❌ [mark-paid] fama24h_likes_error', e3?.response?.data || e3?.message || String(e3)); } catch(_) {}
-                    await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty } } });
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty } } });
                   }
                }
             }
@@ -4888,9 +4888,10 @@ app.get('/painel', async (req, res) => {
       let costPer1000 = 0;
       // Per user rules:
        // mistos=5.40, brasileiros=15.48, organicos=35, curtidas=2, comentarios=0.3, visualizacao=0.01
-       if (type.includes('mistos')) costPer1000 = 5.40;
-       else if (type.includes('brasileiros') && !type.includes('curtidas') && !type.includes('comentarios') && !type.includes('visualiza')) costPer1000 = 15.48;
-       else if (type.includes('organicos')) costPer1000 = 35.0;
+      if (type.includes('curtidas') && type.includes('mistos')) costPer1000 = 0.75;
+      else if (type.includes('mistos')) costPer1000 = 5.40;
+      else if (type.includes('brasileiros') && !type.includes('curtidas') && !type.includes('comentarios') && !type.includes('visualiza')) costPer1000 = 15.48;
+      else if (type.includes('organicos')) costPer1000 = 35.0;
       else if (type.includes('curtidas')) costPer1000 = 2.0;
       else if (type.includes('comentarios')) costPer1000 = 0.3;
       else if (type.includes('visualiza')) costPer1000 = 0.01;
@@ -5145,9 +5146,9 @@ app.post('/api/payment/confirm', async (req, res) => {
                 const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                 const dataLikes = respLikes.data || {};
                 const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
               } catch (e3) {
-                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 666, link: likesLinkSel, quantity: likesQty } } });
+                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty } } });
               }
           }
         }
