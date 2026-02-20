@@ -18,12 +18,14 @@
           <div class="card-content">
             <h3 class="card-title">Refil de Pedido</h3>
             <div class="card-desc">
-              <div class="input-group" id="grupoRefil" style="position:relative;">
-                <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Digite seu Order ID" maxlength="20" />
-                <button id="refilSubmitBtn" class="continue-button" type="button" style="margin-left:0.5rem;">
-                  <span class="button-text">Solicitar Refil</span>
-                </button>
-              </div>
+              <div class="input-group" id="grupoRefil">
+                <label for="refilOrderIdInput" class="input-label" style="display:block; margin-bottom:0.25rem; font-weight:600; text-align:center;">Order ID</label>
+                <div class="refil-input-row">
+                  <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Digite seu Order ID" maxlength="20" />
+                  <button id="refilSubmitBtn" class="continue-button" type="button">
+                    <span class="button-text">Solicitar Refil</span>
+                  </button>
+                </div>
               <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
               <div id="refilResult" class="card-desc" style="display:none; margin-top:0.75rem;"></div>
             </div>
@@ -35,8 +37,14 @@
   <style>
     .refil-page .main-content { max-width: 1040px; width: 100%; margin: 0 auto; }
     .refil-page #refilCard { width: 100%; }
-    .refil-page #grupoRefil { display: grid; grid-template-columns: minmax(0,1fr); gap: 0.5rem; justify-items: center; }
+    .refil-page #grupoRefil { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+    .refil-page #grupoRefil .refil-input-row { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+    .refil-page #grupoRefil .select-input { max-width: 360px; }
     .refil-page #refilSubmitBtn { margin-left: 0 !important; }
+    @media (min-width: 768px) {
+      .refil-page #grupoRefil .refil-input-row { flex-direction: row; justify-content: center; }
+      .refil-page #refilSubmitBtn { white-space: nowrap; }
+    }
   </style>
   
   <script>

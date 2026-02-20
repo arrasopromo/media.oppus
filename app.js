@@ -1728,6 +1728,13 @@ app.post('/api/refil/create', async (req, res) => {
         console.log('✅ [Refil] OK status:', response.status);
         return res.status(200).json(response.data);
     } catch (err) {
+        if (err && (err.code === 'EPROTO' || String(err.message || '').toLowerCase().includes('eproto') || String(err.message || '').toLowerCase().includes('tlsv1 alert internal error'))) {
+            console.error('❌ [Refil] Erro TLS/EPROTO:', err.message);
+            return res.status(502).json({
+                error: 'refil_indisponivel',
+                message: 'Serviço de refil temporariamente indisponível. Tente novamente em alguns minutos.'
+            });
+        }
         const status = err.response?.status || 500;
         const details = err.response?.data || { message: err.message };
         console.error('❌ [Refil] Erro:', { status, details });
