@@ -339,10 +339,18 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      if (isCurtidasContext && !isInstagramPrivate) {
-        if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode) {
-          openPostModal('likes');
-          return;
+      if (!isInstagramPrivate) {
+        if (isCurtidasContext) {
+          if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode || curtidasSelectedPost.kind !== 'likes') {
+            openPostModal('likes');
+            return;
+          }
+        }
+        if (isViewsContext) {
+          if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode || curtidasSelectedPost.kind !== 'views') {
+            openPostModal('views');
+            return;
+          }
         }
       }
     }
@@ -1486,7 +1494,10 @@ document.addEventListener('DOMContentLoaded', function() {
              } catch(_) {}
         }
 
-        if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+        // Após validar perfil, abrir o modal de seleção de post:
+        // - Curtidas  -> seleção de post (likes)
+        // - Visualizações -> seleção de Reels (views)
+        if (isCurtidasContext || isViewsContext) {
           openPostModal(isCurtidasContext ? 'likes' : 'views');
         }
         
@@ -1786,21 +1797,29 @@ document.addEventListener('DOMContentLoaded', function() {
       try {
         const selResp = await fetch('/api/instagram/selected-for');
         if (selResp.ok) {
-            const selData = await selResp.json();
-            const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
-            const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
-            
-            const likesLink = mapKind('likes');
-            const viewsLink = mapKind('views');
-            const commentsLink = mapKind('comments');
-            
-            const hasLikes = promos.some(p => p.key === 'likes');
-            const hasViews = promos.some(p => p.key === 'views');
-            const hasComments = promos.some(p => p.key === 'comments');
+          const selData = await selResp.json();
+          const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+          const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
 
-            if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
-            if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
-            if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+          const likesLink = mapKind('likes');
+          const viewsLink = mapKind('views');
+          const commentsLink = mapKind('comments');
+
+          const hasLikes = promos.some(p => p.key === 'likes');
+          const hasViews = promos.some(p => p.key === 'views');
+          const hasComments = promos.some(p => p.key === 'comments');
+
+          if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
+          if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
+          if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+
+          // Para serviços principais de curtidas/visualizações, salvar também o post selecionado
+          if (serviceCategory === 'curtidas' && likesLink) {
+            payload.additionalInfo.push({ key: 'post_link', value: likesLink });
+          }
+          if (serviceCategory === 'visualizacoes' && viewsLink) {
+            payload.additionalInfo.push({ key: 'post_link', value: viewsLink });
+          }
         }
       } catch(_) {}
 
