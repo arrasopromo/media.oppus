@@ -74,6 +74,8 @@ async function dispatchPendingOrganicos() {
 
         const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
         const tipo = additionalInfoMap['tipo_servico'] || record.tipo || record.tipoServico || '';
+        const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+        if (categoriaServ === 'curtidas' || categoriaServ === 'visualizacoes') continue;
         if (!/organicos/i.test(String(tipo))) continue;
         const qtdBase = Number(additionalInfoMap['quantidade'] || record.quantidade || record.qtd || 0) || 0;
         const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
@@ -2013,20 +2015,28 @@ async function processOrderFulfillment(record, col, req) {
         return acc;
     }, {});
     const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
-    const isCurtidasBase = pacoteStr.includes('curtida');
+    const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+    const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
+    const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas';
     let serviceId = null;
-    if (isCurtidasBase) {
+    let linkToSend = instaUser;
+    if (isViewsBase) {
+        serviceId = 250;
+        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+    } else if (isCurtidasBase) {
         if (/^mistos$/i.test(tipo)) {
             serviceId = 671;
         } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
             serviceId = 679;
         }
+        linkToSend = additionalInfoMap['post_link'] || instaUser;
     } else {
         if (/^mistos$/i.test(tipo)) {
             serviceId = 663;
         } else if (/^brasileiros$/i.test(tipo)) {
             serviceId = 23;
         }
+        linkToSend = instaUser;
     }
     const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
     const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
@@ -2047,9 +2057,9 @@ async function processOrderFulfillment(record, col, req) {
         qtd = 100;
     }
     
-    const isOrganicos = /organicos/i.test(tipo) && !isCurtidasBase;
+    const isOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
     if (!isOrganicos) {
-        const canSend = !!key && !!serviceId && !!instaUser && qtd > 0;
+        const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0;
         if (canSend) {
             // Atomic lock for Fama24h
             const lockUpdate = await col.updateOne(
@@ -2063,12 +2073,12 @@ async function processOrderFulfillment(record, col, req) {
 
             if (lockUpdate.modifiedCount > 0) {
                 const axios = require('axios');
-                const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
+                const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkToSend), quantity: String(qtd) });
                 try {
                     const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                     const famaData = famaResp.data || {};
                     const orderId = famaData.order || famaData.id || null;
-                    await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                    await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkToSend, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
                     try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                 } catch (err) {
                     console.error('Erro ao enviar para Fama24h:', err.message);
@@ -3440,20 +3450,28 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const key = process.env.FAMA24H_API_KEY || '';
           
           const pacoteStr = String(additionalInfoMap['pacote'] || record?.additionalInfoMapPaid?.['pacote'] || '').toLowerCase();
-          const isCurtidasBase = pacoteStr.includes('curtida');
+          const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+          const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
+          const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas';
           let serviceId = null;
-          if (isCurtidasBase) {
+          let linkToSend = instaUser;
+          if (isViewsBase) {
+              serviceId = 250;
+              linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+          } else if (isCurtidasBase) {
               if (/^mistos$/i.test(tipo)) {
                   serviceId = 671;
               } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
                   serviceId = 679;
               }
+              linkToSend = additionalInfoMap['post_link'] || instaUser;
           } else {
               if (/^mistos$/i.test(tipo)) {
                   serviceId = 663;
               } else if (/^brasileiros$/i.test(tipo)) {
                   serviceId = 23;
               }
+              linkToSend = instaUser;
           }
 
           const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
@@ -3469,23 +3487,23 @@ app.post('/api/openpix/webhook', async (req, res) => {
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-          const isOrganicos = /organicos/i.test(tipo);
+          const isOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
           if (!isOrganicos) {
-            const canSend = !!key && !!serviceId && !!instaUser && qtd > 0 && !alreadySentFama;
+            const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0 && !alreadySentFama;
             if (canSend) {
               const axios = require('axios');
-              const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(instaUser), quantity: String(qtd) });
-              console.log('➡️ Enviando pedido Fama24h', { service: serviceId, link: instaUser, quantity: qtd });
+              const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkToSend), quantity: String(qtd) });
+              console.log('➡️ Enviando pedido Fama24h', { service: serviceId, link: linkToSend, quantity: qtd });
               try {
                 const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                 const famaData = famaResp.data || {};
                 console.log('✅ Fama24h resposta', { status: famaResp.status, data: famaData });
                 const orderId = famaData.order || famaData.id || null;
-                await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkToSend, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
                 try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
               } catch (fErr) {
                 console.error('❌ Fama24h erro', fErr?.response?.data || fErr?.message || String(fErr));
-                await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: instaUser, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+                await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: linkToSend, quantity: qtd }, requestedAt: new Date().toISOString() } } });
               }
             } else {
               console.log('ℹ️ Fama24h não enviado', { hasKey: !!key, tipo, qtd: qtdBase, instaUser, alreadySentFama, hasUpgrade });
