@@ -1718,15 +1718,16 @@ app.get('/refil', async (req, res) => {
   });
 });
 
-// API para solicitar refil (proxy para smmrefil)
+// API para solicitar refil (proxy para Fama24h)
 app.post('/api/refil/create', async (req, res) => {
     try {
         const { order_id, username } = req.body || {};
         if (!order_id) return res.status(400).json({ error: 'missing_order_id' });
         const axios = require('axios');
-        const payload = { order_id: String(order_id).trim(), username: String(username || 'arraso') };
-        console.log('🔁 [Refil] Solicitando:', payload);
-        const response = await axios.post('https://refilfama24h.net/api/refill/create', payload, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 20000 });
+        const orderIdStr = String(order_id).trim();
+        const url = `https://refilfama24h.com/api/refill/create?order_id=${encodeURIComponent(orderIdStr)}`;
+        console.log('🔁 [Refil] Solicitando:', { order_id: orderIdStr, url });
+        const response = await axios.post(url, null, { headers: { 'Accept': 'application/json' }, timeout: 20000 });
         console.log('✅ [Refil] OK status:', response.status);
         return res.status(200).json(response.data);
     } catch (err) {
@@ -2037,6 +2038,26 @@ async function processOrderFulfillment(record, col, req) {
             serviceId = 23;
         }
         linkToSend = instaUser;
+    }
+
+    // Fallback: se serviço é de curtidas/visualizações e não há post selecionado,
+    // tentar usar o último post disponível em validated_insta_users
+    if ((isViewsBase || isCurtidasBase) && (!linkToSend || linkToSend === instaUser) && instaUser) {
+        try {
+            const { getCollection } = require('./mongodbClient');
+            const vu = await getCollection('validated_insta_users');
+            const vUser = await vu.findOne({ username: String(instaUser).toLowerCase() });
+            if (vUser && vUser.latestPosts && Array.isArray(vUser.latestPosts) && vUser.latestPosts.length > 0) {
+                const lp = vUser.latestPosts[0];
+                const code = lp.shortcode || lp.code;
+                if (code) {
+                    linkToSend = `https://www.instagram.com/p/${code}/`;
+                    try { console.log('🔄 [Base] Recuperado link do post via cache para:', instaUser, linkToSend); } catch(_) {}
+                }
+            }
+        } catch (eFallbackBase) {
+            try { console.error('⚠️ [Base] Erro ao recuperar post cache:', eFallbackBase.message); } catch(_) {}
+        }
     }
     const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
     const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
@@ -2367,12 +2388,90 @@ app.post('/api/fama/status', async (req, res) => {
       const data = resp.data || {};
       try { console.log('🛰️ Fama status response', { status: resp.status, data }); } catch(_) {}
       const col = await getCollection('checkout_orders');
-      await col.updateOne({ 'fama24h.orderId': Number(orderParam) }, { $set: { 'fama24h.statusPayload': data, 'fama24h.lastStatusAt': new Date().toISOString() } });
+      const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
+      let normalized = '';
+      if (/cancel/.test(txt)) normalized = 'cancelled';
+      else if (/partial/.test(txt)) normalized = 'partial';
+      else if (/pend/.test(txt)) normalized = 'pending';
+      else if (/process|progress|start|running/.test(txt)) normalized = 'processing';
+      else if (/complete|success|finished|done|conclu/.test(txt)) normalized = 'completed';
+      await col.updateOne(
+        { 'fama24h.orderId': Number(orderParam) },
+        { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } }
+      );
     } catch (_) {}
     return res.json({ ok: true, data: resp.data || {} });
   } catch (e) {
     try { console.error('🛰️ Fama status error', e?.response?.data || e?.message || String(e)); } catch(_) {}
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/order/provider-status', async (req, res) => {
+  try {
+    const idRaw = String(req.query.order || req.query.orderID || req.query.oid || req.query.identifier || req.query.id || '').trim();
+    try { console.log('🛰️ [provider-status] incoming', { query: req.query }); } catch(_) {}
+    if (!idRaw) return res.status(400).json({ ok: false, error: 'missing_id' });
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const filter = { $or: [] };
+    const maybeNum = Number(idRaw);
+    if (!Number.isNaN(maybeNum)) {
+      filter.$or.push({ 'fama24h.orderId': maybeNum });
+      filter.$or.push({ 'fornecedor_social.orderId': maybeNum });
+    }
+    filter.$or.push({ 'fama24h.orderId': idRaw });
+    filter.$or.push({ 'fornecedor_social.orderId': idRaw });
+    filter.$or.push({ identifier: idRaw });
+    filter.$or.push({ 'woovi.identifier': idRaw });
+    filter.$or.push({ correlationID: idRaw });
+    if (/^[0-9a-fA-F]{24}$/.test(idRaw)) {
+      try { filter.$or.push({ _id: new (require('mongodb').ObjectId)(idRaw) }); } catch(_) {}
+    }
+    const doc = await col.findOne(filter.$or.length ? filter : { identifier: idRaw });
+    if (!doc) return res.status(404).json({ ok: false, error: 'order_not_found' });
+    const famaId = doc?.fama24h?.orderId || null;
+    const fsId = doc?.fornecedor_social?.orderId || null;
+    let provider = '';
+    let orderParam = '';
+    if (famaId) { provider = 'fama24h'; orderParam = String(famaId); }
+    else if (fsId) { provider = 'fornecedor_social'; orderParam = String(fsId); }
+    else return res.status(400).json({ ok: false, error: 'missing_provider_order_id' });
+    try { console.log('🛰️ [provider-status] resolved', { provider, orderParam, _id: String(doc._id) }); } catch(_) {}
+    const getText = (obj) => String(obj?.status || obj?.Status || obj?.status_text || obj?.statusText || obj?.StatusText || '').toLowerCase();
+    const persisted = provider === 'fama24h' ? (doc?.fama24h?.statusPayload || null) : (doc?.fornecedor_social?.statusPayload || null);
+    const t = getText(persisted);
+    const isFinal = /cancel/.test(t) || /complete|success|finished|done|conclu/.test(t);
+    if (persisted && isFinal) {
+      try { console.log('🛰️ [provider-status] skip (final)', { t }); } catch(_) {}
+      return res.json({ ok: true, provider, data: persisted, skipped: true });
+    }
+    const key = provider === 'fama24h' ? (process.env.FAMA24H_API_KEY || '') : (process.env.FORNECEDOR_SOCIAL_API_KEY || '');
+    if (!key) return res.status(400).json({ ok: false, error: 'missing_key', provider });
+    const axios = require('axios');
+    const url = provider === 'fama24h' ? 'https://fama24h.net/api/v2' : 'https://fornecedorsocial.com/api/v2';
+    const payload = new URLSearchParams({ key, action: 'status', order: orderParam });
+    try { console.log('🛰️ [provider-status] requesting', { url, order: orderParam }); } catch(_) {}
+    const resp = await axios.post(url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
+    const data = resp.data || {};
+    try { console.log('🛰️ [provider-status] response', { status: resp.status, data }); } catch(_) {}
+    const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
+    let normalized = '';
+    if (/cancel/.test(txt)) normalized = 'cancelled';
+    else if (/partial/.test(txt)) normalized = 'partial';
+    else if (/pend/.test(txt)) normalized = 'pending';
+    else if (/process|progress|start|running/.test(txt)) normalized = 'processing';
+    else if (/complete|success|finished|done|conclu/.test(txt)) normalized = 'completed';
+    if (provider === 'fama24h') {
+      await col.updateOne({ _id: doc._id }, { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || doc?.fama24h?.status || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } });
+    } else {
+      await col.updateOne({ _id: doc._id }, { $set: { 'fornecedor_social.statusPayload': data, 'fornecedor_social.status': normalized || doc?.fornecedor_social?.status || 'unknown', 'fornecedor_social.lastStatusAt': new Date().toISOString() } });
+    }
+    try { console.log('🛰️ [provider-status] stored', { normalized }); } catch(_) {}
+    return res.json({ ok: true, provider, data });
+  } catch (err) {
+    try { console.error('🛰️ [provider-status] error', err?.message || String(err)); } catch(_) {}
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
@@ -3461,8 +3560,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
           } else if (isCurtidasBase) {
               if (/^mistos$/i.test(tipo)) {
                   serviceId = 671;
-              } else if (/^(brasileiros|organicos)$/i.test(tipo)) {
+              } else if (/^brasileiros$/i.test(tipo)) {
                   serviceId = 679;
+              } else if (/^organicos$/i.test(tipo)) {
+                  serviceId = 670;
               }
               linkToSend = additionalInfoMap['post_link'] || instaUser;
           } else {
@@ -3472,6 +3573,26 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   serviceId = 23;
               }
               linkToSend = instaUser;
+          }
+
+          // Fallback: se serviço é de curtidas/visualizações e não há post selecionado,
+          // tentar usar o último post disponível em validated_insta_users
+          if ((isViewsBase || isCurtidasBase) && (!linkToSend || linkToSend === instaUser) && instaUser) {
+              try {
+                  const { getCollection } = require('./mongodbClient');
+                  const vu = await getCollection('validated_insta_users');
+                  const vUser = await vu.findOne({ username: String(instaUser).toLowerCase() });
+                  if (vUser && vUser.latestPosts && Array.isArray(vUser.latestPosts) && vUser.latestPosts.length > 0) {
+                      const lp = vUser.latestPosts[0];
+                      const code = lp.shortcode || lp.code;
+                      if (code) {
+                          linkToSend = `https://www.instagram.com/p/${code}/`;
+                          try { console.log('🔄 [Webhook Base] Recuperado link do post via cache para:', instaUser, linkToSend); } catch(_) {}
+                      }
+                  }
+              } catch (eFallbackWebhook) {
+                  try { console.error('⚠️ [Webhook Base] Erro ao recuperar post cache:', eFallbackWebhook.message); } catch(_) {}
+              }
           }
 
           const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
@@ -4139,25 +4260,17 @@ app.get('/pedido', async (req, res) => {
     }
     const col = await getCollection('checkout_orders');
     let doc = null;
-    // 1) Priorizar pedido selecionado explicitamente em sessão
-    if (req.session && req.session.selectedOrderID) {
-      const soid = req.session.selectedOrderID;
-      const { ObjectId } = require('mongodb');
-      const orConds = [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ];
-      if (typeof soid === 'string' && /^[0-9a-fA-F]{24}$/.test(soid)) {
-        try { orConds.push({ _id: new ObjectId(soid) }); } catch(_) {}
-      }
-      doc = await col.findOne({ $or: orConds });
-    }
-    // 2) Em seguida, tentar pelos parâmetros de consulta
-    if (!doc) {
+    // 1) Se houver parâmetros na URL, priorizar sempre a busca por eles
+    if (hasQuery) {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
-        if (!Number.isNaN(maybeNum)) conds.push({ 'fama24h.orderId': maybeNum });
-        if (!Number.isNaN(maybeNum)) conds.push({ 'fornecedor_social.orderId': maybeNum });
+        if (!Number.isNaN(maybeNum)) {
+          conds.push({ 'fama24h.orderId': maybeNum });
+          conds.push({ 'fornecedor_social.orderId': maybeNum });
+        }
         conds.push({ 'fama24h.orderId': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
         // Support woovi.chargeId
@@ -4179,6 +4292,16 @@ app.get('/pedido', async (req, res) => {
       if (conds.length) {
         doc = await col.findOne({ $or: conds });
       }
+    }
+    // 2) Se não veio query ou ela não encontrou nada, usar pedido selecionado em sessão
+    if (!doc && req.session && req.session.selectedOrderID) {
+      const soid = req.session.selectedOrderID;
+      const { ObjectId } = require('mongodb');
+      const orConds = [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ];
+      if (typeof soid === 'string' && /^[0-9a-fA-F]{24}$/.test(soid)) {
+        try { orConds.push({ _id: new ObjectId(soid) }); } catch(_) {}
+      }
+      doc = await col.findOne({ $or: orConds });
     }
     // 3) Por último, usar último pago guardado em sessão (apenas se recente)
     if (!doc && req.session && (req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID)) {
@@ -4812,10 +4935,21 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+const DEFAULT_COST_SETTINGS = {
+  seguidores_mistos: 5.40,
+  seguidores_brasileiros: 15.48,
+  seguidores_organicos: 35.0,
+  curtidas_mistos: 0.75,
+  curtidas: 2.0,
+  comentarios: 0.3,
+  visualizacoes: 0.01
+};
+
 app.get('/painel', async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
+    const settingsCol = await getCollection('settings');
 
     // Filter by paid status
     const query = {
@@ -4826,6 +4960,9 @@ app.get('/painel', async (req, res) => {
     };
 
     const orders = await col.find(query).sort({ createdAt: -1 }).toArray();
+
+    let costSettingsDoc = await settingsCol.findOne({ _id: 'cost_settings' });
+    const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, (costSettingsDoc && costSettingsDoc.values) || {});
 
     // Timezone correction (-3 hours) helper
     // Returns a Date object shifted by -3 hours so that UTC methods return SP components
@@ -4911,16 +5048,13 @@ app.get('/painel', async (req, res) => {
 
       // Determine cost per 1000
       let costPer1000 = 0;
-      // Per user rules:
-       // mistos=5.40, brasileiros=15.48, organicos=35, curtidas=2, comentarios=0.3, visualizacao=0.01
-      if (type.includes('curtidas') && type.includes('mistos')) costPer1000 = 0.75;
-      else if (type.includes('mistos')) costPer1000 = 5.40;
-      else if (type.includes('brasileiros') && !type.includes('curtidas') && !type.includes('comentarios') && !type.includes('visualiza')) costPer1000 = 15.48;
-      else if (type.includes('organicos')) costPer1000 = 35.0;
-      else if (type.includes('curtidas')) costPer1000 = 2.0;
-      else if (type.includes('comentarios')) costPer1000 = 0.3;
-      else if (type.includes('visualiza')) costPer1000 = 0.01;
-      else if (type.includes('views')) costPer1000 = 0.01; // Alias
+      if (type.includes('curtidas') && type.includes('mistos')) costPer1000 = costSettings.curtidas_mistos;
+      else if (type.includes('mistos')) costPer1000 = costSettings.seguidores_mistos;
+      else if (type.includes('brasileiros') && !type.includes('curtidas') && !type.includes('comentarios') && !type.includes('visualiza')) costPer1000 = costSettings.seguidores_brasileiros;
+      else if (type.includes('organicos')) costPer1000 = costSettings.seguidores_organicos;
+      else if (type.includes('curtidas')) costPer1000 = costSettings.curtidas;
+      else if (type.includes('comentarios')) costPer1000 = costSettings.comentarios;
+      else if (type.includes('visualiza') || type.includes('views')) costPer1000 = costSettings.visualizacoes;
 
       const serviceCost = (qty / 1000) * costPer1000;
       const totalItemCost = 0.85 + serviceCost;
@@ -4946,7 +5080,44 @@ app.get('/painel', async (req, res) => {
       };
     });
 
-    res.render('painel', { orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length });
+    res.render('painel', { orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length, costSettings });
+  } catch (e) {
+    res.status(500).send(e.toString());
+  }
+});
+
+app.post('/painel/custos', async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const body = req.body || {};
+    const parseNumber = (name, fallback) => {
+      const raw = body[name];
+      if (typeof raw === 'undefined') return fallback;
+      const str = String(raw).replace(',', '.');
+      const num = parseFloat(str);
+      return Number.isFinite(num) ? num : fallback;
+    };
+    const values = {
+      seguidores_mistos: parseNumber('seguidores_mistos', DEFAULT_COST_SETTINGS.seguidores_mistos),
+      seguidores_brasileiros: parseNumber('seguidores_brasileiros', DEFAULT_COST_SETTINGS.seguidores_brasileiros),
+      seguidores_organicos: parseNumber('seguidores_organicos', DEFAULT_COST_SETTINGS.seguidores_organicos),
+      curtidas_mistos: parseNumber('curtidas_mistos', DEFAULT_COST_SETTINGS.curtidas_mistos),
+      curtidas: parseNumber('curtidas', DEFAULT_COST_SETTINGS.curtidas),
+      comentarios: parseNumber('comentarios', DEFAULT_COST_SETTINGS.comentarios),
+      visualizacoes: parseNumber('visualizacoes', DEFAULT_COST_SETTINGS.visualizacoes)
+    };
+    await settingsCol.updateOne(
+      { _id: 'cost_settings' },
+      { $set: { values } },
+      { upsert: true }
+    );
+    const accept = String(req.headers['accept'] || '').toLowerCase();
+    const isJson = accept.indexOf('application/json') !== -1;
+    if (isJson) {
+      return res.json({ ok: true, values });
+    }
+    res.redirect('/painel');
   } catch (e) {
     res.status(500).send(e.toString());
   }

@@ -174,7 +174,7 @@
             if (fCat && fCat.value) catServ = String(fCat.value).toLowerCase();
           }
           var isPostCategory = (catServ === 'curtidas' || catServ === 'visualizacoes');
-          var showPrivacyAlert = (order && order.profilePrivacy && order.profilePrivacy.isPrivate && !isPostCategory);
+          var showPrivacyAlert = (order && order.profilePrivacy && order.profilePrivacy.isPrivate);
         %>
         <% if (showPrivacyAlert) { %>
         <div class="service-card" id="privacyAlertCard" style="border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.5); backdrop-filter: blur(8px); margin-bottom: 2rem;">
@@ -238,8 +238,8 @@
                        <span style="font-family: monospace; font-size: 1.1rem; font-weight: 700; color: var(--text-primary);" id="orderNumberId"><%= (function(){ 
                            var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId):''; 
                            var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId):''; 
-                           var functionalOid = oidF||oidFS;
-                           return String(functionalOid || ''); 
+                           var providerOid = oidF||oidFS;
+                           return providerOid || '-'; 
                        })() %></span>
                        <div style="position: relative; display: flex; align-items: center;">
                            <button id="copyOrderBtn" class="copy-icon-btn" aria-label="Copiar número do pedido" style="background: transparent; border: none; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; cursor: pointer;">
@@ -250,7 +250,16 @@
                    </div>
                 </div>
                 
-                 <% var famaPayload=(order&&order.fama24h&&order.fama24h.statusPayload)||null; var sRaw=String((famaPayload&&(famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText))||'').trim(); var t=sRaw.toLowerCase(); var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running/.test(t)?'Em andamento':(/complete|success|finished|done/.test(t)?'Concluído':sRaw))))):'-'; %>
+                <% 
+                  var famaPayload=(order&&order.fama24h&&order.fama24h.statusPayload)||null; 
+                  var sRawBase='';
+                  if(order && order.fama24h && order.fama24h.status) sRawBase = order.fama24h.status;
+                  if(!sRawBase && famaPayload) sRawBase = (famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText||famaPayload.status_normalized)||'';
+                  if(!sRawBase && order && (order.status||(order.woovi&&order.woovi.status))) sRawBase = order.status||(order.woovi&&order.woovi.status);
+                  var sRaw=String(sRawBase||'').trim(); 
+                  var t=sRaw.toLowerCase(); 
+                  var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running|created/.test(t)?'Em andamento':(/complete|success|finished|done|conclu/.test(t)?'Concluído':sRaw))))):'-'; 
+                %>
                 <div class="info-item status-box-custom" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; background: rgba(107, 70, 193, 0.1); padding: 1.25rem; border-radius: 12px; border: 1px solid rgba(107, 70, 193, 0.2);">
                     <span style="font-size: 1rem; font-weight: 500; color: var(--primary-purple); font-family: inherit;">Status do Serviço</span>
                     <span id="famaServicoStatus" class="status-badge <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>" style="font-size: 1rem; font-weight: 500; letter-spacing: 0.05em; font-family: inherit;"><%= stMap %></span>
@@ -270,6 +279,28 @@
       </section>
     </main>
   </div>
+  <div id="upsellFollowersModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
+    <div class="modal-dialog" style="max-width:480px; width:95%; border-radius:16px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Mais seguidores com 25% OFF</h3>
+        <button id="upsellFollowersClose" class="modal-close" type="button" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-top:0; margin-bottom:0.75rem; color:var(--text-secondary);">
+          Aumente seu resultado com 25% OFF em pacotes de seguidores a partir de 500.
+        </p>
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
+          <button type="button" class="continue-button" data-upsell-tipo="mistos" style="flex:1 1 100px; padding:0.4rem 0.75rem; font-size:0.85rem;">Seguidores mundiais</button>
+          <button type="button" class="continue-button" data-upsell-tipo="brasileiros" style="flex:1 1 100px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Seguidores BR</button>
+          <button type="button" class="continue-button" data-upsell-tipo="organicos" style="flex:1 1 120px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Brasileiros reais</button>
+        </div>
+        <div id="upsellFollowersList" style="display:flex; flex-direction:column; gap:0.5rem; max-height:360px; overflow:auto;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="upsellFollowersClose2" class="continue-button" type="button">Fechar</button>
+      </div>
+    </div>
+  </div>
   <script id="orderDataJson" type="application/json"><%= JSON.stringify(order || {}) %></script>
   <script>
     (function(){
@@ -288,7 +319,8 @@
         if (oidToSave) localStorage.setItem('oppus_selected_oid', oidToSave);
       } catch(_) {}
       try {
-        var initialFama = (orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null;
+        var initialNorm = (orderData && orderData.fama24h && orderData.fama24h.status) ? orderData.fama24h.status : '';
+        var initialFama = initialNorm ? null : ((orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null);
         var elFamaInit = document.getElementById('famaServicoStatus');
         var mapFamaInit = function(s){
           var t = String(s || '').toLowerCase();
@@ -296,12 +328,26 @@
           if (/cancel/.test(t)) return 'Cancelado';
           if (/partial/.test(t)) return 'Parcial';
           if (/pend/.test(t)) return 'Pendente';
-          if (/process|progress|start|running/.test(t)) return 'Em andamento';
-          if (/complete|success|finished|done/.test(t)) return 'Concluído';
+          if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+          if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
           return s;
         };
-        if (initialFama && elFamaInit) {
-          var raw0 = String(initialFama.status || initialFama.Status || initialFama.status_text || initialFama.statusText || initialFama.StatusText || '').trim();
+        if (initialNorm && elFamaInit) {
+          var stN = mapFamaInit(initialNorm);
+          if (stN) {
+            lastFamaStatus = stN;
+            elFamaInit.textContent = stN;
+            try {
+              elFamaInit.classList.remove('status-green','status-yellow','status-red','status-blue');
+              var sN = stN.toLowerCase();
+              if (/conclu/.test(sN)) elFamaInit.classList.add('status-green');
+              else if (/cancel/.test(sN)) elFamaInit.classList.add('status-red');
+              else if (/andament|process|progress|start|running/.test(sN)) elFamaInit.classList.add('status-yellow');
+              else if (/pend/.test(sN)) elFamaInit.classList.add('status-blue');
+            } catch(_){ }
+          }
+        } else if (initialFama && elFamaInit) {
+          var raw0 = String(initialFama.status || initialFama.Status || initialFama.status_text || initialFama.statusText || initialFama.StatusText || initialFama.status_normalized || '').trim();
           var st0 = mapFamaInit(raw0);
           if (st0) {
             lastFamaStatus = st0;
@@ -330,6 +376,160 @@
           var txt = dd + '/' + mm + '/' + yyyy + ' as ' + hh + ':' + min;
           var el = document.getElementById('paidAtLocal');
           if (el) el.textContent = txt;
+        }
+      } catch(_) {}
+      
+      try {
+        var tabelaSeguidoresBase = {
+          mistos: [
+            { q: 500, p: 'R$ 24,90' },
+            { q: 700, p: 'R$ 29,90' },
+            { q: 1000, p: 'R$ 39,90' },
+            { q: 2000, p: 'R$ 59,90' },
+            { q: 3000, p: 'R$ 79,90' },
+            { q: 4000, p: 'R$ 99,90' },
+            { q: 5000, p: 'R$ 129,90' },
+            { q: 7500, p: 'R$ 169,90' },
+            { q: 10000, p: 'R$ 199,90' },
+            { q: 15000, p: 'R$ 329,90' }
+          ],
+          brasileiros: [
+            { q: 500, p: 'R$ 39,90' },
+            { q: 700, p: 'R$ 49,90' },
+            { q: 1000, p: 'R$ 79,90' },
+            { q: 2000, p: 'R$ 129,90' },
+            { q: 3000, p: 'R$ 179,90' },
+            { q: 4000, p: 'R$ 249,90' },
+            { q: 5000, p: 'R$ 279,90' },
+            { q: 7500, p: 'R$ 399,90' },
+            { q: 10000, p: 'R$ 499,90' },
+            { q: 15000, p: 'R$ 799,90' }
+          ],
+          organicos: [
+            { q: 500, p: 'R$ 69,90' },
+            { q: 700, p: 'R$ 89,90' },
+            { q: 1000, p: 'R$ 129,90' },
+            { q: 2000, p: 'R$ 199,90' },
+            { q: 3000, p: 'R$ 249,90' },
+            { q: 4000, p: 'R$ 329,90' },
+            { q: 5000, p: 'R$ 499,90' },
+            { q: 7500, p: 'R$ 599,90' },
+            { q: 10000, p: 'R$ 899,90' },
+            { q: 15000, p: 'R$ 1.299,90' }
+          ]
+        };
+        var parsePrecoToCents = function(str){
+          var s = String(str || '').replace(/[^0-9,\.]/g,'');
+          if (!s) return 0;
+          var parts = s.split(',');
+          var whole = parts[0].replace(/\./g,'');
+          var frac = parts[1] || '';
+          var frac2 = (frac + '00').slice(0,2);
+          var w = Number(whole || '0');
+          var f = Number(frac2 || '0');
+          if (Number.isNaN(w) || Number.isNaN(f)) return 0;
+          return (w * 100) + f;
+        };
+        var formatCentsToBRL = function(cents){
+          var v = Number(cents || 0);
+          if (!v) return 'R$ 0,00';
+          var reais = Math.floor(v/100);
+          var frac = String(v%100).padStart(2,'0');
+          return 'R$ ' + reais.toLocaleString('pt-BR') + ',' + frac;
+        };
+        var buildUpsellList = function(tipo){
+          var baseArr = tabelaSeguidoresBase[tipo] || [];
+          var result = [];
+          for (var i=0;i<baseArr.length;i++){
+            var it = baseArr[i];
+            var cents = parsePrecoToCents(it.p);
+            if (!cents) continue;
+            var newCents = Math.round(cents * 0.75);
+            result.push({ q: it.q, p: formatCentsToBRL(newCents) });
+          }
+          return result;
+        };
+        var upsellModal = document.getElementById('upsellFollowersModal');
+        var upsellList = document.getElementById('upsellFollowersList');
+        var upsellTabs = document.querySelectorAll('[data-upsell-tipo]');
+        var currentUpsellTipo = 'mistos';
+        var renderUpsellTipo = function(tipo){
+          currentUpsellTipo = tipo;
+          if (!upsellList) return;
+          var items = buildUpsellList(tipo);
+          upsellList.innerHTML = '';
+          for (var i=0;i<items.length;i++){
+            var it = items[i];
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'continue-button';
+            btn.style.margin = '0';
+            btn.style.width = '100%';
+            btn.style.display = 'flex';
+            btn.style.alignItems = 'center';
+            btn.style.justifyContent = 'space-between';
+            btn.style.padding = '0.5rem 0.75rem';
+            var qSpan = document.createElement('span');
+            qSpan.textContent = it.q.toLocaleString('pt-BR') + ' seguidores';
+            var pSpan = document.createElement('span');
+            pSpan.textContent = it.p;
+            btn.appendChild(qSpan);
+            btn.appendChild(pSpan);
+            (function(tipoLocal, qtdLocal){
+              btn.addEventListener('click', function(){
+                var url = '/servicos-instagram?upsell_followers=1&utm_source=upsell_pedido_modal&utm_medium=after_order&utm_campaign=' + encodeURIComponent(tipoLocal) + '&tipo=' + encodeURIComponent(tipoLocal) + '&q=' + encodeURIComponent(String(qtdLocal));
+                try { window.location.href = url; } catch(_) {}
+              });
+            })(tipo, it.q);
+            upsellList.appendChild(btn);
+          }
+          if (upsellTabs && upsellTabs.length) {
+            upsellTabs.forEach(function(el){
+              var t = el.getAttribute('data-upsell-tipo') || '';
+              if (t === tipo) {
+                el.style.background = '';
+                el.style.color = '';
+                el.style.borderColor = 'transparent';
+              } else {
+                el.style.background = 'transparent';
+                el.style.color = 'var(--text-primary)';
+                el.style.borderColor = 'var(--border-color)';
+              }
+            });
+          }
+        };
+        if (upsellTabs && upsellTabs.length) {
+          upsellTabs.forEach(function(el){
+            el.addEventListener('click', function(){
+              var t = el.getAttribute('data-upsell-tipo') || 'mistos';
+              renderUpsellTipo(t);
+            });
+          });
+        }
+        var closeUpsellModal = function(){
+          if (upsellModal) upsellModal.style.display = 'none';
+        };
+        var openUpsellModal = function(){
+          if (!upsellModal) return;
+          renderUpsellTipo('mistos');
+          upsellModal.style.display = 'flex';
+        };
+        var btnClose1 = document.getElementById('upsellFollowersClose');
+        var btnClose2 = document.getElementById('upsellFollowersClose2');
+        if (btnClose1) btnClose1.addEventListener('click', closeUpsellModal);
+        if (btnClose2) btnClose2.addEventListener('click', closeUpsellModal);
+        
+        var statusStr = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+        var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
+        var catServ = '';
+        try {
+          var mapAdd = (orderData && orderData.additionalInfoMapPaid) || {};
+          if (mapAdd && typeof mapAdd['categoria_servico'] === 'string') catServ = mapAdd['categoria_servico'];
+        } catch(_) {}
+        var tipoServUpsell = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
+        var isFollowersOrder = (String(catServ||'').toLowerCase().indexOf('seguidor') !== -1) || tipoServUpsell.indexOf('seguidor') !== -1;
+        if (isPaidNow && isFollowersOrder) {
+          openUpsellModal();
         }
       } catch(_) {}
       
@@ -473,8 +673,7 @@
               var o = d && d.order ? d.order : null;
               if (!o) return;
               var providerOid = (o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : null);
-              var shortId = (o._id && String(o._id).length > 8) ? '#' + String(o._id).slice(-8).toUpperCase() : String(o._id || '-');
-              var oid = providerOid || shortId;
+              var oid = providerOid || '';
               var paidRaw = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
               var status = String(o.status || o.woovi && o.woovi.status || 'pendente');
               var tipo = String(o.tipo || o.tipoServico || '-');
@@ -575,9 +774,13 @@
                   var elFama = document.getElementById('famaServicoStatus');
                   var elLabel = document.getElementById('famaServicoLabel');
                   var famaPollTimer = null;
+                  var isFinalState = function(state){
+                    var s = String(state || lastFamaStatus || '').toLowerCase();
+                    return /cancel/.test(s) || /conclu/.test(s) || /complete|success|finished|done/.test(s);
+                  };
                   var shouldPoll = function(state){
                     var s = String(state || lastFamaStatus || '').toLowerCase();
-                    return /pend/.test(s) || /andament|process|progress|start|running/.test(s);
+                    return /pend/.test(s) || /andament|process|progress|start|running/.test(s) || /created|unknown/.test(s);
                   };
                   var schedulePoll = function(){
                     try { if (famaPollTimer) { clearInterval(famaPollTimer); famaPollTimer = null; } } catch(_){}
@@ -591,8 +794,8 @@
                     if (/cancel/.test(t)) return 'Cancelado';
                     if (/partial/.test(t)) return 'Parcial';
                     if (/pend/.test(t)) return 'Pendente';
-                    if (/process|progress|start|running/.test(t)) return 'Em andamento';
-                    if (/complete|success|finished|done/.test(t)) return 'Concluído';
+                    if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+                    if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
                     return s;
                   };
                   var updateFama = function(resp){
@@ -636,12 +839,36 @@
                       }
                     }
                   } catch(_){ }
-                  if (oid && shouldPoll()) {
-                    try { console.debug('Fama status request', { order: String(oid) }); } catch(_) {}
-                    fetch('/api/fama/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: String(oid) }) })
-                      .then(function(r){ return r.json(); })
-                      .then(function(x){ try { console.debug('Fama status response', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
-                      .catch(function(){});
+                  if (oid) {
+                    var currentDisplay = (elFama && elFama.textContent) ? elFama.textContent : '';
+                    var stateToCheck = currentDisplay || lastFamaStatus || '';
+                    if (!isFinalState(stateToCheck)) {
+                      var isFamaProvider = !!(o && o.fama24h && o.fama24h.orderId);
+                      if (isFamaProvider) {
+                        try { console.debug('Fama status request from /pedido', { order: oid }); } catch(_) {}
+                        fetch('/api/fama/status', { 
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ order: String(oid) })
+                        })
+                          .then(function(r){ return r.json(); })
+                          .then(function(x){ try { console.debug('Fama status response /pedido', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
+                          .catch(function(){});
+                      } else {
+                        var qs2 = new URLSearchParams((location && location.search) || '');
+                        var identParam = String(qs2.get('identifier') || qs2.get('t') || '').trim();
+                        var corrParam = String(qs2.get('correlationID') || qs2.get('ref') || '').trim();
+                        var urlParam = '';
+                        if (identParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(identParam));
+                        else if (corrParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(corrParam));
+                        else urlParam = ('/api/order/provider-status?order=' + encodeURIComponent(String(oid)));
+                        try { console.debug('Provider status request', { url: urlParam }); } catch(_) {}
+                        fetch(urlParam, { method: 'GET' })
+                          .then(function(r){ return r.json(); })
+                          .then(function(x){ try { console.debug('Provider status response', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
+                          .catch(function(){});
+                      }
+                    }
                   }
                 } catch(_) {}
               } catch(_) {}
@@ -650,6 +877,20 @@
           .catch(function(){});
       }
       try { check(); } catch(_) {}
+      try {
+        var quickTries = 0;
+        var quickMaxTries = 40;
+        (function quickCheck(){
+          quickTries++;
+          var elNum = document.getElementById('orderNumberId');
+          var txtNum = (elNum && elNum.textContent) ? elNum.textContent.trim() : '';
+          if (txtNum && txtNum !== '-') return;
+          try { check(); } catch(_) {}
+          if (quickTries < quickMaxTries) {
+            setTimeout(quickCheck, 3000);
+          }
+        })();
+      } catch(_) {}
       try {
         var cachedOid2 = null;
         try { cachedOid2 = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
@@ -676,6 +917,59 @@
           });
         } catch(_) {}
       });
+    })();
+    (function forceProviderStatusOnLoad(){
+      try {
+        var qs = new URLSearchParams((location && location.search) || '');
+        var identParam = String(qs.get('identifier') || qs.get('t') || '').trim();
+        var corrParam = String(qs.get('correlationID') || qs.get('ref') || '').trim();
+        var orderParam = String(qs.get('orderID') || qs.get('orderid') || qs.get('oid') || '').trim();
+        var url = '';
+        if (identParam) url = '/api/order/provider-status?id=' + encodeURIComponent(identParam);
+        else if (corrParam) url = '/api/order/provider-status?id=' + encodeURIComponent(corrParam);
+        else if (orderParam) url = '/api/order/provider-status?order=' + encodeURIComponent(orderParam);
+        if (!url) return;
+        try { console.debug('FORCE provider-status on load', { url: url }); } catch(_) {}
+        fetch(url, { method: 'GET' })
+          .then(function(r){ return r.json(); })
+          .then(function(x){
+            try { console.debug('FORCE provider-status result', x); } catch(_) {}
+            try {
+              var data = x && x.data ? x.data : null;
+              var raw = data ? String(
+                data.status ||
+                data.Status ||
+                data.status_text ||
+                data.statusText ||
+                data.StatusText ||
+                ''
+              ).trim() : '';
+              if (!raw && x && x.normalized) raw = String(x.normalized).trim();
+              var t = raw.toLowerCase();
+              var label = '';
+              if (/cancel/.test(t)) label = 'Cancelado';
+              else if (/partial/.test(t)) label = 'Parcial';
+              else if (/pend/.test(t)) label = 'Pendente';
+              else if (/process|progress|start|running|created/.test(t)) label = 'Em andamento';
+              else if (/complete|success|finished|done|conclu/.test(t)) label = 'Concluído';
+              if (label) {
+                var el = document.getElementById('famaServicoStatus');
+                if (el) {
+                  el.textContent = label;
+                  try {
+                    el.classList.remove('status-green','status-yellow','status-red','status-blue');
+                    var s = label.toLowerCase();
+                    if (/conclu/.test(s)) el.classList.add('status-green');
+                    else if (/cancel/.test(s)) el.classList.add('status-red');
+                    else if (/andament|process|progress|start|running/.test(s)) el.classList.add('status-yellow');
+                    else if (/pend/.test(s)) el.classList.add('status-blue');
+                  } catch(_) {}
+                }
+              }
+            } catch(_) {}
+          })
+          .catch(function(){});
+      } catch(_) {}
     })();
     (function initBackButton(){
       var btn = document.getElementById('backToPrevBtn');
