@@ -255,7 +255,6 @@
                   var sRawBase='';
                   if(order && order.fama24h && order.fama24h.status) sRawBase = order.fama24h.status;
                   if(!sRawBase && famaPayload) sRawBase = (famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText||famaPayload.status_normalized)||'';
-                  if(!sRawBase && order && (order.status||(order.woovi&&order.woovi.status))) sRawBase = order.status||(order.woovi&&order.woovi.status);
                   var sRaw=String(sRawBase||'').trim(); 
                   var t=sRaw.toLowerCase(); 
                   var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running|created/.test(t)?'Em andamento':(/complete|success|finished|done|conclu/.test(t)?'Concluído':sRaw))))):'-'; 

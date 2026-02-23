@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabelaSeguidores = {
     mistos: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
       { q: 500, p: 'R$ 24,90' },
@@ -1686,26 +1687,41 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
       const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}&id=${encodeURIComponent(chargeId||'')}`;
-      const resp = await fetch(apiUrl);
-      const data = await resp.json();
-      
-      if (data && data.order) {
-          window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(chargeId||'')}`;
-       } else {
-          // Fallback se não tiver número do pedido ainda
-          showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
-          setTimeout(async () => {
-              try {
-                 const resp2 = await fetch(apiUrl);
-                 const data2 = await resp2.json();
-                 if (data2 && data2.order) {
-                     window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(chargeId||'')}`;
-                 } else {
-                     showResumoIfAllowed();
-                 }
-              } catch(_) { showResumoIfAllowed(); }
-          }, 3000);
-       }
+      const extractProviderOid = function(orderObj){
+        if (!orderObj || typeof orderObj !== 'object') return '';
+        var o = orderObj;
+        var oidF = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+        var oidFS = (o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '';
+        return oidF || oidFS || '';
+      };
+      let data = null;
+      try {
+        const resp = await fetch(apiUrl);
+        data = await resp.json();
+      } catch(_) {}
+      let providerOid = data && data.order ? extractProviderOid(data.order) : '';
+      if (!data || !data.order || !providerOid) {
+        showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
+        let attempts = 0;
+        const maxAttempts = 10;
+        while (attempts < maxAttempts && !providerOid) {
+          attempts++;
+          try {
+            const respLoop = await fetch(apiUrl);
+            const dataLoop = await respLoop.json();
+            if (dataLoop && dataLoop.order) {
+              providerOid = extractProviderOid(dataLoop.order);
+              if (providerOid) {
+                try { localStorage.setItem('oppus_selected_oid', String(providerOid)); } catch(_) {}
+                break;
+              }
+            }
+          } catch(_) {}
+          await new Promise(function(resolve){ setTimeout(resolve, 1500); });
+        }
+      }
+      const finalOid = providerOid || (chargeId ? String(chargeId) : '');
+      window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(finalOid||'')}`;
     } catch(_) {
         showStatusMessageCheckout('Pagamento confirmado! Verifique seu email.', 'success');
     }
