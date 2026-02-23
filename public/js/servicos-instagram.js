@@ -59,6 +59,35 @@ document.addEventListener('DOMContentLoaded', function() {
     ],
   };
 
+  // Upsell: desconto de 25% em seguidores (mundiais, brasileiros, brasileiros reais) a partir de 500
+  let isUpsellFollowers = false;
+  try {
+    const paramsUpsell = new URLSearchParams(window.location.search || '');
+    const u = String(paramsUpsell.get('upsell_followers') || paramsUpsell.get('upsell') || '').toLowerCase();
+    if (u === '1' || u === 'seguidores_25' || u === 'followers_25') {
+      isUpsellFollowers = true;
+    }
+  } catch(_) {}
+  try { window.isUpsellFollowers = isUpsellFollowers; } catch(_) {}
+
+
+  if (isUpsellFollowers && !isCurtidasContext && !isViewsContext) {
+    ['mistos', 'brasileiros', 'organicos'].forEach(function(tipoKey){
+      const arr = tabelaSeguidores[tipoKey] || [];
+      arr.forEach(function(item){
+        if (Number(item.q) >= 500) {
+          const cents = (typeof parsePrecoToCents === 'function') ? parsePrecoToCents(item.p) : 0;
+          if (cents > 0) {
+            const newCents = Math.round(cents * 0.75);
+            if (typeof formatCentsToBRL === 'function') {
+              item.p = formatCentsToBRL(newCents);
+            }
+          }
+        }
+      });
+    });
+  }
+
   const tabelaCurtidas = {
     mistos: [
       { q: 150, p: 'R$ 3,90' },
@@ -477,10 +506,11 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getAllowedQuantities(tipo) {
-    const base = [150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+    const base = [50, 150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
-        return base.slice(0, 6);
+        // Para curtidas mantemos apenas a partir de 150
+        return base.filter(function(q){ return q >= 150; }).slice(0, 6);
       }
       return base;
     }
@@ -488,6 +518,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   const quantityBadges = {
+    50: 'PACOTE TESTE',
     150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',

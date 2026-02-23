@@ -65,48 +65,131 @@
       Total de Transações: <%= totalTransactions %>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Data (SP)</th>
-          <th>Serviço</th>
-          <th>Qtd</th>
-          <th>Custo/1k</th>
-          <th>Taxa</th>
-          <th>Total Item</th>
-        </tr>
-      </thead>
-      <tbody>
-        <% orders.forEach(order => { %>
-          <% 
-             // Convert date to SP string for display
-             // order.createdAt is usually ISO string or Date object
-             let d;
-             if (order.createdAt instanceof Date) {
-                d = new Date(order.createdAt);
-             } else {
-                d = new Date(order.createdAt || new Date());
-             }
-             // Apply offset manually to get SP hours
-             d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
-             
-             const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
-                             (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
-                             d.getUTCFullYear() + ' ' + 
-                             d.getUTCHours().toString().padStart(2, '0') + ':' + 
-                             d.getUTCMinutes().toString().padStart(2, '0');
-          %>
-          <tr>
-            <td><%= dateStr %></td>
-            <td><%= order.type %></td>
-            <td><%= order.qty %></td>
-            <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
-            <td>R$ 0,85</td>
-            <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
+    <div style="display:flex; gap:24px; align-items:flex-start; margin-top:16px;">
+      <div style="flex:2; min-width:0;">
+        <table>
+          <thead>
+            <tr>
+              <th>Data (SP)</th>
+              <th>Serviço</th>
+              <th>Qtd</th>
+              <th>Custo/1k</th>
+              <th>Taxa</th>
+              <th>Total Item</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% orders.forEach(order => { %>
+              <% 
+                 let d;
+                 if (order.createdAt instanceof Date) {
+                    d = new Date(order.createdAt);
+                 } else {
+                    d = new Date(order.createdAt || new Date());
+                 }
+                 d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                 
+                 const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
+                                 (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
+                                 d.getUTCFullYear() + ' ' + 
+                                 d.getUTCHours().toString().padStart(2, '0') + ':' + 
+                                 d.getUTCMinutes().toString().padStart(2, '0');
+              %>
+              <tr>
+                <td><%= dateStr %></td>
+                <td><%= order.type %></td>
+                <td><%= order.qty %></td>
+                <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
+                <td>R$ 0,85</td>
+                <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="flex:1; max-width:320px;">
+        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; position:sticky; top:16px;">
+          <h2 style="margin:0 0 8px; font-size:1rem;">Custos por 1.000</h2>
+          <p style="margin:0 0 12px; font-size:0.85rem; color:#555;">
+            Ajuste o custo de cada produto. Os valores são usados no cálculo do custo total do painel.
+          </p>
+          <form id="costSettingsForm" method="POST" action="/painel/custos">
+            <div style="display:flex; flex-direction:column; gap:8px; font-size:0.9rem;">
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Seg. Mistos</span>
+                <input type="number" step="0.01" name="seguidores_mistos" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.seguidores_mistos) ? costSettings.seguidores_mistos : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Seg. Brasileiros</span>
+                <input type="number" step="0.01" name="seguidores_brasileiros" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.seguidores_brasileiros) ? costSettings.seguidores_brasileiros : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Seg. Orgânicos</span>
+                <input type="number" step="0.01" name="seguidores_organicos" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.seguidores_organicos) ? costSettings.seguidores_organicos : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Curtidas Mistos</span>
+                <input type="number" step="0.01" name="curtidas_mistos" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.curtidas_mistos) ? costSettings.curtidas_mistos : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Outras Curtidas</span>
+                <input type="number" step="0.01" name="curtidas" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.curtidas) ? costSettings.curtidas : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Comentários</span>
+                <input type="number" step="0.01" name="comentarios" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.comentarios) ? costSettings.comentarios : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Visualizações</span>
+                <input type="number" step="0.01" name="visualizacoes" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.visualizacoes) ? costSettings.visualizacoes : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+            </div>
+            <div style="margin-top:12px; text-align:right;">
+              <button type="submit" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.9rem;">
+                Salvar
+              </button>
+            </div>
+          </form>
+          <script>
+            (function(){
+              var form = document.getElementById('costSettingsForm');
+              if (!form) return;
+              form.addEventListener('submit', function(ev){
+                try {
+                  ev.preventDefault();
+                } catch(_) {}
+                try {
+                  var fd = new FormData(form);
+                  var params = new URLSearchParams();
+                  fd.forEach(function(value, key){
+                    params.append(key, value);
+                  });
+                  fetch(form.action, {
+                    method: 'POST',
+                    body: params.toString(),
+                    headers: {
+                      'Accept': 'application/json',
+                      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                    }
+                  }).then(function(resp){
+                    if (!resp.ok) return resp.text().then(function(t){ throw new Error(t || ('HTTP ' + resp.status)); });
+                    return resp.json();
+                  }).then(function(data){
+                    alert('Custos atualizados com sucesso.');
+                    try { window.location.reload(); } catch(_) {}
+                  }).catch(function(err){
+                    alert('Erro ao salvar custos: ' + (err && err.message ? err.message : err));
+                  });
+                } catch(e) {
+                  alert('Erro inesperado ao enviar: ' + (e && e.message ? e.message : e));
+                }
+              });
+            })();
+          </script>
+        </div>
+      </div>
+    </div>
   </div>
 </body>
 </html>
