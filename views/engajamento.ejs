@@ -375,7 +375,7 @@
                     <div class="service-card premium-card card-seguidores" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-instagram'+qs; } catch(_){ return '/servicos-instagram'; } })()">
                       <div class="card-content">
                         <img src="/images/icone-seguidores.png" alt="Seguidores" class="card-icon-3d" onerror="this.style.display='none'">
-                        <div class="card-title">Seguidores</div>
+                        <div class="card-title text-gradient-seguidores">Seguidores</div>
                         <div class="card-subtitle">
                           <span class="badge-seguidores-br">Seguidores brasileiros e reais</span>
                         </div>
@@ -391,7 +391,7 @@
                     <div class="service-card premium-card card-curtidas" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,v); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-curtidas'+qs; } catch(_){ return '/servicos-curtidas'; } })()">
                       <div class="card-content">
                         <img src="/images/curtidas-icone.png" alt="Curtidas" class="card-icon-3d" onerror="this.style.display='none'">
-                        <div class="card-title">Curtidas</div>
+                        <div class="card-title text-gradient-curtidas">Curtidas</div>
                         <div class="card-subtitle">Curtidas brasileiras e reais</div>
                         <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 3,90</span></div>
                         <div class="card-security">
@@ -405,7 +405,7 @@
                     <div class="service-card premium-card card-visualizacoes" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-visualizacoes'+qs; } catch(_){ return '/servicos-visualizacoes'; } })()">
                       <div class="card-content">
                         <img src="/images/visualizacao-icon.png" alt="Visualizações" class="card-icon-3d" onerror="this.style.display='none'">
-                        <div class="card-title">Visualizações</div>
+                        <div class="card-title text-gradient-visualizacoes">Visualizações</div>
                         <div class="card-subtitle">Visualizações no Reels</div>
                         <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 4,90</span></div>
                         <div class="card-security">
