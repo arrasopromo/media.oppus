@@ -21,13 +21,13 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 500, p: 'R$ 32,90' },
       { q: 700, p: 'R$ 39,90' },
       { q: 1000, p: 'R$ 45,90' },
-      { q: 2000, p: 'R$ 79,90' },
-      { q: 3000, p: 'R$ 109,90' },
-      { q: 4000, p: 'R$ 139,90' },
-      { q: 5000, p: 'R$ 159,90' },
-      { q: 7500, p: 'R$ 199,90' },
-      { q: 10000, p: 'R$ 269,90' },
-      { q: 15000, p: 'R$ 399,90' },
+      { q: 2000, p: 'R$ 69,90' },
+      { q: 3000, p: 'R$ 99,90' },
+      { q: 4000, p: 'R$ 129,90' },
+      { q: 5000, p: 'R$ 129,90' },
+      { q: 7500, p: 'R$ 169,90' },
+      { q: 10000, p: 'R$ 199,90' },
+      { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
       { q: 150, p: 'R$ 12,90' },
@@ -506,7 +506,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getAllowedQuantities(tipo) {
-    const base = [50, 150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+    const base = [150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
         // Para curtidas mantemos apenas a partir de 150
@@ -518,7 +518,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   const quantityBadges = {
-    50: 'PACOTE TESTE',
     150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',
@@ -821,7 +820,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Upgrade genérico para demais pacotes
-    const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
       if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
