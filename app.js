@@ -2110,6 +2110,10 @@ async function processOrderFulfillment(record, col, req) {
             }
         }
     } else {
+        // Somente seguidores orgânicos vão para FornecedorSocial
+        if (!isOrganicos) {
+            return;
+        }
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
         const canSendFS = !!keyFS && !!instaUser && qtd > 0;
@@ -4634,6 +4638,10 @@ app.post('/session/mark-paid', async (req, res) => {
         const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
         const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
         const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
+        const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
+        const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+        const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
+        const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas';
         const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
         let upgradeAdd = 0;
         if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
@@ -4643,7 +4651,8 @@ app.post('/session/mark-paid', async (req, res) => {
           }
         }
         const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
-        if (/organicos/i.test(tipo) && !alreadySentFS) {
+        const isOrganicosFollowers = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
+        if (isOrganicosFollowers && !alreadySentFS) {
           const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
           const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
           if (!!keyFS && !!instaUser && qtd > 0) {
@@ -5267,7 +5276,10 @@ app.post('/api/payment/confirm', async (req, res) => {
           return acc;
       }, {});
       const pacoteStr = String(infoMap['pacote'] || '').toLowerCase();
-      const isCurtidasBase = pacoteStr.includes('curtida');
+      const categoriaServ = String(infoMap['categoria_servico'] || '').toLowerCase();
+      const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(resolvedTipo);
+      const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas';
+      const isOrganicosFollowers = /organicos/i.test(resolvedTipo) && !isCurtidasBase && !isViewsBase;
       
       let serviceId = null;
       if (isCurtidasBase) {
@@ -5302,8 +5314,13 @@ app.post('/api/payment/confirm', async (req, res) => {
     }
     // Disparo para FornecedorSocial quando for orgânicos
     try {
-      const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(resolvedTipo);
+          const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(resolvedTipo);
       const additionalInfoMap = record?.additionalInfoMapPaid || (Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(record?.additionalInfo) ? record.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
+      const pacoteStrFS = String(additionalInfoMap['pacote'] || '').toLowerCase();
+      const categoriaServFS = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+      const isViewsBaseFS = categoriaServFS === 'visualizacoes' || /^visualizacoes_reels$/i.test(resolvedTipo);
+      const isCurtidasBaseFS = pacoteStrFS.includes('curtida') || categoriaServFS === 'curtidas';
+      const isOrganicosFollowersFS = /organicos/i.test(resolvedTipo) && !isCurtidasBaseFS && !isViewsBaseFS;
       const bumpsStr0 = additionalInfoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
       let upgradeAdd = 0;
       if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
@@ -5314,7 +5331,7 @@ app.post('/api/payment/confirm', async (req, res) => {
       }
       const finalQtd = Math.max(0, Number(resolvedQtd) + Number(upgradeAdd));
       const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
-      if (/organicos/i.test(resolvedTipo) && !!resolvedUser && finalQtd > 0 && !alreadySentFS) {
+      if (isOrganicosFollowersFS && !!resolvedUser && finalQtd > 0 && !alreadySentFS) {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
         if (!!keyFS) {
