@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <link href="/css/style.css?v=2" rel="stylesheet" />
   <link href="/css/perfil.css?v=2" rel="stylesheet" />
+  <link href="/css/badges.css" rel="stylesheet" />
   <link rel="icon" type="image/png" href="/images/logo.png" />
   <!-- TRACK COMBO -->
   <script>
@@ -107,6 +108,24 @@
             font-size: 1rem !important;
         }
     }
+    /* Upsell Modal fine-tuning */
+    #upsellFollowersModal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); }
+    #upsellFollowersModal .modal-dialog { background: var(--bg-secondary); overflow: visible; }
+    #upsellFollowersModal .modal-body { padding-top: 0.75rem; }
+    #upsellFollowersModal .plan-cards { gap: 1rem; }
+    #upsellFollowersModal .plan-card { position: relative; overflow: visible !important; padding-top: 0.8rem; margin-top: 0.25rem; }
+    #upsellFollowersModal .plan-badge { top: -6px; z-index: 2; }
+    #upsellExclusiveBanner {
+        background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%);
+        color: #ffffff;
+        padding: 0.6rem 0.8rem;
+        border-radius: 12px;
+        text-align: center;
+        margin-bottom: 0.75rem;
+        box-shadow: var(--shadow-sm);
+    }
+    #upsellExclusiveBanner .exclusive-title { font-weight: 800; letter-spacing: -0.01em; }
+    #upsellExclusiveBanner .exclusive-countdown { font-weight: 700; margin-top: 0.25rem; }
   </style>
 </head>
 <body class="theme-light has-fixed-menu">
@@ -118,7 +137,7 @@
     <main class="main-content">
       <section class="section-block">
 
-        <% if (String(order.status||order.woovi?.status||'').toLowerCase() === 'pago') { %>
+      <% if (String(order.status || (order.woovi && order.woovi.status) || '').toLowerCase() === 'pago') { %>
         <div class="approved-payment-section" style="text-align: center; margin: 0 0 2rem 0; animation: fadeInUp 0.6s ease-out;">
             <div style="display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; background-color: #22c55e; margin-bottom: 1rem; box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -281,10 +300,14 @@
   <div id="upsellFollowersModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
     <div class="modal-dialog" style="max-width:480px; width:95%; border-radius:16px;">
       <div class="modal-header">
-        <h3 class="modal-title">Mais seguidores com 25% OFF</h3>
+        <h3 class="modal-title" style="flex:1; text-align:center;">Mais seguidores com 25% OFF</h3>
         <button id="upsellFollowersClose" class="modal-close" type="button" aria-label="Fechar">✕</button>
       </div>
       <div class="modal-body">
+        <div id="upsellExclusiveBanner" aria-live="polite" style="background:#22C55E; border-radius:14px; padding:0.9rem 1.25rem; margin-bottom:0.85rem; border:1px solid #15803D; color:#f9fafb; box-shadow:0 8px 16px rgba(22, 163, 74, 0.25);">
+          <div class="exclusive-title">Desconto exclusivo disponível por tempo limitado</div>
+          <div class="exclusive-countdown">Expira em <span id="upsellTimer">10:00</span></div>
+        </div>
         <p style="margin-top:0; margin-bottom:0.75rem; color:var(--text-secondary);">
           Aumente seu resultado com 25% OFF em pacotes de seguidores a partir de 500.
         </p>
@@ -293,7 +316,8 @@
           <button type="button" class="continue-button" data-upsell-tipo="brasileiros" style="flex:1 1 100px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Seguidores BR</button>
           <button type="button" class="continue-button" data-upsell-tipo="organicos" style="flex:1 1 120px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Brasileiros reais</button>
         </div>
-        <div id="upsellFollowersList" style="display:flex; flex-direction:column; gap:0.5rem; max-height:360px; overflow:auto;"></div>
+        <div id="upsellFollowersList" class="plan-cards" style="margin-bottom:0.75rem;"></div>
+        <div id="upsellPixContainer" style="margin-top:0.25rem; display:none;"></div>
       </div>
       <div class="modal-footer">
         <button id="upsellFollowersClose2" class="continue-button" type="button">Fechar</button>
@@ -366,13 +390,12 @@
         var paidRaw = (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
         if (paidRaw) {
           var d = new Date(paidRaw);
-          var spTime = d;
-          var dd = String(spTime.getUTCDate()).padStart(2,'0');
-          var mm = String(spTime.getUTCMonth()+1).padStart(2,'0');
-          var yyyy = spTime.getUTCFullYear();
-          var hh = String(spTime.getUTCHours()).padStart(2,'0');
-          var min = String(spTime.getUTCMinutes()).padStart(2,'0');
-          var txt = dd + '/' + mm + '/' + yyyy + ' as ' + hh + ':' + min;
+          var dd = String(d.getDate()).padStart(2,'0');
+          var mm = String(d.getMonth()+1).padStart(2,'0');
+          var yyyy = d.getFullYear();
+          var hh = String(d.getHours()).padStart(2,'0');
+          var min = String(d.getMinutes()).padStart(2,'0');
+          var txt = dd + '/' + mm + '/' + yyyy + ' às ' + hh + ':' + min;
           var el = document.getElementById('paidAtLocal');
           if (el) el.textContent = txt;
         }
@@ -381,12 +404,12 @@
       try {
         var tabelaSeguidoresBase = {
           mistos: [
-            { q: 500, p: 'R$ 24,90' },
-            { q: 700, p: 'R$ 29,90' },
-            { q: 1000, p: 'R$ 39,90' },
-            { q: 2000, p: 'R$ 59,90' },
-            { q: 3000, p: 'R$ 79,90' },
-            { q: 4000, p: 'R$ 99,90' },
+            { q: 500, p: 'R$ 32,90' },
+            { q: 700, p: 'R$ 39,90' },
+            { q: 1000, p: 'R$ 45,90' },
+            { q: 2000, p: 'R$ 69,90' },
+            { q: 3000, p: 'R$ 99,90' },
+            { q: 4000, p: 'R$ 129,90' },
             { q: 5000, p: 'R$ 129,90' },
             { q: 7500, p: 'R$ 169,90' },
             { q: 10000, p: 'R$ 199,90' },
@@ -444,9 +467,241 @@
             var cents = parsePrecoToCents(it.p);
             if (!cents) continue;
             var newCents = Math.round(cents * 0.75);
-            result.push({ q: it.q, p: formatCentsToBRL(newCents) });
+            result.push({ q: it.q, base: it.p, promo: formatCentsToBRL(newCents), cents: newCents });
           }
           return result;
+        };
+        var upsellPixContainer = document.getElementById('upsellPixContainer');
+        var upsellPaymentPollInterval = null;
+        var createUpsellPix = function(tipoLocal, qtdLocal, valueCents, promoLabel){
+          if (!upsellPixContainer) return;
+          if (!valueCents || !qtdLocal) return;
+          upsellPixContainer.style.display = 'block';
+          upsellPixContainer.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#166534;"><div class="oppus-spinner" style="width:24px;height:24px;border:3px solid rgba(22,101,52,0.15);border-top-color:#16a34a;border-radius:50%;animation:oppusSpin 1s linear infinite;"></div><span>Gerando Pix do seu upsell...</span></div>';
+          var orderDataLocal = orderData || {};
+          var nameValue = '';
+          var phoneValue = '';
+          var emailValue = '';
+          var instaUser = '';
+          var fillFromOrder = function(o){
+            if (!o || typeof o !== 'object') return;
+            var customer = o.customer || {};
+            if (!nameValue) nameValue = customer.name || 'Cliente Instagram';
+            if (!phoneValue) phoneValue = customer.phone || '';
+            if (!emailValue) emailValue = customer.email || '';
+            var iu = '';
+            try {
+              var mapAdd = o.additionalInfoMapPaid || {};
+              if (mapAdd && mapAdd['instagram_username']) iu = mapAdd['instagram_username'];
+            } catch(_) {}
+            if (!iu && Array.isArray(o.additionalInfoPaid)) {
+              var fPaid = o.additionalInfoPaid.find(function(i){ return i && i.key === 'instagram_username'; });
+              if (fPaid && fPaid.value) iu = fPaid.value;
+            }
+            if (!iu && Array.isArray(o.additionalInfo)) {
+              var fInfo = o.additionalInfo.find(function(i){ return i && i.key === 'instagram_username'; });
+              if (fInfo && fInfo.value) iu = fInfo.value;
+            }
+            if (!iu) {
+              iu = o.instagramUsername || o.instauser || '';
+            }
+            iu = String(iu || '').trim();
+            if (iu) instaUser = iu;
+          };
+          fillFromOrder(orderDataLocal);
+          var ensureOrderFromServer = function(cb){
+            if (instaUser && nameValue && phoneValue && emailValue) {
+              cb();
+              return;
+            }
+            var ident = '';
+            var corr = '';
+            var oid = '';
+            try {
+              var qs = new URLSearchParams((location && location.search) || '');
+              ident = String(qs.get('identifier') || qs.get('t') || '').trim();
+              corr = String(qs.get('correlationID') || qs.get('ref') || '').trim();
+              oid = String(qs.get('orderID') || '').trim();
+            } catch(_) {}
+            if (!ident && orderDataLocal) {
+              ident = String(orderDataLocal.identifier || (orderDataLocal.woovi && orderDataLocal.woovi.identifier) || '').trim();
+            }
+            if (!oid && orderDataLocal && orderDataLocal._id) {
+              oid = String(orderDataLocal._id);
+            }
+            var url = '';
+            if (ident) url = '/api/order?identifier=' + encodeURIComponent(ident);
+            else if (oid) url = '/api/order?orderID=' + encodeURIComponent(oid);
+            else if (corr) url = '/api/order?correlationID=' + encodeURIComponent(corr);
+            if (!url) {
+              cb();
+              return;
+            }
+            fetch(url)
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                try {
+                  if (d && d.order) {
+                    orderDataLocal = d.order;
+                    fillFromOrder(orderDataLocal);
+                  }
+                } catch(_) {}
+              })
+              .catch(function(){})
+              .then(function(){ cb(); });
+          };
+          ensureOrderFromServer(function(){
+            if (!nameValue) nameValue = 'Cliente Instagram';
+            if (!instaUser) {
+              var errorMsg = 'Não foi possível identificar o usuário do Instagram para o upsell.';
+              upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">' + errorMsg + '</div>';
+              return;
+            }
+            var baseIdentifier = String(orderDataLocal && (orderDataLocal.identifier || orderDataLocal._id) || '').trim();
+            var correlationID = 'UpsellFollowers_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            var additionalInfo = [
+              { key: 'tipo_servico', value: tipoLocal },
+              { key: 'categoria_servico', value: 'seguidores' },
+              { key: 'quantidade', value: String(qtdLocal) },
+              { key: 'pacote', value: String(qtdLocal) + ' seguidores - ' + String(promoLabel || '') },
+              { key: 'phone', value: String(phoneValue || '') },
+              { key: 'instagram_username', value: instaUser },
+              { key: 'upsell_followers', value: '1' }
+            ];
+            if (baseIdentifier) {
+              additionalInfo.push({ key: 'upsell_from_identifier', value: baseIdentifier });
+            }
+            var payload = {
+              correlationID: correlationID,
+              value: Number(valueCents),
+              comment: 'Upsell Seguidores OPPUS',
+              customer: {
+                name: nameValue,
+                phone: phoneValue,
+                email: emailValue
+              },
+              additionalInfo: additionalInfo,
+              profile_is_private: !!(orderDataLocal && orderDataLocal.profilePrivacy && orderDataLocal.profilePrivacy.isPrivate)
+            };
+            fetch('/api/woovi/charge', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            })
+          .then(function(resp){ return resp.json().then(function(data){ return { ok: resp.ok, data: data }; }); })
+          .then(function(result){
+            if (!result.ok) {
+              var msg = (result.data && result.data.details && result.data.details.message) ? result.data.details.message : 'Falha ao criar cobrança';
+              upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">Erro ao criar Pix: ' + msg + '</div>';
+              return;
+            }
+            var data = result.data || {};
+            var charge = data.charge || data || {};
+            var pix = (charge.paymentMethods && charge.paymentMethods.pix) ? charge.paymentMethods.pix : (charge.pix || {});
+            var brCode = pix.brCode || charge.brCode || data.brCode || '';
+            var qrImage = pix.qrCodeImage || charge.qrCodeImage || data.qrCodeImage || '';
+            var totalFormatted = formatCentsToBRL(valueCents);
+            var html = '';
+            if (qrImage) {
+              html += '<div style="text-align:center; margin-bottom:0.75rem;"><img src="' + qrImage + '" alt="QR Code Pix Upsell" style="width:200px; height:200px; border-radius:12px; background:#ffffff; box-shadow:0 4px 12px rgba(15,23,42,0.15);" /></div>';
+            }
+            html += '<div style="font-size:1rem; font-weight:700; text-align:center; margin-bottom:0.75rem; color:#166534;">Valor do Pix: <span>' + totalFormatted + '</span></div>';
+            html += '<div style="position:relative; margin-bottom:0.75rem;"><textarea id="upsellPixCodeArea" readonly style="width:100%; min-height:80px; padding:0.75rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; font-family:inherit; font-size:0.9rem; color:#022c22; resize:none;">' + brCode + '</textarea></div>';
+            html += '<button id="upsellPixCopyBtn" type="button" class="continue-button" style="width:100%; display:flex; align-items:center; justify-content:center; padding:0.9rem 1rem; margin-bottom:0.5rem;"><span class="button-text">Copiar código Pix</span></button>';
+            html += '<div style="font-size:0.85rem; color:#6b7280; text-align:center;">Após o pagamento, seu novo pedido será criado automaticamente.</div>';
+            upsellPixContainer.innerHTML = html;
+            upsellPixContainer.style.display = 'block';
+            try {
+              var targetEl = upsellPixContainer;
+              var scroller = targetEl ? targetEl.parentElement : null;
+              while (scroller && scroller !== document.body) {
+                var cs = window.getComputedStyle(scroller);
+                var oy = cs ? cs.overflowY : '';
+                if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight + 10) {
+                  break;
+                }
+                scroller = scroller.parentElement;
+              }
+              if (scroller && scroller !== document.body) {
+                var rEl = targetEl.getBoundingClientRect();
+                var rSc = scroller.getBoundingClientRect();
+                var top = scroller.scrollTop + (rEl.top - rSc.top) - 16;
+                scroller.scrollTo({ top: top, behavior: 'smooth' });
+              } else {
+                var rect = targetEl.getBoundingClientRect();
+                var offset = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
+                window.scrollTo({ top: offset, behavior: 'smooth' });
+              }
+            } catch(_) {}
+            var copyBtn = document.getElementById('upsellPixCopyBtn');
+            var codeArea = document.getElementById('upsellPixCodeArea');
+            if (copyBtn && codeArea && brCode) {
+              copyBtn.addEventListener('click', function(){
+                try {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(brCode);
+                  } else {
+                    codeArea.focus();
+                    codeArea.select();
+                    document.execCommand('copy');
+                  }
+                  var span = copyBtn.querySelector('.button-text');
+                  var prev = span ? span.textContent : '';
+                  if (span) span.textContent = 'Pix copiado';
+                  copyBtn.classList.add('success');
+                  setTimeout(function(){
+                    copyBtn.classList.remove('success');
+                    if (span) span.textContent = prev || 'Copiar código Pix';
+                  }, 1600);
+                } catch(e) {
+                  alert('Não foi possível copiar o código Pix.');
+                }
+              });
+            }
+            var chargeId = charge.id || charge.chargeId || data.chargeId || '';
+            var identifier = charge.identifier || (data.charge && data.charge.identifier) || '';
+            var serverCorrelationID = charge.correlationID || (data.charge && data.charge.correlationID) || '';
+            if (upsellPaymentPollInterval) {
+              clearInterval(upsellPaymentPollInterval);
+              upsellPaymentPollInterval = null;
+            }
+            if (chargeId || identifier || serverCorrelationID) {
+              var doCheckPaid = function(){
+                var idParam = chargeId ? encodeURIComponent(chargeId) : '';
+                var identParam = encodeURIComponent(identifier || '');
+                var corrParam = encodeURIComponent(serverCorrelationID || correlationID);
+                var url = '/api/checkout/payment-state?id=' + idParam + '&identifier=' + identParam + '&correlationID=' + corrParam;
+                fetch(url)
+                  .then(function(r){ return r.json(); })
+                  .then(function(stData){
+                    try {
+                      if (stData && stData.paid === true) {
+                        if (upsellPaymentPollInterval) {
+                          clearInterval(upsellPaymentPollInterval);
+                          upsellPaymentPollInterval = null;
+                        }
+                        try {
+                          if (typeof navigateToPedidoOrFallback === 'function') {
+                            navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+                          } else {
+                            var qs = new URLSearchParams({ identifier: identifier, correlationID: serverCorrelationID || correlationID }).toString();
+                            window.location.href = '/pedido?' + qs;
+                          }
+                        } catch(_) {}
+                      }
+                    } catch(_) {}
+                  })
+                  .catch(function(){});
+              };
+              doCheckPaid();
+              upsellPaymentPollInterval = setInterval(doCheckPaid, 8000);
+            }
+          })
+          .catch(function(err){
+            var msg = err && err.message ? err.message : String(err || 'Erro desconhecido');
+            upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">Erro ao criar Pix: ' + msg + '</div>';
+          });
+          });
         };
         var upsellModal = document.getElementById('upsellFollowersModal');
         var upsellList = document.getElementById('upsellFollowersList');
@@ -459,28 +714,33 @@
           upsellList.innerHTML = '';
           for (var i=0;i<items.length;i++){
             var it = items[i];
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'continue-button';
-            btn.style.margin = '0';
-            btn.style.width = '100%';
-            btn.style.display = 'flex';
-            btn.style.alignItems = 'center';
-            btn.style.justifyContent = 'space-between';
-            btn.style.padding = '0.5rem 0.75rem';
-            var qSpan = document.createElement('span');
-            qSpan.textContent = it.q.toLocaleString('pt-BR') + ' seguidores';
-            var pSpan = document.createElement('span');
-            pSpan.textContent = it.p;
-            btn.appendChild(qSpan);
-            btn.appendChild(pSpan);
-            (function(tipoLocal, qtdLocal){
-              btn.addEventListener('click', function(){
-                var url = '/servicos-instagram?upsell_followers=1&utm_source=upsell_pedido_modal&utm_medium=after_order&utm_campaign=' + encodeURIComponent(tipoLocal) + '&tipo=' + encodeURIComponent(tipoLocal) + '&q=' + encodeURIComponent(String(qtdLocal));
-                try { window.location.href = url; } catch(_) {}
+            var qNum = Number(it.q);
+            var badgeText = '';
+            var quantityBadges = { 150:'PACOTE INICIAL', 500:'PACOTE BÁSICO', 1000:'MAIS PEDIDO', 3000:'EXCLUSIVO', 5000:'VIP', 10000:'ELITE' };
+            if (tipo === 'mistos') {
+              if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+              else if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; }
+            } else if (tipo === 'brasileiros') {
+              if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; }
+            } else if (tipo === 'organicos') {
+              if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; }
+            }
+            if (!badgeText && quantityBadges[qNum]) badgeText = quantityBadges[qNum];
+            if (!badgeText) continue;
+            var card = document.createElement('div');
+            card.className = 'service-card plan-card';
+            if ((tipo === 'mistos' && qNum === 3000) || ((tipo === 'brasileiros' || tipo === 'organicos') && qNum === 1000)) { card.classList.add('gold-card'); }
+            var badgeHtml = '<div class="plan-badge">' + badgeText + '</div>';
+            var qtyFormatted = qNum.toLocaleString('pt-BR');
+            var baseText = String(it.base || '');
+            var promoText = String(it.promo || '');
+            card.innerHTML = badgeHtml + '<div class="card-content"><div class="card-title">' + qtyFormatted + ' seguidores</div><div class="card-desc"><span class="price-old">' + baseText + '</span> <span class="price-new">' + promoText + '</span></div></div>';
+            (function(tipoLocal, qtdLocal, promoLabel, promoCents){
+              card.addEventListener('click', function(){
+                try { createUpsellPix(tipoLocal, qtdLocal, promoCents, promoLabel); } catch(_) {}
               });
-            })(tipo, it.q);
-            upsellList.appendChild(btn);
+            })(tipo, it.q, promoText, it.cents);
+            upsellList.appendChild(card);
           }
           if (upsellTabs && upsellTabs.length) {
             upsellTabs.forEach(function(el){
@@ -508,15 +768,54 @@
         var closeUpsellModal = function(){
           if (upsellModal) upsellModal.style.display = 'none';
         };
+        var upsellAlreadyOpened = false;
         var openUpsellModal = function(){
-          if (!upsellModal) return;
+          if (!upsellModal || upsellAlreadyOpened) return;
+          upsellAlreadyOpened = true;
           renderUpsellTipo('mistos');
           upsellModal.style.display = 'flex';
+          try {
+            var timerEl = document.getElementById('upsellTimer');
+            var timerId = null;
+            var remain = 600;
+            var updateTimer = function(){
+              var m = Math.floor(remain/60);
+              var s = remain % 60;
+              if (timerEl) timerEl.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+              if (remain <= 0) { if (timerId) clearInterval(timerId); timerId = null; }
+              remain--;
+            };
+            updateTimer();
+            timerId = setInterval(updateTimer, 1000);
+          } catch(_) {}
+        };
+        var upsellPaidReady = false;
+        var upsellProviderDone = false;
+        var upsellOpenScheduled = false;
+        var ensureUpsell = function(){
+          if (!upsellPaidReady || !upsellProviderDone) return;
+          if (upsellOpenScheduled) return;
+          upsellOpenScheduled = true;
+          setTimeout(function(){
+            try { openUpsellModal(); } catch(_){}
+          }, 3000);
         };
         var btnClose1 = document.getElementById('upsellFollowersClose');
         var btnClose2 = document.getElementById('upsellFollowersClose2');
         if (btnClose1) btnClose1.addEventListener('click', closeUpsellModal);
         if (btnClose2) btnClose2.addEventListener('click', closeUpsellModal);
+        try {
+          var qsDebug = new URLSearchParams((location && location.search) || '');
+          var debugT = String(qsDebug.get('t') || qsDebug.get('identifier') || '').trim();
+          var debugRef = String(qsDebug.get('ref') || qsDebug.get('correlationID') || '').trim();
+          var debugOid = String(qsDebug.get('oid') || '').trim();
+          var isDebugUpsell = (debugT === 'ecd2a0873a5040488234acfead241250') ||
+                              (debugRef === 'wer-tw4-23444444442') ||
+                              (debugOid === '3199169');
+          if (isDebugUpsell) {
+            setTimeout(function(){ try { openUpsellModal(); } catch(_){ } }, 1200);
+          }
+        } catch(_) {}
         
         var statusStr = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
         var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
@@ -527,8 +826,9 @@
         } catch(_) {}
         var tipoServUpsell = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
         var isFollowersOrder = (String(catServ||'').toLowerCase().indexOf('seguidor') !== -1) || tipoServUpsell.indexOf('seguidor') !== -1;
-        if (isPaidNow && isFollowersOrder) {
-          openUpsellModal();
+        if (isPaidNow) {
+          upsellPaidReady = true;
+          ensureUpsell();
         }
       } catch(_) {}
       
@@ -595,6 +895,8 @@
                   if (elNumber) elNumber.textContent = oid;
                   try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
                 }
+                upsellPaidReady = true;
+                ensureUpsell();
               } catch(_){}
             });
           } else if (corrQ) {
@@ -610,24 +912,8 @@
                   if (elNumber) elNumber.textContent = oid;
                   try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
                 }
-              } catch(_){}
-            });
-          }
-        } catch(_){}
-        try {
-          if (ident) {
-            var es = new EventSource('/api/payment/subscribe?identifier=' + encodeURIComponent(ident));
-            es.addEventListener('paid', function(ev){
-              try {
-                var data = JSON.parse(ev.data || '{}');
-                var oidFS = String(data && data.fornecedor_social_orderId ? data.fornecedor_social_orderId : '');
-                var oidFama = String(data && data.fama24h_orderId ? data.fama24h_orderId : '');
-                var oid = String(oidFS || oidFama || '');
-                if (oid) {
-                  var elNumber = document.getElementById('orderNumberId');
-                  if (elNumber) elNumber.textContent = oid;
-                  try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
-                }
+                upsellPaidReady = true;
+                ensureUpsell();
               } catch(_){}
             });
           }
@@ -654,7 +940,7 @@
                 } catch(_){ }
               })
               .catch(function() {})
-              .finally(function(){ if (tries < maxTries) setTimeout(refreshOrderFS, 1500); });
+              .then(function(){ if (tries < maxTries) setTimeout(refreshOrderFS, 1500); });
           }
           if (isPaid && tipoServ === 'organicos') setTimeout(refreshOrderFS, 1200);
         })();
@@ -807,10 +1093,20 @@
                     try {
                       elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
                       var s1 = show.toLowerCase();
-                      if (/conclu/.test(s1)) elFama.classList.add('status-green');
-                      else if (/cancel/.test(s1)) elFama.classList.add('status-red');
-                      else if (/andament|process|progress|start|running/.test(s1)) elFama.classList.add('status-yellow');
-                      else if (/pend/.test(s1)) elFama.classList.add('status-blue');
+                      var isDone = /conclu/.test(s1) || /complete|success|finished|done/.test(s1);
+                      if (isDone) {
+                        elFama.classList.add('status-green');
+                      } else if (/cancel/.test(s1)) {
+                        elFama.classList.add('status-red');
+                      } else if (/andament|process|progress|start|running/.test(s1)) {
+                        elFama.classList.add('status-yellow');
+                      } else if (/pend/.test(s1)) {
+                        elFama.classList.add('status-blue');
+                      }
+                      if (isDone) {
+                        upsellProviderDone = true;
+                        ensureUpsell();
+                      }
                     } catch(_){ }
                     if (elLabel) {
                       elLabel.textContent = show;
@@ -829,10 +1125,20 @@
                         try {
                           elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
                           var s2 = stPersist.toLowerCase();
-                          if (/conclu/.test(s2)) elFama.classList.add('status-green');
-                          else if (/cancel/.test(s2)) elFama.classList.add('status-red');
-                          else if (/andament|process|progress|start|running/.test(s2)) elFama.classList.add('status-yellow');
-                          else if (/pend/.test(s2)) elFama.classList.add('status-blue');
+                          var isDonePersist = /conclu/.test(s2) || /complete|success|finished|done/.test(s2);
+                          if (isDonePersist) {
+                            elFama.classList.add('status-green');
+                          } else if (/cancel/.test(s2)) {
+                            elFama.classList.add('status-red');
+                          } else if (/andament|process|progress|start|running/.test(s2)) {
+                            elFama.classList.add('status-yellow');
+                          } else if (/pend/.test(s2)) {
+                            elFama.classList.add('status-blue');
+                          }
+                          if (isDonePersist) {
+                            upsellProviderDone = true;
+                            ensureUpsell();
+                          }
                         } catch(_){ }
                         schedulePoll();
                       }
@@ -1196,7 +1502,7 @@ function checkPrivacyStatus() {
           // Success: Profile is Public
           
           // Dispatch fulfillment retry (Trigger services)
-          var id = orderData.identifier || orderData.woovi?.identifier || orderData._id;
+          var id = orderData.identifier || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
           if (id) {
              console.log('🔄 Initiating fulfillment retry for ID:', id);
              fetch('/api/order/retry-fulfillment', {
@@ -1264,6 +1570,14 @@ function startPrivacyTimer(seconds) {
   }, 1000);
 }
 </script>
+<style>
+@media (min-width: 768px) {
+  #upsellExclusiveBanner {
+    padding: 1.1rem 1.5rem !important;
+    margin-bottom: 1.1rem !important;
+  }
+}
+</style>
 <script src="/js/checkout.js"></script>
   <script src="/js/main.js"></script>
 </body>

@@ -39,10 +39,13 @@
     .refil-page #refilCard { width: 100%; }
     .refil-page #grupoRefil { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
     .refil-page #grupoRefil .refil-input-row { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
-    .refil-page #grupoRefil .select-input { max-width: 360px; }
+    .refil-page #grupoRefil .select-input { width: 100%; max-width: 520px; }
     .refil-page #refilSubmitBtn { margin-left: 0 !important; }
+    @media (max-width: 767px) {
+      .refil-page #grupoRefil label[for="refilOrderIdInput"] { display: none; }
+    }
     @media (min-width: 768px) {
-      .refil-page #grupoRefil .refil-input-row { flex-direction: row; justify-content: center; }
+      .refil-page #grupoRefil .refil-input-row { flex-direction: column; justify-content: center; }
       .refil-page #refilSubmitBtn { white-space: nowrap; }
     }
   </style>
