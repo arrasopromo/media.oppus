@@ -349,7 +349,7 @@
 }
 
 /* Overrides: tornar número do passo neutro e posições controladas via JS */
-.tutorial-pop-step { background: transparent !important; color: var(--text-secondary) !important; border-radius: 6px !important; }
+.tutorial-pop-step { background: linear-gradient(135deg, #8B5CF6 0%, #C4B5FD 100%) !important; color: #ffffff !important; border-radius: 999px !important; }
 .tutorial-pop-input, .tutorial-pop-check, .tutorial-pop-confirm { top: auto !important; left: auto !important; right: auto !important; transform: none !important; }
 .platform-toggle-home { position: relative; }
 .audio-controls { position: relative; }
