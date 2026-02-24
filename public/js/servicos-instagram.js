@@ -105,6 +105,7 @@ document.addEventListener('DOMContentLoaded', function() {
     ],
     brasileiros: tabelaSeguidores.brasileiros,
     organicos: [
+      { q: 50, p: 'R$ 0,10' },
       { q: 150, p: 'R$ 4,90' },
       { q: 300, p: 'R$ 9,90' },
       { q: 500, p: 'R$ 14,90' },
@@ -518,6 +519,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   const quantityBadges = {
+    50: 'PACOTE TESTE',
     150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',
