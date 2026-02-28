@@ -20,6 +20,7 @@
     "ejs": "^3.1.10",
     "express": "^5.1.0",
     "express-session": "^1.18.1",
+    "gn-api-sdk-node": "^3.0.4",
     "googleapis": "^150.0.1",
     "https-proxy-agent": "^7.0.2",
     "mongodb": "^5.9.2",

@@ -6,14 +6,25 @@ let db;
 async function connect() {
   const uri = process.env.MONGODB_URI;
   const dbName = process.env.MONGODB_DB_NAME || 'site-whatsapp';
-  if (!uri) throw new Error('MONGODB_URI não definido no .env');
+  
+  if (!uri) {
+    console.warn('⚠️ MONGODB_URI não definido no .env. MongoDB desabilitado.');
+    return null;
+  }
+
   if (db) return db;
-  client = new MongoClient(uri, {
-    serverSelectionTimeoutMS: 5000,
-    // tls desabilitado conforme URI
-  });
-  await client.connect();
-  db = client.db(dbName);
+  
+  try {
+    client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+    });
+    await client.connect();
+    db = client.db(dbName);
+  } catch (err) {
+    console.warn('⚠️ Falha ao conectar ao MongoDB:', err.message);
+    return null;
+  }
+
   try {
     try {
       const host = (() => { try { const m = String(uri).match(/^mongodb(?:\+srv)?:\/\/[^@]*@([^\/]+)/i) || String(uri).match(/^mongodb(?:\+srv)?:\/\/([^\/]+)/i); return m && m[1] ? m[1] : 'unknown'; } catch(_) { return 'unknown'; } })();
@@ -36,6 +47,19 @@ async function connect() {
 
 async function getCollection(name) {
   const database = await connect();
+  if (!database) {
+    // Retorna coleção mockada para evitar crashes
+    return {
+      find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => [] }) }) }),
+      findOne: async () => null,
+      updateOne: async () => ({ modifiedCount: 0, upsertedCount: 0 }),
+      insertOne: async () => ({ insertedId: 'mock_id' }),
+      countDocuments: async () => 0,
+      createIndex: async () => {},
+      createIndexes: async () => {},
+      drop: async () => {}
+    };
+  }
   return database.collection(name);
 }
 

@@ -604,12 +604,32 @@ html, body { overflow-x: hidden; }
 /* Ajustes específicos para o botão Comprar seguidores */
 #buyFollowersBtn {
     text-decoration: none !important;
-    padding: 0.7rem 3rem; /* menor altura, mais largo */
-    min-width: 220px;
+    padding: 0.6rem 2rem; /* Bem menor */
+    min-width: 180px;
+    font-size: 0.95rem;
 }
 #buyFollowersBtn .button-text {
     text-decoration: none !important;
     text-transform: uppercase;
+    font-weight: 700;
+}
+
+/* Ajustes para cards menores em Engajamento Novo */
+.checkout-page #tipoSelectCard,
+.checkout-page #quantidadeSelectCard {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+.checkout-page #tipoSelectCard .card-title,
+.checkout-page #quantidadeSelectCard .card-title {
+    font-size: 1rem;
+    margin-bottom: 0.35rem;
+}
+.checkout-page #tipoSelectCard .select-input,
+.checkout-page #quantidadeSelectCard .select-input {
+    padding: 0.65rem 1rem;
+    font-size: 0.95rem;
+    margin-top: 0.25rem;
 }
 
 /* Botão de copiar estilo ícone */
@@ -1664,6 +1684,74 @@ body:not(.theme-light) button[id^="backToStep"] svg {
 #tipoCards .card-content { text-align: center; }
 #tipoCards .card-title { text-align: center; }
 #tipoCards .card-desc { text-align: center; }
+
+/* Custom Vertical Layout for Checkout (User Request) */
+/* Force vertical layout for type selection cards AND plan cards */
+.checkout-page #tipoCards, 
+#tipoCards,
+.checkout-page #planCards,
+#planCards,
+.checkout-page .plan-cards {
+    grid-template-columns: 1fr !important;
+}
+
+@media (max-width: 639px) {
+    .checkout-page #tipoCards, 
+    #tipoCards,
+    .checkout-page #planCards,
+    #planCards,
+    .checkout-page .plan-cards {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (min-width: 640px) {
+    .checkout-page #tipoCards, 
+    #tipoCards,
+    .checkout-page #planCards,
+    #planCards,
+    .checkout-page .plan-cards {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (min-width: 1024px) {
+    .checkout-page #tipoCards, 
+    #tipoCards,
+    .checkout-page #planCards,
+    #planCards,
+    .checkout-page .plan-cards {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* Make them look more like buttons */
+.checkout-page #tipoCards .service-card,
+#tipoCards .service-card,
+.checkout-page #planCards .service-card,
+#planCards .service-card {
+    min-height: 70px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1rem;
+    width: 100%;
+    margin-bottom: 0.5rem; /* Add spacing between vertical cards */
+}
+
+.checkout-page #tipoCards .card-content,
+#tipoCards .card-content,
+.checkout-page #planCards .card-content,
+#planCards .card-content {
+    text-align: center;
+    width: 100%;
+}
+
+/* Ensure plan cards content is centered */
+#planCards .card-title {
+    margin-bottom: 0.25rem;
+}
 
 /* =========================================
    Styles ported from servicos-instagram.ejs for consistency

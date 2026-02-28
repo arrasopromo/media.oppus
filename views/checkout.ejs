@@ -43,6 +43,13 @@
 <body class="theme-light has-fixed-menu">
   <%- include('partials/menu') %>
   <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
+  <% if (typeof EFI_SCRIPT_URL !== 'undefined' && EFI_SCRIPT_URL) { %>
+    <script type="text/javascript" src="<%= EFI_SCRIPT_URL %>"></script>
+  <% } %>
+  <script>
+    window.EFI_PAYEE_CODE = "<%= EFI_PAYEE_CODE %>";
+    window.EFI_SANDBOX = "<%= EFI_SANDBOX %>" === "true";
+  </script>
   <div class="container checkout-page">
     <header class="header">
       <div id="headerTicker" class="header-ticker" aria-live="polite">
@@ -606,39 +613,169 @@
     <div id="paymentSuccessScreen" style="display: none; max-width: 1440px; width: 100%; margin: 2rem auto; gap: 2rem; padding: 1rem; align-items: flex-start;">
       <!-- Left Column: Payment Info -->
       <div class="payment-main-card" style="background: #fff; border-radius: 12px; padding: 2.5rem; flex: 1; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); width: 100%;">
-        <div style="text-align: center; margin-bottom: 2.5rem;">
-            <div style="width: 72px; height: 72px; background: #d1fae5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            </div>
-            <h2 style="font-size: 1.75rem; font-weight: 700; color: #111827; margin-bottom: 0.5rem;">Realize o Pagamento</h2>
-            <p style="color: #6b7280; font-size: 1.1rem;">Realize o pagamento do <strong>Pix</strong> para garantir a sua compra.</p>
-            <div style="display: inline-block; background: #f3f4f6; padding: 0.6rem 1.2rem; border-radius: 99px; margin-top: 1.25rem; font-weight: 500; font-size: 1.05rem;">
-                O Pix será expirado em <span id="pixTimer" style="color: #db2777;">29:59</span>
-            </div>
-        </div>
+          <!-- Payment Method Selector (Visible only if total >= 39.90) -->
+          <div id="paymentMethodSelector" style="display:none; margin-bottom: 2rem; flex-direction: column; gap: 0.75rem;">
+              <h3 style="font-size: 1.1rem; font-weight: 600; color: #374151; margin-bottom: 0.25rem;">Como você prefere pagar?</h3>
+              
+              <label class="payment-option" id="optionPix" style="display: flex; align-items: center; padding: 1rem; border: 2px solid #db2777; border-radius: 12px; cursor: pointer; transition: all 0.2s; background: #fff;">
+                  <input type="radio" name="paymentMethod" value="pix" checked style="margin-right: 1rem; width: 1.25rem; height: 1.25rem; accent-color: #db2777;">
+                  <div style="flex: 1; display: flex; align-items: center; gap: 0.75rem;">
+                      <div style="width: 40px; height: 40px; background: #d1fae5; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                      </div>
+                      <div style="display: flex; flex-direction: column;">
+                        <span style="font-weight: 700; color: #111827; font-size: 1.05rem;">Pix</span>
+                        <span style="font-size: 0.85rem; color: #059669; font-weight: 500;">Aprovação imediata</span>
+                      </div>
+                  </div>
+              </label>
 
-        <div style="text-align: center; margin-bottom: 2.5rem;">
-            <p style="margin-bottom: 1.25rem; font-size: 1.1rem;">Acesse o aplicativo que você utiliza o <strong>Pix</strong><br>e escolha a opção <strong>Ler QR code</strong>.</p>
-            <div id="paymentQrImage" style="background: #f9fafb; padding: 1.5rem; border-radius: 12px; display: inline-block; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                <!-- QR Code Img injected here -->
-            </div>
-            <p style="font-size: 0.85rem; color: #6b7280; margin-top: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">ESCANEIE O QR CODE PARA PAGAR</p>
-        </div>
+              <label class="payment-option" id="optionCard" style="display: flex; align-items: center; padding: 1rem; border: 1px solid #e5e7eb; border-radius: 12px; cursor: pointer; transition: all 0.2s; background: #f9fafb;">
+                  <input type="radio" name="paymentMethod" value="credit_card" style="margin-right: 1rem; width: 1.25rem; height: 1.25rem; accent-color: #db2777;">
+                  <div style="flex: 1; display: flex; align-items: center; gap: 0.75rem;">
+                      <div style="width: 40px; height: 40px; background: #fce7f3; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#db2777" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                      </div>
+                      <div style="display: flex; flex-direction: column;">
+                        <span style="font-weight: 700; color: #111827; font-size: 1.05rem;">Cartão de Crédito</span>
+                        <span style="font-size: 0.85rem; color: #6b7280;">Até 12x</span>
+                      </div>
+                  </div>
+              </label>
+          </div>
 
-        <div style="text-align: center; margin-bottom: 1rem;">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1.5rem;">
-                Valor do Pix: <span id="paymentValue" style="color: #db2777;">R$ 0,00</span>
-            </div>
-            
-            <p style="color: #6b7280; font-size: 18px; margin-bottom: 1.25rem; max-width: 600px; margin-left: auto; margin-right: auto;">
-                Também é possível realizar o pagamento através do código abaixo. Basta copiar e realizar o pagamento no seu aplicativo ou Internet Banking escolhendo a opção <strong>Pix Copia e Cola</strong>.
-            </p>
+          <!-- Credit Card Content (Hidden by default) -->
+          <div id="cardPaymentContent" style="display:none;">
+              <div style="text-align: center; margin-bottom: 2rem;">
+                  <div style="width: 72px; height: 72px; background: #fce7f3; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#db2777" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                  </div>
+                  <h2 style="font-size: 1.75rem; font-weight: 700; color: #111827; margin-bottom: 0.5rem;">Pagamento via Cartão</h2>
+                  <p style="color: #6b7280; font-size: 1.1rem;">Preencha os dados para finalizar.</p>
+              </div>
 
-            <div style="position: relative; max-width: 600px; margin: 0 auto;">
-                <textarea id="paymentCopyCode" readonly style="width: 100%; height: 90px; padding: 1rem; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; font-family: inherit; resize: none; font-size: 0.95rem; color: #374151;"></textarea>
-                <button id="paymentCopyBtn" class="continue-button" style="margin-top: 1.25rem; width: 100%; display: flex; justify-content: center; align-items: center; padding: 1rem;">
-                    <span class="button-text" style="text-align: center; width: 100%;">Copiar Código</span>
-                </button>
+              <form id="cardPaymentForm" style="display: grid; gap: 1rem;">
+                  <div class="form-group">
+                      <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Número do Cartão</label>
+                      <div style="position:relative;">
+                          <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" maxlength="19" style="width:100%; padding-right: 40px;" required>
+                          <div id="cardBrandIcon" style="position:absolute; right:12px; top:50%; transform:translateY(-50%); width:24px; height:24px; background-size:contain; background-repeat:no-repeat; background-position:center;"></div>
+                      </div>
+                  </div>
+
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                      <div class="form-group">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Validade</label>
+                          <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AAAA" maxlength="7" required>
+                      </div>
+                      <div class="form-group">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">CVV</label>
+                          <input type="text" id="cardCvv" class="select-input" placeholder="123" maxlength="4" required>
+                      </div>
+                  </div>
+
+                  <div class="form-group">
+                      <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Parcelas</label>
+                      <select id="cardInstallments" class="select-input" style="width:100%;" required>
+                          <option value="" disabled selected>Informe o número do cartão...</option>
+                      </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Nome no Cartão</label>
+                    <input type="text" id="cardHolderName" class="select-input" placeholder="Como impresso no cartão" required>
+                </div>
+
+                <div class="form-group">
+                    <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Email</label>
+                    <input type="email" id="cardHolderEmail" class="select-input" placeholder="seu@email.com" required>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                      <div class="form-group">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">CPF do Titular</label>
+                          <input type="text" id="cardHolderCpf" class="select-input" placeholder="000.000.000-00" required>
+                      </div>
+                      <div class="form-group">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Data Nasc.</label>
+                          <input type="date" id="cardHolderBirth" class="select-input" required>
+                      </div>
+                  </div>
+
+                  <div style="margin-top: 1rem; padding-top:1rem; border-top:1px solid #eee;">
+                      <h4 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #db2777;">Endereço de Cobrança</h4>
+                      <div class="form-group" style="margin-bottom:1rem;">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">CEP</label>
+                          <input type="text" id="billingCep" class="select-input" placeholder="00000-000" required>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; margin-bottom:1rem;">
+                          <div class="form-group">
+                              <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Rua</label>
+                              <input type="text" id="billingStreet" class="select-input" required>
+                          </div>
+                          <div class="form-group">
+                              <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Número</label>
+                              <input type="text" id="billingNumber" class="select-input" required>
+                          </div>
+                      </div>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom:1rem;">
+                          <div class="form-group">
+                              <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Bairro</label>
+                              <input type="text" id="billingNeighborhood" class="select-input" required>
+                          </div>
+                          <div class="form-group">
+                              <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Cidade</label>
+                              <input type="text" id="billingCity" class="select-input" required>
+                          </div>
+                      </div>
+                      <div class="form-group">
+                          <label style="display:block; font-weight:600; margin-bottom:0.5rem;">Estado (UF)</label>
+                          <input type="text" id="billingState" class="select-input" placeholder="SP" maxlength="2" style="text-transform:uppercase;" required>
+                      </div>
+                  </div>
+
+                  <button type="submit" id="payWithCardBtn" class="continue-button" style="margin-top: 1rem; width: 100%; display: flex; justify-content: center; align-items: center; padding: 1rem;">
+                      <span class="button-text">Pagar Agora</span>
+                  </button>
+              </form>
+          </div>
+
+        <!-- Pix Content (Default) -->
+        <div id="pixPaymentContent">
+            <div style="text-align: center; margin-bottom: 2.5rem;">
+                <div style="width: 72px; height: 72px; background: #d1fae5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                </div>
+                <h2 style="font-size: 1.75rem; font-weight: 700; color: #111827; margin-bottom: 0.5rem;">Realize o Pagamento</h2>
+                <p style="color: #6b7280; font-size: 1.1rem;">Realize o pagamento do <strong>Pix</strong> para garantir a sua compra.</p>
+                <div style="display: inline-block; background: #f3f4f6; padding: 0.6rem 1.2rem; border-radius: 99px; margin-top: 1.25rem; font-weight: 500; font-size: 1.05rem;">
+                    O Pix será expirado em <span id="pixTimer" style="color: #db2777;">29:59</span>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-bottom: 2.5rem;">
+                <p style="margin-bottom: 1.25rem; font-size: 1.1rem;">Acesse o aplicativo que você utiliza o <strong>Pix</strong><br>e escolha a opção <strong>Ler QR code</strong>.</p>
+                <div id="paymentQrImage" style="background: #f9fafb; padding: 1.5rem; border-radius: 12px; display: inline-block; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <!-- QR Code Img injected here -->
+                </div>
+                <p style="font-size: 0.85rem; color: #6b7280; margin-top: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">ESCANEIE O QR CODE PARA PAGAR</p>
+            </div>
+
+            <div style="text-align: center; margin-bottom: 1rem;">
+                <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 1.5rem;">
+                    Valor do Pix: <span id="paymentValue" style="color: #db2777;">R$ 0,00</span>
+                </div>
+                
+                <p style="color: #6b7280; font-size: 18px; margin-bottom: 1.25rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+                    Também é possível realizar o pagamento através do código abaixo. Basta copiar e realizar o pagamento no seu aplicativo ou Internet Banking escolhendo a opção <strong>Pix Copia e Cola</strong>.
+                </p>
+
+                <div style="position: relative; max-width: 600px; margin: 0 auto;">
+                    <textarea id="paymentCopyCode" readonly style="width: 100%; height: 90px; padding: 1rem; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; font-family: inherit; resize: none; font-size: 0.95rem; color: #374151;"></textarea>
+                    <button id="paymentCopyBtn" class="continue-button" style="margin-top: 1.25rem; width: 100%; display: flex; justify-content: center; align-items: center; padding: 1rem;">
+                        <span class="button-text" style="text-align: center; width: 100%;">Copiar Código</span>
+                    </button>
+                </div>
             </div>
         </div>
       </div>
@@ -740,6 +877,11 @@
     </footer>
   </div>
 
+  <script>
+    window.EFI_PAYEE_CODE = "<%= EFI_PAYEE_CODE %>";
+    window.EFI_SANDBOX = "<%= EFI_SANDBOX %>";
+  </script>
+  <script src="<%= EFI_SCRIPT_URL %>"></script>
    <script src="/js/main.js" defer></script>
    <script src="/js/checkout.js?v=<%= Date.now() %>" defer></script>
    <script src="/js/why-us.js" defer></script>
@@ -918,6 +1060,33 @@
     .media-frame > img, .media-frame > video, .media-frame > iframe { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border: none; }
     @media (max-width: 640px) { #postSelectModal.modal-overlay { align-items: flex-start; } #postSelectModal .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } .media-frame { aspect-ratio: 9/16; max-height: 200px; } #postModalGrid.post-grid .inline-msg { font-size: 11px; } }
   </style>
-  
-</body>
+    <!-- Upsell Modal -->
+    <div id="upsellModal" class="modal" style="display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center;">
+      <div class="modal-content" style="background-color: #fefefe; margin: auto; padding: 25px; border: 1px solid #888; width: 90%; max-width: 450px; border-radius: 16px; text-align: center; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+        <span id="upsellClose" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; position: absolute; right: 15px; top: 10px;" onclick="document.getElementById('upsellModal').style.display='none'">×</span>
+        <div style="font-size: 3rem; margin-bottom: 10px;">🎁</div>
+        <h2 style="color: #db2777; margin: 0 0 10px 0; font-size: 1.5rem;">ESPERE! UMA OFERTA ESPECIAL</h2>
+        <p style="font-size: 1.1rem; color: #374151; margin-bottom: 20px;">Você foi selecionado para uma oferta exclusiva.</p>
+        
+        <div style="background: #fff1f2; border: 2px dashed #db2777; border-radius: 12px; padding: 15px; margin-bottom: 20px;">
+            <p id="upsellText" style="margin: 0; font-size: 1.1rem; color: #1f2937;">
+                Adicione mais <strong id="upsellQty">1000</strong> seguidores por apenas <strong id="upsellPrice" style="color: #059669; font-size: 1.2rem;">R$ 29,90</strong>
+            </p>
+            <div style="margin-top: 8px; font-size: 0.9rem; color: #db2777; font-weight: 700;">
+                ⚡ 25% DE DESCONTO APLICADO
+            </div>
+        </div>
+
+        <button id="btnUpsellYes" class="continue-button" style="width: 100%; margin-bottom: 12px; font-size: 1.1rem; padding: 12px;">
+            SIM! QUERO APROVEITAR
+        </button>
+        <button id="btnUpsellNo" style="background: transparent; border: none; color: #6b7280; text-decoration: underline; cursor: pointer; font-size: 0.95rem;">
+            Não, obrigado. Vou perder essa chance.
+        </button>
+      </div>
+    </div>
+
+    <!-- Upsell Modal Logic handled in checkout.js -->
+
+  </body>
 </html>

@@ -11,6 +11,68 @@ const GoogleDriveManager = require("./googleDriveManager");
 const BaserowManager = require("./baserowManager");
 const axios = require('axios');
 const fs = require('fs');
+const EfiPay = require('gn-api-sdk-node');
+
+const app = express();
+app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
+
+// Configuração de sessão
+app.use(session({
+    secret: "agencia-oppus-secret-key",
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 horas
+}));
+
+// Middleware para parsing de JSON e URL encoded
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Middleware melhorado para capturar IP real (útil quando atrás de proxy)
+app.use((req, res, next) => {
+    // Tentar diferentes headers para capturar o IP real
+    let ip = req.headers['x-forwarded-for'] || 
+             req.headers['x-real-ip'] || 
+             req.headers['cf-connecting-ip'] || 
+             req.headers['x-client-ip'] || 
+             req.headers['x-forwarded'] || 
+             req.headers['forwarded-for'] || 
+             req.headers['forwarded'] ||
+             req.connection.remoteAddress || 
+             req.socket.remoteAddress || 
+             req.ip || 
+             'unknown';
+    
+    // Se x-forwarded-for contém múltiplos IPs, pegar o primeiro
+    if (ip && ip.includes(',')) {
+        ip = ip.split(',')[0].trim();
+    }
+    
+    // Normalizar IPv6 mapeado para IPv4
+    const ipNormalized = ip.replace('::ffff:', '');
+    
+    // Atribuir o IP real à requisição
+    req.realIP = ipNormalized;
+    req.ip = ipNormalized; // Também sobrescrever req.ip
+    
+    next();
+});
+
+// Configurar view engine ANTES de qualquer render
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+app.use((req, res, next) => { res.locals.PIXEL_ID = process.env.PIXEL_ID || ''; next(); });
+
+// Configuração Efí Bank (Homologação/Produção)
+const efiOptions = {
+    sandbox: process.env.EFI_SANDBOX === 'true',
+    client_id: process.env.EFI_CLIENT_ID_HM,
+    client_secret: process.env.EFI_CLIENT_SECRET_HM,
+    certificate: path.join(__dirname, 'certs', 'productionCertificate.p12'), // Opcional para cartão se não usar PIX com certificado, mas o SDK pode exigir
+    pem: false // Para cartão geralmente não precisa de certificado mTLS obrigatório como Pix, mas vamos ver
+};
+// Nota: Para cartão de crédito, o SDK usa apenas client_id e client_secret para OAuth.
+// Se der erro de certificado, ajustamos.
 
 const cookieProfiles = require("./instagramProfiles.json");
 
@@ -186,32 +248,41 @@ async function fetchInstagramPosts(username) {
         console.log(`🔍 Buscando posts do Instagram para: @${username} (via API/Cookies)`);
         // Reutiliza a função otimizada com suporte a cookies paralelos
         const result = await fetchInstagramRecentPosts(username);
-        
-        if (result.success && result.posts) {
-            const shortcodes = result.posts.map(p => p.shortcode);
-            console.log(`📊 IDs de posts encontrados: ${shortcodes.length}`);
-            return {
-                success: true,
-                posts: shortcodes,
-                totalPosts: shortcodes.length
-            };
-        }
-        
-        return { 
-            success: false, 
-            error: result.error || 'Erro ao buscar posts',
-            details: result.error
-        };
-
+        return result;
     } catch (error) {
-        console.error('❌ Erro ao buscar posts do Instagram:', error.message);
-        return {
-            success: false,
-            error: 'Erro ao buscar posts do Instagram',
-            details: error.message
-        };
+        console.error('Erro em fetchInstagramPosts:', error);
+        return { success: false, error: error.message };
     }
 }
+
+// Rota para buscar posts do Instagram
+app.get('/api/instagram/posts', async (req, res) => {
+    try {
+        const username = req.query.username;
+        if (!username) {
+            return res.status(400).json({ success: false, error: 'Username é obrigatório' });
+        }
+
+        const result = await fetchInstagramPosts(username);
+        
+        if (result && result.success) {
+            return res.json({ 
+                success: true, 
+                posts: result.posts || [],
+                user: result.user 
+            });
+        } else {
+            return res.status(404).json({ 
+                success: false, 
+                error: result.error || 'Não foi possível buscar os posts. Perfil pode ser privado.' 
+            });
+        }
+    } catch (error) {
+        console.error('Erro na rota /api/instagram/posts:', error);
+        res.status(500).json({ success: false, error: 'Erro interno ao buscar posts' });
+    }
+});
+
 const PROFILE_CACHE = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -489,9 +560,6 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         return errorResult;
     }
 }
-
-const app = express();
-app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
 
 app.get('/teste-embed', (req, res) => {
   res.render('teste-embed');
@@ -863,53 +931,6 @@ const blockedFingerprints = ['e7DMDkz0nWbVn4O3OPoE'];
 // const allowedFingerprints = ['e7DMDkz0nWbVn4O3OPoE'];
 
 // ==================== ROTAS ====================
-
-// Configuração de sessão
-app.use(session({
-    secret: "agencia-oppus-secret-key",
-    resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 horas
-}));
-
-// Middleware para parsing de JSON e URL encoded
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Middleware melhorado para capturar IP real (útil quando atrás de proxy)
-app.use((req, res, next) => {
-    // Tentar diferentes headers para capturar o IP real
-    let ip = req.headers['x-forwarded-for'] || 
-             req.headers['x-real-ip'] || 
-             req.headers['cf-connecting-ip'] || 
-             req.headers['x-client-ip'] || 
-             req.headers['x-forwarded'] || 
-             req.headers['forwarded-for'] || 
-             req.headers['forwarded'] ||
-             req.connection.remoteAddress || 
-             req.socket.remoteAddress || 
-             req.ip || 
-             'unknown';
-    
-    // Se x-forwarded-for contém múltiplos IPs, pegar o primeiro
-    if (ip && ip.includes(',')) {
-        ip = ip.split(',')[0].trim();
-    }
-    
-    // Normalizar IPv6 mapeado para IPv4
-    const ipNormalized = ip.replace('::ffff:', '');
-    
-    // Atribuir o IP real à requisição
-    req.realIP = ipNormalized;
-    req.ip = ipNormalized; // Também sobrescrever req.ip
-    
-    next();
-});
-
-// Configurar view engine ANTES de qualquer render
-app.set("view engine", "ejs");
-app.set("views", path.join(__dirname, "views"));
-app.use((req, res, next) => { res.locals.PIXEL_ID = process.env.PIXEL_ID || ''; next(); });
 
 // Rota de diagnóstico simples
 app.get('/ping', (req, res) => {
@@ -1454,6 +1475,73 @@ app.post('/api/instagram/track-validated', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
+// Rota para buscar posts do Instagram (usada pelo grid de seleção)
+app.get('/api/instagram/posts', async (req, res) => {
+    try {
+        const username = String(req.query.username || '').trim();
+        if (!username) return res.json({ success: false, error: 'Username missing' });
+
+        const userAgent = req.get('User-Agent') || 'Mozilla/5.0';
+        const ip = req.ip || '127.0.0.1';
+
+        // Usa a verificação robusta que já retorna latestPosts
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+
+        if (result.success && result.profile) {
+            return res.json({
+                success: true,
+                posts: result.profile.latestPosts || []
+            });
+        } else {
+            return res.json({
+                success: false,
+                error: result.error || 'Erro ao buscar posts',
+                posts: []
+            });
+        }
+    } catch (error) {
+        console.error('Erro em /api/instagram/posts:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Rota para selecionar um post para um tipo de serviço (likes, views, comments)
+app.post('/api/instagram/select-post-for', (req, res) => {
+    try {
+        const { username, shortcode, kind } = req.body;
+        if (!req.session) return res.json({ success: false, error: 'no_session' });
+        
+        req.session.selectedFor = req.session.selectedFor || {};
+        
+        if (shortcode) {
+            req.session.selectedFor[kind] = {
+                shortcode: shortcode,
+                username: username,
+                at: Date.now()
+            };
+            // Compatibilidade com lógica antiga de array único
+            req.session.selectedPosts = req.session.selectedPosts || [];
+            if (!req.session.selectedPosts.find(p => p.shortcode === shortcode)) {
+                req.session.selectedPosts.push({ shortcode, username });
+            }
+        } else {
+            // Se shortcode vazio, remove seleção
+            if (req.session.selectedFor[kind]) delete req.session.selectedFor[kind];
+        }
+        
+        return res.json({ success: true, selectedFor: req.session.selectedFor });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Rota para obter seleções atuais
+app.get('/api/instagram/selected-for', (req, res) => {
+    const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+    return res.json({ success: true, selectedFor });
+});
+
 app.use(async (req, res, next) => {
   try {
     const p = req.session && req.session.instagramProfile;
@@ -1480,7 +1568,17 @@ app.get('/', (req, res) => {
             req.session.lastPaidCorrelationID = '';
         }
     } catch (_) {}
-    res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+    const isSandbox = process.env.EFI_SANDBOX === 'true';
+    const EFI_SCRIPT_URL = isSandbox 
+        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
+        : 'https://payment-token.efipay.com.br/v1/payment-token.js';
+
+    res.render('checkout', { 
+        PIXEL_ID: process.env.PIXEL_ID || '', 
+        EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
+        EFI_SCRIPT_URL: EFI_SCRIPT_URL,
+        EFI_SANDBOX: isSandbox
+    }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar home/checkout:', err.message);
             return res.status(500).send('Erro ao renderizar checkout');
@@ -1553,7 +1651,18 @@ app.get('/checkout', (req, res) => {
         req.session.selectedFor = {};
         req.session.selectedPosts = [];
     }
-    res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' }, (err, html) => {
+    // Define EFI_SCRIPT_URL based on environment
+    const isSandbox = process.env.EFI_SANDBOX === 'true';
+    const efiScriptUrl = isSandbox 
+        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
+        : 'https://payment-token.efipay.com.br/v1/payment-token.js';
+
+    res.render('checkout', { 
+        PIXEL_ID: process.env.PIXEL_ID || '',
+        EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
+        EFI_SCRIPT_URL: efiScriptUrl,
+        EFI_SANDBOX: isSandbox
+    }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar checkout:', err.message);
             return res.status(500).send('Erro ao renderizar checkout');
@@ -1574,6 +1683,22 @@ app.get('/engajamento', (req, res) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
       return res.status(500).send('Erro ao renderizar engajamento');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+// Página Engajamento Novo (com seletor de contexto e cards unificados)
+app.get('/engajamento-novo', (req, res) => {
+  console.log('✨ Acessando rota /engajamento-novo');
+  res.render('engajamento-novo', { 
+    PIXEL_ID: process.env.PIXEL_ID || '', 
+    queryParams: req.query 
+  }, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar engajamento-novo:', err.message);
+      return res.status(500).send('Erro ao renderizar engajamento-novo');
     }
     res.type('text/html');
     res.send(html);
@@ -1745,8 +1870,155 @@ app.post('/api/refil/create', async (req, res) => {
     }
 });
 
+// API: criar cobrança Cartão via Efí
+app.post('/api/efi/card-charge', async (req, res) => {
+    try {
+        const { payment_token, installments, customer, billing_address, items, total_cents, additionalInfo, profile_is_private, comment, utms: reqUtms } = req.body;
+
+        // Validação mínima de valor (R$ 1,00 = 100 centavos)
+        if (!total_cents || total_cents < 100) {
+            return res.status(400).json({ 
+                error: 'invalid_amount', 
+                message: 'Valor mínimo para cartão de crédito é R$ 1,00.' 
+            });
+        }
+
+        const options = {
+            sandbox: process.env.EFI_SANDBOX === 'true',
+            client_id: process.env.EFI_CLIENT_ID_HM,
+            client_secret: process.env.EFI_CLIENT_SECRET_HM
+        };
+
+        const efipay = new EfiPay(options);
+
+        // Mapear itens para formato Efí
+        const efiItems = (items || []).map(i => ({
+            name: i.title,
+            value: parseInt(i.price_cents),
+            amount: parseInt(i.quantity)
+        }));
+
+        const params = {};
+        const body = {
+            payment: {
+                credit_card: {
+                    installments: Number(installments) || 1,
+                    payment_token: payment_token,
+                    billing_address: billing_address,
+                    customer: {
+                        name: customer.name,
+                        cpf: customer.cpf,
+                        phone_number: customer.phone_number,
+                        email: customer.email,
+                        birth: customer.birth
+                    }
+                }
+            },
+            items: efiItems
+        };
+
+        console.log('💳 Processando pagamento cartão Efí:', { total_cents, installments, customer_cpf: customer.cpf });
+
+        const charge = await efipay.createOneStepCharge(params, body);
+
+        if (charge && charge.data && charge.data.status !== 'error') {
+            // Persistência (adaptada do Woovi)
+            const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+            const addInfo = addInfoArr.reduce((acc, item) => {
+                const k = String(item?.key || '').trim();
+                const v = String(item?.value || '').trim();
+                acc[k] = v;
+                return acc;
+            }, {});
+
+            let utms = {};
+            try {
+                if (reqUtms && Object.keys(reqUtms).length > 0) {
+                    utms = reqUtms;
+                    if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+                } else {
+                    const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                    utms = { ref: refUrl };
+                }
+            } catch(_) {
+                const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                utms = { ref: refUrl };
+            }
+
+            const tipo = addInfo['tipo_servico'] || '';
+            const qtd = Number(addInfo['quantidade'] || 0) || 0;
+            const instauserFromClient = addInfo['instagram_username'] || '';
+            const userAgent = req.get('User-Agent') || '';
+            const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+            const slug = req.session?.linkSlug || '';
+            const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfo['profile_is_private'] === 'true';
+
+            // Geolocalization
+            let geolocation = null;
+            try {
+                geolocation = await geoLookupIp(ip);
+            } catch(_) {}
+
+            const createdIso = new Date().toISOString();
+            
+            // Status Efí: 'new', 'waiting', 'paid', 'unpaid', 'refunded', 'contested', 'canceled', 'settled'
+            let sysStatus = 'pendente';
+            if (charge.data.status === 'paid' || charge.data.status === 'settled') sysStatus = 'pago';
+
+            const record = {
+                nomeUsuario: null,
+                telefone: customer.phone_number || '',
+                instauser: instauserFromClient,
+                profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
+                isPrivate: isPrivate,
+                criado: createdIso,
+                identifier: String(charge.data.charge_id),
+                correlationID: req.body.correlationID || '',
+                status: sysStatus,
+                qtd,
+                tipo,
+                utms,
+                geolocation,
+                valueCents: total_cents,
+                customer: customer,
+                additionalInfo: addInfoArr,
+                tipoServico: tipo,
+                quantidade: qtd,
+                instagramUsername: instauserFromClient,
+                slug,
+                userAgent,
+                ip,
+                createdAt: createdIso,
+                paymentMethod: 'credit_card',
+                efi: {
+                    charge_id: charge.data.charge_id,
+                    status: charge.data.status,
+                    total: charge.data.total,
+                    installments: charge.data.payment?.credit_card?.installments,
+                    card_mask: charge.data.payment?.credit_card?.card_mask
+                }
+            };
+
+            const col = await getCollection('checkout_orders');
+            await col.insertOne(record);
+            console.log('🗃️ MongoDB: pedido cartão persistido (Efí charge_id=', charge.data.charge_id, ')');
+
+            return res.json({ success: true, charge: charge.data });
+        } else {
+            console.error('❌ Efí retornou erro ou status inválido:', charge);
+            return res.status(400).json({ error: 'payment_failed', details: charge });
+        }
+
+    } catch (error) {
+        console.error('❌ Erro pagamento cartão Efí:', error);
+        return res.status(500).json({ error: 'payment_error', message: error.message || 'Erro ao processar pagamento.' });
+    }
+});
+
 // API: criar cobrança PIX via Woovi
 app.post('/api/woovi/charge', async (req, res) => {
+    // ... (código existente da Woovi)
+
     const WOOVI_AUTH = process.env.WOOVI_AUTH || 'Q2xpZW50X0lkXzI1OTRjODMwLWExN2YtNDc0Yy05ZTczLWJjNDRmYTc4NTU2NzpDbGllbnRfU2VjcmV0X0NCVTF6Szg4eGJyRTV0M1IxVklGZEpaOHZLQ0N4aGdPR29UQnE2dDVWdU09';
     const {
         correlationID,
@@ -2486,8 +2758,18 @@ app.get('/:slug', async (req, res, next) => {
     const { slug } = req.params;
     console.log('🔎 Capturado em /:slug:', slug);
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
+    const isSandbox = process.env.EFI_SANDBOX === 'true';
+    const EFI_SCRIPT_URL = isSandbox 
+        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
+        : 'https://payment-token.efipay.com.br/v1/payment-token.js'; // Verifique a URL correta de produção na doc
+
     if (slug === 'checkout') {
-        return res.render('checkout', { PIXEL_ID: process.env.PIXEL_ID || '' });
+        return res.render('checkout', { 
+            PIXEL_ID: process.env.PIXEL_ID || '',
+            EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
+            EFI_SCRIPT_URL: EFI_SCRIPT_URL,
+            EFI_SANDBOX: isSandbox
+        });
     }
     if (slug === 'engajamento') {
         return res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
