@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-17892165907"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'AW-17892165907');
+  </script>
+<%
+  let serverQueryString = '';
+  if (typeof queryParams !== 'undefined' && queryParams) {
+     const p = new URLSearchParams();
+     ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+        if (queryParams[k]) p.set(k, queryParams[k]);
+     });
+     const s = p.toString();
+     if (s) serverQueryString = '?' + s;
+  }
+%>
+  <meta charset="utf-8" />
+  <title>Checkout - Engajamento</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link href="/css/style.css?v=6" rel="stylesheet" />
+  <link href="/css/badges.css" rel="stylesheet" />
+  <link href="/css/perfil.css" rel="stylesheet" />
+  <!-- Testimonials CSS -->
+  <link href="/css/testimonials.css" rel="stylesheet" />
+  <link href="/css/why-us.css?v=5" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="/images/logo.png" />
+  
+  <style>
+    /* Footer Fix */
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .checkout-page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .main-content {
+      flex: 1;
+      width: 100%;
+    }
+
+    /* Estilos específicos para o seletor de contexto (Topo) */
+    .service-context-selector {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding: 0 1rem;
+      flex-wrap: wrap;
+    }
+    
+    /* Base Button Style */
+    .service-selector-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 999px; /* Pill shape */
+      font-weight: 700;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.95rem;
+      box-shadow: var(--shadow-sm);
+      white-space: nowrap;
+    }
+    
+    .service-selector-btn:hover {
+      border-color: var(--primary-purple);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+    
+    .service-selector-btn.active {
+      background: var(--instagram-gradient);
+      color: white;
+      border: 1px solid transparent;
+      box-shadow: 0 4px 12px rgba(220, 39, 67, 0.3);
+    }
+
+    .service-selector-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    /* Specific Styles for Service Type Buttons (The ones to change) */
+    .type-btn {
+      background: #1e1e1e; /* Dark theme */
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.1);
+      font-size: 0.8rem; /* Smaller font */
+      padding: 0.5rem 1rem; /* Smaller padding */
+      height: auto;
+      min-width: 0;
+    }
+
+    .type-btn:hover {
+        background: #333;
+    }
+    
+    .type-btn.active {
+        background: var(--instagram-gradient);
+        border-color: transparent;
+    }
+
+    /* Custom Buy Button Style */
+    .buy-btn-custom {
+      background: var(--primary-purple) !important;
+      font-size: 0.85rem !important;
+      padding: 0.5rem 1.5rem !important;
+      height: auto !important;
+      min-height: 0 !important;
+      border-radius: 999px !important;
+      box-shadow: none !important;
+      color: white !important;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+    }
+    .buy-btn-custom:hover {
+      background: var(--dark-purple) !important;
+      transform: translateY(-2px);
+    }
+
+    /* Horizontal Layout for Type Buttons */
+    #tipoCards {
+      display: flex;
+      flex-direction: row;
+      gap: 0.75rem;
+      overflow-x: auto;
+      padding-bottom: 1rem;
+      margin-bottom: 1.5rem;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/Edge */
+      justify-content: center; /* Center them */
+      flex-wrap: wrap; /* Wrap on small screens or scroll? User image showed row. Let's wrap for better usability unless specifically scroll. */
+    }
+    
+    /* User asked for "smaller", "like I put on computer". Assuming horizontal pills. */
+    /* If many options, wrap is safer than scroll for desktop. */
+
+    /* Ferramenta Exclusiva Image Size */
+    .exclusive-img-container {
+        max-width: 320px;
+        margin: 0 auto;
+        transition: max-width 0.3s ease;
+    }
+    @media (min-width: 768px) {
+      .exclusive-img-container {
+        max-width: 500px !important; /* Slightly smaller on desktop */
+      }
+    }
+    
+    #ferramentaExclusivaSection img {
+        transition: all 0.3s ease;
+        width: 100%;
+        height: auto;
+    }
+
+    /* Ajuste para mobile */
+    @media (max-width: 640px) {
+      .service-context-selector {
+        gap: 0.5rem;
+      }
+      .service-selector-btn {
+        padding: 0.6rem 1rem;
+        font-size: 0.85rem;
+      }
+      #tipoCards {
+        justify-content: flex-start; /* Align left on mobile for scrolling */
+        flex-wrap: nowrap; /* Force scroll on mobile */
+        padding-left: 1rem;
+        padding-right: 1rem;
+        margin-left: -1rem; /* Full width scroll */
+        margin-right: -1rem;
+      }
+    }
+  </style>
+
+  <!-- TRACK COMBO -->
+  <script>
+    (function() {
+      var script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+      var firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+    })();
+  </script>
+  <!-- End TRACK COMBO -->
+     <!-- Google Tag Manager --> 
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': 
+  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0], 
+  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src= 
+  'https://tracke.agenciaoppus.site/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f); 
+  })(window,document,'script','dataLayer','GTM-MZD45RKD');</script> 
+  <!-- End Google Tag Manager -->
+
+</head>
+<body class="theme-light has-fixed-menu">
+  <%- include('partials/menu', { logoLink: '/engajamento-novo' }) %>
+  <script>
+    // Server-side UTMs passed to client
+    window.SERVER_UTMS_QUERY = '<%- serverQueryString %>';
+    
+    // Configuração inicial
+    window.__ENG_MODE__ = false; // Modo checkout direto
+  </script>
+
+  <div class="container checkout-page">
+    <header class="header">
+      <div id="headerTicker" class="header-ticker" aria-live="polite">
+        <span class="ticker-item enter">Empresa regularizada</span>
+      </div>
+      <h1 class="title">
+        Cresça o seu perfil com<br>
+        <span class="title-highlight-gradient">resultados reais e imediatos</span>
+      </h1>
+      <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com serviços de alta qualidade que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
+    </header>
+
+    <main class="main-content">
+      
+      <!-- Seletor de Serviço (Contexto) -->
+      <div class="service-context-selector">
+        <button class="service-selector-btn active" data-service="followers" onclick="window.selectService && window.selectService('followers')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          Seguidores
+        </button>
+        <button class="service-selector-btn" data-service="likes" onclick="window.selectService && window.selectService('likes')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+          Curtidas
+        </button>
+        <button class="service-selector-btn" data-service="views" onclick="window.selectService && window.selectService('views')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          Visualizações
+        </button>
+      </div>
+
+      <!-- Stepper removed as per request -->
+
+
+      <section class="section-block">
+        <!-- STEP 1: Seleção do Serviço -->
+        <div id="step1Container">
+
+          <!-- Audio Player -->
+          <div class="service-card" id="audioCard" style="margin-bottom: 2rem;">
+            <div class="card-content">
+              <h3 class="card-title">Guia de áudio</h3>
+              <div class="card-desc">
+                  <div class="audio-player">
+                  <audio id="guideAudio" class="audio-element" preload="none" src="/images/audio%20site.MP3"></audio>
+                  <div class="audio-controls">
+                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" data-tip-mode="manual" data-tip-top="50" data-tip-left="" data-tip-arrow-left="">
+                      <div class="tutorial-pop-step">1/5</div>
+                      <div class="tutorial-pop-text">Ouça o áudio primeiro</div>
+                    </div>
+                    <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
+                    <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
+                  <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
+                  </div>
+                  <div class="audio-speed-row">
+                    <button type="button" id="audioSpeed15x" class="audio-speed-btn">1.5x</button>
+                    <button type="button" id="audioSpeed2x" class="audio-speed-btn">2x</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Botão Comprar Agora (Moved to top) -->
+          <div class="service-card" style="background: transparent; border: none; box-shadow: none; padding: 0; margin-bottom: 2rem;">
+            <div class="card-content" style="display:flex; justify-content:center; align-items:center; text-align:center;">
+              <a href="#tipoCards" id="buyFollowersBtn" class="continue-button" style="display:inline-flex; justify-content:center; align-items:center; text-align:center; margin:0 auto; width: 100%; max-width: 450px;">
+                <span class="button-text">COMPRAR SEGUIDORES AGORA</span>
+              </a>
+              <div class="value-props" style="margin-top: 1rem;">
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" loading="lazy" width="119" height="119" />
+                    <div class="value-prop-metric">+3</div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">anos de operação</span><span class="caption-mobile">anos de<br>operação</span></div>
+                </div>
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" loading="lazy" width="119" height="119" />
+                    <div class="value-prop-metric">+2</div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
+                </div>
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" loading="lazy" width="119" height="119" />
+                    <div class="value-prop-metric">R$<span class="value-prop-arrow">↓</span></div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">melhores preços do mercado</span><span class="caption-mobile">melhores<br>preços do<br>mercado</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Testimonials Section (Image based) -->
+          <div class="testimonials-section" id="depoimentosCard" style="display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;">
+            <div class="why-us-pill">O que as pessoas estão falando?</div>
+            <h2 class="why-us-title">Veja depoimentos de quem <span class="why-us-gradient-text">comprou conosco</span></h2>
+            <p class="why-us-subtitle" style="margin-bottom: 1.5rem;">Junte-se a milhares de clientes satisfeitos que impulsionaram suas redes sociais.</p>
+            <div id="testimonialsCarousel" class="testimonials-carousel">
+              <button type="button" class="carousel-btn prev" aria-label="Anterior">‹</button>
+              <div class="carousel-viewport">
+              <div class="carousel-track">
+                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" loading="lazy" width="505" height="897" /></div>
+                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" loading="lazy" width="577" height="769" /></div>
+                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" loading="lazy" width="433" height="769" /></div>
+              </div>
+              </div>
+              <button type="button" class="carousel-btn next" aria-label="Próximo">›</button>
+            </div>
+          </div>
+
+          <!-- Why Us (Moved here) -->
+          <div class="why-choose-us-section" style="margin-bottom: 2rem;">
+            <div class="why-us-pill">Por que escolher a Agência Oppus?</div>
+            <h2 class="why-us-title">Sabemos o que está <span class="why-us-gradient-text">funcionando</span></h2>
+            <p class="why-us-subtitle">Nossa metodologia comprovada entrega crescimento sustentável para sua presença digital</p>
+            <div class="why-us-slider-container">
+              <div class="why-us-track" id="whyUsTrack">
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 16V12M12 8H12.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>100% Seguro</h3>
+                  <p>Sem riscos de banimento. Metodologia aprovada pelos algoritmos das plataformas.</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M16 21V19C16 17.9391 15.5786 16.9217 14.8284 16.1716C14.0783 15.4214 13.0609 15 12 15C10.9391 15 9.92172 15.4214 9.17157 16.1716C8.42143 16.9217 8 17.9391 8 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 13C13.6569 13 15 11.6569 15 10C15 8.34315 13.6569 7 12 7C10.3431 7 9 8.34315 9 10C9 11.6569 10.3431 13 12 13Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M4 7C4 9.20914 5.79086 11 8 11H16C18.2091 11 20 9.20914 20 7C20 4.79086 18.2091 3 16 3H8C5.79086 3 4 4.79086 4 7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Seguidores Reais</h3>
+                  <p>Trabalhamos com pacote de seguidores brasileiros reais e ativos</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M18.5 11.5L12 5L5.5 11.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 12.5V19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Entrega Rápida</h3>
+                  <p>Pacotes com resultados visiveis em até 5 minutos com crescimento de autoridade rápido</p>
+                </div>
+              </div>
+              <div class="why-us-dots">
+                <div class="why-us-dot active" data-index="0"></div>
+                <div class="why-us-dot" data-index="1"></div>
+                <div class="why-us-dot" data-index="2"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cards de Opções (Tipos) - Visível como Botões Verticais -->
+          <div id="tipoCards" class="option-cards vertical-buttons" style="margin-bottom: 1.5rem; display: flex; gap: 0.75rem;"></div>
+          
+          <div class="service-card" id="tipoDescCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title" id="tipoDescTitle"></h3>
+              <div class="card-desc" id="tipoDescContent"></div>
+            </div>
+          </div>
+
+          <!-- Cards de Planos (Quantidade) - Select visível -->
+          <div class="service-card" id="quantidadeSelectCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title">Escolha o pacote</h3>
+              <div class="input-group" id="grupoQuantidade" style="position:relative;">
+                <select id="quantidadeSelect" class="select-input" style="flex:1;">
+                  <option value="">Selecione o tipo primeiro...</option>
+                </select>
+                <!-- Tutorial: 3/4 -->
+                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">3/4</div>
+                  <div class="tutorial-pop-text">Selecionar o plano</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Select de Tipo Oculto (Substituído por Botões) -->
+          <div class="service-card" id="tipoSelectCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title">Tipo de serviço</h3>
+              <div class="input-group" id="grupoTipo" style="position:relative;">
+                <select id="tipoSelect" class="select-input" style="flex:1;">
+                  <option value="" selected>Selecione...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+
+        </div>
+
+        <!-- STEP 2: Dados do Perfil -->
+        <div id="step2Container" style="display:none;">
+          <div class="service-card">
+            <div class="card-content">
+              <div style="text-align: center; margin-bottom: 1.5rem; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
+                <button id="backToStep1Btn" onclick="window.goToStep(1)" type="button" style="background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9;">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <h3 class="card-title" style="margin-bottom: 0; font-size: 1.5rem;">Dados do Pedido</h3>
+              </div>
+              <div class="card-desc">
+                <div style="margin-bottom: 0.5rem;">
+                  <label class="input-label" style="display:block; margin-bottom:0.5rem; font-weight:600;">Usuário do Instagram <span style="color:#ef4444">*</span></label>
+                  <div class="input-group username-group" id="grupoUsername" style="position:relative; display: flex; gap: 0.5rem;">
+                    <input type="text" id="usernameCheckoutInput" placeholder="Ex: @usuario" class="select-input" maxlength="100" style="flex: 1; border-radius: 8px;" />
+                    <button id="checkCheckoutButton" class="continue-button validate-btn" type="button" style="padding: 0 1.5rem; border-radius: 8px; font-weight: 600; background: var(--instagram-gradient);">
+                      <span class="button-text">Buscar</span>
+                      <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-left: 0.4rem;">
+                        <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                    <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:block;">
+                      <div class="tutorial-pop-step">3/5</div>
+                      <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
+                    </div>
+                  </div>
+                  <style>
+                    @media (max-width: 640px) {
+                        #grupoUsername { flex-direction: column; }
+                        #checkCheckoutButton { width: 100%; height: 40px; min-height: 40px; margin-top: 0.5rem; }
+                        #usernameCheckoutInput { width: 100%; }
+                    }
+                  </style>
+                  <div id="perfilHints" style="margin-top:0.4rem; color: var(--text-secondary); font-size: 0.85rem;">
+                    Pode inserir com ou sem @ (Ex: @usuario ou usuario). Acentos serão removidos automaticamente.
+                  </div>
+                  <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                  <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                    <div class="spinner"></div>
+                    <p>Verificando perfil...</p>
+                  </div>
+                  <div id="profilePreview" style="display:none; margin-top:1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color);">
+                    <div style="display:flex; align-items:center; gap:1rem;">
+                      <img id="checkoutProfileImage" alt="Foto" style="width:64px; height:64px; border-radius:50%; object-fit:cover; background:#fff;" />
+                      <div>
+                        <div style="font-weight:700; font-size:1.1rem; color: var(--text-primary);">@<span id="checkoutProfileUsername"></span></div>
+                        <div id="checkoutProfileStats" style="display:flex; gap:0.8rem; font-size:0.9rem; color: var(--text-secondary); margin-top:0.2rem;">
+                          <div><strong><span id="checkoutPostsCount"></span></strong> posts</div>
+                          <div><strong><span id="checkoutFollowersCount">-</span></strong> curtidas</div>
+                          <div><strong><span id="checkoutFollowingCount">-</span></strong> seguindo</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="contactFieldsArea" style="display:none; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+                   <div id="selectedPostPreview" style="display:none; margin-bottom: 1.5rem;">
+                      <div style="font-weight:600; margin-bottom:0.5rem; color:var(--text-primary);">Post selecionado para receber as curtidas</div>
+                      <div id="selectedPostPreviewContent"></div>
+                   </div>
+                   <div style="margin-bottom: 1rem;">
+                      <div id="emailErrorMsg" style="color:#ef4444; font-size: 0.85rem; display:none; margin-bottom: 0.2rem;">Por favor, informe um e-mail válido</div>
+                      <div style="background-color: #eff6ff; padding: 0.75rem; border-radius: 8px; border: 1px solid #dbeafe; margin-bottom: 0.8rem;">
+                          <span style="color: #1e40af; font-weight: 700; font-size: 0.95rem; display: block; margin-bottom: 0.3rem;">Por que pedimos esses dados?</span>
+                          <p style="font-size: 0.85rem; color: #1e3a8a; margin: 0; line-height: 1.4;">Para entrar em contato com você e para você consultar os dados do seu pedido.</p>
+                      </div>
+                      <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Email <span style="color:#ef4444">*</span></label>
+                      <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" style="width:100%; border-radius: 8px;" />
+                   </div>
+                   <div style="margin-bottom: 2rem;">
+                      <label for="contactPhoneInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Telefone <span style="color:#ef4444">*</span></label>
+                      <div class="phone-field" style="width:100%;">
+                         <input type="tel" id="checkoutPhoneInput" class="select-input" placeholder="(00) 00000-0000" maxlength="15" style="width:100%; border-radius: 8px;" />
+                         <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                           <div class="tutorial-pop-step">4/5</div>
+                           <div class="tutorial-pop-text">Informe seu telefone para contato</div>
+                         </div>
+                      </div>
+                   </div>
+                   <a href="javascript:void(0)" id="btnActionProceed" onclick="window.goToStep(3)" class="continue-button contact-continue-btn" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center; background: var(--instagram-gradient); text-decoration: none; color: white; cursor: pointer;">
+                      <span class="button-text">Continuar</span>
+                   </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP 3: Pagamento (Estrutura Completa) -->
+        <div id="step3Container" style="display:none;">
+          <div class="service-card" id="step3ProfileCard" style="overflow: hidden; max-width: 960px; margin: 0 auto;">
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color);">
+               <button onclick="window.goToStep(2)" type="button" style="position: absolute; left: 1rem; top: 1.5rem; background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9; z-index: 10;">
+                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                     <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                   </svg>
+               </button>
+               <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 1rem;">
+                  <div style="position: relative; margin-bottom: 0.5rem;">
+                    <img id="reviewProfileImage" src="" alt="Perfil" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);" />
+                    <div style="position: absolute; bottom: 0; right: 0; background: #fff; border-radius: 50%; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="#2563eb" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div style="font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">@<span id="reviewProfileUsername"></span></div>
+               </div>
+               <div id="step3PostPreview" style="display:none; margin-top: 1.5rem;">
+                  <div style="font-weight:600; margin-bottom:0.5rem; color:var(--text-primary);">Post selecionado</div>
+                  <div id="step3PostPreviewContent"></div>
+               </div>
+            </div>
+
+            <!-- Order Bump Inline -->
+            <div class="service-card" id="orderBumpInline" style="display:none;">
+              <div class="card-content">
+                <h3 class="card-title" style="background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: transparent; display: block; text-align: center; width: 100%;">Oferta exclusivas para você</h3>
+                <div class="card-desc promo-list">
+                    <label class="promo-item upgrade">
+                      <input type="checkbox" id="orderBumpCheckboxInline" />
+                      <div class="promo-content">
+                        <div class="promo-highlight" id="orderBumpHighlight">Upgrade de quantidade</div>
+                        <div class="promo-title">Upgrade de pacote</div>
+                        <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
+                        <div class="promo-prices" data-promo="upgrade">
+                          <span class="old-price">—</span>
+                          <span class="discount-badge">OFERTA</span>
+                          <span class="new-price">—</span>
+                        </div>
+                      </div>
+                    </label>
+                    <!-- Outros bumps podem ser adicionados dinamicamente via JS -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Resumo do Pedido -->
+            <div style="padding: 1.5rem; background: var(--bg-secondary);">
+               <h3 style="margin-top:0; margin-bottom:1rem; font-size:1.1rem; color:var(--text-primary);">Resumo do Pedido</h3>
+               <div id="resumo" style="font-size:0.95rem; color:var(--text-secondary);">
+                 <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+                   <span>Serviço:</span>
+                   <strong id="resTipo" style="color:var(--text-primary);">...</strong>
+                 </div>
+                 <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
+                   <span>Quantidade:</span>
+                   <strong id="resQtd" style="color:var(--text-primary);">...</strong>
+                 </div>
+                 <div style="display:flex; justify-content:space-between; margin-top:1rem; padding-top:1rem; border-top:1px dashed var(--border-color); font-size:1.2rem;">
+                   <span style="font-weight:700;">Total:</span>
+                   <strong id="resTotalFinal" style="color:#22c55e;">...</strong>
+                 </div>
+               </div>
+            </div>
+
+            <!-- Seletor de Método de Pagamento -->
+            <div class="service-card" style="margin-top: 1.5rem;">
+                <div class="card-content">
+                    <h3 class="card-title">Pagamento</h3>
+                    
+                    <!-- CPF do Pagador -->
+                    <div class="input-group" style="margin-bottom: 1.5rem;">
+                        <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CPF do Pagador <span style="color:#ef4444">*</span></label>
+                        <input type="text" id="cpfInput" class="select-input" placeholder="000.000.000-00" maxlength="14" style="width:100%; border-radius:8px;">
+                        <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.3rem;">Necessário para emissão da nota fiscal e segurança.</div>
+                    </div>
+
+                    <div id="paymentMethodSelector" style="display:none; gap: 1rem; margin-bottom: 1.5rem;">
+                        <label id="optionPix" class="payment-option" style="flex:1; cursor:pointer; border:2px solid #db2777; background:#fff; border-radius:12px; padding:1rem; display:flex; flex-direction:column; align-items:center; transition:all 0.2s;">
+                            <input type="radio" name="paymentMethod" value="pix" checked style="display:none;">
+                            <div style="margin-bottom:0.5rem; color:#db2777;">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                            </div>
+                            <span style="font-weight:700; font-size:0.95rem;">Pix (Imediato)</span>
+                            <span style="font-size:0.75rem; color:var(--text-secondary);">Aprovação na hora</span>
+                        </label>
+                        <label id="optionCard" class="payment-option" style="flex:1; cursor:pointer; border:2px solid var(--border-color); background:var(--bg-secondary); border-radius:12px; padding:1rem; display:flex; flex-direction:column; align-items:center; transition:all 0.2s;">
+                            <input type="radio" name="paymentMethod" value="credit_card" style="display:none;">
+                            <div style="margin-bottom:0.5rem; color:var(--text-secondary);">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                            </div>
+                            <span style="font-weight:700; font-size:0.95rem;">Cartão</span>
+                            <span style="font-size:0.75rem; color:var(--text-secondary);">Até 12x</span>
+                        </label>
+                    </div>
+
+                    <!-- Conteúdo Pix -->
+                    <div id="pixPaymentContent" style="padding: 1rem; text-align: center; background: #fdf2f8; border-radius: 8px; border: 1px dashed #db2777;">
+                        <p style="color:#db2777; margin-bottom:0; font-weight: 500;">Ao clicar em "Pagar Agora", o código Pix será gerado.</p>
+                    </div>
+
+                    <!-- Conteúdo Cartão -->
+                    <div id="cardPaymentContent" style="display:none;">
+                        <div class="input-group" style="margin-bottom:1rem;">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Nome no Cartão</label>
+                            <input type="text" id="cardHolderName" class="select-input" placeholder="Como impresso no cartão" style="width:100%; border-radius:8px;">
+                        </div>
+                        <div class="input-group" style="margin-bottom:1rem;">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">E-mail do Titular</label>
+                            <input type="email" id="cardHolderEmail" class="select-input" placeholder="email@exemplo.com" style="width:100%; border-radius:8px;">
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                             <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CPF do Titular</label>
+                                <input type="text" id="cardHolderCpf" class="select-input" placeholder="000.000.000-00" maxlength="14" style="width:100%; border-radius:8px;">
+                             </div>
+                             <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Nascimento</label>
+                                <input type="date" id="cardHolderBirth" class="select-input" style="width:100%; border-radius:8px;">
+                             </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom:1rem;">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Número do Cartão</label>
+                            <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" style="width:100%; border-radius:8px;">
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Validade</label>
+                                <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AA" style="width:100%; border-radius:8px;">
+                            </div>
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CVV</label>
+                                <input type="text" id="cardCvv" class="select-input" placeholder="123" style="width:100%; border-radius:8px;">
+                            </div>
+                        </div>
+                        
+                        <!-- Endereço de Cobrança -->
+                        <div style="margin-top:1.5rem; margin-bottom:1rem; font-weight:700; color:var(--text-primary);">Endereço de Cobrança</div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CEP</label>
+                                <input type="text" id="billingCep" class="select-input" placeholder="00000-000" maxlength="9" style="width:100%; border-radius:8px;">
+                            </div>
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Número</label>
+                                <input type="text" id="billingNumber" class="select-input" placeholder="123" style="width:100%; border-radius:8px;">
+                            </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom:1rem;">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Rua</label>
+                            <input type="text" id="billingStreet" class="select-input" placeholder="Rua Exemplo" style="width:100%; border-radius:8px;">
+                        </div>
+                        <div class="input-group" style="margin-bottom:1rem;">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Bairro</label>
+                            <input type="text" id="billingNeighborhood" class="select-input" placeholder="Bairro" style="width:100%; border-radius:8px;">
+                        </div>
+                        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem; margin-bottom:1rem;">
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Cidade</label>
+                                <input type="text" id="billingCity" class="select-input" placeholder="Cidade" style="width:100%; border-radius:8px;">
+                            </div>
+                            <div class="input-group">
+                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Estado</label>
+                                <input type="text" id="billingState" class="select-input" placeholder="UF" maxlength="2" style="width:100%; border-radius:8px;">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Parcelas</label>
+                            <select id="cardInstallments" class="select-input" style="width:100%; border-radius:8px;">
+                                <option value="1">1x sem juros</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button id="realizarPedidoBtn" class="continue-button" style="width: 100%; padding: 1rem; margin-top: 2rem; font-size: 1.1rem; border-radius: 8px; background: var(--instagram-gradient); color: white; border: none; cursor: pointer; font-weight: 700; position: relative;">
+                        Pagar Agora
+                        <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-input" style="display:none; bottom: 100%; margin-bottom: 10px;">
+                          <div class="tutorial-pop-step">5/5</div>
+                          <div class="tutorial-pop-text">Clique em Pagar Agora para finalizar</div>
+                        </div>
+                    </button>
+                    
+                    <div id="pixResultado" style="display:none; margin-top: 1.5rem; padding: 1rem; background: #f0fdf4; border: 1px solid #22c55e; border-radius: 8px;">
+                        <!-- Resultado Pix será injetado aqui -->
+                    </div>
+
+                </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ferramenta Exclusiva -->
+        <div class="service-card" id="ferramentaExclusivaSection" style="margin-top: 3rem; text-align: center; background: transparent; box-shadow: none; border: none;">
+          <div style="display: inline-block; background: rgba(139, 92, 246, 0.1); color: #8B5CF6; padding: 0.35rem 1rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1rem;">
+            Exclusividade
+          </div>
+          <h3 class="card-title" style="font-size: 2rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+            <span style="font-weight: 700;">Ferramenta</span> <span style="font-weight: 700; background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Exclusiva</span>
+          </h3>
+          <p class="card-desc" style="max-width: 600px; margin: 0 auto 2rem; font-size: 1.1rem; color: var(--text-secondary);">
+            Garantia estendida: caso haja queda no período de 60 dias, nós repomos sem custo. Apenas com 4 cliques e menos de 30 segundos, basta informar o ID do pedido no nosso sistema e clicar em solicitar refil para recuperar a quantidade de seguidores.
+          </p>
+          <div class="exclusive-img-container">
+            <img src="/images/refil%20(1).png" alt="Ferramenta Exclusiva" style="display: block; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ Section -->
+      <section class="section-block">
+        <div id="faqSection" class="faq-section" style="max-width: 800px; margin: 0 auto 3rem; padding: 0 1rem;">
+          <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 2rem; font-size: 1.75rem;">Perguntas frequentes</h3>
+          <div class="faq-grid" style="display: flex; flex-direction: column; gap: 1rem;">
+            
+            <div class="service-card faq-card" style="cursor: pointer; transition: all 0.2s ease;">
+              <div class="card-content">
+                <button type="button" class="faq-question" aria-expanded="false" style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; padding: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); cursor: pointer; text-align: left;">
+                  <span class="faq-label">Qual prazo de entrega do serviço?</span>
+                  <svg class="faq-toggle" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="faq-answer" hidden style="margin-top: 1rem; color: var(--text-secondary); line-height: 1.6; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                  Após a confirmação do pagamento, a entrega inicia automaticamente e os seguidores começam a chegar rapidamente.
+                </div>
+              </div>
+            </div>
+
+            <div class="service-card faq-card" style="cursor: pointer; transition: all 0.2s ease;">
+              <div class="card-content">
+                <button type="button" class="faq-question" aria-expanded="false" style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; padding: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); cursor: pointer; text-align: left;">
+                  <span class="faq-label">Os seguidores são reais?</span>
+                  <svg class="faq-toggle" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="faq-answer" hidden style="margin-top: 1rem; color: var(--text-secondary); line-height: 1.6; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                  Sim. Trabalhamos com pacotes de seguidores brasileiros e reais.
+                </div>
+              </div>
+            </div>
+
+            <div class="service-card faq-card" style="cursor: pointer; transition: all 0.2s ease;">
+              <div class="card-content">
+                <button type="button" class="faq-question" aria-expanded="false" style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; padding: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); cursor: pointer; text-align: left;">
+                  <span class="faq-label">Existe garantia?</span>
+                  <svg class="faq-toggle" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="faq-answer" hidden style="margin-top: 1rem; color: var(--text-secondary); line-height: 1.6; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                  Sim. Temos sistema exclusivo onde você informa seu pedido e recuperar os seguidores que caíram.
+                </div>
+              </div>
+            </div>
+
+            <div class="service-card faq-card" style="cursor: pointer; transition: all 0.2s ease;">
+              <div class="card-content">
+                <button type="button" class="faq-question" aria-expanded="false" style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; padding: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-primary); cursor: pointer; text-align: left;">
+                  <span class="faq-label">Se o perfil é privado posso receber os serviços?</span>
+                  <svg class="faq-toggle" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="faq-answer" hidden style="margin-top: 1rem; color: var(--text-secondary); line-height: 1.6; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                  Não. É necessário ter o perfil publico na plataforma para recebimento do serviço.
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Modal de Posts (para Curtidas/Visualizações) -->
+    <div id="postsModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+      <div class="modal-content" style="background:var(--bg-card); width:90%; max-width:600px; max-height:85vh; border-radius:12px; display:flex; flex-direction:column; overflow:hidden;">
+        <div class="modal-header" style="padding:1rem; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0; font-size:1.1rem;">Selecione o Post</h3>
+          <button type="button" id="closePostsModal" style="background:none; border:none; cursor:pointer; font-size:1.5rem;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1rem; overflow-y:auto; flex:1;">
+           <div id="postsGrid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:4px;">
+              <!-- Posts loaded via JS -->
+           </div>
+           <div id="postsLoading" style="text-align:center; padding:2rem; display:none;">
+             <div class="spinner"></div>
+           </div>
+           <div id="postsError" style="text-align:center; padding:2rem; color:red; display:none;"></div>
+        </div>
+        <div class="modal-footer" style="padding:1rem; border-top:1px solid var(--border-color); text-align:right;">
+           <button type="button" id="confirmPostSelection" class="continue-button" style="padding:0.5rem 1.5rem; font-size:0.9rem;" disabled>Confirmar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <%- include('partials/footer') %>
+  
+  <script src="/js/checkout.js"></script>
+  <script src="/js/engajamento-novo.js"></script>
+  
+  <script>
+    // Slider Logic for Testimonials and Why Us
+    document.addEventListener('DOMContentLoaded', function() {
+      // --- Testimonials Carousel ---
+      const track = document.querySelector('.carousel-track');
+      const items = document.querySelectorAll('.carousel-item');
+      const prevBtn = document.querySelector('.carousel-btn.prev');
+      const nextBtn = document.querySelector('.carousel-btn.next');
+      
+      if (track && items.length > 0) {
+        let currentIndex = 0;
+        
+        function updateCarousel() {
+          // Assuming items are equal width and visible 1 at a time (or partial)
+          // Simple transform based on index
+          // Check if it's a simple fade or slide. Structure suggests slide (track).
+          const itemWidth = items[0].offsetWidth;
+          // Center the active item?
+          // Let's just scroll to the item
+          const scrollAmount = items[currentIndex].offsetLeft - (track.parentElement.offsetWidth - items[currentIndex].offsetWidth) / 2;
+          
+          track.parentElement.scrollTo({
+            left: items[currentIndex].offsetLeft - (track.parentElement.offsetWidth - items[currentIndex].offsetWidth) / 2,
+            behavior: 'smooth'
+          });
+          
+          items.forEach((item, i) => {
+             if (i === currentIndex) item.classList.add('active');
+             else item.classList.remove('active');
+          });
+        }
+        
+        if (prevBtn) {
+          prevBtn.addEventListener('click', () => {
+            currentIndex = (currentIndex > 0) ? currentIndex - 1 : items.length - 1;
+            updateCarousel();
+          });
+        }
+        
+        if (nextBtn) {
+          nextBtn.addEventListener('click', () => {
+            currentIndex = (currentIndex < items.length - 1) ? currentIndex + 1 : 0;
+            updateCarousel();
+          });
+        }
+        
+        // Auto play for testimonials? User didn't ask, but good for UX.
+        // setInterval(() => { if(nextBtn) nextBtn.click(); }, 5000);
+      }
+      
+      // --- Why Us Slider (Mobile mostly) ---
+      const whyUsTrack = document.getElementById('whyUsTrack');
+      const whyUsDots = document.querySelectorAll('.why-us-dot');
+      
+      if (whyUsTrack && whyUsDots.length > 0) {
+        // Scroll listener to update dots
+        whyUsTrack.addEventListener('scroll', () => {
+           const scrollLeft = whyUsTrack.scrollLeft;
+           const cards = whyUsTrack.querySelectorAll('.why-us-card');
+           let cardWidth = whyUsTrack.offsetWidth; // Fallback
+           
+           if (cards.length > 0) {
+               // Get width + gap (approx 24px)
+               cardWidth = cards[0].offsetWidth + 24; 
+           }
+           
+           const index = Math.round(scrollLeft / cardWidth);
+           
+           whyUsDots.forEach((dot, i) => {
+             if (i === index) dot.classList.add('active');
+             else dot.classList.remove('active');
+           });
+        });
+        
+        // Dot click
+        whyUsDots.forEach((dot, i) => {
+           dot.addEventListener('click', () => {
+             const cards = whyUsTrack.querySelectorAll('.why-us-card');
+             if (cards[i]) {
+                // Calculate position relative to track
+                // If track is not positioned, offsetLeft is relative to parent.
+                // We subtract track.offsetLeft to get position inside track.
+                // However, simple approach for scroll-snap is usually enough.
+                // Let's try to be precise.
+                let targetLeft = cards[i].offsetLeft;
+                if (whyUsTrack.offsetParent === cards[i].offsetParent) {
+                    targetLeft -= whyUsTrack.offsetLeft;
+                }
+                
+                whyUsTrack.scrollTo({
+                  left: targetLeft,
+                  behavior: 'smooth'
+                });
+             }
+           });
+        });
+      }
+
+      // --- FAQ Accordion ---
+      const faqCards = document.querySelectorAll('.faq-card');
+      faqCards.forEach(card => {
+        card.addEventListener('click', () => {
+          const questionBtn = card.querySelector('.faq-question');
+          const answer = card.querySelector('.faq-answer');
+          const toggle = card.querySelector('.faq-toggle');
+          
+          if (!questionBtn || !answer || !toggle) return;
+
+          const isExpanded = questionBtn.getAttribute('aria-expanded') === 'true';
+          
+          questionBtn.setAttribute('aria-expanded', !isExpanded);
+          answer.hidden = isExpanded;
+          toggle.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(180deg)';
+        });
+      });
+    });
+  </script>
+</body>
+</html>

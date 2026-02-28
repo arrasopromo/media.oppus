@@ -26,9 +26,295 @@
   const btnInstagram = document.querySelector('.platform-btn.instagram');
   const btnTikTok = document.querySelector('.platform-btn.tiktok');
   let selectedPlatform = (btnInstagram && btnInstagram.getAttribute('aria-pressed') === 'true') ? 'instagram' : 'tiktok';
-  let basePriceCents = 0;
+  // Use window.basePriceCents if defined (integration with engajamento-novo.js), otherwise local
+  let localBasePriceCents = 0;
+  
+  // Expose functions for external control
+  window.updatePaymentMethodVisibility = updatePaymentMethodVisibility;
+  window.populateInstallments = populateInstallments;
+  window.selectPaymentMethod = selectPaymentMethod;
+  window.calculateTotalCents = calculateTotalCents;
+  window.showTutorialStep = showTutorialStep;
+
   let paymentPollInterval = null;
   let paymentEventSource = null;
+
+  // Lógica de Pagamento (Cartão vs Pix)
+  let currentPaymentMethod = 'pix'; // 'pix' or 'credit_card'
+  
+  // Upsell Logic State
+  let upsellShown = false;
+  let upsellAccepted = false;
+  let pendingPaymentFn = null;
+  window.upsellPriceCents = 2990; // Default fallback
+  window.upsellQty = 1000;
+
+  function getServiceCategory() {
+    if (window.__ENG_MODE__) return 'seguidores';
+    try {
+      const path = window.location && window.location.pathname ? window.location.pathname : '';
+      if (path.indexOf('/servicos-curtidas') === 0) return 'curtidas';
+      if (path.indexOf('/servicos-visualizacoes') === 0) return 'visualizacoes';
+    } catch(_) {}
+    return 'seguidores';
+  }
+
+  function updateUpsellModalContent() {
+      const tipo = tipoSelect ? tipoSelect.value : 'mistos';
+      const elQty = document.getElementById('upsellQty');
+      const elPrice = document.getElementById('upsellPrice');
+      
+      let offerQty = 1000;
+      let offerPriceCents = 2990;
+      
+      // Tenta calcular 25% OFF baseado no preço de 1000 da categoria atual
+      try {
+          // Se for TikTok, usa tabela mistos (mapeado na linha 414: tabela.seguidores_tiktok = tabela.mistos)
+          // Mas findPrice usa tabela[tipo]
+          const price1kStr = findPrice(tipo, 1000);
+          if (price1kStr) {
+              const baseCents = parsePrecoToCents(price1kStr);
+              offerPriceCents = Math.round(baseCents * 0.75);
+          }
+      } catch(e) { console.error('Upsell price calc error:', e); }
+
+      window.upsellPriceCents = offerPriceCents;
+      window.upsellQty = offerQty;
+      
+      const offerPriceStr = formatCentsToBRL(offerPriceCents);
+      
+      if (elQty) elQty.textContent = offerQty;
+      if (elPrice) elPrice.textContent = offerPriceStr;
+  }
+
+  function showUpsellModal(callback) {
+      const modal = document.getElementById('upsellModal');
+      if (!modal) {
+          if (callback) callback();
+          return;
+      }
+      updateUpsellModalContent();
+      pendingPaymentFn = callback;
+      modal.style.display = 'flex';
+  }
+
+  const handleUpsellDecision = async (accepted) => {
+      upsellAccepted = accepted;
+      upsellShown = true;
+      const modal = document.getElementById('upsellModal');
+      if (modal) modal.style.display = 'none';
+      
+      // Update total immediately
+      try { updatePromosSummary(); } catch(e) { console.error(e); }
+      
+      // Proceed with payment
+      if (pendingPaymentFn) {
+          const fn = pendingPaymentFn;
+          pendingPaymentFn = null; // Prevent double call
+          await fn();
+      }
+  };
+
+  // Setup upsell buttons safely
+  function setupUpsellListeners() {
+    const btnUpsellYes = document.getElementById('btnUpsellYes');
+    const btnUpsellNo = document.getElementById('btnUpsellNo');
+    const upsellClose = document.getElementById('upsellClose');
+    
+    if (btnUpsellYes) {
+        btnUpsellYes.onclick = () => handleUpsellDecision(true);
+    }
+    if (btnUpsellNo) {
+        btnUpsellNo.onclick = () => handleUpsellDecision(false);
+    }
+    if (upsellClose) {
+        upsellClose.onclick = () => handleUpsellDecision(false);
+    }
+  }
+
+  // Try immediately in case script is at bottom
+  setupUpsellListeners();
+  // And also on DOMContentLoaded just in case
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupUpsellListeners);
+  }
+
+
+  function calculateTotalCents() {
+    let promosTotal = 0;
+    try { promosTotal = calcPromosTotalCents(getSelectedPromos()); } catch(_) {}
+    
+    // Use global if available, otherwise local
+    let price = window.basePriceCents !== undefined ? window.basePriceCents : localBasePriceCents;
+
+    // Fallback: se price for 0, tentar recalcular do select atual
+    if (!price) {
+        try {
+            const qs = document.getElementById('quantidadeSelect');
+            if (qs) {
+                const opt = qs.options[qs.selectedIndex];
+                const p = opt ? opt.dataset.preco : '';
+                if (p) {
+                    price = parsePrecoToCents(p);
+                    // Update local/global to avoid re-parsing
+                    if (window.basePriceCents !== undefined) window.basePriceCents = price;
+                    else localBasePriceCents = price;
+                }
+            }
+        } catch(_) {}
+    }
+
+    const total = Math.max(0, Number(price || 0) + Number(promosTotal));
+    return total;
+  }
+
+  function populateInstallments(totalCents) {
+    const select = document.getElementById('cardInstallments');
+    if (!select) return;
+    
+    select.innerHTML = '';
+    
+    const minInstallment = 500;
+    const maxInstallments = 12;
+
+    // Adiciona opção padrão placeholder
+    const defaultOption = document.createElement('option');
+    defaultOption.value = "";
+    defaultOption.disabled = true;
+    defaultOption.selected = true;
+    defaultOption.textContent = "Selecione as parcelas...";
+    select.appendChild(defaultOption);
+
+    // Se total for 0, não adiciona parcelas
+    if (!totalCents || totalCents <= 0) return;
+
+    for (let i = 1; i <= maxInstallments; i++) {
+      const installmentValue = Math.floor(totalCents / i);
+      
+      // Regra: Parcela mínima de R$ 5,00
+      if (installmentValue < minInstallment && i > 1) break;
+      
+      const option = document.createElement('option');
+      option.value = i;
+      option.textContent = `${i}x de ${formatCentsToBRL(installmentValue)} sem juros`;
+      select.appendChild(option);
+    }
+  }
+
+  function updatePaymentMethodVisibility() {
+    const total = calculateTotalCents();
+    const selector = document.getElementById('paymentMethodSelector');
+    
+    // Check EFI Payee Code
+    const payeeCode = window.EFI_PAYEE_CODE;
+    const isPayeeCodeValid = payeeCode && payeeCode !== 'pl_change_me' && payeeCode.length > 5;
+
+    console.log('💳 updatePaymentMethodVisibility:', { total, isPayeeCodeValid, payeeCode });
+
+    if (selector) {
+      // Exibir apenas para pedidos acima de R$ 39,90 (3990 centavos)
+      if (total >= 3990) {
+        if (selector.style.display !== 'flex') {
+            selector.style.display = 'flex';
+        }
+        
+        // Show warning if Payee Code is invalid but we are showing the selector
+        let warningEl = document.getElementById('efi-config-warning');
+        if (!isPayeeCodeValid) {
+            if (!warningEl) {
+                warningEl = document.createElement('div');
+                warningEl.id = 'efi-config-warning';
+                warningEl.style.color = 'red';
+                warningEl.style.padding = '10px';
+                warningEl.style.background = '#fee2e2';
+                warningEl.style.borderRadius = '8px';
+                warningEl.style.marginTop = '10px';
+                warningEl.textContent = 'Configuração Efí incompleta: EFI_PAYEE_CODE inválido no .env. O pagamento com cartão pode falhar.';
+                selector.parentNode.insertBefore(warningEl, selector);
+            }
+        } else if (warningEl) {
+            warningEl.remove();
+        }
+
+        // Sempre repopular parcelas pois o total pode ter mudado
+        populateInstallments(total);
+        
+        // Se nenhum método selecionado, define Pix como padrão
+        if (typeof currentPaymentMethod === 'undefined' || !currentPaymentMethod) selectPaymentMethod('pix');
+      } else {
+        selector.style.display = 'none';
+        // Revert to PIX if hidden
+        if (currentPaymentMethod !== 'pix') {
+          selectPaymentMethod('pix');
+        }
+      }
+    }
+  }
+
+  function selectPaymentMethod(method) {
+    currentPaymentMethod = method;
+    window.currentPaymentMethod = method;
+    const optionPix = document.getElementById('optionPix');
+    const optionCard = document.getElementById('optionCard');
+    const contentPix = document.getElementById('pixPaymentContent');
+    const contentCard = document.getElementById('cardPaymentContent');
+    
+    // Sync radio buttons if function called programmatically
+    const radioPix = document.querySelector('input[name="paymentMethod"][value="pix"]');
+    const radioCard = document.querySelector('input[name="paymentMethod"][value="credit_card"]');
+    
+    if (method === 'pix') {
+      if (radioPix) radioPix.checked = true;
+      
+      if (optionPix) {
+        optionPix.style.borderColor = '#db2777';
+        optionPix.style.backgroundColor = '#fff';
+        const div = optionPix.querySelector('div');
+        if (div) div.style.color = '#db2777';
+      }
+      if (optionCard) {
+        optionCard.style.borderColor = 'var(--border-color, #e5e7eb)';
+        optionCard.style.backgroundColor = 'var(--bg-secondary, #f9fafb)';
+        const div = optionCard.querySelector('div');
+        if (div) div.style.color = 'var(--text-secondary, #6b7280)';
+      }
+      
+      if (contentPix) contentPix.style.display = 'block';
+      if (contentCard) contentCard.style.display = 'none';
+    } else {
+      if (radioCard) radioCard.checked = true;
+      
+      if (optionCard) {
+        optionCard.style.borderColor = '#db2777';
+        optionCard.style.backgroundColor = '#fff';
+        const div = optionCard.querySelector('div');
+        if (div) div.style.color = '#db2777';
+      }
+      if (optionPix) {
+        optionPix.style.borderColor = 'var(--border-color, #e5e7eb)';
+        optionPix.style.backgroundColor = 'var(--bg-secondary, #f9fafb)';
+        const div = optionPix.querySelector('div');
+        if (div) div.style.color = 'var(--text-secondary, #6b7280)';
+      }
+      
+      if (contentPix) contentPix.style.display = 'none';
+      if (contentCard) contentCard.style.display = 'block';
+    }
+    
+    // Update Step 5 Tutorial Highlight
+    if (typeof window.showTutorialStep === 'function') {
+         if (window.currentStep === 3) window.showTutorialStep(5);
+    }
+  }
+
+  // Event Listeners for Payment Methods
+  // Note: DOMContentLoaded might have already fired if script is deferred/async
+  const radioInputs = document.querySelectorAll('input[name="paymentMethod"]');
+  radioInputs.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      selectPaymentMethod(e.target.value);
+    });
+  });
   const checkoutPhoneInput = document.getElementById('checkoutPhoneInput');
   function onlyDigits(v){ return String(v||'').replace(/\D+/g,''); }
   function maskBrPhone(v){
@@ -117,14 +403,14 @@
 
   const tabela = {
     mistos: [
-      { q: 150, p: 'R$ 9,90' },
-      { q: 300, p: 'R$ 16,90' },
-      { q: 500, p: 'R$ 32,90' },
-      { q: 700, p: 'R$ 39,90' },
-      { q: 1000, p: 'R$ 45,90' },
-      { q: 2000, p: 'R$ 69,90' },
-      { q: 3000, p: 'R$ 99,90' },
-      { q: 4000, p: 'R$ 129,90' },
+      { q: 150, p: 'R$ 7,90' },
+      { q: 300, p: 'R$ 12,90' },
+      { q: 500, p: 'R$ 19,90' },
+      { q: 700, p: 'R$ 24,90' },
+      { q: 1000, p: 'R$ 29,90' },
+      { q: 2000, p: 'R$ 54,90' },
+      { q: 3000, p: 'R$ 89,90' },
+      { q: 4000, p: 'R$ 109,90' },
       { q: 5000, p: 'R$ 129,90' },
       { q: 7500, p: 'R$ 169,90' },
       { q: 10000, p: 'R$ 199,90' },
@@ -855,6 +1141,87 @@
 
   function showTutorialStep(step) {
     hideAllTutorials();
+    
+    // Detect New Page (engajamento-novo.ejs)
+    const isNewPage = !!document.getElementById('step1Container');
+    
+    if (isNewPage) {
+        // Step 1: Serviço (Optional, no tutorial needed or handled by UI)
+        // Step 2: Pacote (Optional, handled by UI)
+        // Step 3: Perfil
+        if (step === 3) {
+            if (tutorial3Usuario) {
+                tutorial3Usuario.style.display = 'block';
+                // Try to find the username input
+                const userInput = document.getElementById('usernameCheckoutInput');
+                if (userInput) {
+                    userInput.classList.add('tutorial-highlight');
+                }
+            }
+        }
+        // Step 4: Validação/Telefone
+        if (step === 4) {
+            if (tutorial4Validar) {
+                tutorial4Validar.style.display = 'block';
+                if (checkoutPhoneInput) {
+                    checkoutPhoneInput.classList.add('tutorial-highlight');
+                    // Focus on phone input if visible
+                    try { checkoutPhoneInput.focus(); } catch(_) {}
+                }
+                const emailInput = document.getElementById('contactEmailInput');
+                if (emailInput) {
+                     emailInput.classList.add('tutorial-highlight');
+                }
+            }
+        }
+        // Step 5: Pagamento
+        if (step === 5) {
+            if (tutorial5Pedido) {
+                tutorial5Pedido.style.display = 'block';
+                
+                // Highlight based on payment method
+                if (typeof currentPaymentMethod !== 'undefined' && currentPaymentMethod === 'credit_card') {
+                    const cardFields = [
+                        'cardNumber', 'cardHolderName', 'cardHolderCpf', 'cardHolderBirth', 'cardExpiry', 'cardCvv',
+                        'billingCep', 'billingStreet', 'billingNumber', 'billingNeighborhood', 'billingCity', 'billingState'
+                    ];
+                    let focused = false;
+                    let hasEmpty = false;
+                    for (const fid of cardFields) {
+                        const el = document.getElementById(fid);
+                        if (el) {
+                            if (!el.value) {
+                                el.classList.add('tutorial-highlight');
+                                hasEmpty = true;
+                                if (!focused) {
+                                    try { el.focus(); focused = true; } catch(_) {}
+                                }
+                            } else {
+                                el.classList.remove('tutorial-highlight');
+                            }
+                        }
+                    }
+                    
+                    // Se todos preenchidos ou não focado, highlight no botão
+                    if (!hasEmpty && btnPedido) {
+                         btnPedido.classList.add('tutorial-highlight');
+                    } else if (!focused && document.getElementById('cardNumber')) {
+                         // Fallback focus
+                         try { document.getElementById('cardNumber').focus(); } catch(_) {}
+                    }
+                } else {
+                    if (btnPedido) {
+                        btnPedido.classList.add('tutorial-highlight');
+                    }
+                }
+            }
+        }
+        
+        try { positionTutorials(); } catch(_) {}
+        setTimeout(()=>{ try { positionTutorials(); } catch(_) {} }, 120);
+        return;
+    }
+
     switch (step) {
       case 1:
         const tutorialAudio = document.getElementById('tutorialAudio');
@@ -886,6 +1253,26 @@
         const t5 = document.getElementById('tutorial5Pedido');
         if (t5) t5.style.display = 'block';
         if (btnPedido) btnPedido.classList.add('tutorial-highlight');
+        
+        // Highlight Card Fields if Credit Card is selected
+        if (typeof currentPaymentMethod !== 'undefined' && currentPaymentMethod === 'credit_card') {
+             const cardFields = [
+                'cardNumber', 'cardExpiry', 'cardCvv', 
+                'cardHolderName', 'cardHolderEmail', 'cardHolderCpf', 'cardHolderBirth',
+                'billingCep', 'billingStreet', 'billingNumber', 'billingNeighborhood', 'billingCity', 'billingState'
+             ];
+             let focused = false;
+             cardFields.forEach(id => {
+                 const el = document.getElementById(id);
+                 if (el && !el.value) {
+                     el.classList.add('tutorial-highlight');
+                     if (!focused) {
+                         try { el.focus(); focused = true; } catch(_) {}
+                     }
+                 }
+             });
+        }
+
         try { positionTutorials(); } catch(_) {}
         setTimeout(() => { try { positionTutorials(); } catch(_) {} }, 120);
 
@@ -1685,6 +2072,17 @@
         const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
         promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
       }
+      
+      // Upsell Followers (25% off)
+      if (upsellAccepted) {
+        promos.push({ 
+          key: 'upsell_followers', 
+          qty: 1000, 
+          label: '1000 Seguidores (Oferta Especial)', 
+          priceCents: window.upsellPriceCents || 2990,
+          upsell_followers: true 
+        });
+      }
     } catch (_) {}
     return promos;
   }
@@ -1970,6 +2368,14 @@
   }
 
   async function criarPixWoovi() {
+    // Check Upsell for Followers
+    try {
+      if (getServiceCategory() === 'seguidores' && !upsellShown) {
+         showUpsellModal(criarPixWoovi);
+         return;
+      }
+    } catch(e) { console.error(e); }
+
     try {
       const t = document.getElementById('tutorial5Pedido');
       if (t) { t.style.display = 'none'; t.classList.add('hide'); }
@@ -1997,6 +2403,13 @@
       const opt = qtdSelect.options[qtdSelect.selectedIndex];
       const precoStr = opt ? (opt.dataset.preco || '') : '';
       const valueCents = parsePrecoToCents(precoStr);
+      
+      // Fix: Update global basePriceCents to ensure payment method visibility works
+      if (valueCents) {
+          basePriceCents = valueCents;
+          console.log('✅ basePriceCents updated in criarPixWoovi:', basePriceCents);
+      }
+
       if (!tipo || !qtd || !valueCents) {
         try {
           const hasTipo = !!tipo;
@@ -2225,6 +2638,23 @@
       if (screen) {
           screen.style.display = 'flex';
           
+          // Força visibilidade baseada no totalCents da transação atual
+          // Isso garante que o botão apareça mesmo se calculateTotalCents() falhar
+          try {
+             const selector = document.getElementById('paymentMethodSelector');
+             if (selector) {
+                 if (totalCents >= 3990) {
+                     selector.style.display = 'flex';
+                     populateInstallments(totalCents);
+                     // Se não houver método selecionado, define Pix (mas o seletor estará visível)
+                     if (!currentPaymentMethod) currentPaymentMethod = 'pix';
+                 } else {
+                     selector.style.display = 'none';
+                     if (currentPaymentMethod !== 'pix') selectPaymentMethod('pix');
+                 }
+             }
+          } catch(e) { console.error('Erro ao atualizar visibilidade pagamento (forçado):', e); }
+          
           // QR Code
           const qrContainer = document.getElementById('paymentQrImage');
           if (qrContainer && qrImage) {
@@ -2425,8 +2855,317 @@
     }
   }
 
+  // Payment Method Toggles (Click on containers)
+  const optionPixToggle = document.getElementById('optionPix');
+  const optionCardToggle = document.getElementById('optionCard');
+
+  if (optionPixToggle) optionPixToggle.addEventListener('click', () => selectPaymentMethod('pix'));
+  if (optionCardToggle) optionCardToggle.addEventListener('click', () => selectPaymentMethod('credit_card'));
+
+  // Masking Helpers
+  function maskCardNumber(v) {
+      v = v.replace(/\D/g, "");
+      v = v.substring(0, 16);
+      return v.replace(/(\d{4})(\d{4})(\d{4})(\d{4})/, "$1 $2 $3 $4").trim();
+  }
+  function maskDate(v) {
+      v = v.replace(/\D/g, "");
+      if (v.length > 8) v = v.substring(0, 8); // YYYY-MM-DD usually, but input date handles itself? 
+      // Wait, input type="date" doesn't need masking. 
+      // But cardExpiry is text.
+      return v;
+  }
+  function maskExpiry(v) {
+      v = v.replace(/\D/g, "");
+      if (v.length > 4) v = v.substring(0, 4);
+      if (v.length > 2) return v.substring(0, 2) + '/' + v.substring(2);
+      return v;
+  }
+  function maskCep(v) {
+      v = v.replace(/\D/g, "");
+      if (v.length > 8) v = v.substring(0, 8);
+      return v.replace(/(\d{5})(\d{3})/, "$1-$2");
+  }
+
+  const elCardNum = document.getElementById('cardNumber');
+  if (elCardNum) elCardNum.addEventListener('input', e => e.target.value = maskCardNumber(e.target.value));
+  
+  const elCardExp = document.getElementById('cardExpiry');
+  if (elCardExp) elCardExp.addEventListener('input', e => e.target.value = maskExpiry(e.target.value));
+
+  const elBillingCep = document.getElementById('billingCep');
+  if (elBillingCep) elBillingCep.addEventListener('input', e => e.target.value = maskCep(e.target.value));
+
+  const elCardCpf = document.getElementById('cardHolderCpf');
+  if (elCardCpf) elCardCpf.addEventListener('input', e => e.target.value = maskCpf(e.target.value));
+
   if (btnPedido) {
-    btnPedido.addEventListener('click', criarPixWoovi);
+    btnPedido.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (typeof currentPaymentMethod !== 'undefined' && currentPaymentMethod === 'credit_card') {
+            await handleCardPayment(e);
+        } else {
+            await criarPixWoovi(e);
+        }
+    });
+  }
+
+  // Lógica de Pagamento Cartão
+  const payWithCardBtn = document.getElementById('payWithCardBtn');
+  const cardPaymentForm = document.getElementById('cardPaymentForm');
+
+  async function handleCardPayment(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+
+    // Check Upsell logic (only if relevant for followers)
+    try {
+        if (typeof getServiceCategory === 'function' && getServiceCategory() === 'seguidores' && !window.upsellShown) {
+             showUpsellModal(() => handleCardPayment({ preventDefault: () => {} }));
+             return;
+        }
+    } catch(e) { console.error(e); }
+
+    const payWithCardBtn = document.getElementById('payWithCardBtn');
+    if (payWithCardBtn) {
+      payWithCardBtn.disabled = true;
+      payWithCardBtn.classList.add('loading');
+      const span = payWithCardBtn.querySelector('.button-text');
+      if (span) {
+          if (!span.dataset.original) span.dataset.original = span.textContent;
+          span.textContent = 'Processando...';
+      }
+    }
+
+    try {
+      // 1. Validação Básica e Highlight de Erros
+      const fields = [
+        { id: 'cardNumber', type: 'text' },
+        { id: 'cardExpiry', type: 'text' },
+        { id: 'cardCvv', type: 'text' },
+        { id: 'cardHolderName', type: 'text' },
+        { id: 'cardHolderEmail', type: 'email' },
+        { id: 'cardHolderCpf', type: 'text' },
+        { id: 'cardHolderBirth', type: 'date' },
+        { id: 'billingCep', type: 'text' },
+        { id: 'billingStreet', type: 'text' },
+        { id: 'billingNumber', type: 'text' },
+        { id: 'billingNeighborhood', type: 'text' },
+        { id: 'billingCity', type: 'text' },
+        { id: 'billingState', type: 'text' }
+      ];
+
+      let firstError = null;
+      let values = {};
+
+      fields.forEach(f => {
+          const el = document.getElementById(f.id);
+          if (el) {
+              el.classList.remove('input-error');
+              el.classList.remove('tutorial-highlight'); // Remove highlight anterior
+              const val = el.value.trim();
+              
+              let isValid = true;
+              if (!val) isValid = false;
+              if (f.type === 'email' && val && !val.includes('@')) isValid = false;
+              if (f.id === 'cardHolderCpf' && val.replace(/\D/g, '').length !== 11) isValid = false;
+              
+              if (!isValid) {
+                  el.classList.add('input-error');
+                  el.classList.add('tutorial-highlight');
+                  if (!firstError) firstError = el;
+              }
+              values[f.id] = val;
+          }
+      });
+
+      if (firstError) {
+          firstError.focus();
+          try { firstError.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+          throw new Error('Por favor, preencha todos os campos obrigatórios destacados.');
+      }
+
+      const cardNum = values.cardNumber.replace(/\D/g, '');
+      const cardExpiry = values.cardExpiry;
+      const cardCvv = values.cardCvv;
+      const cardHolder = values.cardHolderName;
+      const cardEmail = values.cardHolderEmail;
+      const cardCpf = values.cardHolderCpf.replace(/\D/g, '');
+      const cardBirth = values.cardHolderBirth;
+      const installments = document.getElementById('cardInstallments')?.value || '1';
+      
+      const billingCep = values.billingCep.replace(/\D/g, '');
+      const billingStreet = values.billingStreet;
+      const billingNumber = values.billingNumber;
+      const billingNeighborhood = values.billingNeighborhood;
+      const billingCity = values.billingCity;
+      const billingState = values.billingState.toUpperCase();
+
+      // 2. Tokenização Efí
+      if (typeof EfiPay === 'undefined') {
+        throw new Error('Biblioteca de pagamento não carregada. Recarregue a página.');
+      }
+      
+      let expMonth, expYear;
+      if (cardExpiry.includes('/')) {
+          [expMonth, expYear] = cardExpiry.split('/');
+      } else {
+          // Fallback parsing if mask failed
+          expMonth = cardExpiry.substring(0, 2);
+          expYear = cardExpiry.substring(2);
+      }
+      
+      // Basic Year Validation (add 20 if needed)
+      if (expYear && expYear.length === 2) expYear = '20' + expYear;
+      
+      if (!expMonth || !expYear || expMonth > 12 || expMonth < 1) throw new Error('Data de validade inválida');
+
+      // Detect Brand (basic)
+      let brand = 'visa';
+      if (/^5[1-5]/.test(cardNum)) brand = 'mastercard';
+      else if (/^3[47]/.test(cardNum)) brand = 'amex';
+      else if (/^6011/.test(cardNum)) brand = 'discover';
+      else if (/^36/.test(cardNum)) brand = 'diners';
+      else if (/^606282|^3841/.test(cardNum)) brand = 'hipercard';
+      else if (/^50/.test(cardNum)) brand = 'elo';
+
+      const paymentToken = await new Promise((resolve, reject) => {
+        // Efí Pay Initialization
+        const callback = (error, response) => {
+          if(error) {
+            console.error('❌ Erro EfiPay Token:', error);
+            reject(new Error(error.error_description || 'Erro ao gerar token do cartão'));
+          } else {
+            resolve(response.payment_token);
+          }
+        };
+
+        const isSandbox = String(window.EFI_SANDBOX) === 'true';
+        // Ensure PAYEE_CODE is available
+        const payeeCode = window.EFI_PAYEE_CODE || '00000000000000000000000000000000'; // Fallback to avoid crash, but will fail
+        
+        EfiPay(payeeCode, isSandbox, (error, promise) => {
+          if(error) {
+            console.error('❌ Erro EfiPay Init:', error);
+            reject(new Error('Erro ao inicializar pagamento (EfiPay Init)'));
+          } else {
+             promise.payment_token({
+               brand: brand,
+               number: cardNum,
+               cvv: cardCvv,
+               expiration_month: expMonth,
+               expiration_year: expYear,
+               reuse: false
+             }, callback);
+          }
+        });
+      });
+
+      // 3. Preparar Payload
+      const tipo = document.getElementById('tipoSelect')?.value || window.selectedType || 'seguidores';
+      const qtdSelect = document.getElementById('quantidadeSelect');
+      const qtd = qtdSelect ? Number(qtdSelect.value) : (window.selectedPlan ? window.selectedPlan.q : 1);
+      
+      // Calculate Price
+      let totalCents = 0;
+      if (typeof window.calculateTotalCents === 'function') {
+          totalCents = window.calculateTotalCents(); // Should return correct total including bumps
+      } else {
+          totalCents = window.basePriceCents || 0;
+      }
+
+      if (totalCents < 500) { // Safety check for min amount (R$ 5,00 typically, but here R$ 1,00 min)
+           // alert('Valor mínimo não atingido.');
+      }
+
+      const phoneValue = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl || '');
+      
+      // Username logic
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      let usernameFromSession = '';
+      try { usernameFromSession = sessionStorage.getItem('oppus_instagram_username') || ''; } catch(_) {}
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const instagramUsernameFinal = usernamePreview || usernameFromSession || usernameInputRaw || '';
+      
+      const serviceCategory = (function(){
+        if (window.__ENG_MODE__) return 'seguidores';
+        try {
+          const path = window.location.pathname;
+          if (path.includes('curtidas')) return 'curtidas';
+          if (path.includes('visualizacoes')) return 'visualizacoes';
+        } catch(_) {}
+        return 'seguidores';
+      })();
+
+      const payload = {
+        payment_token: paymentToken,
+        installments: Number(installments),
+        total_cents: totalCents,
+        items: [
+           { title: `${qtd} ${getUnitForTipo(tipo)}`, quantity: 1, price_cents: totalCents }
+        ],
+        customer: {
+          name: cardHolder,
+          cpf: cardCpf,
+          phone_number: phoneValue,
+          email: cardEmail,
+          birth: cardBirth
+        },
+        billing_address: {
+          street: billingStreet,
+          number: billingNumber,
+          neighborhood: billingNeighborhood,
+          zipcode: billingCep,
+          city: billingCity,
+          state: billingState
+        },
+        additionalInfo: [
+          { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
+          { key: 'quantidade', value: String(qtd) },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal }
+        ],
+        profile_is_private: !!window.isInstagramPrivate,
+        comment: 'Checkout OPPUS Card'
+      };
+      
+      // Add Order Bumps to Additional Info if present
+      const promos = getSelectedPromos();
+      if (promos.length > 0) {
+          payload.additionalInfo.push({ key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') });
+      }
+
+      // 4. Enviar para Backend
+      const resp = await fetch('/api/efi/card-charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data?.message || data?.error || 'Falha ao processar pagamento');
+      }
+
+      // Sucesso
+      alert('Pagamento realizado com sucesso!');
+      window.location.href = '/pedido';
+
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Erro desconhecido ao processar cartão.');
+    } finally {
+      if (payWithCardBtn) {
+        payWithCardBtn.disabled = false;
+        payWithCardBtn.classList.remove('loading');
+        const span = payWithCardBtn.querySelector('.button-text');
+        if (span && span.dataset.original) span.textContent = span.dataset.original;
+      }
+    }
+  }
+
+  if (cardPaymentForm) {
+    cardPaymentForm.addEventListener('submit', handleCardPayment);
   }
 
   if (checkCheckoutButton) {
@@ -3378,6 +4117,7 @@
            headerUser.textContent = userTxt;
        }
     }
+    try { updatePaymentMethodVisibility(); } catch(_) {}
   }
 
   window.goToStep = function(step) {
