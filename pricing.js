@@ -128,8 +128,8 @@ const calculateOrderBumps = (bumpsStr) => {
         const q = parseInt(qtyStr, 10) || 1;
         
         if (key === 'likes') {
-            // Reutiliza tabela de curtidas mistos (ou a que for padrão para upsell)
-            const table = tabelaCurtidas.mistos;
+            // Reutiliza tabela de curtidas_reais (preço promocional usado no upsell do frontend)
+            const table = tabelaCurtidas.curtidas_reais;
             const item = table.find(x => x.q === q);
             if (item) total += parsePrecoToCents(item.p);
             
@@ -257,6 +257,44 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
     
     if (bumpsStr) {
         totalCents += calculateOrderBumps(bumpsStr);
+
+        // --- UPGRADE LOGIC START ---
+        // Mirroring logic from servicos-instagram.js updateOrderBump
+        if (/(^|;)upgrade:\d+/i.test(bumpsStr)) {
+            const q = parseInt(quantity, 10);
+            let targetQ = 0;
+            
+            if (type === 'visualizacoes_reels' || type === 'views' || type === 'reels') {
+                 const map = {
+                    1000: 2500,
+                    5000: 10000,
+                    25000: 50000,
+                    100000: 150000,
+                    200000: 250000,
+                    500000: 1000000
+                 };
+                 targetQ = map[q];
+            } else if ((type === 'brasileiros' || type === 'organicos') && q === 1000) {
+                targetQ = 2000;
+            } else {
+                // Generic (works for followers and likes)
+                const map = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+                targetQ = map[q];
+            }
+            
+            if (targetQ && table && Array.isArray(table)) {
+                const baseItem = table.find(x => x.q === q);
+                const targetItem = table.find(x => x.q === targetQ);
+                
+                if (baseItem && targetItem) {
+                    const basePrice = parsePrecoToCents(baseItem.p);
+                    const targetPrice = parsePrecoToCents(targetItem.p);
+                    const upgradePrice = Math.max(0, targetPrice - basePrice);
+                    totalCents += upgradePrice;
+                }
+            }
+        }
+        // --- UPGRADE LOGIC END ---
     }
 
     return totalCents;

@@ -292,6 +292,17 @@
                   <div style="font-weight:600; margin-bottom:0.5rem; color:var(--text-primary);">Reels selecionado para receber as visualizações</div>
                   <div id="step3PostPreviewContent"></div>
                </div>
+
+               <!-- Coupon Section -->
+               <div class="coupon-section" style="margin-top: 1rem;">
+                   <div class="coupon-container">
+                       <input type="text" id="couponInput" class="select-input" placeholder="Cupom de desconto">
+                       <button type="button" id="applyCouponBtn" class="continue-button coupon-btn">
+                           Aplicar
+                       </button>
+                   </div>
+                   <div id="couponMessage" class="coupon-message"></div>
+               </div>
             </div>
 
             <div class="service-card" id="orderBumpInline" style="display:none;">
@@ -390,17 +401,9 @@
                 </button>
               </div>
 
-              <!-- Coupon Section -->
-              <div class="coupon-section">
-                  <div class="coupon-container">
-                      <input type="text" id="couponInput" class="select-input" placeholder="Cupom de desconto">
-                      <button type="button" id="applyCouponBtn" class="continue-button coupon-btn">
-                          Aplicar
-                      </button>
-                  </div>
-                  <div id="couponMessage" class="coupon-message"></div>
-              </div>
               <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
+
+
             </div>
           </div>
         </div>

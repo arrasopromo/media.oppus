@@ -425,6 +425,17 @@
                <div style="margin-top: 1rem; text-align: center; font-size: 0.95rem; color: white; background: #22c55e; padding: 0.8rem; border-radius: 12px; font-weight: 600;">
                   Finalize o pagamento e conquiste os seguidores acima
                </div>
+
+               <!-- Coupon Section -->
+               <div class="coupon-section" style="margin-top: 1rem;">
+                   <div class="coupon-container">
+                       <input type="text" id="couponInput" class="select-input" placeholder="Cupom de desconto">
+                       <button type="button" id="applyCouponBtn" class="continue-button coupon-btn">
+                           Aplicar
+                       </button>
+                   </div>
+                   <div id="couponMessage" class="coupon-message"></div>
+               </div>
             </div>
 
             <!-- PROMOTIONS SECTION (Merged) -->
@@ -575,17 +586,6 @@
                 </p>
               </div>
 
-              <!-- Coupon Section -->
-              <div class="coupon-section">
-                  <div class="coupon-container">
-                      <input type="text" id="couponInput" class="select-input" placeholder="Cupom de desconto">
-                      <button type="button" id="applyCouponBtn" class="continue-button coupon-btn">
-                          Aplicar
-                      </button>
-                  </div>
-                  <div id="couponMessage" class="coupon-message"></div>
-              </div>
-
               <!-- PIX PAYMENT SECTION (Integrated) -->
               <div id="pixContainer" style="display:none; margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
                  <div style="text-align: center; margin-bottom: 1rem;">
@@ -611,6 +611,8 @@
                  
                  <div id="pixResultado" style="margin-top: 1rem; min-height: 24px;"></div>
               </div>
+
+
 
               <div id="checkoutAudioContainer" style="margin-top:1.5rem; border-top: 1px solid var(--border-color); padding-top:1rem;">
                  <!-- Audio player injected by JS -->
