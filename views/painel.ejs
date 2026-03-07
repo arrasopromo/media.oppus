@@ -20,7 +20,10 @@
 </head>
 <body>
   <div class="container">
-    <h1>Painel de Gerenciamento de Custos</h1>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1 style="margin:0;">Painel de Gerenciamento de Custos</h1>
+        <a href="/logout" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
+    </div>
     
     <div class="filters">
       <a href="/painel?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
@@ -188,7 +191,206 @@
             })();
           </script>
         </div>
-      </div>
+
+        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
+          <h2 style="margin:0 0 8px; font-size:1rem;">Cupons de Desconto</h2>
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <input type="text" id="couponCodeInput" placeholder="CÓDIGO" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px; text-transform:uppercase;">
+            <input type="number" id="couponDiscountInput" placeholder="%" style="width:60px; padding:6px; border:1px solid #ccc; border-radius:4px;" min="1" max="100">
+            <button onclick="addCoupon()" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer;">Add</button>
+          </div>
+          <ul id="couponsList" style="list-style:none; padding:0; margin:0; max-height: 200px; overflow-y: auto;">
+            <!-- Items via JS -->
+          </ul>
+          <script>
+            async function loadCoupons() {
+              try {
+                const res = await fetch('/api/admin/coupons');
+                const data = await res.json();
+                if(data.success) {
+                  renderCoupons(data.coupons);
+                }
+              } catch(e) { console.error(e); }
+            }
+
+            function renderCoupons(list) {
+              const ul = document.getElementById('couponsList');
+              ul.innerHTML = '';
+              if (list.length === 0) {
+                ul.innerHTML = '<li style="color:#777; font-size:0.9rem; text-align:center;">Nenhum cupom ativo</li>';
+                return;
+              }
+              list.forEach(item => {
+                const li = document.createElement('li');
+                li.style.display = 'flex';
+                li.style.justifyContent = 'space-between';
+                li.style.alignItems = 'center';
+                li.style.padding = '6px 0';
+                li.style.borderBottom = '1px solid #eee';
+                
+                const span = document.createElement('span');
+                span.innerHTML = `<strong>${item.code}</strong> (${item.discountPercentage}%)`;
+                span.style.fontWeight = '500';
+                
+                const btn = document.createElement('button');
+                btn.textContent = '✕';
+                btn.style.background = 'transparent';
+                btn.style.border = 'none';
+                btn.style.color = '#dc3545';
+                btn.style.cursor = 'pointer';
+                btn.style.fontSize = '1.1rem';
+                btn.title = 'Remover';
+                btn.onclick = () => removeCoupon(item._id);
+                
+                li.appendChild(span);
+                li.appendChild(btn);
+                ul.appendChild(li);
+              });
+            }
+
+            async function addCoupon() {
+              const codeInput = document.getElementById('couponCodeInput');
+              const discountInput = document.getElementById('couponDiscountInput');
+              const code = codeInput.value.trim().toUpperCase();
+              const discountPercentage = discountInput.value;
+              
+              if(!code || !discountPercentage) {
+                  alert('Preencha código e porcentagem');
+                  return;
+              }
+              
+              try {
+                const res = await fetch('/api/admin/coupons', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ code, discountPercentage })
+                });
+                const data = await res.json();
+                if(data.success) {
+                  codeInput.value = '';
+                  discountInput.value = '';
+                  loadCoupons();
+                } else {
+                  alert('Erro ao criar cupom: ' + (data.message || data.error));
+                }
+              } catch(e) { alert('Erro: ' + e.message); }
+            }
+
+            async function removeCoupon(id) {
+              if(!confirm('Remover este cupom?')) return;
+              try {
+                const res = await fetch('/api/admin/coupons/' + id, {
+                  method: 'DELETE'
+                });
+                const data = await res.json();
+                if(data.success) {
+                  loadCoupons();
+                } else {
+                  alert('Erro ao remover: ' + (data.message || data.error));
+                }
+              } catch(e) { alert('Erro: ' + e.message); }
+            }
+
+            loadCoupons();
+          </script>
+        </div>
+
+        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px; position: sticky; top: 400px;">
+          <h2 style="margin:0 0 8px; font-size:1rem;">Usuários Bloqueados</h2>
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <input type="text" id="blacklistInput" placeholder="Usuário (sem @)" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px;">
+            <button onclick="addToBlacklist()" style="padding:6px 12px; background:#dc3545; color:#fff; border:none; border-radius:4px; cursor:pointer;">Bloquear</button>
+          </div>
+          <ul id="blacklistList" style="list-style:none; padding:0; margin:0; max-height: 200px; overflow-y: auto;">
+            <!-- Items via JS -->
+          </ul>
+          <script>
+            async function loadBlacklist() {
+              try {
+                const res = await fetch('/api/blacklist');
+                const data = await res.json();
+                if(data.success) {
+                  renderBlacklist(data.blacklist);
+                }
+              } catch(e) { console.error(e); }
+            }
+
+            function renderBlacklist(list) {
+              const ul = document.getElementById('blacklistList');
+              ul.innerHTML = '';
+              if (list.length === 0) {
+                ul.innerHTML = '<li style="color:#777; font-size:0.9rem; text-align:center;">Nenhum usuário bloqueado</li>';
+                return;
+              }
+              list.forEach(item => {
+                const li = document.createElement('li');
+                li.style.display = 'flex';
+                li.style.justifyContent = 'space-between';
+                li.style.alignItems = 'center';
+                li.style.padding = '6px 0';
+                li.style.borderBottom = '1px solid #eee';
+                
+                const span = document.createElement('span');
+                span.textContent = item.username;
+                span.style.fontWeight = '500';
+                
+                const btn = document.createElement('button');
+                btn.textContent = '✕';
+                btn.style.background = 'transparent';
+                btn.style.border = 'none';
+                btn.style.color = '#dc3545';
+                btn.style.cursor = 'pointer';
+                btn.style.fontSize = '1.1rem';
+                btn.title = 'Desbloquear';
+                btn.onclick = () => removeFromBlacklist(item.username);
+                
+                li.appendChild(span);
+                li.appendChild(btn);
+                ul.appendChild(li);
+              });
+            }
+
+            async function addToBlacklist() {
+              const input = document.getElementById('blacklistInput');
+              const username = input.value.trim();
+              if(!username) return;
+              
+              try {
+                const res = await fetch('/api/blacklist/add', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ username })
+                });
+                const data = await res.json();
+                if(data.success) {
+                  input.value = '';
+                  loadBlacklist();
+                } else {
+                  alert('Erro ao bloquear: ' + (data.message || data.error));
+                }
+              } catch(e) { alert('Erro: ' + e.message); }
+            }
+
+            async function removeFromBlacklist(username) {
+              if(!confirm('Desbloquear ' + username + '?')) return;
+              try {
+                const res = await fetch('/api/blacklist/remove', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ username })
+                });
+                const data = await res.json();
+                if(data.success) {
+                  loadBlacklist();
+                } else {
+                  alert('Erro ao desbloquear: ' + (data.message || data.error));
+                }
+              } catch(e) { alert('Erro: ' + e.message); }
+            }
+
+            loadBlacklist();
+          </script>
+        </div>
     </div>
   </div>
 </body>
