@@ -278,7 +278,11 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
                 targetQ = 2000;
             } else {
                 // Generic (works for followers and likes)
-                const map = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+                const map = { 
+                    150: 300, 300: 500, 500: 700, 700: 1000, 
+                    1000: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 
+                    5000: 7500, 7500: 10000, 10000: 15000 
+                };
                 targetQ = map[q];
             }
             

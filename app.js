@@ -4318,13 +4318,30 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
           const hasUpgrade = typeof bumpsStr0 === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr0);
           const isFollowers = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
+          const isVisualizacoes = /(visualizacoes|views|reels)/i.test(tipo);
           let upgradeAdd = 0;
-          if (hasUpgrade && isFollowers) {
-            if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
-              upgradeAdd = 1000;
-            } else {
-              const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
-              upgradeAdd = map[qtdBase] || 0;
+          if (hasUpgrade) {
+            if (isFollowers) {
+              if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
+                upgradeAdd = 1000;
+              } else {
+                const map = { 
+                  50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 
+                  1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 
+                  5000: 2500, 7500: 2500, 10000: 5000 
+                };
+                upgradeAdd = map[qtdBase] || 0;
+              }
+            } else if (isVisualizacoes) {
+               const map = {
+                  1000: 1500,
+                  5000: 5000,
+                  25000: 25000,
+                  100000: 50000,
+                  200000: 50000,
+                  500000: 500000
+               };
+               upgradeAdd = map[qtdBase] || 0;
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
