@@ -24,7 +24,7 @@
   <meta charset="utf-8" />
   <title>Checkout - Engajamento</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link href="/css/style.css?v=6" rel="stylesheet" />
+  <link href="/css/style.css?v=9" rel="stylesheet" />
   <link href="/css/badges.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
   <!-- Testimonials CSS -->
@@ -38,11 +38,19 @@
       display: flex;
       flex-direction: column;
       min-height: 100vh;
+      overflow-x: hidden; /* Previne scroll horizontal global */
+      width: 100%;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
     }
     .checkout-page {
       flex: 1;
       display: flex;
       flex-direction: column;
+      width: 100%; /* Garante que não exceda viewport */
+      overflow-x: hidden; /* Reforço */
     }
     .main-content {
       flex: 1;
@@ -66,7 +74,7 @@
       justify-content: center;
       gap: 0.5rem;
       padding: 0.75rem 1.5rem;
-      background: #ffffff;
+      background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 999px; /* Pill shape */
       font-weight: 700;
@@ -78,15 +86,23 @@
       white-space: nowrap;
     }
     
+    body.theme-light .service-selector-btn {
+      background: #ffffff;
+      color: #334155; /* Slate 700 - Better contrast */
+      border-color: #cbd5e1; /* Slate 300 */
+    }
+
     .service-selector-btn:hover {
       border-color: var(--primary-purple);
       transform: translateY(-2px);
       box-shadow: var(--shadow-md);
     }
     
-    .service-selector-btn.active {
-      background: var(--instagram-gradient);
-      color: white;
+    /* FIX: More specific selector for active button in light mode to override the default light mode background */
+    .service-selector-btn.active,
+    body.theme-light .service-selector-btn.active {
+      background: var(--instagram-gradient) !important;
+      color: white !important;
       border: 1px solid transparent;
       box-shadow: 0 4px 12px rgba(220, 39, 67, 0.3);
     }
@@ -95,6 +111,70 @@
       width: 18px;
       height: 18px;
       flex-shrink: 0;
+    }
+
+    /* Plans Grid */
+    .plans-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1rem;
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .plan-card {
+        background: var(--bg-secondary);
+        border: 2px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .plan-card:hover {
+        border-color: var(--primary-purple);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+    }
+
+    .plan-card.active {
+        border-color: #db2777;
+        background: rgba(219, 39, 119, 0.1);
+        box-shadow: 0 4px 12px rgba(219, 39, 119, 0.15);
+    }
+    
+    body.theme-light .plan-card.active {
+        background: #fdf2f8;
+    }
+
+    .plan-quantity {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: var(--text-primary);
+        line-height: 1.2;
+    }
+
+    .plan-price {
+        font-size: 1rem;
+        color: var(--primary-purple);
+        font-weight: 600;
+        margin-top: 0.25rem;
+    }
+    
+    .plan-unit {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-weight: 500;
+        margin-top: -0.2rem;
     }
 
     /* Specific Styles for Service Type Buttons (The ones to change) */
@@ -171,23 +251,157 @@
         height: auto;
     }
 
-    /* Ajuste para mobile */
+    /* Services Grid (2 Columns Mobile) */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+    }
     @media (max-width: 640px) {
-      .service-context-selector {
-        gap: 0.5rem;
+      .services-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.35rem; /* Reduced gap for wider cards */
       }
-      .service-selector-btn {
-        padding: 0.6rem 1rem;
-        font-size: 0.85rem;
+      /* Reduce container padding on mobile to maximize width */
+      .container, .section-with-bg {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
       }
-      #tipoCards {
-        justify-content: flex-start; /* Align left on mobile for scrolling */
-        flex-wrap: nowrap; /* Force scroll on mobile */
-        padding-left: 1rem;
-        padding-right: 1rem;
-        margin-left: -1rem; /* Full width scroll */
-        margin-right: -1rem;
-      }
+    }
+
+    /* Override Plan Card for this page */
+    .plan-card .plan-quantity {
+      font-size: 1.1rem; /* Smaller numbers as requested */
+    }
+    
+    /* Placeholder size adjustment to match servicos-instagram */
+    .select-input::placeholder, #usernameCheckoutInput::placeholder {
+        font-size: 0.95rem !important;
+        opacity: 0.7;
+    }
+
+    /* Section Background Style */
+    .section-with-bg {
+        background: rgba(255, 255, 255, 0.03); /* Subtle background */
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 20px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    }
+    @media (max-width: 640px) {
+        .section-with-bg {
+            padding: 1rem;
+            border-radius: 16px;
+        }
+    }
+
+    /* Price Styles matching servicos-instagram */
+    .price-old {
+      text-decoration: line-through;
+      color: #9ca3af; /* gray-400 */
+      font-size: 0.85rem;
+      margin-right: 0.25rem;
+    }
+    
+    .price-new {
+      color: #22c55e;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    
+    /* Ensure card title matches servicos-instagram */
+    .plan-card .card-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        line-height: 1.2;
+        margin-bottom: 0.25rem;
+    }
+
+    /* Hide old type cards as we use direct buttons */
+    body.theme-light .plan-card,
+    body.theme-light .service-selector-btn {
+        background: #ffffff;
+    }
+    
+    /* Dark Mode Overrides for Plan Cards */
+    body:not(.theme-light) .plan-card {
+        background: var(--bg-secondary);
+        border-color: var(--border-color);
+    }
+
+    #tipoCards {
+      display: none !important;
+    }
+    
+    /* Footer Fix Override */
+    footer.footer {
+      background: transparent !important;
+      border-top: none !important;
+      margin-top: 0 !important;
+    }
+
+    /* Stepper Styles */
+    .stepper-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 2rem;
+      width: 100%;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 0 1rem;
+    }
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      position: relative;
+      z-index: 2;
+    }
+    .step-circle {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--bg-secondary);
+      border: 2px solid var(--border-color);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      transition: all 0.3s ease;
+    }
+    .step.active .step-circle {
+      background: var(--primary-purple);
+      border-color: var(--primary-purple);
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2);
+    }
+    .step-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      transition: all 0.3s ease;
+    }
+    .step.active .step-label {
+      color: var(--primary-purple);
+    }
+    .step-line {
+      flex: 1;
+      height: 2px;
+      background: var(--border-color);
+      margin: 0 -10px;
+      position: relative;
+      z-index: 1;
+      top: -14px;
+      transition: all 0.3s ease;
+    }
+    .step-line.active {
+      background: var(--primary-purple);
     }
   </style>
 
@@ -212,7 +426,7 @@
   <!-- End Google Tag Manager -->
 
 </head>
-<body class="theme-light has-fixed-menu">
+<body class="has-fixed-menu">
   <%- include('partials/menu', { logoLink: '/engajamento-novo' }) %>
   <script>
     // Server-side UTMs passed to client
@@ -236,24 +450,39 @@
 
     <main class="main-content">
       
-      <!-- Seletor de Serviço (Contexto) -->
-      <div class="service-context-selector">
-        <button class="service-selector-btn active" data-service="followers" onclick="window.selectService && window.selectService('followers')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-          Seguidores
-        </button>
-        <button class="service-selector-btn" data-service="likes" onclick="window.selectService && window.selectService('likes')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
-          Curtidas
-        </button>
-        <button class="service-selector-btn" data-service="views" onclick="window.selectService && window.selectService('views')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-          Visualizações
-        </button>
+      <!-- Stepper Navigation -->
+      <div class="stepper-container" style="display: none !important;">
+        <div class="step active" id="step1" onclick="window.goToStepEngajamento && window.goToStepEngajamento(1)" style="cursor: pointer;">
+          <div class="step-circle">1</div>
+          <div class="step-label">Serviço</div>
+        </div>
+        <div class="step-line" id="line1"></div>
+        <div class="step" id="step2" onclick="window.goToStepEngajamento && window.goToStepEngajamento(2)" style="cursor: pointer;">
+          <div class="step-circle">2</div>
+          <div class="step-label">Dados</div>
+        </div>
+        <div class="step-line" id="line2"></div>
+        <div class="step" id="step3" onclick="window.goToStepEngajamento && window.goToStepEngajamento(3)" style="cursor: pointer;">
+          <div class="step-circle">3</div>
+          <div class="step-label">Pagamento</div>
+        </div>
       </div>
 
-      <!-- Stepper removed as per request -->
-
+      <!-- Top Service Context Buttons -->
+      <div class="service-context-selector" id="topServiceButtons">
+        <button class="service-selector-btn active" onclick="scrollToService('followers')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            Seguidores
+        </button>
+        <button class="service-selector-btn" onclick="scrollToService('likes')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+            Curtidas
+        </button>
+        <button class="service-selector-btn" onclick="scrollToService('views')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            Visualizações
+        </button>
+      </div>
 
       <section class="section-block">
         <!-- STEP 1: Seleção do Serviço -->
@@ -284,39 +513,14 @@
             </div>
           </div>
 
-          <!-- Botão Comprar Agora (Moved to top) -->
-          <div class="service-card" style="background: transparent; border: none; box-shadow: none; padding: 0; margin-bottom: 2rem;">
-            <div class="card-content" style="display:flex; justify-content:center; align-items:center; text-align:center;">
-              <a href="#tipoCards" id="buyFollowersBtn" class="continue-button" style="display:inline-flex; justify-content:center; align-items:center; text-align:center; margin:0 auto; width: 100%; max-width: 450px;">
-                <span class="button-text">COMPRAR SEGUIDORES AGORA</span>
-              </a>
-              <div class="value-props" style="margin-top: 1rem;">
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" loading="lazy" width="119" height="119" />
-                    <div class="value-prop-metric">+3</div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">anos de operação</span><span class="caption-mobile">anos de<br>operação</span></div>
-                </div>
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" loading="lazy" width="119" height="119" />
-                    <div class="value-prop-metric">+2</div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
-                </div>
-                <div class="value-prop-item">
-                  <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" loading="lazy" width="119" height="119" />
-                    <div class="value-prop-metric">R$<span class="value-prop-arrow">↓</span></div>
-                  </div>
-                  <div class="value-prop-caption"><span class="caption-desktop">melhores preços do mercado</span><span class="caption-mobile">melhores<br>preços do<br>mercado</span></div>
-                </div>
-              </div>
-            </div>
+          <!-- Botão COMPRAR SEGUIDORES AGORA -->
+          <div style="display: flex; justify-content: center; margin-bottom: 2rem;">
+            <button id="btnComprarSeguidoresAgora" class="continue-button" style="width: 100%; max-width: 400px; justify-content: center; text-transform: uppercase; font-weight: 500; font-size: 0.85rem; white-space: nowrap; box-shadow: 0 4px 15px rgba(220, 39, 67, 0.4);">
+              COMPRAR SEGUIDORES AGORA
+            </button>
           </div>
-          
-          <!-- Testimonials Section (Image based) -->
+
+          <!-- Testimonials Section -->
           <div class="testimonials-section" id="depoimentosCard" style="display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;">
             <div class="why-us-pill">O que as pessoas estão falando?</div>
             <h2 class="why-us-title">Veja depoimentos de quem <span class="why-us-gradient-text">comprou conosco</span></h2>
@@ -381,6 +585,37 @@
             </div>
           </div>
 
+          <!-- Botões de Serviço Específicos (Restored & Moved) -->
+          <div id="specificButtonsContainer" class="service-specific-buttons" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 2rem; justify-content: center;">
+            
+            <!-- Followers Buttons -->
+            <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('followers', 'mistos')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              Comprar seguidores
+            </button>
+            <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('followers', 'organicos')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              Comprar seguidores reais
+            </button>
+
+            <!-- Likes Buttons -->
+            <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('likes', 'mistos')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+              Comprar curtidas
+            </button>
+            <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('likes', 'organicos')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+              Comprar curtidas reais
+            </button>
+            <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('views', 'visualizacoes_reels')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              Comprar visualizações Reels
+            </button>
+          </div>
+
+          <!-- Services Grid (Replaces old selectors) -->
+          <div id="allServicesContainer"></div>
+
           <!-- Cards de Opções (Tipos) - Visível como Botões Verticais -->
           <div id="tipoCards" class="option-cards vertical-buttons" style="margin-bottom: 1.5rem; display: flex; gap: 0.75rem;"></div>
           
@@ -392,20 +627,15 @@
           </div>
 
           <!-- Cards de Planos (Quantidade) - Select visível -->
-          <div class="service-card" id="quantidadeSelectCard" style="display:none;">
-            <div class="card-content">
-              <h3 class="card-title">Escolha o pacote</h3>
-              <div class="input-group" id="grupoQuantidade" style="position:relative;">
-                <select id="quantidadeSelect" class="select-input" style="flex:1;">
-                  <option value="">Selecione o tipo primeiro...</option>
-                </select>
-                <!-- Tutorial: 3/4 -->
-                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                  <div class="tutorial-pop-step">3/4</div>
-                  <div class="tutorial-pop-text">Selecionar o plano</div>
-                </div>
+          <div id="quantidadeSelectCard" style="display:block; margin-bottom: 2rem;">
+              
+              <!-- Grid de Planos (Cards) -->
+              <div id="plansGrid" class="plans-grid">
+                  <!-- Rendered via JS -->
               </div>
-            </div>
+              
+              <!-- Inputs ocultos para compatibilidade -->
+              <select id="quantidadeSelect" style="display:none;"></select>
           </div>
 
           <!-- Select de Tipo Oculto (Substituído por Botões) -->
@@ -424,11 +654,28 @@
         </div>
 
         <!-- STEP 2: Dados do Perfil -->
+        <style>
+        @media (max-width: 640px) {
+            #step2Container .service-card {
+                width: 100% !important;
+                max-width: 100% !important;
+                margin-left: 0 !important;
+                margin-right: 0 !important;
+                border-radius: 0;
+                border-left: none;
+                border-right: none;
+            }
+            #step2Container {
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+        }
+        </style>
         <div id="step2Container" style="display:none;">
-          <div class="service-card">
+          <div class="service-card" style="max-width: 960px; width: 100%; margin: 0 auto;">
             <div class="card-content">
               <div style="text-align: center; margin-bottom: 1.5rem; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
-                <button id="backToStep1Btn" onclick="window.goToStep(1)" type="button" style="background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9;">
+                <button id="backToStep1Btn" onclick="window.goToStepEngajamento(1)" type="button" style="background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9;">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
@@ -439,6 +686,12 @@
                 <div style="margin-bottom: 0.5rem;">
                   <label class="input-label" style="display:block; margin-bottom:0.5rem; font-weight:600;">Usuário do Instagram <span style="color:#ef4444">*</span></label>
                   <div class="input-group username-group" id="grupoUsername" style="position:relative; display: flex; gap: 0.5rem;">
+                    <style>
+                      #usernameCheckoutInput::placeholder {
+                        font-size: 0.95rem;
+                        opacity: 0.7;
+                      }
+                    </style>
                     <input type="text" id="usernameCheckoutInput" placeholder="Ex: @usuario" class="select-input" maxlength="100" style="flex: 1; border-radius: 8px;" />
                     <button id="checkCheckoutButton" class="continue-button validate-btn" type="button" style="padding: 0 1.5rem; border-radius: 8px; font-weight: 600; background: var(--instagram-gradient);">
                       <span class="button-text">Buscar</span>
@@ -460,6 +713,12 @@
                   </style>
                   <div id="perfilHints" style="margin-top:0.4rem; color: var(--text-secondary); font-size: 0.85rem;">
                     Pode inserir com ou sem @ (Ex: @usuario ou usuario). Acentos serão removidos automaticamente.
+                    <div id="howToGetLinkContainer" style="margin-top: 0.5rem; display: none;">
+                      <a href="javascript:void(0)" onclick="document.getElementById('toolExplanationModal').style.display='flex'" style="color: var(--primary-purple); font-weight: 600; text-decoration: none; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        Como pego o link do meu perfil?
+                      </a>
+                    </div>
                   </div>
                   <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
                   <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
@@ -473,12 +732,22 @@
                         <div style="font-weight:700; font-size:1.1rem; color: var(--text-primary);">@<span id="checkoutProfileUsername"></span></div>
                         <div id="checkoutProfileStats" style="display:flex; gap:0.8rem; font-size:0.9rem; color: var(--text-secondary); margin-top:0.2rem;">
                           <div><strong><span id="checkoutPostsCount"></span></strong> posts</div>
-                          <div><strong><span id="checkoutFollowersCount">-</span></strong> curtidas</div>
+                          <div><strong><span id="checkoutFollowersCount">-</span></strong> seguidores</div>
                           <div><strong><span id="checkoutFollowingCount">-</span></strong> seguindo</div>
                         </div>
                       </div>
                     </div>
                   </div>
+                  
+                  <!-- Post Selection Button (Visible when needed) -->
+                  <div id="postsSelectionContainer" style="display:none; margin-top: 2rem;">
+                      <h3 class="card-title" style="font-size: 1.2rem; margin-bottom: 1rem;">Selecione uma publicação</h3>
+                      <button id="openPostsModalBtn" type="button" class="service-selector-btn" style="width:100%; justify-content:center;">
+                          Selecionar Post
+                      </button>
+                      <div id="selectedPostPreviewInline" style="display:none; margin-top:1rem;"></div>
+                  </div>
+
                 </div>
 
                 <div id="contactFieldsArea" style="display:none; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
@@ -499,13 +768,9 @@
                       <label for="contactPhoneInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Telefone <span style="color:#ef4444">*</span></label>
                       <div class="phone-field" style="width:100%;">
                          <input type="tel" id="checkoutPhoneInput" class="select-input" placeholder="(00) 00000-0000" maxlength="15" style="width:100%; border-radius: 8px;" />
-                         <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
-                           <div class="tutorial-pop-step">4/5</div>
-                           <div class="tutorial-pop-text">Informe seu telefone para contato</div>
-                         </div>
                       </div>
                    </div>
-                   <a href="javascript:void(0)" id="btnActionProceed" onclick="window.goToStep(3)" class="continue-button contact-continue-btn" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center; background: var(--instagram-gradient); text-decoration: none; color: white; cursor: pointer;">
+                   <a href="javascript:void(0)" id="btnActionProceed" onclick="window.goToStepEngajamento(3)" class="continue-button contact-continue-btn" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center; background: var(--instagram-gradient); text-decoration: none; color: white; cursor: pointer;">
                       <span class="button-text">Continuar</span>
                    </a>
                 </div>
@@ -518,7 +783,7 @@
         <div id="step3Container" style="display:none;">
           <div class="service-card" id="step3ProfileCard" style="overflow: hidden; max-width: 960px; margin: 0 auto;">
             <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color);">
-               <button onclick="window.goToStep(2)" type="button" style="position: absolute; left: 1rem; top: 1.5rem; background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9; z-index: 10;">
+               <button onclick="window.goToStepEngajamento(2)" type="button" style="position: absolute; left: 1rem; top: 1.5rem; background: none; border: none; cursor: pointer; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; background-color: #f1f5f9; z-index: 10;">
                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                      <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                    </svg>
@@ -539,9 +804,10 @@
                   <div id="step3PostPreviewContent"></div>
                </div>
             </div>
+          </div>
 
             <!-- Order Bump Inline -->
-            <div class="service-card" id="orderBumpInline" style="display:none;">
+            <div class="service-card" id="orderBumpInline">
               <div class="card-content">
                 <h3 class="card-title" style="background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: transparent; display: block; text-align: center; width: 100%;">Oferta exclusivas para você</h3>
                 <div class="card-desc promo-list">
@@ -558,153 +824,176 @@
                         </div>
                       </div>
                     </label>
-                    <!-- Outros bumps podem ser adicionados dinamicamente via JS -->
+
+
+                    
+                    <!-- Demais promoções -->
+                    <label class="promo-item likes">
+                      <input type="checkbox" id="promoLikes" data-promo="likes" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ curtidas</div>
+                        <div class="promo-title">Curtidas promocionais</div>
+                        <div class="promo-desc">Adicionar curtidas ao post.</div>
+                        <div class="promo-prices" data-promo="likes">
+                          <span class="old-price">R$ 49,90</span>
+                          <span class="discount-badge">80% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
+                          <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="likesQty" class="likes-qty">150</span>
+                          <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                          <div id="likesPromoTip" class="tutorial-pop tutorial-pop-check" style="display:none;"><div class="tutorial-pop-text">Pode aumentar a quantidade clicando na seta</div></div>
+                        </div>
+                      </div>
+                    </label>
+                    
+                    <label class="promo-item views">
+                      <input type="checkbox" id="promoViews" data-promo="views" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ visualizações</div>
+                        <div class="promo-title">Visualizações promocionais</div>
+                        <div class="promo-desc">Adicionar visualizações em Reels.</div>
+                        <div class="promo-prices" data-promo="views">
+                          <span class="old-price">R$ 89,90</span>
+                          <span class="discount-badge">78% OFF</span>
+                          <span class="new-price">R$ 19,90</span>
+                        </div>
+                        <div class="likes-control" aria-label="Quantidade de visualizações">
+                          <button type="button" id="viewsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="viewsQty" class="likes-qty">1000</span>
+                          <button type="button" id="viewsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                        </div>
+                      </div>
+                    </label>
+
+                    <label class="promo-item comments">
+                      <input type="checkbox" id="promoComments" data-promo="comments" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ COMENTÁRIOS</div>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Comentário promocional</span>
+                          <button id="commentsExampleBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Exemplo comentários</button>
+                        </div>
+                        <div class="promo-desc">Adicionar comentários ao post.</div>
+                        <div class="promo-prices" data-promo="comments">
+                          <span class="old-price">R$ 19,90</span>
+                          <span class="discount-badge">50% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                         <div class="likes-control" aria-label="Quantidade de comentários">
+                          <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">‹</button>
+                          <span id="commentsQty" class="likes-qty">5</span>
+                          <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">›</button>
+                        </div>
+                      </div>
+                    </label>
+                    
+                    <label class="promo-item warranty60">
+                      <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
+                      <div class="promo-content">
+                        <div id="warrantyHighlight" class="promo-highlight">GARANTIA VITALÍCIA</div>
+                        <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                          <span>Garantia Vitalícia</span>
+                          <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
+                        </div>
+                        <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                        <div class="promo-prices" data-promo="warranty60">
+                          <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
+                          <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
+                          <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" style="display:none;" aria-label="Garantia estendida">
+                          <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
+                          <span id="warrantyModeLabel" class="likes-qty">Vitalícia</span>
+                          <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
+                        </div>
+                      </div>
+                    </label>
                 </div>
               </div>
             </div>
 
-            <!-- Resumo do Pedido -->
-            <div style="padding: 1.5rem; background: var(--bg-secondary);">
-               <h3 style="margin-top:0; margin-bottom:1rem; font-size:1.1rem; color:var(--text-primary);">Resumo do Pedido</h3>
-               <div id="resumo" style="font-size:0.95rem; color:var(--text-secondary);">
-                 <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
-                   <span>Serviço:</span>
-                   <strong id="resTipo" style="color:var(--text-primary);">...</strong>
+          <!-- RESUMO DO PEDIDO (Unified) -->
+          <div class="service-card" id="resumo" style="margin-top: 1rem; max-width: 960px; margin-left: auto; margin-right: auto; display: block;">
+            <div class="card-content">
+              <h3 class="card-title">Resumo do pedido</h3>
+              
+              <div class="resumo-row">
+                <span>Serviço</span>
+                <span id="resTipo">-</span>
+              </div>
+              <div class="resumo-row">
+                <span>Quantidade</span>
+                <span id="resQtd">-</span>
+              </div>
+              <div class="resumo-row">
+                <span>Valor do pacote</span>
+                <span id="resPreco">-</span>
+              </div>
+              
+              <div id="resPromosContainer" style="display:none;">
+                 <div id="resPromos"></div>
+              </div>
+              
+
+
+              <div class="resumo-total">
+                <span>Total</span>
+                <span id="resTotalFinal" style="color: #22c55e;">-</span>
+              </div>
+
+              <div id="grupoPedido" style="margin-top: 1.5rem; display: block;">
+                <button id="realizarPedidoBtn" class="continue-button pulse-animation" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center;">
+                    <span class="button-text">Realizar Pagamento</span>
+                    <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; margin-left: 10px; display: none;"></div>
+                </button>
+                <p style="text-align: center; margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+                    Ambiente 100% seguro. Liberação imediata.
+                </p>
+              </div>
+
+              <!-- Coupon Section -->
+              <div class="coupon-section">
+                  <div class="coupon-container">
+                      <input type="text" id="couponInput" class="select-input" placeholder="Cupom de desconto">
+                      <button type="button" id="applyCouponBtn" class="continue-button coupon-btn">
+                          Aplicar
+                      </button>
+                  </div>
+                  <div id="couponMessage" class="coupon-message"></div>
+              </div>
+
+              <!-- PIX PAYMENT SECTION (Integrated) -->
+              <div id="pixContainer" style="display:none; margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                 <div style="text-align: center; margin-bottom: 1rem;">
+                    <h4 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Pagamento via PIX</h4>
+                    <p style="font-size: 0.9rem; color: var(--text-secondary);">Aprovação imediata e liberada automaticamente.</p>
                  </div>
-                 <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem;">
-                   <span>Quantidade:</span>
-                   <strong id="resQtd" style="color:var(--text-primary);">...</strong>
+                 
+                 <!-- QR Code Area -->
+                 <div style="background: #fff; padding: 1rem; border-radius: 12px; display: inline-block; margin: 0 auto 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <img id="pixQrcode" src="" alt="QR Code PIX" style="width: 200px; height: 200px; display: none;" />
+                    <div id="pixLoader" style="width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; background: #f8fafc;">
+                       <div class="spinner" style="border-color: #cbd5e1; border-top-color: var(--primary-purple);"></div>
+                    </div>
                  </div>
-                 <div style="display:flex; justify-content:space-between; margin-top:1rem; padding-top:1rem; border-top:1px dashed var(--border-color); font-size:1.2rem;">
-                   <span style="font-weight:700;">Total:</span>
-                   <strong id="resTotalFinal" style="color:#22c55e;">...</strong>
-                 </div>
-               </div>
-            </div>
-
-            <!-- Seletor de Método de Pagamento -->
-            <div class="service-card" style="margin-top: 1.5rem;">
-                <div class="card-content">
-                    <h3 class="card-title">Pagamento</h3>
-                    
-                    <!-- CPF do Pagador -->
-                    <div class="input-group" style="margin-bottom: 1.5rem;">
-                        <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CPF do Pagador <span style="color:#ef4444">*</span></label>
-                        <input type="text" id="cpfInput" class="select-input" placeholder="000.000.000-00" maxlength="14" style="width:100%; border-radius:8px;">
-                        <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.3rem;">Necessário para emissão da nota fiscal e segurança.</div>
-                    </div>
-
-                    <div id="paymentMethodSelector" style="display:none; gap: 1rem; margin-bottom: 1.5rem;">
-                        <label id="optionPix" class="payment-option" style="flex:1; cursor:pointer; border:2px solid #db2777; background:#fff; border-radius:12px; padding:1rem; display:flex; flex-direction:column; align-items:center; transition:all 0.2s;">
-                            <input type="radio" name="paymentMethod" value="pix" checked style="display:none;">
-                            <div style="margin-bottom:0.5rem; color:#db2777;">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-                            </div>
-                            <span style="font-weight:700; font-size:0.95rem;">Pix (Imediato)</span>
-                            <span style="font-size:0.75rem; color:var(--text-secondary);">Aprovação na hora</span>
-                        </label>
-                        <label id="optionCard" class="payment-option" style="flex:1; cursor:pointer; border:2px solid var(--border-color); background:var(--bg-secondary); border-radius:12px; padding:1rem; display:flex; flex-direction:column; align-items:center; transition:all 0.2s;">
-                            <input type="radio" name="paymentMethod" value="credit_card" style="display:none;">
-                            <div style="margin-bottom:0.5rem; color:var(--text-secondary);">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
-                            </div>
-                            <span style="font-weight:700; font-size:0.95rem;">Cartão</span>
-                            <span style="font-size:0.75rem; color:var(--text-secondary);">Até 12x</span>
-                        </label>
-                    </div>
-
-                    <!-- Conteúdo Pix -->
-                    <div id="pixPaymentContent" style="padding: 1rem; text-align: center; background: #fdf2f8; border-radius: 8px; border: 1px dashed #db2777;">
-                        <p style="color:#db2777; margin-bottom:0; font-weight: 500;">Ao clicar em "Pagar Agora", o código Pix será gerado.</p>
-                    </div>
-
-                    <!-- Conteúdo Cartão -->
-                    <div id="cardPaymentContent" style="display:none;">
-                        <div class="input-group" style="margin-bottom:1rem;">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Nome no Cartão</label>
-                            <input type="text" id="cardHolderName" class="select-input" placeholder="Como impresso no cartão" style="width:100%; border-radius:8px;">
-                        </div>
-                        <div class="input-group" style="margin-bottom:1rem;">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">E-mail do Titular</label>
-                            <input type="email" id="cardHolderEmail" class="select-input" placeholder="email@exemplo.com" style="width:100%; border-radius:8px;">
-                        </div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
-                             <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CPF do Titular</label>
-                                <input type="text" id="cardHolderCpf" class="select-input" placeholder="000.000.000-00" maxlength="14" style="width:100%; border-radius:8px;">
-                             </div>
-                             <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Nascimento</label>
-                                <input type="date" id="cardHolderBirth" class="select-input" style="width:100%; border-radius:8px;">
-                             </div>
-                        </div>
-                        <div class="input-group" style="margin-bottom:1rem;">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Número do Cartão</label>
-                            <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" style="width:100%; border-radius:8px;">
-                        </div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Validade</label>
-                                <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AA" style="width:100%; border-radius:8px;">
-                            </div>
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CVV</label>
-                                <input type="text" id="cardCvv" class="select-input" placeholder="123" style="width:100%; border-radius:8px;">
-                            </div>
-                        </div>
-                        
-                        <!-- Endereço de Cobrança -->
-                        <div style="margin-top:1.5rem; margin-bottom:1rem; font-weight:700; color:var(--text-primary);">Endereço de Cobrança</div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CEP</label>
-                                <input type="text" id="billingCep" class="select-input" placeholder="00000-000" maxlength="9" style="width:100%; border-radius:8px;">
-                            </div>
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Número</label>
-                                <input type="text" id="billingNumber" class="select-input" placeholder="123" style="width:100%; border-radius:8px;">
-                            </div>
-                        </div>
-                        <div class="input-group" style="margin-bottom:1rem;">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Rua</label>
-                            <input type="text" id="billingStreet" class="select-input" placeholder="Rua Exemplo" style="width:100%; border-radius:8px;">
-                        </div>
-                        <div class="input-group" style="margin-bottom:1rem;">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Bairro</label>
-                            <input type="text" id="billingNeighborhood" class="select-input" placeholder="Bairro" style="width:100%; border-radius:8px;">
-                        </div>
-                        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:1rem; margin-bottom:1rem;">
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Cidade</label>
-                                <input type="text" id="billingCity" class="select-input" placeholder="Cidade" style="width:100%; border-radius:8px;">
-                            </div>
-                            <div class="input-group">
-                                <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Estado</label>
-                                <input type="text" id="billingState" class="select-input" placeholder="UF" maxlength="2" style="width:100%; border-radius:8px;">
-                            </div>
-                        </div>
-
-                        <div class="input-group">
-                            <label style="display:block; margin-bottom:0.5rem; font-weight:600;">Parcelas</label>
-                            <select id="cardInstallments" class="select-input" style="width:100%; border-radius:8px;">
-                                <option value="1">1x sem juros</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <button id="realizarPedidoBtn" class="continue-button" style="width: 100%; padding: 1rem; margin-top: 2rem; font-size: 1.1rem; border-radius: 8px; background: var(--instagram-gradient); color: white; border: none; cursor: pointer; font-weight: 700; position: relative;">
-                        Pagar Agora
-                        <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-input" style="display:none; bottom: 100%; margin-bottom: 10px;">
-                          <div class="tutorial-pop-step">5/5</div>
-                          <div class="tutorial-pop-text">Clique em Pagar Agora para finalizar</div>
-                        </div>
+                 
+                 <!-- Copy Paste -->
+                 <div class="input-group" style="margin-bottom: 1rem;">
+                    <input type="text" id="pixCopiaCola" class="select-input" readonly placeholder="Aguardando código PIX..." style="text-overflow: ellipsis;" />
+                    <button id="copyPixBtn" class="continue-button" style="padding: 0 1rem;">
+                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
-                    
-                    <div id="pixResultado" style="display:none; margin-top: 1.5rem; padding: 1rem; background: #f0fdf4; border: 1px solid #22c55e; border-radius: 8px;">
-                        <!-- Resultado Pix será injetado aqui -->
-                    </div>
+                 </div>
+                 
+                 <div id="pixResultado" style="margin-top: 1rem; min-height: 24px;"></div>
+              </div>
 
-                </div>
+              <div id="checkoutAudioContainer" style="margin-top:1.5rem; border-top: 1px solid var(--border-color); padding-top:1rem;">
+                 <!-- Audio player injected by JS -->
+              </div>
+              
             </div>
           </div>
         </div>
@@ -728,8 +1017,8 @@
       </section>
 
       <!-- FAQ Section -->
-      <section class="section-block">
-        <div id="faqSection" class="faq-section" style="max-width: 800px; margin: 0 auto 3rem; padding: 0 1rem;">
+      <section id="faqContainerSection" class="section-block" style="margin-bottom: 0;">
+        <div id="faqSection" class="faq-section" style="max-width: 800px; margin: 0 auto 0; padding: 0 1rem;">
           <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 2rem; font-size: 1.75rem;">Perguntas frequentes</h3>
           <div class="faq-grid" style="display: flex; flex-direction: column; gap: 1rem;">
             
@@ -785,36 +1074,117 @@
         </div>
       </section>
 
+      <script>
+        function toggleFaq(card) {
+            const btn = card.querySelector('.faq-question');
+            const answer = card.querySelector('.faq-answer');
+            const toggle = card.querySelector('.faq-toggle');
+            
+            if (!btn || !answer || !toggle) return;
+            
+            const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+            
+            btn.setAttribute('aria-expanded', !isExpanded);
+            answer.hidden = isExpanded;
+            toggle.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(180deg)';
+            
+            // Optional: Close others
+            if (!isExpanded) {
+                document.querySelectorAll('.faq-card').forEach(otherCard => {
+                    if (otherCard !== card) {
+                        const otherBtn = otherCard.querySelector('.faq-question');
+                        const otherAnswer = otherCard.querySelector('.faq-answer');
+                        const otherToggle = otherCard.querySelector('.faq-toggle');
+                        if (otherBtn && otherAnswer && otherToggle) {
+                            otherBtn.setAttribute('aria-expanded', 'false');
+                            otherAnswer.hidden = true;
+                            otherToggle.style.transform = 'rotate(0deg)';
+                        }
+                    }
+                });
+            }
+        }
+      </script>
+
+      <!-- Modal: Garantia 60 dias (Estilo Modal Overlay) -->
+      <div id="warranty60Modal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+        <div class="modal-content" style="background:var(--bg-card); width:90%; max-width:600px; border-radius:12px; padding:1.5rem; position:relative;">
+          <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 class="modal-title" style="margin:0; font-size:1.25rem;">Garantia estendida</h3>
+            <button id="warranty60CloseBtn" type="button" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-secondary);">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p style="color: var(--text-secondary); line-height:1.5;">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de seguidores que teve queda.</p>
+            <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px; margin-top: 1rem;">
+               <img src="/images/reposicao.jpeg" alt="Garantia de Reposição" style="max-width:100%; border-radius:8px;">
+            </div>
+          </div>
+          <div class="modal-footer" style="margin-top:1.5rem; text-align:right;">
+            <button id="warranty60CloseBtn2" class="continue-button" type="button" style="padding:0.5rem 1rem; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; cursor:pointer;">Fechar</button>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <!-- Modal de Posts (para Curtidas/Visualizações) -->
     <div id="postsModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
-      <div class="modal-content" style="background:var(--bg-card); width:90%; max-width:600px; max-height:85vh; border-radius:12px; display:flex; flex-direction:column; overflow:hidden;">
+      <div class="modal-content" style="background:var(--bg-card); width:90%; max-width:600px; max-height:85vh; border-radius:12px; display:flex; flex-direction:column; overflow:hidden; position:relative;">
         <div class="modal-header" style="padding:1rem; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
-          <h3 style="margin:0; font-size:1.1rem;">Selecione o Post</h3>
-          <button type="button" id="closePostsModal" style="background:none; border:none; cursor:pointer; font-size:1.5rem;">&times;</button>
+          <h3 style="margin:0; font-size:1.1rem; color:var(--text-primary);">Selecione o Post</h3>
+          <button type="button" id="closePostsModal" style="background:none; border:none; cursor:pointer; font-size:1.5rem; color:var(--text-secondary);">&times;</button>
         </div>
         <div class="modal-body" style="padding:1rem; overflow-y:auto; flex:1;">
-           <div id="postsGrid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:4px;">
+           <div id="postsGridModal" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:4px;">
               <!-- Posts loaded via JS -->
            </div>
            <div id="postsLoading" style="text-align:center; padding:2rem; display:none;">
              <div class="spinner"></div>
            </div>
            <div id="postsError" style="text-align:center; padding:2rem; color:red; display:none;"></div>
-        </div>
-        <div class="modal-footer" style="padding:1rem; border-top:1px solid var(--border-color); text-align:right;">
-           <button type="button" id="confirmPostSelection" class="continue-button" style="padding:0.5rem 1.5rem; font-size:0.9rem;" disabled>Confirmar</button>
+           
+           <div id="loadMorePostsContainerModal" style="text-align: center; margin-top: 1rem; display: none;">
+               <button id="loadMorePostsBtnModal" class="service-selector-btn" style="font-size: 0.85rem;">Carregar mais posts</button>
+           </div>
         </div>
       </div>
     </div>
+    <!-- Modal: Explicação Link Perfil (Vídeo 9:16) -->
+    <div id="toolExplanationModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:2147483647; justify-content:center; align-items:center;">
+      <div class="modal-content" style="background:transparent; width:100%; max-width:350px; position:relative; display:flex; flex-direction:column; align-items:center;">
+         <button type="button" onclick="document.getElementById('toolExplanationModal').style.display='none'" style="position:absolute; top:-40px; right:0; background:none; border:none; color:white; font-size:2rem; cursor:pointer; z-index:10001;">&times;</button>
+         <div style="width:100%; height: 60vh; max-height: 500px; aspect-ratio: auto; background:#000; border-radius:16px; overflow:hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);">
+            <video controls autoplay loop muted playsinline style="width:100%; height:100%; object-fit:contain;">
+                <source src="/images/como%20usar%20nome.mp4" type="video/mp4">
+                Seu navegador não suporta a tag de vídeo.
+            </video>
+         </div>
+         <div style="color:white; margin-top:1rem; text-align:center; font-size:1.1rem; width:100%; padding:0 1rem;">
+            <p style="margin:0.5rem 0;">1. Abra seu perfil Instagram</p>
+            <p style="margin:0.5rem 0;">2. Clique no botão compartilhar</p>
+            <p style="margin:0.5rem 0;">3. Copie o link e cole aqui</p>
+         </div>
+      </div>
+    </div>
+
   </div>
 
   <%- include('partials/footer') %>
   
-  <script src="/js/checkout.js"></script>
-  <script src="/js/engajamento-novo.js"></script>
+  <script src="/js/main.js?v=9"></script>
+  <script src="/js/checkout.js?v=9"></script>
+  <script src="/js/engajamento-novo.js?v=11"></script>
   
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize with first option selected (Followers + Mistos)
+      // This ensures the quantity selector is visible immediately
+      if (window.selectDirectService) {
+        window.selectDirectService('followers', 'mistos');
+      }
+    });
+  </script>
+
   <script>
     // Slider Logic for Testimonials and Why Us
     document.addEventListener('DOMContentLoaded', function() {

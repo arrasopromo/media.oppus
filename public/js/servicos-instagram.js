@@ -14,19 +14,85 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   try { getBrowserSessionId(); } catch(_) {}
 
+  // Coupon State
+  window.couponCode = '';
+  window.couponDiscount = 0;
+
+  const applyCouponBtn = document.getElementById('applyCouponBtn');
+  if (applyCouponBtn) {
+      applyCouponBtn.addEventListener('click', function() {
+          const input = document.getElementById('couponInput');
+          const msg = document.getElementById('couponMessage');
+          if (!input || !msg) return;
+          
+          const code = input.value.trim().toUpperCase();
+          if (!code) {
+              msg.textContent = 'Digite um cupom.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+              return;
+          }
+          
+          // Validation Logic via API
+          this.disabled = true;
+          this.textContent = 'Verificando...';
+          
+          fetch('/api/validate-coupon', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code })
+          })
+          .then(res => res.json())
+          .then(data => {
+              if (data.valid) {
+                  window.couponCode = data.code;
+                  window.couponDiscount = data.discount; // decimal, e.g. 0.10
+                  
+                  const percent = Math.round(data.discount * 100);
+                  msg.textContent = `Cupom aplicado! (${percent}% OFF)`;
+                  msg.style.color = '#22c55e';
+                  msg.style.display = 'block';
+                  
+                  input.disabled = true;
+                  this.disabled = true;
+                  this.textContent = 'Aplicado';
+              } else {
+                  msg.textContent = data.error || 'Cupom inválido.';
+                  msg.style.color = '#ef4444';
+                  msg.style.display = 'block';
+                  window.couponCode = '';
+                  window.couponDiscount = 0;
+                  
+                  this.disabled = false;
+                  this.textContent = 'Aplicar';
+              }
+              if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          })
+          .catch(err => {
+              console.error('Erro ao validar cupom:', err);
+              msg.textContent = 'Erro ao validar cupom.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+              
+              this.disabled = false;
+              this.textContent = 'Aplicar';
+          });
+      });
+  }
+
   const tabelaSeguidores = {
     mistos: [
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
-      { q: 500, p: 'R$ 19,90' },
-      { q: 700, p: 'R$ 24,90' },
+      { q: 500, p: 'R$ 16,90' },
+      { q: 700, p: 'R$ 22,90' },
       { q: 1000, p: 'R$ 29,90' },
-      { q: 2000, p: 'R$ 54,90' },
-      { q: 3000, p: 'R$ 89,90' },
-      { q: 4000, p: 'R$ 109,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 79,90' },
+      { q: 4000, p: 'R$ 99,90' },
       { q: 5000, p: 'R$ 129,90' },
       { q: 7500, p: 'R$ 169,90' },
-      { q: 10000, p: 'R$ 199,90' },
+      { q: 10000, p: 'R$ 229,90' },
       { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
@@ -297,7 +363,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const map = {
       'mistos': 'Seguidores Mistos',
       'brasileiros': 'Seguidores Brasileiros',
-      'organicos': 'Seguidores brasileiros e reais'
+      'organicos': 'Seguidores Brasileiros Reais'
     };
     return map[tipo] || tipo;
   }
@@ -473,11 +539,19 @@ document.addEventListener('DOMContentLoaded', function() {
   function renderTipoCards() {
     if (!tipoCards) return;
     tipoCards.innerHTML = '';
+    // Garantir visibilidade (pois vem oculto do HTML)
+    tipoCards.style.display = 'grid';
+    
     const tipos = Object.keys(tabela).filter(t => {
       if (t === 'seguidores_tiktok') return false;
       if (isCurtidasContext && t === 'brasileiros') return false;
       return true;
     });
+
+    // Fallback de segurança: garantir que organicos esteja presente se disponível na tabela
+    if (!isCurtidasContext && !isViewsContext && !tipos.includes('organicos') && tabela.organicos) {
+       tipos.push('organicos');
+    }
     
     tipos.forEach(tipo => {
       const card = document.createElement('div');
@@ -506,7 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getAllowedQuantities(tipo) {
-    const base = [150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+    const base = [50, 150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
         // Para curtidas mantemos apenas a partir de 150
@@ -530,6 +604,9 @@ document.addEventListener('DOMContentLoaded', function() {
   function renderPlanCards(tipo) {
     if (!planCards) return;
     planCards.innerHTML = '';
+    // Garantir visibilidade
+    planCards.style.display = '';
+
     let arr = tabela[tipo] || [];
     const unit = getUnitForTipo(tipo);
     
@@ -736,7 +813,25 @@ document.addEventListener('DOMContentLoaded', function() {
   if (wDec) wDec.addEventListener('click', () => stepWarranty(-1));
   if (wInc) wInc.addEventListener('click', () => stepWarranty(1));
 
+  function updateWarrantyVisibility(tipo) {
+    const warrantyItem = document.querySelector('.promo-item.warranty60');
+    if (!warrantyItem) return;
+    
+    // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos') {
+        warrantyItem.style.display = 'flex';
+    } else {
+        warrantyItem.style.display = 'none';
+        const cb = document.getElementById('promoWarranty60');
+        if (cb && cb.checked) {
+             cb.checked = false;
+             updatePromosSummary();
+        }
+    }
+  }
+
   function updateOrderBump(tipo, baseQtd) {
+    updateWarrantyVisibility(tipo);
     if (!orderInline) return;
     const unit = getUnitForTipo(tipo);
     const labelSpan = document.getElementById('orderBumpText');
@@ -1086,7 +1181,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const promosTotal = calcPromosTotalCents(promos);
-    const totalCents = Math.max(0, Number(baseCents) + promosTotal);
+    let totalCents = Math.max(0, Number(baseCents) + promosTotal);
+
+    // Apply Coupon (Display)
+    if (window.couponDiscount && window.couponDiscount > 0) {
+        // Recalculate based on total
+        const discountVal = Math.round(totalCents * window.couponDiscount);
+        totalCents -= discountVal;
+    }
     
     // Atualiza Total Final com Desconto
     if (resTotalFinal) {
@@ -1420,6 +1522,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (username !== rawInput) usernameCheckoutInput.value = username;
     
     hideStatusMessageCheckout();
+    const helpLink = document.getElementById('howToGetLinkContainer');
+    if (helpLink) helpLink.style.display = 'none';
+
     clearProfilePreview();
     showLoadingCheckout();
     
@@ -1549,10 +1654,14 @@ document.addEventListener('DOMContentLoaded', function() {
         
       } else {
         showStatusMessageCheckout(data.error || 'Falha ao verificar perfil.', 'error');
+        const helpLink = document.getElementById('howToGetLinkContainer');
+        if (helpLink) helpLink.style.display = 'block';
       }
     } catch (e) {
       hideLoadingCheckout();
       showStatusMessageCheckout('Erro ao conectar com o servidor.', 'error');
+      const helpLink = document.getElementById('howToGetLinkContainer');
+      if (helpLink) helpLink.style.display = 'block';
     }
   }
 
@@ -1765,7 +1874,13 @@ document.addEventListener('DOMContentLoaded', function() {
       let baseCents = basePriceCents || 0;
       const promos = getSelectedPromos();
       const promosTotalCents = calcPromosTotalCents(promos);
-      const totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
+      let totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
+
+      if (window.couponDiscount && window.couponDiscount > 0) {
+        const discountVal = Math.round(totalCents * window.couponDiscount);
+        totalCents -= discountVal;
+      }
+
       const valueBRL = totalCents / 100;
       let sckValue = '';
       try {
@@ -1825,7 +1940,8 @@ document.addEventListener('DOMContentLoaded', function() {
           { key: 'phone', value: phoneValue },
           { key: 'instagram_username', value: instagramUsernameFinal },
           { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
-          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') },
+          { key: 'cupom', value: window.couponCode || '' }
         ],
         profile_is_private: isInstagramPrivate
       };

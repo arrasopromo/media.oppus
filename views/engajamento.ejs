@@ -518,6 +518,12 @@
               </div>
               <div id="perfilHints" style="margin-top:0.8rem; color: var(--text-secondary);">
                 <div class="perfil-hint strong">• Não precisamos da sua senha</div>
+                <div id="howToGetLinkContainer" style="margin-top: 0.5rem; display: none;">
+                  <a href="javascript:void(0)" onclick="document.getElementById('toolExplanationModal').style.display='flex'" style="color: var(--primary-purple); font-weight: 600; text-decoration: none; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    Como pego o link do meu perfil?
+                  </a>
+                </div>
               </div>
               <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
               <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
@@ -773,25 +779,23 @@
         </div>
       </div>
 
-      <!-- Modal: Explicação da Ferramenta (Novo) -->
-      <div id="toolExplanationModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
-        <div class="modal-dialog" style="max-width:400px; width:90%; background: #1e1e1e; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
-          <div class="modal-header" style="border:none; padding-bottom:0;">
-            <h3 class="modal-title" style="margin:0 auto;">Como funciona?</h3>
-            <button id="toolExplanationCloseBtn" class="modal-close" type="button" aria-label="Fechar" style="position:absolute; right:1rem; top:1rem;">✕</button>
-          </div>
-          <div class="modal-body" style="text-align:center;">
-            <div style="position:relative; aspect-ratio: 9 / 16; height: clamp(320px, 60vh, 560px); max-width: 100%; margin: 0.75rem auto 0; border-radius:12px; overflow:hidden; box-shadow: var(--shadow); background: #000;">
-              <!-- TODO: Substituir src pelo video correto da ferramenta -->
-              <video id="toolVideoPlayer" src="/images/comentarios.mp4" controls muted playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit: cover;"></video>
-            </div>
-            <p style="margin-top:0.75rem; color: var(--text-secondary);">Entenda como nossa tecnologia exclusiva garante a reposição automática.</p>
-          </div>
-          <div class="modal-footer">
-            <button id="toolExplanationCloseBtn2" class="continue-button" type="button">Fechar</button>
-          </div>
-        </div>
+    <!-- Modal: Explicação Link Perfil (Vídeo 9:16) -->
+    <div id="toolExplanationModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:2147483647; justify-content:center; align-items:center;">
+      <div class="modal-content" style="background:transparent; width:100%; max-width:350px; position:relative; display:flex; flex-direction:column; align-items:center;">
+         <button type="button" onclick="document.getElementById('toolExplanationModal').style.display='none'" style="position:absolute; top:-40px; right:0; background:none; border:none; color:white; font-size:2rem; cursor:pointer; z-index:10001;">&times;</button>
+         <div style="width:100%; height: 60vh; max-height: 500px; aspect-ratio: auto; background:#000; border-radius:16px; overflow:hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);">
+            <video controls autoplay loop muted playsinline style="width:100%; height:100%; object-fit:contain;">
+                <source src="/images/como%20usar%20nome.mp4" type="video/mp4">
+                Seu navegador não suporta a tag de vídeo.
+            </video>
+         </div>
+         <div style="color:white; margin-top:1rem; text-align:center; font-size:1.1rem; width:100%; padding:0 1rem;">
+            <p style="margin:0.5rem 0;">1. Abra seu perfil Instagram</p>
+            <p style="margin:0.5rem 0;">2. Clique no botão compartilhar</p>
+            <p style="margin:0.5rem 0;">3. Copie o link e cole aqui</p>
+         </div>
       </div>
+    </div>
       <!-- Modal: Seleção de post (curtidas/visualizações/comentários) -->
       <div id="postSelectModal" class="modal-overlay" style="display:none;">
         <div class="modal-dialog">

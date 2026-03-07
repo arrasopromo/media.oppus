@@ -12,6 +12,7 @@ const BaserowManager = require("./baserowManager");
 const axios = require('axios');
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
+const { validatePrice, verifyPrice } = require('./pricing');
 
 const app = express();
 app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
@@ -56,6 +57,74 @@ app.use((req, res, next) => {
     req.ip = ipNormalized; // Também sobrescrever req.ip
     
     next();
+});
+
+// Middleware de autenticação Admin
+const requireAdmin = (req, res, next) => {
+    if (req.session && req.session.adminUser) {
+        return next();
+    }
+    if (req.xhr || (req.headers.accept && req.headers.accept.indexOf('json') > -1)) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return res.redirect('/login');
+};
+
+// Helper: Hash password (SHA-256)
+function hashPassword(password) {
+    return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+// Ensure default admin exists on startup
+async function ensureAdminUser() {
+    try {
+        const { getCollection } = require('./mongodbClient');
+        const admins = await getCollection('admins');
+        const adminUser = await admins.findOne({ username: 'admin' });
+        
+        if (!adminUser) {
+            console.log('Creating default admin user...');
+            await admins.insertOne({
+                username: 'admin',
+                password: hashPassword('Rr12415721@'), // Initial password
+                role: 'admin',
+                createdAt: new Date()
+            });
+            console.log('✅ Default admin user created.');
+        }
+    } catch (e) {
+        console.error('❌ Error ensuring admin user:', e);
+    }
+}
+// Run the check
+ensureAdminUser();
+
+app.get('/login', (req, res) => {
+    if (req.session && req.session.adminUser) return res.redirect('/painel');
+    res.render('login');
+});
+
+app.post('/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const { getCollection } = require('./mongodbClient');
+        const admins = await getCollection('admins');
+        const user = await admins.findOne({ username });
+
+        if (user && user.password === hashPassword(password)) {
+            req.session.adminUser = { username: user.username, role: user.role };
+            return res.json({ success: true });
+        }
+        return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
+    } catch (e) {
+        console.error('Login error:', e);
+        return res.status(500).json({ success: false, error: 'Erro interno' });
+    }
+});
+
+app.get('/logout', (req, res) => {
+    req.session.destroy();
+    res.redirect('/login');
 });
 
 // Configurar view engine ANTES de qualquer render
@@ -122,6 +191,18 @@ async function dispatchPendingOrganicos() {
     const pending = await cursor.toArray();
     for (const record of pending) {
       try {
+        // SECURITY CHECK: Verify if paid value matches expected value
+        if (record.expectedValueCents && record.valueCents && record.valueCents < record.expectedValueCents) {
+            console.warn(`🛑 Dispatcher BLOCKED for order ${record._id}: Paid value (${record.valueCents}) < Expected (${record.expectedValueCents}).`);
+            await col.updateOne({ _id: record._id }, { 
+                $set: { 
+                    status: 'divergent_value', 
+                    mismatchDetails: { reason: 'value_underpaid_at_dispatcher', expected: record.expectedValueCents, paid: record.valueCents } 
+                } 
+            });
+            continue;
+        }
+
         // Atomic lock attempt
         const lockUpdate = await col.updateOne(
             { 
@@ -146,7 +227,7 @@ async function dispatchPendingOrganicos() {
         let upgradeAdd = 0;
         if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000 && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) upgradeAdd = 1000;
         else if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
-          const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+          const map = { 150: 150, 500: 200, 1000: 1000, 3000: 1000, 5000: 2500, 10000: 5000 };
           upgradeAdd = map[qtdBase] || 0;
         }
         const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
@@ -283,6 +364,42 @@ app.get('/api/instagram/posts', async (req, res) => {
     }
 });
 
+// Rota para buscar informações do perfil (usada no checkout novo)
+app.get('/api/instagram/info', async (req, res) => {
+    try {
+        const username = req.query.username;
+        if (!username) {
+            return res.status(400).json({ success: false, error: 'Username é obrigatório' });
+        }
+
+        const userAgent = req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        const ip = req.ip || '127.0.0.1';
+
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        
+        if (result && result.success && result.profile) {
+            return res.json({ 
+                success: true,
+                username: result.profile.username,
+                profilePicUrl: result.profile.profilePicUrl,
+                followers: result.profile.followersCount,
+                following: result.profile.followingCount,
+                postsCount: result.profile.postsCount,
+                isPrivate: result.profile.isPrivate,
+                isVerified: result.profile.isVerified
+            });
+        } else {
+            return res.status(404).json({ 
+                success: false, 
+                error: result.error || 'Perfil não encontrado.' 
+            });
+        }
+    } catch (error) {
+        console.error('Erro na rota /api/instagram/info:', error);
+        res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil' });
+    }
+});
+
 const PROFILE_CACHE = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -303,20 +420,22 @@ function setCache(username, value, ttlMs) {
     PROFILE_CACHE.set(key, { value, expiresAt: Date.now() + (ttlMs || CACHE_TTL_MS) });
 }
 
-async function verifyInstagramProfile(username, userAgent, ip, req, res) {
-    console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username}`);
+async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassCache = false) {
+    console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username} (bypassCache: ${bypassCache})`);
     
-    const cached = getCachedProfile(username);
-    if (cached) {
-        console.log(`✅ Perfil @${username} retornado do cache`);
-        return cached;
+    if (!bypassCache) {
+        const cached = getCachedProfile(username);
+        if (cached) {
+            console.log(`✅ Perfil @${username} retornado do cache`);
+            return cached;
+        }
     }
 
     try {
         // ---------------------------------------------------------
         // TENTATIVA 1: ROCKETAPI (Rápido: ~2-5s)
         // ---------------------------------------------------------
-        if (process.env.ROCKETAPI_TOKEN) {
+        if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
             try {
                 console.log(`🚀 Tentando RocketAPI para @${username}`);
                 const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
@@ -332,6 +451,9 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                 if (isRocketOk && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) {
                     const rUser = rData.response.body.data.user;
                     console.log(`✅ RocketAPI retornou dados para @${username}`);
+                    
+                    // Reset disable timer on success
+                    global.rocketApiDisabledUntil = 0;
 
                     // Tentar extrair posts de edges (se vierem)
                     let rExtractedPosts = [];
@@ -424,10 +546,19 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
                     setCache(username, resultRocket, CACHE_TTL_MS);
                     return resultRocket;
                 } else {
-                    console.warn(`⚠️ RocketAPI retornou status inválido ou dados incompletos para @${username}:`, JSON.stringify(rData).substring(0, 200));
+                    const msg = JSON.stringify(rData).substring(0, 300);
+                    console.warn(`⚠️ RocketAPI status inválido ou dados incompletos para @${username}:`, msg);
+                    
+                    if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('renew') || msg.toLowerCase().includes('plan is')) {
+                        console.warn('⛔ RocketAPI Plano Expirado (detectado por msg). Desabilitando temporariamente por 10 minutos.');
+                        global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+                    }
                 }
             } catch (eRocket) {
                 console.error('❌ Erro RocketAPI (fallback p/ Apify):', eRocket.message, eRocket.response?.data || '');
+                if (String(eRocket.response?.data || '').toLowerCase().includes('expired')) {
+                     global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+                }
             }
         }
 
@@ -446,7 +577,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
         console.log(`🚀 Enviando requisição para Apify: @${username}`);
         const response = await axios.post(apifyUrl, payload, { 
             headers: { 'Content-Type': 'application/json' },
-            timeout: 30000
+            timeout: 120000 // Aumentado para 120s (Apify pode ser lenta)
         });
 
         const items = response.data;
@@ -555,8 +686,11 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res) {
 
     } catch (error) {
         console.error(`❌ Erro Apify: ${error.message}`);
+        if (error.response) {
+            console.error('❌ Detalhes Erro Apify:', error.response.status, error.response.data);
+        }
         // Fallback genérico
-        const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente." };
+        const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente mais tarde." };
         return errorResult;
     }
 }
@@ -1420,7 +1554,7 @@ app.get('/image-proxy', async (req, res) => {
   try {
     const response = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
-      timeout: 10000,
+      timeout: 25000,
       headers: {
         'User-Agent': req.get('User-Agent') || 'Mozilla/5.0',
         'Accept': 'image/*,video/*,*/*;q=0.8'
@@ -1843,32 +1977,7 @@ app.get('/refil', async (req, res) => {
   });
 });
 
-// API para solicitar refil (proxy para Fama24h)
-app.post('/api/refil/create', async (req, res) => {
-    try {
-        const { order_id, username } = req.body || {};
-        if (!order_id) return res.status(400).json({ error: 'missing_order_id' });
-        const axios = require('axios');
-        const orderIdStr = String(order_id).trim();
-        const url = `https://refilfama24h.com/api/refill/create?order_id=${encodeURIComponent(orderIdStr)}`;
-        console.log('🔁 [Refil] Solicitando:', { order_id: orderIdStr, url });
-        const response = await axios.post(url, null, { headers: { 'Accept': 'application/json' }, timeout: 20000 });
-        console.log('✅ [Refil] OK status:', response.status);
-        return res.status(200).json(response.data);
-    } catch (err) {
-        if (err && (err.code === 'EPROTO' || String(err.message || '').toLowerCase().includes('eproto') || String(err.message || '').toLowerCase().includes('tlsv1 alert internal error'))) {
-            console.error('❌ [Refil] Erro TLS/EPROTO:', err.message);
-            return res.status(502).json({
-                error: 'refil_indisponivel',
-                message: 'Serviço de refil temporariamente indisponível. Tente novamente em alguns minutos.'
-            });
-        }
-        const status = err.response?.status || 500;
-        const details = err.response?.data || { message: err.message };
-        console.error('❌ [Refil] Erro:', { status, details });
-        return res.status(status).json({ error: 'refil_error', details });
-    }
-});
+// Rota antiga de refil removida em favor da nova implementação (ver final do arquivo)
 
 // API: criar cobrança Cartão via Efí
 app.post('/api/efi/card-charge', async (req, res) => {
@@ -1883,6 +1992,35 @@ app.post('/api/efi/card-charge', async (req, res) => {
             });
         }
 
+        // Validação de Preço (Backend) - Validação Estrita para TODOS os pedidos
+        const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+        const addInfoMap = addInfoArr.reduce((acc, item) => {
+             const k = String(item?.key || '').trim();
+             const v = String(item?.value || '').trim();
+             acc[k] = v;
+             return acc;
+        }, {});
+        
+        const tipoVal = addInfoMap['tipo_servico'] || '';
+        const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
+        
+        let validatedPriceCents = null;
+
+        // Tenta validar TODOS os pedidos usando pricing.js
+        const verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        
+        if (verification.isValid) {
+             // Preço validado com sucesso
+             validatedPriceCents = verification.matchedPrice;
+        } else {
+             // Se falhar, rejeita
+             console.warn(`⚠️ Bloqueio de Pagamento (Cartão): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${total_cents}, Esperado=${verification.standardPrice}`);
+             return res.status(400).json({ 
+                 error: 'value_mismatch', 
+                 message: 'O valor do pagamento não corresponde ao preço oficial calculado pelo sistema.' 
+             });
+        }
+
         const options = {
             sandbox: process.env.EFI_SANDBOX === 'true',
             client_id: process.env.EFI_CLIENT_ID_HM,
@@ -1891,12 +2029,13 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
         const efipay = new EfiPay(options);
 
-        // Mapear itens para formato Efí
-        const efiItems = (items || []).map(i => ({
-            name: i.title,
-            value: parseInt(i.price_cents),
-            amount: parseInt(i.quantity)
-        }));
+        // Mapear itens para formato Efí (USANDO O PREÇO VALIDADO, IGNORANDO O FRONTEND)
+        // Isso garante que o valor cobrado no cartão seja exatamente o calculado pelo backend.
+        const efiItems = [{
+            name: `${qtdVal} ${tipoVal} - Checkout OPPUS`,
+            value: parseInt(validatedPriceCents),
+            amount: 1
+        }];
 
         const params = {};
         const body = {
@@ -1922,6 +2061,13 @@ app.post('/api/efi/card-charge', async (req, res) => {
         const charge = await efipay.createOneStepCharge(params, body);
 
         if (charge && charge.data && charge.data.status !== 'error') {
+            // Validação da Resposta (Garantia de que o valor cobrado é o esperado)
+            let mismatchStatus = null;
+            if (validatedPriceCents !== null && charge.data.total !== validatedPriceCents) {
+                console.error(`🚨 CRITICAL: Efí charge total mismatch! Expected: ${validatedPriceCents}, Got: ${charge.data.total}`);
+                mismatchStatus = 'divergent_value';
+            }
+
             // Persistência (adaptada do Woovi)
             const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
             const addInfo = addInfoArr.reduce((acc, item) => {
@@ -1962,8 +2108,8 @@ app.post('/api/efi/card-charge', async (req, res) => {
             const createdIso = new Date().toISOString();
             
             // Status Efí: 'new', 'waiting', 'paid', 'unpaid', 'refunded', 'contested', 'canceled', 'settled'
-            let sysStatus = 'pendente';
-            if (charge.data.status === 'paid' || charge.data.status === 'settled') sysStatus = 'pago';
+            let sysStatus = mismatchStatus || 'pendente';
+            if (!mismatchStatus && (charge.data.status === 'paid' || charge.data.status === 'settled')) sysStatus = 'pago';
 
             const record = {
                 nomeUsuario: null,
@@ -1980,6 +2126,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 utms,
                 geolocation,
                 valueCents: total_cents,
+                expectedValueCents: validatedPriceCents,
                 customer: customer,
                 additionalInfo: addInfoArr,
                 tipoServico: tipo,
@@ -2017,6 +2164,9 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
 // API: criar cobrança PIX via Woovi
 app.post('/api/woovi/charge', async (req, res) => {
+    // DEBUG: Log incoming request body
+    console.log('DEBUG: /api/woovi/charge called', JSON.stringify(req.body, null, 2));
+
     // ... (código existente da Woovi)
 
     const WOOVI_AUTH = process.env.WOOVI_AUTH || 'Q2xpZW50X0lkXzI1OTRjODMwLWExN2YtNDc0Yy05ZTczLWJjNDRmYTc4NTU2NzpDbGllbnRfU2VjcmV0X0NCVTF6Szg4eGJyRTV0M1IxVklGZEpaOHZLQ0N4aGdPR29UQnE2dDVWdU09';
@@ -2029,8 +2179,8 @@ app.post('/api/woovi/charge', async (req, res) => {
         profile_is_private
     } = req.body || {};
 
-    if (!value || typeof value !== 'number') {
-        return res.status(400).json({ error: 'invalid_value', message: 'Campo value (centavos) é obrigatório.' });
+    if (!value || typeof value !== 'number' || value < 10) {
+        return res.status(400).json({ error: 'invalid_value', message: 'Campo value (centavos) é obrigatório e deve ser no mínimo 10 (R$ 0,10).' });
     }
 
     // Função para remover emojis (pares substitutos) e normalizar travessões para hífen
@@ -2065,6 +2215,52 @@ app.post('/api/woovi/charge', async (req, res) => {
             sanitizedAdditionalFiltered.push({ key: 'tc_code', value: tc });
         }
     } catch (_) {}
+
+    // Validação de Preço (Backend Woovi) - Validação Estrita para TODOS os pedidos
+    const addInfoMap = sanitizedAdditionalFiltered.reduce((acc, item) => {
+         acc[item.key] = item.value;
+         return acc;
+    }, {});
+    
+    const tipoVal = addInfoMap['tipo_servico'] || '';
+    const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
+    
+    // DEBUG: Log detalhado da requisição para diagnosticar erro 400
+    console.log('DEBUG Woovi Charge Request:', {
+        value,
+        tipoVal,
+        qtdVal,
+        addInfoMap,
+        rawAdditionalInfo: additionalInfo
+    });
+
+    let validatedPriceCents = null;
+
+    // Tenta validar o preço usando o pricing.js centralizado
+            // Agora suporta categoria_servico para desambiguidade (Mistos vs Mistos)
+            console.log('DEBUG Woovi Charge:', { value, tipoVal, qtdVal, addInfo: sanitizedAdditionalFiltered });
+            const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, value);
+            console.log('DEBUG Woovi Verification:', verification);
+            
+            if (verification.isValid) {
+        // Preço validado com sucesso (bate com standard ou desconto)
+        validatedPriceCents = verification.matchedPrice;
+    } else {
+        // Se a validação falhar, rejeitamos o pedido para segurança
+        console.warn(`⚠️ Bloqueio de Pagamento (Woovi): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${value}, Esperado=${verification.standardPrice}`);
+        // Log detalhado para debug
+        console.log('DEBUG Woovi Mismatch:', {
+            received: value,
+            expected: verification.standardPrice,
+            diff: value - verification.standardPrice,
+            addInfo: sanitizedAdditionalFiltered
+        });
+        return res.status(400).json({ 
+             error: 'value_mismatch', 
+             message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.standardPrice}).` 
+        });
+    }
+
 
     // Normaliza telefone para formato E.164 (prioriza Brasil +55 quando aplicável)
     const normalizePhone = (s) => {
@@ -2114,9 +2310,14 @@ app.post('/api/woovi/charge', async (req, res) => {
     const randChunk = () => Math.random().toString(36).slice(2, 5);
     const chargeCorrelationID = `${randChunk()}-${randChunk()}-${phoneDigitsRaw || 'no-phone'}`;
 
+    // USE VALIDATED PRICE FOR WOOVI CHARGE
+    // Se validatedPriceCents estiver disponível (o que deve estar se passou na verificação acima), use-o.
+    // Caso contrário (fallback improvável), use o value original mas logue o aviso.
+    const finalChargeValue = validatedPriceCents !== null ? validatedPriceCents : value;
+
     const payload = {
         correlationID: chargeCorrelationID,
-        value,
+        value: finalChargeValue,
         comment: sanitizeText(comment || 'Agência OPPUS - Checkout'),
         customer: customerPayload,
         additionalInfo: sanitizedAdditionalFiltered
@@ -2134,6 +2335,14 @@ app.post('/api/woovi/charge', async (req, res) => {
         try {
             const data = response.data || {};
             const charge = data.charge || data || {};
+
+            // Validação da Resposta (Garantia de que o valor cobrado é o esperado)
+            let mismatchStatus = null;
+            if (validatedPriceCents !== null && charge.value !== validatedPriceCents) {
+                console.error(`🚨 CRITICAL: Woovi charge value mismatch! Expected: ${validatedPriceCents}, Got: ${charge.value}`);
+                mismatchStatus = 'divergent_value';
+            }
+
             const addInfoArr = Array.isArray(sanitizedAdditionalFiltered) ? sanitizedAdditionalFiltered : [];
             const addInfo = addInfoArr.reduce((acc, item) => {
                 const k = String(item?.key || '').trim();
@@ -2194,7 +2403,7 @@ app.post('/api/woovi/charge', async (req, res) => {
                 isPrivate: isPrivate,
                 criado: createdIso,
                 identifier,
-                status: 'pendente',
+                status: mismatchStatus || 'pendente',
                 qtd,
                 tipo,
                 utms,
@@ -2202,6 +2411,7 @@ app.post('/api/woovi/charge', async (req, res) => {
 
                 // Demais campos já utilizados pelo app
                 valueCents: value,
+                expectedValueCents: validatedPriceCents,
                 customer: customerPayload,
                 additionalInfo: addInfoArr,
                 tipoServico: tipo,
@@ -2239,6 +2449,24 @@ app.post('/api/woovi/charge', async (req, res) => {
 // Função auxiliar para processar o envio de pedidos (Fama24h/FornecedorSocial)
 async function processOrderFulfillment(record, col, req) {
     if (!record) return;
+
+    // --- SECURITY CHECK: DIVERGENT VALUE ---
+    // Bloqueia despacho se o status for 'divergent_value' ou se houver discrepância de valor não tratada
+    if (record.status === 'divergent_value' || record['woovi.status'] === 'divergent_value') {
+        console.warn(`🛑 Fulfillment BLOCKED for order ${record.identifier}: Status is divergent_value.`);
+        return;
+    }
+    if (record.expectedValueCents && record.valueCents) {
+        // Tolerância zero para diferença, exceto se for erro de arredondamento insignificante (opcional, mas aqui vamos ser estritos)
+        if (record.valueCents < record.expectedValueCents) {
+             console.warn(`🛑 Fulfillment BLOCKED for order ${record.identifier}: Paid value (${record.valueCents}) < Expected (${record.expectedValueCents}).`);
+             // Opcional: Marcar como divergente se ainda não estiver
+             await col.updateOne({ _id: record._id }, { $set: { status: 'divergent_value', mismatchDetails: { reason: 'value_underpaid_at_fulfillment', expected: record.expectedValueCents, paid: record.valueCents } } });
+             return;
+        }
+    }
+    // --- END SECURITY CHECK ---
+
     const filter = { _id: record._id };
     
     const instaUser = record?.instagramUsername || record?.instauser || '';
@@ -2247,11 +2475,21 @@ async function processOrderFulfillment(record, col, req) {
     // Check privacy before dispatch
     let isPriv = record.isPrivate === true || record.profilePrivacy?.isPrivate === true;
     
+    // Allow dispatch if retry-fulfillment forced it
+    if (req && (req.bypassCache === true || req.body?.bypassCache === true)) {
+        console.log(`ℹ️ Fulfillment Bypass: Ignoring initial private status due to retry-fulfillment (User: ${instaUser})`);
+        isPriv = false;
+    }
+    
     if (!isPriv && instaUser) {
         try {
             // Live privacy check
-            const check = await verifyInstagramProfile(instaUser, 'ProcessFulfillment-Check', '127.0.0.1', { session: {} }, null);
+            const bypass = (req && req.body && req.body.bypassCache === true) || (req && req.bypassCache === true);
+            console.log(`🔍 processOrderFulfillment: Verifying privacy for ${instaUser} (Bypass: ${bypass})`);
+            const check = await verifyInstagramProfile(instaUser, 'ProcessFulfillment-Check', '127.0.0.1', { session: {} }, null, bypass);
+            
             if (check && (check.code === 'INSTAUSER_PRIVATE' || (check.profile && check.profile.isPrivate))) {
+                // Only mark as private if live check CONFIRMS private
                 isPriv = true;
                 await col.updateOne(filter, { 
                     $set: { 
@@ -2261,6 +2499,13 @@ async function processOrderFulfillment(record, col, req) {
                     } 
                 });
                 console.log('🔒 Profile detected as PRIVATE during fulfillment:', instaUser);
+            } else {
+                // If live check is public (or error but not explicitly private), ensure DB reflects public
+                if (check && check.success) {
+                     console.log('✅ Profile confirmed PUBLIC during fulfillment:', instaUser);
+                     // Update DB to public just in case
+                     await col.updateOne(filter, { $set: { isPrivate: false, 'profilePrivacy.isPrivate': false } });
+                }
             }
         } catch (e) {
             console.error('⚠️ Live privacy check warning:', e.message);
@@ -2341,7 +2586,7 @@ async function processOrderFulfillment(record, col, req) {
         if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
             upgradeAdd = 1000;
         } else {
-            const map = { 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            const map = { 150: 150, 500: 200, 1000: 1000, 3000: 1000, 5000: 2500, 10000: 5000 };
             upgradeAdd = map[qtdBase] || 0;
         }
     }
@@ -2418,14 +2663,16 @@ async function processOrderFulfillment(record, col, req) {
         }
     }
     
-    // Order Bumps (Views/Likes)
+    // Order Bumps (Views/Likes/Comments)
     try {
         let viewsQty = 0;
         let likesQty = 0;
+        let commentsQty = 0;
         if (typeof bumpsStr === 'string' && bumpsStr) {
             const parts = bumpsStr.split(';');
             const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
             const lPart = parts.find(p => /^likes:\d+$/i.test(p.trim()));
+            const cPart = parts.find(p => /^comments:\d+$/i.test(p.trim()));
             if (vPart) {
                 const num = Number(vPart.split(':')[1]);
                 if (!Number.isNaN(num) && num > 0) viewsQty = num;
@@ -2434,13 +2681,18 @@ async function processOrderFulfillment(record, col, req) {
                 const numL = Number(lPart.split(':')[1]);
                 if (!Number.isNaN(numL) && numL > 0) likesQty = numL;
             }
+            if (cPart) {
+                const numC = Number(cPart.split(':')[1]);
+                if (!Number.isNaN(numC) && numC > 0) commentsQty = numC;
+            }
         }
         // Links selecionados para orderbumps
         const mapPaid = record?.additionalInfoMapPaid || {};
         const viewsLinkRaw = mapPaid['orderbump_post_views'] || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
         const likesLinkRaw = mapPaid['orderbump_post_likes'] || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
+        const commentsLinkRaw = mapPaid['orderbump_post_comments'] || additionalInfoMap['orderbump_post_comments'] || (arrPaid.find(it => it && it.key === 'orderbump_post_comments')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_comments')?.value) || '';
         
-        try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, viewsQty, likesQty }); } catch(_) {}
+        try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, commentsLinkRaw, viewsQty, likesQty, commentsQty }); } catch(_) {}
         const sanitizeLink = (s) => {
             const v = String(s || '').replace(/[`\s]/g, '').trim();
             const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
@@ -2448,9 +2700,10 @@ async function processOrderFulfillment(record, col, req) {
         };
         const viewsLink = sanitizeLink(viewsLinkRaw);
         let likesLink = sanitizeLink(likesLinkRaw);
+        let commentsLink = sanitizeLink(commentsLinkRaw);
         
-        // [FIX] Se não veio link para likes (bump), tentar pegar o post mais recente do perfil validado
-        if (likesQty > 0 && !likesLink && instaUser) {
+        // [FIX] Se não veio link para likes/comments (bump), tentar pegar o post mais recente do perfil validado
+        if ((likesQty > 0 && !likesLink && instaUser) || (commentsQty > 0 && !commentsLink && instaUser)) {
              try {
                  const { getCollection } = require('./mongodbClient');
                  const vu = await getCollection('validated_insta_users');
@@ -2459,8 +2712,10 @@ async function processOrderFulfillment(record, col, req) {
                      const lp = vUser.latestPosts[0];
                      const code = lp.shortcode || lp.code;
                      if (code) {
-                         likesLink = `https://www.instagram.com/p/${code}/`;
-                         console.log('🔄 [OrderBump] Recuperado link do post via cache para:', instaUser, likesLink);
+                         const latestUrl = `https://www.instagram.com/p/${code}/`;
+                         if (likesQty > 0 && !likesLink) likesLink = latestUrl;
+                         if (commentsQty > 0 && !commentsLink) commentsLink = latestUrl;
+                         console.log('🔄 [OrderBump] Recuperado link do post via cache para:', instaUser, latestUrl);
                      }
                  }
              } catch (eFallback) {
@@ -2513,6 +2768,32 @@ async function processOrderFulfillment(record, col, req) {
             }
         } else if (likesQty > 0 && !likesLink) {
             try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
+        }
+
+        const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
+        if (commentsQty > 0 && commentsLink && !alreadyComments) {
+            if (process.env.WORLDSMM_API_KEY) {
+                const lockUpdate = await col.updateOne(
+                    { ...filter, 'worldsmm_comments.status': { $exists: false } },
+                    { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                );
+                if (lockUpdate.modifiedCount > 0) {
+                    const axios = require('axios');
+                    const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
+                    try { console.log('🚀 sending_worldsmm_comments', { service: 90, link: commentsLink, quantity: commentsQty }); } catch(_) {}
+                    try {
+                        const respComments = await axios.post('https://worldsmm.com.br/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const dataComments = respComments.data || {};
+                        const orderIdComments = dataComments.order || dataComments.id || null;
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
+                    } catch (e4) {
+                        try { console.error('❌ worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4), { link: commentsLink, quantity: commentsQty }); } catch(_) {}
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty } } });
+                    }
+                }
+            }
+        } else if (commentsQty > 0 && !commentsLink) {
+            try { console.warn('⚠️ comments_link_invalid', { commentsLinkRaw, sanitized: commentsLink }); } catch(_) {}
         }
     } catch (_) {}
     
@@ -2574,6 +2855,12 @@ app.post('/api/order/retry-fulfillment', async (req, res) => {
         
         const updatedRecord = await col.findOne({ _id: record._id });
         
+        // Force bypassCache for fulfillment retry
+        req.bypassCache = true;
+        if (req.body) req.body.bypassCache = true;
+
+        console.log(`🔄 RetryFulfillment: Dispatching processOrderFulfillment for ${id} (User: ${instaUser})`);
+
         // Dispatch services
         await processOrderFulfillment(updatedRecord, col, req);
         
@@ -2604,8 +2891,10 @@ app.get('/api/woovi/charge-status', async (req, res) => {
     try {
       const charge = respData.charge || respData || {};
       const status = String(charge.status || '').toLowerCase();
-      const paidFlag = charge.paid === true || /paid/.test(status);
+      const paidFlag = charge.paid === true || /paid|completed/.test(status);
+      
       if (paidFlag) {
+        const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
         const pixMethod = charge.paymentMethods?.pix || {};
         const identifier = charge.identifier || null;
@@ -2613,6 +2902,8 @@ app.get('/api/woovi/charge-status', async (req, res) => {
         const paidAtRaw = charge.paidAt || null;
         const txId = pixMethod?.txId || charge?.transactionID || null;
         const endToEndId = charge?.endToEndId || null;
+        const paidValue = charge.value || (pixMethod && pixMethod.value);
+
         const setFields = {
           status: 'pago',
           'woovi.status': 'pago',
@@ -2622,20 +2913,62 @@ app.get('/api/woovi/charge-status', async (req, res) => {
         if (typeof endToEndId === 'string') setFields['woovi.endToEndId'] = endToEndId;
         if (typeof txId === 'string') setFields['woovi.paymentMethods.pix.txId'] = txId;
         if (typeof pixMethod.status === 'string') setFields['woovi.paymentMethods.pix.status'] = pixMethod.status;
-        if (typeof pixMethod.value === 'number') setFields['woovi.paymentMethods.pix.value'] = pixMethod.value;
-        const conds = [ { 'woovi.chargeId': id } ];
-        if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
-        if (correlationID) conds.push({ correlationID });
-        const filter = { $or: conds };
-        const upd = await col.updateOne(filter, { $set: setFields });
-        if (!upd.matchedCount && identifier) {
-          await col.updateOne({ identifier }, { $set: setFields });
+        if (typeof paidValue === 'number') setFields['woovi.paymentMethods.pix.value'] = paidValue;
+
+        const conds = [];
+        if (id) conds.push({ 'woovi.chargeId': id });
+        if (identifier) { 
+             conds.push({ 'woovi.identifier': identifier }); 
+             conds.push({ identifier }); 
         }
-        try {
-          const record = await col.findOne(filter);
-          await processOrderFulfillment(record, col, req);
-        } catch (e) {
-          console.error('Error processing fulfillment in charge-status:', e);
+        if (correlationID) conds.push({ correlationID });
+        
+        if (conds.length === 0) {
+             console.warn('⚠️ No identifiers found in Woovi response to match order.');
+             return res.status(200).json(respData);
+        }
+
+        const filter = { $or: conds };
+
+        // 1. Fetch existing order to validate value
+        const existingOrder = await col.findOne(filter);
+        let isDivergent = false;
+
+        if (existingOrder) {
+            const expected = existingOrder.expectedValueCents;
+            // Validação rigorosa de valor
+            if (expected && typeof paidValue === 'number') {
+                if (expected !== paidValue) {
+                    console.warn(`🚨 PAGAMENTO DIVERGENTE (Woovi Polling): ID=${id}. Esperado=${expected}, Pago=${paidValue}`);
+                    setFields.status = 'divergent_value';
+                    setFields['woovi.status'] = 'divergent_value';
+                    setFields.mismatchDetails = { expected, paid: paidValue, detectedAt: new Date().toISOString() };
+                    isDivergent = true;
+                }
+            }
+            // Fallback safety
+            else if (!expected && paidValue <= 10) { 
+                 console.warn(`🚨 PAGAMENTO SUSPEITO (Woovi Polling): ID=${id}. Valor=${paidValue} (sem expectedValueCents)`);
+                 setFields.status = 'divergent_value';
+                 setFields['woovi.status'] = 'divergent_value';
+                 isDivergent = true;
+            }
+        } else {
+             console.warn('⚠️ Order not found for Woovi charge during polling:', id);
+        }
+
+        const upd = await col.updateOne(filter, { $set: setFields });
+        
+        // 2. Fulfill ONLY if not divergent
+        if (!isDivergent && existingOrder) {
+            try {
+              const record = await col.findOne(filter);
+              await processOrderFulfillment(record, col, req);
+            } catch (e) {
+              console.error('Error processing fulfillment in charge-status:', e);
+            }
+        } else if (isDivergent) {
+            console.error('🚨 Fulfillment BLOCKED due to payment value mismatch (Polling).');
         }
       }
     } catch (_) {}
@@ -2951,6 +3284,8 @@ app.delete("/admin/link/:id", (req, res) => {
 // API para verificar privacidade do perfil (sem bloqueio de uso)
 app.post("/api/check-privacy", async (req, res) => {
     const { username } = req.body;
+    // Sempre forçar bypassCache para true nesta rota, pois é uma verificação explícita do usuário
+    const bypassCache = true;
     const userAgent = req.get("User-Agent") || "";
     const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
 
@@ -2962,9 +3297,12 @@ app.post("/api/check-privacy", async (req, res) => {
     }
 
     try {
+        // Se bypassCache for undefined, assumimos true pois é uma verificação explícita de privacidade
+        const shouldBypass = (bypassCache !== undefined) ? bypassCache : true;
+        
         // Usa verifyInstagramProfile mas ignora a verificação de "já usado" do endpoint principal
         // A função verifyInstagramProfile em si não bloqueia, apenas retorna os dados
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res, shouldBypass);
         
         // Retornar apenas o status de privacidade e sucesso
         return res.json({
@@ -2993,6 +3331,21 @@ app.post("/api/check-instagram-profile", async (req, res) => {
             success: false,
             error: "Nome de usuário é obrigatório"
         });
+    }
+
+    // Verificar Blacklist
+    try {
+        const blacklistCol = await getCollection('blacklist');
+        const blocked = await blacklistCol.findOne({ username: String(username).trim().toLowerCase() });
+        if (blocked) {
+            return res.status(403).json({
+                success: false,
+                error: "blocked_user",
+                message: "Este usuário está bloqueado no sistema."
+            });
+        }
+    } catch (e) {
+        console.error('Erro ao verificar blacklist:', e);
     }
 
     // Pré-registro idempotente antes de qualquer retorno 409
@@ -3029,6 +3382,61 @@ app.post("/api/check-instagram-profile", async (req, res) => {
             success: false,
             error: "Erro interno ao verificar perfil."
         });
+    }
+});
+
+// --- Rotas de Blacklist ---
+
+// Listar usuários bloqueados
+app.get('/api/blacklist', async (req, res) => {
+    try {
+        const col = await getCollection('blacklist');
+        const list = await col.find({}).sort({ blockedAt: -1 }).toArray();
+        res.json({ success: true, blacklist: list });
+    } catch (error) {
+        console.error('Erro ao listar blacklist:', error);
+        res.status(500).json({ success: false, error: 'internal_error' });
+    }
+});
+
+// Adicionar usuário à blacklist
+app.post('/api/blacklist/add', async (req, res) => {
+    try {
+        const { username } = req.body;
+        if (!username) return res.status(400).json({ error: 'missing_username' });
+        
+        const normalized = String(username).trim().toLowerCase();
+        const col = await getCollection('blacklist');
+        await col.updateOne(
+            { username: normalized },
+            { 
+                $set: { 
+                    username: normalized, 
+                    blockedAt: new Date().toISOString() 
+                } 
+            },
+            { upsert: true }
+        );
+        res.json({ success: true, message: 'Usuário bloqueado com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao adicionar à blacklist:', error);
+        res.status(500).json({ success: false, error: 'internal_error' });
+    }
+});
+
+// Remover usuário da blacklist
+app.post('/api/blacklist/remove', async (req, res) => {
+    try {
+        const { username } = req.body;
+        if (!username) return res.status(400).json({ error: 'missing_username' });
+        
+        const normalized = String(username).trim().toLowerCase();
+        const col = await getCollection('blacklist');
+        await col.deleteOne({ username: normalized });
+        res.json({ success: true, message: 'Usuário desbloqueado com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao remover da blacklist:', error);
+        res.status(500).json({ success: false, error: 'internal_error' });
     }
 });
 
@@ -3788,6 +4196,30 @@ app.post('/api/openpix/webhook', async (req, res) => {
         try {
           const record = await col.findOne(filter);
         
+          // ---------------------------------------------------------
+          // VALIDAÇÃO RIGOROSA DE VALOR (Solicitado pelo usuário)
+          // ---------------------------------------------------------
+          // "validar se a resposta de pagamento... o valor é o mesmo do pedido que foi gerado aqui"
+          // Se houver discrepância entre o valor pago e o valor esperado (calculado no backend),
+          // bloqueamos a entrega do serviço e marcamos como 'divergent_value'.
+          
+          const paidValue = charge?.value || (pixMethod && pixMethod.value) || record?.valueCents;
+          const expectedValue = record?.expectedValueCents;
+
+          if (expectedValue && paidValue && Number(paidValue) < Number(expectedValue)) {
+              console.error(`🚨 FRAUD PREVENTED: Payment value ${paidValue} is less than expected ${expectedValue}. Blocking dispatch. Identifier: ${charge?.identifier}`);
+              await col.updateOne(filter, { 
+                  $set: { 
+                      status: 'divergent_value', 
+                      'woovi.status': 'divergent_value',
+                      mismatchDetails: { expected: expectedValue, paid: paidValue, detectedAt: new Date().toISOString() }
+                  } 
+              });
+              // Não entregamos o serviço
+              return res.status(200).json({ ok: true, status: 'divergent_value', message: 'Payment value mismatch detected. Service not dispatched.' });
+          }
+          // ---------------------------------------------------------
+
         // Check LIVE privacy before dispatch if not already marked as private
         let isPriv = record && (
             record.isPrivate === true || 
@@ -3955,18 +4387,24 @@ app.post('/api/openpix/webhook', async (req, res) => {
             const bumpsStr = additionalInfoMap['order_bumps'] || (arrPaid.find(it => it && it.key === 'order_bumps')?.value) || (arrOrig.find(it => it && it.key === 'order_bumps')?.value) || '';
             let viewsQty = 0;
             let likesQtyForStatus = 0;
+            let commentsQty = 0;
             if (typeof bumpsStr === 'string' && bumpsStr) {
               const parts = bumpsStr.split(';');
-              const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
-              const lPartStatus = parts.find(p => /^likes:\d+$/i.test(p.trim()));
-              if (vPart) {
-                const num = Number(vPart.split(':')[1]);
-                if (!Number.isNaN(num) && num > 0) viewsQty = num;
-              }
-              if (lPartStatus) {
-                const numL = Number(lPartStatus.split(':')[1]);
-                if (!Number.isNaN(numL) && numL > 0) likesQtyForStatus = numL;
-              }
+            const vPart = parts.find(p => /^views:\d+$/i.test(p.trim()));
+            const lPartStatus = parts.find(p => /^likes:\d+$/i.test(p.trim()));
+            const cPart = parts.find(p => /^comments:\d+$/i.test(p.trim()));
+            if (vPart) {
+              const num = Number(vPart.split(':')[1]);
+              if (!Number.isNaN(num) && num > 0) viewsQty = num;
+            }
+            if (lPartStatus) {
+              const numL = Number(lPartStatus.split(':')[1]);
+              if (!Number.isNaN(numL) && numL > 0) likesQtyForStatus = numL;
+            }
+            if (cPart) {
+              const numC = Number(cPart.split(':')[1]);
+              if (!Number.isNaN(numC) && numC > 0) commentsQty = numC;
+            }
             }
             if (viewsQty > 0) {
               if ((process.env.FAMA24H_API_KEY || '')) {
@@ -4024,6 +4462,42 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       } catch (e3) {
                         try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
                         await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus } } });
+                      }
+                  }
+                }
+              }
+            }
+            if (commentsQty > 0) {
+              if (!process.env.WORLDSMM_API_KEY) {
+                 console.error('❌ WORLDSMM_API_KEY não definida para orderbump de comentários');
+              } else {
+                const axios = require('axios');
+                const sanitizeLinkC = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+                const mapPaid3 = record?.additionalInfoMapPaid || {};
+                const commentsLinkRaw = mapPaid3['orderbump_post_comments'] || additionalInfoMap['orderbump_post_comments'] || (arrPaid.find(it => it && it.key === 'orderbump_post_comments')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_comments')?.value) || '';
+                const commentsLinkSel = sanitizeLinkC(commentsLinkRaw);
+                try { console.log('🔎 orderbump_comments_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, commentsLinkRaw, commentsQty }); } catch(_) {}
+                
+                const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
+                
+                if (!commentsLinkSel) {
+                  await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLinkSel, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
+                } else if (!alreadyComments) {
+                  const lockUpdate = await col.updateOne(
+                    { ...filter, 'worldsmm_comments.status': { $exists: false } },
+                    { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                  );
+                  if (lockUpdate.modifiedCount > 0) {
+                      const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: '90', link: String(commentsLinkSel), quantity: String(commentsQty) });
+                      try { console.log('🚀 sending_worldsmm_comments', { service: 90, link: commentsLinkSel, quantity: commentsQty }); } catch(_) {}
+                      try {
+                        const respComments = await axios.post('https://worldsmm.com/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const dataComments = respComments.data || {};
+                        const orderIdComments = dataComments.order || dataComments.id || null;
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLinkSel, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
+                      } catch (e4) {
+                        try { console.error('❌ worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4), { link: commentsLinkSel, quantity: commentsQty }); } catch(_) {}
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLinkSel, quantity: commentsQty } } });
                       }
                   }
                 }
@@ -4675,7 +5149,7 @@ app.get('/pedido', async (req, res) => {
         }
       }
     } catch (_) {}
-    return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '' });
+    return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '', logoLink: '/engajamento' });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
   }
@@ -5036,6 +5510,48 @@ app.post('/session/mark-paid', async (req, res) => {
                }
             }
           }
+
+          // Order Bump: Comments (WorldsMM)
+          let commentsQty = 0;
+          if (bumpsStr) {
+            const parts = bumpsStr.split(';').map(p => String(p || '').trim());
+            const cPart = parts.find(p => /^comments:\d+$/i.test(p));
+            if (cPart) { const numC = Number(cPart.split(':')[1]); if (!Number.isNaN(numC) && numC > 0) commentsQty = numC; }
+          }
+          
+          const commentsLinkRaw = mapPaid['orderbump_post_comments'] || 
+                                  mapPaid['post_link'] || 
+                                  (record?.additionalInfoPaid || []).find(it => it && it.key === 'post_link')?.value || 
+                                  (record?.additionalInfo || []).find(it => it && it.key === 'post_link')?.value || 
+                                  '';
+          const commentsLink = sanitizeLink(commentsLinkRaw);
+          
+          const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
+          
+          if ((process.env.WORLDSMM_API_KEY || '') && commentsQty > 0 && !alreadyComments) {
+            if (!commentsLink) {
+               try { console.warn('⚠️ [mark-paid] comments_link_invalid', { commentsLinkRaw }); } catch(_) {}
+               await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLink, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
+            } else {
+               const lockUpdate = await col.updateOne(
+                  { ...filter, 'worldsmm_comments.status': { $exists: false } },
+                  { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+               );
+               if (lockUpdate.modifiedCount > 0) {
+                  const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
+                  try { console.log('🚀 [mark-paid] sending_worldsmm_comments', { service: 90, link: commentsLink, quantity: commentsQty }); } catch(_) {}
+                  try {
+                    const respC = await axios.post('https://worldsmm.com.br/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataC = respC.data || {};
+                    const orderIdC = dataC.order || dataC.id || null;
+                    await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdC, 'worldsmm_comments.status': orderIdC ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataC } });
+                  } catch (e4) {
+                    try { console.error('❌ [mark-paid] worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4)); } catch(_) {}
+                    await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty } } });
+                  }
+               }
+            }
+          }
         } catch(_) {}
       } catch (_) {}
     })();
@@ -5185,6 +5701,108 @@ app.post('/api/refil/backfill', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.post('/api/refil/create', async (req, res) => {
+  try {
+    const orderIdInput = String((req.body && (req.body.order_id || req.body.orderId)) || '').trim();
+    if (!orderIdInput) return res.status(400).json({ ok: false, error: 'missing_order_id' });
+
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    
+    if (/^[0-9a-fA-F]{24}$/.test(orderIdInput)) {
+       try { conds.push({ _id: new (require('mongodb').ObjectId)(orderIdInput) }); } catch(_) {}
+    }
+    const numId = Number(orderIdInput);
+    if (!Number.isNaN(numId)) {
+        conds.push({ 'fama24h.orderId': numId });
+        conds.push({ 'fornecedor_social.orderId': numId });
+        conds.push({ 'fama24h.orderId': String(numId) });
+        conds.push({ 'fornecedor_social.orderId': String(numId) });
+    }
+    conds.push({ identifier: orderIdInput });
+    conds.push({ 'woovi.identifier': orderIdInput });
+    conds.push({ correlationID: orderIdInput });
+
+    const order = await col.findOne({ $or: conds });
+    if (!order) return res.status(404).json({ ok: false, error: 'order_not_found', message: 'Pedido não encontrado' });
+
+    let provider = '';
+    let externalOrderId = null;
+    let apiKey = '';
+    let apiUrl = '';
+
+    if (order.fama24h && (order.fama24h.orderId || order.fama24h.id)) {
+        provider = 'fama24h';
+        externalOrderId = order.fama24h.orderId || order.fama24h.id;
+        apiKey = process.env.FAMA24H_API_KEY;
+        apiUrl = 'https://fama24h.net/api/v2';
+    } else if (order.fornecedor_social && (order.fornecedor_social.orderId || order.fornecedor_social.id)) {
+        provider = 'fornecedor_social';
+        externalOrderId = order.fornecedor_social.orderId || order.fornecedor_social.id;
+        apiKey = process.env.FORNECEDOR_SOCIAL_API_KEY;
+        apiUrl = 'https://fornecedorsocial.com/api/v2';
+    }
+
+    if (!provider || !externalOrderId) {
+        return res.status(400).json({ ok: false, error: 'no_provider_order', message: 'Este pedido não possui registro em fornecedor elegível para refil.' });
+    }
+    if (!apiKey) {
+        return res.status(500).json({ ok: false, error: 'missing_api_key', message: 'Configuração de API ausente no servidor.' });
+    }
+
+    const axios = require('axios');
+    const params = new URLSearchParams();
+    params.append('key', apiKey);
+    params.append('action', 'refill');
+    params.append('order', String(externalOrderId));
+
+    try {
+        const resp = await axios.post(apiUrl, params.toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            timeout: 30000
+        });
+        const data = resp.data || {};
+        
+        const refillLog = {
+            requestedAt: new Date().toISOString(),
+            provider,
+            externalOrderId,
+            response: data,
+            status: data.refill ? 'initiated' : (data.error ? 'error' : 'unknown')
+        };
+        
+        await col.updateOne({ _id: order._id }, { $push: { refillHistory: refillLog } });
+
+        if (data.error) {
+            return res.status(400).json({ ok: false, error: data.error, message: `Erro do fornecedor: ${data.error}` });
+        }
+
+        return res.json({
+            ok: true,
+            message: 'Refil solicitado com sucesso',
+            data: {
+                refill_id: data.refill,
+                status: 'initiated',
+                provider_response: data
+            }
+        });
+
+    } catch (apiErr) {
+        const errMsg = apiErr?.response?.data?.error || apiErr?.message || String(apiErr);
+        await col.updateOne({ _id: order._id }, { $push: { refillHistory: {
+            requestedAt: new Date().toISOString(),
+            provider,
+            externalOrderId,
+            error: errMsg,
+            status: 'failed'
+        }}});
+        return res.status(500).json({ ok: false, error: 'provider_error', message: `Erro ao comunicar com fornecedor: ${errMsg}` });
+    }
+
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.post('/api/woovi/charge/dev', async (req, res) => {
   try {
     const { correlationID, value, comment, customer, additionalInfo } = req.body || {};
@@ -5209,6 +5827,22 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
     const addInfo = addInfoArr.reduce((acc, item) => { acc[String(item.key || '')] = String(item.value || ''); return acc; }, {});
     const tipo = addInfo['tipo_servico'] || '';
     const qtd = Number(addInfo['quantidade'] || 0) || 0;
+
+    // Validação de Preço (Dev) - Mesma lógica da produção para garantir consistência
+    let validatedPriceCents = null;
+    // verifyPrice está disponível no escopo global (require no topo)
+    const verification = await verifyPrice(tipo, qtd, addInfoArr, value);
+    
+    if (verification.isValid) {
+        validatedPriceCents = verification.matchedPrice;
+    } else {
+        return res.status(400).json({ 
+            error: 'value_mismatch', 
+            message: 'Dev: Valor incorreto. O valor deve bater com o cálculo do sistema.',
+            details: verification 
+        });
+    }
+
     const instauserFromClient = addInfo['instagram_username'] || '';
     let utms = {};
     try {
@@ -5231,6 +5865,7 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
       tipo,
       utms,
       valueCents: value,
+      expectedValueCents: validatedPriceCents,
       customer: customerPayload,
       additionalInfo: addInfoArr,
       tipoServico: tipo,
@@ -5255,7 +5890,7 @@ const DEFAULT_COST_SETTINGS = {
   visualizacoes: 0.01
 };
 
-app.get('/painel', async (req, res) => {
+app.get('/painel', requireAdmin, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
@@ -5451,6 +6086,88 @@ app.post('/painel/custos', async (req, res) => {
   } catch (e) {
     res.status(500).send(e.toString());
   }
+});
+
+// ==================== ROTAS DE GESTÃO DE CUPONS (ADMIN) ====================
+
+app.get('/api/admin/coupons', requireAdmin, async (req, res) => {
+    try {
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('coupons');
+        const coupons = await col.find({}).sort({ createdAt: -1 }).toArray();
+        res.json({ success: true, coupons });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/admin/coupons', requireAdmin, async (req, res) => {
+    try {
+        const { code, discountPercentage } = req.body;
+        if (!code || !discountPercentage) {
+            return res.status(400).json({ success: false, error: 'Código e porcentagem são obrigatórios' });
+        }
+        
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('coupons');
+        
+        // Verificar duplicidade
+        const existing = await col.findOne({ code: code.toUpperCase() });
+        if (existing) {
+            return res.status(400).json({ success: false, error: 'Cupom já existe' });
+        }
+        
+        await col.insertOne({
+            code: code.toUpperCase(),
+            discountPercentage: Number(discountPercentage),
+            createdAt: new Date(),
+            isActive: true
+        });
+        
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('coupons');
+        const { ObjectId } = require('mongodb');
+        
+        await col.deleteOne({ _id: new ObjectId(id) });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Rota pública de validação de cupom
+app.post('/api/validate-coupon', async (req, res) => {
+    try {
+        const { code } = req.body;
+        if (!code) return res.status(400).json({ valid: false, error: 'Código não fornecido' });
+        
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('coupons');
+        
+        const coupon = await col.findOne({ code: code.toUpperCase(), isActive: true });
+        
+        if (coupon) {
+            res.json({ 
+                valid: true, 
+                discount: coupon.discountPercentage / 100, // Retorna decimal (ex: 0.10 para 10%)
+                code: coupon.code
+            });
+        } else {
+            res.json({ valid: false, error: 'Cupom inválido ou expirado' });
+        }
+    } catch (error) {
+        console.error('Erro na validação de cupom:', error);
+        res.status(500).json({ valid: false, error: 'Erro interno' });
+    }
 });
 
 app.listen(port, () => {
@@ -5727,6 +6444,7 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     const instaUser = String(body.instagram_username || '').trim();
     const phoneRaw = String(body.phone || '').trim();
 
+    const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
     const conds = [];
     if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
@@ -5740,10 +6458,43 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     }
     const filter = conds.length ? { $or: conds } : {};
 
+    // 1. Fetch existing order FIRST to validate value
+    const record = await col.findOne(filter);
+    if (!record) {
+      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
+    }
+
+    // ---------------------------------------------------------
+    // VALIDAÇÃO RIGOROSA DE VALOR
+    // ---------------------------------------------------------
+    const expectedValue = record.expectedValueCents;
+    // Use body value if provided, otherwise fallback to record value (though body value is preferred for 'payment confirmed' hook)
+    const paidValue = value || record.valueCents;
+    
+    let isDivergent = false;
+    let mismatchDetails = null;
+
+    if (expectedValue && typeof paidValue === 'number') {
+        // Tolerância zero para diferença
+        if (expectedValue !== paidValue) {
+            console.error(`🚨 PAGAMENTO DIVERGENTE (Webhook Confirmado): ID=${identifier}. Esperado=${expectedValue}, Pago=${paidValue}`);
+            isDivergent = true;
+            mismatchDetails = { expected: expectedValue, paid: paidValue, detectedAt: new Date().toISOString() };
+        }
+    } else if (!expectedValue && paidValue <= 10) {
+        // Fallback safety for suspiciously low values without expectedValue
+         console.warn(`🚨 PAGAMENTO SUSPEITO (Webhook Confirmado): ID=${identifier}. Valor=${paidValue} (sem expectedValueCents)`);
+         isDivergent = true;
+    }
+
     const setFields = {
-      status: 'pago',
-      'woovi.status': 'pago',
+      status: isDivergent ? 'divergent_value' : 'pago',
+      'woovi.status': isDivergent ? 'divergent_value' : 'pago',
     };
+    if (isDivergent && mismatchDetails) {
+        setFields.mismatchDetails = mismatchDetails;
+    }
+
     if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
     if (endToEndId) setFields['woovi.endToEndId'] = endToEndId;
     if (typeof value === 'number') setFields['woovi.paymentMethods.pix.value'] = value;
@@ -5752,15 +6503,18 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     if (instaUser) setFields['instagramUsername'] = instaUser;
 
     const upd = await col.updateOne(filter, { $set: setFields });
-    if (!upd.matchedCount) {
-      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
-    }
 
-    try {
-      const record = await col.findOne(filter);
-      await processOrderFulfillment(record, col, req);
-    } catch (e) {
-      console.error('Error processing fulfillment in payment/confirm:', e);
+    // 2. Fulfill ONLY if not divergent
+    if (!isDivergent) {
+        try {
+          const updatedRecord = await col.findOne(filter);
+          await processOrderFulfillment(updatedRecord, col, req);
+        } catch (e) {
+          console.error('Error processing fulfillment in payment/confirm:', e);
+        }
+    } else {
+        console.error('🚨 Fulfillment BLOCKED due to payment value mismatch (Webhook Confirmado).');
+        return res.json({ ok: true, status: 'divergent_value', message: 'Payment value mismatch. Service not dispatched.' });
     }
 
     return res.json({ ok: true, updated: upd.matchedCount });

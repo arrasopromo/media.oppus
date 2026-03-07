@@ -608,7 +608,7 @@
     } */
 
     // Upgrade genérico para demais pacotes
-    const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
       if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
@@ -1165,13 +1165,21 @@
                 tutorial4Validar.style.display = 'block';
                 if (checkoutPhoneInput) {
                     checkoutPhoneInput.classList.add('tutorial-highlight');
-                    // Focus on phone input if visible
                     try { checkoutPhoneInput.focus(); } catch(_) {}
                 }
                 const emailInput = document.getElementById('contactEmailInput');
                 if (emailInput) {
                      emailInput.classList.add('tutorial-highlight');
                 }
+                
+                // Highlight Card Fields if present in Step 4 context (requested by user)
+                const cardFieldsStep4 = ['cardHolderName', 'cardHolderCpf', 'cardHolderBirth'];
+                cardFieldsStep4.forEach(fid => {
+                    const el = document.getElementById(fid);
+                    if (el && !el.value) {
+                        el.classList.add('tutorial-highlight');
+                    }
+                });
             }
         }
         // Step 5: Pagamento
@@ -3989,6 +3997,9 @@
   
   function showResumoIfAllowed(){
     try {
+      // Ignorar verificação na página engajamento-novo
+      if (window.location.pathname.indexOf('/engajamento-novo') !== -1) return;
+
       const allow = (!isFollowersSelected()) || !!isInstagramVerified;
       if (!resumo) return;
       resumo.hidden = !allow;
