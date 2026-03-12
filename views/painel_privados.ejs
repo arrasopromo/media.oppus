@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Perfis Privados</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+    th { background: #f9f9f9; font-weight: 600; }
+    tr:hover { background-color: #f1f1f1; }
+    input[type="number"] { width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    .status-msg { font-size: 0.8em; color: green; display: none; margin-left: 5px; font-weight: bold; }
+    .archive-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    .archive-btn--off { background: #dc3545; }
+    .archive-btn--on { background: #6c757d; }
+    .hide-toolbar { display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-top: 10px; }
+    .hide-btn { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', {page: 'privados'}) %>
+  <div class="main-content">
+  <div class="container">
+    <h1>Perfis Privados (Pagos)</h1>
+    <p>Gerenciamento de pedidos pagos identificados como perfil privado.</p>
+
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+      <form action="/painel/privados" method="GET" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Data Inicial:</label>
+          <input type="date" name="startDate" value="<%= typeof startDate !== 'undefined' ? startDate : '' %>" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Data Final:</label>
+          <input type="date" name="endDate" value="<%= typeof endDate !== 'undefined' ? endDate : '' %>" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Pedido Enviado:</label>
+          <select name="orderSent" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 120px;">
+            <option value="all" <%= typeof orderSent !== 'undefined' && orderSent === 'all' ? 'selected' : '' %>>Todos</option>
+            <option value="yes" <%= typeof orderSent !== 'undefined' && orderSent === 'yes' ? 'selected' : '' %>>Sim (Enviados)</option>
+            <option value="no" <%= typeof orderSent !== 'undefined' && orderSent === 'no' ? 'selected' : '' %>>Não (Pendentes)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Contato:</label>
+          <select name="noContact" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 120px;">
+            <option value="all" <%= typeof noContact !== 'undefined' && noContact === 'all' ? 'selected' : '' %>>Todos</option>
+            <option value="yes" <%= typeof noContact !== 'undefined' && noContact === 'yes' ? 'selected' : '' %>>Sem Contato</option>
+            <option value="no" <%= typeof noContact !== 'undefined' && noContact === 'no' ? 'selected' : '' %>>Com Contato/OK</option>
+          </select>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Contatos Feitos:</label>
+          <select name="contactStatus" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 120px;">
+            <option value="all" <%= typeof contactStatus !== 'undefined' && contactStatus === 'all' ? 'selected' : '' %>>Todos</option>
+            <option value="yes" <%= typeof contactStatus !== 'undefined' && contactStatus === 'yes' ? 'selected' : '' %>>Sim (>= 1)</option>
+            <option value="no" <%= typeof contactStatus !== 'undefined' && contactStatus === 'no' ? 'selected' : '' %>>Não (0)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Telefone:</label>
+          <input type="text" name="searchPhone" placeholder="Digite parte do telefone" value="<%= typeof searchPhone !== 'undefined' ? searchPhone : '' %>" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.9em; margin-bottom: 5px;">Arquivado:</label>
+          <select name="archived" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 120px;">
+            <option value="no" <%= (typeof archived === 'undefined' || !archived || archived === 'no') ? 'selected' : '' %>>Não</option>
+            <option value="yes" <%= typeof archived !== 'undefined' && archived === 'yes' ? 'selected' : '' %>>Sim</option>
+            <option value="all" <%= typeof archived !== 'undefined' && archived === 'all' ? 'selected' : '' %>>Todos</option>
+          </select>
+        </div>
+        <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px;">Filtrar</button>
+        <a href="/painel/privados" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px; text-decoration: none; display: inline-flex; align-items: center;">Limpar</a>
+      </form>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+        <strong>Total de pedidos encontrados: <%= orders.length %></strong>
+    </div>
+    <div class="hide-toolbar">
+        <button type="button" class="hide-btn" onclick="hideSelectedPrivados()">Ocultar selecionados</button>
+        <button type="button" class="hide-btn" style="background:#6c757d;" onclick="clearHiddenOrdersPrivados()">Mostrar tudo</button>
+        <div style="font-size:0.85rem; color:#666;">Ocultos: <span id="privadosHiddenCount">0</span></div>
+    </div>
+
+    <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:center;">
+                <input id="privadosSelectAll" type="checkbox" style="transform:scale(1.1);" />
+              </th>
+              <th>Data</th>
+              <th>Cliente</th>
+              <th>Instagram</th>
+              <th>Serviço</th>
+              <th style="text-align: center;">Pedido Enviado?</th>
+              <th style="text-align: center;">Sem Contato?</th>
+              <th>Contatos Feitos</th>
+              <th style="text-align: center;">Arquivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% orders.forEach(order => { %>
+              <% 
+                 // Date formatting
+                 let d;
+                 if (order.createdAt instanceof Date) {
+                    d = new Date(order.createdAt);
+                 } else {
+                    d = new Date(order.createdAt || new Date());
+                 }
+                 d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                 const dateStr = d.toISOString().replace('T', ' ').substring(0, 16);
+                 
+                 const instaUser = order.instagramUsername || order.instauser || 
+                                   (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'instagram_username')?.value) || 
+                                   (order.additionalInfoMap && order.additionalInfoMap.instagram_username) || '-';
+                                   
+                 let tipo = order.tipo || order.tipoServico || 
+                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'tipo_servico')?.value) || 
+                              (order.additionalInfoMap && order.additionalInfoMap.tipo_servico) || '-';
+
+                 let categoria = order.categoria_servico || 
+                                 (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'categoria_servico')?.value) ||
+                                 (order.additionalInfoMap && order.additionalInfoMap.categoria_servico) || 
+                                 (order.additionalInfo && order.additionalInfo.find(i => i.key === 'categoria_servico')?.value) || '';
+
+                 const t = String(tipo).toLowerCase().trim();
+                 const c = String(categoria).toLowerCase().trim();
+
+                 if (t === 'mistos') {
+                     if (c.includes('curtida')) {
+                         tipo = 'curtidas_mistos';
+                     } else if (c.includes('seguidor')) {
+                         tipo = 'seguidores_mistos';
+                     }
+                 } else if (t === 'curtidas mistos') {
+                     tipo = 'curtidas_mistos';
+                 } else if (t === 'seguidores mistos') {
+                     tipo = 'seguidores_mistos';
+                 }
+                              
+                 const qtd = order.quantidade || order.qtd || 
+                             (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
+                             (order.additionalInfoMap && order.additionalInfoMap.quantidade) || '-';
+
+                 const toNumber = (v) => {
+                     const n = Number(String(v || '').replace(/[^\d]/g, ''));
+                     return Number.isFinite(n) ? n : 0;
+                 };
+                 const bumpsStr =
+                     (order.additionalInfoMapPaid && order.additionalInfoMapPaid.order_bumps) ||
+                     (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'order_bumps')?.value) ||
+                     (order.additionalInfoMap && order.additionalInfoMap.order_bumps) ||
+                     (order.additionalInfo && order.additionalInfo.find(i => i.key === 'order_bumps')?.value) ||
+                     '';
+                 const hasUpgrade = /(^|;)\s*upgrade\s*:\s*(\d+)/i.test(String(bumpsStr || ''));
+                 const tipoLower = String(tipo || '').toLowerCase().trim();
+                 const followersType = tipoLower.startsWith('seguidores_') ? tipoLower.replace(/^seguidores_/, '') : tipoLower;
+                 const getUpgradeAddQtd = (t0, base) => {
+                     const t1 = String(t0 || '').toLowerCase().trim();
+                     const t = t1.startsWith('seguidores_') ? t1.replace(/^seguidores_/, '') : t1;
+                     const b = Number(base) || 0;
+                     if (!b) return 0;
+                     if (t === 'organicos' && b === 50) return 50;
+                     if ((t === 'brasileiros' || t === 'organicos') && b === 1000) return 1000;
+                     const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+                     const target = upsellTargets[b];
+                     if (!target) return 0;
+                     return Number(target) - b;
+                 };
+                 const baseQtyNum = toNumber(qtd);
+                 const isFollowers = (String(c || '').includes('seguidor') || tipoLower.includes('seguidor'));
+                 const upgradeAdd = (hasUpgrade && isFollowers) ? getUpgradeAddQtd(followersType, baseQtyNum) : 0;
+                 const qtdFinal = (baseQtyNum && upgradeAdd) ? (baseQtyNum + upgradeAdd) : qtd;
+                 
+                 // Customer info
+                 const customerName = (order.customer && order.customer.name) || 'N/A';
+                 const customerPhone = (order.customer && (order.customer.phone || order.customer.phone_number)) || 
+                                       (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'phone')?.value) || 
+                                       (order.additionalInfoMap && order.additionalInfoMap.phone) || 'N/A';
+              %>
+              <tr data-id="<%= order._id %>">
+                <td style="text-align:center;">
+                    <input class="privados-hide-cb" type="checkbox" data-id="<%= order._id %>" style="transform:scale(1.1);" />
+                </td>
+                <td><%= dateStr %></td>
+                <td>
+                    <div><%= customerName %></div>
+                    <small style="color:#555;"><%= customerPhone %></small>
+                    <div id="email-actions-<%= order._id %>" data-nocontact="<%= order.noContact ? '1' : '0' %>" style="margin-top:4px; display:none;">
+                        <button type="button" onclick="fetchAndCopyEmail('<%= order._id %>')" style="padding: 4px 10px; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em;">E-mail</button>
+                        <span id="email-val-<%= order._id %>" style="margin-top:4px; font-size:0.8em; color:#555; display:none; word-break:break-all;"></span>
+                    </div>
+                </td>
+                <td><%= instaUser %></td>
+                <td><%= tipo %> (<%= qtdFinal %>)</td>
+                <td style="text-align: center;">
+                    <% 
+                       let supId = '';
+                       let supProvDisplay = '';
+                       let supProvKey = '';
+                       if (order.fama24h && order.fama24h.orderId) { 
+                           supId = order.fama24h.orderId; 
+                           supProvDisplay = 'Fama24h'; 
+                           supProvKey = 'fama24h';
+                       } else if (order.fornecedor_social && order.fornecedor_social.orderId) { 
+                           supId = order.fornecedor_social.orderId; 
+                           supProvDisplay = 'FornecedorSocial'; 
+                           supProvKey = 'fornecedor_social';
+                       }
+                    %>
+                    <input type="checkbox" id="chk-orderSent-<%= order._id %>" onchange="handleOrderSentChange('<%= order._id %>', this, '<%= supId %>', '<%= supProvKey %>')" <%= order.orderSent ? 'checked' : '' %>>
+                    <span class="status-msg" id="msg-orderSent-<%= order._id %>">Salvo!</span>
+                    <% if (supId) { %>
+                            <div style="font-size: 0.75em; color: #666; margin-top: 4px; cursor: pointer;" title="Clique para editar" onclick="openEditModal('<%= order._id %>', '<%= supId %>', '<%= supProvKey %>')">
+                                <%= supProvDisplay %>: <strong><%= supId %></strong> <span style="text-decoration: underline; color: #007bff;">(Editar)</span>
+                            </div>
+                        <% } else if (order.orderSent) { %>
+                             <div style="font-size: 0.75em; color: #007bff; margin-top: 4px; cursor: pointer; text-decoration: underline;" onclick="openEditModal('<%= order._id %>', '', '')">
+                                Adicionar ID
+                            </div>
+                        <% } %>
+                    </td>
+                <td style="text-align: center;">
+                    <input type="checkbox" onchange="updateOrder('<%= order._id %>', 'noContact', this.checked)" <%= order.noContact ? 'checked' : '' %>>
+                    <span class="status-msg" id="msg-noContact-<%= order._id %>">Salvo!</span>
+                </td>
+                <td>
+                    <input type="number" value="<%= order.contactCount || 0 %>" min="0" onchange="updateOrder('<%= order._id %>', 'contactCount', this.value)">
+                    <span class="status-msg" id="msg-contactCount-<%= order._id %>">Salvo!</span>
+                </td>
+                <td style="text-align:center;">
+                    <button type="button" class="archive-btn <%= order.archived ? 'archive-btn--on' : 'archive-btn--off' %>" data-id="<%= order._id %>" data-archived="<%= order.archived ? '1' : '0' %>">
+                      <%= order.archived ? 'Desarquivar' : 'Arquivar' %>
+                    </button>
+                    <span class="status-msg" id="msg-archived-<%= order._id %>">Salvo!</span>
+                </td>
+              </tr>
+            <% }) %>
+            <% if (orders.length === 0) { %>
+                <tr><td colspan="9" style="text-align:center; padding:20px;">Nenhum pedido de perfil privado encontrado.</td></tr>
+            <% } %>
+          </tbody>
+        </table>
+    </div>
+  </div>
+  </div>
+
+  <!-- Modal for Supplier Info -->
+  <div id="supplierModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+      <div style="background: white; padding: 20px; border-radius: 8px; width: 300px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          <h3 style="margin-top: 0; margin-bottom: 15px;">Registrar Pedido</h3>
+          <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 5px; font-weight: bold;">Fornecedor:</label>
+              <select id="modalProvider" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                  <option value="fama24h">Fama24h</option>
+                  <option value="fornecedor_social">Fornecedor Social</option>
+              </select>
+          </div>
+          <div style="margin-bottom: 20px;">
+              <label style="display: block; margin-bottom: 5px; font-weight: bold;">Order ID:</label>
+              <input type="text" id="modalOrderId" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;" placeholder="Ex: 123456">
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+              <button onclick="closeSupplierModal(false)" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Cancelar</button>
+              <button onclick="saveSupplierInfo()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Salvar</button>
+          </div>
+      </div>
+  </div>
+
+  <script>
+    let currentOrderId = null;
+    let currentCheckbox = null;
+
+    let isNewOrder = false;
+    const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
+
+    function getHiddenOrdersSet() {
+        try {
+            const raw = localStorage.getItem(HIDDEN_ORDERS_KEY);
+            const arr = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(arr) ? arr.map(String) : []);
+        } catch (_) {
+            return new Set();
+        }
+    }
+
+    function saveHiddenOrdersSet(set) {
+        try {
+            const arr = Array.from(set);
+            localStorage.setItem(HIDDEN_ORDERS_KEY, JSON.stringify(arr));
+        } catch (_) {}
+    }
+
+    function applyHiddenOrdersToPrivadosTable() {
+        const hidden = getHiddenOrdersSet();
+        const rows = document.querySelectorAll('tr[data-id]');
+        let hiddenCountOnPage = 0;
+        rows.forEach(tr => {
+            const id = String(tr.getAttribute('data-id') || '');
+            if (id && hidden.has(id)) {
+                tr.style.display = 'none';
+                hiddenCountOnPage += 1;
+            } else {
+                tr.style.display = '';
+            }
+        });
+        const el = document.getElementById('privadosHiddenCount');
+        if (el) el.textContent = String(hiddenCountOnPage);
+    }
+
+    function hideSelectedPrivados() {
+        const hidden = getHiddenOrdersSet();
+        const cbs = document.querySelectorAll('.privados-hide-cb:checked');
+        cbs.forEach(cb => {
+            const id = String(cb.getAttribute('data-id') || '');
+            if (id) hidden.add(id);
+            cb.checked = false;
+        });
+        const selAll = document.getElementById('privadosSelectAll');
+        if (selAll) selAll.checked = false;
+        saveHiddenOrdersSet(hidden);
+        applyHiddenOrdersToPrivadosTable();
+    }
+
+    function clearHiddenOrdersPrivados() {
+        try { localStorage.removeItem(HIDDEN_ORDERS_KEY); } catch (_) {}
+        applyHiddenOrdersToPrivadosTable();
+    }
+
+    function openEditModal(orderId, existingId, existingProv, isNew = false) {
+        currentOrderId = orderId;
+        currentCheckbox = document.getElementById('chk-orderSent-' + orderId);
+        isNewOrder = isNew;
+        
+        document.getElementById('supplierModal').style.display = 'flex';
+        document.getElementById('modalOrderId').value = existingId || '';
+        if (existingProv) {
+            document.getElementById('modalProvider').value = existingProv;
+        }
+        document.getElementById('modalOrderId').focus();
+    }
+
+    function handleOrderSentChange(orderId, checkbox, existingId, existingProv) {
+        if (checkbox.checked) {
+            // Open modal to get supplier info
+            // If it was already sent but we are re-checking?
+            // If it has existingId, it's an edit technically, but via checkbox?
+            // Usually checkbox is for toggle. If it was unchecked and we check it, it's "new" in this session.
+            openEditModal(orderId, existingId, existingProv, true);
+        } else {
+            // Just uncheck/update to false
+            updateOrder(orderId, 'orderSent', false);
+        }
+    }
+    
+    function closeSupplierModal(saved) {
+        document.getElementById('supplierModal').style.display = 'none';
+        if (!saved && isNewOrder && currentCheckbox) {
+            currentCheckbox.checked = false; // Revert only if it was a new check action
+        }
+        currentOrderId = null;
+        currentCheckbox = null;
+        isNewOrder = false;
+    }
+
+    async function saveSupplierInfo() {
+        const provider = document.getElementById('modalProvider').value;
+        const orderIdVal = document.getElementById('modalOrderId').value.trim();
+
+        if (!orderIdVal) {
+            alert('Por favor, informe o Order ID do fornecedor.');
+            return;
+        }
+
+        if (!currentOrderId) return;
+
+        try {
+            // Update backend with both orderSent=true and supplier info
+            const res = await fetch('/api/admin/update-private-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    id: currentOrderId, 
+                    field: 'supplierInfo', 
+                    value: { 
+                        provider: provider, 
+                        orderId: orderIdVal 
+                    } 
+                })
+            });
+            const data = await res.json();
+            
+            if (data.ok) {
+                // Success
+                const msg = document.getElementById('msg-orderSent-' + currentOrderId);
+                if (msg) {
+                    msg.style.display = 'inline';
+                    setTimeout(() => msg.style.display = 'none', 2000);
+                }
+                // Ideally refresh the page or update UI to show the ID, but for now just close modal
+                // Since we implemented instant search/refresh, maybe just reload logic?
+                // Or simply reload page to show the new ID label
+                window.location.reload(); 
+            } else {
+                alert('Erro ao salvar: ' + (data.error || 'Erro desconhecido'));
+                if (currentCheckbox) currentCheckbox.checked = false;
+            }
+        } catch (e) {
+            alert('Erro de conexão: ' + e.message);
+            if (currentCheckbox) currentCheckbox.checked = false;
+        }
+
+        closeSupplierModal(true);
+    }
+
+    async function updateOrder(id, field, value) {
+        try {
+            const res = await fetch('/api/admin/update-private-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, field, value })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                const msg = document.getElementById('msg-' + field + '-' + id);
+                if (msg) {
+                    msg.style.display = 'inline';
+                    setTimeout(() => msg.style.display = 'none', 2000);
+                }
+                if (field === 'noContact') {
+                    setNoContactEmailUI(id, !!value);
+                }
+            } else {
+                alert('Erro ao salvar: ' + (data.error || 'Erro desconhecido'));
+            }
+        } catch (e) {
+            alert('Erro de conexão: ' + e.message);
+        }
+    }
+
+    function setNoContactEmailUI(id, isNoContact) {
+        const wrap = document.getElementById('email-actions-' + id);
+        const val = document.getElementById('email-val-' + id);
+        if (wrap) wrap.style.display = isNoContact ? 'block' : 'none';
+        if (!isNoContact && val) {
+            val.textContent = '';
+            val.style.display = 'none';
+        }
+    }
+
+    function initNoContactEmailUI() {
+        const nodes = document.querySelectorAll('[id^="email-actions-"][data-nocontact]');
+        nodes.forEach(wrap => {
+            const id = String(wrap.id || '').replace('email-actions-', '');
+            const isNoContact = String(wrap.getAttribute('data-nocontact') || '') === '1';
+            setNoContactEmailUI(id, isNoContact);
+        });
+    }
+
+    async function fetchAndCopyEmail(id) {
+        const val = document.getElementById('email-val-' + id);
+        if (val) {
+            val.textContent = 'Carregando...';
+            val.style.display = 'block';
+        }
+        try {
+            const res = await fetch('/api/admin/private-order-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ id })
+            });
+            let data = null;
+            const ct = String(res.headers && res.headers.get ? (res.headers.get('content-type') || '') : '');
+            if (ct.includes('application/json')) {
+                data = await res.json();
+            } else {
+                const t = await res.text();
+                data = { ok: false, error: t ? 'Resposta inválida' : 'Resposta vazia' };
+            }
+            if (!res.ok || !data || !data.ok) {
+                const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : 'Não encontrado';
+                if (val) val.textContent = msg;
+                return;
+            }
+            const email = String((data && data.email) || '').trim();
+            let copied = false;
+            try {
+                if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(email);
+                    copied = true;
+                }
+            } catch (_) {}
+            if (val) {
+                val.textContent = copied ? `${email} (copiado)` : email;
+                val.style.display = 'block';
+            }
+        } catch (e) {
+            if (val) val.textContent = 'Erro ao buscar e-mail';
+        }
+    }
+
+    async function toggleArchive(id, archivedValue) {
+        try {
+            const res = await fetch('/api/admin/update-private-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, field: 'archived', value: archivedValue })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                const msg = document.getElementById('msg-archived-' + id);
+                if (msg) {
+                    msg.style.display = 'inline';
+                    setTimeout(() => msg.style.display = 'none', 2000);
+                }
+                const url = new URL(window.location.href);
+                const archivedFilter = String(url.searchParams.get('archived') || 'no');
+                if (archivedValue && archivedFilter !== 'yes' && archivedFilter !== 'all') {
+                    const row = document.querySelector('tr[data-id=\"' + id + '\"]');
+                    if (row) row.remove();
+                } else {
+                    window.location.reload();
+                }
+            } else {
+                alert('Erro ao salvar: ' + (data.error || 'Erro desconhecido'));
+            }
+        } catch (e) {
+            alert('Erro de conexão: ' + e.message);
+        }
+    }
+
+    // Instant Phone Search Implementation
+    document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.archive-btn');
+            if (!btn) return;
+            const id = btn.getAttribute('data-id');
+            const isArchived = btn.getAttribute('data-archived') === '1';
+            toggleArchive(id, !isArchived);
+        });
+
+        const searchInput = document.querySelector('input[name="searchPhone"]');
+        const form = document.querySelector('form');
+        let debounceTimer;
+
+        if (searchInput && form) {
+            searchInput.addEventListener('input', function(e) {
+                clearTimeout(debounceTimer);
+                const term = e.target.value;
+                
+                debounceTimer = setTimeout(() => {
+                    // Create URL with current form data
+                    const formData = new FormData(form);
+                    // Ensure the current typed value is used (though formData should have it)
+                    formData.set('searchPhone', term);
+                    const searchParams = new URLSearchParams(formData);
+                    const targetUrl = window.location.pathname + '?' + searchParams.toString();
+                    
+                    // Update URL bar without reloading (optional, good for UX)
+                    window.history.replaceState({}, '', targetUrl);
+
+                    fetch(targetUrl)
+                        .then(response => response.text())
+                        .then(html => {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(html, 'text/html');
+                            
+                            // Update Table Body
+                            const currentBody = document.querySelector('table tbody');
+                            const newBody = doc.querySelector('table tbody');
+                            if (currentBody && newBody) {
+                                currentBody.innerHTML = newBody.innerHTML;
+                            }
+
+                            // Update Total Count
+                            const currentCount = document.querySelector('div strong'); // "Total de pedidos encontrados..."
+                            const newCount = doc.querySelector('div strong');
+                            if (currentCount && newCount) {
+                                currentCount.textContent = newCount.textContent;
+                            }
+                            applyHiddenOrdersToPrivadosTable();
+                            initNoContactEmailUI();
+                        })
+                        .catch(err => console.error('Erro na busca instantânea:', err));
+                }, 300); // 300ms debounce
+            });
+            
+            // Prevent Enter key from submitting form (let JS handle it or allow default?)
+            // Allowing default is fine, but maybe redundant. Let's keep it simple.
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault(); // Prevent full reload on Enter if we want instant feel
+                    // The input event already fired or will fire, but let's force update immediately
+                    clearTimeout(debounceTimer);
+                    searchInput.dispatchEvent(new Event('input'));
+                }
+            });
+        }
+
+        const selAll = document.getElementById('privadosSelectAll');
+        if (selAll) {
+            selAll.addEventListener('change', function () {
+                const checked = !!selAll.checked;
+                const cbs = document.querySelectorAll('.privados-hide-cb');
+                cbs.forEach(cb => {
+                    const tr = cb.closest('tr[data-id]');
+                    const isVisible = !tr || tr.style.display !== 'none';
+                    if (isVisible) cb.checked = checked;
+                });
+            });
+        }
+
+        applyHiddenOrdersToPrivadosTable();
+        initNoContactEmailUI();
+    });
+  </script>
+</body>
+</html>

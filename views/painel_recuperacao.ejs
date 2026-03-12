@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Recuperação</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin-bottom: 20px; }
+    .header-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .back-btn { text-decoration: none; padding: 8px 16px; background: #6c757d; color: #fff; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+    th { background: #f9f9f9; font-weight: 600; }
+    tr:hover { background-color: #f1f1f1; }
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-divergent { background: #f8d7da; color: #721c24; }
+    .copy-btn { cursor: pointer; background: none; border: none; color: #007bff; font-size: 0.8em; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', {page: 'recuperacao'}) %>
+  <div class="main-content">
+  <div class="container">
+    <div class="header-actions">
+        <h1 style="margin:0;">Relatório de Recuperação (>15min sem pagamento)</h1>
+        <!-- <div>
+            <a href="/painel" class="back-btn">Voltar ao Painel</a>
+        </div> -->
+    </div>
+    
+    <p>Exibindo pedidos gerados há mais de 15 minutos que não foram pagos.</p>
+
+    <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Cliente / Telefone</th>
+              <th>Serviço / Qtd</th>
+              <th>Usuário Instagram</th>
+              <th>Valor</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% orders.forEach(order => { %>
+              <% 
+                 let d;
+                 if (order.createdAt instanceof Date) {
+                    d = new Date(order.createdAt);
+                 } else {
+                    d = new Date(order.createdAt || new Date());
+                 }
+                 // Adjust to SP time (-3h) for display
+                 d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                 const dateStr = d.toISOString().replace('T', ' ').substring(0, 19);
+                 
+                 const customerName = (order.customer && order.customer.name) || 'N/A';
+                 const customerPhone = (order.customer && (order.customer.phone || order.customer.phone_number)) || 
+                                       (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'phone')?.value) ||
+                                       (order.additionalInfoMap && order.additionalInfoMap.phone) ||
+                                       'N/A';
+                                       
+                 const tipo = order.tipo || order.tipoServico || 
+                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'tipo_servico')?.value) || 
+                              (order.additionalInfoMap && order.additionalInfoMap.tipo_servico) || '-';
+                              
+                 const qtd = order.quantidade || order.qtd || 
+                             (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
+                             (order.additionalInfoMap && order.additionalInfoMap.quantidade) || '-';
+
+                 const instaUser = order.instagramUsername || order.instauser || 
+                                   (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'instagram_username')?.value) ||
+                                   (order.additionalInfoMap && order.additionalInfoMap.instagram_username) || '-';
+
+                 const val = (order.valueCents || order.total_cents || 0) / 100;
+                 const status = order.status || (order.woovi && order.woovi.status) || 'pendente';
+                 const chargeId = (order.woovi && (order.woovi.chargeId || order.woovi.id));
+              %>
+              <tr>
+                <td><%= dateStr %></td>
+                <td>
+                    <div><%= customerName %></div>
+                    <div style="font-weight:bold; color:#555;"><%= customerPhone %></div>
+                </td>
+                <td>
+                    <div><%= tipo %></div>
+                    <small>Qtd: <%= qtd %></small>
+                </td>
+                <td><%= instaUser %></td>
+                <td>R$ <%= val.toFixed(2).replace('.', ',') %></td>
+                <td><span class="status-badge <%= status === 'divergent_value' ? 'status-divergent' : 'status-pending' %>"><%= status %></span></td>
+                <td>
+                    <% if (chargeId) { %>
+                        <button onclick="checkStatus(this, '<%= chargeId %>')" style="padding:4px 8px; font-size:0.8em; cursor:pointer; background: #17a2b8; color: white; border: none; border-radius: 4px;">Verificar Pagamento</button>
+                    <% } else { %>
+                        <span style="color: #999; font-size: 0.8em;">Sem ID Woovi</span>
+                    <% } %>
+                </td>
+              </tr>
+            <% }) %>
+            <% if (orders.length === 0) { %>
+                <tr>
+                    <td colspan="7" style="text-align:center; padding: 20px;">Nenhum pedido encontrado para recuperação (filtrado duplicados pagos).</td>
+                </tr>
+            <% } %>
+          </tbody>
+        </table>
+    </div>
+  </div>
+  <script>
+    async function checkStatus(btn, id) {
+        const originalText = btn.innerText;
+        btn.innerText = 'Verificando...';
+        btn.disabled = true;
+        
+        try {
+            const res = await fetch('/api/woovi/charge-status?id=' + id);
+            const data = await res.json();
+            
+            const status = (data.charge && data.charge.status) || data.status || 'unknown';
+            
+            if (status === 'COMPLETED' || status === 'PAID') {
+                alert('Pagamento CONFIRMADO! O pedido será atualizado.');
+                window.location.reload();
+            } else {
+                alert('Status atual na Woovi: ' + status);
+            }
+        } catch(e) {
+            alert('Erro ao verificar: ' + e.message);
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+  </script>
+  </div>
+</body>
+</html>

@@ -37,10 +37,13 @@ document.addEventListener('DOMContentLoaded', function() {
           this.disabled = true;
           this.textContent = 'Verificando...';
           
+          const usernameEl = document.getElementById('usernameCheckoutInput');
+          const instagram_username = usernameEl ? usernameEl.value.trim().replace(/^@+/, '') : '';
+
           fetch('/api/validate-coupon', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code })
+              body: JSON.stringify({ code, instagram_username })
           })
           .then(res => res.json())
           .then(data => {
@@ -356,7 +359,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const map = {
           'mistos': 'Curtidas Mistas',
           'brasileiros': 'Curtidas Brasileiras',
-          'organicos': 'Curtidas Orgânicas'
+          'organicos': 'Curtidas Brasileiras'
         };
         return map[tipo] || tipo;
     }
@@ -717,7 +720,14 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
         break;
       case 'mistos':
-        html = `
+        html = isCurtidasContext ? `
+          <p>Curtidas com entrega rápida e estável para impulsionar suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🌍 Alcance global para melhorar a prova social do post.</li>
+            <li>📈 Ideal para dar força inicial em conteúdos estratégicos.</li>
+          </ul>
+        ` : `
           <p>Perfis variados com entrega rápida e estável, com seguidores reais de vários países.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
@@ -737,7 +747,14 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
         break;
       case 'organicos':
-        html = `
+        html = isCurtidasContext ? `
+          <p>Curtidas focadas no público brasileiro para impulsionar suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🇧🇷 Foco no Brasil para reforçar prova social no seu público.</li>
+            <li>📈 Ideal para posts que você quer destacar.</li>
+          </ul>
+        ` : `
           <p>Brasileiros e reais: perfis ativos e selecionados, com maior credibilidade.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
@@ -918,7 +935,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Upgrade genérico para demais pacotes
     const upsellTargets = { 
       150: 300, 300: 500, 500: 700, 700: 1000, 
-      1000: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 
+      1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 
       5000: 7500, 7500: 10000, 10000: 15000 
     };
     const targetQtd = upsellTargets[Number(baseQtd)];
@@ -1970,14 +1987,37 @@ document.addEventListener('DOMContentLoaded', function() {
           const likesLink = mapKind('likes');
           const viewsLink = mapKind('views');
           const commentsLink = mapKind('comments');
+          const anyLink = viewsLink || likesLink || commentsLink;
 
           const hasLikes = promos.some(p => p.key === 'likes');
           const hasViews = promos.some(p => p.key === 'views');
           const hasComments = promos.some(p => p.key === 'comments');
+          const kinds = [];
+          if (hasLikes) kinds.push('likes');
+          if (hasViews) kinds.push('views');
+          if (hasComments) kinds.push('comments');
 
-          if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
-          if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
-          if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+          if (kinds.length === 1) {
+            const onlyKind = kinds[0];
+            let link = mapKind(onlyKind);
+            if (!link && instagramUsernameFinal) {
+              try {
+                const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+                const pr = await fetch(url);
+                const pd = await pr.json();
+                const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+                const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+                const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+                const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+                if (pick && pick.shortcode) link = `https://instagram.com/p/${encodeURIComponent(pick.shortcode)}/`;
+              } catch (_) {}
+            }
+            if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+          } else {
+            if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+            if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+            if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+          }
 
           // Para serviços principais de curtidas/visualizações, salvar também o post selecionado
           if (serviceCategory === 'curtidas' && likesLink) {

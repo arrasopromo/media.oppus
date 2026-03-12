@@ -29,6 +29,17 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use((req, res, next) => {
+  const isSandbox = process.env.EFI_SANDBOX === 'true';
+  res.locals.EFI_SANDBOX = isSandbox;
+  res.locals.EFI_PAYEE_CODE = process.env.EFI_PAYEE_CODE || '';
+  res.locals.EFI_SCRIPT_URL = 'https://cdn.jsdelivr.net/gh/efipay/js-payment-token-efi/dist/payment-token-efi.min.js';
+  res.locals.EFI_SCRIPT_FALLBACK_URL = isSandbox
+    ? 'https://sandbox.efipay.com.br/v1/payment-token.js'
+    : 'https://payment-token.efipay.com.br/v1/payment-token.js';
+  next();
+});
+
 // Middleware melhorado para capturar IP real (útil quando atrás de proxy)
 app.use((req, res, next) => {
     // Tentar diferentes headers para capturar o IP real
@@ -73,6 +84,58 @@ const requireAdmin = (req, res, next) => {
 // Helper: Hash password (SHA-256)
 function hashPassword(password) {
     return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function normalizeProviderResponseData(data) {
+    if (!data) return {};
+    if (typeof data === 'object') return data;
+    if (typeof data === 'string') {
+        const t = data.trim();
+        if (!t) return {};
+        try { return JSON.parse(t); } catch (_) { return { raw: data }; }
+    }
+    return { raw: data };
+}
+
+function extractProviderOrderId(data) {
+    const d = normalizeProviderResponseData(data);
+    const candidates = [
+        d.order, d.id, d.order_id, d.orderId,
+        d.data && d.data.order, d.data && d.data.id, d.data && d.data.order_id, d.data && d.data.orderId,
+        d.result && d.result.order, d.result && d.result.id, d.result && d.result.order_id, d.result && d.result.orderId,
+        d.response && d.response.order, d.response && d.response.id, d.response && d.response.order_id, d.response && d.response.orderId
+    ];
+    for (const v of candidates) {
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) return String(v);
+        if (typeof v === 'string') {
+            const t = v.trim();
+            if (t && t.toLowerCase() !== 'unknown' && t.toLowerCase() !== 'null' && t.toLowerCase() !== 'undefined') return t;
+        }
+    }
+    return null;
+}
+
+async function postFormWithRetry(url, formBodyString, timeoutMs, maxAttempts) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await axios.post(url, formBodyString, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: timeoutMs });
+        } catch (err) {
+            lastErr = err;
+            const msg = String(err?.message || '').toLowerCase();
+            const code = String(err?.code || '').toLowerCase();
+            const status = err?.response?.status || 0;
+            const isTimeout = msg.includes('timeout') || code === 'ecconnaborted';
+            const isRetryable = isTimeout || !status || status >= 500;
+            if (attempt < maxAttempts && isRetryable) {
+                await sleep(1200 * attempt);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastErr || new Error('request_failed');
 }
 
 // Ensure default admin exists on startup
@@ -336,34 +399,6 @@ async function fetchInstagramPosts(username) {
     }
 }
 
-// Rota para buscar posts do Instagram
-app.get('/api/instagram/posts', async (req, res) => {
-    try {
-        const username = req.query.username;
-        if (!username) {
-            return res.status(400).json({ success: false, error: 'Username é obrigatório' });
-        }
-
-        const result = await fetchInstagramPosts(username);
-        
-        if (result && result.success) {
-            return res.json({ 
-                success: true, 
-                posts: result.posts || [],
-                user: result.user 
-            });
-        } else {
-            return res.status(404).json({ 
-                success: false, 
-                error: result.error || 'Não foi possível buscar os posts. Perfil pode ser privado.' 
-            });
-        }
-    } catch (error) {
-        console.error('Erro na rota /api/instagram/posts:', error);
-        res.status(500).json({ success: false, error: 'Erro interno ao buscar posts' });
-    }
-});
-
 // Rota para buscar informações do perfil (usada no checkout novo)
 app.get('/api/instagram/info', async (req, res) => {
     try {
@@ -401,6 +436,7 @@ app.get('/api/instagram/info', async (req, res) => {
 });
 
 const PROFILE_CACHE = new Map();
+const PROFILE_INFLIGHT = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 2 * 60 * 1000;
 
@@ -421,277 +457,282 @@ function setCache(username, value, ttlMs) {
 }
 
 async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassCache = false) {
-    console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username} (bypassCache: ${bypassCache})`);
-    
+    const key = String(username || '').toLowerCase();
+
     if (!bypassCache) {
         const cached = getCachedProfile(username);
         if (cached) {
             console.log(`✅ Perfil @${username} retornado do cache`);
             return cached;
         }
+        const inflight = PROFILE_INFLIGHT.get(key);
+        if (inflight) return inflight;
+    }
+
+    const exec = (async () => {
+        console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username} (bypassCache: ${bypassCache})`);
+
+        try {
+            // ---------------------------------------------------------
+            // TENTATIVA 1: ROCKETAPI (Rápido: ~2-5s)
+            // ---------------------------------------------------------
+            if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
+                try {
+                    console.log(`🚀 Tentando RocketAPI para @${username}`);
+                    const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
+                    const rocketResp = await axios.post(rocketUrl, { username }, { 
+                        headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                        timeout: 15000 
+                    });
+                    
+                    const rData = rocketResp.data;
+                    const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
+                    
+                    if (isRocketOk && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) {
+                        const rUser = rData.response.body.data.user;
+                        console.log(`✅ RocketAPI retornou dados para @${username}`);
+                        
+                        global.rocketApiDisabledUntil = 0;
+
+                        let rExtractedPosts = [];
+                        const rEdges = (rUser.edge_owner_to_timeline_media && rUser.edge_owner_to_timeline_media.edges) ? rUser.edge_owner_to_timeline_media.edges : [];
+                        
+                        if (rEdges.length > 0) {
+                            rExtractedPosts = rEdges.map(e => e.node ? ({
+                                shortcode: e.node.shortcode,
+                                takenAt: e.node.taken_at_timestamp,
+                                isVideo: !!e.node.is_video,
+                                displayUrl: e.node.display_url || e.node.thumbnail_src,
+                                videoUrl: e.node.video_url,
+                                typename: e.node.__typename
+                            }) : null).filter(Boolean).slice(0, 12);
+                        }
+
+                        if (rExtractedPosts.length === 0 && !rUser.is_private && rUser.id) {
+                             try {
+                                console.log(`🚀 Buscando posts extras (RocketAPI) para ID: ${rUser.id}`);
+                                const mediaUrl = 'https://v1.rocketapi.io/instagram/user/get_media';
+                                const mediaResp = await axios.post(mediaUrl, { id: rUser.id, count: 12 }, { 
+                                    headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                                    timeout: 10000 
+                                });
+                                const mItems = mediaResp.data?.response?.body?.items || [];
+                                if (mItems.length > 0) {
+                                    rExtractedPosts = mItems.map(item => ({
+                                        shortcode: item.code,
+                                        takenAt: item.taken_at,
+                                        isVideo: item.media_type === 2 || !!item.video_versions,
+                                        displayUrl: item.image_versions2?.candidates?.[0]?.url,
+                                        videoUrl: item.video_versions?.[0]?.url,
+                                        typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
+                                    }));
+                                    console.log(`✅ RocketAPI trouxe ${rExtractedPosts.length} posts via get_media.`);
+                                }
+                            } catch (eMedia) {
+                                console.warn('⚠️ Falha ao buscar media RocketAPI:', eMedia.message);
+                            }
+                        }
+
+                        const rProfileData = {
+                            username: rUser.username,
+                            fullName: rUser.full_name || "",
+                            profilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
+                            originalProfilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url,
+                            driveImageUrl: null,
+                            followersCount: (rUser.edge_followed_by ? rUser.edge_followed_by.count : 0),
+                            followingCount: (rUser.edge_follow ? rUser.edge_follow.count : 0),
+                            postsCount: (rUser.edge_owner_to_timeline_media ? rUser.edge_owner_to_timeline_media.count : 0),
+                            isPrivate: !!rUser.is_private,
+                            isVerified: !!rUser.is_verified,
+                            alreadyTested: false,
+                            latestPosts: rExtractedPosts
+                        };
+
+                        try { rProfileData.alreadyTested = await checkInstauserExists(username); } catch (e) {}
+
+                        try {
+                            const vu = await getCollection('validated_insta_users');
+                            const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
+                            const doc = {
+                                username: String(rProfileData.username).toLowerCase(),
+                                fullName: rProfileData.fullName,
+                                profilePicUrl: rProfileData.profilePicUrl,
+                                isVerified: rProfileData.isVerified,
+                                isPrivate: rProfileData.isPrivate,
+                                followersCount: rProfileData.followersCount,
+                                checkedAt: new Date().toISOString(),
+                                linkId: linkId || null,
+                                ip: String(ip || ''),
+                                userAgent: String(userAgent || ''),
+                                source: 'verifyInstagramProfile_ROCKETAPI',
+                                latestPosts: rExtractedPosts
+                            };
+                            await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
+                        } catch (dbErr) { console.error('Erro mongo ROCKET:', dbErr.message); }
+
+                        if (typeof isAllowedImageHost === 'function' && rProfileData.profilePicUrl && isAllowedImageHost(rProfileData.profilePicUrl)) {
+                             rProfileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(rProfileData.profilePicUrl)}`;
+                        }
+
+                        if (rProfileData.isPrivate) {
+                             console.log(`⚠️ Perfil @${username} é privado (RocketAPI), mas será permitido.`);
+                        }
+
+                        const resultRocket = { success: true, status: 200, profile: rProfileData };
+                        setCache(username, resultRocket, CACHE_TTL_MS);
+                        return resultRocket;
+                    } else {
+                        const msg = JSON.stringify(rData).substring(0, 300);
+                        console.warn(`⚠️ RocketAPI status inválido ou dados incompletos para @${username}:`, msg);
+                        
+                        if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('renew') || msg.toLowerCase().includes('plan is')) {
+                            console.warn('⛔ RocketAPI Plano Expirado (detectado por msg). Desabilitando temporariamente por 10 minutos.');
+                            global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+                        }
+                    }
+                } catch (eRocket) {
+                    console.error('❌ Erro RocketAPI (fallback p/ Apify):', eRocket.message, eRocket.response?.data || '');
+                    if (String(eRocket.response?.data || '').toLowerCase().includes('expired')) {
+                         global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+                    }
+                }
+            }
+
+            const apifyToken = process.env.APIFY_TOKEN;
+            if (!apifyToken) {
+                console.error("❌ Erro: APIFY_TOKEN não configurado");
+                throw new Error("APIFY_TOKEN_MISSING");
+            }
+            
+            const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
+            const payload = { 
+                usernames: [username],
+                resultsLimit: 1
+            };
+
+            console.log(`🚀 Enviando requisição para Apify: @${username}`);
+            const response = await axios.post(apifyUrl, payload, { 
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 120000
+            });
+
+            const items = response.data;
+            
+            if (!Array.isArray(items) || items.length === 0 || (items[0] && items[0].error)) {
+                 console.warn(`⚠️ Apify não encontrou @${username} ou retornou erro.`);
+                 const result404 = { success: false, status: 404, error: "Perfil não localizado." };
+                 setCache(username, result404, NEGATIVE_CACHE_TTL_MS);
+                 return result404;
+            }
+
+            const item = items[0];
+            console.log(`✅ Apify retornou dados para @${username}`);
+
+            const isPrivate = typeof item.private !== 'undefined' ? item.private : (typeof item.isPrivate !== 'undefined' ? item.isPrivate : false);
+            const isVerified = typeof item.verified !== 'undefined' ? item.verified : (typeof item.isVerified !== 'undefined' ? item.isVerified : false);
+            
+            let extractedPosts = [];
+            if (item.latestPosts && Array.isArray(item.latestPosts)) {
+                console.log(`✅ Apify trouxe ${item.latestPosts.length} posts para @${username}`);
+                extractedPosts = item.latestPosts.map(p => {
+                    let ts = null;
+                    if (p.timestamp) {
+                        ts = new Date(p.timestamp).getTime() / 1000;
+                    } else if (p.date) {
+                        ts = new Date(p.date).getTime() / 1000;
+                    } else if (p.takenAtTimestamp) {
+                        ts = Number(p.takenAtTimestamp);
+                    }
+                    
+                    return {
+                        shortcode: p.shortCode || p.shortcode,
+                        takenAt: ts,
+                        isVideo: p.type === 'Video' || p.isVideo,
+                        displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
+                        videoUrl: p.videoUrl || p.videoURL,
+                        typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
+                    };
+                }).slice(0, 12);
+            } else {
+                console.log(`⚠️ Apify NÃO trouxe posts para @${username}. Campos disponíveis: ${Object.keys(item).join(', ')}`);
+            }
+
+            const profileData = {
+                username: item.username || username,
+                fullName: item.fullName || "",
+                profilePicUrl: item.profilePicUrlHD || item.profilePicUrl || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
+                originalProfilePicUrl: item.profilePicUrlHD || item.profilePicUrl, 
+                driveImageUrl: null,
+                followersCount: item.followersCount || 0,
+                followingCount: item.followsCount || 0,
+                postsCount: item.postsCount || 0,
+                isPrivate: isPrivate,
+                isVerified: isVerified,
+                alreadyTested: false,
+                latestPosts: extractedPosts
+            };
+
+            try {
+                profileData.alreadyTested = await checkInstauserExists(username);
+            } catch (e) {}
+
+            try {
+                const vu = await getCollection('validated_insta_users');
+                const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
+                const doc = {
+                    username: String(profileData.username).toLowerCase(),
+                    fullName: profileData.fullName,
+                    profilePicUrl: profileData.profilePicUrl,
+                    isVerified: profileData.isVerified,
+                    isPrivate: profileData.isPrivate,
+                    followersCount: profileData.followersCount,
+                    checkedAt: new Date().toISOString(),
+                    linkId: linkId || null,
+                    ip: String(ip || ''),
+                    userAgent: String(userAgent || ''),
+                    source: 'verifyInstagramProfile_APIFY',
+                    latestPosts: extractedPosts
+                };
+                await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
+                console.log('🗃️ MongoDB: validação Apify salva em validated_insta_users com posts');
+            } catch (dbErr) {
+                console.error('Erro mongo:', dbErr.message);
+            }
+
+            if (profileData.profilePicUrl && isAllowedImageHost(profileData.profilePicUrl)) {
+                 profileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(profileData.profilePicUrl)}`;
+            }
+
+            if (isPrivate) {
+                 console.log(`⚠️ Perfil @${username} é privado, mas será permitido.`);
+            }
+
+            const okResult = { success: true, status: 200, profile: profileData };
+            setCache(username, okResult, CACHE_TTL_MS);
+            return okResult;
+
+        } catch (error) {
+            console.error(`❌ Erro Apify: ${error.message}`);
+            if (error.response) {
+                console.error('❌ Detalhes Erro Apify:', error.response.status, error.response.data);
+            }
+            const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente mais tarde." };
+            setCache(username, errorResult, NEGATIVE_CACHE_TTL_MS);
+            return errorResult;
+        }
+    })();
+
+    if (!bypassCache) {
+        PROFILE_INFLIGHT.set(key, exec);
     }
 
     try {
-        // ---------------------------------------------------------
-        // TENTATIVA 1: ROCKETAPI (Rápido: ~2-5s)
-        // ---------------------------------------------------------
-        if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
-            try {
-                console.log(`🚀 Tentando RocketAPI para @${username}`);
-                const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
-                const rocketResp = await axios.post(rocketUrl, { username }, { 
-                    headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
-                    timeout: 15000 
-                });
-                
-                const rData = rocketResp.data;
-                // RocketAPI pode retornar "ok" ou "done" dependendo do endpoint/versão
-                const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
-                
-                if (isRocketOk && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) {
-                    const rUser = rData.response.body.data.user;
-                    console.log(`✅ RocketAPI retornou dados para @${username}`);
-                    
-                    // Reset disable timer on success
-                    global.rocketApiDisabledUntil = 0;
-
-                    // Tentar extrair posts de edges (se vierem)
-                    let rExtractedPosts = [];
-                    const rEdges = (rUser.edge_owner_to_timeline_media && rUser.edge_owner_to_timeline_media.edges) ? rUser.edge_owner_to_timeline_media.edges : [];
-                    
-                    if (rEdges.length > 0) {
-                        rExtractedPosts = rEdges.map(e => e.node ? ({
-                            shortcode: e.node.shortcode,
-                            takenAt: e.node.taken_at_timestamp,
-                            isVideo: !!e.node.is_video,
-                            displayUrl: e.node.display_url || e.node.thumbnail_src,
-                            videoUrl: e.node.video_url,
-                            typename: e.node.__typename
-                        }) : null).filter(Boolean).slice(0, 12);
-                    }
-
-                    // Se não vieram posts e o perfil não é privado, buscar via get_media (segunda chamada)
-                    if (rExtractedPosts.length === 0 && !rUser.is_private && rUser.id) {
-                         try {
-                            console.log(`🚀 Buscando posts extras (RocketAPI) para ID: ${rUser.id}`);
-                            const mediaUrl = 'https://v1.rocketapi.io/instagram/user/get_media';
-                            const mediaResp = await axios.post(mediaUrl, { id: rUser.id, count: 12 }, { 
-                                headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
-                                timeout: 10000 
-                            });
-                            const mItems = mediaResp.data?.response?.body?.items || [];
-                            if (mItems.length > 0) {
-                                rExtractedPosts = mItems.map(item => ({
-                                    shortcode: item.code,
-                                    takenAt: item.taken_at,
-                                    isVideo: item.media_type === 2 || !!item.video_versions, // 2=Video, 8=Album, 1=Image
-                                    displayUrl: item.image_versions2?.candidates?.[0]?.url,
-                                    videoUrl: item.video_versions?.[0]?.url,
-                                    typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
-                                }));
-                                console.log(`✅ RocketAPI trouxe ${rExtractedPosts.length} posts via get_media.`);
-                            }
-                        } catch (eMedia) {
-                            console.warn('⚠️ Falha ao buscar media RocketAPI:', eMedia.message);
-                        }
-                    }
-
-                    const rProfileData = {
-                        username: rUser.username,
-                        fullName: rUser.full_name || "",
-                        profilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
-                        originalProfilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url,
-                        driveImageUrl: null,
-                        followersCount: (rUser.edge_followed_by ? rUser.edge_followed_by.count : 0),
-                        followingCount: (rUser.edge_follow ? rUser.edge_follow.count : 0),
-                        postsCount: (rUser.edge_owner_to_timeline_media ? rUser.edge_owner_to_timeline_media.count : 0),
-                        isPrivate: !!rUser.is_private,
-                        isVerified: !!rUser.is_verified,
-                        alreadyTested: false,
-                        latestPosts: rExtractedPosts
-                    };
-
-                    try { rProfileData.alreadyTested = await checkInstauserExists(username); } catch (e) {}
-
-                    try {
-                        const vu = await getCollection('validated_insta_users');
-                        const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
-                        const doc = {
-                            username: String(rProfileData.username).toLowerCase(),
-                            fullName: rProfileData.fullName,
-                            profilePicUrl: rProfileData.profilePicUrl,
-                            isVerified: rProfileData.isVerified,
-                            isPrivate: rProfileData.isPrivate,
-                            followersCount: rProfileData.followersCount,
-                            checkedAt: new Date().toISOString(),
-                            linkId: linkId || null,
-                            ip: String(ip || ''),
-                            userAgent: String(userAgent || ''),
-                            source: 'verifyInstagramProfile_ROCKETAPI',
-                            latestPosts: rExtractedPosts
-                        };
-                        await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
-                    } catch (dbErr) { console.error('Erro mongo ROCKET:', dbErr.message); }
-
-                    // Proxy check
-                    if (typeof isAllowedImageHost === 'function' && rProfileData.profilePicUrl && isAllowedImageHost(rProfileData.profilePicUrl)) {
-                         rProfileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(rProfileData.profilePicUrl)}`;
-                    }
-
-                    if (rProfileData.isPrivate) {
-                         console.log(`⚠️ Perfil @${username} é privado (RocketAPI), mas será permitido.`);
-                    }
-
-                    const resultRocket = { success: true, status: 200, profile: rProfileData };
-                    setCache(username, resultRocket, CACHE_TTL_MS);
-                    return resultRocket;
-                } else {
-                    const msg = JSON.stringify(rData).substring(0, 300);
-                    console.warn(`⚠️ RocketAPI status inválido ou dados incompletos para @${username}:`, msg);
-                    
-                    if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('renew') || msg.toLowerCase().includes('plan is')) {
-                        console.warn('⛔ RocketAPI Plano Expirado (detectado por msg). Desabilitando temporariamente por 10 minutos.');
-                        global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
-                    }
-                }
-            } catch (eRocket) {
-                console.error('❌ Erro RocketAPI (fallback p/ Apify):', eRocket.message, eRocket.response?.data || '');
-                if (String(eRocket.response?.data || '').toLowerCase().includes('expired')) {
-                     global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
-                }
-            }
+        return await exec;
+    } finally {
+        if (!bypassCache) {
+            const current = PROFILE_INFLIGHT.get(key);
+            if (current === exec) PROFILE_INFLIGHT.delete(key);
         }
-
-        const apifyToken = process.env.APIFY_TOKEN;
-        if (!apifyToken) {
-            console.error("❌ Erro: APIFY_TOKEN não configurado");
-            throw new Error("APIFY_TOKEN_MISSING");
-        }
-        
-        const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
-        const payload = { 
-            usernames: [username],
-            resultsLimit: 1
-        };
-
-        console.log(`🚀 Enviando requisição para Apify: @${username}`);
-        const response = await axios.post(apifyUrl, payload, { 
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 120000 // Aumentado para 120s (Apify pode ser lenta)
-        });
-
-        const items = response.data;
-        
-        if (!Array.isArray(items) || items.length === 0 || (items[0] && items[0].error)) {
-             console.warn(`⚠️ Apify não encontrou @${username} ou retornou erro.`);
-             const result404 = { success: false, status: 404, error: "Perfil não localizado." };
-             setCache(username, result404, NEGATIVE_CACHE_TTL_MS);
-             return result404;
-        }
-
-        const item = items[0];
-        console.log(`✅ Apify retornou dados para @${username}`);
-
-        const isPrivate = typeof item.private !== 'undefined' ? item.private : (typeof item.isPrivate !== 'undefined' ? item.isPrivate : false);
-        const isVerified = typeof item.verified !== 'undefined' ? item.verified : (typeof item.isVerified !== 'undefined' ? item.isVerified : false);
-        
-        // Extrair posts do Apify se disponíveis
-        let extractedPosts = [];
-        if (item.latestPosts && Array.isArray(item.latestPosts)) {
-            console.log(`✅ Apify trouxe ${item.latestPosts.length} posts para @${username}`);
-            extractedPosts = item.latestPosts.map(p => {
-                let ts = null;
-                if (p.timestamp) {
-                    ts = new Date(p.timestamp).getTime() / 1000;
-                } else if (p.date) {
-                    ts = new Date(p.date).getTime() / 1000;
-                } else if (p.takenAtTimestamp) {
-                    ts = Number(p.takenAtTimestamp);
-                }
-                
-                return {
-                    shortcode: p.shortCode || p.shortcode,
-                    takenAt: ts, // Sempre timestamp em segundos
-                    isVideo: p.type === 'Video' || p.isVideo,
-                    displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
-                    videoUrl: p.videoUrl || p.videoURL,
-                    typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
-                };
-            }).slice(0, 12);
-        } else {
-            console.log(`⚠️ Apify NÃO trouxe posts para @${username}. Campos disponíveis: ${Object.keys(item).join(', ')}`);
-        }
-
-        // Mapeamento compatível com o formato esperado pelo app
-        const profileData = {
-            username: item.username || username,
-            fullName: item.fullName || "",
-            profilePicUrl: item.profilePicUrlHD || item.profilePicUrl || "https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg",
-            originalProfilePicUrl: item.profilePicUrlHD || item.profilePicUrl, 
-            driveImageUrl: null, // Apify retorna URLs públicas, não precisamos (por enquanto) do drive proxy aqui
-            followersCount: item.followersCount || 0,
-            followingCount: item.followsCount || 0,
-            postsCount: item.postsCount || 0,
-            isPrivate: isPrivate,
-            isVerified: isVerified,
-            alreadyTested: false, // Será preenchido abaixo
-            latestPosts: extractedPosts // Inclui posts retornados
-        };
-
-        // Check if already tested
-        try {
-            profileData.alreadyTested = await checkInstauserExists(username);
-        } catch (e) {}
-
-        // Persist to MongoDB
-        try {
-            const vu = await getCollection('validated_insta_users');
-            const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
-            const doc = {
-                username: String(profileData.username).toLowerCase(),
-                fullName: profileData.fullName,
-                profilePicUrl: profileData.profilePicUrl,
-                isVerified: profileData.isVerified,
-                isPrivate: profileData.isPrivate,
-                followersCount: profileData.followersCount,
-                checkedAt: new Date().toISOString(),
-                linkId: linkId || null,
-                ip: String(ip || ''),
-                userAgent: String(userAgent || ''),
-                source: 'verifyInstagramProfile_APIFY',
-                latestPosts: extractedPosts // Salvar posts no banco
-            };
-            await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true });
-            console.log('🗃️ MongoDB: validação Apify salva em validated_insta_users com posts');
-        } catch (dbErr) {
-            console.error('Erro mongo:', dbErr.message);
-        }
-
-        // PROXY: Modificar a URL para usar o proxy se for do Instagram
-        // Isso é feito APÓS salvar no banco (para o banco ter a URL original)
-        // e ANTES de retornar ao frontend/cache
-        if (profileData.profilePicUrl && isAllowedImageHost(profileData.profilePicUrl)) {
-             profileData.profilePicUrl = `/image-proxy?url=${encodeURIComponent(profileData.profilePicUrl)}`;
-        }
-
-        if (isPrivate) {
-             console.log(`⚠️ Perfil @${username} é privado, mas será permitido.`);
-             // Permitir fluxo normal mesmo se for privado
-             // O frontend exibirá os dados e avisará se necessário no modal de posts
-        }
-
-        const okResult = { success: true, status: 200, profile: profileData };
-        setCache(username, okResult, CACHE_TTL_MS);
-        return okResult;
-
-    } catch (error) {
-        console.error(`❌ Erro Apify: ${error.message}`);
-        if (error.response) {
-            console.error('❌ Detalhes Erro Apify:', error.response.status, error.response.data);
-        }
-        // Fallback genérico
-        const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente mais tarde." };
-        return errorResult;
     }
 }
 
@@ -1529,6 +1570,14 @@ app.get('/__debug/views-list', (req, res) => {
 app.use(express.static("public"));
 app.use('/temp-images', express.static(path.join(__dirname, 'temp_images')));
 
+app.get('/@vite/client', (req, res) => {
+  res.type('application/javascript').send('');
+});
+
+app.get('/@react-refresh', (req, res) => {
+  res.type('application/javascript').send('');
+});
+
 // Helper: validar hosts permitidos para proxy de imagem
 function isAllowedImageHost(urlStr) {
   try {
@@ -1610,36 +1659,6 @@ app.post('/api/instagram/track-validated', async (req, res) => {
   }
 });
 
-// Rota para buscar posts do Instagram (usada pelo grid de seleção)
-app.get('/api/instagram/posts', async (req, res) => {
-    try {
-        const username = String(req.query.username || '').trim();
-        if (!username) return res.json({ success: false, error: 'Username missing' });
-
-        const userAgent = req.get('User-Agent') || 'Mozilla/5.0';
-        const ip = req.ip || '127.0.0.1';
-
-        // Usa a verificação robusta que já retorna latestPosts
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
-
-        if (result.success && result.profile) {
-            return res.json({
-                success: true,
-                posts: result.profile.latestPosts || []
-            });
-        } else {
-            return res.json({
-                success: false,
-                error: result.error || 'Erro ao buscar posts',
-                posts: []
-            });
-        }
-    } catch (error) {
-        console.error('Erro em /api/instagram/posts:', error);
-        return res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 // Rota para selecionar um post para um tipo de serviço (likes, views, comments)
 app.post('/api/instagram/select-post-for', (req, res) => {
     try {
@@ -1702,16 +1721,8 @@ app.get('/', (req, res) => {
             req.session.lastPaidCorrelationID = '';
         }
     } catch (_) {}
-    const isSandbox = process.env.EFI_SANDBOX === 'true';
-    const EFI_SCRIPT_URL = isSandbox 
-        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
-        : 'https://payment-token.efipay.com.br/v1/payment-token.js';
-
     res.render('checkout', { 
-        PIXEL_ID: process.env.PIXEL_ID || '', 
-        EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
-        EFI_SCRIPT_URL: EFI_SCRIPT_URL,
-        EFI_SANDBOX: isSandbox
+        PIXEL_ID: process.env.PIXEL_ID || ''
     }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar home/checkout:', err.message);
@@ -1785,17 +1796,8 @@ app.get('/checkout', (req, res) => {
         req.session.selectedFor = {};
         req.session.selectedPosts = [];
     }
-    // Define EFI_SCRIPT_URL based on environment
-    const isSandbox = process.env.EFI_SANDBOX === 'true';
-    const efiScriptUrl = isSandbox 
-        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
-        : 'https://payment-token.efipay.com.br/v1/payment-token.js';
-
     res.render('checkout', { 
-        PIXEL_ID: process.env.PIXEL_ID || '',
-        EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
-        EFI_SCRIPT_URL: efiScriptUrl,
-        EFI_SANDBOX: isSandbox
+        PIXEL_ID: process.env.PIXEL_ID || ''
     }, (err, html) => {
         if (err) {
             console.error('❌ Erro ao renderizar checkout:', err.message);
@@ -1828,7 +1830,7 @@ app.get('/engajamento-novo', (req, res) => {
   console.log('✨ Acessando rota /engajamento-novo');
   res.render('engajamento-novo', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query 
+    queryParams: req.query
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento-novo:', err.message);
@@ -1903,8 +1905,10 @@ app.get('/servicos-curtidas', (req, res) => {
 // Página de Refil
 app.get('/refil', async (req, res) => {
   console.log('🔁 Acessando rota /refil');
+  let token = String(req.query.token || '').trim();
+  const phoneRaw = String(req.query.phone || '').trim();
+  let refilDaysLeft = null;
   try {
-    const token = String(req.query.token || '').trim();
     let isValid = false;
     if (token) {
       if (/^liberado$/i.test(token)) {
@@ -1916,6 +1920,11 @@ app.get('/refil', async (req, res) => {
          }
       } else {
         try { const v = linkManager.validateLink(token, req); isValid = !!(v && v.valid); } catch(_) {}
+        if (isValid && req.session) {
+          req.session.refilAccessAllowed = true;
+          req.session.linkSlug = token;
+          req.session.linkAccessTime = Date.now();
+        }
         if (!isValid) {
             // Tentar recuperar do banco para ver se apenas expirou ou renovar
             try {
@@ -1961,13 +1970,31 @@ app.get('/refil', async (req, res) => {
         }
       } catch(_) {}
     }
+
+    try {
+      const slugFromQuery = token && !/^liberado$/i.test(token) ? String(token).trim() : '';
+      const slugFromSession = req.session && req.session.refilAccessAllowed ? String(req.session.linkSlug || '').trim() : '';
+      const slug = slugFromQuery || (slugFromSession && slugFromSession !== 'liberado' ? slugFromSession : '');
+      if (slug) {
+        const tl = await getCollection('temporary_links');
+        const linkRec = await tl.findOne({ id: slug }, { projection: { createdAt: 1 } });
+        const created = linkRec && linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+        if (created) {
+          const nowMs = Date.now();
+          const dayMs = 24 * 60 * 60 * 1000;
+          const daysPassed = Math.floor((nowMs - created) / dayMs);
+          const left = 30 - daysPassed;
+          refilDaysLeft = Math.max(0, left);
+        }
+      }
+    } catch(_) {}
   } catch(_) {}
   if (!(req.session && req.session.refilAccessAllowed)) {
     const from = '/refil';
     const qs = token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`;
     return res.redirect(`/restrito?${qs}`);
   }
-  res.render('refil', {}, (err, html) => {
+  res.render('refil', { refilDaysLeft }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar refil:', err.message);
       return res.status(500).send('Erro ao carregar página de refil');
@@ -2029,11 +2056,27 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
         const efipay = new EfiPay(options);
 
-        // Mapear itens para formato Efí (USANDO O PREÇO VALIDADO, IGNORANDO O FRONTEND)
-        // Isso garante que o valor cobrado no cartão seja exatamente o calculado pelo backend.
+        const sanitizeItemName = (s) => {
+            const raw = String(s || '').replace(/[<>]/g, '').trim();
+            return raw ? raw : 'Checkout OPPUS';
+        };
+        const safeInt = (n) => {
+            const v = Number(n);
+            if (!Number.isFinite(v)) return null;
+            const iv = Math.round(v);
+            return Number.isFinite(iv) ? iv : null;
+        };
+
+        const qtdSafe = (Number.isFinite(Number(qtdVal)) && Number(qtdVal) > 0) ? Number(qtdVal) : 1;
+        const tipoSafe = String(tipoVal || '').trim();
+        const validatedValue = safeInt(validatedPriceCents);
+        if (validatedValue === null || validatedValue < 100) {
+            return res.status(400).json({ error: 'invalid_amount', message: 'Valor inválido para cartão.' });
+        }
+
         const efiItems = [{
-            name: `${qtdVal} ${tipoVal} - Checkout OPPUS`,
-            value: parseInt(validatedPriceCents),
+            name: sanitizeItemName(`${qtdSafe} ${tipoSafe}`),
+            value: validatedValue,
             amount: 1
         }];
 
@@ -2043,22 +2086,35 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 credit_card: {
                     installments: Number(installments) || 1,
                     payment_token: payment_token,
-                    billing_address: billing_address,
+                    billing_address: billing_address || {
+                        street: 'Av. Paulista',
+                        number: 1000,
+                        neighborhood: 'Bela Vista',
+                        zipcode: '01310100',
+                        city: 'São Paulo',
+                        state: 'SP'
+                    },
                     customer: {
-                        name: customer.name,
-                        cpf: customer.cpf,
+                        name: String(customer?.name || '').trim() || 'Cliente',
+                        cpf: customer.cpf || '49789324020',
                         phone_number: customer.phone_number,
-                        email: customer.email,
-                        birth: customer.birth
+                        email: customer.email || 'cliente@email.com',
+                        birth: customer.birth || '1990-01-01'
                     }
                 }
             },
-            items: efiItems
+            items: efiItems,
+            shippings: [
+                { name: 'Frete', value: 0 }
+            ]
         };
 
-        console.log('💳 Processando pagamento cartão Efí:', { total_cents, installments, customer_cpf: customer.cpf });
+        console.log('💳 Processando pagamento cartão Efí:', { total_cents, installments, has_payment_token: !!payment_token, item_value: validatedValue });
 
-        const charge = await efipay.createOneStepCharge(params, body);
+        const charge = await Promise.race([
+            efipay.createOneStepCharge(params, body),
+            new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('payment_timeout'), { code: 'PAYMENT_TIMEOUT' })), 25000))
+        ]);
 
         if (charge && charge.data && charge.data.status !== 'error') {
             // Validação da Resposta (Garantia de que o valor cobrado é o esperado)
@@ -2147,8 +2203,14 @@ app.post('/api/efi/card-charge', async (req, res) => {
             };
 
             const col = await getCollection('checkout_orders');
-            await col.insertOne(record);
+            const insertResult = await col.insertOne(record);
+            try { record._id = insertResult?.insertedId; } catch (_) {}
             console.log('🗃️ MongoDB: pedido cartão persistido (Efí charge_id=', charge.data.charge_id, ')');
+            try {
+              if (sysStatus === 'pago') {
+                await processOrderFulfillment(record, col, req);
+              }
+            } catch (_) {}
 
             return res.json({ success: true, charge: charge.data });
         } else {
@@ -2158,7 +2220,16 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Erro pagamento cartão Efí:', error);
-        return res.status(500).json({ error: 'payment_error', message: error.message || 'Erro ao processar pagamento.' });
+        if (String(error?.code || '') === 'PAYMENT_TIMEOUT' || String(error?.message || '') === 'payment_timeout') {
+            return res.status(504).json({ error: 'payment_timeout', message: 'Tempo esgotado processando o pagamento. Tente novamente.' });
+        }
+        const msg = String(error?.error_description || error?.message || error?.error || '').trim();
+        const code = (typeof error?.code !== 'undefined') ? error.code : undefined;
+        const status = (typeof error?.http_status !== 'undefined') ? error.http_status : undefined;
+        if (String(error?.error || '') === 'validation_error') {
+            return res.status(400).json({ error: 'validation_error', message: msg || 'Erro de validação na Efí.', code, status });
+        }
+        return res.status(500).json({ error: 'payment_error', message: msg || 'Erro ao processar pagamento.', code, status });
     }
 });
 
@@ -2471,6 +2542,9 @@ async function processOrderFulfillment(record, col, req) {
     
     const instaUser = record?.instagramUsername || record?.instauser || '';
     const identifier = record?.identifier;
+    try {
+      await consumeCouponUsageFromOrder(record, { orderIdentifier: identifier, correlationID: record?.correlationID });
+    } catch (_) {}
     
     // Check privacy before dispatch
     let isPriv = record.isPrivate === true || record.profilePrivacy?.isPrivate === true;
@@ -2698,24 +2772,34 @@ async function processOrderFulfillment(record, col, req) {
             const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
             return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
         };
-        const viewsLink = sanitizeLink(viewsLinkRaw);
+        let viewsLink = sanitizeLink(viewsLinkRaw);
         let likesLink = sanitizeLink(likesLinkRaw);
         let commentsLink = sanitizeLink(commentsLinkRaw);
+        if (!likesLink) likesLink = viewsLink;
+        if (!commentsLink) commentsLink = viewsLink;
         
-        // [FIX] Se não veio link para likes/comments (bump), tentar pegar o post mais recente do perfil validado
-        if ((likesQty > 0 && !likesLink && instaUser) || (commentsQty > 0 && !commentsLink && instaUser)) {
+        if ((viewsQty > 0 && !viewsLink && instaUser) || (likesQty > 0 && !likesLink && instaUser) || (commentsQty > 0 && !commentsLink && instaUser)) {
              try {
                  const { getCollection } = require('./mongodbClient');
                  const vu = await getCollection('validated_insta_users');
                  const vUser = await vu.findOne({ username: String(instaUser).toLowerCase() });
                  if (vUser && vUser.latestPosts && Array.isArray(vUser.latestPosts) && vUser.latestPosts.length > 0) {
-                     const lp = vUser.latestPosts[0];
-                     const code = lp.shortcode || lp.code;
-                     if (code) {
-                         const latestUrl = `https://www.instagram.com/p/${code}/`;
+                     const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+                     const lpAny = vUser.latestPosts[0];
+                     const lpVideo = vUser.latestPosts.find(isVideo) || lpAny;
+                     const codeAny = lpAny && (lpAny.shortcode || lpAny.code);
+                     const codeVideo = lpVideo && (lpVideo.shortcode || lpVideo.code);
+                     if (viewsQty > 0 && !viewsLink && codeVideo) {
+                         viewsLink = `https://www.instagram.com/p/${codeVideo}/`;
+                         console.log('🔄 [OrderBump] Recuperado link de vídeo via cache para:', instaUser, viewsLink);
+                     }
+                     if (codeAny) {
+                         const latestUrl = `https://www.instagram.com/p/${codeAny}/`;
                          if (likesQty > 0 && !likesLink) likesLink = latestUrl;
                          if (commentsQty > 0 && !commentsLink) commentsLink = latestUrl;
-                         console.log('🔄 [OrderBump] Recuperado link do post via cache para:', instaUser, latestUrl);
+                         if ((likesQty > 0 && !likesLink) || (commentsQty > 0 && !commentsLink)) {
+                             console.log('🔄 [OrderBump] Recuperado link do post via cache para:', instaUser, latestUrl);
+                         }
                      }
                  }
              } catch (eFallback) {
@@ -2725,44 +2809,90 @@ async function processOrderFulfillment(record, col, req) {
 
         try { console.log('🔎 orderbump_links_sanitized', { viewsLink, likesLink }); } catch(_) {}
 
-        if (viewsQty > 0 && viewsLink) {
+        const alreadyViews = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || record.fama24h_views.status === 'duplicate' || typeof record.fama24h_views.error !== 'undefined' || typeof record.fama24h_views.duplicate !== 'undefined'));
+        if (viewsQty > 0 && viewsLink && !alreadyViews) {
             if (process.env.FAMA24H_API_KEY || '') {
                 const axios = require('axios');
-                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
-                try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                try {
-                    const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                    const dataViews = respViews.data || {};
-                    const orderIdViews = dataViews.order || dataViews.id || null;
-                    await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-                } catch (e2) {
-                    try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                    await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                const lockUpdate = await col.updateOne(
+                    { ...filter, 'fama24h_views.orderId': { $exists: false }, 'fama24h_views.status': { $nin: ['processing', 'created'] } },
+                    { $set: { 'fama24h_views.status': 'processing', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } }
+                );
+                if (lockUpdate.modifiedCount > 0) {
+                    const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                    try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                    try {
+                        const respViews = await postFormWithRetry('https://fama24h.net/api/v2', payloadViews.toString(), 60000, 3);
+                        const dataViews = normalizeProviderResponseData(respViews.data);
+                        const orderIdViews = extractProviderOrderId(dataViews);
+                        const providerErrViews = (dataViews && (dataViews.error || (dataViews.data && dataViews.data.error) || (dataViews.response && dataViews.response.error))) || null;
+                        if (providerErrViews && !orderIdViews) {
+                          const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
+                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          if (st === 'duplicate') {
+                            await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+                          } else {
+                            await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                          }
+                        } else {
+                          const setObj = { 'fama24h_views.status': orderIdViews ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() };
+                          if (orderIdViews) setObj['fama24h_views.orderId'] = orderIdViews;
+                          await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '', 'fama24h_views.duplicate': '' } });
+                        }
+                    } catch (e2) {
+                        const errVal = e2?.response?.data || e2?.message || String(e2);
+                        const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        try { console.error('❌ fama24h_views_error', errVal, { link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                        if (st === 'duplicate') {
+                          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+                        } else {
+                          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                        }
+                    }
                 }
             }
         } else if (viewsQty > 0 && !viewsLink) {
             try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
         }
         
-        const alreadyLikes = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
+        const alreadyLikes = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created' || record.fama24h_likes.status === 'duplicate' || typeof record.fama24h_likes.error !== 'undefined' || typeof record.fama24h_likes.duplicate !== 'undefined'));
         if (likesQty > 0 && likesLink && !alreadyLikes) {
             if (process.env.FAMA24H_API_KEY || '') {
                 const lockUpdate = await col.updateOne(
-                    { ...filter, 'fama24h_likes.status': { $exists: false } },
-                    { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                    { ...filter, 'fama24h_likes.orderId': { $exists: false }, 'fama24h_likes.status': { $nin: ['processing', 'created'] } },
+                    { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } }
                 );
                 if (lockUpdate.modifiedCount > 0) {
-                    const axios = require('axios');
                     const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
                     try { console.log('🚀 sending_fama24h_likes', { service: 671, link: likesLink, quantity: likesQty }); } catch(_) {}
                     try {
-                        const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                        const dataLikes = respLikes.data || {};
-                        const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+                        const respLikes = await postFormWithRetry('https://fama24h.net/api/v2', payloadLikes.toString(), 60000, 3);
+                        const dataLikes = normalizeProviderResponseData(respLikes.data);
+                        const orderIdLikes = extractProviderOrderId(dataLikes);
+                        const providerErrLikes = (dataLikes && (dataLikes.error || (dataLikes.data && dataLikes.data.error) || (dataLikes.response && dataLikes.response.error))) || null;
+                        if (providerErrLikes && !orderIdLikes) {
+                          const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
+                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          if (st === 'duplicate') {
+                            await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                          } else {
+                            await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                          }
+                        } else {
+                          const setObj = { 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() };
+                          if (orderIdLikes) setObj['fama24h_likes.orderId'] = orderIdLikes;
+                          await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '', 'fama24h_likes.duplicate': '' } });
+                        }
                     } catch (e3) {
                         try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
+                        const errVal = e3?.response?.data || e3?.message || String(e3);
+                        const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        if (st === 'duplicate') {
+                          await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                        } else {
+                          await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                        }
                     }
                 }
             }
@@ -2774,15 +2904,36 @@ async function processOrderFulfillment(record, col, req) {
         if (commentsQty > 0 && commentsLink && !alreadyComments) {
             if (process.env.WORLDSMM_API_KEY) {
                 const lockUpdate = await col.updateOne(
-                    { ...filter, 'worldsmm_comments.status': { $exists: false } },
-                    { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                    { ...filter, $or: [{ 'worldsmm_comments.status': { $exists: false } }, { 'worldsmm_comments.status': { $in: ['error', 'unknown'] } }] },
+                    { $set: { 'worldsmm_comments.status': 'processing', 'worldsmm_comments.requestedAt': new Date().toISOString() }, $unset: { 'worldsmm_comments.error': '' } }
                 );
                 if (lockUpdate.modifiedCount > 0) {
                     const axios = require('axios');
                     const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
-                    try { console.log('🚀 sending_worldsmm_comments', { service: 90, link: commentsLink, quantity: commentsQty }); } catch(_) {}
                     try {
-                        const respComments = await axios.post('https://worldsmm.com.br/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
+                        const timeoutMs = 60000;
+                        const maxAttempts = 3;
+                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                        let respComments = null;
+                        let lastErr = null;
+                        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                          try {
+                            try { console.log('🚀 sending_worldsmm_comments', { service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: commentsLink, quantity: commentsQty, attempt, timeoutMs }); } catch(_) {}
+                            respComments = await axios.post(worldsmmUrl, payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: timeoutMs });
+                            lastErr = null;
+                            break;
+                          } catch (err) {
+                            lastErr = err;
+                            const msg = String(err?.message || '');
+                            const isTimeout = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('ecconnaborted');
+                            if (attempt < maxAttempts && isTimeout) {
+                              await sleep(1500 * attempt);
+                              continue;
+                            }
+                            throw err;
+                          }
+                        }
                         const dataComments = respComments.data || {};
                         const orderIdComments = dataComments.order || dataComments.id || null;
                         await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
@@ -3091,17 +3242,9 @@ app.get('/:slug', async (req, res, next) => {
     const { slug } = req.params;
     console.log('🔎 Capturado em /:slug:', slug);
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
-    const isSandbox = process.env.EFI_SANDBOX === 'true';
-    const EFI_SCRIPT_URL = isSandbox 
-        ? 'https://sandbox.efipay.com.br/v1/payment-token.js' 
-        : 'https://payment-token.efipay.com.br/v1/payment-token.js'; // Verifique a URL correta de produção na doc
-
     if (slug === 'checkout') {
         return res.render('checkout', { 
-            PIXEL_ID: process.env.PIXEL_ID || '',
-            EFI_PAYEE_CODE: process.env.EFI_PAYEE_CODE || '',
-            EFI_SCRIPT_URL: EFI_SCRIPT_URL,
-            EFI_SANDBOX: isSandbox
+            PIXEL_ID: process.env.PIXEL_ID || ''
         });
     }
     if (slug === 'engajamento') {
@@ -4423,63 +4566,101 @@ app.post('/api/openpix/webhook', async (req, res) => {
               if (!Number.isNaN(numC) && numC > 0) commentsQty = numC;
             }
             }
-            if (viewsQty > 0) {
-              if ((process.env.FAMA24H_API_KEY || '')) {
-                const axios = require('axios');
-                const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
-                const mapPaid2 = record?.additionalInfoMapPaid || {};
-                const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
-                const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
-                const viewsLinkRaw = mapPaid2['orderbump_post_views'] || selViews || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
-                try { console.log('🔎 orderbump_views_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, viewsLinkRaw, viewsQty }); } catch(_) {}
-                const viewsLink = sanitizeLink(viewsLinkRaw);
-                try { console.log('🔎 orderbump_views_sanitized', { viewsLink }); } catch(_) {}
+            const hasFamaKey = !!(process.env.FAMA24H_API_KEY || '');
+            if (hasFamaKey) {
+              const axios = require('axios');
+              const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+              const mapPaid2 = record?.additionalInfoMapPaid || {};
+              const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+              const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
+              const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
+              const viewsLinkRaw = mapPaid2['orderbump_post_views'] || selViews || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
+              const likesLinkRaw0 = mapPaid2['orderbump_post_likes'] || selLikes || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
+              const viewsLink = sanitizeLink(viewsLinkRaw);
+              const likesLinkSel = sanitizeLink(likesLinkRaw0 || viewsLinkRaw) || viewsLink;
+
+              if (viewsQty > 0) {
+                const alreadyViews2 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || record.fama24h_views.status === 'duplicate' || typeof record.fama24h_views.error !== 'undefined' || typeof record.fama24h_views.duplicate !== 'undefined'));
                 if (!viewsLink) {
-                  await col.updateOne(filter, { $set: { fama24h_views: { error: 'invalid_link', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-                } else {
-                  const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
-                  try { console.log('🚀 sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                  try {
-                    const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                    const dataViews = respViews.data || {};
-                    const orderIdViews = dataViews.order || dataViews.id || null;
-                    await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-                  } catch (e2) {
-                    try { console.error('❌ fama24h_views_error', e2?.response?.data || e2?.message || String(e2), { link: viewsLink, quantity: viewsQty }); } catch(_) {}
-                    await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+                  await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': 'invalid_link', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                } else if (!alreadyViews2) {
+                  const lockUpdate = await col.updateOne(
+                    { ...filter, 'fama24h_views.orderId': { $exists: false }, 'fama24h_views.status': { $nin: ['processing', 'created'] } },
+                    { $set: { 'fama24h_views.status': 'processing', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } }
+                  );
+                  if (lockUpdate.modifiedCount > 0) {
+                    const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                    try {
+                      const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                      const dataViews = normalizeProviderResponseData(respViews.data);
+                      const orderIdViews = extractProviderOrderId(dataViews);
+                      const providerErrViews = (dataViews && (dataViews.error || (dataViews.data && dataViews.data.error) || (dataViews.response && dataViews.response.error))) || null;
+                      if (providerErrViews && !orderIdViews) {
+                        const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        if (st === 'duplicate') {
+                          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+                        } else {
+                          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                        }
+                      } else {
+                        const setObj = { 'fama24h_views.status': orderIdViews ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() };
+                        if (orderIdViews) setObj['fama24h_views.orderId'] = orderIdViews;
+                        await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '', 'fama24h_views.duplicate': '' } });
+                      }
+                    } catch (e2) {
+                      const errVal = e2?.response?.data || e2?.message || String(e2);
+                      const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      if (st === 'duplicate') {
+                        await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+                      } else {
+                        await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                      }
+                    }
                   }
                 }
               }
-            }
-            if (likesQtyForStatus > 0) {
-              if ((process.env.FAMA24H_API_KEY || '')) {
-                const axios = require('axios');
-                const sanitizeLinkL = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
-                const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
-                const likesLinkRaw = mapPaid2['orderbump_post_likes'] || selLikes || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
-                const likesLinkSel = sanitizeLinkL(likesLinkRaw);
-                try { console.log('🔎 orderbump_likes_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, likesLinkRaw, likesQtyForStatus }); } catch(_) {}
-                try { console.log('🔎 orderbump_likes_sanitized', { likesLinkSel }); } catch(_) {}
-                const alreadyLikes2 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
+
+              if (likesQtyForStatus > 0) {
+                const alreadyLikes2 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created' || record.fama24h_likes.status === 'duplicate' || typeof record.fama24h_likes.error !== 'undefined' || typeof record.fama24h_likes.duplicate !== 'undefined'));
                 if (!likesLinkSel) {
-                  await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, requestedAt: new Date().toISOString() } } });
+                  await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': 'invalid_link', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
                 } else if (!alreadyLikes2) {
                   const lockUpdate = await col.updateOne(
-                    { ...filter, 'fama24h_likes.status': { $exists: false } },
-                    { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                    { ...filter, 'fama24h_likes.orderId': { $exists: false }, 'fama24h_likes.status': { $nin: ['processing', 'created'] } },
+                    { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } }
                   );
                   if (lockUpdate.modifiedCount > 0) {
-                      const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
-                      try { console.log('🚀 sending_fama24h_likes', { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
-                      try {
-                        const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                        const dataLikes = respLikes.data || {};
-                        const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes } });
-                      } catch (e3) {
-                        try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLinkSel, quantity: likesQtyForStatus }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus } } });
+                    const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQtyForStatus) });
+                    try {
+                      const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                      const dataLikes = normalizeProviderResponseData(respLikes.data);
+                      const orderIdLikes = extractProviderOrderId(dataLikes);
+                      const providerErrLikes = (dataLikes && (dataLikes.error || (dataLikes.data && dataLikes.data.error) || (dataLikes.response && dataLikes.response.error))) || null;
+                      if (providerErrLikes && !orderIdLikes) {
+                        const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        if (st === 'duplicate') {
+                          await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                        } else {
+                          await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                        }
+                      } else {
+                        const setObj = { 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() };
+                        if (orderIdLikes) setObj['fama24h_likes.orderId'] = orderIdLikes;
+                        await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '', 'fama24h_likes.duplicate': '' } });
                       }
+                    } catch (e3) {
+                      const errVal = e3?.response?.data || e3?.message || String(e3);
+                      const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      if (st === 'duplicate') {
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                      } else {
+                        await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': errVal, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                      }
+                    }
                   }
                 }
               }
@@ -4501,14 +4682,35 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLinkSel, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
                 } else if (!alreadyComments) {
                   const lockUpdate = await col.updateOne(
-                    { ...filter, 'worldsmm_comments.status': { $exists: false } },
-                    { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                    { ...filter, $or: [{ 'worldsmm_comments.status': { $exists: false } }, { 'worldsmm_comments.status': { $in: ['error', 'unknown'] } }] },
+                    { $set: { 'worldsmm_comments.status': 'processing', 'worldsmm_comments.requestedAt': new Date().toISOString() }, $unset: { 'worldsmm_comments.error': '' } }
                   );
                   if (lockUpdate.modifiedCount > 0) {
                       const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: '90', link: String(commentsLinkSel), quantity: String(commentsQty) });
-                      try { console.log('🚀 sending_worldsmm_comments', { service: 90, link: commentsLinkSel, quantity: commentsQty }); } catch(_) {}
                       try {
-                        const respComments = await axios.post('https://worldsmm.com/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
+                        const timeoutMs = 60000;
+                        const maxAttempts = 3;
+                        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                        let respComments = null;
+                        let lastErr = null;
+                        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                          try {
+                            try { console.log('🚀 sending_worldsmm_comments', { service: '90', link: commentsLinkSel, quantity: commentsQty, attempt, timeoutMs }); } catch(_) {}
+                            respComments = await axios.post(worldsmmUrl, payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: timeoutMs });
+                            lastErr = null;
+                            break;
+                          } catch (err) {
+                            lastErr = err;
+                            const msg = String(err?.message || '');
+                            const isTimeout = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('ecconnaborted');
+                            if (attempt < maxAttempts && isTimeout) {
+                              await sleep(1500 * attempt);
+                              continue;
+                            }
+                            throw err;
+                          }
+                        }
                         const dataComments = respComments.data || {};
                         const orderIdComments = dataComments.order || dataComments.id || null;
                         await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLinkSel, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
@@ -4637,7 +4839,7 @@ app.post('/api/services/dispatch', async (req, res) => {
     let upgradeAdd = 0;
     if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
       if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
-        const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+        const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
         upgradeAdd = map[qtdBase] || 0;
       }
     }
@@ -4765,11 +4967,18 @@ app.get('/api/instagram/validet', async (req, res) => {
 app.post('/api/instagram/validet-track', async (req, res) => {
   try {
     const username = String((req.body && req.body.username) || '').trim().toLowerCase();
-    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    if (!username) return res.json({ ok: false, error: 'missing_username' });
     
-    const vu = await getCollection('validated_insta_users');
-    const doc = { username, ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track', lastTrackAt: new Date().toISOString() };
-    await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+    let trackStored = true;
+    let trackError = null;
+    try {
+      const vu = await getCollection('validated_insta_users');
+      const doc = { username, ip: req.realIP || req.ip || null, userAgent: req.get('User-Agent') || '', source: 'api.validet.track', lastTrackAt: new Date().toISOString() };
+      await vu.updateOne({ username }, { $setOnInsert: { username, firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
+    } catch (eStore) {
+      trackStored = false;
+      trackError = eStore?.message || String(eStore);
+    }
 
     // Link audio_logs to username
     try {
@@ -4821,9 +5030,9 @@ app.post('/api/instagram/validet-track', async (req, res) => {
         console.error('Failed to link audio_log in validet-track:', eLog);
     }
 
-    res.json({ ok: true });
+    return res.json({ ok: true, trackStored, trackError });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res.json({ ok: false, error: e?.message || String(e) });
   }
 });
 app.post('/api/orderbump/resend', async (req, res) => {
@@ -4848,7 +5057,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
     const likesQty = lPart ? Number(String(lPart).split(':')[1]) : 0;
     const sanitize = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
     const viewsLink = sanitize(map['orderbump_post_views']);
-    const likesLink = sanitize(map['orderbump_post_likes']);
+    const likesLink = sanitize(map['orderbump_post_likes'] || map['orderbump_post_views']);
     const key = process.env.FAMA24H_API_KEY || '';
     const results = { views: null, likes: null };
     if (key && viewsQty > 0 && viewsLink) {
@@ -4856,13 +5065,36 @@ app.post('/api/orderbump/resend', async (req, res) => {
       const payload = new URLSearchParams({ key, action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
       try {
         const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-        const data = resp.data || {};
-        const orderIdViews = data.order || data.id || null;
-        await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: data, requestedAt: new Date().toISOString() } } });
-        results.views = { orderId: orderIdViews, data };
+        const data = normalizeProviderResponseData(resp.data);
+        const orderIdViews = extractProviderOrderId(data);
+        const providerErrViews = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
+        if (providerErrViews && !orderIdViews) {
+          const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
+          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+          if (st === 'duplicate') {
+            await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+            results.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null, data };
+          } else {
+            await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() } });
+            results.views = { orderId: null, data };
+          }
+        } else {
+          const setObj = { 'fama24h_views.status': orderIdViews ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() };
+          if (orderIdViews) setObj['fama24h_views.orderId'] = orderIdViews;
+          await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '', 'fama24h_views.duplicate': '' } });
+          results.views = { orderId: orderIdViews, data };
+        }
       } catch (e) {
-        await col.updateOne(filter, { $set: { fama24h_views: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-        results.views = { error: e?.message || String(e) };
+        const errVal = e?.response?.data || e?.message || String(e);
+        const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+        if (st === 'duplicate') {
+          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+          results.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null, error: null };
+        } else {
+          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+          results.views = { error: e?.message || String(e) };
+        }
       }
     }
     if (key && likesQty > 0 && likesLink) {
@@ -4870,20 +5102,43 @@ app.post('/api/orderbump/resend', async (req, res) => {
       if (!alreadyLikes) {
         const lockUpdate = await col.updateOne(
           { ...filter, 'fama24h_likes.status': { $nin: ['processing', 'created'] }, 'fama24h_likes.orderId': { $exists: false } },
-          { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+          { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } }
         );
         if (lockUpdate.modifiedCount > 0) {
           const axios = require('axios');
           const payload = new URLSearchParams({ key, action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
           try {
             const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const data = resp.data || {};
-            const orderIdLikes = data.order || data.id || null;
-            await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
-            results.likes = { orderId: orderIdLikes, data };
+            const data = normalizeProviderResponseData(resp.data);
+            const orderIdLikes = extractProviderOrderId(data);
+            const providerErrLikes = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
+            if (providerErrLikes && !orderIdLikes) {
+              const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
+              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              if (st === 'duplicate') {
+                await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                results.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null, data };
+              } else {
+                await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                results.likes = { orderId: null, data };
+              }
+            } else {
+              const setObj = { 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() };
+              if (orderIdLikes) setObj['fama24h_likes.orderId'] = orderIdLikes;
+              await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '', 'fama24h_likes.duplicate': '' } });
+              results.likes = { orderId: orderIdLikes, data };
+            }
           } catch (e) {
-            await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
-            results.likes = { error: e?.message || String(e) };
+            const errVal = e?.response?.data || e?.message || String(e);
+            const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+            if (st === 'duplicate') {
+              await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+              results.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null, error: null };
+            } else {
+              await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+              results.likes = { error: e?.message || String(e) };
+            }
           }
         } else {
            results.likes = { error: 'already_processing_or_created' };
@@ -4925,30 +5180,61 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
       const likesQty = lPart ? Number(String(lPart).split(':')[1]) : 0;
       const sanitize = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
       const viewsLink = sanitize(map['orderbump_post_views']);
-      const likesLink = sanitize(map['orderbump_post_likes']);
+      const likesLink = sanitize(map['orderbump_post_likes'] || map['orderbump_post_views']);
       const filter = { _id: record._id };
       const resultItem = { id: String(record._id), views: null, likes: null };
       if (key && viewsQty > 0 && viewsLink) {
-        const currentViewsLink = String(record?.fama24h_views?.requestPayload?.link || '');
-        const isInvalid = !/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(currentViewsLink);
+        const currentViewsLinkRaw = String(record?.fama24h_views?.requestPayload?.link || '');
+        const currentViewsLink = sanitize(currentViewsLinkRaw);
+        const isInvalid = !!currentViewsLinkRaw && !currentViewsLink;
+        if (currentViewsLink && currentViewsLink !== currentViewsLinkRaw) {
+          await col.updateOne(filter, { $set: { 'fama24h_views.requestPayload.link': currentViewsLink } });
+        }
         if (isInvalid) {
           const axios = require('axios');
           const payload = new URLSearchParams({ key, action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
           try {
             const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const data = resp.data || {};
-            const orderIdViews = data.order || data.id || null;
-            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: data, requestedAt: new Date().toISOString() } } });
-            resultItem.views = { orderId: orderIdViews };
+            const data = normalizeProviderResponseData(resp.data);
+            const orderIdViews = extractProviderOrderId(data);
+            const providerErrViews = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
+            if (providerErrViews && !orderIdViews) {
+              const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
+              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              if (st === 'duplicate') {
+                await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+                resultItem.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null };
+              } else {
+                await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': providerErrViews, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                resultItem.views = { orderId: null };
+              }
+            } else {
+              const setObj = { 'fama24h_views.status': orderIdViews ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() };
+              if (orderIdViews) setObj['fama24h_views.orderId'] = orderIdViews;
+              await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '', 'fama24h_views.duplicate': '' } });
+              resultItem.views = { orderId: orderIdViews };
+            }
           } catch (e) {
-            await col.updateOne(filter, { $set: { fama24h_views: { error: e?.response?.data || e?.message || String(e), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
-            resultItem.views = { error: e?.message || String(e) };
+            const errVal = e?.response?.data || e?.message || String(e);
+            const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+            if (st === 'duplicate') {
+              await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
+              resultItem.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null };
+            } else {
+              await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+              resultItem.views = { error: e?.message || String(e) };
+            }
           }
         }
       }
       if (key && likesQty > 0 && likesLink) {
-        const currentLikesLink = String(record?.fama24h_likes?.requestPayload?.link || '');
-        const isInvalidLikes = !/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(currentLikesLink);
+        const currentLikesLinkRaw = String(record?.fama24h_likes?.requestPayload?.link || '');
+        const currentLikesLink = sanitize(currentLikesLinkRaw);
+        const isInvalidLikes = !!currentLikesLinkRaw && !currentLikesLink;
+        if (currentLikesLink && currentLikesLink !== currentLikesLinkRaw) {
+          await col.updateOne(filter, { $set: { 'fama24h_likes.requestPayload.link': currentLikesLink } });
+        }
         const isProcessing = record?.fama24h_likes?.status === 'processing';
         if (isInvalidLikes && !isProcessing) {
           const lockUpdate = await col.updateOne(
@@ -4960,13 +5246,36 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
               const payload = new URLSearchParams({ key, action: 'add', service: '671', link: String(likesLink), quantity: String(likesQty) });
               try {
                 const resp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const data = resp.data || {};
-                const orderIdLikes = data.order || data.id || null;
-                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data } });
-                resultItem.likes = { orderId: orderIdLikes };
+                const data = normalizeProviderResponseData(resp.data);
+                const orderIdLikes = extractProviderOrderId(data);
+                const providerErrLikes = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
+                if (providerErrLikes && !orderIdLikes) {
+                  const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
+                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  if (st === 'duplicate') {
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                    resultItem.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null };
+                  } else {
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': providerErrLikes, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                    resultItem.likes = { orderId: null };
+                  }
+                } else {
+                  const setObj = { 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() };
+                  if (orderIdLikes) setObj['fama24h_likes.orderId'] = orderIdLikes;
+                  await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '', 'fama24h_likes.duplicate': '' } });
+                  resultItem.likes = { orderId: orderIdLikes };
+                }
               } catch (e) {
-                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e?.response?.data || e?.message || String(e), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty } } });
-                resultItem.likes = { error: e?.message || String(e) };
+                const errVal = e?.response?.data || e?.message || String(e);
+                const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                if (st === 'duplicate') {
+                  await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
+                  resultItem.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null };
+                } else {
+                  await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
+                  resultItem.likes = { error: e?.message || String(e) };
+                }
               }
           }
         }
@@ -5131,6 +5440,22 @@ app.get('/pedido', async (req, res) => {
     }
 
     const order = doc || {};
+    let refilDaysLeft = null;
+    try {
+      const token = order && order.refilLinkId ? String(order.refilLinkId).trim() : '';
+      if (token) {
+        const tl = await getCollection('temporary_links');
+        const linkRec = await tl.findOne({ id: token }, { projection: { createdAt: 1 } });
+        const created = linkRec && linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+        if (created) {
+          const nowMs = Date.now();
+          const dayMs = 24 * 60 * 60 * 1000;
+          const daysPassed = Math.floor((nowMs - created) / dayMs);
+          const left = 30 - daysPassed;
+          refilDaysLeft = Math.max(0, left);
+        }
+      }
+    } catch (_) {}
     try {
       const map = order && order.additionalInfoMapPaid ? order.additionalInfoMapPaid : {};
       let uname = String(map['instagram_username'] || '').trim();
@@ -5166,7 +5491,7 @@ app.get('/pedido', async (req, res) => {
         }
       }
     } catch (_) {}
-    return res.render('pedido', { order, PIXEL_ID: process.env.PIXEL_ID || '', logoLink: '/engajamento' });
+    return res.render('pedido', { order, refilDaysLeft, PIXEL_ID: process.env.PIXEL_ID || '', logoLink: '/engajamento' });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
   }
@@ -5187,8 +5512,8 @@ app.get('/api/instagram/posts', async (req, res) => {
   try {
     const usernameParam = String(req.query.username || '').trim();
     const usernameSession = req.session && req.session.instagramProfile && req.session.instagramProfile.username ? String(req.session.instagramProfile.username) : '';
-    const username = usernameParam || usernameSession || '';
-    if (!username) return res.status(400).json({ success: false, error: 'missing_username' });
+    const username = String(usernameParam || usernameSession || '').trim().toLowerCase();
+    if (!username) return res.json({ success: false, error: 'missing_username', posts: [] });
     const debugInsert = String(req.query.debug || '').trim() === '1';
     let debugInfo = null;
     try {
@@ -5419,7 +5744,7 @@ app.post('/session/mark-paid', async (req, res) => {
         let upgradeAdd = 0;
         if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
           if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000; else {
-            const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+            const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
             upgradeAdd = map[qtdBase] || 0;
           }
         }
@@ -5484,21 +5809,33 @@ app.post('/session/mark-paid', async (req, res) => {
           const likesLinkSel = sanitizeLink(likesLinkRaw);
           try { console.log('🔎 [mark-paid] orderbump_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, selectedFor, viewsQty, likesQty }); } catch(_) {}
           try { console.log('🔎 [mark-paid] orderbump_sanitized', { viewsLink, likesLinkSel }); } catch(_) {}
-          if ((process.env.FAMA24H_API_KEY || '') && viewsQty > 0) {
+          const alreadyViews3 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || typeof record.fama24h_views.error !== 'undefined'));
+          if ((process.env.FAMA24H_API_KEY || '') && viewsQty > 0 && !alreadyViews3) {
             if (!viewsLink) {
               try { console.warn('⚠️ [mark-paid] views_link_invalid', { viewsLinkRaw }); } catch(_) {}
-              await col.updateOne(filter, { $set: { fama24h_views: { error: 'invalid_link', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+              await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': 'invalid_link', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
             } else {
-              const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
-              try { console.log('🚀 [mark-paid] sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
-              try {
-                const respV = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataV = respV.data || {};
-                const orderIdV = dataV.order || dataV.id || null;
-                await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdV, status: orderIdV ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataV, requestedAt: new Date().toISOString() } } });
-              } catch (e2) {
-                try { console.error('❌ [mark-paid] fama24h_views_error', e2?.response?.data || e2?.message || String(e2)); } catch(_) {}
-                await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+              const lockUpdate = await col.updateOne(
+                { ...filter, 'fama24h_views.orderId': { $exists: false }, 'fama24h_views.status': { $nin: ['processing', 'created'] } },
+                { $set: { 'fama24h_views.status': 'processing', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } }
+              );
+              if (lockUpdate.modifiedCount > 0) {
+                const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+                try { console.log('🚀 [mark-paid] sending_fama24h_views', { service: 250, link: viewsLink, quantity: viewsQty }); } catch(_) {}
+                try {
+                  const respV = await postFormWithRetry('https://fama24h.net/api/v2', payloadViews.toString(), 60000, 3);
+                  const dataV = normalizeProviderResponseData(respV.data);
+                  const orderIdV = extractProviderOrderId(dataV);
+                  const setObj = { 'fama24h_views.status': orderIdV ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataV, 'fama24h_views.requestedAt': new Date().toISOString() };
+                  if (orderIdV) setObj['fama24h_views.orderId'] = orderIdV;
+                  await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '' } });
+                } catch (e2) {
+                  const errVal = e2?.response?.data || e2?.message || String(e2);
+                  const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  try { console.error('❌ [mark-paid] fama24h_views_error', errVal); } catch(_) {}
+                  await col.updateOne(filter, { $set: { 'fama24h_views.status': st, 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+                }
               }
             }
           }
@@ -5506,23 +5843,28 @@ app.post('/session/mark-paid', async (req, res) => {
           if ((process.env.FAMA24H_API_KEY || '') && likesQty > 0 && !alreadyLikes3) {
             if (!likesLinkSel) {
               try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
-              await col.updateOne(filter, { $set: { fama24h_likes: { error: 'invalid_link', requestPayload: { service: 671, link: likesLinkSel, quantity: likesQty }, requestedAt: new Date().toISOString() } } });
+              await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': 'invalid_link', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
             } else {
                const lockUpdate = await col.updateOne(
-                  { ...filter, 'fama24h_likes.status': { $exists: false } },
-                  { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                  { ...filter, 'fama24h_likes.orderId': { $exists: false }, 'fama24h_likes.status': { $nin: ['processing', 'created'] } },
+                  { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } }
                );
                if (lockUpdate.modifiedCount > 0) {
                   const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQty) });
                   try { console.log('🚀 [mark-paid] sending_fama24h_likes', { service: 671, link: likesLinkSel, quantity: likesQty }); } catch(_) {}
                   try {
-                    const respL = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                    const dataL = respL.data || {};
-                    const orderIdL = dataL.order || dataL.id || null;
-                    await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdL, 'fama24h_likes.status': orderIdL ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataL } });
+                    const respL = await postFormWithRetry('https://fama24h.net/api/v2', payloadLikes.toString(), 60000, 3);
+                    const dataL = normalizeProviderResponseData(respL.data);
+                    const orderIdL = extractProviderOrderId(dataL);
+                    const setObj = { 'fama24h_likes.status': orderIdL ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataL, 'fama24h_likes.requestedAt': new Date().toISOString() };
+                    if (orderIdL) setObj['fama24h_likes.orderId'] = orderIdL;
+                    await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '' } });
                   } catch (e3) {
-                    try { console.error('❌ [mark-paid] fama24h_likes_error', e3?.response?.data || e3?.message || String(e3)); } catch(_) {}
-                    await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty } } });
+                    const errVal = e3?.response?.data || e3?.message || String(e3);
+                    const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                    try { console.error('❌ [mark-paid] fama24h_likes_error', errVal); } catch(_) {}
+                    await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': st, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
                   }
                }
             }
@@ -5551,14 +5893,35 @@ app.post('/session/mark-paid', async (req, res) => {
                await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLink, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
             } else {
                const lockUpdate = await col.updateOne(
-                  { ...filter, 'worldsmm_comments.status': { $exists: false } },
-                  { $set: { worldsmm_comments: { status: 'processing', requestedAt: new Date().toISOString() } } }
+                  { ...filter, $or: [{ 'worldsmm_comments.status': { $exists: false } }, { 'worldsmm_comments.status': { $in: ['error', 'unknown'] } }] },
+                  { $set: { 'worldsmm_comments.status': 'processing', 'worldsmm_comments.requestedAt': new Date().toISOString() }, $unset: { 'worldsmm_comments.error': '' } }
                );
                if (lockUpdate.modifiedCount > 0) {
                   const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
-                  try { console.log('🚀 [mark-paid] sending_worldsmm_comments', { service: 90, link: commentsLink, quantity: commentsQty }); } catch(_) {}
                   try {
-                    const respC = await axios.post('https://worldsmm.com.br/api/v2', payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
+                    const timeoutMs = 60000;
+                    const maxAttempts = 3;
+                    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                    let respC = null;
+                    let lastErr = null;
+                    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                      try {
+                        try { console.log('🚀 [mark-paid] sending_worldsmm_comments', { service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: commentsLink, quantity: commentsQty, attempt, timeoutMs }); } catch(_) {}
+                        respC = await axios.post(worldsmmUrl, payloadComments.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: timeoutMs });
+                        lastErr = null;
+                        break;
+                      } catch (err) {
+                        lastErr = err;
+                        const msg = String(err?.message || '');
+                        const isTimeout = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('ecconnaborted');
+                        if (attempt < maxAttempts && isTimeout) {
+                          await sleep(1500 * attempt);
+                          continue;
+                        }
+                        throw err;
+                      }
+                    }
                     const dataC = respC.data || {};
                     const orderIdC = dataC.order || dataC.id || null;
                     await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdC, 'worldsmm_comments.status': orderIdC ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataC } });
@@ -5774,12 +6137,15 @@ app.post('/api/refil/create', async (req, res) => {
     params.append('order', String(externalOrderId));
 
     try {
+        console.log(`[Refil] Enviando solicitação para ${provider} (Order: ${externalOrderId})`);
         const resp = await axios.post(apiUrl, params.toString(), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             timeout: 30000
         });
         const data = resp.data || {};
         
+        console.log(`[Refil] Resposta de ${provider}:`, JSON.stringify(data));
+
         const refillLog = {
             requestedAt: new Date().toISOString(),
             provider,
@@ -5791,7 +6157,7 @@ app.post('/api/refil/create', async (req, res) => {
         await col.updateOne({ _id: order._id }, { $push: { refillHistory: refillLog } });
 
         if (data.error) {
-            return res.status(400).json({ ok: false, error: data.error, message: `Erro do fornecedor: ${data.error}` });
+            return res.status(400).json({ ok: false, error: data.error, message: `Resposta do Fornecedor: ${data.error}` });
         }
 
         return res.json({
@@ -5805,6 +6171,7 @@ app.post('/api/refil/create', async (req, res) => {
         });
 
     } catch (apiErr) {
+        console.error(`[Refil] Erro de conexão/API com ${provider}:`, apiErr.message);
         const errMsg = apiErr?.response?.data?.error || apiErr?.message || String(apiErr);
         await col.updateOne({ _id: order._id }, { $push: { refillHistory: {
             requestedAt: new Date().toISOString(),
@@ -5816,6 +6183,47 @@ app.post('/api/refil/create', async (req, res) => {
         return res.status(500).json({ ok: false, error: 'provider_error', message: `Erro ao comunicar com fornecedor: ${errMsg}` });
     }
 
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.post('/api/refil/history', async (req, res) => {
+  try {
+    const orderIdInput = String((req.body && (req.body.order_id || req.body.orderId)) || '').trim();
+    if (!orderIdInput) return res.status(400).json({ ok: false, error: 'missing_order_id' });
+
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+
+    if (/^[0-9a-fA-F]{24}$/.test(orderIdInput)) {
+      try { conds.push({ _id: new (require('mongodb').ObjectId)(orderIdInput) }); } catch(_) {}
+    }
+    const numId = Number(orderIdInput);
+    if (!Number.isNaN(numId)) {
+      conds.push({ 'fama24h.orderId': numId });
+      conds.push({ 'fornecedor_social.orderId': numId });
+      conds.push({ 'fama24h.orderId': String(numId) });
+      conds.push({ 'fornecedor_social.orderId': String(numId) });
+    }
+    conds.push({ identifier: orderIdInput });
+    conds.push({ 'woovi.identifier': orderIdInput });
+    conds.push({ correlationID: orderIdInput });
+
+    const order = await col.findOne({ $or: conds }, { projection: { refillHistory: 1 } });
+    if (!order) return res.status(404).json({ ok: false, error: 'order_not_found', message: 'Pedido não encontrado' });
+
+    const historyRaw = Array.isArray(order.refillHistory) ? order.refillHistory : [];
+    const history = historyRaw
+      .filter((h) => h && (h.status === 'initiated' || (h.response && h.response.refill)))
+      .map((h) => ({
+        requestedAt: h.requestedAt || null,
+        refillId: (h.response && h.response.refill) ? String(h.response.refill) : null,
+        status: h.status || 'initiated'
+      }))
+      .sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')))
+      .slice(0, 20);
+
+    return res.json({ ok: true, history });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -5907,21 +6315,856 @@ const DEFAULT_COST_SETTINGS = {
   visualizacoes: 0.01
 };
 
+app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    // 15 minutes ago
+    const cutoffDate = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
+    const query = {
+      $and: [
+        { status: { $ne: 'pago' } },
+        { 'woovi.status': { $ne: 'pago' } },
+        { createdAt: { $lt: cutoffDate } }
+      ]
+    };
+
+    // Get pending orders (limit to recent 200 to avoid overload)
+    let pendingOrders = await col.find(query).sort({ createdAt: -1 }).limit(200).toArray();
+
+    if (pendingOrders.length > 0) {
+      // Logic to filter out orders where the user paid in a subsequent order
+      // Extract usernames and phones
+      const usernames = pendingOrders
+        .map(o => o.instagramUsername || o.instauser || (o.additionalInfoPaid || []).find(i => i.key === 'instagram_username')?.value || (o.additionalInfoMap || {}).instagram_username)
+        .filter(u => u && typeof u === 'string')
+        .map(u => u.toLowerCase().trim());
+
+      const phones = pendingOrders
+        .map(o => (o.customer && (o.customer.phone || o.customer.phone_number)))
+        .filter(p => p && typeof p === 'string');
+      
+      const uniqueUsernames = [...new Set(usernames)].filter(Boolean);
+      
+      // Escape special characters for Regex
+      const escapeRegExp = (string) => {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      };
+
+      if (uniqueUsernames.length > 0) {
+         // Find any PAID orders for these users created after the oldest pending order in this batch
+         const oldestPending = pendingOrders[pendingOrders.length - 1].createdAt;
+         
+         const paidQuery = {
+            $and: [
+              {
+                $or: [
+                  { status: 'pago' },
+                  { 'woovi.status': 'pago' }
+                ]
+              },
+              {
+                $or: [
+                   { instagramUsername: { $in: uniqueUsernames.map(u => new RegExp(`^${escapeRegExp(u)}$`, 'i')) } },
+                   { instauser: { $in: uniqueUsernames.map(u => new RegExp(`^${escapeRegExp(u)}$`, 'i')) } }
+                ]
+              },
+              { createdAt: { $gt: oldestPending } }
+            ]
+         };
+
+         const paidOrders = await col.find(paidQuery).project({ instagramUsername: 1, instauser: 1, createdAt: 1 }).toArray();
+         
+         // Filter pending orders
+         pendingOrders = pendingOrders.filter(pending => {
+            // Normalize pending user
+            let pUser = (pending.instagramUsername || pending.instauser || (pending.additionalInfoPaid || []).find(i => i.key === 'instagram_username')?.value || (pending.additionalInfoMap || {}).instagram_username || '').toLowerCase().trim();
+            if (!pUser) return true; // Keep if no username to match
+
+            const pDate = new Date(pending.createdAt);
+            
+            // Check if there is a paid order for this user created AFTER the pending order
+            const hasNewerPaid = paidOrders.some(paid => {
+               // Normalize paid user (check both fields)
+               const paidUser1 = (paid.instagramUsername || '').toLowerCase().trim();
+               const paidUser2 = (paid.instauser || '').toLowerCase().trim();
+               
+               if (paidUser1 !== pUser && paidUser2 !== pUser) return false;
+               
+               const paidDate = new Date(paid.createdAt);
+               return paidDate > pDate;
+            });
+
+            return !hasNewerPaid;
+         });
+      }
+    }
+
+    const normalizeUsername = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const extractUsername = (o) => {
+      try {
+        return o.instagramUsername || o.instauser || (o.additionalInfoPaid || []).find(i => i && i.key === 'instagram_username')?.value || (o.additionalInfoMap || {}).instagram_username || '';
+      } catch (_) {
+        return '';
+      }
+    };
+
+    const seen = new Set();
+    pendingOrders = pendingOrders.filter(o => {
+      const key = normalizeUsername(extractUsername(o));
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    res.render('painel_recuperacao', { orders: pendingOrders });
+  } catch (err) {
+    console.error('Error in /painel/recuperacao:', err);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+app.get('/painel/privados', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const { startDate, endDate, orderSent, noContact, contactStatus, searchPhone, archived } = req.query;
+
+    const query = {
+        $and: [
+            {
+                $or: [
+                    { status: 'pago' },
+                    { 'woovi.status': 'pago' }
+                ]
+            },
+            {
+                $or: [
+                    { isPrivate: true },
+                    { 'additionalInfoMap.isPrivate': true },
+                    { 'additionalInfoMap.isPrivate': "true" }
+                ]
+            }
+        ]
+    };
+
+    // Date Filters
+    if (startDate || endDate) {
+        const dateFilter = {};
+        // Adjust for Brazil Time (UTC-3)
+        // User input 2023-10-27 implies 00:00 SP, which is 03:00 UTC
+        if (startDate) {
+            const start = new Date(`${startDate}T00:00:00.000Z`);
+            start.setUTCHours(start.getUTCHours() + 3);
+            dateFilter.$gte = start.toISOString();
+        }
+        if (endDate) {
+            const end = new Date(`${endDate}T23:59:59.999Z`);
+            end.setUTCHours(end.getUTCHours() + 3);
+            dateFilter.$lte = end.toISOString();
+        }
+        query.$and.push({ createdAt: dateFilter });
+    }
+
+    // Status Filters
+    if (orderSent === 'yes') {
+        query.$and.push({ orderSent: true });
+    } else if (orderSent === 'no') {
+        query.$and.push({ $or: [{ orderSent: false }, { orderSent: { $exists: false } }] });
+    }
+
+    if (noContact === 'yes') {
+        query.$and.push({ noContact: true });
+    } else if (noContact === 'no') {
+        query.$and.push({ $or: [{ noContact: false }, { noContact: { $exists: false } }] });
+    }
+
+    // Contact Count Filters
+    if (contactStatus === 'yes') {
+        query.$and.push({ contactCount: { $gt: 0 } });
+    } else if (contactStatus === 'no') {
+        query.$and.push({ $or: [{ contactCount: 0 }, { contactCount: { $exists: false } }] });
+    }
+
+    // Phone Search Filter
+    if (searchPhone) {
+        const rawSearch = String(searchPhone || '').trim();
+        const digits = rawSearch.replace(/\D/g, '');
+        const phoneRegex = digits
+          ? new RegExp(digits.split('').join('\\D*'), 'i')
+          : new RegExp(rawSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        query.$and.push({
+            $or: [
+                { 'customer.phone': { $regex: phoneRegex } },
+                { 'customer.phone_number': { $regex: phoneRegex } },
+                { 'additionalInfoMap.phone': { $regex: phoneRegex } },
+                { 'additionalInfoPaid': { $elemMatch: { key: 'phone', value: { $regex: phoneRegex } } } }
+            ]
+        });
+    }
+
+    if (archived === 'yes') {
+        query.$and.push({ archived: true });
+    } else if (archived !== 'all') {
+        query.$and.push({ $or: [{ archived: false }, { archived: { $exists: false } }] });
+    }
+
+    const unknownTokens = ['', null, 'unknown', 'unknow', 'null'];
+    const noFamaId = { $or: [{ 'fama24h.orderId': { $exists: false } }, { 'fama24h.orderId': { $in: unknownTokens } }] };
+    const noFsId = { $or: [{ 'fornecedor_social.orderId': { $exists: false } }, { 'fornecedor_social.orderId': { $in: unknownTokens } }] };
+    query.$and.push({ $or: [{ orderSent: { $ne: true } }, { $and: [{ orderSent: true }, noFamaId, noFsId] }] });
+    
+    const orders = await col.find(query).sort({ createdAt: -1 }).limit(500).toArray();
+    res.render('painel_privados', { orders, page: 'privados', startDate, endDate, orderSent, noContact, contactStatus, searchPhone, archived });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Erro interno');
+  }
+});
+
+app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const monitorCol = await getCollection('followers_monitor');
+    const validatedCol = await getCollection('validated_insta_users');
+
+    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
+    const followersQuery = {
+      $and: [
+        paidQuery,
+        {
+          $or: [
+            { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: { $regex: '^seguidores$', $options: 'i' } } } },
+            { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { tipo: { $regex: 'seguidores', $options: 'i' } },
+            { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+          ]
+        }
+      ]
+    };
+
+    const orders = await col.find(followersQuery, {
+      projection: {
+        _id: 1,
+        createdAt: 1,
+        paidAt: 1,
+        woovi: 1,
+        tipo: 1,
+        tipoServico: 1,
+        qtd: 1,
+        quantidade: 1,
+        instagramUsername: 1,
+        instauser: 1,
+        fama24h: 1,
+        fornecedor_social: 1,
+        additionalInfo: 1,
+        additionalInfoPaid: 1,
+        additionalInfoMap: 1,
+        additionalInfoMapPaid: 1,
+        initialFollowersCount: 1,
+        initialFollowersCheckedAt: 1
+      }
+    }).sort({ createdAt: -1 }).limit(4000).toArray();
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const resolveUsername = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'instagram_username'),
+        o.instagramUsername,
+        o.instauser
+      ];
+      for (const c of candidates) {
+        const k = normalizeUsernameKey(c);
+        if (k) return k;
+      }
+      return '';
+    };
+
+    const resolveDateMs = (o) => {
+      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt || null;
+      const t = dateStr ? new Date(dateStr).getTime() : 0;
+      return Number.isFinite(t) ? t : 0;
+    };
+
+    const resolveQty = (o) => {
+      const direct = Number(o.quantidade || o.qtd || 0) || 0;
+      if (direct) return direct;
+      const q = extractInfoAny(o, 'quantidade');
+      const n = Number(String(q || '').replace(/[^\d]/g, '')) || 0;
+      return n;
+    };
+
+    const resolveOrderBumps = (o) => {
+      const raw = extractInfoAny(o, 'order_bumps');
+      return String(raw || '');
+    };
+
+    const getUpgradeAddQtd = (tipo, base) => {
+      try {
+        const t0 = String(tipo || '').toLowerCase().trim();
+        const t = t0.startsWith('seguidores_') ? t0.replace(/^seguidores_/, '') : t0;
+        const b = Number(base) || 0;
+        if (!b) return 0;
+        if (t === 'organicos' && b === 50) return 50;
+        if ((t === 'brasileiros' || t === 'organicos') && b === 1000) return 1000;
+        const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
+        return map[b] || 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
+    const resolveQtyWithUpgrade = (o) => {
+      const baseQty = resolveQty(o);
+      if (!baseQty) return baseQty;
+      const bumpsStr = String(resolveOrderBumps(o) || '').toLowerCase();
+      const m = bumpsStr.match(/(?:^|;)\s*upgrade\s*:\s*(\d+)/i);
+      const upgradeQty = m ? Number(m[1]) : 0;
+      if (!upgradeQty) return baseQty;
+      const tipo = String(o.tipo || o.tipoServico || '').trim();
+      const add = getUpgradeAddQtd(tipo, baseQty);
+      return baseQty + add;
+    };
+
+    const resolveTipo = (o) => {
+      const t = String(extractInfoAny(o, 'tipo_servico') || o.tipo || o.tipoServico || '').trim();
+      return t;
+    };
+
+    const resolveFornecedor = (o) => {
+      const isUnknown = (v) => {
+        const s = String(v ?? '').toLowerCase().trim();
+        return s === '' || s === 'unknown' || s === 'unknow' || s === 'null' || s === 'undefined';
+      };
+
+      const getByPath = (obj, path) => {
+        try {
+          return path.split('.').reduce((acc, k) => (acc && typeof acc === 'object') ? acc[k] : undefined, obj);
+        } catch (_) {
+          return undefined;
+        }
+      };
+
+      const pickProviderOrderId = (providerObj) => {
+        if (!providerObj || typeof providerObj !== 'object') return '';
+        const candidates = [
+          'orderId',
+          'orderID',
+          'orderid',
+          'order_id',
+          'id',
+          'pedidoId',
+          'pedido_id',
+          'data.orderId',
+          'data.orderID',
+          'data.order_id',
+          'data.id',
+          'response.orderId',
+          'response.orderID',
+          'response.order_id',
+          'response.id',
+          'payload.orderId',
+          'payload.orderID',
+          'payload.order_id',
+          'payload.id',
+          'statusPayload.orderId',
+          'statusPayload.orderID',
+          'statusPayload.order_id',
+          'statusPayload.id'
+        ];
+        for (const p of candidates) {
+          const v = getByPath(providerObj, p);
+          if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+          if (typeof v === 'string' && !isUnknown(v)) return String(v).trim();
+        }
+        return '';
+      };
+
+      const fsOid = pickProviderOrderId(o && o.fornecedor_social ? o.fornecedor_social : null);
+      if (fsOid) return 'Fornecedor Social';
+      const famaOid = pickProviderOrderId(o && o.fama24h ? o.fama24h : null);
+      if (famaOid) return 'Fama24h';
+      return '-';
+    };
+
+    const resolveFornecedorOrderId = (o) => {
+      const isUnknown = (v) => {
+        const s = String(v ?? '').toLowerCase().trim();
+        return s === '' || s === 'unknown' || s === 'unknow' || s === 'null' || s === 'undefined';
+      };
+
+      const getByPath = (obj, path) => {
+        try {
+          return path.split('.').reduce((acc, k) => (acc && typeof acc === 'object') ? acc[k] : undefined, obj);
+        } catch (_) {
+          return undefined;
+        }
+      };
+
+      const pickProviderOrderId = (providerObj) => {
+        if (!providerObj || typeof providerObj !== 'object') return '';
+        const candidates = [
+          'orderId',
+          'orderID',
+          'orderid',
+          'order_id',
+          'id',
+          'pedidoId',
+          'pedido_id',
+          'data.orderId',
+          'data.orderID',
+          'data.order_id',
+          'data.id',
+          'response.orderId',
+          'response.orderID',
+          'response.order_id',
+          'response.id',
+          'payload.orderId',
+          'payload.orderID',
+          'payload.order_id',
+          'payload.id',
+          'statusPayload.orderId',
+          'statusPayload.orderID',
+          'statusPayload.order_id',
+          'statusPayload.id'
+        ];
+        for (const p of candidates) {
+          const v = getByPath(providerObj, p);
+          if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+          if (typeof v === 'string' && !isUnknown(v)) return String(v).trim();
+        }
+        return '';
+      };
+
+      const fs = o && o.fornecedor_social ? o.fornecedor_social : null;
+      const fama = o && o.fama24h ? o.fama24h : null;
+
+      const fsOid = pickProviderOrderId(fs);
+      if (fsOid) return fsOid;
+      const famaOid = pickProviderOrderId(fama);
+      if (famaOid) return famaOid;
+      return '';
+    };
+
+    const resolveIdentifier = (o) => {
+      const id = o && o.woovi && (o.woovi.identifier || o.woovi.chargeId || '');
+      const raw = id || o.identifier || '';
+      return String(raw || '').trim();
+    };
+
+    const parseOptionalNumber = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const pageRaw = parseInt(String(req.query.page || '1'), 10);
+    const pageSizeRaw = parseInt(String(req.query.pageSize || '50'), 10);
+    const pageSize = Math.min(200, Math.max(10, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 50));
+    const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
+    const minPct = (String(req.query.minPct || '').trim() !== '') ? parseOptionalNumber(req.query.minPct) : null;
+    const maxPct = (String(req.query.maxPct || '').trim() !== '') ? parseOptionalNumber(req.query.maxPct) : null;
+    const q = String(req.query.q || '').trim();
+    const qType = String(req.query.qType || 'username').trim();
+    const filledOnly = String(req.query.filled || '').trim() === '1';
+
+    const usernames = Array.from(new Set(orders.map(resolveUsername).filter(Boolean)));
+    const monitorDocs = usernames.length ? await monitorCol.find({ username: { $in: usernames } }, { projection: { _id: 0 } }).toArray() : [];
+    const monitorMap = new Map(monitorDocs.map(d => [String(d.username || '').toLowerCase(), d]));
+    const validatedDocs = usernames.length ? await validatedCol.find({ username: { $in: usernames } }, { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1 } }).toArray() : [];
+    const validatedMap = new Map(validatedDocs.map(d => [String(d.username || '').toLowerCase(), d]));
+
+    const backfillOps = [];
+
+    const allRows = orders.map((o) => {
+      const username = resolveUsername(o);
+      const contracted = resolveQtyWithUpgrade(o);
+      const dateMs = resolveDateMs(o);
+      const mon = username ? (monitorMap.get(username) || null) : null;
+      const vu = username ? (validatedMap.get(username) || null) : null;
+
+      const currentFollowersCount = mon && typeof mon.followersCount === 'number' ? mon.followersCount : null;
+      const currentCheckedAt = mon ? (mon.checkedAt || null) : null;
+      const isPrivate = mon ? (typeof mon.isPrivate === 'boolean' ? mon.isPrivate : null) : null;
+
+      let initialFollowersCount = (typeof o.initialFollowersCount === 'number') ? o.initialFollowersCount : null;
+      let initialFollowersCheckedAt = o.initialFollowersCheckedAt ? String(o.initialFollowersCheckedAt) : null;
+
+      if (initialFollowersCount == null && vu && typeof vu.followersCount === 'number') {
+        initialFollowersCount = vu.followersCount;
+        initialFollowersCheckedAt = vu.checkedAt || null;
+      } else if (initialFollowersCount == null && mon && typeof mon.followersCount === 'number') {
+        initialFollowersCount = mon.followersCount;
+        initialFollowersCheckedAt = mon.checkedAt || null;
+      }
+
+      if ((typeof o.initialFollowersCount !== 'number') && initialFollowersCount != null) {
+        backfillOps.push({
+          updateOne: {
+            filter: { _id: o._id, $or: [{ initialFollowersCount: { $exists: false } }, { initialFollowersCount: null }] },
+            update: { $set: { initialFollowersCount: Number(initialFollowersCount), initialFollowersCheckedAt: initialFollowersCheckedAt || new Date().toISOString() } }
+          }
+        });
+      }
+
+      const resultado = (initialFollowersCount != null && contracted) ? (Number(initialFollowersCount) + Number(contracted)) : null;
+      const diffAbs = (resultado != null && currentFollowersCount != null) ? (Number(resultado) - Number(currentFollowersCount)) : null;
+      const diffPct = (diffAbs != null && resultado) ? ((Number(diffAbs) / Number(resultado)) * 100) : null;
+
+      return {
+        orderId: o._id,
+        orderIdentifier: resolveIdentifier(o),
+        fornecedorOrderId: resolveFornecedorOrderId(o),
+        username,
+        tipo: resolveTipo(o),
+        fornecedor: resolveFornecedor(o),
+        contracted: Number(contracted || 0),
+        initialFollowersCount,
+        initialFollowersCheckedAt,
+        resultado,
+        currentFollowersCount,
+        currentCheckedAt,
+        isPrivate,
+        lastPurchaseAtMs: dateMs,
+        diffAbs,
+        diffPct
+      };
+    }).filter(r => r.username && r.contracted > 0).sort((a, b) => Number(b.lastPurchaseAtMs || 0) - Number(a.lastPurchaseAtMs || 0));
+
+    if (backfillOps.length) {
+      try {
+        await col.bulkWrite(backfillOps, { ordered: false });
+      } catch (_) {}
+    }
+
+    const qNorm = String(q || '').trim().toLowerCase();
+    const qTypeNorm = String(qType || 'username').trim().toLowerCase();
+
+    const filtered = allRows.filter((r) => {
+      if (filledOnly) {
+        if (r.currentFollowersCount == null) return false;
+        if (r.resultado == null) return false;
+      }
+
+      if (qNorm) {
+        if (qTypeNorm === 'orderid') {
+          const fId = String(r.fornecedorOrderId || '').toLowerCase();
+          if (!fId.includes(qNorm)) return false;
+        } else {
+          const u = String(r.username || '').toLowerCase();
+          if (!u.includes(qNorm)) return false;
+        }
+      }
+
+      if (minPct == null && maxPct == null) return true;
+      if (r.diffPct == null) return false;
+      if (minPct != null && r.diffPct < minPct) return false;
+      if (maxPct != null && r.diffPct > maxPct) return false;
+      return true;
+    });
+
+    const totalRows = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    const safePage = Math.min(totalPages, page);
+    const start = (safePage - 1) * pageSize;
+    const pageRows = filtered.slice(start, start + pageSize);
+
+    res.render('painel', {
+      view: 'gerenciamento_seguidores',
+      followersOrders: pageRows,
+      pagination: { page: safePage, pageSize, totalRows, totalPages },
+      filters: { minPct, maxPct, q, qType, filled: filledOnly },
+      period: 'all'
+    });
+  } catch (err) {
+    console.error('Erro em /painel/gerenciamento-seguidores:', err);
+    res.status(500).send('Erro interno');
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req, res) => {
+  try {
+    const username = String(req.query.username || '').trim().toLowerCase().replace(/^@/, '');
+    const force = String(req.query.force || '').trim() === '1';
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+
+    const { getCollection } = require('./mongodbClient');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const cached = await monitorCol.findOne({ username }, { projection: { _id: 0 } });
+    if (!force && cached && cached.checkedAt) {
+      const ageMs = Date.now() - new Date(String(cached.checkedAt)).getTime();
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < (5 * 60 * 1000)) {
+        return res.json({ ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null });
+      }
+    }
+
+    let result = await fetchInstagramFollowersInfo(username);
+    let profile = result && result.success ? result.profile : null;
+    let source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+    let isPrivate = profile ? !!profile.isPrivate : null;
+    let followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
+    let error = result && !result.success ? (result.error || 'unknown_error') : null;
+
+    if (!profile) {
+      try {
+        const userAgent = req.get("User-Agent") || "";
+        const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
+        const mockReq = { session: {}, query: {}, body: {} };
+        const fallback = await verifyInstagramProfile(username, userAgent, ip, mockReq, null, true);
+        if (fallback && fallback.success && fallback.profile) {
+          profile = fallback.profile;
+          source = 'verifyInstagramProfile';
+          isPrivate = !!profile.isPrivate;
+          followersCount = typeof profile.followersCount === 'number' ? profile.followersCount : null;
+          error = null;
+        }
+      } catch (_) {}
+    }
+
+    const checkedAt = new Date().toISOString();
+    await monitorCol.updateOne(
+      { username },
+      { $set: { username, followersCount, isPrivate, checkedAt, source, error } },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true, cached: false, username, followersCount, isPrivate, checkedAt, source, error });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/admin/update-private-order', requireAdmin, async (req, res) => {
+    try {
+        console.log('Update Private Order:', req.body);
+        const { id, field, value } = req.body;
+        if (!id || !field) return res.status(400).json({ error: 'Missing id or field' });
+        
+        const allowedFields = ['orderSent', 'noContact', 'contactCount', 'supplierInfo', 'archived'];
+        if (!allowedFields.includes(field)) return res.status(400).json({ error: 'Invalid field' });
+        
+        const { getCollection } = require('./mongodbClient');
+        const { ObjectId } = require('mongodb');
+        const col = await getCollection('checkout_orders');
+        
+        let updateSet = {};
+        let updateUnset = {};
+
+        if (field === 'contactCount') {
+            updateSet['contactCount'] = Number(value);
+        } else if (field === 'supplierInfo') {
+            const { provider, orderId } = value;
+            if (!provider || !orderId) return res.status(400).json({ error: 'Missing provider info' });
+            
+            updateSet['orderSent'] = true;
+            
+            if (provider === 'fama24h') {
+                updateSet['fama24h.orderId'] = orderId;
+                updateSet['fama24h.status'] = 'Pending'; 
+                updateUnset['fama24h.error'] = '';
+            } else if (provider === 'fornecedor_social') {
+                updateSet['fornecedor_social.orderId'] = orderId;
+                updateSet['fornecedor_social.status'] = 'Pending';
+                updateUnset['fornecedor_social.error'] = '';
+            } else if (provider === 'worldsmm_comments') {
+                updateSet['worldsmm_comments.orderId'] = orderId;
+                updateSet['worldsmm_comments.status'] = 'created';
+                updateUnset['worldsmm_comments.error'] = '';
+            } else if (provider === 'fama24h_views') {
+                updateSet['fama24h_views.orderId'] = orderId;
+                updateSet['fama24h_views.status'] = 'created';
+                updateUnset['fama24h_views.error'] = '';
+            } else if (provider === 'fama24h_likes') {
+                updateSet['fama24h_likes.orderId'] = orderId;
+                updateSet['fama24h_likes.status'] = 'created';
+                updateUnset['fama24h_likes.error'] = '';
+            }
+        } else if (field === 'archived') {
+            const v = !!value;
+            updateSet['archived'] = v;
+            updateSet['archivedAt'] = v ? new Date().toISOString() : null;
+        } else {
+            updateSet[field] = value;
+        }
+        
+        const update = { $set: updateSet };
+        if (updateUnset && Object.keys(updateUnset).length > 0) update.$unset = updateUnset;
+        await col.updateOne({ _id: new ObjectId(id) }, update);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/private-order-email', requireAdmin, async (req, res) => {
+    try {
+        const { id } = req.body || {};
+        if (!id || !/^[0-9a-fA-F]{24}$/.test(String(id))) return res.status(400).json({ ok: false, error: 'invalid_id' });
+        const { getCollection } = require('./mongodbClient');
+        const { ObjectId } = require('mongodb');
+        const col = await getCollection('checkout_orders');
+        const order = await col.findOne(
+            { _id: new ObjectId(String(id)) },
+            {
+                projection: {
+                    customer: 1,
+                    woovi: 1,
+                    customerEmail: 1,
+                    additionalInfoMap: 1,
+                    additionalInfoMapPaid: 1,
+                    additionalInfo: 1,
+                    additionalInfoPaid: 1
+                }
+            }
+        );
+        const arrEmail = (arr) => {
+            const a = Array.isArray(arr) ? arr : [];
+            const item = a.find(it => {
+                const k = String(it?.key || '').trim().toLowerCase();
+                return k === 'email' || k === 'e-mail' || k === 'mail' || k === 'contact_email';
+            });
+            return item ? String(item.value || '') : '';
+        };
+        const normalizeEmail = (s) => {
+            const raw = typeof s === 'string' ? s.trim() : '';
+            if (!raw) return '';
+            const email = raw.toLowerCase();
+            const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+            return isValid ? email : '';
+        };
+        const mapEmail = (m) => {
+            const obj = (m && typeof m === 'object') ? m : null;
+            if (!obj) return '';
+            const keys = Object.keys(obj);
+            for (const k of keys) {
+                const kk = String(k || '').toLowerCase();
+                if (!kk.includes('email')) continue;
+                const v = obj[k];
+                if (typeof v === 'string' && v.trim()) return v;
+            }
+            return '';
+        };
+        const candidates = [
+            order?.customer?.email,
+            order?.customer?.mail,
+            order?.customerEmail,
+            order?.woovi?.customer?.email,
+            order?.woovi?.charge?.customer?.email,
+            order?.woovi?.charge?.charge?.customer?.email,
+            order?.additionalInfoMapPaid?.email,
+            order?.additionalInfoMap?.email,
+            mapEmail(order?.additionalInfoMapPaid),
+            mapEmail(order?.additionalInfoMap),
+            arrEmail(order?.additionalInfoPaid),
+            arrEmail(order?.additionalInfo)
+        ];
+        let emailOut = '';
+        for (const c of candidates) {
+            const normalized = normalizeEmail(typeof c === 'string' ? c : '');
+            if (normalized) {
+                emailOut = normalized;
+                break;
+            }
+        }
+        if (!emailOut) {
+            return res.json({ ok: false, error: 'email_not_found' });
+        }
+        return res.json({ ok: true, email: emailOut });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 app.get('/painel', requireAdmin, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
     const settingsCol = await getCollection('settings');
 
-    // Filter by paid status
-    const query = {
+    const view = String(req.query.view || 'dashboard');
+    const sessionSelectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+
+    const paidQuery = {
       $or: [
         { status: 'pago' },
         { 'woovi.status': 'pago' }
       ]
     };
 
-    const orders = await col.find(query).sort({ createdAt: -1 }).toArray();
+    const unknownProviderQuery = {
+      $or: [
+        { 'fama24h.status': 'unknown' },
+        { 'fama24h.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h.status': 'error' },
+        { 'fama24h.error': { $exists: true, $ne: '' } },
+        { 'fornecedor_social.status': 'unknown' },
+        { 'fornecedor_social.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fornecedor_social.status': 'error' },
+        { 'fornecedor_social.error': { $exists: true, $ne: '' } },
+        { 'worldsmm_comments.status': 'unknown' },
+        { 'worldsmm_comments.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'worldsmm_comments.status': 'error' },
+        { 'worldsmm_comments.error': { $regex: 'timeout', $options: 'i' } },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } }
+              ]
+            },
+            { $or: [{ worldsmm_comments: { $exists: false } }, { 'worldsmm_comments.orderId': { $exists: false } }] }
+          ]
+        },
+        { 'fama24h_views.status': 'unknown' },
+        { 'fama24h_views.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h_views.status': 'error' },
+        { 'fama24h_views.error': { $exists: true } },
+        { 'fama24h_likes.status': 'unknown' },
+        { 'fama24h_likes.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h_likes.status': 'error' },
+        { 'fama24h_likes.error': { $exists: true } }
+      ]
+    };
+
+    const query = view === 'unknown_orderid'
+      ? { $and: [paidQuery, unknownProviderQuery] }
+      : paidQuery;
+
+    const orders = await col.find(query).sort({ createdAt: -1 }).limit(2000).toArray();
 
     let costSettingsDoc = await settingsCol.findOne({ _id: 'cost_settings' });
     const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, (costSettingsDoc && costSettingsDoc.values) || {});
@@ -5931,12 +7174,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
 
     // Filter logic
-    const period = req.query.period || 'today';
+    const periodDefault = view === 'unknown_orderid' ? 'all' : 'today';
+    const period = req.query.period || periodDefault;
     const nowUTC = new Date();
     const nowSP = toSP(nowUTC);
     
     // Start of today in SP (00:00 SP time)
     const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
+    const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
     let filteredOrders = orders.filter(o => {
       const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
@@ -5945,7 +7190,9 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const orderDateUTC = new Date(dateStr);
       const orderDateSP = toSP(orderDateUTC);
 
-      if (period === 'today') {
+      if (period === 'all') {
+        return true;
+      } else if (period === 'today') {
         return orderDateSP >= startOfTodaySP;
       } else if (period === 'last3days') {
         const start = new Date(startOfTodaySP);
@@ -5983,10 +7230,545 @@ app.get('/painel', requireAdmin, async (req, res) => {
       return true;
     });
 
+    if (view === 'unknown_orderid') {
+      const resolveQty = (o) => {
+        if (o.quantidade) return Number(o.quantidade);
+        if (o.qtd) return Number(o.qtd);
+        if (o.additionalInfoPaid) {
+          const qItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i && i.key === 'quantidade') : null;
+          if (qItem) return Number(qItem.value);
+        }
+        if (o.additionalInfoMap && o.additionalInfoMap.quantidade) return Number(o.additionalInfoMap.quantidade);
+        return 0;
+      };
+
+      const resolveOrderBumps = (o) => {
+        try {
+          if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid.order_bumps === 'string') return o.additionalInfoMapPaid.order_bumps;
+          const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const paidItem = arrPaid.find(i => i && i.key === 'order_bumps');
+          if (paidItem && typeof paidItem.value === 'string') return paidItem.value;
+          if (o.additionalInfoMap && typeof o.additionalInfoMap.order_bumps === 'string') return o.additionalInfoMap.order_bumps;
+          const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+          const item = arr.find(i => i && i.key === 'order_bumps');
+          if (item && typeof item.value === 'string') return item.value;
+        } catch (_) {}
+        return '';
+      };
+
+      const parseBumps = (raw) => {
+        const text = String(raw || '');
+        const parts = text.split(';').map(p => p.trim()).filter(Boolean);
+        const res = { views: 0, likes: 0, comments: 0, upgrade: 0 };
+        for (const p of parts) {
+          const [kRaw, vRaw] = p.split(':');
+          const k = String(kRaw || '').toLowerCase().trim();
+          const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+          if (k === 'views') res.views = v;
+          else if (k === 'likes') res.likes = v;
+          else if (k === 'comments') res.comments = v;
+          else if (k === 'upgrade') res.upgrade = v || 1;
+        }
+        return res;
+      };
+
+      const isUnknownToken = (v) => {
+        const s = String(v || '').toLowerCase().trim();
+        return s === 'unknown' || s === 'unknow';
+      };
+
+      const isUnknownForFamaBump = (subdoc) => {
+        if (!subdoc) return true;
+        const st = (typeof subdoc.status !== 'undefined') ? String(subdoc.status) : '';
+        const oid = (typeof subdoc.orderId !== 'undefined') ? String(subdoc.orderId) : '';
+        const err = (typeof subdoc.error !== 'undefined') ? String(subdoc.error) : '';
+        const stLower = st.toLowerCase();
+        const errLower = err.toLowerCase();
+        if (!String(oid || '').trim()) return true;
+        return isUnknownToken(st) || isUnknownToken(oid) || stLower === 'error' || errLower.includes('timeout') || (!!err && String(err || '').trim() !== '');
+      };
+
+      const getUpgradeAddQtd = (tipo, base) => {
+        try {
+          const t0 = String(tipo || '').toLowerCase().trim();
+          const t = t0.startsWith('seguidores_') ? t0.replace(/^seguidores_/, '') : t0;
+          const b = Number(base) || 0;
+          if (!b) return 0;
+          if (t === 'organicos' && b === 50) return 50;
+          if ((t === 'brasileiros' || t === 'organicos') && b === 1000) return 1000;
+          const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+          const target = upsellTargets[b];
+          if (!target) return 0;
+          return Number(target) - b;
+        } catch (_) {
+          return 0;
+        }
+      };
+
+      const resolveQtyWithUpgrade = (o) => {
+        const baseQty = resolveQty(o);
+        if (!baseQty) return baseQty;
+        const bumpsStr = String(resolveOrderBumps(o) || '').toLowerCase();
+        const m = bumpsStr.match(/(?:^|;)\s*upgrade\s*:\s*(\d+)/i);
+        const upgradeQty = m ? Number(m[1]) : 0;
+        if (!upgradeQty) return baseQty;
+        const serviceKey = String(resolveServiceKey(o) || '').toLowerCase();
+        if (!serviceKey.startsWith('seguidores')) return baseQty;
+        const tipo = resolveType(o);
+        const add = getUpgradeAddQtd(tipo, baseQty);
+        return baseQty + add;
+      };
+
+      const resolvePhone = (o) => {
+        try {
+          const phoneFromCustomer = o && o.customer && (o.customer.phone || o.customer.telefone || o.customer.whatsapp);
+          if (phoneFromCustomer) return String(phoneFromCustomer);
+
+          const phoneFromMap = o && o.additionalInfoMap && (o.additionalInfoMap.phone || o.additionalInfoMap.telefone || o.additionalInfoMap.whatsapp);
+          if (phoneFromMap) return String(phoneFromMap);
+
+          const direct = o && (o.phone || o.telefone || o.whatsapp || o.customerPhone);
+          if (direct) return String(direct);
+
+          if (o && o.additionalInfoPaid) {
+            const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+            const pItem = arr.find(i => i && (i.key === 'phone' || i.key === 'telefone' || i.key === 'whatsapp' || i.key === 'celular'));
+            if (pItem && typeof pItem.value !== 'undefined') return String(pItem.value);
+          }
+        } catch (_) {}
+        return '';
+      };
+
+      const resolveType = (o) => {
+        let type = o.tipo || o.tipoServico;
+        if (!type && o.additionalInfoPaid) {
+          const tItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i && i.key === 'tipo_servico') : null;
+          if (tItem) type = tItem.value;
+        }
+        if (!type && o.additionalInfoMap && o.additionalInfoMap.tipo_servico) type = o.additionalInfoMap.tipo_servico;
+        return String(type || '');
+      };
+
+      const resolveUser = (o) => {
+        if (o.instaUser) return String(o.instaUser);
+        if (o.instauser) return String(o.instauser);
+        if (o.instagramUser) return String(o.instagramUser);
+        if (o.additionalInfoMap && (o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser)) return String(o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser);
+        if (o.additionalInfoPaid) {
+          const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const uItem = arr.find(i => i && (i.key === 'instauser' || i.key === 'instaUser' || i.key === 'instagram_username' || i.key === 'user'));
+          if (uItem && typeof uItem.value !== 'undefined') return String(uItem.value);
+        }
+        return '';
+      };
+
+      const resolveCategory = (o) => {
+        let category = '';
+        if (o.additionalInfoPaid) {
+          const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const cItem = arr.find(i => i && i.key === 'categoria_servico');
+          if (cItem && typeof cItem.value === 'string') category = cItem.value;
+        }
+        if (!category && o.additionalInfoMap && typeof o.additionalInfoMap.categoria_servico === 'string') {
+          category = o.additionalInfoMap.categoria_servico;
+        }
+        return String(category || '');
+      };
+
+      const resolveServiceKey = (o) => {
+        let category = String(resolveCategory(o) || '').toLowerCase().trim();
+        let type = String(resolveType(o) || '').toLowerCase().trim();
+
+        if (!category) {
+          if (type.startsWith('curtidas_')) {
+            category = 'curtidas';
+            type = type.replace(/^curtidas_/, '');
+          } else if (type.startsWith('seguidores_')) {
+            category = 'seguidores';
+            type = type.replace(/^seguidores_/, '');
+          } else if (type.startsWith('visualizacoes_')) {
+            category = 'visualizacoes';
+            type = type.replace(/^visualizacoes_/, '');
+          }
+        }
+
+        if (type === 'visualizacoes_reels') {
+          category = 'visualizacoes';
+          type = 'reels';
+        }
+
+        if (category === 'curtidas' && type === 'mistos') return 'curtidas_mistos';
+        if (category === 'seguidores' && type === 'mistos') return 'seguidores_mistos';
+        if (category === 'curtidas' && type === 'organicos') return 'curtidas_organicos';
+        if (category === 'seguidores' && type === 'organicos') return 'seguidores_organicos';
+
+        if (category && type) return `${category}_${type}`;
+        return type || category || '';
+      };
+
+      const resolveServiceLabel = (o) => {
+        const key = resolveServiceKey(o);
+        return String(key || '').replace(/_/g, ' ').trim();
+      };
+
+      const extractInfoAny = (o, key) => {
+        try {
+          if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+          if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+          const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const itemPaid = arrPaid.find(i => i && i.key === key);
+          if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+          const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+          const item = arr.find(i => i && i.key === key);
+          if (item && typeof item.value !== 'undefined') return item.value;
+        } catch (_) {}
+        return '';
+      };
+
+      const normalizeUrl = (u) => {
+        const s0 = String(u || '').trim();
+        if (!s0) return '';
+        if (/^https?:\/\//i.test(s0)) return s0;
+        if (/^www\./i.test(s0)) return `https://${s0}`;
+        if (/instagram\.com\//i.test(s0)) return `https://${s0.replace(/^\/+/, '')}`;
+        return s0;
+      };
+
+      const resolvePostLinkViews = (o) => {
+        const sessionLink = sessionSelectedFor && sessionSelectedFor.views && sessionSelectedFor.views.link ? String(sessionSelectedFor.views.link) : '';
+        const candidates = [
+          sessionLink,
+          o?.fama24h_views?.requestPayload?.link,
+          extractInfoAny(o, 'orderbump_post_views'),
+          extractInfoAny(o, 'post_link')
+        ];
+        for (const c of candidates) {
+          const url = normalizeUrl(c);
+          if (url) return url;
+        }
+        return '';
+      };
+
+      const resolvePostLinkLikes = (o) => {
+        const sessionLink = sessionSelectedFor && sessionSelectedFor.likes && sessionSelectedFor.likes.link ? String(sessionSelectedFor.likes.link) : '';
+        const candidates = [
+          sessionLink,
+          o?.fama24h_likes?.requestPayload?.link,
+          extractInfoAny(o, 'orderbump_post_likes'),
+          extractInfoAny(o, 'post_link')
+        ];
+        for (const c of candidates) {
+          const url = normalizeUrl(c);
+          if (url) return url;
+        }
+        return '';
+      };
+
+      const resolvePostLinkComments = (o) => {
+        const sessionLink = sessionSelectedFor && sessionSelectedFor.comments && sessionSelectedFor.comments.link ? String(sessionSelectedFor.comments.link) : '';
+        const candidates = [
+          sessionLink,
+          o?.worldsmm_comments?.requestPayload?.link,
+          extractInfoAny(o, 'orderbump_post_comments'),
+          extractInfoAny(o, 'post_link')
+        ];
+        for (const c of candidates) {
+          const url = normalizeUrl(c);
+          if (url) return url;
+        }
+        return '';
+      };
+
+      const normalizeUsernameKey = (u) => {
+        const s0 = String(u || '').trim();
+        if (!s0) return '';
+        const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+        return s1.toLowerCase().trim();
+      };
+
+      const resolveIsPrivate = (o) => {
+        try {
+          if (o && o.isPrivate === true) return true;
+          if (o && o.profilePrivacy && o.profilePrivacy.isPrivate === true) return true;
+          if (o && o.additionalInfoMap && (o.additionalInfoMap.isPrivate === true || o.additionalInfoMap.isPrivate === 'true')) return true;
+          if (o && o.additionalInfoMapPaid && (o.additionalInfoMapPaid.isPrivate === true || o.additionalInfoMapPaid.isPrivate === 'true')) return true;
+          const arrPaid = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const iPaid = arrPaid.find(i => i && String(i.key || '').trim().toLowerCase() === 'isprivate');
+          if (iPaid && String(iPaid.value || '').trim().toLowerCase() === 'true') return true;
+          const arr = Array.isArray(o && o.additionalInfo) ? o.additionalInfo : [];
+          const i = arr.find(i => i && String(i.key || '').trim().toLowerCase() === 'isprivate');
+          if (i && String(i.value || '').trim().toLowerCase() === 'true') return true;
+        } catch (_) {}
+        return false;
+      };
+
+      const normalizePhoneKey = (p) => String(p || '').replace(/\D/g, '');
+
+      const privateKeySetUsers = new Set();
+      const privateKeySetPhones = new Set();
+      try {
+        const privateQuery = {
+          $and: [
+            paidQuery,
+            {
+              $or: [
+                { isPrivate: true },
+                { 'profilePrivacy.isPrivate': true },
+                { 'additionalInfoMap.isPrivate': true },
+                { 'additionalInfoMap.isPrivate': 'true' },
+                { 'additionalInfoMapPaid.isPrivate': true },
+                { 'additionalInfoMapPaid.isPrivate': 'true' }
+              ]
+            }
+          ]
+        };
+        const privateOrders = await col.find(privateQuery, {
+          projection: { instauser: 1, instaUser: 1, instagramUsername: 1, instagramUser: 1, additionalInfoPaid: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, customer: 1, phone: 1, telefone: 1, whatsapp: 1, customerPhone: 1 }
+        }).sort({ createdAt: -1 }).limit(5000).toArray();
+        for (const po of privateOrders) {
+          const uKey = normalizeUsernameKey(resolveUser(po));
+          if (uKey) privateKeySetUsers.add(uKey);
+          const pKey = normalizePhoneKey(resolvePhone(po));
+          if (pKey) privateKeySetPhones.add(pKey);
+        }
+      } catch (_) {}
+
+      let filteredUnknownOrders = filteredOrders;
+      const searchPhone = String(req.query.searchPhone || '').trim();
+      if (searchPhone) {
+        const needleDigits = searchPhone.replace(/\D/g, '');
+        filteredUnknownOrders = filteredUnknownOrders.filter(o => {
+          const phone = resolvePhone(o);
+          if (!phone) return false;
+          if (needleDigits) return String(phone).replace(/\D/g, '').includes(needleDigits);
+          return String(phone).toLowerCase().includes(searchPhone.toLowerCase());
+        });
+      }
+
+      const hasWorldsmmComments = (o) => !!(o && o.worldsmm_comments && (typeof o.worldsmm_comments.status !== 'undefined' || typeof o.worldsmm_comments.orderId !== 'undefined'));
+
+      const serviceFilter = String(req.query.service || '').toLowerCase().trim();
+      const issueFilter = String(req.query.issue || '').toLowerCase().trim();
+      if (serviceFilter && serviceFilter !== 'all') {
+        if (serviceFilter === 'comentarios') {
+          filteredUnknownOrders = filteredUnknownOrders.filter(o => hasWorldsmmComments(o));
+        } else {
+          filteredUnknownOrders = filteredUnknownOrders.filter(o => resolveServiceKey(o) === serviceFilter);
+        }
+      }
+
+      const expectedProviderFromServiceKey = (serviceKey) => {
+        const k = String(serviceKey || '').toLowerCase().trim();
+        if (!k) return '';
+        if (k === 'seguidores_organicos') return 'fornecedor_social';
+        if (k.startsWith('seguidores')) return 'fama24h';
+        if (k.startsWith('curtidas')) return 'fama24h';
+        if (k.startsWith('visualizacoes')) return 'fama24h';
+        return '';
+      };
+
+      const isUnknownForProvider = (o, provider) => {
+        if (provider === 'fama24h') {
+          const st = (o && o.fama24h && typeof o.fama24h.status !== 'undefined') ? o.fama24h.status : '';
+          const oid = (o && o.fama24h && typeof o.fama24h.orderId !== 'undefined') ? o.fama24h.orderId : '';
+          return isUnknownToken(st) || isUnknownToken(oid);
+        }
+        if (provider === 'fornecedor_social') {
+          const st = (o && o.fornecedor_social && typeof o.fornecedor_social.status !== 'undefined') ? o.fornecedor_social.status : '';
+          const oid = (o && o.fornecedor_social && typeof o.fornecedor_social.orderId !== 'undefined') ? o.fornecedor_social.orderId : '';
+          return isUnknownToken(st) || isUnknownToken(oid);
+        }
+        return false;
+      };
+
+      const hasValidOrderId = (v) => {
+        const s = String(v || '').trim();
+        if (!s) return false;
+        return !isUnknownToken(s);
+      };
+
+      const isErrorForProvider = (o, provider) => {
+        const doc = (o && o[provider]) ? o[provider] : null;
+        if (!doc) return false;
+        const stLower = String(doc.status || '').toLowerCase().trim();
+        const err = (typeof doc.error !== 'undefined') ? String(doc.error || '') : '';
+        if (stLower === 'error') return true;
+        if (err && err.trim() !== '') return true;
+        return false;
+      };
+
+      const classifyFamaBumpIssue = (subdoc) => {
+        const stLower = subdoc && typeof subdoc.status !== 'undefined' ? String(subdoc.status || '').toLowerCase().trim() : '';
+        const oid = subdoc && typeof subdoc.orderId !== 'undefined' ? String(subdoc.orderId || '') : '';
+        const err = subdoc && typeof subdoc.error !== 'undefined' ? String(subdoc.error || '') : '';
+        const errLower = err.toLowerCase();
+        const hasId = hasValidOrderId(oid);
+        if (hasId && (stLower === 'created' || stLower === 'processing' || stLower === 'pending' || stLower === 'completed')) return 'ok';
+        if (isUnknownToken(stLower) || isUnknownToken(oid)) return 'unknown';
+        if (stLower === 'error') return 'error';
+        if (err && err.trim() !== '') return 'error';
+        if (!hasId) return 'unknown';
+        return 'unknown';
+      };
+
+      const classifyWorldsmmCommentsIssue = (o) => {
+        const doc = o && o.worldsmm_comments ? o.worldsmm_comments : null;
+        if (!doc) return 'unknown';
+        const stLower = typeof doc.status !== 'undefined' ? String(doc.status || '').toLowerCase().trim() : '';
+        const oid = typeof doc.orderId !== 'undefined' ? String(doc.orderId || '') : '';
+        const err = typeof doc.error !== 'undefined' ? String(doc.error || '') : '';
+        const errLower = err.toLowerCase();
+        const hasId = hasValidOrderId(oid);
+        if (hasId && (stLower === 'created' || stLower === 'processing' || stLower === 'pending' || stLower === 'completed')) return 'ok';
+        if (isUnknownToken(stLower) || isUnknownToken(oid)) return 'unknown';
+        if (stLower === 'error') return 'error';
+        if (!hasId && errLower.includes('timeout')) return 'error';
+        if (!hasId && err && err.trim() !== '') return 'error';
+        if (!hasId) return 'unknown';
+        return 'unknown';
+      };
+
+      filteredUnknownOrders = filteredUnknownOrders.filter(o => {
+        const serviceKey = resolveServiceKey(o);
+        const expectedMain = expectedProviderFromServiceKey(serviceKey);
+        const bumps = parseBumps(resolveOrderBumps(o));
+        const wantsViewsBump = bumps.views > 0 || !!(o && o.fama24h_views);
+        const wantsLikesBump = bumps.likes > 0 || !!(o && o.fama24h_likes);
+        const wantsCommentsBump = bumps.comments > 0 || !!(o && o.worldsmm_comments);
+        const mainUnknown = expectedMain ? isUnknownForProvider(o, expectedMain) : (isUnknownForProvider(o, 'fama24h') || isUnknownForProvider(o, 'fornecedor_social'));
+        const mainError = expectedMain ? isErrorForProvider(o, expectedMain) : (isErrorForProvider(o, 'fama24h') || isErrorForProvider(o, 'fornecedor_social'));
+
+        const bumpViewsIssue = wantsViewsBump ? classifyFamaBumpIssue(o && o.fama24h_views) : 'ok';
+        const bumpLikesIssue = wantsLikesBump ? classifyFamaBumpIssue(o && o.fama24h_likes) : 'ok';
+        const bumpCommentsIssue = wantsCommentsBump ? classifyWorldsmmCommentsIssue(o) : 'ok';
+
+        const anyUnknown = mainUnknown || bumpViewsIssue === 'unknown' || bumpLikesIssue === 'unknown' || bumpCommentsIssue === 'unknown';
+        const anyError = mainError || bumpViewsIssue === 'error' || bumpLikesIssue === 'error' || bumpCommentsIssue === 'error';
+
+        if (issueFilter === 'unknown') {
+          if (serviceFilter === 'comentarios') return wantsCommentsBump && bumpCommentsIssue === 'unknown';
+          if (serviceFilter && serviceFilter !== 'all') return mainUnknown;
+          return anyUnknown;
+        }
+        if (issueFilter === 'error') {
+          if (serviceFilter === 'comentarios') return wantsCommentsBump && bumpCommentsIssue === 'error';
+          if (serviceFilter && serviceFilter !== 'all') return mainError;
+          return anyError;
+        }
+
+        return anyUnknown || anyError;
+      });
+
+      const seenPrivates = new Set();
+      filteredUnknownOrders = filteredUnknownOrders.filter(o => {
+        if (!(o && o.isPrivate)) return true;
+        const key = normalizeUsernameKey(resolveUser(o));
+        if (!key) return true;
+        if (seenPrivates.has(key)) return false;
+        seenPrivates.add(key);
+        return true;
+      });
+
+      const unknownOrders = filteredUnknownOrders.map(o => ({
+        orderBumps: resolveOrderBumps(o),
+        _id: o._id,
+        createdAt: o.createdAt || o.woovi?.paidAt || o.paidAt,
+        instaUser: resolveUser(o),
+        phone: resolvePhone(o),
+        postLinkViews: resolvePostLinkViews(o),
+        postLinkLikes: resolvePostLinkLikes(o),
+        postLinkComments: resolvePostLinkComments(o),
+        type: resolveType(o),
+        serviceLabel: resolveServiceLabel(o),
+        serviceKey: resolveServiceKey(o),
+        expectedMainProvider: expectedProviderFromServiceKey(resolveServiceKey(o)) || '',
+        needsWorldsmmComments: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.comments > 0 || !!(o && o.worldsmm_comments); if (!wants) return false; return classifyWorldsmmCommentsIssue(o) !== 'ok'; })(),
+        needsFamaViewsBump: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.views > 0 || !!(o && o.fama24h_views); return wants ? classifyFamaBumpIssue(o && o.fama24h_views) !== 'ok' : false; })(),
+        needsFamaLikesBump: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.likes > 0 || !!(o && o.fama24h_likes); return wants ? classifyFamaBumpIssue(o && o.fama24h_likes) !== 'ok' : false; })(),
+        qty: resolveQtyWithUpgrade(o),
+        isPrivate: (() => {
+          const byDoc = resolveIsPrivate(o);
+          if (byDoc) return true;
+          const uKey = normalizeUsernameKey(resolveUser(o));
+          if (uKey && privateKeySetUsers.has(uKey)) return true;
+          const pKey = normalizePhoneKey(resolvePhone(o));
+          if (pKey && privateKeySetPhones.has(pKey)) return true;
+          return false;
+        })(),
+        famaOrderId: (o.fama24h && typeof o.fama24h.orderId !== 'undefined') ? String(o.fama24h.orderId) : '',
+        famaStatus: (o.fama24h && o.fama24h.status) ? String(o.fama24h.status) : '',
+        fsOrderId: (o.fornecedor_social && typeof o.fornecedor_social.orderId !== 'undefined') ? String(o.fornecedor_social.orderId) : '',
+        fsStatus: (o.fornecedor_social && o.fornecedor_social.status) ? String(o.fornecedor_social.status) : '',
+        famaViewsOrderId: (o.fama24h_views && typeof o.fama24h_views.orderId !== 'undefined') ? String(o.fama24h_views.orderId) : '',
+        famaViewsStatus: (o.fama24h_views && typeof o.fama24h_views.status !== 'undefined') ? String(o.fama24h_views.status) : '',
+        famaViewsQty: (o.fama24h_views && o.fama24h_views.requestPayload && typeof o.fama24h_views.requestPayload.quantity !== 'undefined') ? String(o.fama24h_views.requestPayload.quantity) : String(parseBumps(resolveOrderBumps(o)).views || ''),
+        famaViewsError: (o.fama24h_views && typeof o.fama24h_views.error !== 'undefined') ? String(o.fama24h_views.error) : '',
+        famaLikesOrderId: (o.fama24h_likes && typeof o.fama24h_likes.orderId !== 'undefined') ? String(o.fama24h_likes.orderId) : '',
+        famaLikesStatus: (o.fama24h_likes && typeof o.fama24h_likes.status !== 'undefined') ? String(o.fama24h_likes.status) : '',
+        famaLikesQty: (o.fama24h_likes && o.fama24h_likes.requestPayload && typeof o.fama24h_likes.requestPayload.quantity !== 'undefined') ? String(o.fama24h_likes.requestPayload.quantity) : String(parseBumps(resolveOrderBumps(o)).likes || ''),
+        famaLikesError: (o.fama24h_likes && typeof o.fama24h_likes.error !== 'undefined') ? String(o.fama24h_likes.error) : '',
+        worldsmmCommentsOrderId: (o.worldsmm_comments && typeof o.worldsmm_comments.orderId !== 'undefined') ? String(o.worldsmm_comments.orderId) : '',
+        worldsmmCommentsStatus: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.comments > 0 || !!(o && o.worldsmm_comments); if (!wants) return ''; const st = (o.worldsmm_comments && typeof o.worldsmm_comments.status !== 'undefined') ? String(o.worldsmm_comments.status) : ''; return st || 'unknown'; })(),
+        worldsmmCommentsError: (o.worldsmm_comments && typeof o.worldsmm_comments.error !== 'undefined') ? String(o.worldsmm_comments.error) : '',
+        worldsmmCommentsQty: (() => {
+          const b = parseBumps(resolveOrderBumps(o));
+          const wants = b.comments > 0 || !!(o && o.worldsmm_comments);
+          if (!wants) return '';
+          if (o.worldsmm_comments && o.worldsmm_comments.requestPayload && typeof o.worldsmm_comments.requestPayload.quantity !== 'undefined') {
+            return String(o.worldsmm_comments.requestPayload.quantity);
+          }
+          return String(b.comments || '');
+        })()
+      }));
+
+      return res.render('painel', { view, period, unknownOrders, totalUnknown: unknownOrders.length, costSettings });
+    }
+
+    const paidOrdersToday = orders.filter(o => {
+      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+      if (!dateStr) return false;
+      const orderDateUTC = new Date(dateStr);
+      const orderDateSP = toSP(orderDateUTC);
+      return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+    }).length;
+
+    let validatedProfilesToday = 0;
+    try {
+      const vu = await getCollection('validated_insta_users');
+      const agg = await vu.aggregate([
+        { $match: { checkedAt: { $exists: true, $ne: null } } },
+        { $addFields: { checkedAtDate: { $convert: { input: '$checkedAt', to: 'date', onError: null, onNull: null } } } },
+        { $match: { checkedAtDate: { $gte: startOfTodaySP, $lt: startOfTomorrowSP } } },
+        { $count: 'count' }
+      ]).toArray();
+      validatedProfilesToday = (agg && agg[0] && agg[0].count) ? Number(agg[0].count) : 0;
+    } catch (_) {
+      validatedProfilesToday = 0;
+    }
+
     // Cost calculation
     let totalCost = 0;
     let totalRevenue = 0;
     const report = filteredOrders.map(o => {
+      const extractInfo = (key) => {
+        try {
+          if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+          if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+          const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const itemPaid = arrPaid.find(i => i && i.key === key);
+          if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+          const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+          const item = arr.find(i => i && i.key === key);
+          if (item && typeof item.value !== 'undefined') return item.value;
+        } catch (_) {}
+        return '';
+      };
+
+      const toNumber = (v) => {
+        const n = Number(String(v || '').replace(/[^\d.]/g, ''));
+        return Number.isFinite(n) ? n : 0;
+      };
+
       // Determine quantity
       let qty = 0;
       if (o.quantidade) qty = Number(o.quantidade);
@@ -6039,7 +7821,33 @@ app.get('/painel', requireAdmin, async (req, res) => {
       else if (typeForCost.includes('visualiza') || typeForCost.includes('views')) costPer1000 = costSettings.visualizacoes;
 
       const serviceCost = (qty / 1000) * costPer1000;
-      const totalItemCost = 0.85 + serviceCost;
+      const bumpStrRaw = extractInfo('order_bumps');
+      const bumpTotalRaw = extractInfo('order_bumps_total');
+
+      const parseBumps = (raw) => {
+        const text = String(raw || '').toLowerCase();
+        const get = (name) => {
+          const m = text.match(new RegExp(`${name}\\s*:\\s*(\\d+)`, 'i'));
+          return m ? Number(m[1]) : 0;
+        };
+        return {
+          views: get('views'),
+          likes: get('likes'),
+          comments: get('comments')
+        };
+      };
+
+      const bumpsFromStr = parseBumps(bumpStrRaw);
+      const bumpViewsQty = toNumber((o && o.fama24h_views && o.fama24h_views.requestPayload && o.fama24h_views.requestPayload.quantity) || bumpsFromStr.views);
+      const bumpLikesQty = toNumber((o && o.fama24h_likes && o.fama24h_likes.requestPayload && o.fama24h_likes.requestPayload.quantity) || bumpsFromStr.likes);
+      const bumpCommentsQty = toNumber((o && o.worldsmm_comments && o.worldsmm_comments.requestPayload && o.worldsmm_comments.requestPayload.quantity) || bumpsFromStr.comments);
+
+      const bumpCost =
+        ((bumpViewsQty / 1000) * Number(costSettings.visualizacoes || 0)) +
+        ((bumpLikesQty / 1000) * Number(costSettings.curtidas || 0)) +
+        ((bumpCommentsQty / 1000) * Number(costSettings.comentarios || 0));
+
+      const totalItemCost = 0.85 + serviceCost + bumpCost;
       totalCost += totalItemCost;
 
       // Revenue calculation
@@ -6058,13 +7866,489 @@ app.get('/painel', requireAdmin, async (req, res) => {
         qty,
         costPer1000,
         cost: totalItemCost,
+        bumpCost,
+        orderBumps: String(bumpStrRaw || ''),
+        orderBumpsTotal: String(bumpTotalRaw || ''),
         revenue
       };
     });
 
-    res.render('painel', { orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length, costSettings });
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, paidOrdersToday });
   } catch (e) {
     res.status(500).send(e.toString());
+  }
+});
+
+app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const sessionSelectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+
+    const paidQuery = {
+      $or: [
+        { status: 'pago' },
+        { 'woovi.status': 'pago' }
+      ]
+    };
+
+    const unknownProviderQuery = {
+      $or: [
+        { 'fama24h.status': 'unknown' },
+        { 'fama24h.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h.status': 'error' },
+        { 'fama24h.error': { $exists: true, $ne: '' } },
+        { 'fornecedor_social.status': 'unknown' },
+        { 'fornecedor_social.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fornecedor_social.status': 'error' },
+        { 'fornecedor_social.error': { $exists: true, $ne: '' } },
+        { 'worldsmm_comments.status': 'unknown' },
+        { 'worldsmm_comments.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'worldsmm_comments.status': 'error' },
+        { 'worldsmm_comments.error': { $regex: 'timeout', $options: 'i' } },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } }
+              ]
+            },
+            { $or: [{ worldsmm_comments: { $exists: false } }, { 'worldsmm_comments.orderId': { $exists: false } }] }
+          ]
+        },
+        { 'fama24h_views.status': 'unknown' },
+        { 'fama24h_views.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h_views.status': 'error' },
+        { 'fama24h_views.error': { $exists: true } },
+        { 'fama24h_likes.status': 'unknown' },
+        { 'fama24h_likes.orderId': { $in: ['unknown', 'unknow'] } },
+        { 'fama24h_likes.status': 'error' },
+        { 'fama24h_likes.error': { $exists: true } }
+      ]
+    };
+
+    const query = { $and: [paidQuery, unknownProviderQuery] };
+    const orders = await col.find(query).sort({ createdAt: -1 }).limit(5000).toArray();
+
+    const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
+    const nowUTC = new Date();
+    const nowSP = toSP(nowUTC);
+    const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
+
+    const periodDefault = 'all';
+    const period = String(req.query.period || periodDefault);
+    const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
+
+    const inPeriod = (o) => {
+      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      if (!dateStr) return false;
+      const orderDateUTC = new Date(dateStr);
+      const orderDateSP = toSP(orderDateUTC);
+      if (period === 'all') return true;
+      if (period === 'today') return orderDateSP >= startOfTodaySP;
+      if (period === 'last3days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 2); return orderDateSP >= s; }
+      if (period === 'last7days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 6); return orderDateSP >= s; }
+      if (period === 'thismonth') { const s = new Date(startOfTodaySP); s.setUTCDate(1); return orderDateSP >= s; }
+      if (period === 'lastmonth') {
+        const s = new Date(startOfTodaySP); s.setUTCMonth(s.getUTCMonth() - 1); s.setUTCDate(1);
+        const e = new Date(startOfTodaySP); e.setUTCDate(1);
+        return orderDateSP >= s && orderDateSP < e;
+      }
+      if (period === 'custom') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = String(startStr).split('-').map(Number);
+          const s = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+          const [eY, eM, eD] = String(endStr).split('-').map(Number);
+          const e = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
+          return orderDateSP >= s && orderDateSP <= e;
+        }
+        return true;
+      }
+      return true;
+    };
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const normalizeUrl = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      if (/^https?:\/\//i.test(s0)) return s0;
+      if (/^www\./i.test(s0)) return `https://${s0}`;
+      if (/instagram\.com\//i.test(s0)) return `https://${s0.replace(/^\/+/, '')}`;
+      return s0;
+    };
+
+    const resolvePhone = (o) => {
+      try {
+        const phoneFromCustomer = o && o.customer && (o.customer.phone || o.customer.telefone || o.customer.whatsapp);
+        if (phoneFromCustomer) return String(phoneFromCustomer);
+        const phoneFromMap = o && o.additionalInfoMap && (o.additionalInfoMap.phone || o.additionalInfoMap.telefone || o.additionalInfoMap.whatsapp);
+        if (phoneFromMap) return String(phoneFromMap);
+        const direct = o && (o.phone || o.telefone || o.whatsapp || o.customerPhone);
+        if (direct) return String(direct);
+        if (o && o.additionalInfoPaid) {
+          const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const pItem = arr.find(i => i && (i.key === 'phone' || i.key === 'telefone' || i.key === 'whatsapp' || i.key === 'celular'));
+          if (pItem && typeof pItem.value !== 'undefined') return String(pItem.value);
+        }
+      } catch (_) {}
+      return '';
+    };
+
+    const resolveUser = (o) => {
+      try {
+        if (o.instaUser) return String(o.instaUser);
+        if (o.instauser) return String(o.instauser);
+        if (o.instagramUser) return String(o.instagramUser);
+        if (o.additionalInfoMap && (o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser)) return String(o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser);
+        if (o.additionalInfoPaid) {
+          const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+          const uItem = arr.find(i => i && (i.key === 'instauser' || i.key === 'instaUser' || i.key === 'instagram_username' || i.key === 'user'));
+          if (uItem && typeof uItem.value !== 'undefined') return String(uItem.value);
+        }
+      } catch (_) {}
+      return '';
+    };
+
+    const resolveQtyWithUpgrade = (o) => {
+      try {
+        const baseQty = Number(o.quantidade || o.qtd || extractInfoAny(o, 'quantidade') || 0) || 0;
+        if (!baseQty) return baseQty;
+        const bumpsStr = String(extractInfoAny(o, 'order_bumps') || '').toLowerCase();
+        const m = bumpsStr.match(/(?:^|;)\s*upgrade\s*:\s*(\d+)/i);
+        const upgradeQty = m ? Number(m[1]) : 0;
+        if (!upgradeQty) return baseQty;
+        const category = String(extractInfoAny(o, 'categoria_servico') || (o.additionalInfoMap || {}).categoria_servico || '').toLowerCase().trim();
+        let type = String(o.tipo || o.tipoServico || extractInfoAny(o, 'tipo_servico') || '').toLowerCase().trim();
+        const t = type.startsWith('seguidores_') ? type.replace(/^seguidores_/, '') : type;
+        if (category !== 'seguidores' && !type.startsWith('seguidores')) return baseQty;
+        const b = Number(baseQty) || 0;
+        if (!b) return baseQty;
+        if (t === 'organicos' && b === 50) return 100;
+        if ((t === 'brasileiros' || t === 'organicos') && b === 1000) return 2000;
+        const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+        const target = upsellTargets[b];
+        if (!target) return baseQty;
+        return baseQty + (target - b);
+      } catch (_) {
+        return Number(o.quantidade || o.qtd || extractInfoAny(o, 'quantidade') || 0) || 0;
+      }
+    };
+
+    const resolveServiceKey = (o) => {
+      let category = String(extractInfoAny(o, 'categoria_servico') || (o.additionalInfoMap || {}).categoria_servico || '').toLowerCase().trim();
+      let type = String(o.tipo || o.tipoServico || extractInfoAny(o, 'tipo_servico') || '').toLowerCase().trim();
+      if (!category) {
+        if (type.startsWith('curtidas_')) { category = 'curtidas'; type = type.replace(/^curtidas_/, ''); }
+        else if (type.startsWith('seguidores_')) { category = 'seguidores'; type = type.replace(/^seguidores_/, ''); }
+        else if (type.startsWith('visualizacoes_')) { category = 'visualizacoes'; type = type.replace(/^visualizacoes_/, ''); }
+      }
+      if (type === 'visualizacoes_reels') { category = 'visualizacoes'; type = 'reels'; }
+      if (category === 'curtidas' && type === 'mistos') return 'curtidas_mistos';
+      if (category === 'seguidores' && type === 'mistos') return 'seguidores_mistos';
+      if (category === 'curtidas' && type === 'organicos') return 'curtidas_organicos';
+      if (category === 'seguidores' && type === 'organicos') return 'seguidores_organicos';
+      if (category && type) return `${category}_${type}`;
+      return type || category || '';
+    };
+
+    const resolveServiceLabel = (o) => String(resolveServiceKey(o) || '').replace(/_/g, ' ').trim();
+
+    const resolvePostLinkViews = (o) => {
+      const sessionLink = sessionSelectedFor && sessionSelectedFor.views && sessionSelectedFor.views.link ? String(sessionSelectedFor.views.link) : '';
+      const candidates = [
+        sessionLink,
+        o?.fama24h_views?.requestPayload?.link,
+        extractInfoAny(o, 'orderbump_post_views'),
+        extractInfoAny(o, 'post_link')
+      ];
+      for (const c of candidates) {
+        const url = normalizeUrl(c);
+        if (url) return url;
+      }
+      return '';
+    };
+
+    const resolvePostLinkLikes = (o) => {
+      const sessionLink = sessionSelectedFor && sessionSelectedFor.likes && sessionSelectedFor.likes.link ? String(sessionSelectedFor.likes.link) : '';
+      const candidates = [
+        sessionLink,
+        o?.fama24h_likes?.requestPayload?.link,
+        extractInfoAny(o, 'orderbump_post_likes'),
+        extractInfoAny(o, 'post_link')
+      ];
+      for (const c of candidates) {
+        const url = normalizeUrl(c);
+        if (url) return url;
+      }
+      return '';
+    };
+
+    const resolvePostLinkComments = (o) => {
+      const sessionLink = sessionSelectedFor && sessionSelectedFor.comments && sessionSelectedFor.comments.link ? String(sessionSelectedFor.comments.link) : '';
+      const candidates = [
+        sessionLink,
+        o?.worldsmm_comments?.requestPayload?.link,
+        extractInfoAny(o, 'orderbump_post_comments'),
+        extractInfoAny(o, 'post_link')
+      ];
+      for (const c of candidates) {
+        const url = normalizeUrl(c);
+        if (url) return url;
+      }
+      return '';
+    };
+
+    let filtered = orders.filter(inPeriod);
+    const issueFilter = String(req.query.issue || '').toLowerCase().trim();
+
+    const searchPhone = String(req.query.searchPhone || '').trim();
+    if (searchPhone) {
+      const needleDigits = searchPhone.replace(/\D/g, '');
+      filtered = filtered.filter(o => {
+        const phone = resolvePhone(o);
+        if (!phone) return false;
+        if (needleDigits) return String(phone).replace(/\D/g, '').includes(needleDigits);
+        return String(phone).toLowerCase().includes(searchPhone.toLowerCase());
+      });
+    }
+
+    const serviceFilter = String(req.query.service || '').toLowerCase().trim();
+    if (serviceFilter && serviceFilter !== 'all') {
+      if (serviceFilter === 'comentarios') {
+        filtered = filtered.filter(o => !!(o && o.worldsmm_comments && (typeof o.worldsmm_comments.status !== 'undefined' || typeof o.worldsmm_comments.orderId !== 'undefined')));
+      } else {
+        filtered = filtered.filter(o => resolveServiceKey(o) === serviceFilter);
+      }
+    }
+
+    const isUnknownToken = (v) => {
+      const s = String(v || '').toLowerCase().trim();
+      return s === 'unknown' || s === 'unknow' || s === 'null';
+    };
+
+    const hasValidOrderId = (v) => {
+      const s = String(v || '').trim();
+      if (!s) return false;
+      return !isUnknownToken(s);
+    };
+
+    const isUnknownForProvider = (o, provider) => {
+      const doc = (o && o[provider]) ? o[provider] : null;
+      if (!doc) return false;
+      const st = typeof doc.status !== 'undefined' ? doc.status : '';
+      const oid = typeof doc.orderId !== 'undefined' ? doc.orderId : '';
+      return isUnknownToken(st) || isUnknownToken(oid);
+    };
+
+    const isErrorForProvider = (o, provider) => {
+      const doc = (o && o[provider]) ? o[provider] : null;
+      if (!doc) return false;
+      const stLower = String(doc.status || '').toLowerCase().trim();
+      const err = (typeof doc.error !== 'undefined') ? String(doc.error || '') : '';
+      if (stLower === 'error') return true;
+      if (err && err.trim() !== '') return true;
+      return false;
+    };
+
+    const classifyFamaBumpIssue = (subdoc) => {
+      const stLower = subdoc && typeof subdoc.status !== 'undefined' ? String(subdoc.status || '').toLowerCase().trim() : '';
+      const oid = subdoc && typeof subdoc.orderId !== 'undefined' ? String(subdoc.orderId || '') : '';
+      const err = subdoc && typeof subdoc.error !== 'undefined' ? String(subdoc.error || '') : '';
+      const errLower = err.toLowerCase();
+      const hasId = hasValidOrderId(oid);
+      if (hasId && (stLower === 'created' || stLower === 'processing' || stLower === 'pending' || stLower === 'completed')) return 'ok';
+      if (isUnknownToken(stLower) || isUnknownToken(oid)) return 'unknown';
+      if (stLower === 'error') return 'error';
+      if (err && err.trim() !== '') return 'error';
+      if (!hasId) return 'unknown';
+      return 'unknown';
+    };
+
+    const classifyWorldsmmCommentsIssue = (o) => {
+      const doc = o && o.worldsmm_comments ? o.worldsmm_comments : null;
+      if (!doc) return 'unknown';
+      const stLower = typeof doc.status !== 'undefined' ? String(doc.status || '').toLowerCase().trim() : '';
+      const oid = typeof doc.orderId !== 'undefined' ? String(doc.orderId || '') : '';
+      const err = typeof doc.error !== 'undefined' ? String(doc.error || '') : '';
+      const errLower = err.toLowerCase();
+      const hasId = hasValidOrderId(oid);
+      if (hasId && (stLower === 'created' || stLower === 'processing' || stLower === 'pending' || stLower === 'completed')) return 'ok';
+      if (isUnknownToken(stLower) || isUnknownToken(oid)) return 'unknown';
+      if (stLower === 'error') return 'error';
+      if (!hasId && errLower.includes('timeout')) return 'error';
+      if (!hasId && err && err.trim() !== '') return 'error';
+      if (!hasId) return 'unknown';
+      return 'unknown';
+    };
+
+    const expectedProviderFromServiceKey = (serviceKey) => {
+      const k = String(serviceKey || '').toLowerCase().trim();
+      if (!k) return '';
+      if (k === 'seguidores_organicos') return 'fornecedor_social';
+      if (k.startsWith('seguidores')) return 'fama24h';
+      if (k.startsWith('curtidas')) return 'fama24h';
+      if (k.startsWith('visualizacoes')) return 'fama24h';
+      return '';
+    };
+
+    if (issueFilter === 'unknown' || issueFilter === 'error') {
+      filtered = filtered.filter(o => {
+        if (serviceFilter === 'comentarios') {
+          const issue = classifyWorldsmmCommentsIssue(o);
+          return issue === issueFilter;
+        }
+        if (serviceFilter && serviceFilter !== 'all') {
+          const expectedMain = expectedProviderFromServiceKey(serviceFilter);
+          if (!expectedMain) return false;
+          if (issueFilter === 'unknown') return isUnknownForProvider(o, expectedMain);
+          return isErrorForProvider(o, expectedMain);
+        }
+
+        const anyUnknown =
+          isUnknownForProvider(o, 'fama24h') ||
+          isUnknownForProvider(o, 'fornecedor_social') ||
+          classifyFamaBumpIssue(o && o.fama24h_views) === 'unknown' ||
+          classifyFamaBumpIssue(o && o.fama24h_likes) === 'unknown' ||
+          classifyWorldsmmCommentsIssue(o) === 'unknown';
+
+        const anyError =
+          isErrorForProvider(o, 'fama24h') ||
+          isErrorForProvider(o, 'fornecedor_social') ||
+          classifyFamaBumpIssue(o && o.fama24h_views) === 'error' ||
+          classifyFamaBumpIssue(o && o.fama24h_likes) === 'error' ||
+          classifyWorldsmmCommentsIssue(o) === 'error';
+
+        return issueFilter === 'unknown' ? anyUnknown : anyError;
+      });
+    }
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const seenPrivates = new Set();
+    filtered = filtered.filter(o => {
+      if (!(o && o.isPrivate)) return true;
+      const key = normalizeUsernameKey(resolveUser(o));
+      if (!key) return true;
+      if (seenPrivates.has(key)) return false;
+      seenPrivates.add(key);
+      return true;
+    });
+
+    const formatDateSP = (dateStr) => {
+      const d0 = new Date(dateStr || new Date());
+      const d = toSP(d0);
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const yyyy = String(d.getUTCFullYear());
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mi = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+    };
+
+    const headers = [
+      'Data (SP)',
+      'Order _id',
+      'Usuário',
+      'Privado',
+      'Telefone',
+      'Serviço',
+      'Qtd contratada',
+      'OrderBumps',
+      'Fama24h OrderId',
+      'Fama24h Status',
+      'Fornecedor Social OrderId',
+      'Fornecedor Social Status',
+      'WorldSMM Comentários OrderId',
+      'WorldSMM Comentários Status',
+      'WorldSMM Comentários Qtd',
+      'WorldSMM Comentários Link',
+      'WorldSMM Comentários Erro',
+      'Fama24h Views OrderId',
+      'Fama24h Views Status',
+      'Fama24h Views Qtd',
+      'Fama24h Views Link',
+      'Fama24h Views Erro',
+      'Fama24h Curtidas OrderId',
+      'Fama24h Curtidas Status',
+      'Fama24h Curtidas Qtd',
+      'Fama24h Curtidas Link',
+      'Fama24h Curtidas Erro'
+    ];
+
+    const esc = (v) => {
+      const s = String(typeof v === 'undefined' || v === null ? '' : v);
+      if (/[\";\r\n]/.test(s)) return `"${s.replace(/\"/g, '""')}"`;
+      return s;
+    };
+
+    const rows = filtered.map(o => {
+      const createdAt = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      return [
+        formatDateSP(createdAt),
+        String(o._id || ''),
+        resolveUser(o),
+        o && o.isPrivate ? 'SIM' : 'NÃO',
+        resolvePhone(o),
+        resolveServiceLabel(o) || String(o.tipo || o.tipoServico || ''),
+        String(resolveQtyWithUpgrade(o) || ''),
+        String(extractInfoAny(o, 'order_bumps') || ''),
+        String(o?.fama24h?.orderId || ''),
+        String(o?.fama24h?.status || ''),
+        String(o?.fornecedor_social?.orderId || ''),
+        String(o?.fornecedor_social?.status || ''),
+        String(o?.worldsmm_comments?.orderId || ''),
+        String(o?.worldsmm_comments?.status || ''),
+        String(o?.worldsmm_comments?.requestPayload?.quantity || ''),
+        resolvePostLinkComments(o),
+        String(o?.worldsmm_comments?.error || ''),
+        String(o?.fama24h_views?.orderId || ''),
+        String(o?.fama24h_views?.status || ''),
+        String(o?.fama24h_views?.requestPayload?.quantity || ''),
+        resolvePostLinkViews(o),
+        String(o?.fama24h_views?.error || ''),
+        String(o?.fama24h_likes?.orderId || ''),
+        String(o?.fama24h_likes?.status || ''),
+        String(o?.fama24h_likes?.requestPayload?.quantity || ''),
+        resolvePostLinkLikes(o),
+        String(o?.fama24h_likes?.error || '')
+      ];
+    });
+
+    const csv = `\uFEFF${headers.map(esc).join(';')}\r\n${rows.map(r => r.map(esc).join(';')).join('\r\n')}\r\n`;
+    const todayKey = (() => {
+      const d = toSP(new Date());
+      const yyyy = String(d.getUTCFullYear());
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      return `${yyyy}${mm}${dd}`;
+    })();
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="orderid-unknown-${todayKey}.csv"`);
+    res.send(csv);
+  } catch (e) {
+    res.status(500).send(String(e && e.message ? e.message : e));
   }
 });
 
@@ -6107,6 +8391,90 @@ app.post('/painel/custos', async (req, res) => {
 
 // ==================== ROTAS DE GESTÃO DE CUPONS (ADMIN) ====================
 
+function normalizeCouponCode(code) {
+  return String(code || '').trim().toUpperCase();
+}
+
+function normalizeProfileKey(username) {
+  return String(username || '').trim().replace(/^@+/, '').toLowerCase();
+}
+
+function parseOptionalDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+async function getCouponEligibility(code, profileKey) {
+  const { getCollection } = require('./mongodbClient');
+  const couponsCol = await getCollection('coupons');
+  const coupon = await couponsCol.findOne({ code: normalizeCouponCode(code), isActive: true });
+  if (!coupon) return { ok: false, error: 'Cupom inválido ou inativo' };
+
+  const now = new Date();
+  const validFrom = coupon.validFrom ? new Date(coupon.validFrom) : null;
+  const validTo = coupon.validTo ? new Date(coupon.validTo) : null;
+  if (validFrom && !Number.isNaN(validFrom.getTime()) && now < validFrom) return { ok: false, error: 'Cupom ainda não está válido' };
+  if (validTo && !Number.isNaN(validTo.getTime()) && now > validTo) return { ok: false, error: 'Cupom expirado' };
+
+  const usedCount = (typeof coupon.usedCount === 'number') ? coupon.usedCount : 0;
+  const maxUsesTotal = (coupon.maxUsesTotal != null && Number(coupon.maxUsesTotal) > 0) ? Number(coupon.maxUsesTotal) : null;
+  if (maxUsesTotal && usedCount >= maxUsesTotal) return { ok: false, error: 'Cupom esgotado' };
+
+  const maxUsesPerProfile = (coupon.maxUsesPerProfile != null && Number(coupon.maxUsesPerProfile) > 0) ? Number(coupon.maxUsesPerProfile) : null;
+  if (maxUsesPerProfile) {
+    if (!profileKey) return { ok: false, error: 'Preencha o usuário do Instagram para usar este cupom' };
+    const usesCol = await getCollection('coupon_uses');
+    const count = await usesCol.countDocuments({ couponId: coupon._id, profileKey, status: 'consumed' });
+    if (count >= maxUsesPerProfile) return { ok: false, error: 'Cupom já usado neste perfil' };
+  }
+
+  return { ok: true, coupon };
+}
+
+async function consumeCouponUsageFromOrder(order, meta = {}) {
+  try {
+    if (!order) return;
+    const arrPaid = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : [];
+    const arrOrig = Array.isArray(order.additionalInfo) ? order.additionalInfo : [];
+    const mapPaid = order.additionalInfoMapPaid || {};
+    const addMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => {
+      const k = String(it?.key || '').trim();
+      if (k) acc[k] = String(it?.value || '').trim();
+      return acc;
+    }, {});
+    const merged = Object.assign({}, addMap, mapPaid);
+    const rawCode = merged.cupom || merged.coupon || '';
+    const couponCode = normalizeCouponCode(rawCode);
+    if (!couponCode) return;
+
+    const profileKey = normalizeProfileKey(merged.instagram_username || order.instagramUsername || order.instauser || '');
+
+    const eligibility = await getCouponEligibility(couponCode, profileKey);
+    if (!eligibility.ok) return;
+
+    const { getCollection } = require('./mongodbClient');
+    const usesCol = await getCollection('coupon_uses');
+    const couponsCol = await getCollection('coupons');
+
+    const orderMongoId = order._id || null;
+    const orderIdentifier = String(meta.orderIdentifier || order.identifier || order.woovi?.identifier || order.efi?.charge_id || '').trim();
+    const orderCorrelationID = String(meta.correlationID || order.correlationID || '').trim();
+    const dedupeKey = orderMongoId ? String(orderMongoId) : (orderIdentifier || orderCorrelationID);
+    if (!dedupeKey) return;
+
+    const up = await usesCol.updateOne(
+      { couponId: eligibility.coupon._id, dedupeKey },
+      { $setOnInsert: { couponId: eligibility.coupon._id, couponCode, profileKey, orderMongoId, orderIdentifier, correlationID: orderCorrelationID, status: 'consumed', consumedAt: new Date(), dedupeKey } },
+      { upsert: true }
+    );
+    if (up.upsertedCount > 0) {
+      await couponsCol.updateOne({ _id: eligibility.coupon._id }, { $inc: { usedCount: 1 } });
+    }
+  } catch (_) {}
+}
+
 app.get('/api/admin/coupons', requireAdmin, async (req, res) => {
     try {
         const { getCollection } = require('./mongodbClient');
@@ -6120,31 +8488,87 @@ app.get('/api/admin/coupons', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/coupons', requireAdmin, async (req, res) => {
     try {
-        const { code, discountPercentage } = req.body;
+        const code = normalizeCouponCode(req.body?.code);
+        const discountPercentage = Number(req.body?.discountPercentage || 0) || 0;
+        const maxUsesTotal = (req.body?.maxUsesTotal != null && String(req.body.maxUsesTotal).trim() !== '') ? (Number(req.body.maxUsesTotal) || null) : null;
+        const maxUsesPerProfile = (req.body?.maxUsesPerProfile != null && String(req.body.maxUsesPerProfile).trim() !== '') ? (Number(req.body.maxUsesPerProfile) || null) : null;
+        const validFrom = parseOptionalDate(req.body?.validFrom);
+        const validTo = parseOptionalDate(req.body?.validTo);
+        const isActive = (req.body?.isActive === false || req.body?.isActive === 'false') ? false : true;
+
         if (!code || !discountPercentage) {
             return res.status(400).json({ success: false, error: 'Código e porcentagem são obrigatórios' });
+        }
+        if (discountPercentage <= 0 || discountPercentage > 100) {
+          return res.status(400).json({ success: false, error: 'Porcentagem inválida' });
+        }
+        if (validFrom && validTo && validFrom.getTime() > validTo.getTime()) {
+          return res.status(400).json({ success: false, error: 'Validade inválida' });
         }
         
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('coupons');
         
         // Verificar duplicidade
-        const existing = await col.findOne({ code: code.toUpperCase() });
+        const existing = await col.findOne({ code });
         if (existing) {
             return res.status(400).json({ success: false, error: 'Cupom já existe' });
         }
         
         await col.insertOne({
-            code: code.toUpperCase(),
-            discountPercentage: Number(discountPercentage),
+            code,
+            discountPercentage,
+            maxUsesTotal: (maxUsesTotal && maxUsesTotal > 0) ? Math.floor(maxUsesTotal) : null,
+            maxUsesPerProfile: (maxUsesPerProfile && maxUsesPerProfile > 0) ? Math.floor(maxUsesPerProfile) : null,
+            validFrom: validFrom || null,
+            validTo: validTo || null,
+            usedCount: 0,
             createdAt: new Date(),
-            isActive: true
+            isActive
         });
         
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
+});
+
+app.put('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ObjectId } = require('mongodb');
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('coupons');
+
+    const update = {};
+    if (req.body?.code != null) update.code = normalizeCouponCode(req.body.code);
+    if (req.body?.discountPercentage != null) update.discountPercentage = Number(req.body.discountPercentage || 0) || 0;
+    if (req.body?.maxUsesTotal !== undefined) update.maxUsesTotal = (req.body.maxUsesTotal == null || String(req.body.maxUsesTotal).trim() === '') ? null : Math.floor(Number(req.body.maxUsesTotal) || 0);
+    if (req.body?.maxUsesPerProfile !== undefined) update.maxUsesPerProfile = (req.body.maxUsesPerProfile == null || String(req.body.maxUsesPerProfile).trim() === '') ? null : Math.floor(Number(req.body.maxUsesPerProfile) || 0);
+    if (req.body?.validFrom !== undefined) update.validFrom = parseOptionalDate(req.body.validFrom);
+    if (req.body?.validTo !== undefined) update.validTo = parseOptionalDate(req.body.validTo);
+    if (req.body?.isActive !== undefined) update.isActive = !(req.body.isActive === false || req.body.isActive === 'false');
+
+    if (!update.code || !update.discountPercentage) {
+      return res.status(400).json({ success: false, error: 'Código e porcentagem são obrigatórios' });
+    }
+    if (update.discountPercentage <= 0 || update.discountPercentage > 100) {
+      return res.status(400).json({ success: false, error: 'Porcentagem inválida' });
+    }
+    if (update.validFrom && update.validTo && update.validFrom.getTime() > update.validTo.getTime()) {
+      return res.status(400).json({ success: false, error: 'Validade inválida' });
+    }
+    if (update.maxUsesTotal != null && update.maxUsesTotal <= 0) update.maxUsesTotal = null;
+    if (update.maxUsesPerProfile != null && update.maxUsesPerProfile <= 0) update.maxUsesPerProfile = null;
+
+    const existing = await col.findOne({ code: update.code, _id: { $ne: new ObjectId(id) } });
+    if (existing) return res.status(400).json({ success: false, error: 'Cupom já existe' });
+
+    await col.updateOne({ _id: new ObjectId(id) }, { $set: update });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.delete('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
@@ -6164,23 +8588,20 @@ app.delete('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
 // Rota pública de validação de cupom
 app.post('/api/validate-coupon', async (req, res) => {
     try {
-        const { code } = req.body;
+        const code = normalizeCouponCode(req.body?.code);
+        const profileKey = normalizeProfileKey(req.body?.instagram_username || '');
         if (!code) return res.status(400).json({ valid: false, error: 'Código não fornecido' });
-        
-        const { getCollection } = require('./mongodbClient');
-        const col = await getCollection('coupons');
-        
-        const coupon = await col.findOne({ code: code.toUpperCase(), isActive: true });
-        
-        if (coupon) {
-            res.json({ 
-                valid: true, 
-                discount: coupon.discountPercentage / 100, // Retorna decimal (ex: 0.10 para 10%)
-                code: coupon.code
-            });
-        } else {
-            res.json({ valid: false, error: 'Cupom inválido ou expirado' });
+
+        const eligibility = await getCouponEligibility(code, profileKey);
+        if (!eligibility.ok) {
+          return res.json({ valid: false, error: eligibility.error || 'Cupom inválido' });
         }
+        const coupon = eligibility.coupon;
+        return res.json({
+          valid: true,
+          discount: (Number(coupon.discountPercentage || 0) / 100),
+          code: coupon.code
+        });
     } catch (error) {
         console.error('Erro na validação de cupom:', error);
         res.status(500).json({ valid: false, error: 'Erro interno' });
@@ -6283,6 +8704,21 @@ app.post('/api/payment/confirm', async (req, res) => {
       const resolvedQtd = qtd || record?.quantidade || record?.qtd || 0;
       const resolvedUser = instaUser || record?.instagramUsername || record?.instauser || '';
       const key = process.env.FAMA24H_API_KEY || '';
+
+      try {
+        const uname = String(resolvedUser || '').trim().toLowerCase().replace(/^@/, '');
+        const missingInitial = !record || record.initialFollowersCount == null;
+        if (uname && missingInitial) {
+          const vu = await getCollection('validated_insta_users');
+          const vUser = await vu.findOne({ username: uname });
+          if (vUser && typeof vUser.followersCount === 'number') {
+            await col.updateOne(
+              { _id: record._id, $or: [{ initialFollowersCount: { $exists: false } }, { initialFollowersCount: null }] },
+              { $set: { initialFollowersCount: Number(vUser.followersCount), initialFollowersCheckedAt: vUser.checkedAt || new Date().toISOString() } }
+            );
+          }
+        }
+      } catch (_) {}
       
       const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
       const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
@@ -6341,7 +8777,7 @@ app.post('/api/payment/confirm', async (req, res) => {
       let upgradeAdd = 0;
       if (isFollowers && /(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
         if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && Number(resolvedQtd) === 1000) upgradeAdd = 1000; else {
-          const map = { 50: 50, 150: 150, 500: 200, 1200: 800, 3000: 1000, 5000: 2500, 10000: 5000 };
+          const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
           upgradeAdd = map[Number(resolvedQtd)] || 0;
         }
       }
@@ -6395,34 +8831,51 @@ app.post('/api/payment/confirm', async (req, res) => {
         const mapPaid3 = record?.additionalInfoMapPaid || {};
         const viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
         const likesLinkSel = sanitizeLink(mapPaid3['orderbump_post_likes'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');
-        if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && viewsLink) {
-          const axios = require('axios');
-          const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
-          try {
-            const respViews = await axios.post('https://fama24h.net/api/v2', payloadViews.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-            const dataViews = respViews.data || {};
-            const orderIdViews = dataViews.order || dataViews.id || null;
-            await col.updateOne(filter, { $set: { fama24h_views: { orderId: orderIdViews, status: orderIdViews ? 'created' : 'unknown', requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, response: dataViews, requestedAt: new Date().toISOString() } } });
-          } catch (e2) {
-            await col.updateOne(filter, { $set: { fama24h_views: { error: e2?.response?.data || e2?.message || String(e2), requestPayload: { service: 250, link: viewsLink, quantity: viewsQty }, requestedAt: new Date().toISOString() } } });
+        const alreadyViews4 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || typeof record.fama24h_views.error !== 'undefined'));
+        if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && viewsLink && !alreadyViews4) {
+          const lockUpdate = await col.updateOne(
+            { ...filter, 'fama24h_views.orderId': { $exists: false }, 'fama24h_views.status': { $nin: ['processing', 'created'] } },
+            { $set: { 'fama24h_views.status': 'processing', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } }
+          );
+          if (lockUpdate.modifiedCount > 0) {
+            const payloadViews = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '250', link: String(viewsLink), quantity: String(viewsQty) });
+            try {
+              const respViews = await postFormWithRetry('https://fama24h.net/api/v2', payloadViews.toString(), 60000, 3);
+              const dataViews = normalizeProviderResponseData(respViews.data);
+              const orderIdViews = extractProviderOrderId(dataViews);
+              const setObj = { 'fama24h_views.status': orderIdViews ? 'created' : 'unknown', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() };
+              if (orderIdViews) setObj['fama24h_views.orderId'] = orderIdViews;
+              await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_views.error': '' } });
+            } catch (e2) {
+              const errVal = e2?.response?.data || e2?.message || String(e2);
+              const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              await col.updateOne(filter, { $set: { 'fama24h_views.status': st, 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
+            }
           }
+        } else if (viewsQty > 0 && (process.env.FAMA24H_API_KEY || '') && !viewsLink && !alreadyViews4) {
+          await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': 'invalid_link', 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
         }
         const alreadyLikes4 = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
         if (likesQty > 0 && (process.env.FAMA24H_API_KEY || '') && likesLinkSel && !alreadyLikes4) {
           const lockUpdate = await col.updateOne(
-            { ...filter, 'fama24h_likes.status': { $exists: false } },
-            { $set: { fama24h_likes: { status: 'processing', requestedAt: new Date().toISOString() } } }
+            { ...filter, 'fama24h_likes.orderId': { $exists: false }, 'fama24h_likes.status': { $nin: ['processing', 'created'] } },
+            { $set: { 'fama24h_likes.status': 'processing', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } }
           );
           if (lockUpdate.modifiedCount > 0) {
-              const axios = require('axios');
-              const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '666', link: String(likesLinkSel), quantity: String(likesQty) });
+              const payloadLikes = new URLSearchParams({ key: String(process.env.FAMA24H_API_KEY), action: 'add', service: '671', link: String(likesLinkSel), quantity: String(likesQty) });
               try {
-                const respLikes = await axios.post('https://fama24h.net/api/v2', payloadLikes.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                const dataLikes = respLikes.data || {};
-                const orderIdLikes = dataLikes.order || dataLikes.id || null;
-                await col.updateOne(filter, { $set: { 'fama24h_likes.orderId': orderIdLikes, 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataLikes } });
+                const respLikes = await postFormWithRetry('https://fama24h.net/api/v2', payloadLikes.toString(), 60000, 3);
+                const dataLikes = normalizeProviderResponseData(respLikes.data);
+                const orderIdLikes = extractProviderOrderId(dataLikes);
+                const setObj = { 'fama24h_likes.status': orderIdLikes ? 'created' : 'unknown', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() };
+                if (orderIdLikes) setObj['fama24h_likes.orderId'] = orderIdLikes;
+                await col.updateOne(filter, { $set: setObj, $unset: { 'fama24h_likes.error': '' } });
               } catch (e3) {
-                await col.updateOne(filter, { $set: { 'fama24h_likes.error': e3?.response?.data || e3?.message || String(e3), 'fama24h_likes.status': 'error', 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty } } });
+                const errVal = e3?.response?.data || e3?.message || String(e3);
+                const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': st, 'fama24h_likes.requestPayload': { service: 671, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
               }
           }
         }
@@ -6480,6 +8933,21 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     if (!record) {
       return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
     }
+
+    try {
+      const uname = String(instaUser || record.instagramUsername || record.instauser || '').trim().toLowerCase().replace(/^@/, '');
+      const missingInitial = record.initialFollowersCount == null;
+      if (uname && missingInitial) {
+        const vu = await getCollection('validated_insta_users');
+        const vUser = await vu.findOne({ username: uname });
+        if (vUser && typeof vUser.followersCount === 'number') {
+          await col.updateOne(
+            { _id: record._id, $or: [{ initialFollowersCount: { $exists: false } }, { initialFollowersCount: null }] },
+            { $set: { initialFollowersCount: Number(vUser.followersCount), initialFollowersCheckedAt: vUser.checkedAt || new Date().toISOString() } }
+          );
+        }
+      }
+    } catch (_) {}
 
     // ---------------------------------------------------------
     // VALIDAÇÃO RIGOROSA DE VALOR
@@ -6631,5 +9099,84 @@ async function fetchInstagramRecentPosts(username) {
   }
 
   throw new Error('Falha ao buscar posts (timeout ou erro)');
+}
+
+async function fetchInstagramFollowersInfo(username) {
+  const now = Date.now();
+  const MAX_ERRORS_PER_PROFILE = 5;
+  const DISABLE_TIME_MS = 60 * 1000;
+  const REQUEST_TIMEOUT = 3500;
+
+  const available = cookieProfiles.filter(p => p.disabledUntil <= now && !isCookieLocked(p.ds_user_id))
+    .sort((a, b) => {
+      if (a.errorCount !== b.errorCount) return a.errorCount - b.errorCount;
+      return a.lastUsed - b.lastUsed;
+    });
+
+  const candidates = available.slice(0, 3);
+
+  const tryProfile = async (profile) => {
+    if (!profile) throw new Error('No profile');
+    if (isCookieLocked(profile.ds_user_id)) throw new Error('Locked');
+    lockCookie(profile.ds_user_id);
+
+    try {
+      const proxyAgent = profile.proxy ? new HttpsProxyAgent(`http://${profile.proxy.auth.username}:${profile.proxy.auth.password}@${profile.proxy.host}:${profile.proxy.port}`, { rejectUnauthorized: false }) : null;
+      const headers = {
+        "User-Agent": profile.userAgent,
+        "X-IG-App-ID": "936619743392459",
+        "Cookie": `sessionid=${profile.sessionid}; ds_user_id=${profile.ds_user_id}`,
+        "Accept": "application/json",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "X-Requested-With": "XMLHttpRequest"
+      };
+
+      const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
+        headers,
+        httpsAgent: proxyAgent,
+        timeout: REQUEST_TIMEOUT
+      });
+
+      if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
+      const user = resp.data && resp.data.data && resp.data.data.user;
+      if (!user || !user.username) {
+        profile.lastUsed = Date.now();
+        profile.errorCount = 0;
+        return { success: false, error: 'Perfil inexistente' };
+      }
+
+      const followersCount = (user.edge_followed_by && typeof user.edge_followed_by.count === 'number') ? user.edge_followed_by.count : 0;
+      const result = {
+        success: true,
+        profile: {
+          username: String(user.username || username),
+          followersCount,
+          isPrivate: !!user.is_private,
+          checkedAt: new Date().toISOString(),
+          source: 'web_profile_info'
+        }
+      };
+
+      profile.lastUsed = Date.now();
+      profile.errorCount = 0;
+      return result;
+    } catch (err) {
+      profile.errorCount++;
+      if (profile.errorCount >= MAX_ERRORS_PER_PROFILE) profile.disabledUntil = Date.now() + DISABLE_TIME_MS;
+      throw err;
+    } finally {
+      unlockCookie(profile.ds_user_id);
+    }
+  };
+
+  if (candidates.length > 0) {
+    try {
+      return await Promise.any(candidates.map(p => tryProfile(p)));
+    } catch (_) {}
+  }
+
+  return { success: false, error: 'Falha ao buscar seguidores' };
 }
 

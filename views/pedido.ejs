@@ -176,6 +176,15 @@
                 <a href="<%= refilHref %>" style="display: inline-block; background: var(--instagram-gradient); color: white; padding: 0.75rem 2rem; border-radius: 999px; text-decoration: none; font-weight: 600; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(220, 39, 67, 0.4);">
                     Acessar ferramenta
                 </a>
+                <% if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
+                  <div style="color: var(--text-secondary); font-size: 0.95rem;">
+                    <% if (refilDaysLeft <= 0) { %>
+                      Acesso: <strong>Expirado</strong>
+                    <% } else { %>
+                      Acesso expira em: <strong><%= refilDaysLeft %></strong> <%= (refilDaysLeft === 1 ? 'dia' : 'dias') %>
+                    <% } %>
+                  </div>
+                <% } %>
             </div>
         </div>
         <% } %>
@@ -273,7 +282,7 @@
 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Data Pagamento</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw) return '-'; try{ var d=new Date(raw); var sp=d; var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
                 </div>
 
                 <div class="info-item" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 1rem;">
@@ -365,6 +374,28 @@
       var orderData = {};
       try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
       var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
+      function formatDateTimeSP(raw) {
+        if (!raw) return null;
+        var d = null;
+        try { d = new Date(raw); } catch(_) { d = null; }
+        if (!d || isNaN(d.getTime())) return null;
+        try {
+          var parts = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+          var mp = {};
+          parts.forEach(function(p){ mp[p.type] = p.value; });
+          if (mp.day && mp.month && mp.year && mp.hour && mp.minute) return mp.day + '/' + mp.month + '/' + mp.year + ' às ' + mp.hour + ':' + mp.minute;
+        } catch(_) {}
+        try {
+          var sp = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+          var dd = String(sp.getUTCDate()).padStart(2,'0');
+          var mm = String(sp.getUTCMonth()+1).padStart(2,'0');
+          var yyyy = sp.getUTCFullYear();
+          var hh = String(sp.getUTCHours()).padStart(2,'0');
+          var min = String(sp.getUTCMinutes()).padStart(2,'0');
+          return dd + '/' + mm + '/' + yyyy + ' às ' + hh + ':' + min;
+        } catch(_) {}
+        return null;
+      }
       var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
       var lastFamaStatus = '';
       try {
@@ -423,17 +454,9 @@
       } catch(_) {}
       try {
         var paidRaw = (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
-        if (paidRaw) {
-          var d = new Date(paidRaw);
-          var dd = String(d.getDate()).padStart(2,'0');
-          var mm = String(d.getMonth()+1).padStart(2,'0');
-          var yyyy = d.getFullYear();
-          var hh = String(d.getHours()).padStart(2,'0');
-          var min = String(d.getMinutes()).padStart(2,'0');
-          var txt = dd + '/' + mm + '/' + yyyy + ' às ' + hh + ':' + min;
-          var el = document.getElementById('paidAtLocal');
-          if (el) el.textContent = txt;
-        }
+        var txt = formatDateTimeSP(paidRaw);
+        var el = document.getElementById('paidAtLocal');
+        if (el && txt) el.textContent = txt;
       } catch(_) {}
       
       try {
@@ -1011,19 +1034,7 @@
                 var tipo = (function(){ if(cat0==='curtidas'){ if(t0==='mistos') return 'Curtidas Mistas'; if(t0==='brasileiros') return 'Curtidas Brasileiras'; if(t0==='organicos') return 'Curtidas Orgânicas'; } else if(cat0==='visualizacoes'){ if(t0==='visualizacoes_reels'||t0==='views'||t0==='reels') return 'Visualizações Reels'; return 'Visualizações'; } else { if(t0==='mistos') return 'Seguidores Mistos'; if(t0==='brasileiros') return 'Seguidores Brasileiros'; if(t0==='organicos') return 'Seguidores brasileiros e reais'; } return t0; })();
               var qtd = String(o.qtd || o.quantidade || '0');
               var insta = String(o.instagramUsername || o.instauser || '-');
-              var paidStr = null;
-              if (paidRaw) {
-                try {
-                  var d0 = new Date(paidRaw);
-                  var sp = d0;
-                  var dd = String(sp.getUTCDate()).padStart(2,'0');
-                  var mm = String(sp.getUTCMonth()+1).padStart(2,'0');
-                  var yyyy = sp.getUTCFullYear();
-                  var hh = String(sp.getUTCHours()).padStart(2,'0');
-                  var mn = String(sp.getUTCMinutes()).padStart(2,'0');
-                  paidStr = dd + '/' + mm + '/' + yyyy + ' as ' + hh + ':' + mn;
-                } catch(_) {}
-              }
+              var paidStr = formatDateTimeSP(paidRaw);
               var elNum = document.getElementById('orderNumberId');
               if (elNum && oid) elNum.textContent = String(oid);
               var elPaid = document.getElementById('paidAtLocal');

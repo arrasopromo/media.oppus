@@ -10,7 +10,14 @@
   <div class="container checkout-page">
     <header class="header">
       <h1 class="title">Refil</h1>
-      <p class="subtitle">Informe o Order ID para repor seguidores (Mistos ou Brasileiros)</p>
+      <p class="subtitle">Informe o ID do pedido para repor seguidores (Mistos ou Brasileiros)</p>
+      <% if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
+        <% if (refilDaysLeft <= 0) { %>
+          <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Expirado</strong></p>
+        <% } else { %>
+          <p class="subtitle" style="margin-top:0.25rem;">Acesso expira em: <strong><%= refilDaysLeft %></strong> <%= (refilDaysLeft === 1 ? 'dia' : 'dias') %></p>
+        <% } %>
+      <% } %>
     </header>
     <main class="main-content">
       <section class="section-block">
@@ -19,9 +26,11 @@
             <h3 class="card-title">Refil de Pedido</h3>
             <div class="card-desc">
               <div class="input-group" id="grupoRefil">
-                <label for="refilOrderIdInput" class="input-label" style="display:block; margin-bottom:0.25rem; font-weight:600; text-align:center;">Order ID</label>
+                <div id="tutorialRefilPedidoId" class="tutorial-pop tutorial-pop-input">
+                  <div class="tutorial-pop-text">Cole o ID do pedido aqui</div>
+                </div>
                 <div class="refil-input-row">
-                  <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Digite seu Order ID" maxlength="20" />
+                  <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Cole o ID do pedido aqui..." maxlength="24" />
                   <button id="refilSubmitBtn" class="continue-button" type="button">
                     <span class="button-text">Solicitar Refil</span>
                   </button>
@@ -31,22 +40,45 @@
             </div>
           </div>
         </div>
+        <div class="service-card" id="refilHistoryCard" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title">Histórico de Reposições</h3>
+            <div class="card-desc" id="refilHistoryList"></div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
   <style>
-    .refil-page .main-content { max-width: 1040px; width: 100%; margin: 0 auto; }
-    .refil-page #refilCard { width: 100%; }
-    .refil-page #grupoRefil { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+    .refil-page .container.checkout-page { padding-top: 24px; }
+    .refil-page .section-block { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+    .refil-page .main-content { max-width: 1160px; width: 100%; margin: 0 auto; }
+    .refil-page #refilCard { width: 100%; max-width: 980px; margin: 0 auto; }
+    .refil-page #refilHistoryCard { width: 100%; max-width: 980px; margin: 0 auto; }
+    .refil-page #refilCard .card-content { display: flex; flex-direction: column; align-items: center; }
+    .refil-page #refilCard .card-desc { width: 100%; display: flex; flex-direction: column; align-items: center; }
+    .refil-page #grupoRefil { width: 100%; max-width: 760px; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
     .refil-page #grupoRefil .refil-input-row { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
-    .refil-page #grupoRefil .select-input { width: 100%; max-width: 520px; }
+    .refil-page #grupoRefil .select-input { width: 100%; max-width: 760px; }
     .refil-page #refilSubmitBtn { margin-left: 0 !important; }
+    .refil-page .tutorial-pop { display: flex !important; }
+    .refil-page .tutorial-pop.hide { display: none !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId { border-color: #cc2366 !important; background: var(--instagram-gradient) !important; color: #ffffff !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId .tutorial-pop-text { color: #ffffff !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId::after { border-top-color: #cc2366 !important; }
+    .refil-page #tutorialRefilPedidoId { top: 32px; left: 16px; transform: none; --tip-arrow-left: 34px; }
     @media (max-width: 767px) {
-      .refil-page #grupoRefil label[for="refilOrderIdInput"] { display: none; }
+      .refil-page #refilCard { max-width: 1020px; }
+      .refil-page #grupoRefil { max-width: 100%; }
+      .refil-page #grupoRefil .select-input { max-width: 100%; }
+      .refil-page #tutorialRefilPedidoId { top: 56px; max-width: 280px; left: 6px; --tip-arrow-left: 22px; }
+      body.theme-light.refil-page #tutorialRefilPedidoId::after { top: -6px; bottom: auto; border-top: 0; border-bottom: 6px solid #cc2366 !important; }
     }
     @media (min-width: 768px) {
       .refil-page #grupoRefil .refil-input-row { flex-direction: column; justify-content: center; }
       .refil-page #refilSubmitBtn { white-space: nowrap; }
+      .refil-page #tutorialRefilPedidoId { top: 78px; left: 20px; --tip-arrow-left: 44px; }
+      body.theme-light.refil-page #tutorialRefilPedidoId::after { top: -6px; bottom: auto; border-top: 0; border-bottom: 6px solid #cc2366 !important; }
     }
   </style>
   
@@ -56,12 +88,86 @@
       const submitBtn = document.getElementById('refilSubmitBtn')
       const statusEl = document.getElementById('refilStatus')
       const resultEl = document.getElementById('refilResult')
+      const tipEl = document.getElementById('tutorialRefilPedidoId')
+      const historyCardEl = document.getElementById('refilHistoryCard')
+      const historyListEl = document.getElementById('refilHistoryList')
+      function sanitizeSupplierName(input){
+        const s = String(input || '')
+        return s
+          .replace(/\bfama24h\b\s*[:\-–—]?\s*/ig, '')
+          .replace(/\(\s*fama24h\s*\)/ig, '')
+          .replace(/\[\s*fama24h\s*\]/ig, '')
+          .replace(/\{\s*fama24h\s*\}/ig, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim()
+      }
       function setStatus(msg, type){
         if (!statusEl) return
-        statusEl.textContent = msg
+        statusEl.textContent = sanitizeSupplierName(msg)
         statusEl.style.display = 'block'
         statusEl.style.textAlign = 'center'
         statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ffb4b4' : '#ffffff')
+      }
+      function syncTipVisibility(){
+        if (!tipEl || !orderInput) return
+        const hasValue = !!String(orderInput.value || '').trim()
+        if (hasValue) tipEl.classList.add('hide')
+        else tipEl.classList.remove('hide')
+      }
+      function formatDatePtBR(iso){
+        try {
+          const d = new Date(iso)
+          if (Number.isNaN(d.getTime())) return String(iso || '')
+          return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(d)
+        } catch(_) {
+          return String(iso || '')
+        }
+      }
+      function renderHistory(items){
+        if (!historyCardEl || !historyListEl) return
+        const arr = Array.isArray(items) ? items : []
+        historyCardEl.style.display = 'block'
+        if (!arr.length) {
+          historyListEl.innerHTML = `<div style="text-align:center; color: var(--text-secondary);">Nenhuma reposição com sucesso ainda.</div>`
+          return
+        }
+        historyListEl.innerHTML = arr.map((it) => {
+          const when = formatDatePtBR(it?.requestedAt)
+          const rid = it?.refillId ? String(it.refillId) : '—'
+          return `<div style="display:flex; justify-content:space-between; gap: 0.75rem; padding: 0.6rem 0; border-top: 1px solid var(--border-color);">
+            <div style="min-width: 0;">
+              <div style="font-weight: 700;">Reposição solicitada</div>
+              <div style="color: var(--text-secondary); font-size: 0.9rem;">${when}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-weight: 700;">ID</div>
+              <div style="color: var(--text-secondary); font-size: 0.9rem;">${rid}</div>
+            </div>
+          </div>`
+        }).join('')
+      }
+      async function loadHistory(orderId){
+        if (!historyCardEl || !historyListEl) return
+        const v = String(orderId || '').trim()
+        if (!v) {
+          historyCardEl.style.display = 'none'
+          return
+        }
+        try {
+          const resp = await fetch('/api/refil/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order_id: v })
+          })
+          const data = await resp.json().catch(() => ({}))
+          if (!resp.ok || !data || data.ok !== true) {
+            historyCardEl.style.display = 'none'
+            return
+          }
+          renderHistory(data.history)
+        } catch(_) {
+          historyCardEl.style.display = 'none'
+        }
       }
       function extractErrorMessage(data){
         try {
@@ -72,12 +178,12 @@
             : (details && (details.message || details.error || details.detail || details.reason))
             || ''
           const merged = [main, sub].map(s => String(s || '').trim()).filter(Boolean)
-          return merged.length ? merged.join(' — ') : 'Falha ao solicitar refil'
+          return sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil')
         } catch(_) { return 'Falha ao solicitar refil' }
       }
       async function submitRefil(){
         const orderId = (orderInput && orderInput.value || '').trim()
-        if (!orderId) { setStatus('Informe seu Order ID', 'error'); return }
+        if (!orderId) { setStatus('Cole o ID do pedido', 'error'); return }
         setStatus('Solicitando refil...', 'info')
         resultEl.style.display = 'none'
         try {
@@ -94,10 +200,10 @@
           setStatus('Refil processado com sucesso', 'success')
           resultEl.style.display = 'block'
           const item = Array.isArray(data) ? data[0] : data
-          const msg = item?.message || 'OK'
+          const msg = sanitizeSupplierName(item?.message || 'OK') || 'OK'
           const drop = item?.data?.drop_amount ?? '—'
           const qtd = item?.data?.quantidade_reposta ?? '—'
-          const status = item?.data?.status ?? '—'
+          const status = sanitizeSupplierName(item?.data?.status ?? '—') || '—'
           const extId = item?.data?.external_refill_id ?? '—'
           resultEl.innerHTML = `<div style="text-align:left;">
             <div><strong>Mensagem:</strong> ${msg}</div>
@@ -106,9 +212,20 @@
             <div><strong>Status:</strong> ${status}</div>
             <div><strong>ID externo:</strong> ${extId}</div>
           </div>`
+          await loadHistory(orderId)
         } catch (e) {
           setStatus(e?.message || 'Erro ao solicitar refil', 'error')
         }
+      }
+      if (orderInput) {
+        let historyTimer = null
+        orderInput.addEventListener('input', () => {
+          syncTipVisibility()
+          const v = String(orderInput.value || '').trim()
+          if (historyTimer) clearTimeout(historyTimer)
+          historyTimer = setTimeout(() => loadHistory(v), 650)
+        })
+        syncTipVisibility()
       }
       if (submitBtn) submitBtn.addEventListener('click', submitRefil)
     })()
