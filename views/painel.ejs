@@ -6,51 +6,163 @@
   <title>Painel de Gerenciamento</title>
   <link href="/css/style.css" rel="stylesheet" />
   <style>
-    body { font-family: sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
-    .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .main-content { max-width: 100% !important; width: calc(100% - 250px); box-sizing: border-box; }
+    @media (max-width: 768px) { .main-content { width: 100%; } }
+    .container { max-width: 1400px; width: 100%; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); box-sizing: border-box; overflow-x: visible; }
     h1 { margin-bottom: 20px; }
     .filters { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
     .filters a { text-decoration: none; padding: 8px 16px; background: #eee; color: #333; border-radius: 4px; }
     .filters a.active { background: #007bff; color: #fff; }
-    table { width: 1000px; border-collapse: collapse; width: 100%; }
+    table { border-collapse: collapse; width: 100%; }
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
     th { background: #f9f9f9; }
-    .total-box { font-size: 1.2em; font-weight: bold; margin-top: 20px; text-align: right; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+    @media (min-width: 1200px) { .summary-grid.summary-grid-dashboard { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+    .summary-card { border: 1px solid #e8e8e8; background: #fafafa; border-radius: 10px; padding: 12px 14px; }
+    .summary-label { font-size: 0.85rem; color: #666; margin-bottom: 6px; }
+    .summary-value { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.2px; color: #111; }
+    .summary-sub { font-size: 0.8rem; color: #666; margin-top: 6px; }
+    .dashboard-layout { display: flex; gap: 24px; align-items: flex-start; margin-top: 16px; flex-wrap: wrap; }
+    .dashboard-main { flex: 1 1 760px; min-width: 0; }
+    .dashboard-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; border: 1px solid #eee; border-radius: 8px; background: #fff; }
+    .dashboard-table { width: 100%; min-width: 980px; border-collapse: collapse; }
+    .dashboard-table th, .dashboard-table td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+    .dashboard-table th { background: #fafafa; white-space: nowrap; }
+    .dashboard-table td:nth-child(1) { white-space: nowrap; width: 140px; }
+    .dashboard-table td:nth-child(3), .dashboard-table td:nth-child(4), .dashboard-table td:nth-child(5), .dashboard-table td:nth-child(7), .dashboard-table td:nth-child(8) { white-space: nowrap; }
+    .dashboard-table td:nth-child(6) { white-space: nowrap; }
+    .cost-panel-wrap { flex: 0 1 320px; max-width: 320px; width: 100%; }
+    .cost-panel { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fff; position: sticky; top: 16px; }
+    @media (max-width: 1100px) { .cost-panel-wrap { max-width: 100%; } .cost-panel { position: static; } }
+    .container-wide { max-width: 1800px; overflow-x: visible; }
+    .unknown-table-wrap { width: 100%; overflow-x: auto; }
+    .unknown-table { min-width: 1400px; table-layout: auto; }
+    .unknown-table th, .unknown-table td { padding: 8px; white-space: normal; overflow: visible; text-overflow: clip; }
+    .unknown-table td small { display: block; color: #666; margin-top: 2px; }
+    .unknown-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .unknown-actions a, .unknown-actions button { font-size: 0.85rem; }
+    .unknown-btn { padding: 6px 10px; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    .unknown-link { color: #007bff; text-decoration: underline; }
+    .unknown-table th, .unknown-table td { vertical-align: top; }
+    .unknown-table td { overflow-wrap: anywhere; word-break: break-word; }
+    .unknown-table th:first-child, .unknown-table td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; border-right: 1px solid #eee; }
+    .unknown-table th:first-child { z-index: 2; background: #f9f9f9; }
+    .unknown-table th:nth-child(2), .unknown-table td:nth-child(2) { position: sticky; left: 44px; background: #fff; z-index: 1; border-right: 1px solid #eee; }
+    .unknown-table th:nth-child(2) { z-index: 2; background: #f9f9f9; }
+    .unknown-table th:nth-child(4), .unknown-table td:nth-child(4) { text-align: right; }
+    .unknown-table th:last-child, .unknown-table td:last-child { text-align: center; }
+    .unknown-badge { display:inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
+    .unknown-badge--private { background: #111827; color: #ffffff; }
+    .followers-pager-link { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; text-decoration: none; color: #111827; }
+    .followers-pager-link--disabled { pointer-events: none; opacity: 0.5; }
   </style>
 </head>
 <body>
-  <div class="container">
+  <% const isUnknownOrderIdView = (typeof view !== 'undefined' && view === 'unknown_orderid'); %>
+  <% const isCouponsView = (typeof view !== 'undefined' && view === 'coupons'); %>
+  <% const isFollowersMgmtView = (typeof view !== 'undefined' && view === 'gerenciamento_seguidores'); %>
+  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : 'dashboard'))}) %>
+  <div class="main-content">
+  <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <h1 style="margin:0;">Painel de Gerenciamento de Custos</h1>
-        <a href="/logout" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
+        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isCouponsView ? 'Cupons' : 'Painel de Gerenciamento de Custos') %></h1>
+        <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
     </div>
     
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isCouponsView ? '/painel?view=coupons' : '/painel'); %>
+    <% const sep = (isUnknownOrderIdView || isCouponsView) ? '&' : '?'; %>
+
+    <% if (!isCouponsView && !isFollowersMgmtView) { %>
     <div class="filters">
-      <a href="/painel?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
-      <a href="/painel?period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
-      <a href="/painel?period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
-      <a href="/painel?period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
-      <a href="/painel?period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <a href="<%= baseUrl + sep %>period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="<%= baseUrl + sep %>period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+      <a href="<%= baseUrl + sep %>period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+      <a href="<%= baseUrl + sep %>period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      <a href="<%= baseUrl + sep %>period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
       <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
     </div>
 
-    <div style="margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #ddd; display: flex; align-items: center; gap: 10px;">
+    <div style="margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #ddd; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
         <strong>Filtrar por data:</strong>
         <input type="date" id="startDate" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
         <span>até</span>
         <input type="date" id="endDate" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
-        <button onclick="applyCustomFilter()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Filtrar</button>
+        <% if (isUnknownOrderIdView) { %>
+          <span style="margin-left: 10px;"><strong>Telefone:</strong></span>
+          <input type="text" id="searchPhone" placeholder="+55..." style="padding: 5px; border: 1px solid #ccc; border-radius: 4px; width: 160px;">
+
+          <span><strong>Serviço:</strong></span>
+          <select id="serviceFilter" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            <option value="all">Todos</option>
+            <option value="curtidas_mistos">Curtidas mistos</option>
+            <option value="seguidores_mistos">Seguidores mistos</option>
+            <option value="seguidores_brasileiros">Seguidores brasileiros</option>
+            <option value="curtidas_organicos">Curtidas orgânicos</option>
+            <option value="seguidores_organicos">Seguidores orgânicos</option>
+            <option value="visualizacoes_reels">Visualizações reels</option>
+            <option value="comentarios">Comentários (WorldSMM)</option>
+          </select>
+
+          <span><strong>Situação:</strong></span>
+          <select id="issueFilter" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+            <option value="all">Todos</option>
+            <option value="unknown">Unknown</option>
+            <option value="error">Erro</option>
+          </select>
+        <% } %>
+        <button onclick="applyCustomFilter()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
+        <% if (isUnknownOrderIdView) { %>
+          <button onclick="exportUnknownOrderId()" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Exportar Excel</button>
+        <% } %>
     </div>
 
     <script>
         function applyCustomFilter() {
             const start = document.getElementById('startDate').value;
             const end = document.getElementById('endDate').value;
-            if (!start || !end) {
-                alert('Por favor, selecione as datas de início e fim.');
-                return;
+            const urlParams = new URLSearchParams(window.location.search);
+            const isUnknown = "<%= (typeof view !== 'undefined' && view === 'unknown_orderid') ? '1' : '' %>" === '1';
+
+            if (isUnknown) {
+                urlParams.set('view', 'unknown_orderid');
+
+                const phoneEl = document.getElementById('searchPhone');
+                const phoneVal = phoneEl ? phoneEl.value.trim() : '';
+                if (phoneVal) urlParams.set('searchPhone', phoneVal);
+                else urlParams.delete('searchPhone');
+
+                const serviceEl = document.getElementById('serviceFilter');
+                const serviceVal = serviceEl ? serviceEl.value : 'all';
+                if (serviceVal && serviceVal !== 'all') urlParams.set('service', serviceVal);
+                else urlParams.delete('service');
+
+                const issueEl = document.getElementById('issueFilter');
+                const issueVal = issueEl ? issueEl.value : 'all';
+                if (issueVal && issueVal !== 'all') urlParams.set('issue', issueVal);
+                else urlParams.delete('issue');
             }
-            window.location.href = `/painel?period=custom&startDate=${start}&endDate=${end}`;
+
+            if (start && end) {
+                urlParams.set('period', 'custom');
+                urlParams.set('startDate', start);
+                urlParams.set('endDate', end);
+            } else if (urlParams.get('period') === 'custom') {
+                urlParams.delete('period');
+                urlParams.delete('startDate');
+                urlParams.delete('endDate');
+            }
+
+            const base = '/painel';
+            const qs = urlParams.toString();
+            window.location.href = qs ? `${base}?${qs}` : base;
+        }
+
+        function exportUnknownOrderId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            urlParams.set('view', 'unknown_orderid');
+            const qs = urlParams.toString();
+            window.location.href = '/painel/unknown_orderid/export' + (qs ? `?${qs}` : '');
         }
         
         const urlParams = new URLSearchParams(window.location.search);
@@ -58,61 +170,798 @@
             document.getElementById('startDate').value = urlParams.get('startDate') || '';
             document.getElementById('endDate').value = urlParams.get('endDate') || '';
         }
+        const phoneEl = document.getElementById('searchPhone');
+        if (phoneEl) phoneEl.value = urlParams.get('searchPhone') || '';
+        const serviceEl = document.getElementById('serviceFilter');
+        if (serviceEl) serviceEl.value = urlParams.get('service') || 'all';
+        const issueEl = document.getElementById('issueFilter');
+        if (issueEl) issueEl.value = urlParams.get('issue') || 'all';
     </script>
+    <% } %>
 
-    <div class="total-box">
-      Total de Vendas: R$ <%= totalRevenue.toFixed(2).replace('.', ',') %>
-      <br>
-      Custo Total no Período: R$ <%= totalCost.toFixed(2).replace('.', ',') %>
-      <br>
-      Total de Transações: <%= totalTransactions %>
-    </div>
+    <% if (isFollowersMgmtView) { %>
+      <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+          <button type="button" id="followersRefreshAllBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Atualizar todos</button>
+          <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
+            <select id="followersSearchType" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+              <option value="username" <%= (!filters || !filters.qType || String(filters.qType) === 'username') ? 'selected' : '' %>>Usuário</option>
+              <option value="orderid" <%= (filters && String(filters.qType) === 'orderid') ? 'selected' : '' %>>OrderID</option>
+            </select>
+            <input id="followersSearch" type="text" placeholder="buscar..." value="<%= (filters && filters.q) ? String(filters.q) : '' %>" style="width:170px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            <div style="font-size:0.9rem; color:#444; font-weight:600;">Filtro % (diferença):</div>
+            <input id="followersMinPct" type="number" step="0.01" placeholder="mín" value="<%= (filters && typeof filters.minPct === 'number') ? filters.minPct : '' %>" style="width:84px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            <input id="followersMaxPct" type="number" step="0.01" placeholder="máx" value="<%= (filters && typeof filters.maxPct === 'number') ? filters.maxPct : '' %>" style="width:84px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+              <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
+              <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
+              <option value="100" <%= (pagination && pagination.pageSize === 100) ? 'selected' : '' %>>100</option>
+              <option value="200" <%= (pagination && pagination.pageSize === 200) ? 'selected' : '' %>>200</option>
+            </select>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersFilledOnly" type="checkbox" <%= (filters && filters.filled) ? 'checked' : '' %> />
+              <span>Somente preenchidos</span>
+            </label>
+            <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
+            <button type="button" id="followersClearFiltersBtn" style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Limpar</button>
+            <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
+            <button type="button" class="followersPctQuickBtn" data-min="20" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">20%</button>
+            <button type="button" class="followersPctQuickBtn" data-min="30" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">30%</button>
+            <button type="button" class="followersPctQuickBtn" data-min="50" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">50%</button>
+          </div>
+          <div id="followersStatus" style="font-size: 0.9rem; color:#555;"></div>
+          <div style="margin-left:auto; font-size:0.9rem; color:#555;">
+            <% const p = (pagination && pagination.page) ? pagination.page : 1; %>
+            <% const tp = (pagination && pagination.totalPages) ? pagination.totalPages : 1; %>
+            <% const tr = (pagination && typeof pagination.totalRows === 'number') ? pagination.totalRows : 0; %>
+            Página <%= p %> de <%= tp %> (<%= tr %> registros)
+          </div>
+        </div>
+      </div>
 
-    <div style="display:flex; gap:24px; align-items:flex-start; margin-top:16px;">
-      <div style="flex:2; min-width:0;">
-        <table>
+      <div class="dashboard-table-wrap" style="margin-top: 14px;">
+        <table class="dashboard-table" style="min-width: 1700px; font-size: 0.92rem;">
           <thead>
             <tr>
-              <th>Data (SP)</th>
-              <th>Serviço</th>
-              <th>Qtd</th>
-              <th>Custo/1k</th>
-              <th>Taxa</th>
-              <th>Total Item</th>
+              <th>OrderID</th>
+              <th>Usuário</th>
+              <th>Tipo</th>
+              <th>Fornecedor</th>
+              <th style="text-align:right;">Inicial</th>
+              <th style="text-align:right;">Contratado</th>
+              <th style="text-align:right;">Resultado</th>
+              <th style="text-align:right;">Atual</th>
+              <th style="text-align:right;">Diferença</th>
+              <th style="text-align:right;">% Dif.</th>
+              <th>Compra</th>
+              <th>Checado em</th>
+              <th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            <% orders.forEach(order => { %>
+            <% (followersOrders || []).forEach(row => { %>
               <% 
-                 let d;
-                 if (order.createdAt instanceof Date) {
-                    d = new Date(order.createdAt);
-                 } else {
-                    d = new Date(order.createdAt || new Date());
-                 }
-                 d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
-                 
-                 const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
-                                 (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
-                                 d.getUTCFullYear() + ' ' + 
-                                 d.getUTCHours().toString().padStart(2, '0') + ':' + 
-                                 d.getUTCMinutes().toString().padStart(2, '0');
+                const username = String(row.username || '').trim();
+                const init = (typeof row.initialFollowersCount === 'number') ? row.initialFollowersCount : null;
+                const contracted = (typeof row.contracted === 'number') ? row.contracted : 0;
+                const resultado = (typeof row.resultado === 'number') ? row.resultado : ((init !== null && contracted) ? (init + contracted) : null);
+                const current = (typeof row.currentFollowersCount === 'number') ? row.currentFollowersCount : null;
+                const diff = (resultado !== null && current !== null) ? (resultado - current) : null;
+                const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && resultado) ? ((diff / resultado) * 100) : null);
+                const oid = row.orderId ? String(row.orderId) : '';
+                const wid = row.orderIdentifier ? String(row.orderIdentifier) : '';
+                const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
+                let lastPurchase = '-';
+                try {
+                  const t = Number(row.lastPurchaseAtMs || 0);
+                  if (t) {
+                    const d = new Date(t - 3 * 60 * 60 * 1000);
+                    const dd = String(d.getUTCDate()).padStart(2,'0');
+                    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+                    const yyyy = String(d.getUTCFullYear());
+                    const hh = String(d.getUTCHours()).padStart(2,'0');
+                    const mn = String(d.getUTCMinutes()).padStart(2,'0');
+                    lastPurchase = `${dd}/${mm}/${yyyy} ${hh}:${mn}`;
+                  }
+                } catch(_) {}
               %>
-              <tr>
-                <td><%= dateStr %></td>
-                <td><%= order.type %></td>
-                <td><%= order.qty %></td>
-                <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
-                <td>R$ 0,85</td>
-                <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
+              <tr data-username="<%= username %>" data-resultado="<%= (resultado !== null ? resultado : '') %>">
+                <td style="white-space: nowrap;">
+                  <div style="font-size:0.85rem; color:#111;"><%= fid ? fid : '-' %></div>
+                  <% if (wid) { %>
+                    <div style="font-size:0.78rem; color:#666;">woovi: <%= wid %></div>
+                  <% } %>
+                </td>
+                <td style="white-space: nowrap;">
+                  <% if (row.isPrivate === true) { %>
+                    <span class="unknown-badge unknown-badge--private">Privado</span>
+                  <% } %>
+                  @<%= username %>
+                </td>
+                <td style="white-space: nowrap;"><%= row.tipo ? String(row.tipo) : '-' %></td>
+                <td style="white-space: nowrap;"><%= row.fornecedor ? String(row.fornecedor) : '-' %></td>
+                <td style="text-align:right;" class="cell-initial"><%= (init !== null ? init : '-') %></td>
+                <td style="text-align:right;"><%= contracted %></td>
+                <td style="text-align:right;" class="cell-resultado"><%= (resultado !== null ? resultado : '-') %></td>
+                <td style="text-align:right;" class="cell-current"><%= (current !== null ? current : '-') %></td>
+                <td style="text-align:right;" class="cell-diff"><%= (diff !== null ? diff : '-') %></td>
+                <td style="text-align:right;" class="cell-pct"><%= (pct !== null ? (pct.toFixed(2).replace('.', ',') + '%') : '-') %></td>
+                <td style="white-space: nowrap;"><%= lastPurchase %></td>
+                <td style="white-space: nowrap;" class="cell-checkedat"><%= row.currentCheckedAt ? String(row.currentCheckedAt) : '-' %></td>
+                <td style="white-space: nowrap;">
+                  <button type="button" class="unknown-btn btn-refresh" data-force="0">Atualizar</button>
+                  <button type="button" class="unknown-btn btn-refresh" data-force="1" style="background:#6c757d;">Forçar</button>
+                </td>
               </tr>
             <% }) %>
           </tbody>
         </table>
       </div>
 
-      <div style="flex:1; max-width:320px;">
-        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; position:sticky; top:16px;">
+      <script>
+        (function(){
+          function el(id){ return document.getElementById(id); }
+          function setStatus(t){ var s = el('followersStatus'); if (s) s.textContent = t || ''; }
+          function toNum(v){ var n = Number(v); return Number.isFinite(n) ? n : null; }
+
+          async function refreshRow(tr, force) {
+            if (!tr) return;
+            var username = String(tr.getAttribute('data-username') || '').trim();
+            if (!username) return;
+
+            var btns = tr.querySelectorAll('button');
+            for (var i=0;i<btns.length;i++){ try { btns[i].disabled = true; } catch(_) {} }
+
+            try {
+              var url = '/api/painel/gerenciamento-seguidores/current?username=' + encodeURIComponent(username) + '&force=' + (force ? '1' : '0');
+              var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+              var data = await resp.json();
+              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+
+              var current = (typeof data.followersCount === 'number') ? data.followersCount : null;
+              var resultadoRaw = tr.getAttribute('data-resultado');
+              var resultado = resultadoRaw === '' ? null : toNum(resultadoRaw);
+              var diff = (resultado !== null && current !== null) ? (resultado - current) : null;
+              var pct = (diff !== null && resultado) ? ((diff / resultado) * 100) : null;
+
+              var cellCurrent = tr.querySelector('.cell-current');
+              var cellDiff = tr.querySelector('.cell-diff');
+              var cellPct = tr.querySelector('.cell-pct');
+              var cellCheckedAt = tr.querySelector('.cell-checkedat');
+              if (cellCurrent) cellCurrent.textContent = (current !== null ? String(current) : '-');
+              if (cellDiff) cellDiff.textContent = (diff !== null ? String(diff) : '-');
+              if (cellPct) cellPct.textContent = (pct !== null ? (pct.toFixed(2).replace('.', ',') + '%') : '-');
+              if (cellCheckedAt) cellCheckedAt.textContent = data.checkedAt ? String(data.checkedAt) : '-';
+            } finally {
+              for (var j=0;j<btns.length;j++){ try { btns[j].disabled = false; } catch(_) {} }
+            }
+          }
+
+          document.addEventListener('click', function(ev){
+            var t = ev && ev.target ? ev.target : null;
+            if (!t) return;
+            if (t.classList && t.classList.contains('btn-refresh')) {
+              var tr = t.closest('tr');
+              var force = String(t.getAttribute('data-force') || '0') === '1';
+              refreshRow(tr, force).catch(function(e){
+                alert('Falha ao atualizar: ' + (e && e.message ? e.message : e));
+              });
+            }
+          });
+
+          var allBtn = el('followersRefreshAllBtn');
+          if (allBtn) {
+            allBtn.addEventListener('click', async function(){
+              var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
+              if (!rows.length) return;
+              allBtn.disabled = true;
+              try {
+                for (var i=0;i<rows.length;i++){
+                  setStatus('Atualizando ' + (i+1) + ' de ' + rows.length + '…');
+                  await refreshRow(rows[i], false);
+                }
+                setStatus('Atualização concluída.');
+              } catch (e) {
+                setStatus('Erro ao atualizar.');
+                alert('Erro ao atualizar todos: ' + (e && e.message ? e.message : e));
+              } finally {
+                allBtn.disabled = false;
+              }
+            });
+          }
+
+          var applyBtn = el('followersApplyFilterBtn');
+          var clearBtn = el('followersClearFiltersBtn');
+          if (applyBtn) {
+            applyBtn.addEventListener('click', function(){
+              try {
+                var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+                var urlParams = new URLSearchParams(window.location.search);
+                var qEl = el('followersSearch');
+                var qtEl = el('followersSearchType');
+                var minEl = el('followersMinPct');
+                var maxEl = el('followersMaxPct');
+                var sizeEl = el('followersPageSize');
+                var filledEl = el('followersFilledOnly');
+                var qV = qEl ? String(qEl.value || '').trim() : '';
+                var qtV = qtEl ? String(qtEl.value || '').trim() : '';
+                var minV = minEl ? String(minEl.value || '').trim() : '';
+                var maxV = maxEl ? String(maxEl.value || '').trim() : '';
+                var sizeV = sizeEl ? String(sizeEl.value || '').trim() : '';
+                var filledV = filledEl && filledEl.checked ? '1' : '';
+                if (qV) urlParams.set('q', qV); else urlParams.delete('q');
+                if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
+                if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
+                if (minV) urlParams.set('minPct', minV); else urlParams.delete('minPct');
+                if (maxV) urlParams.set('maxPct', maxV); else urlParams.delete('maxPct');
+                if (sizeV) urlParams.set('pageSize', sizeV); else urlParams.delete('pageSize');
+                urlParams.set('page', '1');
+                var qs = urlParams.toString();
+                window.location.href = qs ? (base + '?' + qs) : base;
+              } catch (e) {
+                alert('Erro ao aplicar filtro: ' + (e && e.message ? e.message : e));
+              }
+            });
+          }
+          var qEl2 = el('followersSearch');
+          if (qEl2 && applyBtn) {
+            qEl2.addEventListener('keydown', function(ev){
+              try {
+                if (ev && (ev.key === 'Enter' || ev.keyCode === 13)) {
+                  ev.preventDefault();
+                  applyBtn.click();
+                }
+              } catch (_) {}
+            });
+          }
+          if (clearBtn) {
+            clearBtn.addEventListener('click', function(){
+              try {
+                var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+                window.location.href = base;
+              } catch (_) {}
+            });
+          }
+
+          document.addEventListener('click', function(ev){
+            try {
+              var t = ev && ev.target ? ev.target : null;
+              if (!t || !t.classList || !t.classList.contains('followersPctQuickBtn')) return;
+              var min = String(t.getAttribute('data-min') || '').trim();
+              var minEl = el('followersMinPct');
+              if (minEl) minEl.value = min;
+              var maxEl = el('followersMaxPct');
+              if (maxEl) maxEl.value = '';
+              if (applyBtn) applyBtn.click();
+            } catch (_) {}
+          });
+        })();
+      </script>
+
+      <% 
+        const buildFollowersUrl = (targetPage) => {
+          const parts = [];
+          const ps = (pagination && pagination.pageSize) ? pagination.pageSize : 50;
+          if (ps) parts.push(`pageSize=${encodeURIComponent(String(ps))}`);
+          if (filters && filters.q) parts.push(`q=${encodeURIComponent(String(filters.q))}`);
+          if (filters && filters.qType) parts.push(`qType=${encodeURIComponent(String(filters.qType))}`);
+          if (filters && filters.filled) parts.push(`filled=1`);
+          if (filters && typeof filters.minPct === 'number') parts.push(`minPct=${encodeURIComponent(String(filters.minPct))}`);
+          if (filters && typeof filters.maxPct === 'number') parts.push(`maxPct=${encodeURIComponent(String(filters.maxPct))}`);
+          parts.push(`page=${encodeURIComponent(String(targetPage || 1))}`);
+          return '/painel/gerenciamento-seguidores' + (parts.length ? ('?' + parts.join('&')) : '');
+        };
+        const curPage = (pagination && pagination.page) ? pagination.page : 1;
+        const totalPages = (pagination && pagination.totalPages) ? pagination.totalPages : 1;
+      %>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 12px; flex-wrap: wrap; gap: 10px;">
+        <div style="font-size:0.9rem; color:#555;">Página <%= curPage %> de <%= totalPages %></div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <a href="<%= buildFollowersUrl(Math.max(1, curPage - 1)) %>" class="followers-pager-link <%= curPage <= 1 ? 'followers-pager-link--disabled' : '' %>">Anterior</a>
+          <a href="<%= buildFollowersUrl(Math.min(totalPages, curPage + 1)) %>" class="followers-pager-link <%= curPage >= totalPages ? 'followers-pager-link--disabled' : '' %>">Próxima</a>
+        </div>
+      </div>
+
+    <% } else if (isCouponsView) { %>
+      <div id="cupons" style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
+        <h2 style="margin:0 0 8px; font-size:1rem;">Cupons</h2>
+        <div style="display:grid; grid-template-columns: 1fr; gap: 12px;">
+          <div style="display:grid; grid-template-columns: 1fr 90px; gap: 8px;">
+            <input type="hidden" id="couponIdInput" value="">
+            <input type="text" id="couponCodeInput" placeholder="CÓDIGO" style="padding:6px; border:1px solid #ccc; border-radius:4px; text-transform:uppercase;">
+            <input type="number" id="couponDiscountInput" placeholder="%" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1" max="100">
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <input type="number" id="couponMaxUsesTotalInput" placeholder="Limite total (opcional)" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1">
+            <input type="number" id="couponMaxUsesPerProfileInput" placeholder="Limite por perfil (opcional)" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1">
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <input type="datetime-local" id="couponValidFromInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+            <input type="datetime-local" id="couponValidToInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+          </div>
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="couponIsActiveInput" checked>
+            <span>Ativo</span>
+          </label>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button type="button" onclick="clearCouponForm()" style="padding:6px 12px; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer;">Limpar</button>
+            <button type="button" onclick="saveCoupon()" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 14px; border-top: 1px solid #eaeaea; padding-top: 12px;">
+          <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 8px;">Lista</div>
+          <div style="max-height: 520px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; background: #fff;">
+            <table style="width:100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Código</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">%</th>
+                  <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Ativo</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Usos</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Por perfil</th>
+                  <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Validade</th>
+                  <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Ação</th>
+                </tr>
+              </thead>
+              <tbody id="couponsListBody">
+                <tr><td colspan="8" style="padding:10px; color:#777; text-align:center;">Carregando…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <script>
+          function toLocalDateTimeInputValue(d) {
+            if (!d) return '';
+            const dt = new Date(d);
+            if (Number.isNaN(dt.getTime())) return '';
+            const pad = (n) => String(n).padStart(2, '0');
+            const y = dt.getFullYear();
+            const m = pad(dt.getMonth() + 1);
+            const day = pad(dt.getDate());
+            const hh = pad(dt.getHours());
+            const mm = pad(dt.getMinutes());
+            return `${y}-${m}-${day}T${hh}:${mm}`;
+          }
+
+          function getCouponFormPayload() {
+            const id = String(document.getElementById('couponIdInput').value || '').trim();
+            const code = String(document.getElementById('couponCodeInput').value || '').trim().toUpperCase();
+            const discountPercentage = Number(document.getElementById('couponDiscountInput').value || 0) || 0;
+            const maxUsesTotalRaw = String(document.getElementById('couponMaxUsesTotalInput').value || '').trim();
+            const maxUsesPerProfileRaw = String(document.getElementById('couponMaxUsesPerProfileInput').value || '').trim();
+            const validFromRaw = String(document.getElementById('couponValidFromInput').value || '').trim();
+            const validToRaw = String(document.getElementById('couponValidToInput').value || '').trim();
+            const isActive = !!document.getElementById('couponIsActiveInput').checked;
+            const maxUsesTotal = maxUsesTotalRaw ? (Number(maxUsesTotalRaw) || null) : null;
+            const maxUsesPerProfile = maxUsesPerProfileRaw ? (Number(maxUsesPerProfileRaw) || null) : null;
+            const validFrom = validFromRaw ? new Date(validFromRaw).toISOString() : null;
+            const validTo = validToRaw ? new Date(validToRaw).toISOString() : null;
+            return { id, code, discountPercentage, maxUsesTotal, maxUsesPerProfile, validFrom, validTo, isActive };
+          }
+
+          function clearCouponForm() {
+            document.getElementById('couponIdInput').value = '';
+            document.getElementById('couponCodeInput').value = '';
+            document.getElementById('couponDiscountInput').value = '';
+            document.getElementById('couponMaxUsesTotalInput').value = '';
+            document.getElementById('couponMaxUsesPerProfileInput').value = '';
+            document.getElementById('couponValidFromInput').value = '';
+            document.getElementById('couponValidToInput').value = '';
+            document.getElementById('couponIsActiveInput').checked = true;
+          }
+
+          function fillCouponForm(c) {
+            document.getElementById('couponIdInput').value = c && c._id ? String(c._id) : '';
+            document.getElementById('couponCodeInput').value = c && c.code ? String(c.code) : '';
+            document.getElementById('couponDiscountInput').value = (c && c.discountPercentage != null) ? String(c.discountPercentage) : '';
+            document.getElementById('couponMaxUsesTotalInput').value = (c && c.maxUsesTotal != null) ? String(c.maxUsesTotal) : '';
+            document.getElementById('couponMaxUsesPerProfileInput').value = (c && c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '';
+            document.getElementById('couponValidFromInput').value = toLocalDateTimeInputValue(c && c.validFrom ? c.validFrom : '');
+            document.getElementById('couponValidToInput').value = toLocalDateTimeInputValue(c && c.validTo ? c.validTo : '');
+            document.getElementById('couponIsActiveInput').checked = !!(c && c.isActive);
+          }
+
+          function formatValidity(c) {
+            const from = c && c.validFrom ? new Date(c.validFrom) : null;
+            const to = c && c.validTo ? new Date(c.validTo) : null;
+            const fmt = (d) => {
+              if (!d || Number.isNaN(d.getTime())) return '';
+              const pad = (n) => String(n).padStart(2,'0');
+              return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            };
+            const a = fmt(from);
+            const b = fmt(to);
+            if (a && b) return `${a} → ${b}`;
+            return a || b || '-';
+          }
+
+          async function loadCoupons() {
+            const tbody = document.getElementById('couponsListBody');
+            try {
+              const res = await fetch('/api/admin/coupons');
+              const data = await res.json();
+              if (!data || !data.success) throw new Error(data && (data.error || data.message) ? (data.error || data.message) : 'Falha ao carregar cupons');
+              renderCoupons(Array.isArray(data.coupons) ? data.coupons : []);
+            } catch (e) {
+              if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:10px; color:#dc3545; text-align:center;">Erro ao carregar cupons</td></tr>';
+            }
+          }
+
+          function renderCoupons(list) {
+            const tbody = document.getElementById('couponsListBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            if (!list.length) {
+              tbody.innerHTML = '<tr><td colspan="8" style="padding:10px; color:#777; text-align:center;">Nenhum cupom</td></tr>';
+              return;
+            }
+            list.forEach(c => {
+              const tr = document.createElement('tr');
+              tr.style.cursor = 'pointer';
+              tr.onclick = () => fillCouponForm(c);
+              const usedCount = (typeof c.usedCount === 'number') ? c.usedCount : 0;
+              const maxTotal = (c.maxUsesTotal != null) ? String(c.maxUsesTotal) : '-';
+              const maxPer = (c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '-';
+              tr.innerHTML = `
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2;"><strong>${String(c.code || '')}</strong></td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${String(c.discountPercentage || 0)}%</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">${c.isActive ? 'Sim' : 'Não'}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${usedCount}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxTotal}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxPer}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2;">${formatValidity(c)}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">
+                  <button type="button" data-role="del" style="padding:4px 8px; background:#dc3545; color:#fff; border:none; border-radius:4px; cursor:pointer;">Remover</button>
+                </td>
+              `;
+              const delBtn = tr.querySelector('button[data-role="del"]');
+              if (delBtn) {
+                delBtn.onclick = (ev) => { ev.stopPropagation(); deleteCoupon(String(c._id || '')); };
+              }
+              tbody.appendChild(tr);
+            });
+          }
+
+          async function saveCoupon() {
+            const payload = getCouponFormPayload();
+            if (!payload.code || !payload.discountPercentage) {
+              alert('Preencha código e porcentagem.');
+              return;
+            }
+            try {
+              const isEdit = !!payload.id;
+              const url = isEdit ? ('/api/admin/coupons/' + encodeURIComponent(payload.id)) : '/api/admin/coupons';
+              const method = isEdit ? 'PUT' : 'POST';
+              const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              const data = await res.json();
+              if (!data || !data.success) throw new Error(data && (data.error || data.message) ? (data.error || data.message) : 'Falha ao salvar cupom');
+              clearCouponForm();
+              loadCoupons();
+            } catch (e) {
+              alert('Erro ao salvar cupom: ' + (e && e.message ? e.message : e));
+            }
+          }
+
+          async function deleteCoupon(id) {
+            if (!id) return;
+            if (!confirm('Remover este cupom?')) return;
+            try {
+              const res = await fetch('/api/admin/coupons/' + encodeURIComponent(id), { method: 'DELETE' });
+              const data = await res.json();
+              if (!data || !data.success) throw new Error(data && (data.error || data.message) ? (data.error || data.message) : 'Falha ao remover cupom');
+              loadCoupons();
+            } catch (e) {
+              alert('Erro ao remover cupom: ' + (e && e.message ? e.message : e));
+            }
+          }
+
+          loadCoupons();
+        </script>
+      </div>
+    <% } else { %>
+    <% if (isUnknownOrderIdView) { %>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="summary-label">Pedidos com OrderID Unknown</div>
+          <div class="summary-value"><%= totalUnknown || 0 %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">WorldSMM timeout/erro (na lista)</div>
+          <div class="summary-value"><%= ((unknownOrders || []).filter(o => String(o && o.worldsmmCommentsError || '').toLowerCase().includes('timeout') || String(o && o.worldsmmCommentsStatus || '').toLowerCase() === 'error').length) %></div>
+        </div>
+      </div>
+    <% } else { %>
+      <div class="summary-grid summary-grid-dashboard">
+        <div class="summary-card">
+          <div class="summary-label">Total de Vendas</div>
+          <div class="summary-value">R$ <%= totalRevenue.toFixed(2).replace('.', ',') %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Custo Total no Período</div>
+          <div class="summary-value">R$ <%= totalCost.toFixed(2).replace('.', ',') %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Perfis validados hoje</div>
+          <div class="summary-value"><%= typeof validatedProfilesToday !== 'undefined' ? validatedProfilesToday : 0 %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Pedidos pagos hoje</div>
+          <div class="summary-value"><%= typeof paidOrdersToday !== 'undefined' ? paidOrdersToday : 0 %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Pedidos pagos no período</div>
+          <div class="summary-value"><%= totalTransactions %></div>
+        </div>
+      </div>
+    <% } %>
+
+    <div class="dashboard-layout">
+      <div class="dashboard-main">
+        <% if (isUnknownOrderIdView) { %>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-bottom: 10px;">
+            <button type="button" class="unknown-btn" onclick="hideSelectedUnknown()">Ocultar selecionados</button>
+            <button type="button" class="unknown-btn" style="background:#6c757d;" onclick="clearHiddenOrders()">Mostrar tudo</button>
+            <div style="font-size:0.85rem; color:#666;">Ocultos: <span id="unknownHiddenCount">0</span></div>
+          </div>
+          <div class="unknown-table-wrap">
+          <table class="unknown-table">
+            <colgroup>
+              <col style="width: 44px;">
+              <col style="width: 130px;">
+              <col style="width: 240px;">
+              <col style="width: 130px;">
+              <col style="width: 80px;">
+              <col style="width: 190px;">
+              <col style="width: 190px;">
+              <col style="width: 220px;">
+              <col style="width: 220px;">
+              <col style="width: 220px;">
+              <col style="width: 200px;">
+            </colgroup>
+            <thead>
+              <tr>
+                <th style="text-align:center;">
+                  <input id="unknownSelectAll" type="checkbox" style="transform:scale(1.1);" />
+                </th>
+                <th>Data (SP)</th>
+                <th>Usuário</th>
+                <th>Serviço</th>
+                <th>Qtd</th>
+                <th>Fama24h</th>
+                <th>Fornecedor Social</th>
+                <th>WorldSMM (Bump Comentários)</th>
+                <th>Fama24h (Bump Views)</th>
+                <th>Fama24h (Bump Curtidas)</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% (unknownOrders || []).forEach(order => { %>
+                <% 
+                   let d;
+                   if (order.createdAt instanceof Date) d = new Date(order.createdAt);
+                   else d = new Date(order.createdAt || new Date());
+                   d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                   
+                   const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
+                                   (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
+                                   d.getUTCFullYear() + ' ' + 
+                                   d.getUTCHours().toString().padStart(2, '0') + ':' + 
+                                   d.getUTCMinutes().toString().padStart(2, '0');
+
+                   const famaStatusStr = String(order.famaStatus || '');
+                   const famaOrderIdStr = String(order.famaOrderId || '');
+                   const famaOrderIdDisplay = (famaOrderIdStr && famaOrderIdStr !== 'null') ? famaOrderIdStr : '-';
+                   const fsStatusStr = String(order.fsStatus || '');
+                   const fsOrderIdStr = String(order.fsOrderId || '');
+                   const fsOrderIdDisplay = (fsOrderIdStr && fsOrderIdStr !== 'null') ? fsOrderIdStr : '-';
+                   const wStatusStr = String(order.worldsmmCommentsStatus || '');
+                   const wOrderIdStr = String(order.worldsmmCommentsOrderId || '');
+                   const wOrderIdDisplay = (wOrderIdStr && wOrderIdStr !== 'null') ? wOrderIdStr : '-';
+                   const wQtyStr = String(order.worldsmmCommentsQty || '').trim();
+                   const vStatusStr = String(order.famaViewsStatus || '');
+                   const vOrderIdStr = String(order.famaViewsOrderId || '');
+                   const vOrderIdDisplay = (vOrderIdStr && vOrderIdStr !== 'null') ? vOrderIdStr : '-';
+                   const vQtyStr = String(order.famaViewsQty || '').trim();
+                   const lStatusStr = String(order.famaLikesStatus || '');
+                   const lOrderIdStr = String(order.famaLikesOrderId || '');
+                   const lOrderIdDisplay = (lOrderIdStr && lOrderIdStr !== 'null') ? lOrderIdStr : '-';
+                   const lQtyStr = String(order.famaLikesQty || '').trim();
+                   const expectedProvider = String(order.expectedMainProvider || '').trim();
+                   const defaultProvider = expectedProvider || ((
+                     famaStatusStr === 'unknown' ||
+                     famaOrderIdStr === 'unknown' ||
+                     famaOrderIdStr === 'unknow' ||
+                     famaOrderIdStr === 'null' ||
+                     famaOrderIdStr === ''
+                   ) ? 'fama24h' : 'fornecedor_social');
+                   const lockProvider = expectedProvider ? '1' : '';
+                   const showFama = (!expectedProvider || expectedProvider === 'fama24h');
+                   const showFS = (!expectedProvider || expectedProvider === 'fornecedor_social');
+                   const showW = true;
+                   const isUnknownToken = (v) => {
+                     const s = String(v || '').toLowerCase().trim();
+                     return s === 'unknown' || s === 'unknow' || s === '';
+                   };
+                   const mainNeeds = !expectedProvider || (
+                     expectedProvider === 'fama24h'
+                       ? (isUnknownToken(famaStatusStr) || isUnknownToken(famaOrderIdStr) || famaOrderIdStr === 'null')
+                       : (isUnknownToken(fsStatusStr) || isUnknownToken(fsOrderIdStr) || fsOrderIdStr === 'null')
+                   );
+                   const worldNeeds = String(order.needsWorldsmmComments || '') === 'true' || order.needsWorldsmmComments === true;
+                %>
+                <tr data-id="<%= order._id %>">
+                  <td style="text-align:center;">
+                    <input class="unknown-hide-cb" type="checkbox" data-id="<%= order._id %>" style="transform:scale(1.1);" />
+                  </td>
+                  <td><%= dateStr %></td>
+                  <td>
+                    <div>
+                      <% if (order.isPrivate) { %><span class="unknown-badge unknown-badge--private">PRIVADO</span><% } %>
+                      <%= order.instaUser || '-' %>
+                    </div>
+                    <small>
+                      <%= order.phone || '-' %>
+                    </small>
+                  </td>
+                  <td><%= order.serviceLabel || order.type || '-' %></td>
+                  <td><%= (typeof order.qty !== 'undefined' ? order.qty : '-') %></td>
+                  <td>
+                    <% if (showFama) { %>
+                      <div><%= famaOrderIdDisplay %></div>
+                      <small>(<%= famaStatusStr || 'unknown' %>)</small>
+                    <% } else { %>
+                      -
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (showFS) { %>
+                      <div><%= fsOrderIdDisplay %></div>
+                      <small>(<%= fsStatusStr || 'unknown' %>)</small>
+                    <% } else { %>
+                      -
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (showW && (wOrderIdStr || wStatusStr)) { %>
+                      <div><%= wOrderIdDisplay %></div>
+                      <small>(<%= wStatusStr || 'unknown' %>)</small>
+                      <% if (wQtyStr) { %>
+                        <div><small style="color:#666;">Qtd comentários: <%= wQtyStr %></small></div>
+                      <% } %>
+                      <% if (order.postLinkComments) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkComments %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                      <% if (order.worldsmmCommentsError) { %>
+                        <div><small style="color:#b00020;"><%= order.worldsmmCommentsError %></small></div>
+                      <% } %>
+                    <% } else { %>
+                      -
+                      <% if (order.postLinkComments) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkComments %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (vOrderIdStr || vStatusStr || vQtyStr || order.famaViewsError) { %>
+                      <div><%= vOrderIdDisplay %></div>
+                      <small>(<%= vStatusStr || 'unknown' %>)</small>
+                      <% if (vQtyStr) { %>
+                        <div><small style="color:#666;">Qtd views: <%= vQtyStr %></small></div>
+                      <% } %>
+                      <% if (order.postLinkViews) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkViews %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                      <% if (order.famaViewsError) { %>
+                        <div><small style="color:#b00020;"><%= order.famaViewsError %></small></div>
+                      <% } %>
+                    <% } else { %>
+                      -
+                      <% if (order.postLinkViews) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkViews %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (lOrderIdStr || lStatusStr || lQtyStr || order.famaLikesError) { %>
+                      <div><%= lOrderIdDisplay %></div>
+                      <small>(<%= lStatusStr || 'unknown' %>)</small>
+                      <% if (lQtyStr) { %>
+                        <div><small style="color:#666;">Qtd curtidas: <%= lQtyStr %></small></div>
+                      <% } %>
+                      <% if (order.postLinkLikes) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkLikes %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                      <% if (order.famaLikesError) { %>
+                        <div><small style="color:#b00020;"><%= order.famaLikesError %></small></div>
+                      <% } %>
+                    <% } else { %>
+                      -
+                      <% if (order.postLinkLikes) { %>
+                        <div><small><a class="unknown-link" href="<%= order.postLinkLikes %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
+                      <% } %>
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (mainNeeds) { %>
+                      <button class="unknown-btn" onclick='openUnknownOrderModal("<%= order._id %>", "<%= defaultProvider %>", "<%= lockProvider %>")'>Cadastrar OrderID</button>
+                    <% } %>
+                    <% if (worldNeeds) { %>
+                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "worldsmm_comments", "1")'>Cadastrar Comentários<%= wQtyStr ? (" (" + wQtyStr + ")") : "" %></button>
+                    <% } %>
+                    <% if (order.needsFamaViewsBump) { %>
+                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "fama24h_views", "1")'>Cadastrar Views Bump<%= vQtyStr ? (" (" + vQtyStr + ")") : "" %></button>
+                    <% } %>
+                    <% if (order.needsFamaLikesBump) { %>
+                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "fama24h_likes", "1")'>Cadastrar Curtidas Bump<%= lQtyStr ? (" (" + lQtyStr + ")") : "" %></button>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+          </div>
+        <% } else { %>
+          <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead>
+              <tr>
+                <th>Data (SP)</th>
+                <th>Serviço</th>
+                <th>Qtd</th>
+                <th>Custo/1k</th>
+                <th>Taxa</th>
+                <th>Orderbump</th>
+                <th>Custo Bump</th>
+                <th>Total Item</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% orders.forEach(order => { %>
+                <% 
+                   let d;
+                   if (order.createdAt instanceof Date) {
+                      d = new Date(order.createdAt);
+                   } else {
+                      d = new Date(order.createdAt || new Date());
+                   }
+                   d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                   
+                   const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
+                                   (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
+                                   d.getUTCFullYear() + ' ' + 
+                                   d.getUTCHours().toString().padStart(2, '0') + ':' + 
+                                   d.getUTCMinutes().toString().padStart(2, '0');
+                %>
+                <tr>
+                  <td><%= dateStr %></td>
+                  <td><%= order.type %></td>
+                  <td><%= order.qty %></td>
+                  <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
+                  <td>R$ 0,85</td>
+                  <td><%= (order.orderBumps || '-') %></td>
+                  <td>
+                    R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>
+                    <% if (order.orderBumpsTotal) { %>
+                      <div><small style="color:#666;"><%= order.orderBumpsTotal %></small></div>
+                    <% } %>
+                  </td>
+                  <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+          </div>
+        <% } %>
+      </div>
+
+      <% if (!isUnknownOrderIdView) { %>
+      <div class="cost-panel-wrap">
+        <div class="cost-panel">
           <h2 style="margin:0 0 8px; font-size:1rem;">Custos por 1.000</h2>
           <p style="margin:0 0 12px; font-size:0.85rem; color:#555;">
             Ajuste o custo de cada produto. Os valores são usados no cálculo do custo total do painel.
@@ -189,109 +1038,6 @@
                 }
               });
             })();
-          </script>
-        </div>
-
-        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
-          <h2 style="margin:0 0 8px; font-size:1rem;">Cupons de Desconto</h2>
-          <div style="display:flex; gap:8px; margin-bottom:12px;">
-            <input type="text" id="couponCodeInput" placeholder="CÓDIGO" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px; text-transform:uppercase;">
-            <input type="number" id="couponDiscountInput" placeholder="%" style="width:60px; padding:6px; border:1px solid #ccc; border-radius:4px;" min="1" max="100">
-            <button onclick="addCoupon()" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer;">Add</button>
-          </div>
-          <ul id="couponsList" style="list-style:none; padding:0; margin:0; max-height: 200px; overflow-y: auto;">
-            <!-- Items via JS -->
-          </ul>
-          <script>
-            async function loadCoupons() {
-              try {
-                const res = await fetch('/api/admin/coupons');
-                const data = await res.json();
-                if(data.success) {
-                  renderCoupons(data.coupons);
-                }
-              } catch(e) { console.error(e); }
-            }
-
-            function renderCoupons(list) {
-              const ul = document.getElementById('couponsList');
-              ul.innerHTML = '';
-              if (list.length === 0) {
-                ul.innerHTML = '<li style="color:#777; font-size:0.9rem; text-align:center;">Nenhum cupom ativo</li>';
-                return;
-              }
-              list.forEach(item => {
-                const li = document.createElement('li');
-                li.style.display = 'flex';
-                li.style.justifyContent = 'space-between';
-                li.style.alignItems = 'center';
-                li.style.padding = '6px 0';
-                li.style.borderBottom = '1px solid #eee';
-                
-                const span = document.createElement('span');
-                span.innerHTML = `<strong>${item.code}</strong> (${item.discountPercentage}%)`;
-                span.style.fontWeight = '500';
-                
-                const btn = document.createElement('button');
-                btn.textContent = '✕';
-                btn.style.background = 'transparent';
-                btn.style.border = 'none';
-                btn.style.color = '#dc3545';
-                btn.style.cursor = 'pointer';
-                btn.style.fontSize = '1.1rem';
-                btn.title = 'Remover';
-                btn.onclick = () => removeCoupon(item._id);
-                
-                li.appendChild(span);
-                li.appendChild(btn);
-                ul.appendChild(li);
-              });
-            }
-
-            async function addCoupon() {
-              const codeInput = document.getElementById('couponCodeInput');
-              const discountInput = document.getElementById('couponDiscountInput');
-              const code = codeInput.value.trim().toUpperCase();
-              const discountPercentage = discountInput.value;
-              
-              if(!code || !discountPercentage) {
-                  alert('Preencha código e porcentagem');
-                  return;
-              }
-              
-              try {
-                const res = await fetch('/api/admin/coupons', {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ code, discountPercentage })
-                });
-                const data = await res.json();
-                if(data.success) {
-                  codeInput.value = '';
-                  discountInput.value = '';
-                  loadCoupons();
-                } else {
-                  alert('Erro ao criar cupom: ' + (data.message || data.error));
-                }
-              } catch(e) { alert('Erro: ' + e.message); }
-            }
-
-            async function removeCoupon(id) {
-              if(!confirm('Remover este cupom?')) return;
-              try {
-                const res = await fetch('/api/admin/coupons/' + id, {
-                  method: 'DELETE'
-                });
-                const data = await res.json();
-                if(data.success) {
-                  loadCoupons();
-                } else {
-                  alert('Erro ao remover: ' + (data.message || data.error));
-                }
-              } catch(e) { alert('Erro: ' + e.message); }
-            }
-
-            loadCoupons();
           </script>
         </div>
 
@@ -392,6 +1138,176 @@
           </script>
         </div>
     </div>
+      <% } %>
+    <% } %>
+
+      <% if (isUnknownOrderIdView) { %>
+      <div id="unknownOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+        <div style="background:white; padding:20px; border-radius:8px; width:320px; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+          <h3 style="margin-top:0; margin-bottom:15px;">Registrar OrderID</h3>
+          <div style="margin-bottom:15px;">
+            <label style="display:block; margin-bottom:5px; font-weight:bold;">Fornecedor:</label>
+            <select id="unknownModalProvider" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+              <option value="fama24h">Fama24h</option>
+              <option value="fama24h_views">Fama24h (Bump Views)</option>
+              <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
+              <option value="fornecedor_social">Fornecedor Social</option>
+              <option value="worldsmm_comments">WorldSMM (Comentários)</option>
+            </select>
+          </div>
+          <div style="margin-bottom:20px;">
+            <label style="display:block; margin-bottom:5px; font-weight:bold;">Order ID:</label>
+            <input type="text" id="unknownModalOrderId" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;" placeholder="Ex: 123456">
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
+            <button onclick="saveUnknownOrderInfo()" style="padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
+          </div>
+        </div>
+      </div>
+      <script>
+        let currentUnknownOrderId = null;
+        const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
+
+        function openUnknownOrderModal(orderId, defaultProvider, lockProvider) {
+          currentUnknownOrderId = orderId;
+          const modal = document.getElementById('unknownOrderModal');
+          const providerEl = document.getElementById('unknownModalProvider');
+          const orderIdEl = document.getElementById('unknownModalOrderId');
+          if (providerEl && defaultProvider) providerEl.value = defaultProvider;
+          if (providerEl) providerEl.disabled = (String(lockProvider || '') === '1');
+          if (orderIdEl) orderIdEl.value = '';
+          if (modal) modal.style.display = 'flex';
+          if (orderIdEl) orderIdEl.focus();
+        }
+
+        function closeUnknownOrderModal() {
+          const modal = document.getElementById('unknownOrderModal');
+          if (modal) modal.style.display = 'none';
+          const providerEl = document.getElementById('unknownModalProvider');
+          if (providerEl) providerEl.disabled = false;
+          currentUnknownOrderId = null;
+        }
+
+        async function saveUnknownOrderInfo() {
+          const provider = document.getElementById('unknownModalProvider').value;
+          const orderIdVal = document.getElementById('unknownModalOrderId').value.trim();
+          if (!orderIdVal) {
+            alert('Por favor, informe o Order ID do fornecedor.');
+            return;
+          }
+          if (!currentUnknownOrderId) return;
+
+          try {
+            const res = await fetch('/api/admin/update-private-order', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+              body: JSON.stringify({
+                id: currentUnknownOrderId,
+                field: 'supplierInfo',
+                value: { provider, orderId: orderIdVal }
+              })
+            });
+            const contentType = String(res.headers.get('content-type') || '');
+            let data = null;
+            if (contentType.includes('application/json')) {
+              try { data = await res.json(); } catch (_) { data = null; }
+            } else {
+              const raw = await res.text();
+              if (res.status === 401) {
+                window.location.href = '/login';
+                return;
+              }
+              throw new Error(raw || `HTTP ${res.status}`);
+            }
+            if (res.ok && data && data.ok) {
+              window.location.reload();
+            } else {
+              if (res.status === 401) {
+                window.location.href = '/login';
+                return;
+              }
+              alert('Erro ao salvar: ' + ((data && data.error) || `HTTP ${res.status}`));
+            }
+          } catch (e) {
+            alert('Erro de conexão: ' + (e && e.message ? e.message : e));
+          } finally {
+            closeUnknownOrderModal();
+          }
+        }
+
+        function getHiddenOrdersSet() {
+          try {
+            const raw = localStorage.getItem(HIDDEN_ORDERS_KEY);
+            const arr = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(arr) ? arr.map(String) : []);
+          } catch (_) {
+            return new Set();
+          }
+        }
+
+        function saveHiddenOrdersSet(set) {
+          try {
+            const arr = Array.from(set);
+            localStorage.setItem(HIDDEN_ORDERS_KEY, JSON.stringify(arr));
+          } catch (_) {}
+        }
+
+        function applyHiddenOrdersToUnknownTable() {
+          const hidden = getHiddenOrdersSet();
+          const rows = document.querySelectorAll('tr[data-id]');
+          let hiddenCountOnPage = 0;
+          rows.forEach(tr => {
+            const id = String(tr.getAttribute('data-id') || '');
+            if (id && hidden.has(id)) {
+              tr.style.display = 'none';
+              hiddenCountOnPage += 1;
+            } else {
+              tr.style.display = '';
+            }
+          });
+          const el = document.getElementById('unknownHiddenCount');
+          if (el) el.textContent = String(hiddenCountOnPage);
+        }
+
+        function hideSelectedUnknown() {
+          const hidden = getHiddenOrdersSet();
+          const cbs = document.querySelectorAll('.unknown-hide-cb:checked');
+          cbs.forEach(cb => {
+            const id = String(cb.getAttribute('data-id') || '');
+            if (id) hidden.add(id);
+            cb.checked = false;
+          });
+          const selAll = document.getElementById('unknownSelectAll');
+          if (selAll) selAll.checked = false;
+          saveHiddenOrdersSet(hidden);
+          applyHiddenOrdersToUnknownTable();
+        }
+
+        function clearHiddenOrders() {
+          try { localStorage.removeItem(HIDDEN_ORDERS_KEY); } catch (_) {}
+          applyHiddenOrdersToUnknownTable();
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          const selAll = document.getElementById('unknownSelectAll');
+          if (selAll) {
+            selAll.addEventListener('change', function () {
+              const checked = !!selAll.checked;
+              const cbs = document.querySelectorAll('.unknown-hide-cb');
+              cbs.forEach(cb => {
+                const tr = cb.closest('tr[data-id]');
+                const isVisible = !tr || tr.style.display !== 'none';
+                if (isVisible) cb.checked = checked;
+              });
+            });
+          }
+          applyHiddenOrdersToUnknownTable();
+        });
+      </script>
+      <% } %>
+  </div>
   </div>
 </body>
 </html>

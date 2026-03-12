@@ -1,0 +1,99 @@
+<div class="sidebar">
+    <h2>Painel Admin</h2>
+    <ul>
+        <li><a href="/painel" class="<%= typeof page !== 'undefined' && page === 'dashboard' ? 'active' : '' %>">Dashboard</a></li>
+        <li><a href="/painel?view=coupons" class="<%= typeof page !== 'undefined' && page === 'coupons' ? 'active' : '' %>">Cupons</a></li>
+        <li><a href="/painel/recuperacao" class="<%= typeof page !== 'undefined' && page === 'recuperacao' ? 'active' : '' %>">Recuperação</a></li>
+        <li><a href="/painel/privados" class="<%= typeof page !== 'undefined' && page === 'privados' ? 'active' : '' %>">Perfis Privados</a></li>
+        <li><a href="/painel/gerenciamento-seguidores" class="<%= typeof page !== 'undefined' && page === 'gerenciamento-seguidores' ? 'active' : '' %>">Gerenciamento de Seguidores</a></li>
+        <li><a href="/painel?view=unknown_orderid&period=all" class="<%= typeof page !== 'undefined' && page === 'unknown_orderid' ? 'active' : '' %>">OrderID Unknown</a></li>
+        <li><a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a></li>
+    </ul>
+</div>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+        background: #f0f2f5;
+    }
+    .sidebar {
+        width: 250px;
+        background: #343a40;
+        color: #fff;
+        height: 100vh;
+        position: fixed;
+        left: 0;
+        top: 0;
+        padding: 20px;
+        box-sizing: border-box;
+        z-index: 1000;
+    }
+    .sidebar h2 {
+        color: #fff;
+        margin-bottom: 30px;
+        font-size: 1.5rem;
+        text-align: center;
+        border-bottom: 1px solid #495057;
+        padding-bottom: 20px;
+    }
+    .sidebar ul {
+        list-style: none;
+        padding: 0;
+    }
+    .sidebar ul li {
+        margin-bottom: 5px;
+    }
+    .sidebar ul li a {
+        display: block;
+        padding: 12px 15px;
+        color: #adb5bd;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: all 0.2s;
+        font-size: 1rem;
+    }
+    .sidebar ul li a:hover {
+        background: #495057;
+        color: #fff;
+    }
+    .sidebar ul li a.active {
+        background: #007bff;
+        color: #fff;
+        font-weight: 600;
+    }
+    
+    /* Main content adjustment */
+    .main-content {
+        margin-left: 250px;
+        padding: 30px;
+        min-height: 100vh;
+    }
+
+    @media (max-width: 768px) {
+        .sidebar {
+            width: 100%;
+            height: auto;
+            position: relative;
+            padding: 10px;
+        }
+        .sidebar ul {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .sidebar h2 {
+            display: none;
+        }
+        .main-content {
+            margin-left: 0;
+            padding: 15px;
+        }
+        .sidebar ul li a {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            background: #495057;
+        }
+    }
+</style>

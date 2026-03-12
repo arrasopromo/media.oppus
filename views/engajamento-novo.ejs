@@ -435,6 +435,14 @@
     // Configuração inicial
     window.__ENG_MODE__ = false; // Modo checkout direto
   </script>
+  <% if (typeof EFI_SCRIPT_URL !== 'undefined' && EFI_SCRIPT_URL) { %>
+    <script type="text/javascript" src="<%= EFI_SCRIPT_URL %>"></script>
+  <% } %>
+  <script>
+    window.EFI_PAYEE_CODE = "<%= typeof EFI_PAYEE_CODE !== 'undefined' ? EFI_PAYEE_CODE : '' %>";
+    window.EFI_SANDBOX = "<%= typeof EFI_SANDBOX !== 'undefined' ? EFI_SANDBOX : false %>" === "true";
+    window.EFI_SCRIPT_URL = "<%= typeof EFI_SCRIPT_URL !== 'undefined' ? EFI_SCRIPT_URL : '' %>";
+  </script>
 
   <div class="container checkout-page">
     <header class="header">
@@ -605,7 +613,7 @@
             </button>
             <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('likes', 'organicos')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
-              Comprar curtidas reais
+              Comprar curtidas brasileiras
             </button>
             <button class="service-selector-btn specific-service-btn" onclick="window.selectDirectService && window.selectDirectService('views', 'visualizacoes_reels')" style="font-size: 0.85rem; padding: 0.6rem 1.2rem;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>

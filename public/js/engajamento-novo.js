@@ -43,10 +43,13 @@ document.addEventListener('DOMContentLoaded', function() {
           this.disabled = true;
           this.textContent = 'Verificando...';
           
+          const usernameEl = document.getElementById('usernameCheckoutInput');
+          const instagram_username = usernameEl ? usernameEl.value.trim().replace(/^@+/, '') : '';
+
           fetch('/api/validate-coupon', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code })
+              body: JSON.stringify({ code, instagram_username })
           })
           .then(res => res.json())
           .then(data => {
@@ -409,8 +412,8 @@ document.addEventListener('DOMContentLoaded', function() {
         id: 'section-likes-org',
         service: 'likes', 
         type: 'organicos', 
-        title: 'Curtidas Reais', 
-        desc: 'Curtidas de perfis reais brasileiros para aumentar seu alcance.',
+        title: 'Curtidas Brasileiras', 
+        desc: 'Curtidas focadas no público brasileiro para impulsionar suas publicações.',
         tabela: tabelaCurtidas.organicos,
         badgeType: 'organicos'
       },
@@ -872,7 +875,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (window.currentService === 'likes') {
           const labels = {
               'mistos': 'Curtidas Mundiais',
-              'organicos': 'Curtidas Reais'
+              'organicos': 'Curtidas Brasileiras'
           };
           return labels[tipo] || tipo;
       }
@@ -1091,12 +1094,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Validação antes de ir para Step 3
                 const profileVisible = document.getElementById('profilePreview').style.display !== 'none';
           if (!profileVisible) {
-              alert('Por favor, verifique o perfil antes de continuar.');
+              // No reload ou navegação direta, se o perfil não estiver validado, volta para o passo 2
+              window.goToStepEngajamento(2);
               return;
           }
           
           if ((window.currentService === 'likes' || window.currentService === 'views' || window.currentService === 'salvar_posts') && !window.selectedPost) {
               alert('Por favor, selecione uma publicação para receber as ' + (window.currentService === 'views' ? 'visualizações' : (window.currentService === 'salvar_posts' ? 'salvamentos' : 'curtidas')) + '.');
+              // Mantém no passo 2 (onde a seleção ocorre) se já estiver lá, mas aqui estamos tentando ir pro 3.
+              // Como o usuário precisa selecionar, vamos garantir que ele veja a seleção.
+              // O alert é útil aqui para explicar POR QUE ele não avançou, mas no reload pode ser chato.
+              // Mas posts são selecionados APÓS validar perfil. Se profileVisible é true, ele está no step 2 vendo o perfil.
+              // Então o alert aqui faz sentido se ele clicar em "Ir para Pagamento" sem selecionar.
+              // Mas no reload, se profileVisible for true (improvável no reload sem persistência), cairia aqui.
+              // Como profileVisible é false no reload, ele cai no if anterior.
               return;
           }
 

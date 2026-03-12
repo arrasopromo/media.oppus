@@ -164,7 +164,24 @@
         } catch(_) {}
     }
 
-    const total = Math.max(0, Number(price || 0) + Number(promosTotal));
+    const discount = (function () {
+      try {
+        const code = String(window.couponCode || '').trim();
+        const d = Number(window.couponDiscount || 0);
+        if (!code) return 0;
+        if (!Number.isFinite(d) || d <= 0 || d >= 1) return 0;
+        return d;
+      } catch (_) {
+        return 0;
+      }
+    })();
+
+    let base = Number(price || 0);
+    if (discount > 0) {
+      base = Math.max(0, Math.round(base * (1 - discount)));
+    }
+
+    const total = Math.max(0, Number(base) + Number(promosTotal));
     return total;
   }
 
@@ -212,8 +229,8 @@
     console.log('💳 updatePaymentMethodVisibility:', { total, isPayeeCodeValid, payeeCode });
 
     if (selector) {
-      // Exibir apenas para pedidos acima de R$ 39,90 (3990 centavos)
-      if (total >= 3990) {
+      // Exibir para pedidos acima de R$ 1,00 (100 centavos)
+      if (total >= 100) {
         if (selector.style.display !== 'flex') {
             selector.style.display = 'flex';
         }
@@ -254,51 +271,76 @@
   function selectPaymentMethod(method) {
     currentPaymentMethod = method;
     window.currentPaymentMethod = method;
-    const optionPix = document.getElementById('optionPix');
-    const optionCard = document.getElementById('optionCard');
-    const contentPix = document.getElementById('pixPaymentContent');
-    const contentCard = document.getElementById('cardPaymentContent');
     
-    // Sync radio buttons if function called programmatically
+    // 1. Update Radio Inputs
     const radioPix = document.querySelector('input[name="paymentMethod"][value="pix"]');
     const radioCard = document.querySelector('input[name="paymentMethod"][value="credit_card"]');
-    
-    if (method === 'pix') {
-      if (radioPix) radioPix.checked = true;
-      
-      if (optionPix) {
-        optionPix.style.borderColor = '#db2777';
-        optionPix.style.backgroundColor = '#fff';
-        const div = optionPix.querySelector('div');
-        if (div) div.style.color = '#db2777';
-      }
-      if (optionCard) {
-        optionCard.style.borderColor = 'var(--border-color, #e5e7eb)';
-        optionCard.style.backgroundColor = 'var(--bg-secondary, #f9fafb)';
-        const div = optionCard.querySelector('div');
-        if (div) div.style.color = 'var(--text-secondary, #6b7280)';
-      }
-      
-      if (contentPix) contentPix.style.display = 'block';
-      if (contentCard) contentCard.style.display = 'none';
+    if (radioPix) radioPix.checked = (method === 'pix');
+    if (radioCard) radioCard.checked = (method === 'credit_card');
+
+    // 2. Update Visual Styles (Option Cards)
+    const optionPix = document.getElementById('optionPix');
+    const optionCard = document.getElementById('optionCard');
+
+    // Helper to reset style
+    const resetStyle = (el) => {
+        if (!el) return;
+        el.style.borderColor = '#e5e7eb';
+        el.style.backgroundColor = '#fff';
+        const icon = el.querySelector('.check-icon');
+        if (icon) icon.style.display = 'none';
+        const title = el.querySelector('div:nth-child(2)');
+        if (title) title.style.color = '#374151';
+        const subtitle = el.querySelector('div:nth-child(3)');
+        if (subtitle) subtitle.style.color = '#6b7280';
+    };
+
+    resetStyle(optionPix);
+    resetStyle(optionCard);
+
+    // Apply Active Style
+    if (method === 'pix' && optionPix) {
+        optionPix.style.borderColor = '#10b981';
+        optionPix.style.backgroundColor = '#ecfdf5';
+        const icon = optionPix.querySelector('.check-icon');
+        if (icon) icon.style.display = 'block';
+        const title = optionPix.querySelector('div:nth-child(2)');
+        if (title) title.style.color = '#065f46';
+        const subtitle = optionPix.querySelector('div:nth-child(3)');
+        if (subtitle) subtitle.style.color = '#047857';
+    } else if (method === 'credit_card' && optionCard) {
+        optionCard.style.borderColor = '#3b82f6';
+        optionCard.style.backgroundColor = '#eff6ff';
+        const icon = optionCard.querySelector('.check-icon');
+        if (icon) icon.style.display = 'block';
+        const title = optionCard.querySelector('div:nth-child(2)');
+        if (title) title.style.color = '#1e40af';
+        const subtitle = optionCard.querySelector('div:nth-child(3)');
+        if (subtitle) subtitle.style.color = '#1d4ed8';
+        
+        // Populate Installments when Card is selected
+        if (typeof populateInstallments === 'function') {
+            const total = (typeof window.calculateTotalCents === 'function') ? window.calculateTotalCents() : (window.basePriceCents || 0);
+            populateInstallments(total);
+        }
+    }
+
+    // 3. Toggle Sections
+    const cardForm = document.getElementById('cardPaymentContent');
+    const pixBtnContainer = document.getElementById('pixPaymentBtnContainer');
+    const contentPix = document.getElementById('pixPaymentContent'); // Success Screen QR
+
+    if (method === 'credit_card') {
+        if (cardForm) cardForm.style.display = 'block';
+        if (pixBtnContainer) pixBtnContainer.style.display = 'none';
+        if (contentPix) contentPix.style.display = 'none';
+        
+        // Auto-focus first field if needed
+        // setTimeout(() => document.getElementById('cardNumber')?.focus(), 100);
     } else {
-      if (radioCard) radioCard.checked = true;
-      
-      if (optionCard) {
-        optionCard.style.borderColor = '#db2777';
-        optionCard.style.backgroundColor = '#fff';
-        const div = optionCard.querySelector('div');
-        if (div) div.style.color = '#db2777';
-      }
-      if (optionPix) {
-        optionPix.style.borderColor = 'var(--border-color, #e5e7eb)';
-        optionPix.style.backgroundColor = 'var(--bg-secondary, #f9fafb)';
-        const div = optionPix.querySelector('div');
-        if (div) div.style.color = 'var(--text-secondary, #6b7280)';
-      }
-      
-      if (contentPix) contentPix.style.display = 'none';
-      if (contentCard) contentCard.style.display = 'block';
+        if (cardForm) cardForm.style.display = 'none';
+        if (pixBtnContainer) pixBtnContainer.style.display = 'block';
+        if (contentPix) contentPix.style.display = 'block';
     }
     
     // Update Step 5 Tutorial Highlight
@@ -306,6 +348,8 @@
          if (window.currentStep === 3) window.showTutorialStep(5);
     }
   }
+
+
 
   // Event Listeners for Payment Methods
   // Note: DOMContentLoaded might have already fired if script is deferred/async
@@ -865,7 +909,7 @@
       case 'brasileiros': return 'Seguidores Brasileiros';
       case 'organicos': return 'Seguidores brasileiros e reais';
       case 'seguidores_tiktok': return 'Seguidores';
-      case 'curtidas_reais': return 'Curtidas reais';
+      case 'curtidas_reais': return 'Curtidas Brasileiras';
       case 'visualizacoes_reels': return 'Visualizações Reels';
       default: return String(t).replace(/_/g, ' ');
     }
@@ -2378,10 +2422,7 @@
   async function criarPixWoovi() {
     // Check Upsell for Followers
     try {
-      if (getServiceCategory() === 'seguidores' && !upsellShown) {
-         showUpsellModal(criarPixWoovi);
-         return;
-      }
+        // Upsell removed
     } catch(e) { console.error(e); }
 
     try {
@@ -2593,6 +2634,10 @@
         profile_is_private: isInstagramPrivate
       };
       try {
+        const cc = String(window.couponCode || '').trim();
+        if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+      } catch (_) {}
+      try {
         const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
         const tc = m && m[1] ? m[1] : '';
         if (tc) { payload.additionalInfo.push({ key: 'tc_code', value: tc }); }
@@ -2609,14 +2654,37 @@
         const likesLink = mapKind('likes');
         const viewsLink = mapKind('views');
         const commentsLink = mapKind('comments');
+        const anyLink = viewsLink || likesLink || commentsLink;
         
         const hasLikes = promos.some(p => p.key === 'likes');
         const hasViews = promos.some(p => p.key === 'views');
         const hasComments = promos.some(p => p.key === 'comments');
+        const kinds = [];
+        if (hasLikes) kinds.push('likes');
+        if (hasViews) kinds.push('views');
+        if (hasComments) kinds.push('comments');
 
-        if (likesLink && hasLikes) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink });
-        if (viewsLink && hasViews) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink });
-        if (commentsLink && hasComments) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink });
+        if (kinds.length === 1) {
+          const onlyKind = kinds[0];
+          let link = mapKind(onlyKind);
+          if (!link && instagramUsernameFinal) {
+            try {
+              const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+              const pr = await fetch(url);
+              const pd = await pr.json();
+              const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+              const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+              const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+              const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+              if (pick && pick.shortcode) link = `https://instagram.com/p/${encodeURIComponent(pick.shortcode)}/`;
+            } catch (_) {}
+          }
+          if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+        } else {
+          if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+          if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+          if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+        }
       } catch(_) {}
 
       // sem envio de links de posts
@@ -2651,7 +2719,7 @@
           try {
              const selector = document.getElementById('paymentMethodSelector');
              if (selector) {
-                 if (totalCents >= 3990) {
+                 if (totalCents >= 100) {
                      selector.style.display = 'flex';
                      populateInstallments(totalCents);
                      // Se não houver método selecionado, define Pix (mas o seletor estará visível)
@@ -2731,7 +2799,7 @@
           const sName = document.getElementById('summaryItemName');
           if (sName) {
              const tipoLabel = (tipo === 'seguidores_tiktok') ? 'Seguidores TikTok' : 
-                               (tipo === 'curtidas_reais' ? 'Curtidas Reais' : 
+                              (tipo === 'curtidas_reais' ? 'Curtidas Brasileiras' : 
                                (tipo === 'visualizacoes_reels' ? 'Visualizações Reels' : 'Seguidores Instagram'));
              sName.textContent = tipoLabel;
           }
@@ -2894,6 +2962,21 @@
       if (v.length > 8) v = v.substring(0, 8);
       return v.replace(/(\d{5})(\d{3})/, "$1-$2");
   }
+  function maskCpf(v) {
+      v = String(v || '').replace(/\D/g, "");
+      if (v.length > 11) v = v.substring(0, 11);
+      if (v.length <= 3) return v;
+      if (v.length <= 6) return v.replace(/(\d{3})(\d{1,3})/, "$1.$2");
+      if (v.length <= 9) return v.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+      return v.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
+  }
+  function maskBirth(v) {
+      v = String(v || '').replace(/\D/g, "");
+      if (v.length > 8) v = v.substring(0, 8);
+      if (v.length <= 2) return v;
+      if (v.length <= 4) return v.replace(/(\d{2})(\d{1,2})/, "$1/$2");
+      return v.replace(/(\d{2})(\d{2})(\d{1,4})/, "$1/$2/$3");
+  }
 
   const elCardNum = document.getElementById('cardNumber');
   if (elCardNum) elCardNum.addEventListener('input', e => e.target.value = maskCardNumber(e.target.value));
@@ -2906,6 +2989,9 @@
 
   const elCardCpf = document.getElementById('cardHolderCpf');
   if (elCardCpf) elCardCpf.addEventListener('input', e => e.target.value = maskCpf(e.target.value));
+  
+  const elCardBirth = document.getElementById('cardHolderBirth');
+  if (elCardBirth) elCardBirth.addEventListener('input', e => e.target.value = maskBirth(e.target.value));
 
   if (btnPedido) {
     btnPedido.addEventListener('click', async (e) => {
@@ -2922,15 +3008,84 @@
   const payWithCardBtn = document.getElementById('payWithCardBtn');
   const cardPaymentForm = document.getElementById('cardPaymentForm');
 
+  function getEfiCreditCardLib() {
+    try {
+      const candidates = [
+        window.EfiJs,
+        window.EfiPay,
+        window.paymentTokenEfi,
+        window.PaymentTokenEfi,
+        window.PaymentTokenEFI,
+        window.payment_token_efi,
+        window.paymentToken,
+        window.payment_token
+      ];
+      for (const c of candidates) {
+        if (c && c.CreditCard) return c.CreditCard;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  async function ensureEfiPayLoaded() {
+    try {
+      if (getEfiCreditCardLib()) return true;
+    } catch (_) {}
+
+    const urls = (function () {
+      const list = [];
+      try {
+        const a = String(window.EFI_SCRIPT_URL || '').trim();
+        const b = String(window.EFI_SCRIPT_FALLBACK_URL || '').trim();
+        if (a) list.push(a);
+        if (b && b !== a) list.push(b);
+      } catch (_) {}
+      return list;
+    })();
+    if (!urls.length) return false;
+
+    const loadOnce = (src) => new Promise((resolve) => {
+      try {
+        const any = document.querySelector('script[src="' + src.replace(/"/g, '\\"') + '"]');
+        if (any) return resolve(true);
+      } catch (_) {}
+      const s = document.createElement('script');
+      s.type = 'text/javascript';
+      s.src = src;
+      s.async = true;
+      s.setAttribute('data-efi-pay', '1');
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+
+    let loaded = false;
+    for (const src of urls) {
+      const ok = await loadOnce(src);
+      if (ok) {
+        loaded = true;
+        break;
+      }
+    }
+    if (!loaded) return false;
+
+    const maxWaitMs = 20000;
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        if (getEfiCreditCardLib()) return true;
+      } catch (_) {}
+      await new Promise(r => setTimeout(r, 80));
+    }
+    return false;
+  }
+
   async function handleCardPayment(e) {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
 
     // Check Upsell logic (only if relevant for followers)
     try {
-        if (typeof getServiceCategory === 'function' && getServiceCategory() === 'seguidores' && !window.upsellShown) {
-             showUpsellModal(() => handleCardPayment({ preventDefault: () => {} }));
-             return;
-        }
+        // Upsell removed
     } catch(e) { console.error(e); }
 
     const payWithCardBtn = document.getElementById('payWithCardBtn');
@@ -2950,16 +3105,7 @@
         { id: 'cardNumber', type: 'text' },
         { id: 'cardExpiry', type: 'text' },
         { id: 'cardCvv', type: 'text' },
-        { id: 'cardHolderName', type: 'text' },
-        { id: 'cardHolderEmail', type: 'email' },
-        { id: 'cardHolderCpf', type: 'text' },
-        { id: 'cardHolderBirth', type: 'date' },
-        { id: 'billingCep', type: 'text' },
-        { id: 'billingStreet', type: 'text' },
-        { id: 'billingNumber', type: 'text' },
-        { id: 'billingNeighborhood', type: 'text' },
-        { id: 'billingCity', type: 'text' },
-        { id: 'billingState', type: 'text' }
+        { id: 'cardHolderName', type: 'text' }
       ];
 
       let firstError = null;
@@ -2974,8 +3120,6 @@
               
               let isValid = true;
               if (!val) isValid = false;
-              if (f.type === 'email' && val && !val.includes('@')) isValid = false;
-              if (f.id === 'cardHolderCpf' && val.replace(/\D/g, '').length !== 11) isValid = false;
               
               if (!isValid) {
                   el.classList.add('input-error');
@@ -2996,21 +3140,26 @@
       const cardExpiry = values.cardExpiry;
       const cardCvv = values.cardCvv;
       const cardHolder = values.cardHolderName;
-      const cardEmail = values.cardHolderEmail;
-      const cardCpf = values.cardHolderCpf.replace(/\D/g, '');
-      const cardBirth = values.cardHolderBirth;
-      const installments = document.getElementById('cardInstallments')?.value || '1';
+      const installments = String(document.getElementById('cardInstallments')?.value || '').trim();
+      if (!installments) throw new Error('Selecione as parcelas.');
       
-      const billingCep = values.billingCep.replace(/\D/g, '');
-      const billingStreet = values.billingStreet;
-      const billingNumber = values.billingNumber;
-      const billingNeighborhood = values.billingNeighborhood;
-      const billingCity = values.billingCity;
-      const billingState = values.billingState.toUpperCase();
-
       // 2. Tokenização Efí
-      if (typeof EfiPay === 'undefined') {
-        throw new Error('Biblioteca de pagamento não carregada. Recarregue a página.');
+      let efiLib = getEfiCreditCardLib();
+      if (!efiLib) {
+        const ok = await ensureEfiPayLoaded();
+        efiLib = getEfiCreditCardLib();
+        if (!ok || !efiLib) {
+          throw new Error('Biblioteca de pagamento não carregada. Desative bloqueadores e recarregue a página.');
+        }
+      }
+      try {
+        const blocked = await efiLib.isScriptBlocked();
+        if (blocked) {
+          throw new Error('Bloqueador de scripts detectado. Desative o bloqueador e tente novamente.');
+        }
+      } catch (eBlocked) {
+        const msg = String(eBlocked?.message || '');
+        if (msg) throw eBlocked;
       }
       
       let expMonth, expYear;
@@ -3036,37 +3185,43 @@
       else if (/^606282|^3841/.test(cardNum)) brand = 'hipercard';
       else if (/^50/.test(cardNum)) brand = 'elo';
 
-      const paymentToken = await new Promise((resolve, reject) => {
-        // Efí Pay Initialization
-        const callback = (error, response) => {
-          if(error) {
-            console.error('❌ Erro EfiPay Token:', error);
-            reject(new Error(error.error_description || 'Erro ao gerar token do cartão'));
-          } else {
-            resolve(response.payment_token);
-          }
-        };
+      const cardHolderCpf = String(values.cardHolderCpf || '').replace(/\D/g, '');
 
+      const paymentToken = await (async () => {
         const isSandbox = String(window.EFI_SANDBOX) === 'true';
-        // Ensure PAYEE_CODE is available
-        const payeeCode = window.EFI_PAYEE_CODE || '00000000000000000000000000000000'; // Fallback to avoid crash, but will fail
-        
-        EfiPay(payeeCode, isSandbox, (error, promise) => {
-          if(error) {
-            console.error('❌ Erro EfiPay Init:', error);
-            reject(new Error('Erro ao inicializar pagamento (EfiPay Init)'));
-          } else {
-             promise.payment_token({
-               brand: brand,
-               number: cardNum,
-               cvv: cardCvv,
-               expiration_month: expMonth,
-               expiration_year: expYear,
-               reuse: false
-             }, callback);
-          }
-        });
-      });
+        const payeeCode = String(window.EFI_PAYEE_CODE || '').trim();
+        if (!payeeCode) {
+          throw new Error('Configuração de pagamento inválida (payee_code ausente).');
+        }
+        if (!efiLib || typeof efiLib.setAccount !== 'function' || typeof efiLib.setCreditCardData !== 'function') {
+          throw new Error('Biblioteca de pagamento inválida.');
+        }
+
+        const tokenPromise = (async () => {
+          const result = await efiLib
+            .setAccount(payeeCode)
+            .setEnvironment(isSandbox ? 'sandbox' : 'production')
+            .setCreditCardData({
+              brand: brand,
+              number: cardNum,
+              cvv: cardCvv,
+              expirationMonth: expMonth,
+              expirationYear: expYear,
+              holderName: cardHolder,
+              holderDocument: cardHolderCpf,
+              reuse: false
+            })
+            .getPaymentToken();
+
+          const token = result && (result.payment_token || result.paymentToken || result.token);
+          if (!token) throw new Error('Erro ao gerar token do cartão');
+          return String(token);
+        })();
+
+        const timeoutMs = 15000;
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Tempo esgotado ao gerar token do cartão. Tente novamente.')), timeoutMs));
+        return await Promise.race([tokenPromise, timeoutPromise]);
+      })();
 
       // 3. Preparar Payload
       const tipo = document.getElementById('tipoSelect')?.value || window.selectedType || 'seguidores';
@@ -3106,26 +3261,12 @@
 
       const payload = {
         payment_token: paymentToken,
-        installments: Number(installments),
+        installments: Number(installments) || 1,
         total_cents: totalCents,
         items: [
            { title: `${qtd} ${getUnitForTipo(tipo)}`, quantity: 1, price_cents: totalCents }
         ],
-        customer: {
-          name: cardHolder,
-          cpf: cardCpf,
-          phone_number: phoneValue,
-          email: cardEmail,
-          birth: cardBirth
-        },
-        billing_address: {
-          street: billingStreet,
-          number: billingNumber,
-          neighborhood: billingNeighborhood,
-          zipcode: billingCep,
-          city: billingCity,
-          state: billingState
-        },
+        customer: { name: cardHolder, phone_number: phoneValue },
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
@@ -3136,6 +3277,10 @@
         profile_is_private: !!window.isInstagramPrivate,
         comment: 'Checkout OPPUS Card'
       };
+      try {
+        const cc = String(window.couponCode || '').trim();
+        if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+      } catch (_) {}
       
       // Add Order Bumps to Additional Info if present
       const promos = getSelectedPromos();
@@ -3143,12 +3288,57 @@
           payload.additionalInfo.push({ key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') });
       }
 
+      try {
+        const selResp = await fetch('/api/instagram/selected-for');
+        const selData = await selResp.json();
+        const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+        const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
+        const likesLink = mapKind('likes');
+        const viewsLink = mapKind('views');
+        const commentsLink = mapKind('comments');
+        const anyLink = viewsLink || likesLink || commentsLink;
+
+        const hasLikes = promos.some(p => p.key === 'likes');
+        const hasViews = promos.some(p => p.key === 'views');
+        const hasComments = promos.some(p => p.key === 'comments');
+        const kinds = [];
+        if (hasLikes) kinds.push('likes');
+        if (hasViews) kinds.push('views');
+        if (hasComments) kinds.push('comments');
+
+        if (kinds.length === 1) {
+          const onlyKind = kinds[0];
+          let link = mapKind(onlyKind);
+          if (!link && instagramUsernameFinal) {
+            try {
+              const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+              const pr = await fetch(url);
+              const pd = await pr.json();
+              const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+              const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+              const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+              const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+              if (pick && pick.shortcode) link = `https://instagram.com/p/${encodeURIComponent(pick.shortcode)}/`;
+            } catch (_) {}
+          }
+          if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+        } else {
+          if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+          if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+          if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+        }
+      } catch (_) {}
+
       // 4. Enviar para Backend
+      const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
       const resp = await fetch('/api/efi/card-charge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: ctrl ? ctrl.signal : undefined
       });
+      if (timeoutId) clearTimeout(timeoutId);
 
       const data = await resp.json();
       if (!resp.ok) {
@@ -3176,7 +3366,10 @@
     cardPaymentForm.addEventListener('submit', handleCardPayment);
   }
 
-  if (checkCheckoutButton) {
+  const isEngajamentoNovoPage = (function () {
+    try { return String(window.location && window.location.pathname || '').indexOf('/engajamento-novo') === 0; } catch (_) { return false; }
+  })();
+  if (checkCheckoutButton && !isEngajamentoNovoPage) {
     checkCheckoutButton.addEventListener('click', checkInstagramProfileCheckout);
   }
 
