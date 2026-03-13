@@ -33,10 +33,11 @@ app.use((req, res, next) => {
   const isSandbox = process.env.EFI_SANDBOX === 'true';
   res.locals.EFI_SANDBOX = isSandbox;
   res.locals.EFI_PAYEE_CODE = process.env.EFI_PAYEE_CODE || '';
-  res.locals.EFI_SCRIPT_URL = 'https://cdn.jsdelivr.net/gh/efipay/js-payment-token-efi/dist/payment-token-efi.min.js';
-  res.locals.EFI_SCRIPT_FALLBACK_URL = isSandbox
+  const official = isSandbox
     ? 'https://sandbox.efipay.com.br/v1/payment-token.js'
     : 'https://payment-token.efipay.com.br/v1/payment-token.js';
+  res.locals.EFI_SCRIPT_URL = official;
+  res.locals.EFI_SCRIPT_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/efipay/js-payment-token-efi/dist/payment-token-efi.min.js';
   next();
 });
 
@@ -1158,15 +1159,85 @@ async function ensureRefilLink(identifier, correlationID, req) {
     if (ident) { conds.push({ 'woovi.identifier': ident }); conds.push({ identifier: ident }); }
     if (corr) { conds.push({ correlationID: corr }); }
     const filter = conds.length ? { $or: conds } : {};
-    const doc = await col.findOne(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1, customer: 1 } });
+    let doc = null;
+    try {
+      const arr = await col.find(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, customer: 1, comment: 1, paidAt: 1, createdAt: 1, woovi: 1 } })
+        .sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 })
+        .limit(1)
+        .toArray();
+      doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
+    } catch (_) {
+      doc = await col.findOne(filter, { projection: { _id: 1, instauser: 1, instagramUsername: 1, additionalInfoPaid: 1, additionalInfo: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, customer: 1, comment: 1, paidAt: 1, createdAt: 1, woovi: 1 } });
+    }
     if (!doc) return null;
     const arrPaid = Array.isArray(doc?.additionalInfoPaid) ? doc.additionalInfoPaid : [];
     const arrOrig = Array.isArray(doc?.additionalInfo) ? doc.additionalInfo : [];
-    const map = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+    const mapBase = Object.assign(
+      {},
+      (doc && doc.additionalInfoMapPaid && typeof doc.additionalInfoMapPaid === 'object') ? doc.additionalInfoMapPaid : {},
+      (doc && doc.additionalInfoMap && typeof doc.additionalInfoMap === 'object') ? doc.additionalInfoMap : {}
+    );
+    const mapFromArr = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
+    const map = Object.assign({}, mapBase, mapFromArr);
+    const pickVal = (arr, keyLower) => {
+      try {
+        const a = Array.isArray(arr) ? arr : [];
+        const it = a.find(x => String(x?.key || '').trim().toLowerCase() === keyLower);
+        const v = it && typeof it.value !== 'undefined' ? it.value : '';
+        const s = String(v || '').trim();
+        return s;
+      } catch (_) {
+        return '';
+      }
+    };
     const iu = doc.instauser || doc.instagramUsername || map['instagram_username'] || '';
     const phoneFromCustomer = (doc && doc.customer && doc.customer.phone) ? String(doc.customer.phone).replace(/\D/g, '') : '';
-    const phoneFromMap = map['phone'] ? String(map['phone']).replace(/\D/g, '') : '';
+    const phoneFromMap = (map['phone'] ? String(map['phone']) : (pickVal(arrPaid, 'phone') || pickVal(arrOrig, 'phone'))).replace(/\D/g, '');
     const phoneDigits = phoneFromCustomer || phoneFromMap || '';
+    const bumpsStr = String(map['order_bumps'] || pickVal(arrPaid, 'order_bumps') || pickVal(arrOrig, 'order_bumps') || '').trim();
+    const bumpKeys = bumpsStr
+      ? bumpsStr.split(';').map(s => String(s || '').trim()).filter(Boolean).map(s => String(s.split(':')[0] || '').trim().toLowerCase()).filter(Boolean)
+      : [];
+    let warrantyMode = null;
+    let warrantyDays = null;
+    if (bumpKeys.includes('warranty_lifetime')) {
+      warrantyMode = 'life';
+    } else if (bumpKeys.includes('warranty60')) {
+      warrantyMode = '60';
+      warrantyDays = 60;
+    } else if (bumpKeys.includes('warranty30') || bumpKeys.includes('warranty')) {
+      warrantyMode = '30';
+      warrantyDays = 30;
+    }
+    if (warrantyMode !== 'life') {
+      if (!warrantyMode) warrantyMode = '30';
+      if (typeof warrantyDays !== 'number' || !Number.isFinite(warrantyDays) || warrantyDays <= 0) {
+        warrantyDays = 30;
+      }
+    }
+    const orderBaseMs = (() => {
+      const toMs = (v) => {
+        try {
+          if (!v) return 0;
+          if (typeof v === 'number' && Number.isFinite(v)) return v;
+          const t = new Date(v).getTime();
+          return Number.isFinite(t) ? t : 0;
+        } catch (_) {
+          return 0;
+        }
+      };
+      const a = toMs(doc?.woovi?.paidAt);
+      if (a) return a;
+      const b = toMs(doc?.paidAt);
+      if (b) return b;
+      const c = toMs(doc?.createdAt);
+      if (c) return c;
+      return Date.now();
+    })();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const desiredExpiresAtIso = warrantyMode === 'life'
+      ? new Date('2099-12-31T23:59:59.999Z').toISOString()
+      : new Date(orderBaseMs + (warrantyDays * dayMs)).toISOString();
     const tl = await getCollection('temporary_links');
 
     // Primeiro: tentar reutilizar link existente por telefone (um token único por telefone)
@@ -1174,8 +1245,26 @@ async function ensureRefilLink(identifier, correlationID, req) {
       const existingByPhone = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
       if (existingByPhone) {
         await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existingByPhone.id } });
-        const sets = { instauser: existingByPhone.instauser || iu || null };
-        await tl.updateOne({ id: existingByPhone.id }, { $set: sets, $addToSet: { orders: String(doc._id) } });
+        const sets = {
+          orderId: existingByPhone.orderId ? String(existingByPhone.orderId) : String(doc._id),
+          phone: phoneDigits || existingByPhone.phone || null,
+          instauser: iu || existingByPhone.instauser || null,
+          warrantyMode: warrantyMode || existingByPhone.warrantyMode || null,
+          warrantyDays: (typeof warrantyDays === 'number' ? warrantyDays : (typeof existingByPhone.warrantyDays === 'number' ? existingByPhone.warrantyDays : null))
+        };
+        if (desiredExpiresAtIso) {
+          const currentExpMs = existingByPhone.expiresAt ? new Date(existingByPhone.expiresAt).getTime() : 0;
+          const desiredExpMs = new Date(desiredExpiresAtIso).getTime();
+          if (!currentExpMs || (desiredExpMs && desiredExpMs > currentExpMs)) {
+            sets.expiresAt = desiredExpiresAtIso;
+          }
+        }
+        const addToSet = { orders: String(doc._id) };
+        if (iu) addToSet.instausers = String(iu);
+        const updateFilter = existingByPhone._id ? { _id: existingByPhone._id } : { id: existingByPhone.id };
+        await tl.updateOne(updateFilter, { $set: sets, $addToSet: addToSet });
+        if (sets.expiresAt) existingByPhone.expiresAt = sets.expiresAt;
+        if (sets.warrantyMode) existingByPhone.warrantyMode = sets.warrantyMode;
         return existingByPhone;
       }
     }
@@ -1192,6 +1281,23 @@ async function ensureRefilLink(identifier, correlationID, req) {
       if (phoneDigits) {
         await tl.updateOne({ id: existing.id }, { $set: { phone: phoneDigits }, $addToSet: { orders: String(doc._id) } });
       }
+      try {
+        const sets = {};
+        if (warrantyMode) sets.warrantyMode = warrantyMode;
+        if (typeof warrantyDays === 'number') sets.warrantyDays = warrantyDays;
+        if (desiredExpiresAtIso) {
+          const currentExpMs = existing.expiresAt ? new Date(existing.expiresAt).getTime() : 0;
+          const desiredExpMs = new Date(desiredExpiresAtIso).getTime();
+          if (!currentExpMs || (desiredExpMs && desiredExpMs > currentExpMs)) {
+            sets.expiresAt = desiredExpiresAtIso;
+          }
+        }
+        if (Object.keys(sets).length) {
+          await tl.updateOne({ id: existing.id }, { $set: sets, ...(iu ? { $addToSet: { instausers: String(iu) } } : {}) });
+          if (sets.expiresAt) existing.expiresAt = sets.expiresAt;
+          if (sets.warrantyMode) existing.warrantyMode = sets.warrantyMode;
+        }
+      } catch (_) {}
       return existing;
     }
 
@@ -1204,8 +1310,11 @@ async function ensureRefilLink(identifier, correlationID, req) {
       phone: phoneDigits || null,
       orders: [String(doc._id)],
       instauser: iu || null,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(info.expiresAt).toISOString()
+      instausers: iu ? [String(iu)] : [],
+      warrantyMode: warrantyMode,
+      warrantyDays: warrantyDays,
+      createdAt: new Date(orderBaseMs).toISOString(),
+      expiresAt: desiredExpiresAtIso || new Date(info.expiresAt).toISOString()
     };
     await tl.insertOne(rec);
     await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: info.id } });
@@ -1905,9 +2014,16 @@ app.get('/servicos-curtidas', (req, res) => {
 // Página de Refil
 app.get('/refil', async (req, res) => {
   console.log('🔁 Acessando rota /refil');
-  let token = String(req.query.token || '').trim();
+  const normalizeRefilToken = (v) => String(v || '').trim().replace(/[^0-9a-z]/gi, '');
+  let token = normalizeRefilToken(req.query.token || '');
   const phoneRaw = String(req.query.phone || '').trim();
+  const usernameRaw = String(req.query.username || req.query.user || req.query.u || req.query.instauser || req.query.instagram || '').trim();
   let refilDaysLeft = null;
+  let refilIsLifetime = false;
+  let whatsappHref = '';
+  let lastRefilOrderId = '';
+  let refilLinkRec = null;
+  let refilBaseOrderDoc = null;
   try {
     let isValid = false;
     if (token) {
@@ -1932,13 +2048,37 @@ app.get('/refil', async (req, res) => {
                 const linkRec = await tl.findOne({ id: token });
                 if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                     const nowMs = Date.now();
-                    const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
-                    await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
-                    isValid = true;
-                    if (req.session) {
+                    const dayMs = 24 * 60 * 60 * 1000;
+                    const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
+                    const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
+                    let ok = false;
+                    let shouldRenew = false;
+                    if (isLifetime) {
+                      ok = true;
+                    } else if (expMs && nowMs <= expMs) {
+                      ok = true;
+                    } else {
+                      const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+                      const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
+                      if (createdMs) {
+                        const warrantyEndMs = createdMs + (daysTotal * dayMs);
+                        if (nowMs <= warrantyEndMs) {
+                          ok = true;
+                          shouldRenew = true;
+                        }
+                      }
+                    }
+                    if (ok) {
+                      if (shouldRenew) {
+                        const newExp = new Date(nowMs + dayMs).toISOString();
+                        await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                      }
+                      isValid = true;
+                      if (req.session) {
                         req.session.refilAccessAllowed = true;
                         req.session.linkSlug = token;
-                        req.session.linkAccessTime = Date.now();
+                        req.session.linkAccessTime = nowMs;
+                      }
                     }
                 }
             } catch(_) {}
@@ -1954,37 +2094,75 @@ app.get('/refil', async (req, res) => {
            const tl = await getCollection('temporary_links');
            const linkRec = await tl.findOne({ purpose: 'refil', phone: digits });
            if (linkRec && linkRec.id) {
-             token = linkRec.id; // Atualizar token para o válido encontrado
-             // Renovar e logar
              const nowMs = Date.now();
-             const newExp = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
-             await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
-             isValid = true;
-             if (req.session) {
-                req.session.refilAccessAllowed = true;
-                req.session.linkSlug = token;
-                req.session.linkAccessTime = Date.now();
+             const dayMs = 24 * 60 * 60 * 1000;
+             const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
+             const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
+             let ok = false;
+             let shouldRenew = false;
+             if (isLifetime) {
+               ok = true;
+             } else if (expMs && nowMs <= expMs) {
+               ok = true;
+             } else {
+               const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+               const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
+               if (createdMs) {
+                 const warrantyEndMs = createdMs + (daysTotal * dayMs);
+                 if (nowMs <= warrantyEndMs) {
+                   ok = true;
+                   shouldRenew = true;
+                 }
+               }
              }
-             console.log('🔁 Refil: Acesso recuperado via telefone:', digits);
+             if (ok) {
+               token = linkRec.id;
+               if (shouldRenew) {
+                 const newExp = new Date(nowMs + dayMs).toISOString();
+                 await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+               }
+               isValid = true;
+               if (req.session) {
+                 req.session.refilAccessAllowed = true;
+                 req.session.linkSlug = token;
+                 req.session.linkAccessTime = nowMs;
+               }
+               console.log('🔁 Refil: Acesso recuperado via telefone:', digits);
+             }
            }
         }
       } catch(_) {}
     }
 
     try {
-      const slugFromQuery = token && !/^liberado$/i.test(token) ? String(token).trim() : '';
+      const slugFromQuery = token && !/^liberado$/i.test(token) ? normalizeRefilToken(token) : '';
       const slugFromSession = req.session && req.session.refilAccessAllowed ? String(req.session.linkSlug || '').trim() : '';
-      const slug = slugFromQuery || (slugFromSession && slugFromSession !== 'liberado' ? slugFromSession : '');
+      const slugFromSessionNorm = (slugFromSession && slugFromSession !== 'liberado') ? normalizeRefilToken(slugFromSession) : '';
+      const slug = slugFromQuery || slugFromSessionNorm;
       if (slug) {
         const tl = await getCollection('temporary_links');
-        const linkRec = await tl.findOne({ id: slug }, { projection: { createdAt: 1 } });
-        const created = linkRec && linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
-        if (created) {
-          const nowMs = Date.now();
-          const dayMs = 24 * 60 * 60 * 1000;
-          const daysPassed = Math.floor((nowMs - created) / dayMs);
-          const left = 30 - daysPassed;
-          refilDaysLeft = Math.max(0, left);
+        const linkRec = await tl.findOne({ id: slug }, { projection: { createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1, phone: 1, instauser: 1, instausers: 1, orderId: 1, orders: 1, order: 1 } });
+        refilLinkRec = linkRec || null;
+        if (linkRec && String(linkRec.warrantyMode || '').toLowerCase() === 'life') {
+          refilIsLifetime = true;
+        } else if (linkRec && linkRec.expiresAt) {
+          const exp = new Date(linkRec.expiresAt).getTime();
+          if (exp) {
+            const nowMs = Date.now();
+            const dayMs = 24 * 60 * 60 * 1000;
+            const left = Math.ceil((exp - nowMs) / dayMs);
+            refilDaysLeft = Math.max(0, left);
+          }
+        } else if (linkRec && linkRec.createdAt) {
+          const created = new Date(linkRec.createdAt).getTime();
+          if (created) {
+            const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
+            const nowMs = Date.now();
+            const dayMs = 24 * 60 * 60 * 1000;
+            const daysPassed = Math.floor((nowMs - created) / dayMs);
+            const left = daysTotal - daysPassed;
+            refilDaysLeft = Math.max(0, left);
+          }
         }
       }
     } catch(_) {}
@@ -1994,7 +2172,168 @@ app.get('/refil', async (req, res) => {
     const qs = token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`;
     return res.redirect(`/restrito?${qs}`);
   }
-  res.render('refil', { refilDaysLeft }, (err, html) => {
+  if (!refilLinkRec && token && !/^liberado$/i.test(token)) {
+    try {
+      const tl = await getCollection('temporary_links');
+      const linkRec = await tl.findOne({ id: String(token).trim() }, { projection: { createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1, phone: 1, instauser: 1, instausers: 1, orderId: 1, orders: 1, order: 1 } });
+      if (linkRec) refilLinkRec = linkRec;
+    } catch (_) {}
+  }
+  try {
+    const waPhone = '553173425727';
+    const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pickPaid = (d) => {
+      if (!d) return false;
+      const st = String(d.status || '').toLowerCase();
+      const wst = String(d?.woovi?.status || '').toLowerCase();
+      if (st === 'pago' || wst === 'pago') return true;
+      if (d.paidAt) return true;
+      if (d?.woovi?.paidAt) return true;
+      if (d?.payment?.paidAt) return true;
+      return false;
+    };
+    const pickOrderId = (d) => {
+      if (!d) return '';
+      const a = d.fama24h && (d.fama24h.orderId || d.fama24h.id) ? (d.fama24h.orderId || d.fama24h.id) : '';
+      const b = d.fornecedor_social && (d.fornecedor_social.orderId || d.fornecedor_social.id) ? (d.fornecedor_social.orderId || d.fornecedor_social.id) : '';
+      const ident = d.identifier || (d.woovi && d.woovi.identifier) || '';
+      const mongoId = d._id ? String(d._id || '').trim() : '';
+      return String(a || b || ident || mongoId || '').trim();
+    };
+
+    const tokenFromSession = (req.session && req.session.refilAccessAllowed && req.session.linkSlug) ? normalizeRefilToken(req.session.linkSlug || '') : '';
+    const refilTokenLookup = (token && !/^liberado$/i.test(token)) ? normalizeRefilToken(token) : ((tokenFromSession && !/^liberado$/i.test(tokenFromSession)) ? tokenFromSession : '');
+
+    const col = await getCollection('checkout_orders');
+    if (refilTokenLookup) {
+      try {
+        const arr = await col.find({ refilLinkId: refilTokenLookup }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+        refilBaseOrderDoc = arr.find(pickPaid) || (arr.length ? arr[0] : null);
+      } catch (_) {}
+    }
+    if (!refilBaseOrderDoc && refilLinkRec && refilLinkRec.phone) {
+      try {
+        const digits = String(refilLinkRec.phone || '').replace(/\D/g, '');
+        if (digits) {
+          const conds = [
+            { 'customer.phone': `+55${digits}` },
+            { 'customer.phone': digits },
+            { additionalInfo: { $elemMatch: { key: 'phone', value: digits } } },
+            { additionalInfoPaid: { $elemMatch: { key: 'phone', value: digits } } }
+          ];
+          const arr = await col.find({ $or: conds }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+          refilBaseOrderDoc = arr.find(pickPaid) || (arr.length ? arr[0] : null);
+        }
+      } catch (_) {}
+    }
+    if (!refilBaseOrderDoc && phoneRaw) {
+      try {
+        const digits = String(phoneRaw || '').replace(/\D/g, '');
+        if (digits) {
+          const conds = [
+            { 'customer.phone': `+55${digits}` },
+            { 'customer.phone': digits },
+            { additionalInfo: { $elemMatch: { key: 'phone', value: digits } } },
+            { additionalInfoPaid: { $elemMatch: { key: 'phone', value: digits } } }
+          ];
+          const arr = await col.find({ $or: conds }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+          refilBaseOrderDoc = arr.find(pickPaid) || (arr.length ? arr[0] : null);
+        }
+      } catch (_) {}
+    }
+
+    if (refilLinkRec && refilLinkRec.order) {
+      const fromLink = pickOrderId(refilLinkRec.order);
+      if (fromLink) lastRefilOrderId = fromLink;
+    }
+    if (!lastRefilOrderId && refilLinkRec && refilLinkRec.orderId) {
+      lastRefilOrderId = String(refilLinkRec.orderId || '').trim();
+    }
+    if (!lastRefilOrderId && refilBaseOrderDoc) {
+      lastRefilOrderId = pickOrderId(refilBaseOrderDoc);
+    }
+
+    whatsappHref = `https://wa.me/${waPhone}?text=${encodeURIComponent(`Perdi seguidores e preciso de reposição. ID do meu pedido: ${lastRefilOrderId || ''}`)}`;
+
+    let username = '';
+    if (refilLinkRec) {
+      username = String(refilLinkRec.instauser || '').trim();
+      if (!username && Array.isArray(refilLinkRec.instausers) && refilLinkRec.instausers.length) {
+        username = String(refilLinkRec.instausers[refilLinkRec.instausers.length - 1] || '').trim();
+      }
+    }
+    if (!username && usernameRaw) {
+      username = usernameRaw;
+    }
+
+    let lastDoc = null;
+    try {
+      const { ObjectId } = require('mongodb');
+      if (refilLinkRec) {
+        const oid = String(refilLinkRec.orderId || (refilLinkRec.order && refilLinkRec.order._id) || '').trim();
+        if (/^[0-9a-fA-F]{24}$/.test(oid)) {
+          try { lastDoc = await col.findOne({ _id: new ObjectId(oid) }); } catch (_) {}
+        }
+        if (!lastDoc && Array.isArray(refilLinkRec.orders) && refilLinkRec.orders.length) {
+          const ids = refilLinkRec.orders.map(v => String(v || '').trim()).filter(v => /^[0-9a-fA-F]{24}$/.test(v)).map(v => new ObjectId(v));
+          if (ids.length) {
+            const arr = await col.find({ _id: { $in: ids } }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+            lastDoc = arr.find(pickPaid) || null;
+          }
+        }
+      }
+    } catch (_) {}
+    if (!lastDoc && refilBaseOrderDoc) {
+      lastDoc = refilBaseOrderDoc;
+    }
+    if (lastDoc && !username) {
+      try {
+        const u0 = String(lastDoc.instagramUsername || lastDoc.instauser || '').trim();
+        if (u0) username = u0;
+        if (!username) {
+          const arrPaid = Array.isArray(lastDoc?.additionalInfoPaid) ? lastDoc.additionalInfoPaid : [];
+          const arrOrig = Array.isArray(lastDoc?.additionalInfo) ? lastDoc.additionalInfo : [];
+          const arr = arrPaid.length ? arrPaid : arrOrig;
+          const u1 = (arr || []).find(it => String(it?.key || '').trim() === 'instagram_username');
+          const u2 = u1 && u1.value ? String(u1.value || '').trim() : '';
+          if (u2) username = u2;
+        }
+      } catch (_) {}
+    }
+    if (!lastDoc && username) {
+      const re = new RegExp(`^${esc(username)}$`, 'i');
+      const arr = await col.find({ $or: [ { instauser: re }, { instagramUsername: re } ] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+      lastDoc = arr.find(pickPaid) || null;
+    }
+
+    if (lastDoc && pickPaid(lastDoc)) {
+      const oid = pickOrderId(lastDoc);
+      if (oid) {
+        lastRefilOrderId = oid;
+        const msg = `Perdi seguidores e preciso de reposição. ID do meu pedido: ${lastRefilOrderId}`;
+        whatsappHref = `https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`;
+      }
+    }
+  } catch (_) {}
+
+  let refilOrderMongoId = (refilLinkRec && (refilLinkRec.orderId || (refilLinkRec.order && refilLinkRec.order._id))) ? String(refilLinkRec.orderId || (refilLinkRec.order && refilLinkRec.order._id) || '').trim() : '';
+  if (!refilOrderMongoId && refilBaseOrderDoc && refilBaseOrderDoc._id) {
+    refilOrderMongoId = String(refilBaseOrderDoc._id || '').trim();
+  }
+  if (!refilOrderMongoId && token && !/^liberado$/i.test(token)) {
+    try {
+      const tl = await getCollection('temporary_links');
+      const linkRec = await tl.findOne({ id: String(token).trim() }, { projection: { orderId: 1, order: 1 } });
+      const oid = linkRec && (linkRec.orderId || (linkRec.order && linkRec.order._id)) ? String(linkRec.orderId || (linkRec.order && linkRec.order._id) || '').trim() : '';
+      if (oid) refilOrderMongoId = oid;
+    } catch (_) {}
+  }
+  const refilToken = (token && !/^liberado$/i.test(token)) ? String(token || '').trim() : (
+    (req.session && req.session.refilAccessAllowed && req.session.linkSlug && !/^liberado$/i.test(req.session.linkSlug))
+      ? String(req.session.linkSlug || '').trim().replace(/[^0-9a-z]/gi, '')
+      : (token ? String(token || '').trim() : '')
+  );
+  res.render('refil', { refilDaysLeft, refilIsLifetime, whatsappHref, lastRefilOrderId, refilOrderMongoId, refilToken }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar refil:', err.message);
       return res.status(500).send('Erro ao carregar página de refil');
@@ -2041,7 +2380,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
              validatedPriceCents = verification.matchedPrice;
         } else {
              // Se falhar, rejeita
-             console.warn(`⚠️ Bloqueio de Pagamento (Cartão): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${total_cents}, Esperado=${verification.standardPrice}`);
+             console.warn(`⚠️ Bloqueio de Pagamento (Cartão): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${total_cents}, Esperado=${verification.expectedPrice}`);
              return res.status(400).json({ 
                  error: 'value_mismatch', 
                  message: 'O valor do pagamento não corresponde ao preço oficial calculado pelo sistema.' 
@@ -2055,6 +2394,30 @@ app.post('/api/efi/card-charge', async (req, res) => {
         };
 
         const efipay = new EfiPay(options);
+
+        const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+        const normalizeEfiPhone = (raw) => {
+            let d = normalizeDigits(raw);
+            if (!d) return '';
+            if (d.startsWith('55') && (d.length === 12 || d.length === 13)) d = d.slice(2);
+            if (d.length > 11) d = d.slice(-11);
+            if (!/^[1-9]{2}9?[0-9]{8}$/.test(d)) return '';
+            return d;
+        };
+        const isValidCPF = (cpfRaw) => {
+            const cpf = normalizeDigits(cpfRaw);
+            if (cpf.length !== 11) return false;
+            if (/^(\d)\1+$/.test(cpf)) return false;
+            const calc = (base, factor) => {
+                let sum = 0;
+                for (let i = 0; i < base.length; i++) sum += Number(base[i]) * (factor - i);
+                const mod = (sum * 10) % 11;
+                return mod === 10 ? 0 : mod;
+            };
+            const d1 = calc(cpf.slice(0, 9), 10);
+            const d2 = calc(cpf.slice(0, 10), 11);
+            return d1 === Number(cpf[9]) && d2 === Number(cpf[10]);
+        };
 
         const sanitizeItemName = (s) => {
             const raw = String(s || '').replace(/[<>]/g, '').trim();
@@ -2080,6 +2443,23 @@ app.post('/api/efi/card-charge', async (req, res) => {
             amount: 1
         }];
 
+        const cpfDigits = normalizeDigits(customer?.cpf);
+        if (!cpfDigits) {
+            return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é obrigatório.' });
+        }
+        if (!isValidCPF(cpfDigits)) {
+            return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é inválido.' });
+        }
+
+        const phoneRaw = customer?.phone_number || customer?.phone || customer?.telefone || customer?.whatsapp || '';
+        const phoneDigits = normalizeEfiPhone(phoneRaw);
+        const phoneHasInput = normalizeDigits(phoneRaw).length > 0;
+        if (phoneHasInput && !phoneDigits) {
+            return res.status(400).json({ error: 'invalid_phone', message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).' });
+        }
+
+        const customerSafe = Object.assign({}, customer || {}, { cpf: cpfDigits }, (phoneDigits ? { phone_number: phoneDigits } : {}));
+
         const params = {};
         const body = {
             payment: {
@@ -2094,13 +2474,12 @@ app.post('/api/efi/card-charge', async (req, res) => {
                         city: 'São Paulo',
                         state: 'SP'
                     },
-                    customer: {
-                        name: String(customer?.name || '').trim() || 'Cliente',
-                        cpf: customer.cpf || '49789324020',
-                        phone_number: customer.phone_number,
-                        email: customer.email || 'cliente@email.com',
-                        birth: customer.birth || '1990-01-01'
-                    }
+                    customer: Object.assign({
+                        name: String(customerSafe?.name || '').trim() || 'Cliente',
+                        cpf: cpfDigits,
+                        email: customerSafe.email || 'cliente@email.com',
+                        birth: customerSafe.birth || '1990-01-01'
+                    }, (phoneDigits ? { phone_number: phoneDigits } : {}))
                 }
             },
             items: efiItems,
@@ -2169,7 +2548,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
             const record = {
                 nomeUsuario: null,
-                telefone: customer.phone_number || '',
+                telefone: phoneDigits || '',
                 instauser: instauserFromClient,
                 profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
                 isPrivate: isPrivate,
@@ -2183,7 +2562,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 geolocation,
                 valueCents: total_cents,
                 expectedValueCents: validatedPriceCents,
-                customer: customer,
+                customer: customerSafe,
                 additionalInfo: addInfoArr,
                 tipoServico: tipo,
                 quantidade: qtd,
@@ -2223,13 +2602,22 @@ app.post('/api/efi/card-charge', async (req, res) => {
         if (String(error?.code || '') === 'PAYMENT_TIMEOUT' || String(error?.message || '') === 'payment_timeout') {
             return res.status(504).json({ error: 'payment_timeout', message: 'Tempo esgotado processando o pagamento. Tente novamente.' });
         }
-        const msg = String(error?.error_description || error?.message || error?.error || '').trim();
+        const errDesc = error?.error_description;
+        const errDescObj = (errDesc && typeof errDesc === 'object') ? errDesc : null;
+        const errMsg = String(errDescObj?.message || errDesc || error?.message || error?.error || '').trim();
+        const errProp = String(errDescObj?.property || '').trim();
         const code = (typeof error?.code !== 'undefined') ? error.code : undefined;
         const status = (typeof error?.http_status !== 'undefined') ? error.http_status : undefined;
         if (String(error?.error || '') === 'validation_error') {
-            return res.status(400).json({ error: 'validation_error', message: msg || 'Erro de validação na Efí.', code, status });
+            if (errProp === '/payment/credit_card/customer/phone_number') {
+                return res.status(400).json({ error: 'invalid_phone', message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).' , code, status });
+            }
+            if (errProp === '/payment/credit_card/customer/cpf') {
+                return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é inválido.', code, status });
+            }
+            return res.status(400).json({ error: 'validation_error', message: errMsg || 'Erro de validação na Efí.', code, status });
         }
-        return res.status(500).json({ error: 'payment_error', message: msg || 'Erro ao processar pagamento.', code, status });
+        return res.status(500).json({ error: 'payment_error', message: errMsg || 'Erro ao processar pagamento.', code, status });
     }
 });
 
@@ -2318,17 +2706,17 @@ app.post('/api/woovi/charge', async (req, res) => {
         validatedPriceCents = verification.matchedPrice;
     } else {
         // Se a validação falhar, rejeitamos o pedido para segurança
-        console.warn(`⚠️ Bloqueio de Pagamento (Woovi): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${value}, Esperado=${verification.standardPrice}`);
+        console.warn(`⚠️ Bloqueio de Pagamento (Woovi): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${value}, Esperado=${verification.expectedPrice}`);
         // Log detalhado para debug
         console.log('DEBUG Woovi Mismatch:', {
             received: value,
-            expected: verification.standardPrice,
-            diff: value - verification.standardPrice,
+            expected: verification.expectedPrice,
+            diff: value - verification.expectedPrice,
             addInfo: sanitizedAdditionalFiltered
         });
         return res.status(400).json({ 
              error: 'value_mismatch', 
-             message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.standardPrice}).` 
+             message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.expectedPrice}).` 
         });
     }
 
@@ -2768,8 +3156,15 @@ async function processOrderFulfillment(record, col, req) {
         
         try { console.log('🔎 orderbump_links_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, commentsLinkRaw, viewsQty, likesQty, commentsQty }); } catch(_) {}
         const sanitizeLink = (s) => {
-            const v = String(s || '').replace(/[`\s]/g, '').trim();
-            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+            let v = String(s || '').replace(/[`\s]/g, '').trim();
+            if (!v) return '';
+            if (!/^https?:\/\//i.test(v)) {
+                if (/^www\./i.test(v)) v = `https://${v}`;
+                else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+                else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+            }
+            v = v.split('#')[0].split('?')[0];
+            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
             return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
         };
         let viewsLink = sanitizeLink(viewsLinkRaw);
@@ -3300,11 +3695,7 @@ app.get('/:slug', async (req, res, next) => {
               if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                 req.session.refilAccessAllowed = true;
                 req.session.perfilAccessAllowed = false;
-                return res.render('refil', {}, (err, html) => {
-                  if (err) { console.error('❌ Erro ao renderizar refil via slug:', err.message); return res.status(500).send('Erro ao carregar página de refil'); }
-                  res.type('text/html');
-                  res.send(html);
-                });
+                return res.redirect('/refil');
               }
             } catch(_) {}
             req.session.perfilAccessAllowed = true;
@@ -4569,7 +4960,18 @@ app.post('/api/openpix/webhook', async (req, res) => {
             const hasFamaKey = !!(process.env.FAMA24H_API_KEY || '');
             if (hasFamaKey) {
               const axios = require('axios');
-              const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+              const sanitizeLink = (s) => {
+                let v = String(s || '').replace(/[`\s]/g, '').trim();
+                if (!v) return '';
+                if (!/^https?:\/\//i.test(v)) {
+                  if (/^www\./i.test(v)) v = `https://${v}`;
+                  else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+                  else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+                }
+                v = v.split('#')[0].split('?')[0];
+                const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+                return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+              };
               const mapPaid2 = record?.additionalInfoMapPaid || {};
               const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
               const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
@@ -4670,7 +5072,18 @@ app.post('/api/openpix/webhook', async (req, res) => {
                  console.error('❌ WORLDSMM_API_KEY não definida para orderbump de comentários');
               } else {
                 const axios = require('axios');
-                const sanitizeLinkC = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+                const sanitizeLinkC = (s) => {
+                  let v = String(s || '').replace(/[`\s]/g, '').trim();
+                  if (!v) return '';
+                  if (!/^https?:\/\//i.test(v)) {
+                    if (/^www\./i.test(v)) v = `https://${v}`;
+                    else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+                    else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+                  }
+                  v = v.split('#')[0].split('?')[0];
+                  const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+                  return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+                };
                 const mapPaid3 = record?.additionalInfoMapPaid || {};
                 const commentsLinkRaw = mapPaid3['orderbump_post_comments'] || additionalInfoMap['orderbump_post_comments'] || (arrPaid.find(it => it && it.key === 'orderbump_post_comments')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_comments')?.value) || '';
                 const commentsLinkSel = sanitizeLinkC(commentsLinkRaw);
@@ -5799,7 +6212,18 @@ app.post('/session/mark-paid', async (req, res) => {
             if (vPart) { const num = Number(vPart.split(':')[1]); if (!Number.isNaN(num) && num > 0) viewsQty = num; }
             if (lPart) { const numL = Number(lPart.split(':')[1]); if (!Number.isNaN(numL) && numL > 0) likesQty = numL; }
           }
-          const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+          const sanitizeLink = (s) => {
+            let v = String(s || '').replace(/[`\s]/g, '').trim();
+            if (!v) return '';
+            if (!/^https?:\/\//i.test(v)) {
+              if (/^www\./i.test(v)) v = `https://${v}`;
+              else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+              else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+            }
+            v = v.split('#')[0].split('?')[0];
+            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+            return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+          };
           const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
           const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
           const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
@@ -5948,6 +6372,7 @@ app.get('/api/order', async (req, res) => {
      const correlationID = String(req.query.correlationID || req.query.ref || '').trim();
      const orderIDRaw = String(req.query.orderID || req.query.orderid || req.query.oid || '').trim();
      const phoneRaw = String(req.query.phone || '').trim();
+     const refilToken = String(req.query.refilToken || req.query.refilLinkId || '').trim().replace(/[^0-9a-z]/gi, '');
     const col = await getCollection('checkout_orders');
     let doc = null;
     if (id) {
@@ -5970,6 +6395,7 @@ app.get('/api/order', async (req, res) => {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
+      if (refilToken) conds.push({ refilLinkId: refilToken });
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
         if (!Number.isNaN(maybeNum)) { conds.push({ 'fama24h.orderId': maybeNum }); conds.push({ 'fornecedor_social.orderId': maybeNum }); }
@@ -6020,6 +6446,49 @@ app.get('/api/refil/links', async (req, res) => {
       return { id: r.id, purpose: r.purpose, orderId: r.orderId, createdAt: r.createdAt, expiresAt: r.expiresAt, order };
     }));
     return res.json({ ok: true, links: enriched });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+app.get('/api/refil/order', async (req, res) => {
+  try {
+    const tokenRaw = String(req.query.token || '').trim().replace(/[^0-9a-z]/gi, '');
+    if (!tokenRaw) return res.status(400).json({ ok: false, error: 'missing_token' });
+
+    const tl = await getCollection('temporary_links');
+    const linkRec = await tl.findOne({ id: tokenRaw, purpose: 'refil' });
+    if (!linkRec) return res.status(404).json({ ok: false, error: 'token_not_found' });
+
+    const { ObjectId } = require('mongodb');
+    const ids = [];
+    const tryPush = (v) => {
+      const s = String(v || '').trim();
+      if (/^[0-9a-fA-F]{24}$/.test(s)) {
+        try { ids.push(new ObjectId(s)); } catch (_) {}
+      }
+    };
+    tryPush(linkRec.orderId);
+    tryPush(linkRec?.order?._id);
+    if (Array.isArray(linkRec.orders)) {
+      linkRec.orders.forEach(tryPush);
+    }
+
+    if (!ids.length) return res.status(404).json({ ok: false, error: 'order_not_found' });
+
+    const col = await getCollection('checkout_orders');
+    const pickPaid = (d) => {
+      if (!d) return false;
+      const st = String(d.status || '').toLowerCase();
+      const wst = String(d?.woovi?.status || '').toLowerCase();
+      if (st === 'pago' || wst === 'pago') return true;
+      if (d.paidAt) return true;
+      if (d?.woovi?.paidAt) return true;
+      if (d?.payment?.paidAt) return true;
+      return false;
+    };
+    const arr = await col.find({ _id: { $in: ids } }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(20).toArray();
+    const doc = arr.find(pickPaid) || (arr.length ? arr[0] : null);
+    return res.json({ ok: true, token: tokenRaw, order: doc || null });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -7029,6 +7498,89 @@ app.post('/api/admin/update-private-order', requireAdmin, async (req, res) => {
     }
 });
 
+app.post('/api/admin/evolution/send-text', requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const id = String(body.id || '').trim();
+    const rawPhone = String(body.phone || '').trim();
+    const text = String(body.text || '').trim();
+
+    const baseUrlRaw = String(process.env.EVOLUTION_API_URL || '').trim();
+    const apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+    const instanceName = String(process.env.EVOLUTION_INSTANCE_NAME || 'oppus').trim();
+    const instanceToken = String(process.env.EVOLUTION_INSTANCE_TOKEN || '').trim();
+
+    if (!baseUrlRaw) return res.status(500).json({ ok: false, error: 'missing_evolution_api_url' });
+    if (!apiKey) return res.status(500).json({ ok: false, error: 'missing_evolution_api_key' });
+    if (!instanceName) return res.status(500).json({ ok: false, error: 'missing_evolution_instance_name' });
+    if (!rawPhone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    if (!text) return res.status(400).json({ ok: false, error: 'missing_text' });
+
+    const normalizePhone = (p) => {
+      const digits = String(p || '').replace(/[^\d]/g, '');
+      if (!digits) return '';
+      if (digits.startsWith('55') && digits.length >= 12) return digits;
+      if (digits.length === 10 || digits.length === 11) return '55' + digits;
+      return digits;
+    };
+
+    const number = normalizePhone(rawPhone);
+    if (!number || number.length < 10) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+
+    const baseUrl = baseUrlRaw.replace(/\/+$/, '');
+    const axios = require('axios');
+    const headers = Object.assign({ 'Content-Type': 'application/json', apikey: apiKey }, instanceToken ? { token: instanceToken } : {});
+
+    const tryUrls = [
+      `${baseUrl}/message/sendText/${encodeURIComponent(instanceName)}`,
+      `${baseUrl}/api/message/sendText/${encodeURIComponent(instanceName)}`
+    ];
+
+    let resp = null;
+    let lastErr = null;
+    for (const url of tryUrls) {
+      try {
+        resp = await axios.post(url, { number, text }, { timeout: 20000, headers });
+        lastErr = null;
+        break;
+      } catch (err) {
+        const status = err?.response?.status;
+        if (status && status !== 404) throw err;
+        lastErr = err;
+      }
+    }
+    if (!resp && lastErr) throw lastErr;
+
+    try {
+      if (id && /^[0-9a-fA-F]{24}$/.test(id)) {
+        const { getCollection } = require('./mongodbClient');
+        const { ObjectId } = require('mongodb');
+        const col = await getCollection('checkout_orders');
+        await col.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: { lastContactAt: new Date().toISOString(), noContact: false },
+            $inc: { contactCount: 1 }
+          }
+        );
+      }
+    } catch (_) {}
+
+    return res.json({ ok: true, result: resp.data || null });
+  } catch (e) {
+    const status = e?.response?.status || 500;
+    const data = e?.response?.data;
+    const msg =
+      (typeof data === 'string'
+        ? data
+        : (data && (typeof data.message === 'string' ? data.message : (data.error || data.message))) || null) ||
+      e?.message ||
+      String(e);
+    const details = (data && typeof data === 'object') ? data : null;
+    return res.status(status).json({ ok: false, error: String(msg), details });
+  }
+});
+
 app.post('/api/admin/private-order-email', requireAdmin, async (req, res) => {
     try {
         const { id } = req.body || {};
@@ -7156,7 +7708,51 @@ app.get('/painel', requireAdmin, async (req, res) => {
         { 'fama24h_likes.status': 'unknown' },
         { 'fama24h_likes.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h_likes.status': 'error' },
-        { 'fama24h_likes.error': { $exists: true } }
+        { 'fama24h_likes.error': { $exists: true } },
+        {
+          $and: [
+            {
+              $or: [
+                { tipo: { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } },
+                { tipoServico: { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } },
+                { additionalInfo: { $elemMatch: { key: 'tipo_servico', value: { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'tipo_servico', value: { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } } } },
+                { 'additionalInfoMap.tipo_servico': { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } },
+                { 'additionalInfoMapPaid.tipo_servico': { $regex: '^(seguidores|curtidas|visualizacoes)', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fama24h: { $exists: false } },
+                { 'fama24h.orderId': { $exists: false } },
+                { 'fama24h.orderId': '' },
+                { 'fama24h.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
+            {
+              $or: [
+                { tipo: { $regex: '^seguidores_organicos', $options: 'i' } },
+                { tipoServico: { $regex: '^seguidores_organicos', $options: 'i' } },
+                { additionalInfo: { $elemMatch: { key: 'tipo_servico', value: { $regex: '^seguidores_organicos', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'tipo_servico', value: { $regex: '^seguidores_organicos', $options: 'i' } } } },
+                { 'additionalInfoMap.tipo_servico': { $regex: '^seguidores_organicos', $options: 'i' } },
+                { 'additionalInfoMapPaid.tipo_servico': { $regex: '^seguidores_organicos', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fornecedor_social: { $exists: false } },
+                { 'fornecedor_social.orderId': { $exists: false } },
+                { 'fornecedor_social.orderId': '' },
+                { 'fornecedor_social.orderId': null }
+              ]
+            }
+          ]
+        }
       ]
     };
 
@@ -7176,12 +7772,27 @@ app.get('/painel', requireAdmin, async (req, res) => {
     // Filter logic
     const periodDefault = view === 'unknown_orderid' ? 'all' : 'today';
     const period = req.query.period || periodDefault;
+    const ignoreBumps = String(req.query.ignoreBumps || '') === '1';
+    const toggleIgnoreBumpsUrl = (() => {
+      try {
+        const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http');
+        const host = String(req.get('host') || 'localhost');
+        const u = new URL(String(req.originalUrl || '/painel'), `${proto}://${host}`);
+        if (ignoreBumps) u.searchParams.delete('ignoreBumps');
+        else u.searchParams.set('ignoreBumps', '1');
+        return u.pathname + (u.search || '');
+      } catch (_) {
+        return ignoreBumps ? '/painel' : '/painel?ignoreBumps=1';
+      }
+    })();
     const nowUTC = new Date();
     const nowSP = toSP(nowUTC);
     
     // Start of today in SP (00:00 SP time)
     const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
     const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
+    const startOfTodayUtc = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 3, 0, 0, 0));
+    const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
     let filteredOrders = orders.filter(o => {
       const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
@@ -7312,8 +7923,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const m = bumpsStr.match(/(?:^|;)\s*upgrade\s*:\s*(\d+)/i);
         const upgradeQty = m ? Number(m[1]) : 0;
         if (!upgradeQty) return baseQty;
+        const category = String(resolveCategory(o) || '').toLowerCase();
+        const type = String(resolveType(o) || '').toLowerCase();
         const serviceKey = String(resolveServiceKey(o) || '').toLowerCase();
-        if (!serviceKey.startsWith('seguidores')) return baseQty;
+        const tipoRaw = String(o && (o.tipo || o.tipoServico) ? (o.tipo || o.tipoServico) : '').toLowerCase();
+        const isFollowers =
+          category.includes('seguidores') ||
+          type.includes('seguidores') ||
+          serviceKey.includes('seguidores') ||
+          tipoRaw.includes('seguidores');
+        if (!isFollowers) return baseQty;
         const tipo = resolveType(o);
         const add = getUpgradeAddQtd(tipo, baseQty);
         return baseQty + add;
@@ -7434,6 +8053,19 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return s0;
       };
 
+      const sanitizeInstagramPostLink = (u) => {
+        const s0 = normalizeUrl(u);
+        let v = String(s0 || '').trim();
+        if (!v) return '';
+        v = v.split('#')[0].split('?')[0];
+        const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+        if (!m) return '';
+        const kind = String(m[2] || '').toLowerCase();
+        const code = String(m[3] || '');
+        if (!kind || !code) return '';
+        return `https://www.instagram.com/${kind}/${code}/`;
+      };
+
       const resolvePostLinkViews = (o) => {
         const sessionLink = sessionSelectedFor && sessionSelectedFor.views && sessionSelectedFor.views.link ? String(sessionSelectedFor.views.link) : '';
         const candidates = [
@@ -7443,7 +8075,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           extractInfoAny(o, 'post_link')
         ];
         for (const c of candidates) {
-          const url = normalizeUrl(c);
+          const url = sanitizeInstagramPostLink(c);
           if (url) return url;
         }
         return '';
@@ -7458,7 +8090,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           extractInfoAny(o, 'post_link')
         ];
         for (const c of candidates) {
-          const url = normalizeUrl(c);
+          const url = sanitizeInstagramPostLink(c);
           if (url) return url;
         }
         return '';
@@ -7473,7 +8105,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           extractInfoAny(o, 'post_link')
         ];
         for (const c of candidates) {
-          const url = normalizeUrl(c);
+          const url = sanitizeInstagramPostLink(c);
           if (url) return url;
         }
         return '';
@@ -7569,13 +8201,23 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const isUnknownForProvider = (o, provider) => {
         if (provider === 'fama24h') {
-          const st = (o && o.fama24h && typeof o.fama24h.status !== 'undefined') ? o.fama24h.status : '';
-          const oid = (o && o.fama24h && typeof o.fama24h.orderId !== 'undefined') ? o.fama24h.orderId : '';
+          const doc = o && o.fama24h ? o.fama24h : null;
+          if (!doc) return true;
+          const st = typeof doc.status !== 'undefined' ? doc.status : '';
+          const oid = typeof doc.orderId !== 'undefined' ? doc.orderId : '';
+          const oidStr = String(oid || '').trim().toLowerCase();
+          if (!oidStr) return true;
+          if (oidStr === 'null' || oidStr === 'undefined') return true;
           return isUnknownToken(st) || isUnknownToken(oid);
         }
         if (provider === 'fornecedor_social') {
-          const st = (o && o.fornecedor_social && typeof o.fornecedor_social.status !== 'undefined') ? o.fornecedor_social.status : '';
-          const oid = (o && o.fornecedor_social && typeof o.fornecedor_social.orderId !== 'undefined') ? o.fornecedor_social.orderId : '';
+          const doc = o && o.fornecedor_social ? o.fornecedor_social : null;
+          if (!doc) return true;
+          const st = typeof doc.status !== 'undefined' ? doc.status : '';
+          const oid = typeof doc.orderId !== 'undefined' ? doc.orderId : '';
+          const oidStr = String(oid || '').trim().toLowerCase();
+          if (!oidStr) return true;
+          if (oidStr === 'null' || oidStr === 'undefined') return true;
           return isUnknownToken(st) || isUnknownToken(oid);
         }
         return false;
@@ -7732,23 +8374,98 @@ app.get('/painel', requireAdmin, async (req, res) => {
       return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
     }).length;
 
+    const countValidatedUsersInRange = async (vu, start, endExclusive) => {
+      const hasStart = !!start;
+      const hasEnd = !!endExclusive;
+      const startIso = hasStart ? start.toISOString() : null;
+      const endIso = hasEnd ? endExclusive.toISOString() : null;
+      const stringRange = {};
+      if (startIso) stringRange.$gte = startIso;
+      if (endIso) stringRange.$lt = endIso;
+      const dateRange = {};
+      if (start) dateRange.$gte = start;
+      if (endExclusive) dateRange.$lt = endExclusive;
+      const or = [
+        { checkedAt: Object.assign({ $type: 'string' }, stringRange) },
+        { checkedAt: Object.assign({ $type: 'date' }, dateRange) },
+        { lastTrackAt: Object.assign({ $type: 'string' }, stringRange) },
+        { lastTrackAt: Object.assign({ $type: 'date' }, dateRange) }
+      ];
+      return vu.countDocuments({ $or: or });
+    };
+
     let validatedProfilesToday = 0;
     try {
       const vu = await getCollection('validated_insta_users');
-      const agg = await vu.aggregate([
-        { $match: { checkedAt: { $exists: true, $ne: null } } },
-        { $addFields: { checkedAtDate: { $convert: { input: '$checkedAt', to: 'date', onError: null, onNull: null } } } },
-        { $match: { checkedAtDate: { $gte: startOfTodaySP, $lt: startOfTomorrowSP } } },
-        { $count: 'count' }
-      ]).toArray();
-      validatedProfilesToday = (agg && agg[0] && agg[0].count) ? Number(agg[0].count) : 0;
+      validatedProfilesToday = await countValidatedUsersInRange(vu, startOfTodayUtc, startOfTomorrowUtc);
     } catch (_) {
       validatedProfilesToday = 0;
     }
 
+    const getPeriodRange = () => {
+      if (period === 'today') {
+        return { start: startOfTodayUtc, endExclusive: startOfTomorrowUtc };
+      }
+      if (period === 'last3days') {
+        const start = new Date(startOfTodayUtc);
+        start.setUTCDate(start.getUTCDate() - 2);
+        return { start, endExclusive: startOfTomorrowUtc };
+      }
+      if (period === 'last7days') {
+        const start = new Date(startOfTodayUtc);
+        start.setUTCDate(start.getUTCDate() - 6);
+        return { start, endExclusive: startOfTomorrowUtc };
+      }
+      if (period === 'thismonth') {
+        const start = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), 1, 3, 0, 0, 0));
+        return { start, endExclusive: startOfTomorrowUtc };
+      }
+      if (period === 'lastmonth') {
+        const endExclusive = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), 1, 3, 0, 0, 0));
+        const start = new Date(endExclusive);
+        start.setUTCMonth(start.getUTCMonth() - 1);
+        return { start, endExclusive };
+      }
+      if (period === 'custom') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = startStr.split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
+          const [eY, eM, eD] = endStr.split('-').map(Number);
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
+          return { start, endExclusive };
+        }
+      }
+      return { start: null, endExclusive: null };
+    };
+
+    let validatedProfilesPeriod = 0;
+    try {
+      const { start, endExclusive } = getPeriodRange();
+      const vu = await getCollection('validated_insta_users');
+      if (!start && !endExclusive) {
+        validatedProfilesPeriod = await vu.countDocuments({
+          $or: [
+            { checkedAt: { $exists: true, $ne: null } },
+            { lastTrackAt: { $exists: true, $ne: null } }
+          ]
+        });
+      } else {
+        validatedProfilesPeriod = await countValidatedUsersInRange(vu, start, endExclusive);
+      }
+    } catch (_) {
+      validatedProfilesPeriod = 0;
+    }
+
+    const paidOverValidatedTodayPct = validatedProfilesToday > 0 ? (paidOrdersToday / validatedProfilesToday) * 100 : 0;
+    const paidOrdersPeriod = filteredOrders.length;
+    const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (paidOrdersPeriod / validatedProfilesPeriod) * 100 : 0;
+
     // Cost calculation
     let totalCost = 0;
     let totalRevenue = 0;
+    let totalBumpRevenue = 0;
     const report = filteredOrders.map(o => {
       const extractInfo = (key) => {
         try {
@@ -7766,6 +8483,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const toNumber = (v) => {
         const n = Number(String(v || '').replace(/[^\d.]/g, ''));
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const toMoney = (v) => {
+        const raw = String(v == null ? '' : v).trim();
+        if (!raw) return 0;
+        let s = raw.replace(/[^\d,.\-]/g, '');
+        const hasComma = s.includes(',');
+        const hasDot = s.includes('.');
+        if (hasComma && hasDot) {
+          if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+            s = s.replace(/\./g, '').replace(/,/g, '.');
+          } else {
+            s = s.replace(/,/g, '');
+          }
+        } else if (hasComma && !hasDot) {
+          s = s.replace(/,/g, '.');
+        }
+        const n = Number(s);
         return Number.isFinite(n) ? n : 0;
       };
 
@@ -7823,6 +8559,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const serviceCost = (qty / 1000) * costPer1000;
       const bumpStrRaw = extractInfo('order_bumps');
       const bumpTotalRaw = extractInfo('order_bumps_total');
+      const bumpRevenue = toMoney(bumpTotalRaw);
+      totalBumpRevenue += bumpRevenue;
 
       const parseBumps = (raw) => {
         const text = String(raw || '').toLowerCase();
@@ -7833,7 +8571,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return {
           views: get('views'),
           likes: get('likes'),
-          comments: get('comments')
+          comments: get('comments'),
+          upgrade: get('upgrade')
         };
       };
 
@@ -7842,10 +8581,41 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const bumpLikesQty = toNumber((o && o.fama24h_likes && o.fama24h_likes.requestPayload && o.fama24h_likes.requestPayload.quantity) || bumpsFromStr.likes);
       const bumpCommentsQty = toNumber((o && o.worldsmm_comments && o.worldsmm_comments.requestPayload && o.worldsmm_comments.requestPayload.quantity) || bumpsFromStr.comments);
 
-      const bumpCost =
+      const getUpgradeExtraQty = (tipo, base) => {
+        try {
+          const t0 = String(tipo || '').toLowerCase().trim();
+          const isFollowersType = t0.startsWith('seguidores') || t0 === 'mistos' || t0 === 'brasileiros' || t0 === 'organicos';
+          if (!isFollowersType) return 0;
+          const t = t0.startsWith('seguidores_')
+            ? t0.replace(/^seguidores_/, '')
+            : (t0.startsWith('seguidores') ? t0.replace(/^seguidores/, '').replace(/^_/, '') : t0);
+          const b = Number(base) || 0;
+          if (!b) return 0;
+          if (t === 'organicos' && (b === 50 || b === 100)) return 50;
+          if ((t === 'brasileiros' || t === 'organicos') && (b === 1000 || b === 2000)) return 1000;
+          const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+          const reverse = {};
+          Object.keys(upsellTargets).forEach(k => { reverse[upsellTargets[k]] = Number(k); });
+          const baseQty = upsellTargets[b] ? b : (reverse[b] ? reverse[b] : 0);
+          if (!baseQty) return 0;
+          const targetQty = upsellTargets[baseQty];
+          if (!targetQty) return 0;
+          return Number(targetQty) - Number(baseQty);
+        } catch (_) {
+          return 0;
+        }
+      };
+
+      const upgradeExtraQty = bumpsFromStr.upgrade ? getUpgradeExtraQty(typeForCost, qty) : 0;
+      const upgradeCost = (upgradeExtraQty / 1000) * Number(costPer1000 || 0);
+      const bumpCommentsCost = bumpCommentsQty * Number(costSettings.comentarios || 0);
+
+      const bumpCostRaw =
         ((bumpViewsQty / 1000) * Number(costSettings.visualizacoes || 0)) +
         ((bumpLikesQty / 1000) * Number(costSettings.curtidas || 0)) +
-        ((bumpCommentsQty / 1000) * Number(costSettings.comentarios || 0));
+        bumpCommentsCost +
+        upgradeCost;
+      const bumpCost = ignoreBumps ? 0 : bumpCostRaw;
 
       const totalItemCost = 0.85 + serviceCost + bumpCost;
       totalCost += totalItemCost;
@@ -7869,11 +8639,30 @@ app.get('/painel', requireAdmin, async (req, res) => {
         bumpCost,
         orderBumps: String(bumpStrRaw || ''),
         orderBumpsTotal: String(bumpTotalRaw || ''),
+        bumpRevenue,
         revenue
       };
     });
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, paidOrdersToday });
+    const ignoreBumpRevenue = String(req.query.ignoreBumpRevenue || '') === '1';
+    const revenueWithoutBumps = Math.max(0, Number(totalRevenue || 0) - Number(totalBumpRevenue || 0));
+    const revenueShown = ignoreBumpRevenue ? revenueWithoutBumps : totalRevenue;
+    const costOverRevenuePct = revenueShown > 0 ? (Number(totalCost || 0) / Number(revenueShown || 0)) * 100 : 0;
+    const bumpRevenuePctOfTotal = totalRevenue > 0 ? (Number(totalBumpRevenue || 0) / Number(totalRevenue || 0)) * 100 : 0;
+    const toggleIgnoreBumpRevenueUrl = (() => {
+      try {
+        const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http');
+        const host = String(req.get('host') || 'localhost');
+        const u = new URL(String(req.originalUrl || '/painel'), `${proto}://${host}`);
+        if (ignoreBumpRevenue) u.searchParams.delete('ignoreBumpRevenue');
+        else u.searchParams.set('ignoreBumpRevenue', '1');
+        return u.pathname + (u.search || '');
+      } catch (_) {
+        return ignoreBumpRevenue ? '/painel' : '/painel?ignoreBumpRevenue=1';
+      }
+    })();
+
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl });
   } catch (e) {
     res.status(500).send(e.toString());
   }
@@ -7993,6 +8782,19 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
       return s0;
     };
 
+    const sanitizeInstagramPostLink = (u) => {
+      const s0 = normalizeUrl(u);
+      let v = String(s0 || '').trim();
+      if (!v) return '';
+      v = v.split('#')[0].split('?')[0];
+      const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+      if (!m) return '';
+      const kind = String(m[2] || '').toLowerCase();
+      const code = String(m[3] || '');
+      if (!kind || !code) return '';
+      return `https://www.instagram.com/${kind}/${code}/`;
+    };
+
     const resolvePhone = (o) => {
       try {
         const phoneFromCustomer = o && o.customer && (o.customer.phone || o.customer.telefone || o.customer.whatsapp);
@@ -8078,7 +8880,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
         extractInfoAny(o, 'post_link')
       ];
       for (const c of candidates) {
-        const url = normalizeUrl(c);
+        const url = sanitizeInstagramPostLink(c);
         if (url) return url;
       }
       return '';
@@ -8093,7 +8895,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
         extractInfoAny(o, 'post_link')
       ];
       for (const c of candidates) {
-        const url = normalizeUrl(c);
+        const url = sanitizeInstagramPostLink(c);
         if (url) return url;
       }
       return '';
@@ -8108,7 +8910,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
         extractInfoAny(o, 'post_link')
       ];
       for (const c of candidates) {
-        const url = normalizeUrl(c);
+        const url = sanitizeInstagramPostLink(c);
         if (url) return url;
       }
       return '';
@@ -8150,9 +8952,12 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
 
     const isUnknownForProvider = (o, provider) => {
       const doc = (o && o[provider]) ? o[provider] : null;
-      if (!doc) return false;
+      if (!doc) return true;
       const st = typeof doc.status !== 'undefined' ? doc.status : '';
       const oid = typeof doc.orderId !== 'undefined' ? doc.orderId : '';
+      const oidStr = String(oid || '').trim().toLowerCase();
+      if (!oidStr) return true;
+      if (oidStr === 'null' || oidStr === 'undefined') return true;
       return isUnknownToken(st) || isUnknownToken(oid);
     };
 
@@ -8827,7 +9632,18 @@ app.post('/api/payment/confirm', async (req, res) => {
         }
         const arrPaid2 = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
         const arrOrig2 = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-        const sanitizeLink = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+        const sanitizeLink = (s) => {
+          let v = String(s || '').replace(/[`\s]/g, '').trim();
+          if (!v) return '';
+          if (!/^https?:\/\//i.test(v)) {
+            if (/^www\./i.test(v)) v = `https://${v}`;
+            else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+            else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+          }
+          v = v.split('#')[0].split('?')[0];
+          const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
+          return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+        };
         const mapPaid3 = record?.additionalInfoMapPaid || {};
         const viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
         const likesLinkSel = sanitizeLink(mapPaid3['orderbump_post_likes'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');

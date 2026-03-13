@@ -928,7 +928,7 @@
         `;
       case 'brasileiros':
         return `
-          <p>Base nacional com nomes locais e seguidores brasileiros reais.</p>
+          <p>Base nacional com nomes locais e seguidores brasileiros.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>🇧🇷 Foco total no público brasileiro e mais credibilidade.</li>
@@ -941,7 +941,7 @@
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>✨ Perfis mais qualificados para reforçar autoridade do perfil.</li>
-            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
+            <li>📉 Serviço com baixa queda de seguidores.</li>
           </ul>
         `;
       default:
@@ -3105,7 +3105,8 @@
         { id: 'cardNumber', type: 'text' },
         { id: 'cardExpiry', type: 'text' },
         { id: 'cardCvv', type: 'text' },
-        { id: 'cardHolderName', type: 'text' }
+        { id: 'cardHolderName', type: 'text' },
+        { id: 'cardHolderCpf', type: 'text' }
       ];
 
       let firstError = null;
@@ -3186,6 +3187,7 @@
       else if (/^50/.test(cardNum)) brand = 'elo';
 
       const cardHolderCpf = String(values.cardHolderCpf || '').replace(/\D/g, '');
+      if (!/^\d{11}$/.test(cardHolderCpf)) throw new Error('CPF do titular inválido.');
 
       const paymentToken = await (async () => {
         const isSandbox = String(window.EFI_SANDBOX) === 'true';
@@ -3240,7 +3242,13 @@
            // alert('Valor mínimo não atingido.');
       }
 
-      const phoneValue = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl || '');
+      const phoneValue = (function(){
+        let d = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl || '');
+        if (d.startsWith('55') && (d.length === 12 || d.length === 13)) d = d.slice(2);
+        if (d.length > 11) d = d.slice(-11);
+        if (!/^[1-9]{2}9?[0-9]{8}$/.test(d)) return '';
+        return d;
+      })();
       
       // Username logic
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
@@ -3259,6 +3267,8 @@
         return 'seguidores';
       })();
 
+      const customerPayload = { name: cardHolder, cpf: cardHolderCpf };
+      if (phoneValue) customerPayload.phone_number = phoneValue;
       const payload = {
         payment_token: paymentToken,
         installments: Number(installments) || 1,
@@ -3266,17 +3276,17 @@
         items: [
            { title: `${qtd} ${getUnitForTipo(tipo)}`, quantity: 1, price_cents: totalCents }
         ],
-        customer: { name: cardHolder, phone_number: phoneValue },
+        customer: customerPayload,
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtd) },
-          { key: 'phone', value: phoneValue },
           { key: 'instagram_username', value: instagramUsernameFinal }
         ],
         profile_is_private: !!window.isInstagramPrivate,
         comment: 'Checkout OPPUS Card'
       };
+      if (phoneValue) payload.additionalInfo.push({ key: 'phone', value: phoneValue });
       try {
         const cc = String(window.couponCode || '').trim();
         if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
@@ -3351,7 +3361,22 @@
 
     } catch (err) {
       console.error(err);
-      alert(err.message || 'Erro desconhecido ao processar cartão.');
+      const msg = (function () {
+        try {
+          if (!err) return '';
+          if (typeof err === 'string') return err;
+          if (typeof err === 'object') {
+            const m = String(err.message || err.error || '').trim();
+            if (m) return m;
+            try { return JSON.stringify(err); } catch (_) {}
+            return String(err);
+          }
+          return String(err);
+        } catch (_) {
+          return '';
+        }
+      })();
+      alert(msg || 'Erro desconhecido ao processar cartão.');
     } finally {
       if (payWithCardBtn) {
         payWithCardBtn.disabled = false;
