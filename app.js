@@ -2349,6 +2349,17 @@ app.get('/refil', async (req, res) => {
 app.post('/api/efi/card-charge', async (req, res) => {
     try {
         const { payment_token, installments, customer, billing_address, items, total_cents, additionalInfo, profile_is_private, comment, utms: reqUtms } = req.body;
+        const correlationIDSafe = (function () {
+            try {
+                const c = String(req.body?.correlationID || '').trim();
+                if (c) return c;
+            } catch (_) {}
+            try {
+                const crypto = require('crypto');
+                if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+            } catch (_) {}
+            return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        })();
 
         // Validação mínima de valor (R$ 1,00 = 100 centavos)
         if (!total_cents || total_cents < 100) {
@@ -2360,6 +2371,15 @@ app.post('/api/efi/card-charge', async (req, res) => {
 
         // Validação de Preço (Backend) - Validação Estrita para TODOS os pedidos
         const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+        try {
+            const hasTc = addInfoArr.some((it) => String(it?.key || '').trim() === 'tc_code');
+            if (!hasTc) {
+                const cookieHeader = req.headers['cookie'] || '';
+                const m = cookieHeader && cookieHeader.match(/(?:^|;\s*)tc_code=([^;]+)/);
+                const tc = m && m[1] ? decodeURIComponent(m[1]) : '';
+                if (tc) addInfoArr.push({ key: 'tc_code', value: String(tc) });
+            }
+        } catch (_) {}
         const addInfoMap = addInfoArr.reduce((acc, item) => {
              const k = String(item?.key || '').trim();
              const v = String(item?.value || '').trim();
@@ -2399,9 +2419,12 @@ app.post('/api/efi/card-charge', async (req, res) => {
         const normalizeEfiPhone = (raw) => {
             let d = normalizeDigits(raw);
             if (!d) return '';
-            if (d.startsWith('55') && (d.length === 12 || d.length === 13)) d = d.slice(2);
-            if (d.length > 11) d = d.slice(-11);
-            if (!/^[1-9]{2}9?[0-9]{8}$/.test(d)) return '';
+            if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
+            if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
+            if (d.length > 11) d = d.slice(0, 11);
+            if (!(d.length === 10 || d.length === 11)) return '';
+            if (d.startsWith('0')) return '';
+            if (!/^[1-9]{2}[0-9]{8,9}$/.test(d)) return '';
             return d;
         };
         const isValidCPF = (cpfRaw) => {
@@ -2457,8 +2480,11 @@ app.post('/api/efi/card-charge', async (req, res) => {
         if (phoneHasInput && !phoneDigits) {
             return res.status(400).json({ error: 'invalid_phone', message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).' });
         }
+        if (!phoneDigits) {
+            return res.status(400).json({ error: 'missing_phone', message: 'Telefone (DDD + número) é obrigatório para pagamento no cartão.' });
+        }
 
-        const customerSafe = Object.assign({}, customer || {}, { cpf: cpfDigits }, (phoneDigits ? { phone_number: phoneDigits } : {}));
+        const customerSafe = Object.assign({}, customer || {}, { cpf: cpfDigits }, { phone_number: phoneDigits });
 
         const params = {};
         const body = {
@@ -2554,7 +2580,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 isPrivate: isPrivate,
                 criado: createdIso,
                 identifier: String(charge.data.charge_id),
-                correlationID: req.body.correlationID || '',
+                correlationID: correlationIDSafe,
                 status: sysStatus,
                 qtd,
                 tipo,
@@ -2610,7 +2636,9 @@ app.post('/api/efi/card-charge', async (req, res) => {
         const status = (typeof error?.http_status !== 'undefined') ? error.http_status : undefined;
         if (String(error?.error || '') === 'validation_error') {
             if (errProp === '/payment/credit_card/customer/phone_number') {
-                return res.status(400).json({ error: 'invalid_phone', message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).' , code, status });
+                const low = String(errMsg || '').toLowerCase();
+                const required = /obrigat|required/.test(low);
+                return res.status(400).json({ error: required ? 'missing_phone' : 'invalid_phone', message: required ? 'Telefone (DDD + número) é obrigatório para pagamento no cartão.' : 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).', code, status });
             }
             if (errProp === '/payment/credit_card/customer/cpf') {
                 return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é inválido.', code, status });
@@ -7559,7 +7587,13 @@ app.post('/api/admin/evolution/send-text', requireAdmin, async (req, res) => {
         await col.updateOne(
           { _id: new ObjectId(id) },
           {
-            $set: { lastContactAt: new Date().toISOString(), noContact: false },
+            $set: {
+              lastContactAt: new Date().toISOString(),
+              lastContactText: text,
+              lastContactPhone: rawPhone,
+              lastContactChannel: 'whatsapp',
+              noContact: false
+            },
             $inc: { contactCount: 1 }
           }
         );
