@@ -152,6 +152,26 @@
                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
                              (order.additionalInfoMap && order.additionalInfoMap.quantidade) || '-';
 
+                 let lastContactStr = '';
+                 let lastContactTitle = '';
+                 try {
+                    const lcRaw = order.lastContactAt ? String(order.lastContactAt) : '';
+                    if (lcRaw) {
+                        let lcD = new Date(lcRaw);
+                        if (!Number.isNaN(lcD.getTime())) {
+                            lcD = new Date(lcD.getTime() - 3 * 60 * 60 * 1000);
+                            lastContactStr = lcD.toISOString().replace('T', ' ').substring(0, 16);
+                        }
+                    }
+                 } catch (_) {}
+                 try {
+                    const t0 = String(order.lastContactText || '').trim();
+                    if (t0) {
+                        const snippet = t0.length > 80 ? (t0.slice(0, 80) + '…') : t0;
+                        lastContactTitle = snippet;
+                    }
+                 } catch (_) {}
+
                  const toNumber = (v) => {
                      const n = Number(String(v || '').replace(/[^\d]/g, ''));
                      return Number.isFinite(n) ? n : 0;
@@ -208,7 +228,15 @@
                       const iuHref = iuClean ? ('https://instagram.com/' + encodeURIComponent(iuClean)) : '';
                     %>
                     <% if (iuClean) { %>
-                      <a href="<%= iuHref %>" target="_blank" rel="noopener noreferrer">@<%= iuClean %></a>
+                      <span style="display:inline-flex; align-items:center; gap:6px;">
+                        <a href="<%= iuHref %>" target="_blank" rel="noopener noreferrer">@<%= iuClean %></a>
+                        <button type="button" class="copy-iu-btn" data-iu="<%= iuClean %>" style="border:0; background:transparent; padding:2px; cursor:pointer; line-height:0;" title="Copiar usuário">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                          </svg>
+                        </button>
+                      </span>
                     <% } else { %>
                       <%= instaUser %>
                     <% } %>
@@ -248,6 +276,11 @@
                 <td>
                     <input type="number" value="<%= order.contactCount || 0 %>" min="0" onchange="updateOrder('<%= order._id %>', 'contactCount', this.value)">
                     <span class="status-msg" id="msg-contactCount-<%= order._id %>">Salvo!</span>
+                    <% if (lastContactStr) { %>
+                      <div style="font-size: 0.75em; color: #666; margin-top: 4px;" <%= lastContactTitle ? ('title=\"' + lastContactTitle.replace(/\"/g, '&quot;') + '\"') : '' %>>
+                        Última msg: <%= lastContactStr %>
+                      </div>
+                    <% } %>
                 </td>
                 <td style="text-align:center;">
                     <button type="button" class="whatsapp-btn" data-id="<%= order._id %>" data-phone="<%= customerPhone %>" data-insta="<%= instaUser %>" data-contactcount="<%= order.contactCount || 0 %>">Enviar msg</button>
@@ -330,6 +363,39 @@
         const el = document.getElementById('privadosHiddenCount');
         if (el) el.textContent = String(hiddenCountOnPage);
     }
+
+    function copyTextToClipboard(text) {
+        const v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            return navigator.clipboard.writeText(v);
+        }
+        return new Promise((resolve, reject) => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = v;
+                ta.setAttribute('readonly', 'readonly');
+                ta.style.position = 'fixed';
+                ta.style.top = '-1000px';
+                ta.style.left = '-1000px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (ok) resolve();
+                else reject(new Error('copy_failed'));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    document.addEventListener('click', function(e){
+        const btn = e && e.target ? e.target.closest('.copy-iu-btn') : null;
+        if (!btn) return;
+        const iu = String(btn.getAttribute('data-iu') || '').replace(/^@/, '').trim();
+        copyTextToClipboard(iu).catch(function(){});
+    });
 
     function hideSelectedPrivados() {
         const hidden = getHiddenOrdersSet();

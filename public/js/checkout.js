@@ -443,21 +443,21 @@
   let isInstagramVerified = false;
   let isInstagramPrivate = false;
   // Captura phone da URL: /checkout?phone=... (default 11111111)
-  let phoneFromUrl = new URLSearchParams(window.location.search).get('phone') || '11111111';
+  let phoneFromUrl = new URLSearchParams(window.location.search).get('phone') || '';
 
   const tabela = {
     mistos: [
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
-      { q: 500, p: 'R$ 19,90' },
-      { q: 700, p: 'R$ 24,90' },
+      { q: 500, p: 'R$ 16,90' },
+      { q: 700, p: 'R$ 22,90' },
       { q: 1000, p: 'R$ 29,90' },
-      { q: 2000, p: 'R$ 54,90' },
-      { q: 3000, p: 'R$ 89,90' },
-      { q: 4000, p: 'R$ 109,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 79,90' },
+      { q: 4000, p: 'R$ 99,90' },
       { q: 5000, p: 'R$ 129,90' },
       { q: 7500, p: 'R$ 169,90' },
-      { q: 10000, p: 'R$ 199,90' },
+      { q: 10000, p: 'R$ 229,90' },
       { q: 15000, p: 'R$ 329,90' },
     ],
     brasileiros: [
@@ -2124,17 +2124,6 @@
         const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
         promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
       }
-      
-      // Upsell Followers (25% off)
-      if (upsellAccepted) {
-        promos.push({ 
-          key: 'upsell_followers', 
-          qty: 1000, 
-          label: '1000 Seguidores (Oferta Especial)', 
-          priceCents: window.upsellPriceCents || 2990,
-          upsell_followers: true 
-        });
-      }
     } catch (_) {}
     return promos;
   }
@@ -3243,12 +3232,35 @@
       }
 
       const phoneValue = (function(){
-        let d = onlyDigits((checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) || phoneFromUrl || '');
-        if (d.startsWith('55') && (d.length === 12 || d.length === 13)) d = d.slice(2);
-        if (d.length > 11) d = d.slice(-11);
-        if (!/^[1-9]{2}9?[0-9]{8}$/.test(d)) return '';
+        const inputVal = (checkoutPhoneInput && checkoutPhoneInput.value && checkoutPhoneInput.value.trim()) ? String(checkoutPhoneInput.value).trim() : '';
+        const urlVal = (function () {
+          try {
+            const raw = new URLSearchParams(window.location.search).get('phone') || '';
+            return String(raw || '').trim();
+          } catch (_) {
+            return '';
+          }
+        })();
+        let d = onlyDigits(inputVal || urlVal || '');
+        if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
+        if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
+        if (d.length > 11) d = d.slice(0, 11);
+        if (!(d.length === 10 || d.length === 11)) return '';
+        if (d.startsWith('0')) return '';
         return d;
       })();
+      if (!phoneValue) {
+        try {
+          if (checkoutPhoneInput) {
+            checkoutPhoneInput.classList.add('tutorial-highlight');
+            try { checkoutPhoneInput.focus(); } catch (_) {}
+            try { checkoutPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+          }
+        } catch (_) {}
+        throw new Error('Digite seu telefone (DDD + número) para pagar no cartão.');
+      }
+
+      const correlationID = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       
       // Username logic
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
@@ -3270,6 +3282,7 @@
       const customerPayload = { name: cardHolder, cpf: cardHolderCpf };
       if (phoneValue) customerPayload.phone_number = phoneValue;
       const payload = {
+        correlationID,
         payment_token: paymentToken,
         installments: Number(installments) || 1,
         total_cents: totalCents,
@@ -3281,6 +3294,7 @@
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtd) },
+          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)}` },
           { key: 'instagram_username', value: instagramUsernameFinal }
         ],
         profile_is_private: !!window.isInstagramPrivate,
@@ -3291,11 +3305,37 @@
         const cc = String(window.couponCode || '').trim();
         if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
       } catch (_) {}
+
+      try {
+        const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
+        const tc = m && m[1] ? m[1] : '';
+        if (tc) payload.additionalInfo.push({ key: 'tc_code', value: tc });
+      } catch(_) {}
+      try {
+        let sckValue = '';
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          sckValue = params.get('sck') || '';
+        } catch (_) {}
+        if (!sckValue) {
+          try {
+            const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+            sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+          } catch (_) {}
+        }
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
+      } catch(_) {}
       
       // Add Order Bumps to Additional Info if present
       const promos = getSelectedPromos();
       if (promos.length > 0) {
           payload.additionalInfo.push({ key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') });
+          try {
+            const promosTotalCents = (typeof calcPromosTotalCents === 'function') ? calcPromosTotalCents(promos) : 0;
+            if (Number.isFinite(promosTotalCents) && promosTotalCents > 0) {
+              payload.additionalInfo.push({ key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) });
+            }
+          } catch (_) {}
       }
 
       try {
@@ -4160,14 +4200,15 @@
           promos.push({ key: 'views', qty, label: `Visualizações (${qty})`, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (commentsChecked) {
-          let priceStr = document.querySelector('.promo-prices[data-promo="comments"] .new-price')?.textContent || '';
-          if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.comments ? window.promoPricing.comments.price : '') || '';
-          promos.push({ key: 'comments', qty: 1, label: 'Comentário promocional', priceCents: window.parsePrecoToCents(priceStr) });
+          const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
+          const priceCents = qty * 150;
+          promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
         }
         if (warrantyChecked) {
-          const priceStr = 'R$ 9,90';
-          const label = 'Garantia Vitalícia';
-          promos.push({ key: 'garantia', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
+          const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
+          const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
+          const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
+          promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -4526,6 +4567,13 @@
     var last = 0;
     document.addEventListener('touchend', function(e){
       var now = Date.now();
+      try {
+        var t = e && e.target ? e.target : null;
+        if (t && typeof t.closest === 'function') {
+          var hit = t.closest('input,textarea,select,button,[contenteditable="true"]');
+          if (hit) { last = now; return; }
+        }
+      } catch (_) {}
       if (now - last <= 300) { e.preventDefault(); }
       last = now;
     }, { passive: false });
