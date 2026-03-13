@@ -222,7 +222,14 @@ document.addEventListener('DOMContentLoaded', function() {
   let isInstagramVerified = false;
   let isInstagramPrivate = false;
   let warrantyMode = '30';
-  try { window.warrantyMode = warrantyMode; } catch(_) {}
+  try {
+    const initialWarrantyLabel = (document.getElementById('warrantyModeLabel')?.textContent || '').toLowerCase();
+    const initialWarrantyHighlight = (document.getElementById('warrantyHighlight')?.textContent || '').toLowerCase();
+    if (initialWarrantyLabel.includes('vital') || initialWarrantyHighlight.includes('vital')) {
+      warrantyMode = 'life';
+    }
+    window.warrantyMode = warrantyMode;
+  } catch(_) {}
 
   let paymentPollInterval = null;
   let paymentEventSource = null;
@@ -738,7 +745,7 @@ document.addEventListener('DOMContentLoaded', function() {
         break;
       case 'brasileiros':
         html = `
-          <p>Base nacional com nomes locais e seguidores brasileiros reais.</p>
+          <p>Base nacional com nomes locais e seguidores brasileiros.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>🇧🇷 Foco total no público brasileiro e mais credibilidade.</li>
@@ -759,7 +766,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>✨ Perfis mais qualificados para reforçar autoridade do perfil.</li>
-            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
+            <li>📉 Serviço com baixa queda de seguidores.</li>
           </ul>
         `;
         break;
@@ -810,9 +817,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
     if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
-    if (wOld) wOld.textContent = isLife ? 'R$ 129,90' : 'R$ 39,90';
-    if (wNew) wNew.textContent = isLife ? 'R$ 19,90' : 'R$ 9,90';
-    if (wDisc) wDisc.textContent = isLife ? '85% OFF' : '75% OFF';
+    if (wOld) wOld.textContent = 'R$ 39,90';
+    if (wNew) wNew.textContent = 'R$ 9,90';
+    if (wDisc) wDisc.textContent = '75% OFF';
     updatePromosSummary();
   }
 
@@ -1115,9 +1122,10 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       if (warrantyChecked) {
         const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
-        const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
+        let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
+        if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 9,90';
         const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
-        promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        promos.push({ key: (mode === 'life') ? 'warranty60' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';

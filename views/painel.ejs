@@ -277,7 +277,16 @@
                   <% if (row.isPrivate === true) { %>
                     <span class="unknown-badge unknown-badge--private">Privado</span>
                   <% } %>
-                  @<%= username %>
+                  <%
+                    const uRaw = String(username || '').trim();
+                    const uClean = uRaw.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                    const uHref = uClean ? ('https://instagram.com/' + encodeURIComponent(uClean)) : '';
+                  %>
+                  <% if (uClean) { %>
+                    <a href="<%= uHref %>" target="_blank" rel="noopener noreferrer">@<%= uClean %></a>
+                  <% } else { %>
+                    @<%= username %>
+                  <% } %>
                 </td>
                 <td style="white-space: nowrap;"><%= row.tipo ? String(row.tipo) : '-' %></td>
                 <td style="white-space: nowrap;"><%= row.fornecedor ? String(row.fornecedor) : '-' %></td>
@@ -678,11 +687,15 @@
       <div class="summary-grid summary-grid-dashboard">
         <div class="summary-card">
           <div class="summary-label">Total de Vendas</div>
-          <div class="summary-value">R$ <%= totalRevenue.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-value">R$ <%= (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)).toFixed(2).replace('.', ',') %></div>
         </div>
         <div class="summary-card">
           <div class="summary-label">Custo Total no Período</div>
           <div class="summary-value">R$ <%= totalCost.toFixed(2).replace('.', ',') %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">% custo / vendas (período)</div>
+          <div class="summary-value"><%= (typeof costOverRevenuePct !== 'undefined' ? Number(costOverRevenuePct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">Perfis validados hoje</div>
@@ -693,8 +706,29 @@
           <div class="summary-value"><%= typeof paidOrdersToday !== 'undefined' ? paidOrdersToday : 0 %></div>
         </div>
         <div class="summary-card">
+          <div class="summary-label">Perfis validados no período</div>
+          <div class="summary-value"><%= typeof validatedProfilesPeriod !== 'undefined' ? validatedProfilesPeriod : 0 %></div>
+        </div>
+        <div class="summary-card">
           <div class="summary-label">Pedidos pagos no período</div>
           <div class="summary-value"><%= totalTransactions %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">% pagos/validados (hoje)</div>
+          <div class="summary-value"><%= (typeof paidOverValidatedTodayPct !== 'undefined' ? Number(paidOverValidatedTodayPct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">% pagos/validados (período)</div>
+          <div class="summary-value"><%= (typeof paidOverValidatedPeriodPct !== 'undefined' ? Number(paidOverValidatedPeriodPct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Vendas sem orderbump</div>
+          <div class="summary-value">R$ <%= (typeof revenueWithoutBumps !== 'undefined' ? Number(revenueWithoutBumps || 0) : 0).toFixed(2).replace('.', ',') %></div>
+          <div style="margin-top:8px;">
+            <a href="<%= (typeof toggleIgnoreBumpRevenueUrl !== 'undefined' && toggleIgnoreBumpRevenueUrl) ? toggleIgnoreBumpRevenueUrl : '/painel' %>" style="display:inline-block; padding:6px 10px; background:#0d6efd; color:#fff; border-radius:6px; text-decoration:none; font-size:0.85rem;">
+              <%= (typeof ignoreBumpRevenue !== 'undefined' && ignoreBumpRevenue) ? 'Considerar venda de orderbump' : 'Retirar venda de orderbump' %>
+            </a>
+          </div>
         </div>
       </div>
     <% } %>
@@ -802,7 +836,16 @@
                   <td>
                     <div>
                       <% if (order.isPrivate) { %><span class="unknown-badge unknown-badge--private">PRIVADO</span><% } %>
-                      <%= order.instaUser || '-' %>
+                      <%
+                        const iuRaw = String(order.instaUser || '').trim();
+                        const iuClean = iuRaw.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                        const iuHref = iuClean ? ('https://instagram.com/' + encodeURIComponent(iuClean)) : '';
+                      %>
+                      <% if (iuClean) { %>
+                        <a href="<%= iuHref %>" target="_blank" rel="noopener noreferrer">@<%= iuClean %></a>
+                      <% } else { %>
+                        <%= order.instaUser || '-' %>
+                      <% } %>
                     </div>
                     <small>
                       <%= order.phone || '-' %>
@@ -966,6 +1009,9 @@
           <p style="margin:0 0 12px; font-size:0.85rem; color:#555;">
             Ajuste o custo de cada produto. Os valores são usados no cálculo do custo total do painel.
           </p>
+          <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-bottom: 10px;">
+            <a href="<%= (typeof toggleIgnoreBumpsUrl !== 'undefined' && toggleIgnoreBumpsUrl) ? toggleIgnoreBumpsUrl : '/painel' %>" id="toggleIgnoreBumpsBtn" data-ignore-bumps="<%= (typeof ignoreBumps !== 'undefined' && ignoreBumps) ? '1' : '0' %>" style="padding:6px 12px; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem; text-decoration:none; display:inline-block;"><%= (typeof ignoreBumps !== 'undefined' && ignoreBumps) ? 'Considerar custos de orderbump' : 'Retirar custos de orderbump' %></a>
+          </div>
           <form id="costSettingsForm" method="POST" action="/painel/custos">
             <div style="display:flex; flex-direction:column; gap:8px; font-size:0.9rem;">
               <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
@@ -1007,6 +1053,21 @@
             (function(){
               var form = document.getElementById('costSettingsForm');
               if (!form) return;
+              var toggleBtn = document.getElementById('toggleIgnoreBumpsBtn');
+              if (toggleBtn) {
+                var ignoreBumpsNow = String(toggleBtn.getAttribute('data-ignore-bumps') || '0') === '1';
+                toggleBtn.style.background = ignoreBumpsNow ? '#6c757d' : '#dc3545';
+                toggleBtn.addEventListener('click', function(){
+                  try {
+                    var url = new URL(window.location.href);
+                    if (ignoreBumpsNow) url.searchParams.delete('ignoreBumps');
+                    else url.searchParams.set('ignoreBumps', '1');
+                    window.location.href = url.toString();
+                  } catch (e) {
+                    try { window.location.reload(); } catch(_) {}
+                  }
+                });
+              }
               form.addEventListener('submit', function(ev){
                 try {
                   ev.preventDefault();

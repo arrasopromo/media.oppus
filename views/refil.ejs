@@ -11,7 +11,9 @@
     <header class="header">
       <h1 class="title">Refil</h1>
       <p class="subtitle">Informe o ID do pedido para repor seguidores (Mistos ou Brasileiros)</p>
-      <% if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
+      <% if (typeof refilIsLifetime !== 'undefined' && refilIsLifetime) { %>
+        <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Vitalícia</strong></p>
+      <% } else if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
         <% if (refilDaysLeft <= 0) { %>
           <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Expirado</strong></p>
         <% } else { %>
@@ -20,6 +22,17 @@
       <% } %>
     </header>
     <main class="main-content">
+      <% const waHref = (typeof whatsappHref === 'string' && whatsappHref) ? whatsappHref : ('https://wa.me/553173425727?text=' + encodeURIComponent('Perdi seguidores e preciso de reposição. ID do meu pedido: ')); %>
+      <section class="section-block" style="padding-top: 0;">
+        <div class="service-card" style="width: 100%; max-width: 980px; margin: 0 auto; border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.35); backdrop-filter: blur(8px);">
+          <div class="card-content" style="text-align: center;">
+            <div style="font-weight: 400; color: var(--text-primary);">Ferramenta temporariamente indisponível</div>
+            <div style="margin-top: 0.35rem; color: var(--text-secondary);">
+              Para solicitar reposição, <a id="refilWhatsAppLink" href="<%= waHref %>" target="_blank" rel="noopener noreferrer" style="color: #16a34a; font-weight: 400; text-decoration: underline;">clique aqui</a>.
+            </div>
+          </div>
+        </div>
+      </section>
       <section class="section-block">
         <div class="service-card" id="refilCard">
           <div class="card-content">
@@ -83,6 +96,34 @@
   </style>
   
   <script>
+    (function(){
+      const a = document.getElementById('refilWhatsAppLink')
+      if (!a) return
+      const href = String(a.getAttribute('href') || '')
+      if (!href || !/ID%20do%20meu%20pedido%3A%20?$/.test(href)) return
+      const rawOrderId = '<%= (typeof refilOrderMongoId === "string" ? refilOrderMongoId : "") %>'
+      const rawToken = '<%= (typeof refilToken === "string" ? refilToken : "") %>'
+      let apiUrl = ''
+      if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
+        apiUrl = '/api/order?orderID=' + encodeURIComponent(rawOrderId)
+      } else if (rawToken && !/^liberado$/i.test(rawToken)) {
+        apiUrl = '/api/refil/order?token=' + encodeURIComponent(rawToken)
+      }
+      if (!apiUrl) return
+      fetch(apiUrl)
+        .then(r => r.json().catch(() => ({})))
+        .then(d => {
+          const o = d && d.order ? d.order : null
+          if (!o) return
+          const providerOid = (o.fama24h && (o.fama24h.orderId || o.fama24h.id)) ? (o.fama24h.orderId || o.fama24h.id)
+            : ((o.fornecedor_social && (o.fornecedor_social.orderId || o.fornecedor_social.id)) ? (o.fornecedor_social.orderId || o.fornecedor_social.id) : '')
+          const finalId = String(o._id || providerOid || o.identifier || (o.woovi && o.woovi.identifier) || '').trim()
+          if (!finalId) return
+          const msg = 'Perdi seguidores e preciso de reposição. ID do meu pedido: ' + finalId
+          a.setAttribute('href', 'https://wa.me/553173425727?text=' + encodeURIComponent(msg))
+        })
+        .catch(() => {})
+    })()
     (function(){
       const orderInput = document.getElementById('refilOrderIdInput')
       const submitBtn = document.getElementById('refilSubmitBtn')

@@ -18,6 +18,7 @@
     .archive-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
     .archive-btn--off { background: #dc3545; }
     .archive-btn--on { background: #6c757d; }
+    .whatsapp-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; background: #198754; }
     .hide-toolbar { display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-top: 10px; }
     .hide-btn { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px; }
   </style>
@@ -103,7 +104,7 @@
               <th style="text-align: center;">Pedido Enviado?</th>
               <th style="text-align: center;">Sem Contato?</th>
               <th>Contatos Feitos</th>
-              <th style="text-align: center;">Arquivo</th>
+              <th style="text-align: center;">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -200,7 +201,18 @@
                         <span id="email-val-<%= order._id %>" style="margin-top:4px; font-size:0.8em; color:#555; display:none; word-break:break-all;"></span>
                     </div>
                 </td>
-                <td><%= instaUser %></td>
+                <td>
+                    <%
+                      const iuRaw = String(instaUser || '').trim();
+                      const iuClean = iuRaw.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                      const iuHref = iuClean ? ('https://instagram.com/' + encodeURIComponent(iuClean)) : '';
+                    %>
+                    <% if (iuClean) { %>
+                      <a href="<%= iuHref %>" target="_blank" rel="noopener noreferrer">@<%= iuClean %></a>
+                    <% } else { %>
+                      <%= instaUser %>
+                    <% } %>
+                </td>
                 <td><%= tipo %> (<%= qtdFinal %>)</td>
                 <td style="text-align: center;">
                     <% 
@@ -238,6 +250,8 @@
                     <span class="status-msg" id="msg-contactCount-<%= order._id %>">Salvo!</span>
                 </td>
                 <td style="text-align:center;">
+                    <button type="button" class="whatsapp-btn" data-id="<%= order._id %>" data-phone="<%= customerPhone %>" data-insta="<%= instaUser %>" data-contactcount="<%= order.contactCount || 0 %>">Enviar msg</button>
+                    <span class="status-msg" id="msg-whatsapp-<%= order._id %>">Enviado!</span>
                     <button type="button" class="archive-btn <%= order.archived ? 'archive-btn--on' : 'archive-btn--off' %>" data-id="<%= order._id %>" data-archived="<%= order.archived ? '1' : '0' %>">
                       <%= order.archived ? 'Desarquivar' : 'Arquivar' %>
                     </button>
@@ -538,9 +552,64 @@
         }
     }
 
+    async function sendEvolutionText(id, phone, insta, contactCount) {
+        try {
+            const initialPhone = String(phone || '').trim();
+            const digits = initialPhone.replace(/[^\d]/g, '');
+            const phonePromptDefault = digits ? digits : '';
+            const phoneFinal = digits ? initialPhone : window.prompt('Número do WhatsApp (com DDD). Ex: 11999990000', phonePromptDefault);
+            if (!phoneFinal) return;
+
+            const u = String(insta || '').trim();
+            const hasUser = !!(u && u !== '-');
+            const prefix = hasUser ? `Olá! Tudo bem?\n\nSou da equipe OPPUS e estou falando sobre o seu pedido para o Instagram @${u}.` : 'Olá! Tudo bem?\n\nSou da equipe OPPUS e estou falando sobre o seu pedido.';
+            const n = Number(contactCount) || 0;
+            const attempt = n <= 0 ? 1 : (n === 1 ? 2 : (n === 2 ? 3 : 4));
+            const messages = {
+                1: `${prefix}\n\nIdentificamos que o perfil está privado. Para conseguirmos entregar corretamente, deixe o perfil público por alguns minutos e avise por aqui assim que liberar.`,
+                2: `${prefix}\n\nEstou entrando em contato pela 2ª vez. O perfil ainda consta como privado. Para conseguirmos concluir a entrega, deixe o perfil público por alguns minutos e nos avise por aqui.`,
+                3: `${prefix}\n\n3ª tentativa de contato: o perfil ainda aparece como privado. Para a entrega acontecer, é só deixar público por alguns minutos e responder aqui quando estiver liberado.`,
+                4: `${prefix}\n\nÚltima tentativa de contato: para não perder seguidores e para conseguirmos finalizar a entrega, deixe o perfil público por alguns minutos e avise por aqui. Caso não haja retorno, vamos encerrar as tentativas de contato.`
+            };
+            const initialText = messages[attempt] || messages[1];
+            const text = window.prompt('Mensagem para enviar no WhatsApp:', initialText);
+            if (!text) return;
+
+            const res = await fetch('/api/admin/evolution/send-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, phone: phoneFinal, text })
+            });
+            let data = null;
+            try { data = await res.json(); } catch (_) { data = null; }
+            if (!res.ok || !data || !data.ok) {
+                const details = (data && data.details) ? ('\n\nDetalhes: ' + JSON.stringify(data.details)) : '';
+                alert('Erro ao enviar: ' + ((data && data.error) ? data.error : ('HTTP ' + res.status)) + details);
+                return;
+            }
+            const msg = document.getElementById('msg-whatsapp-' + id);
+            if (msg) {
+                msg.style.display = 'inline';
+                setTimeout(() => msg.style.display = 'none', 2000);
+            }
+            window.location.reload();
+        } catch (e) {
+            alert('Erro ao enviar: ' + (e && e.message ? e.message : e));
+        }
+    }
+
     // Instant Phone Search Implementation
     document.addEventListener('DOMContentLoaded', function() {
         document.addEventListener('click', function(e) {
+            const wbtn = e.target.closest('.whatsapp-btn');
+            if (wbtn) {
+                const id = wbtn.getAttribute('data-id');
+                const phone = wbtn.getAttribute('data-phone');
+                const insta = wbtn.getAttribute('data-insta');
+                const contactCount = wbtn.getAttribute('data-contactcount');
+                sendEvolutionText(id, phone, insta, contactCount);
+                return;
+            }
             const btn = e.target.closest('.archive-btn');
             if (!btn) return;
             const id = btn.getAttribute('data-id');
