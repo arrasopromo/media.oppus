@@ -717,7 +717,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
             if (error.response) {
                 console.error('❌ Detalhes Erro Apify:', error.response.status, error.response.data);
             }
-            const errorResult = { success: false, status: 500, error: "Erro na verificação do perfil. Tente novamente mais tarde." };
+            const errorResult = { success: false, status: 500, error: "Erro de usuário. configra o nome digitado e tente novamente." };
             setCache(username, errorResult, NEGATIVE_CACHE_TTL_MS);
             return errorResult;
         }
@@ -1190,31 +1190,54 @@ async function ensureRefilLink(identifier, correlationID, req) {
         return '';
       }
     };
-    const iu = doc.instauser || doc.instagramUsername || map['instagram_username'] || '';
+    const normalizeInstaUser = (v) => {
+      try {
+        let s = String(v || '').trim();
+        if (!s) return '';
+        if (/^https?:\/\//i.test(s)) {
+          s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+          s = s.split('?')[0].split('#')[0];
+          s = s.replace(/\/+$/, '');
+          const parts = s.split('/').filter(Boolean);
+          s = parts.length ? String(parts[parts.length - 1] || '') : s;
+        }
+        s = s.trim();
+        if (s.startsWith('@')) s = s.slice(1);
+        return s.toLowerCase().trim();
+      } catch (_) {
+        return '';
+      }
+    };
+    const iuRaw = doc.instauser || doc.instagramUsername || map['instagram_username'] || '';
+    const iu = normalizeInstaUser(iuRaw);
     const phoneFromCustomer = (doc && doc.customer && doc.customer.phone) ? String(doc.customer.phone).replace(/\D/g, '') : '';
     const phoneFromMap = (map['phone'] ? String(map['phone']) : (pickVal(arrPaid, 'phone') || pickVal(arrOrig, 'phone'))).replace(/\D/g, '');
     const phoneDigits = phoneFromCustomer || phoneFromMap || '';
+    const tipoServicoRaw = String(map['tipo_servico'] || doc.tipoServico || doc.tipo || '').trim().toLowerCase();
+    const categoriaServicoRaw = String(map['categoria_servico'] || doc.categoriaServico || '').trim().toLowerCase();
+    const isSeguidores = !categoriaServicoRaw || categoriaServicoRaw.includes('seguidores');
+    const isEligibleRefil = isSeguidores && (tipoServicoRaw.includes('mistos') || tipoServicoRaw.includes('brasileir'));
+    if (!isEligibleRefil) return null;
     const bumpsStr = String(map['order_bumps'] || pickVal(arrPaid, 'order_bumps') || pickVal(arrOrig, 'order_bumps') || '').trim();
-    const bumpKeys = bumpsStr
-      ? bumpsStr.split(';').map(s => String(s || '').trim()).filter(Boolean).map(s => String(s.split(':')[0] || '').trim().toLowerCase()).filter(Boolean)
-      : [];
-    let warrantyMode = null;
-    let warrantyDays = null;
-    if (bumpKeys.includes('warranty_lifetime')) {
-      warrantyMode = 'life';
-    } else if (bumpKeys.includes('warranty60')) {
-      warrantyMode = '60';
-      warrantyDays = 60;
-    } else if (bumpKeys.includes('warranty30') || bumpKeys.includes('warranty')) {
-      warrantyMode = '30';
-      warrantyDays = 30;
-    }
-    if (warrantyMode !== 'life') {
-      if (!warrantyMode) warrantyMode = '30';
-      if (typeof warrantyDays !== 'number' || !Number.isFinite(warrantyDays) || warrantyDays <= 0) {
-        warrantyDays = 30;
+    const bumpQtyMap = (() => {
+      const out = {};
+      const parts = bumpsStr ? bumpsStr.split(';') : [];
+      for (const raw of parts) {
+        const part = String(raw || '').trim();
+        if (!part) continue;
+        const segs = part.split(':');
+        const key = String(segs[0] || '').trim().toLowerCase();
+        if (!key) continue;
+        const qtyRaw = segs.length > 1 ? String(segs[1] || '').trim() : '';
+        const qtyParsed = qtyRaw ? Number(qtyRaw) : 1;
+        const qty = Number.isFinite(qtyParsed) ? qtyParsed : 1;
+        out[key] = Number(out[key] || 0) + qty;
       }
-    }
+      return out;
+    })();
+    const hasLifetime = (Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0) || (Number(bumpQtyMap['warranty30'] || 0) > 0) || (Number(bumpQtyMap['warranty'] || 0) > 0);
+    const warrantyMode = hasLifetime ? 'life' : '30';
+    const warrantyDays = hasLifetime ? null : 30;
     const orderBaseMs = (() => {
       const toMs = (v) => {
         try {
@@ -1234,38 +1257,102 @@ async function ensureRefilLink(identifier, correlationID, req) {
       if (c) return c;
       return Date.now();
     })();
-    const dayMs = 24 * 60 * 60 * 1000;
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const brtYmdFromMs = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+    };
+    const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+    const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+      const base = brtYmdFromMs(baseMs);
+      let y = base.y;
+      let m = base.m + Number(monthsToAdd || 0);
+      while (m > 12) { y += 1; m -= 12; }
+      while (m < 1) { y -= 1; m += 12; }
+      const maxDay = daysInMonth(y, m);
+      const d = Math.min(base.d, maxDay);
+      const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59, 999) + brtOffsetMs;
+      return new Date(utcMs).toISOString();
+    };
+    const monthsToAdd = warrantyMode === 'life' ? null : 1;
     const desiredExpiresAtIso = warrantyMode === 'life'
       ? new Date('2099-12-31T23:59:59.999Z').toISOString()
-      : new Date(orderBaseMs + (warrantyDays * dayMs)).toISOString();
+      : addMonthsEndOfDayBrtIso(orderBaseMs, monthsToAdd);
+    const desiredCreatedAtIso = new Date(orderBaseMs).toISOString();
     const tl = await getCollection('temporary_links');
 
-    // Primeiro: tentar reutilizar link existente por telefone (um token único por telefone)
-    if (phoneDigits) {
-      const existingByPhone = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
-      if (existingByPhone) {
-        await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existingByPhone.id } });
+    if (iu) {
+      const existingByInsta = await tl.findOne({ purpose: 'refil', $or: [{ instauser: iu }, { instausers: iu }] });
+      if (existingByInsta) {
+        await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existingByInsta.id } });
         const sets = {
-          orderId: existingByPhone.orderId ? String(existingByPhone.orderId) : String(doc._id),
-          phone: phoneDigits || existingByPhone.phone || null,
-          instauser: iu || existingByPhone.instauser || null,
-          warrantyMode: warrantyMode || existingByPhone.warrantyMode || null,
-          warrantyDays: (typeof warrantyDays === 'number' ? warrantyDays : (typeof existingByPhone.warrantyDays === 'number' ? existingByPhone.warrantyDays : null))
+          phone: phoneDigits || existingByInsta.phone || null,
+          instauser: iu || existingByInsta.instauser || null,
+          warrantyMode: warrantyMode || existingByInsta.warrantyMode || null,
+          warrantyDays: (typeof warrantyDays === 'number' ? warrantyDays : (typeof existingByInsta.warrantyDays === 'number' ? existingByInsta.warrantyDays : null))
         };
+        if (desiredCreatedAtIso) {
+          const currentCreatedMs = existingByInsta.createdAt ? new Date(existingByInsta.createdAt).getTime() : 0;
+          const desiredCreatedMs = new Date(desiredCreatedAtIso).getTime();
+          if (!currentCreatedMs || (desiredCreatedMs && desiredCreatedMs > currentCreatedMs)) {
+            sets.createdAt = desiredCreatedAtIso;
+            sets.orderId = String(doc._id);
+          }
+        }
         if (desiredExpiresAtIso) {
-          const currentExpMs = existingByPhone.expiresAt ? new Date(existingByPhone.expiresAt).getTime() : 0;
+          const currentExpMs = existingByInsta.expiresAt ? new Date(existingByInsta.expiresAt).getTime() : 0;
           const desiredExpMs = new Date(desiredExpiresAtIso).getTime();
           if (!currentExpMs || (desiredExpMs && desiredExpMs > currentExpMs)) {
             sets.expiresAt = desiredExpiresAtIso;
           }
         }
-        const addToSet = { orders: String(doc._id) };
-        if (iu) addToSet.instausers = String(iu);
-        const updateFilter = existingByPhone._id ? { _id: existingByPhone._id } : { id: existingByPhone.id };
+        const addToSet = { orders: String(doc._id), instausers: String(iu) };
+        const updateFilter = existingByInsta._id ? { _id: existingByInsta._id } : { id: existingByInsta.id };
         await tl.updateOne(updateFilter, { $set: sets, $addToSet: addToSet });
-        if (sets.expiresAt) existingByPhone.expiresAt = sets.expiresAt;
-        if (sets.warrantyMode) existingByPhone.warrantyMode = sets.warrantyMode;
-        return existingByPhone;
+        if (sets.expiresAt) existingByInsta.expiresAt = sets.expiresAt;
+        if (sets.warrantyMode) existingByInsta.warrantyMode = sets.warrantyMode;
+        return existingByInsta;
+      }
+    }
+
+    if (phoneDigits) {
+      const existingByPhone = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
+      if (existingByPhone) {
+        const existingInsta = normalizeInstaUser(existingByPhone.instauser || '');
+        const existingList = Array.isArray(existingByPhone.instausers) ? existingByPhone.instausers.map(normalizeInstaUser).filter(Boolean) : [];
+        const canReuse = !iu || !existingInsta || existingInsta === iu || existingList.includes(iu);
+        if (canReuse) {
+          await col.updateOne({ _id: doc._id }, { $set: { refilLinkId: existingByPhone.id } });
+          const sets = {
+            orderId: existingByPhone.orderId ? String(existingByPhone.orderId) : String(doc._id),
+            phone: phoneDigits || existingByPhone.phone || null,
+            instauser: iu || existingByPhone.instauser || null,
+            warrantyMode: warrantyMode || existingByPhone.warrantyMode || null,
+            warrantyDays: (typeof warrantyDays === 'number' ? warrantyDays : (typeof existingByPhone.warrantyDays === 'number' ? existingByPhone.warrantyDays : null))
+          };
+          if (desiredCreatedAtIso) {
+            const currentCreatedMs = existingByPhone.createdAt ? new Date(existingByPhone.createdAt).getTime() : 0;
+            const desiredCreatedMs = new Date(desiredCreatedAtIso).getTime();
+            if (!currentCreatedMs || (desiredCreatedMs && desiredCreatedMs > currentCreatedMs)) {
+              sets.createdAt = desiredCreatedAtIso;
+              sets.orderId = String(doc._id);
+            }
+          }
+          if (desiredExpiresAtIso) {
+            const currentExpMs = existingByPhone.expiresAt ? new Date(existingByPhone.expiresAt).getTime() : 0;
+            const desiredExpMs = new Date(desiredExpiresAtIso).getTime();
+            if (!currentExpMs || (desiredExpMs && desiredExpMs > currentExpMs)) {
+              sets.expiresAt = desiredExpiresAtIso;
+            }
+          }
+          const addToSet = { orders: String(doc._id) };
+          if (iu) addToSet.instausers = String(iu);
+          const updateFilter = existingByPhone._id ? { _id: existingByPhone._id } : { id: existingByPhone.id };
+          await tl.updateOne(updateFilter, { $set: sets, $addToSet: addToSet });
+          if (sets.expiresAt) existingByPhone.expiresAt = sets.expiresAt;
+          if (sets.warrantyMode) existingByPhone.warrantyMode = sets.warrantyMode;
+          return existingByPhone;
+        }
       }
     }
 
@@ -1285,6 +1372,14 @@ async function ensureRefilLink(identifier, correlationID, req) {
         const sets = {};
         if (warrantyMode) sets.warrantyMode = warrantyMode;
         if (typeof warrantyDays === 'number') sets.warrantyDays = warrantyDays;
+        if (desiredCreatedAtIso) {
+          const currentCreatedMs = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+          const desiredCreatedMs = new Date(desiredCreatedAtIso).getTime();
+          if (!currentCreatedMs || (desiredCreatedMs && desiredCreatedMs > currentCreatedMs)) {
+            sets.createdAt = desiredCreatedAtIso;
+            sets.orderId = String(doc._id);
+          }
+        }
         if (desiredExpiresAtIso) {
           const currentExpMs = existing.expiresAt ? new Date(existing.expiresAt).getTime() : 0;
           const desiredExpMs = new Date(desiredExpiresAtIso).getTime();
@@ -2048,7 +2143,6 @@ app.get('/refil', async (req, res) => {
                 const linkRec = await tl.findOne({ id: token });
                 if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                     const nowMs = Date.now();
-                    const dayMs = 24 * 60 * 60 * 1000;
                     const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
                     const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
                     let ok = false;
@@ -2059,10 +2153,28 @@ app.get('/refil', async (req, res) => {
                       ok = true;
                     } else {
                       const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
-                      const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
                       if (createdMs) {
-                        const warrantyEndMs = createdMs + (daysTotal * dayMs);
-                        if (nowMs <= warrantyEndMs) {
+                        const brtOffsetMs = 3 * 60 * 60 * 1000;
+                        const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+                        const brtYmdFromMs = (ms) => {
+                          const d = new Date(Number(ms || 0) - brtOffsetMs);
+                          return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+                        };
+                        const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+                          const base = brtYmdFromMs(baseMs);
+                          let y = base.y;
+                          let m = base.m + Number(monthsToAdd || 0);
+                          while (m > 12) { y += 1; m -= 12; }
+                          while (m < 1) { y -= 1; m += 12; }
+                          const maxDay = daysInMonth(y, m);
+                          const dd = Math.min(base.d, maxDay);
+                          const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
+                          return new Date(utcMs).toISOString();
+                        };
+                        const monthsToAdd = 1;
+                        const warrantyEndIso = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
+                        const warrantyEndMs = warrantyEndIso ? new Date(warrantyEndIso).getTime() : 0;
+                        if (warrantyEndMs && nowMs <= warrantyEndMs) {
                           ok = true;
                           shouldRenew = true;
                         }
@@ -2070,8 +2182,29 @@ app.get('/refil', async (req, res) => {
                     }
                     if (ok) {
                       if (shouldRenew) {
-                        const newExp = new Date(nowMs + dayMs).toISOString();
-                        await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                        const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+                        if (createdMs) {
+                          const brtOffsetMs = 3 * 60 * 60 * 1000;
+                          const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+                          const brtYmdFromMs = (ms) => {
+                            const d = new Date(Number(ms || 0) - brtOffsetMs);
+                            return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+                          };
+                          const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+                            const base = brtYmdFromMs(baseMs);
+                            let y = base.y;
+                            let m = base.m + Number(monthsToAdd || 0);
+                            while (m > 12) { y += 1; m -= 12; }
+                            while (m < 1) { y -= 1; m += 12; }
+                            const maxDay = daysInMonth(y, m);
+                            const dd = Math.min(base.d, maxDay);
+                            const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
+                            return new Date(utcMs).toISOString();
+                          };
+                          const monthsToAdd = 1;
+                          const newExp = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
+                          if (newExp) await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                        }
                       }
                       isValid = true;
                       if (req.session) {
@@ -2095,7 +2228,6 @@ app.get('/refil', async (req, res) => {
            const linkRec = await tl.findOne({ purpose: 'refil', phone: digits });
            if (linkRec && linkRec.id) {
              const nowMs = Date.now();
-             const dayMs = 24 * 60 * 60 * 1000;
              const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
              const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
              let ok = false;
@@ -2106,10 +2238,28 @@ app.get('/refil', async (req, res) => {
                ok = true;
              } else {
                const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
-               const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
                if (createdMs) {
-                 const warrantyEndMs = createdMs + (daysTotal * dayMs);
-                 if (nowMs <= warrantyEndMs) {
+                 const brtOffsetMs = 3 * 60 * 60 * 1000;
+                 const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+                 const brtYmdFromMs = (ms) => {
+                   const d = new Date(Number(ms || 0) - brtOffsetMs);
+                   return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+                 };
+                 const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+                   const base = brtYmdFromMs(baseMs);
+                   let y = base.y;
+                   let m = base.m + Number(monthsToAdd || 0);
+                   while (m > 12) { y += 1; m -= 12; }
+                   while (m < 1) { y -= 1; m += 12; }
+                   const maxDay = daysInMonth(y, m);
+                   const dd = Math.min(base.d, maxDay);
+                   const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
+                   return new Date(utcMs).toISOString();
+                 };
+                 const monthsToAdd = 1;
+                 const warrantyEndIso = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
+                 const warrantyEndMs = warrantyEndIso ? new Date(warrantyEndIso).getTime() : 0;
+                 if (warrantyEndMs && nowMs <= warrantyEndMs) {
                    ok = true;
                    shouldRenew = true;
                  }
@@ -2118,8 +2268,29 @@ app.get('/refil', async (req, res) => {
              if (ok) {
                token = linkRec.id;
                if (shouldRenew) {
-                 const newExp = new Date(nowMs + dayMs).toISOString();
-                 await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                 const createdMs = linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
+                 if (createdMs) {
+                   const brtOffsetMs = 3 * 60 * 60 * 1000;
+                   const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+                   const brtYmdFromMs = (ms) => {
+                     const d = new Date(Number(ms || 0) - brtOffsetMs);
+                     return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+                   };
+                   const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+                     const base = brtYmdFromMs(baseMs);
+                     let y = base.y;
+                     let m = base.m + Number(monthsToAdd || 0);
+                     while (m > 12) { y += 1; m -= 12; }
+                     while (m < 1) { y -= 1; m += 12; }
+                     const maxDay = daysInMonth(y, m);
+                     const dd = Math.min(base.d, maxDay);
+                     const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
+                     return new Date(utcMs).toISOString();
+                   };
+                   const monthsToAdd = 1;
+                   const newExp = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
+                   if (newExp) await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
+                 }
                }
                isValid = true;
                if (req.session) {
@@ -2148,20 +2319,47 @@ app.get('/refil', async (req, res) => {
         } else if (linkRec && linkRec.expiresAt) {
           const exp = new Date(linkRec.expiresAt).getTime();
           if (exp) {
-            const nowMs = Date.now();
+            const brtOffsetMs = 3 * 60 * 60 * 1000;
             const dayMs = 24 * 60 * 60 * 1000;
-            const left = Math.ceil((exp - nowMs) / dayMs);
-            refilDaysLeft = Math.max(0, left);
+            const brtYmdFromMs = (ms) => {
+              const d = new Date(Number(ms || 0) - brtOffsetMs);
+              return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+            };
+            const dayNumFromYmd = (y, m, d) => Math.floor(Date.UTC(Number(y), Number(m) - 1, Number(d)) / dayMs);
+            const nowYmd = brtYmdFromMs(Date.now());
+            const nowDay = dayNumFromYmd(nowYmd.y, nowYmd.m, nowYmd.d);
+            const expYmd = brtYmdFromMs(exp);
+            const expDay = dayNumFromYmd(expYmd.y, expYmd.m, expYmd.d);
+            refilDaysLeft = Math.max(0, expDay - nowDay);
           }
         } else if (linkRec && linkRec.createdAt) {
           const created = new Date(linkRec.createdAt).getTime();
           if (created) {
-            const daysTotal = (typeof linkRec.warrantyDays === 'number' && linkRec.warrantyDays > 0) ? linkRec.warrantyDays : 30;
-            const nowMs = Date.now();
+            const brtOffsetMs = 3 * 60 * 60 * 1000;
             const dayMs = 24 * 60 * 60 * 1000;
-            const daysPassed = Math.floor((nowMs - created) / dayMs);
-            const left = daysTotal - daysPassed;
-            refilDaysLeft = Math.max(0, left);
+            const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+            const brtYmdFromMs = (ms) => {
+              const d = new Date(Number(ms || 0) - brtOffsetMs);
+              return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+            };
+            const dayNumFromYmd = (y, m, d) => Math.floor(Date.UTC(Number(y), Number(m) - 1, Number(d)) / dayMs);
+            const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+              const base = brtYmdFromMs(baseMs);
+              let y = base.y;
+              let m = base.m + Number(monthsToAdd || 0);
+              while (m > 12) { y += 1; m -= 12; }
+              while (m < 1) { y -= 1; m += 12; }
+              const maxDay = daysInMonth(y, m);
+              const dd = Math.min(base.d, maxDay);
+              const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
+              return { iso: new Date(utcMs).toISOString(), y, m, d: dd };
+            };
+            const monthsToAdd = 1;
+            const exp = addMonthsEndOfDayBrtIso(created, monthsToAdd);
+            const nowYmd = brtYmdFromMs(Date.now());
+            const nowDay = dayNumFromYmd(nowYmd.y, nowYmd.m, nowYmd.d);
+            const expDay = dayNumFromYmd(exp.y, exp.m, exp.d);
+            refilDaysLeft = Math.max(0, expDay - nowDay);
           }
         }
       }
@@ -2419,12 +2617,16 @@ app.post('/api/efi/card-charge', async (req, res) => {
         const normalizeEfiPhone = (raw) => {
             let d = normalizeDigits(raw);
             if (!d) return '';
-            if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
-            if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
-            if (d.length > 11) d = d.slice(0, 11);
+            d = d.replace(/^0+/, '');
+            if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+            if (d.length > 11) d = d.slice(-11);
             if (!(d.length === 10 || d.length === 11)) return '';
             if (d.startsWith('0')) return '';
-            if (!/^[1-9]{2}[0-9]{8,9}$/.test(d)) return '';
+            if (d.length === 11 && d[2] !== '9') {
+              const d2 = d.slice(0, 2) + d.slice(3);
+              if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
+            }
+            if (!/^[1-9]{2}9?[0-9]{8}$/.test(d)) return '';
             return d;
         };
         const isValidCPF = (cpfRaw) => {
@@ -5886,14 +6088,26 @@ app.get('/pedido', async (req, res) => {
       const token = order && order.refilLinkId ? String(order.refilLinkId).trim() : '';
       if (token) {
         const tl = await getCollection('temporary_links');
-        const linkRec = await tl.findOne({ id: token }, { projection: { createdAt: 1 } });
-        const created = linkRec && linkRec.createdAt ? new Date(linkRec.createdAt).getTime() : 0;
-        if (created) {
-          const nowMs = Date.now();
+        const linkRec = await tl.findOne({ id: token }, { projection: { createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1 } });
+        const isLifetime = String(linkRec?.warrantyMode || '').toLowerCase() === 'life';
+        if (!isLifetime) {
+          const brtOffsetMs = 3 * 60 * 60 * 1000;
           const dayMs = 24 * 60 * 60 * 1000;
-          const daysPassed = Math.floor((nowMs - created) / dayMs);
-          const left = 30 - daysPassed;
-          refilDaysLeft = Math.max(0, left);
+          const brtYmdFromMs = (ms) => {
+            const d = new Date(Number(ms || 0) - brtOffsetMs);
+            return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+          };
+          const dayNumFromYmd = (y, m, d) => Math.floor(Date.UTC(Number(y), Number(m) - 1, Number(d)) / dayMs);
+          const nowYmd = brtYmdFromMs(Date.now());
+          const nowDay = dayNumFromYmd(nowYmd.y, nowYmd.m, nowYmd.d);
+          if (linkRec?.expiresAt) {
+            const expMs = new Date(String(linkRec.expiresAt)).getTime();
+            if (Number.isFinite(expMs) && expMs > 0) {
+              const expYmd = brtYmdFromMs(expMs);
+              const expDay = dayNumFromYmd(expYmd.y, expYmd.m, expYmd.d);
+              refilDaysLeft = Math.max(0, expDay - nowDay);
+            }
+          }
         }
       }
     } catch (_) {}
@@ -6222,8 +6436,26 @@ app.post('/session/mark-paid', async (req, res) => {
             if (isRefilExt && linkIdX) {
               const tl = await getCollection('temporary_links');
               const nowMsX = Date.now();
-              const expMsX = modeX === 'life' ? (nowMsX + 3650 * 24 * 60 * 60 * 1000) : (nowMsX + 30 * 24 * 60 * 60 * 1000);
-              await tl.updateOne({ id: linkIdX }, { $set: { expiresAt: new Date(expMsX).toISOString() } });
+              const linkRecX = await tl.findOne({ id: linkIdX }, { projection: { expiresAt: 1 } });
+              const currentExpMsX = (() => {
+                try {
+                  const t = new Date(linkRecX?.expiresAt).getTime();
+                  return Number.isFinite(t) ? t : 0;
+                } catch (_) { return 0; }
+              })();
+              const baseMsX = Math.max(nowMsX, currentExpMsX || 0);
+              const setsX = {};
+              if (modeX === 'life') {
+                setsX.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
+                setsX.warrantyMode = 'life';
+                setsX.warrantyDays = null;
+              } else {
+                const expMsX = baseMsX + 30 * 24 * 60 * 60 * 1000;
+                setsX.expiresAt = new Date(expMsX).toISOString();
+                setsX.warrantyMode = '30';
+                setsX.warrantyDays = 30;
+              }
+              await tl.updateOne({ id: linkIdX }, { $set: setsX });
               try { await col.updateOne(filter, { $set: { refilLinkId: linkIdX } }); } catch(_) {}
             }
           } catch(_) {}
@@ -7035,6 +7267,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const col = await getCollection('checkout_orders');
     const monitorCol = await getCollection('followers_monitor');
     const validatedCol = await getCollection('validated_insta_users');
+    const tlCol = await getCollection('temporary_links');
 
     const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
     const followersQuery = {
@@ -7110,7 +7343,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     };
 
     const resolveDateMs = (o) => {
-      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt || null;
+      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || null;
       const t = dateStr ? new Date(dateStr).getTime() : 0;
       return Number.isFinite(t) ? t : 0;
     };
@@ -7292,9 +7525,13 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
     const minPct = (String(req.query.minPct || '').trim() !== '') ? parseOptionalNumber(req.query.minPct) : null;
     const maxPct = (String(req.query.maxPct || '').trim() !== '') ? parseOptionalNumber(req.query.maxPct) : null;
+    const sortBy = String(req.query.sortBy || 'lastPurchaseAtMs').trim();
+    const sortDirRaw = String(req.query.sortDir || 'desc').trim().toLowerCase();
+    const sortDir = (sortDirRaw === 'asc' || sortDirRaw === 'desc') ? sortDirRaw : 'desc';
     const q = String(req.query.q || '').trim();
     const qType = String(req.query.qType || 'username').trim();
     const filledOnly = String(req.query.filled || '').trim() === '1';
+    const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
 
     const usernames = Array.from(new Set(orders.map(resolveUsername).filter(Boolean)));
     const monitorDocs = usernames.length ? await monitorCol.find({ username: { $in: usernames } }, { projection: { _id: 0 } }).toArray() : [];
@@ -7303,6 +7540,104 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const validatedMap = new Map(validatedDocs.map(d => [String(d.username || '').toLowerCase(), d]));
 
     const backfillOps = [];
+    const dayMs = 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const brtYmdFromMs = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+    };
+    const dayNumFromYmd = (y, m, d) => Math.floor(Date.UTC(Number(y), Number(m) - 1, Number(d)) / dayMs);
+    const nowDayNumBrt = dayNumFromYmd(...Object.values(brtYmdFromMs(nowMs)));
+    const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+    const addMonthsEndOfDayBrt = (baseMs, monthsToAdd) => {
+      const base = brtYmdFromMs(baseMs);
+      let y = base.y;
+      let m = base.m + Number(monthsToAdd || 0);
+      while (m > 12) { y += 1; m -= 12; }
+      while (m < 1) { y -= 1; m += 12; }
+      const maxDay = daysInMonth(y, m);
+      const d = Math.min(base.d, maxDay);
+      const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59, 999) + brtOffsetMs;
+      return { iso: new Date(utcMs).toISOString(), y, m, d };
+    };
+    const warrantyFromBumpsStr = (bumpsStr) => {
+      const s = String(bumpsStr || '').trim();
+      const bumpQtyMap = {};
+      if (s) {
+        const parts = s.split(';');
+        for (const raw of parts) {
+          const part = String(raw || '').trim();
+          if (!part) continue;
+          const segs = part.split(':');
+          const key = String(segs[0] || '').trim().toLowerCase();
+          if (!key) continue;
+          const qtyRaw = segs.length > 1 ? String(segs[1] || '').trim() : '';
+          const qtyParsed = qtyRaw ? Number(qtyRaw) : 1;
+          const qty = Number.isFinite(qtyParsed) ? qtyParsed : 1;
+          bumpQtyMap[key] = Number(bumpQtyMap[key] || 0) + qty;
+        }
+      }
+      if ((Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0) || (Number(bumpQtyMap['warranty30'] || 0) > 0) || (Number(bumpQtyMap['warranty'] || 0) > 0)) return { isLifetime: true, months: null, mode: 'life', days: null };
+      return { isLifetime: false, months: 1, mode: '30', days: 30 };
+    };
+    const isEligibleRefilTipo = (tipoRaw) => {
+      const t = String(tipoRaw || '').toLowerCase();
+      return t.includes('mistos') || t.includes('brasileir');
+    };
+
+    const isFollowersServico = (tipoRaw) => {
+      const t = String(tipoRaw || '').toLowerCase();
+      if (!t) return true;
+      if (t.includes('curtida') || t.includes('like')) return false;
+      if (t.includes('visualiza') || t.includes('view')) return false;
+      return true;
+    };
+
+    const computeWarrantyFromOrder = (o) => {
+      try {
+        const orderBaseMs = (() => {
+          const toMs = (v) => {
+            try {
+              if (!v) return 0;
+              if (typeof v === 'number' && Number.isFinite(v)) return v;
+              const t = new Date(v).getTime();
+              return Number.isFinite(t) ? t : 0;
+            } catch (_) {
+              return 0;
+            }
+          };
+          const a = toMs(o?.woovi?.paidAt);
+          if (a) return a;
+          const b = toMs(o?.paidAt);
+          if (b) return b;
+          const c = toMs(o?.createdAt);
+          if (c) return c;
+          return 0;
+        })();
+
+        const w = warrantyFromBumpsStr(resolveOrderBumps(o) || '');
+        if (w.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
+        const base = orderBaseMs || nowMs;
+        const exp = addMonthsEndOfDayBrt(base, Number(w.months || 1));
+        const expDayNum = dayNumFromYmd(exp.y, exp.m, exp.d);
+        const left = expDayNum - nowDayNumBrt;
+        return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: exp.iso };
+      } catch (_) {
+        return { isLifetime: false, daysLeft: null, expiresAt: null };
+      }
+    };
+
+    const orderInfoById = new Map();
+    for (const o of orders) {
+      const idStr = o && o._id ? String(o._id) : '';
+      if (!idStr) continue;
+      const tipo = resolveTipo(o);
+      const eligible = isEligibleRefilTipo(tipo);
+      const baseMs = resolveDateMs(o);
+      const w = warrantyFromBumpsStr(resolveOrderBumps(o) || '');
+      orderInfoById.set(idStr, { baseMs: Number(baseMs || 0), eligible, warranty: w });
+    }
 
     const allRows = orders.map((o) => {
       const username = resolveUsername(o);
@@ -7338,13 +7673,15 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const resultado = (initialFollowersCount != null && contracted) ? (Number(initialFollowersCount) + Number(contracted)) : null;
       const diffAbs = (resultado != null && currentFollowersCount != null) ? (Number(resultado) - Number(currentFollowersCount)) : null;
       const diffPct = (diffAbs != null && resultado) ? ((Number(diffAbs) / Number(resultado)) * 100) : null;
+      const tipo = resolveTipo(o);
+      const warrantyBase = (isEligibleRefilTipo(tipo) ? computeWarrantyFromOrder(o) : { isLifetime: false, daysLeft: null, expiresAt: null });
 
       return {
         orderId: o._id,
         orderIdentifier: resolveIdentifier(o),
         fornecedorOrderId: resolveFornecedorOrderId(o),
         username,
-        tipo: resolveTipo(o),
+        tipo,
         fornecedor: resolveFornecedor(o),
         contracted: Number(contracted || 0),
         initialFollowersCount,
@@ -7355,9 +7692,104 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         isPrivate,
         lastPurchaseAtMs: dateMs,
         diffAbs,
-        diffPct
+        diffPct,
+        refilIsLifetime: !!warrantyBase.isLifetime,
+        refilDaysLeft: (typeof warrantyBase.daysLeft === 'number') ? warrantyBase.daysLeft : null,
+        refilExpiresAt: warrantyBase.expiresAt || null
       };
-    }).filter(r => r.username && r.contracted > 0).sort((a, b) => Number(b.lastPurchaseAtMs || 0) - Number(a.lastPurchaseAtMs || 0));
+    }).filter(r => {
+      if (!r.username) return false;
+      if (!(r.contracted > 0)) return false;
+      if (!isFollowersServico(r.tipo)) return false;
+      if (!String(r.fornecedorOrderId || '').trim()) return false;
+      return true;
+    }).sort((a, b) => Number(b.lastPurchaseAtMs || 0) - Number(a.lastPurchaseAtMs || 0));
+
+    const mergeWarranty = (a, b) => {
+      if (!a) return b;
+      if (!b) return a;
+      if (a.isLifetime || b.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: a.expiresAt || b.expiresAt || null };
+      const aDays = (typeof a.daysLeft === 'number') ? a.daysLeft : null;
+      const bDays = (typeof b.daysLeft === 'number') ? b.daysLeft : null;
+      if (aDays == null) return b;
+      if (bDays == null) return a;
+      return (bDays > aDays) ? b : a;
+    };
+
+    try {
+      const orderIdStrs = Array.from(new Set(allRows.map(r => (r && r.orderId) ? String(r.orderId) : '').filter(Boolean)));
+      if (orderIdStrs.length) {
+        const orderIdSet = new Set(orderIdStrs);
+        const tlDocs = await tlCol.find(
+          { purpose: 'refil', $or: [{ orderId: { $in: orderIdStrs } }, { orders: { $in: orderIdStrs } }] },
+          { projection: { _id: 0, orderId: 1, orders: 1, createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1 } }
+        ).toArray();
+
+        const safeDateMs = (iso) => {
+          try {
+            const t = new Date(iso).getTime();
+            return Number.isFinite(t) ? t : 0;
+          } catch (_) {
+            return 0;
+          }
+        };
+
+        const byOrder = new Map();
+        for (const d of (tlDocs || [])) {
+          const linked = new Set();
+          if (d?.orderId) linked.add(String(d.orderId));
+          const arr = Array.isArray(d?.orders) ? d.orders : [];
+          for (const x of arr) { if (x) linked.add(String(x)); }
+          let best = null;
+          let bestId = '';
+          for (const oid of linked) {
+            const info = orderInfoById.get(String(oid));
+            if (!info || !info.eligible || !info.baseMs) continue;
+            if (!best || info.baseMs > best.baseMs) { best = info; bestId = String(oid); }
+          }
+          if (!best || !bestId) continue;
+          const linkMode = String(d?.warrantyMode || '').trim().toLowerCase();
+          const linkExpMs = safeDateMs(d?.expiresAt);
+          const computed = (linkMode === 'life' || linkExpMs >= safeDateMs('2099-01-01T00:00:00.000Z'))
+            ? { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' }
+            : (linkExpMs
+              ? (() => {
+                const ymd = brtYmdFromMs(linkExpMs);
+                const expDayNum = dayNumFromYmd(ymd.y, ymd.m, ymd.d);
+                const left = expDayNum - nowDayNumBrt;
+                return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: new Date(linkExpMs).toISOString() };
+              })()
+              : (() => {
+                const w = best.warranty || { isLifetime: false, months: 1 };
+                if (w.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
+                const exp = addMonthsEndOfDayBrt(best.baseMs, Number(w.months || 1));
+                const expDayNum = dayNumFromYmd(exp.y, exp.m, exp.d);
+                const left = expDayNum - nowDayNumBrt;
+                return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: exp.iso };
+              })());
+          for (const oid of linked) {
+            if (!oid) continue;
+            if (!orderIdSet.has(oid)) continue;
+            const info = orderInfoById.get(String(oid));
+            if (!info || !info.eligible) continue;
+            byOrder.set(oid, mergeWarranty(byOrder.get(oid), computed));
+          }
+        }
+        for (const r of allRows) {
+          const oid = r && r.orderId ? String(r.orderId) : '';
+          if (!oid) continue;
+          const info = byOrder.get(oid);
+          if (!info) continue;
+          const merged = mergeWarranty(
+            { isLifetime: !!r.refilIsLifetime, daysLeft: (typeof r.refilDaysLeft === 'number' ? r.refilDaysLeft : null), expiresAt: r.refilExpiresAt || null },
+            info
+          );
+          r.refilIsLifetime = !!merged.isLifetime;
+          r.refilDaysLeft = (typeof merged.daysLeft === 'number') ? merged.daysLeft : null;
+          r.refilExpiresAt = merged.expiresAt || null;
+        }
+      }
+    } catch (_) {}
 
     if (backfillOps.length) {
       try {
@@ -7372,6 +7804,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       if (filledOnly) {
         if (r.currentFollowersCount == null) return false;
         if (r.resultado == null) return false;
+      }
+      if (lifetimeOnly) {
+        if (r.refilIsLifetime !== true) return false;
       }
 
       if (qNorm) {
@@ -7391,6 +7826,33 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return true;
     });
 
+    const cmpNum = (a, b) => {
+      const aa = (a == null) ? null : Number(a);
+      const bb = (b == null) ? null : Number(b);
+      const aOk = Number.isFinite(aa);
+      const bOk = Number.isFinite(bb);
+      if (!aOk && !bOk) return 0;
+      if (!aOk) return 1;
+      if (!bOk) return -1;
+      return aa - bb;
+    };
+
+    const sortKey = (function () {
+      const s = String(sortBy || '').trim();
+      if (s === 'diffPct') return 'diffPct';
+      if (s === 'lastPurchaseAtMs') return 'lastPurchaseAtMs';
+      return 'lastPurchaseAtMs';
+    })();
+
+    filtered.sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1;
+      const primary = cmpNum(a[sortKey], b[sortKey]) * dir;
+      if (primary) return primary;
+      const fallback = cmpNum(a.lastPurchaseAtMs, b.lastPurchaseAtMs) * -1;
+      if (fallback) return fallback;
+      return String(a.username || '').localeCompare(String(b.username || ''), 'pt-BR', { sensitivity: 'base' });
+    });
+
     const totalRows = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const safePage = Math.min(totalPages, page);
@@ -7401,7 +7863,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, q, qType, filled: filledOnly },
+      filters: { minPct, maxPct, q, qType, filled: filledOnly, lifetime: lifetimeOnly, sortBy: sortKey, sortDir },
       period: 'all'
     });
   } catch (err) {
@@ -7458,6 +7920,204 @@ app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req
     );
 
     return res.json({ ok: true, cached: false, username, followersCount, isPrivate, checkedAt, source, error });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/test-old', requireAdmin, async (req, res) => {
+  try {
+    const limitRaw = parseInt(String((req.body && req.body.limit) || req.query.limit || '10'), 10);
+    const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 10));
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
+    const followersQuery = {
+      $and: [
+        paidQuery,
+        {
+          $or: [
+            { 'fama24h.orderId': { $exists: true, $ne: '' } },
+            { 'fornecedor_social.orderId': { $exists: true, $ne: '' } }
+          ]
+        }
+      ]
+    };
+
+    const orders = await col.find(followersQuery, {
+      projection: {
+        _id: 1,
+        createdAt: 1,
+        paidAt: 1,
+        woovi: 1,
+        tipo: 1,
+        tipoServico: 1,
+        qtd: 1,
+        quantidade: 1,
+        instagramUsername: 1,
+        instauser: 1,
+        fama24h: 1,
+        fornecedor_social: 1,
+        additionalInfo: 1,
+        additionalInfoPaid: 1,
+        additionalInfoMap: 1,
+        additionalInfoMapPaid: 1
+      }
+    }).sort({ createdAt: 1 }).limit(2000).toArray();
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const resolveUsername = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'instagram_username'),
+        o.instagramUsername,
+        o.instauser
+      ];
+      for (const c of candidates) {
+        const k = normalizeUsernameKey(c);
+        if (k) return k;
+      }
+      return '';
+    };
+
+    const resolveTipoRaw = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'tipo_servico'),
+        extractInfoAny(o, 'tipo'),
+        o.tipo,
+        o.tipoServico
+      ];
+      for (const c of candidates) {
+        const s = String(c || '').trim();
+        if (s) return s;
+      }
+      return '';
+    };
+
+    const isFollowersServico = (tipoRaw) => {
+      const t = String(tipoRaw || '').toLowerCase();
+      if (!t) return true;
+      if (t.includes('curtida') || t.includes('like')) return false;
+      if (t.includes('visualiza') || t.includes('view')) return false;
+      return true;
+    };
+
+    const resolveQty = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'quantidade'),
+        extractInfoAny(o, 'qtd'),
+        extractInfoAny(o, 'quantity'),
+        o.quantidade,
+        o.qtd
+      ];
+      for (const c of candidates) {
+        const n = parseInt(String(c || '').replace(/[^\d]/g, ''), 10);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 0;
+    };
+
+    const resolveQtyWithUpgrade = (o) => {
+      const base = resolveQty(o);
+      const extraRaw = extractInfoAny(o, 'upgrade_extra_qtd');
+      const extra = parseInt(String(extraRaw || '').replace(/[^\d-]/g, ''), 10);
+      if (Number.isFinite(extra) && extra > 0) return base + extra;
+      return base;
+    };
+
+    const usernames = [];
+    const seen = new Set();
+    for (const o of orders) {
+      const tipoRaw = resolveTipoRaw(o);
+      if (!isFollowersServico(tipoRaw)) continue;
+      const contracted = resolveQtyWithUpgrade(o);
+      if (!contracted || contracted <= 0) continue;
+      const u = resolveUsername(o);
+      if (!u || seen.has(u)) continue;
+      seen.add(u);
+      usernames.push(u);
+      if (usernames.length >= limit) break;
+    }
+
+    const results = [];
+    for (const u of usernames) {
+      const started = Date.now();
+      let profile = null;
+      let source = null;
+      let followersCount = null;
+      let isPrivate = null;
+      let error = null;
+
+      try {
+        const r = await fetchInstagramFollowersInfo(u);
+        profile = r && r.success ? r.profile : null;
+        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+        isPrivate = profile ? !!profile.isPrivate : null;
+        followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
+        error = r && !r.success ? (r.error || 'unknown_error') : null;
+      } catch (e) {
+        error = e?.message || String(e);
+      }
+
+      if (!profile) {
+        try {
+          const userAgent = req.get("User-Agent") || "";
+          const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
+          const mockReq = { session: {}, query: {}, body: {} };
+          const fallback = await verifyInstagramProfile(u, userAgent, ip, mockReq, null, true);
+          if (fallback && fallback.success && fallback.profile) {
+            profile = fallback.profile;
+            source = 'verifyInstagramProfile';
+            isPrivate = !!profile.isPrivate;
+            followersCount = typeof profile.followersCount === 'number' ? profile.followersCount : null;
+            error = null;
+          }
+        } catch (_) {}
+      }
+
+      const checkedAt = new Date().toISOString();
+      try {
+        await monitorCol.updateOne(
+          { username: u },
+          { $set: { username: u, followersCount, isPrivate, checkedAt, source: source || null, error: error || null } },
+          { upsert: true }
+        );
+      } catch (_) {}
+
+      results.push({
+        username: u,
+        ok: typeof followersCount === 'number',
+        followersCount,
+        isPrivate,
+        source,
+        error,
+        ms: Date.now() - started
+      });
+    }
+
+    return res.json({ ok: true, limit, tested: results.length, results });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -7524,6 +8184,197 @@ app.post('/api/admin/update-private-order', requireAdmin, async (req, res) => {
         console.error(e);
         res.status(500).json({ error: e.message });
     }
+});
+
+app.post('/api/admin/unknown_orderid/refresh', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+
+    const idsRaw = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+    const ids = idsRaw.map(v => String(v || '').trim()).filter(Boolean);
+    if (!ids.length) return res.json({ ok: true, updated: 0, updatedPrivacy: 0, updatedLinks: 0 });
+
+    const objectIds = [];
+    for (const s of ids) {
+      try { objectIds.push(new ObjectId(s)); } catch (_) {}
+    }
+    if (!objectIds.length) return res.json({ ok: true, updated: 0, updatedPrivacy: 0, updatedLinks: 0 });
+
+    const orders = await col.find(
+      { _id: { $in: objectIds } },
+      { projection: { instauser: 1, instaUser: 1, instagramUsername: 1, instagramUser: 1, additionalInfoPaid: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, fama24h_views: 1, fama24h_likes: 1, worldsmm_comments: 1, isPrivate: 1, profilePrivacy: 1 } }
+    ).toArray();
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      let s = s0;
+      if (/instagram\.com\//i.test(s)) {
+        try {
+          const u1 = new URL(s.startsWith('http') ? s : `https://${s.replace(/^\/+/, '')}`);
+          const parts = u1.pathname.split('/').map(p => p.trim()).filter(Boolean);
+          if (parts.length) s = parts[0];
+        } catch (_) {
+          const parts = s.split('?')[0].split('#')[0].split('/').map(p => p.trim()).filter(Boolean);
+          if (parts.length) s = parts[parts.length - 1];
+        }
+      }
+      if (s.startsWith('@')) s = s.slice(1);
+      s = s.replace(/[^a-zA-Z0-9._]/g, '').toLowerCase().trim();
+      return s;
+    };
+
+    const resolveUser = (o) => {
+      if (o.instaUser) return String(o.instaUser);
+      if (o.instauser) return String(o.instauser);
+      if (o.instagramUser) return String(o.instagramUser);
+      if (o.additionalInfoMap && (o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser)) return String(o.additionalInfoMap.instauser || o.additionalInfoMap.instaUser);
+      if (o.additionalInfoPaid) {
+        const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const uItem = arr.find(i => i && (i.key === 'instauser' || i.key === 'instaUser' || i.key === 'instagram_username' || i.key === 'user'));
+        if (uItem && typeof uItem.value !== 'undefined') return String(uItem.value);
+      }
+      return '';
+    };
+
+    const resolveOrderBumps = (o) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid.order_bumps === 'string') return o.additionalInfoMapPaid.order_bumps;
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const paidItem = arrPaid.find(i => i && i.key === 'order_bumps');
+        if (paidItem && typeof paidItem.value === 'string') return paidItem.value;
+        if (o.additionalInfoMap && typeof o.additionalInfoMap.order_bumps === 'string') return o.additionalInfoMap.order_bumps;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === 'order_bumps');
+        if (item && typeof item.value === 'string') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const parseBumps = (raw) => {
+      const text = String(raw || '');
+      const parts = text.split(';').map(p => p.trim()).filter(Boolean);
+      const res = { views: 0, likes: 0, comments: 0, upgrade: 0 };
+      for (const p of parts) {
+        const [kRaw, vRaw] = p.split(':');
+        const k = String(kRaw || '').toLowerCase().trim();
+        const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+        if (k === 'views') res.views = v;
+        else if (k === 'likes') res.likes = v;
+        else if (k === 'comments') res.comments = v;
+        else if (k === 'upgrade') res.upgrade = v || 1;
+      }
+      return res;
+    };
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const normalizeUrl = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      if (/^https?:\/\//i.test(s0)) return s0;
+      if (/^www\./i.test(s0)) return `https://${s0}`;
+      if (/instagram\.com\//i.test(s0)) return `https://${s0.replace(/^\/+/, '')}`;
+      return s0;
+    };
+
+    const sanitizeInstagramPostLink = (u) => {
+      const s0 = normalizeUrl(u);
+      let v = String(s0 || '').trim();
+      if (!v) return '';
+      v = v.split('#')[0].split('?')[0];
+      const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+      if (!m) return '';
+      const kind = String(m[2] || '').toLowerCase();
+      const code = String(m[3] || '');
+      if (!kind || !code) return '';
+      return `https://www.instagram.com/${kind}/${code}/`;
+    };
+
+    const getExistingLink = (o, kind) => {
+      if (kind === 'views') return sanitizeInstagramPostLink(o?.fama24h_views?.requestPayload?.link || extractInfoAny(o, 'orderbump_post_views') || extractInfoAny(o, 'post_link'));
+      if (kind === 'likes') return sanitizeInstagramPostLink(o?.fama24h_likes?.requestPayload?.link || extractInfoAny(o, 'orderbump_post_likes') || extractInfoAny(o, 'post_link'));
+      if (kind === 'comments') return sanitizeInstagramPostLink(o?.worldsmm_comments?.requestPayload?.link || extractInfoAny(o, 'orderbump_post_comments') || extractInfoAny(o, 'post_link'));
+      return '';
+    };
+
+    const postsCache = new Map();
+    let updated = 0;
+    let updatedPrivacy = 0;
+    let updatedLinks = 0;
+
+    for (const o of orders) {
+      const id = o && o._id ? o._id : null;
+      if (!id) continue;
+
+      const username = normalizeUsernameKey(resolveUser(o));
+      if (!username) continue;
+      const set = {};
+      const bumps = parseBumps(resolveOrderBumps(o));
+      const wantsViews = bumps.views > 0 || !!(o && o.fama24h_views);
+      const wantsLikes = bumps.likes > 0 || !!(o && o.fama24h_likes);
+      const wantsComments = bumps.comments > 0 || !!(o && o.worldsmm_comments);
+
+      const needViews = wantsViews && !getExistingLink(o, 'views');
+      const needLikes = wantsLikes && !getExistingLink(o, 'likes');
+      const needComments = wantsComments && !getExistingLink(o, 'comments');
+
+      if (needViews || needLikes || needComments) {
+        let posts = postsCache.get(username);
+        if (typeof posts === 'undefined') {
+          try {
+            const r = await fetchInstagramRecentPosts(username);
+            posts = (r && r.success && Array.isArray(r.posts)) ? r.posts : null;
+          } catch (_) {
+            posts = null;
+          }
+          postsCache.set(username, posts);
+        }
+
+        if (Array.isArray(posts) && posts.length) {
+          const isVideo = (p) => !!(p && (p.isVideo || /video|clip/i.test(String(p.typename || ''))));
+          const newest = posts[0];
+          const newestVideo = posts.find(isVideo) || null;
+
+          if (needViews && newestVideo && newestVideo.shortcode) {
+            set['additionalInfoMapPaid.orderbump_post_views'] = `https://www.instagram.com/reel/${encodeURIComponent(String(newestVideo.shortcode))}/`;
+          }
+          if (needLikes && newest && newest.shortcode) {
+            set['additionalInfoMapPaid.orderbump_post_likes'] = `https://www.instagram.com/p/${encodeURIComponent(String(newest.shortcode))}/`;
+          }
+          if (needComments && newest && newest.shortcode) {
+            set['additionalInfoMapPaid.orderbump_post_comments'] = `https://www.instagram.com/p/${encodeURIComponent(String(newest.shortcode))}/`;
+          }
+        }
+      }
+
+      if (Object.keys(set).length) {
+        await col.updateOne({ _id: id }, { $set: set });
+        updated += 1;
+        if (typeof set['additionalInfoMapPaid.orderbump_post_views'] !== 'undefined' || typeof set['additionalInfoMapPaid.orderbump_post_likes'] !== 'undefined' || typeof set['additionalInfoMapPaid.orderbump_post_comments'] !== 'undefined') {
+          updatedLinks += 1;
+        }
+      }
+    }
+
+    return res.json({ ok: true, updated, updatedPrivacy, updatedLinks });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
 app.post('/api/admin/evolution/send-text', requireAdmin, async (req, res) => {
@@ -7694,6 +8545,719 @@ app.post('/api/admin/private-order-email', requireAdmin, async (req, res) => {
     }
 });
 
+function normalizeApifyActorId(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (!s.includes('~') && s.includes('/')) {
+        const parts = s.split('/').map(p => String(p || '').trim()).filter(Boolean);
+        if (parts.length === 2) return `${parts[0]}~${parts[1]}`;
+    }
+    return s;
+}
+
+function normalizeInstaUsernameForScrape(v) {
+    try {
+        let s = String(v || '').trim();
+        if (!s) return '';
+        if (/^https?:\/\//i.test(s)) {
+            s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+            s = s.split('?')[0].split('#')[0];
+            s = s.replace(/\/+$/, '');
+            const parts = s.split('/').filter(Boolean);
+            s = parts.length ? String(parts[parts.length - 1] || '') : s;
+        }
+        s = s.trim();
+        if (s.startsWith('@')) s = s.slice(1);
+        return s.toLowerCase().trim();
+    } catch (_) {
+        return '';
+    }
+}
+
+function extractCookieFromSetCookieHeader(setCookieHeader, cookieName) {
+    const arr = Array.isArray(setCookieHeader) ? setCookieHeader : [];
+    const name = String(cookieName || '').trim();
+    if (!name) return '';
+    for (const raw of arr) {
+        const s = String(raw || '');
+        const idx = s.toLowerCase().indexOf(`${name.toLowerCase()}=`);
+        if (idx === -1) continue;
+        const after = s.slice(idx + name.length + 1);
+        const val = after.split(';')[0];
+        if (val) return val;
+    }
+    return '';
+}
+
+function igBuildProxyAgent(profile) {
+    try {
+        if (!profile || !profile.proxy) return null;
+        return new HttpsProxyAgent(
+            `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
+            { rejectUnauthorized: false }
+        );
+    } catch (_) {
+        return null;
+    }
+}
+
+function igCookieHeader(profile) {
+    const parts = [
+        `sessionid=${String(profile?.sessionid || '').trim()}`,
+        `ds_user_id=${String(profile?.ds_user_id || '').trim()}`
+    ].filter((v) => !/=\s*$/.test(v));
+    const csrf = String(profile?.csrftoken || '').trim();
+    if (csrf) parts.push(`csrftoken=${csrf}`);
+    return parts.join('; ');
+}
+
+async function igEnsureCsrfToken(profile, proxyAgent, userAgent) {
+    if (!profile) return '';
+    const existing = String(profile.csrftoken || '').trim();
+    const fetchedAt = Number(profile.csrftokenFetchedAt || 0) || 0;
+    if (existing && Date.now() - fetchedAt < 30 * 60 * 1000) return existing;
+
+    const headers = {
+        "User-Agent": String(userAgent || profile.userAgent || ''),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Cookie": igCookieHeader(profile)
+    };
+
+    const resp = await axios.get('https://www.instagram.com/', {
+        headers,
+        httpsAgent: proxyAgent || undefined,
+        timeout: 7000,
+        validateStatus: () => true
+    });
+
+    const token = extractCookieFromSetCookieHeader(resp?.headers?.['set-cookie'], 'csrftoken');
+    if (token) {
+        profile.csrftoken = token;
+        profile.csrftokenFetchedAt = Date.now();
+    }
+    return String(profile.csrftoken || '').trim();
+}
+
+function igPickProfiles(max) {
+    const now = Date.now();
+    const available = cookieProfiles
+        .filter((p) => p && p.disabledUntil <= now && !isCookieLocked(p.ds_user_id))
+        .sort((a, b) => {
+            if (a.errorCount !== b.errorCount) return a.errorCount - b.errorCount;
+            return a.lastUsed - b.lastUsed;
+        });
+    const cap = Math.max(1, Number(max || 1));
+    return available.slice(0, cap);
+}
+
+const IG_USERCOUNTS_CACHE = new Map();
+const IG_USERCOUNTS_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function igGetCachedUserCounts(pkRaw) {
+    const pk = String(pkRaw || '').trim();
+    if (!pk) return null;
+    const entry = IG_USERCOUNTS_CACHE.get(pk);
+    if (!entry) return null;
+    if (Date.now() > Number(entry.expiresAt || 0)) {
+        IG_USERCOUNTS_CACHE.delete(pk);
+        return null;
+    }
+    return entry.value || null;
+}
+
+function igSetCachedUserCounts(pkRaw, value) {
+    const pk = String(pkRaw || '').trim();
+    if (!pk) return;
+    if (!value) return;
+    if (IG_USERCOUNTS_CACHE.size > 15000) {
+        const firstKey = IG_USERCOUNTS_CACHE.keys().next().value;
+        if (firstKey) IG_USERCOUNTS_CACHE.delete(firstKey);
+    }
+    IG_USERCOUNTS_CACHE.set(pk, { value, expiresAt: Date.now() + IG_USERCOUNTS_CACHE_TTL_MS });
+}
+
+async function igRespectMinInterval(profile, minIntervalMs) {
+    const p = profile || null;
+    if (!p) return;
+    const minMs = Math.max(0, Number(minIntervalMs || 0));
+    if (!minMs) return;
+    const last = Number(p.lastUsed || 0) || 0;
+    const since = Date.now() - last;
+    if (since < minMs) {
+        const extra = Math.floor(Math.random() * 250);
+        await sleepMs((minMs - since) + extra);
+    }
+}
+
+async function igFetchWebProfileInfo(username) {
+    const u = String(username || '').trim();
+    if (!u) return { success: false, error: 'username_invalid' };
+
+    const REQUEST_TIMEOUT = 4500;
+    const candidates = igPickProfiles(3);
+
+    const tryProfile = async (profile) => {
+        if (!profile) throw new Error('No profile');
+        if (isCookieLocked(profile.ds_user_id)) throw new Error('Locked');
+        lockCookie(profile.ds_user_id);
+        try {
+            const proxyAgent = igBuildProxyAgent(profile);
+            const headers = {
+                "User-Agent": profile.userAgent,
+                "X-IG-App-ID": "936619743392459",
+                "Cookie": igCookieHeader(profile),
+                "Accept": "application/json",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": `https://www.instagram.com/${encodeURIComponent(u)}/`
+            };
+
+            const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`, {
+                headers,
+                httpsAgent: proxyAgent || undefined,
+                timeout: REQUEST_TIMEOUT,
+                validateStatus: () => true
+            });
+
+            if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
+            const user = resp?.data?.data?.user;
+            if (!user || !user.username) return { success: false, error: 'Perfil inexistente' };
+
+            profile.lastUsed = Date.now();
+            profile.errorCount = 0;
+
+            return {
+                success: true,
+                profile: {
+                    id: String(user.id || ''),
+                    username: String(user.username || u),
+                    isPrivate: !!user.is_private,
+                    followersCount: (user.edge_followed_by && typeof user.edge_followed_by.count === 'number') ? user.edge_followed_by.count : 0,
+                    followingCount: (user.edge_follow && typeof user.edge_follow.count === 'number') ? user.edge_follow.count : 0
+                }
+            };
+        } catch (err) {
+            profile.errorCount++;
+            if (profile.errorCount >= 5) profile.disabledUntil = Date.now() + (60 * 1000);
+            throw err;
+        } finally {
+            unlockCookie(profile.ds_user_id);
+        }
+    };
+
+    if (candidates.length) {
+        try {
+            return await Promise.any(candidates.map((p) => tryProfile(p)));
+        } catch (_) {}
+    }
+
+    try {
+        const FALLBACK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+        const resp = await axios.get(`https://www.instagram.com/${encodeURIComponent(u)}/?__a=1&__d=dis`, {
+            headers: {
+                'User-Agent': FALLBACK_UA,
+                'Accept': 'application/json',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Referer': `https://www.instagram.com/${encodeURIComponent(u)}/`
+            },
+            timeout: 4500,
+            validateStatus: () => true
+        });
+        if (resp.status !== 200) return { success: false, error: 'Falha ao buscar perfil' };
+        if (typeof resp.data === 'string') return { success: false, error: 'Falha ao buscar perfil' };
+        const root = resp.data || {};
+        const user = (root.graphql && root.graphql.user) ? root.graphql.user : (root.user || null);
+        if (!user || !user.username) return { success: false, error: 'Perfil inexistente' };
+        return {
+            success: true,
+            profile: {
+                id: String(user.id || ''),
+                username: String(user.username || u),
+                isPrivate: !!user.is_private,
+                followersCount: (user.edge_followed_by && typeof user.edge_followed_by.count === 'number') ? user.edge_followed_by.count : 0,
+                followingCount: (user.edge_follow && typeof user.edge_follow.count === 'number') ? user.edge_follow.count : 0
+            }
+        };
+    } catch (_) {
+        return { success: false, error: 'Falha ao buscar perfil' };
+    }
+}
+
+async function igFetchFollowersBatchByUserId(userIdRaw, maxFollowersRaw) {
+    const userId = String(userIdRaw || '').trim();
+    if (!userId) return { success: false, error: 'user_id_missing', followers: [] };
+
+    const maxFollowers = Math.min(100000, Math.max(1, Number(maxFollowersRaw || 1)));
+    const out = [];
+    const seenUsernames = new Set();
+    const REQUEST_TIMEOUT = 8000;
+    const pageCount = 50;
+
+    let maxId = '';
+    let safety = 0;
+
+    while (out.length < maxFollowers && safety < 250) {
+        safety++;
+        const profile = igPickProfiles(1)[0];
+        if (!profile) return { success: false, error: 'Sem perfis de cookie disponíveis', followers: out };
+
+        if (isCookieLocked(profile.ds_user_id)) {
+            await sleepMs(250);
+            continue;
+        }
+
+        lockCookie(profile.ds_user_id);
+        try {
+            await igRespectMinInterval(profile, 1200);
+            const proxyAgent = igBuildProxyAgent(profile);
+            const csrf = await igEnsureCsrfToken(profile, proxyAgent, profile.userAgent);
+            const headers = {
+                "User-Agent": profile.userAgent,
+                "X-IG-App-ID": "936619743392459",
+                "Cookie": igCookieHeader(profile),
+                "Accept": "application/json",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://www.instagram.com/",
+                ...(csrf ? { "X-CSRFToken": csrf } : {})
+            };
+
+            const url = `https://www.instagram.com/api/v1/friendships/${encodeURIComponent(userId)}/followers/?count=${pageCount}&search_surface=follow_list_page${maxId ? `&max_id=${encodeURIComponent(maxId)}` : ''}`;
+            const resp = await axios.get(url, {
+                headers,
+                httpsAgent: proxyAgent || undefined,
+                timeout: REQUEST_TIMEOUT,
+                validateStatus: () => true
+            });
+
+            if (resp.status === 429 || resp.status === 403) {
+                profile.errorCount = Number(profile.errorCount || 0) + 2;
+                profile.disabledUntil = Date.now() + (10 * 60 * 1000);
+                await sleepMs(2000 + Math.floor(Math.random() * 2000));
+                continue;
+            }
+            if (resp.status !== 200) return { success: false, error: `HTTP ${resp.status}`, followers: out };
+
+            const users = Array.isArray(resp?.data?.users) ? resp.data.users : [];
+            for (const usr of users) {
+                const username = String(usr?.username || '').trim().toLowerCase();
+                const pk = usr?.pk != null ? String(usr.pk) : '';
+                if (!username || !pk) continue;
+                if (seenUsernames.has(username)) continue;
+                seenUsernames.add(username);
+                out.push({ username, pk });
+                if (out.length >= maxFollowers) break;
+            }
+
+            const nextMaxId = String(resp?.data?.next_max_id || resp?.data?.next_maxId || '').trim();
+            profile.errorCount = 0;
+
+            if (!nextMaxId) break;
+            maxId = nextMaxId;
+        } catch (err) {
+            profile.errorCount = Number(profile.errorCount || 0) + 1;
+            if (profile.errorCount >= 5) profile.disabledUntil = Date.now() + (60 * 1000);
+            await sleepMs(700 + Math.floor(Math.random() * 700));
+        } finally {
+            profile.lastUsed = Date.now();
+            unlockCookie(profile.ds_user_id);
+        }
+    }
+
+    return { success: true, followers: out };
+}
+
+async function igFetchUserCountsById(pkRaw) {
+    const pk = String(pkRaw || '').trim();
+    if (!pk) return { success: false, error: 'pk_missing' };
+
+    const cached = igGetCachedUserCounts(pk);
+    if (cached && cached.username) {
+        return { success: true, data: cached };
+    }
+
+    const profile = igPickProfiles(1)[0];
+    if (!profile) return { success: false, error: 'Sem perfis de cookie disponíveis' };
+    if (isCookieLocked(profile.ds_user_id)) return { success: false, error: 'cookie_locked' };
+
+    lockCookie(profile.ds_user_id);
+    try {
+        await igRespectMinInterval(profile, 900);
+        const proxyAgent = igBuildProxyAgent(profile);
+        const csrf = await igEnsureCsrfToken(profile, proxyAgent, profile.userAgent);
+        const headers = {
+            "User-Agent": profile.userAgent,
+            "X-IG-App-ID": "936619743392459",
+            "Cookie": igCookieHeader(profile),
+            "Accept": "application/json",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.instagram.com/",
+            ...(csrf ? { "X-CSRFToken": csrf } : {})
+        };
+
+        const url = `https://www.instagram.com/api/v1/users/${encodeURIComponent(pk)}/info/`;
+        const resp = await axios.get(url, {
+            headers,
+            httpsAgent: proxyAgent || undefined,
+            timeout: 6500,
+            validateStatus: () => true
+        });
+
+        if (resp.status === 429 || resp.status === 403) {
+            profile.errorCount = Number(profile.errorCount || 0) + 2;
+            profile.disabledUntil = Date.now() + (10 * 60 * 1000);
+            return { success: false, error: `HTTP ${resp.status}` };
+        }
+        if (resp.status !== 200) return { success: false, error: `HTTP ${resp.status}` };
+        const user = resp?.data?.user;
+        if (!user || !user.username) return { success: false, error: 'user_missing' };
+
+        profile.errorCount = 0;
+
+        const followersCount = Number(user.follower_count);
+        const followsCount = Number(user.following_count);
+        if (!Number.isFinite(followersCount) || !Number.isFinite(followsCount)) {
+            return { success: false, error: 'counts_missing' };
+        }
+
+        const data = {
+            username: String(user.username).trim().toLowerCase(),
+            followersCount,
+            followsCount
+        };
+        igSetCachedUserCounts(pk, data);
+        return {
+            success: true,
+            data: {
+                username: data.username,
+                followersCount: data.followersCount,
+                followsCount: data.followsCount
+            }
+        };
+    } catch (err) {
+        profile.errorCount = Number(profile.errorCount || 0) + 1;
+        if (profile.errorCount >= 5) profile.disabledUntil = Date.now() + (60 * 1000);
+        return { success: false, error: err?.message || String(err) };
+    } finally {
+        profile.lastUsed = Date.now();
+        unlockCookie(profile.ds_user_id);
+    }
+}
+
+function safeParseJson(raw) {
+    try {
+        return JSON.parse(String(raw || '').trim());
+    } catch (_) {
+        return null;
+    }
+}
+
+function pickNumber(obj, keys) {
+    const o = (obj && typeof obj === 'object') ? obj : null;
+    if (!o) return null;
+    const list = Array.isArray(keys) ? keys : [];
+    for (const k of list) {
+        try {
+            const v = o[k];
+            const n = Number(v);
+            if (Number.isFinite(n)) return n;
+        } catch (_) {}
+    }
+    return null;
+}
+
+function pickString(obj, keys) {
+    const o = (obj && typeof obj === 'object') ? obj : null;
+    if (!o) return '';
+    const list = Array.isArray(keys) ? keys : [];
+    for (const k of list) {
+        try {
+            const v = o[k];
+            const s = String(v || '').trim();
+            if (s) return s;
+        } catch (_) {}
+    }
+    return '';
+}
+
+function apifyFormatAxiosError(e) {
+    try {
+        const status = e?.response?.status;
+        const data = e?.response?.data;
+        const msg =
+            (data && typeof data === 'object'
+                ? (data?.error?.message || data?.error?.type || data?.message || data?.error)
+                : (typeof data === 'string' ? data : null)) ||
+            e?.message ||
+            String(e);
+        if (status) return `HTTP ${status}: ${String(msg)}`;
+        return String(msg);
+    } catch (_) {
+        return String(e?.message || e || 'erro');
+    }
+}
+
+function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+}
+
+async function apifyGetRun(runIdRaw, apifyToken) {
+    const runId = String(runIdRaw || '').trim();
+    const token = String(apifyToken || '').trim();
+    if (!runId) throw new Error('apify_run_id_missing');
+    if (!token) throw new Error('apify_token_missing');
+    const url = `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`;
+    let resp;
+    try {
+        resp = await axios.get(url, { timeout: 60000 });
+    } catch (e) {
+        throw new Error(apifyFormatAxiosError(e));
+    }
+    const run = resp && resp.data && resp.data.data ? resp.data.data : null;
+    if (!run) throw new Error('apify_run_missing');
+    return run;
+}
+
+async function apifyWaitForRun(runId, apifyToken, maxWaitMs) {
+    const deadline = Date.now() + Math.max(0, Number(maxWaitMs || 0));
+    let last = null;
+    while (Date.now() < deadline) {
+        last = await apifyGetRun(runId, apifyToken);
+        const status = String(last?.status || '').toUpperCase();
+        if (status === 'SUCCEEDED' || status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') return last;
+        await sleepMs(3000);
+    }
+    return last;
+}
+
+async function apifyRunAndGetDatasetId(actorIdRaw, input, apifyToken, waitForFinishMs) {
+    const actorId = normalizeApifyActorId(actorIdRaw);
+    if (!actorId) throw new Error('apify_actor_id_missing');
+    if (!apifyToken) throw new Error('apify_token_missing');
+    const waitMs = Math.max(0, Number(waitForFinishMs || 0));
+    const waitSeconds = Math.min(300, Math.max(0, Math.floor(waitMs / 1000)));
+    const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/runs?waitForFinish=${encodeURIComponent(String(waitSeconds))}&token=${encodeURIComponent(String(apifyToken))}`;
+    let resp;
+    try {
+        resp = await axios.post(url, input || {}, { timeout: Math.min(330000, Math.max(15000, waitMs + 45000)) });
+    } catch (e) {
+        throw new Error(apifyFormatAxiosError(e));
+    }
+    const run = resp && resp.data && resp.data.data ? resp.data.data : null;
+    const runId = run && run.id ? String(run.id) : '';
+    const datasetId = run && run.defaultDatasetId ? String(run.defaultDatasetId) : '';
+    let status = run && run.status ? String(run.status) : '';
+    if (!datasetId) throw new Error('apify_dataset_missing');
+    const statusUpper = String(status || '').toUpperCase();
+    if (statusUpper && statusUpper !== 'SUCCEEDED' && statusUpper !== 'TIMED-OUT' && statusUpper !== 'RUNNING' && statusUpper !== 'READY' && statusUpper !== 'STARTING') {
+        throw new Error(`apify_run_status_${String(status || '').toLowerCase()}`);
+    }
+    if (runId && (statusUpper === 'READY' || statusUpper === 'STARTING')) {
+        const extraWaitMs = Math.min(480000, waitMs + 180000);
+        const waited = await apifyWaitForRun(runId, apifyToken, extraWaitMs);
+        status = waited && waited.status ? String(waited.status) : status;
+        const finalStatusUpper = String(status || '').toUpperCase();
+        if (finalStatusUpper === 'READY') {
+            throw new Error('Apify ainda está na fila (READY). Tente novamente em alguns minutos.');
+        }
+        if (finalStatusUpper && finalStatusUpper !== 'SUCCEEDED' && finalStatusUpper !== 'TIMED-OUT' && finalStatusUpper !== 'RUNNING') {
+            throw new Error(`apify_run_status_${String(status || '').toLowerCase()}`);
+        }
+    }
+    return datasetId;
+}
+
+async function apifyFetchDatasetItems(datasetIdRaw, apifyToken, maxItems) {
+    const datasetId = String(datasetIdRaw || '').trim();
+    if (!datasetId) return [];
+    const token = String(apifyToken || '').trim();
+    if (!token) throw new Error('apify_token_missing');
+    const cap = Math.max(1, Number(maxItems || 1));
+    const out = [];
+    const limit = 250;
+    let offset = 0;
+    while (out.length < cap) {
+        const url = `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?clean=true&format=json&limit=${limit}&offset=${offset}&token=${encodeURIComponent(token)}`;
+        let resp;
+        try {
+            resp = await axios.get(url, { timeout: 60000 });
+        } catch (e) {
+            throw new Error(apifyFormatAxiosError(e));
+        }
+        const items = Array.isArray(resp?.data) ? resp.data : [];
+        for (const it of items) {
+            out.push(it);
+            if (out.length >= cap) break;
+        }
+        if (!items.length || items.length < limit) break;
+        offset += limit;
+    }
+    return out;
+}
+
+app.get('/painel/consulta-perfil', requireAdmin, async (req, res) => {
+    try {
+        return res.render('painel_consulta_perfil', {
+            error: null,
+            result: null,
+            input: {
+                username: '',
+                maxFollowers: 2000,
+                followersMax: 10,
+                followingMin: 50,
+                maxAnalyze: 500,
+                sortBy: 'followersAsc',
+                followersActorId: process.env.APIFY_FOLLOWERS_ACTOR_ID || 'patient_discovery~instagram-followers-scraper---no-login',
+                profilesActorId: process.env.APIFY_PROFILES_ACTOR_ID || 'apify~instagram-profile-scraper',
+                cookiesJson: ''
+            }
+        });
+    } catch (e) {
+        return res.status(500).send(e?.message || String(e));
+    }
+});
+
+app.post('/painel/consulta-perfil', requireAdmin, async (req, res) => {
+    const usernameRaw = req?.body?.username;
+    const maxFollowersRaw = req?.body?.maxFollowers;
+    const followersMaxRaw = req?.body?.followersMax;
+    const followingMinRaw = req?.body?.followingMin;
+    const maxAnalyzeRaw = req?.body?.maxAnalyze;
+    const sortByRaw = req?.body?.sortBy;
+    const cookiesJsonRaw = req?.body?.cookiesJson;
+    const followersActorRaw = req?.body?.followersActorId;
+    const profilesActorRaw = req?.body?.profilesActorId;
+
+    const username = normalizeInstaUsernameForScrape(usernameRaw);
+    const maxFollowers = Math.min(100000, Math.max(1, parseInt(String(maxFollowersRaw || '2000'), 10) || 2000));
+    const followersMax = Math.max(0, parseInt(String(followersMaxRaw || '10'), 10) || 10);
+    const followingMin = Math.max(0, parseInt(String(followingMinRaw || '50'), 10) || 50);
+    const maxAnalyze = Math.min(100000, Math.max(1, parseInt(String(maxAnalyzeRaw || '500'), 10) || 500));
+    const sortBy = (String(sortByRaw || 'followersAsc') === 'ratioDesc') ? 'ratioDesc' : 'followersAsc';
+
+    const followersActorId = String(followersActorRaw || process.env.APIFY_FOLLOWERS_ACTOR_ID || 'logical_scrapers~instagram-followers-scraper').trim();
+    const profilesActorId = String(profilesActorRaw || process.env.APIFY_PROFILES_ACTOR_ID || 'apify~instagram-profile-scraper').trim();
+
+    const inputEcho = {
+        username: String(usernameRaw || ''),
+        maxFollowers,
+        followersMax,
+        followingMin,
+        maxAnalyze,
+        sortBy,
+        followersActorId,
+        profilesActorId,
+        cookiesJson: String(cookiesJsonRaw || '')
+    };
+
+    try {
+        if (!username) throw new Error('username_invalid');
+        if (!cookieProfiles || !cookieProfiles.length) throw new Error('Sem perfis de cookie configurados (instagramProfiles.json).');
+
+        const targetInfo = await igFetchWebProfileInfo(username);
+        if (!targetInfo || !targetInfo.success || !targetInfo.profile) {
+            throw new Error(targetInfo?.error || 'Falha ao buscar perfil alvo');
+        }
+
+        if (targetInfo.profile.isPrivate) {
+            throw new Error('Perfil privado: não é possível listar seguidores sem acesso (seguindo/permitido).');
+        }
+
+        if (!targetInfo.profile.id) {
+            throw new Error('Falha ao identificar o ID do perfil alvo');
+        }
+
+        const followersResp = await igFetchFollowersBatchByUserId(targetInfo.profile.id, maxFollowers);
+        const followers = Array.isArray(followersResp?.followers) ? followersResp.followers : [];
+        if (!followers.length) throw new Error(followersResp?.error || 'nenhum_seguidor_encontrado');
+
+        const toAnalyze = followers.slice(0, Math.min(maxAnalyze, followers.length));
+        const concurrency = Math.max(1, Math.min(4, cookieProfiles.length || 3));
+        const q = new PQueue({ concurrency, interval: 1000, intervalCap: concurrency });
+
+        const byUsername = new Map();
+        const tasks = toAnalyze.map((f) =>
+            q.add(async () => {
+                const pk = f && f.pk ? String(f.pk) : '';
+                if (!pk) return;
+                let r = await igFetchUserCountsById(pk);
+                if (!r?.success && String(r?.error || '').toLowerCase() === 'cookie_locked') {
+                    await sleepMs(250);
+                    r = await igFetchUserCountsById(pk);
+                }
+                if (r && r.success && r.data && r.data.username) {
+                    byUsername.set(String(r.data.username).toLowerCase(), {
+                        username: String(r.data.username).toLowerCase(),
+                        followersCount: Number(r.data.followersCount) || 0,
+                        followsCount: Number(r.data.followsCount) || 0
+                    });
+                }
+            })
+        );
+
+        await Promise.all(tasks);
+
+        const suspicious = [];
+        for (const f of toAnalyze) {
+            const u = normalizeInstaUsernameForScrape(f?.username);
+            if (!u) continue;
+            const p = byUsername.get(u);
+            if (!p) continue;
+            if (p.followersCount < followersMax && p.followsCount >= followingMin) {
+                const denom = p.followersCount > 0 ? p.followersCount : 1;
+                suspicious.push({
+                    username: p.username,
+                    followersCount: p.followersCount,
+                    followsCount: p.followsCount,
+                    ratio: p.followsCount / denom
+                });
+            }
+        }
+
+        if (sortBy === 'ratioDesc') suspicious.sort((a, b) => Number(b.ratio || 0) - Number(a.ratio || 0));
+        else suspicious.sort((a, b) => Number(a.followersCount || 0) - Number(b.followersCount || 0));
+
+        const suspiciousLimited = suspicious.slice(0, 300);
+        const suspiciousCount = suspicious.length;
+        const profilesAnalyzed = byUsername.size;
+        const suspiciousPct = profilesAnalyzed ? (suspiciousCount / profilesAnalyzed) * 100 : 0;
+
+        return res.render('painel_consulta_perfil', {
+            error: null,
+            input: inputEcho,
+            result: {
+                target: targetInfo.profile.username || username,
+                followersFetched: followers.length,
+                profilesAnalyzed,
+                suspiciousCount,
+                suspiciousPct,
+                followersMax,
+                followingMin,
+                suspicious: suspiciousLimited
+            }
+        });
+    } catch (e) {
+        const msg = String(e?.message || e || 'erro');
+        return res.render('painel_consulta_perfil', {
+            error: msg,
+            result: null,
+            input: inputEcho
+        });
+    }
+});
+
 app.get('/painel', requireAdmin, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
@@ -7726,10 +9290,24 @@ app.get('/painel', requireAdmin, async (req, res) => {
         { 'worldsmm_comments.error': { $regex: 'timeout', $options: 'i' } },
         {
           $and: [
+            { worldsmm_comments: { $exists: true } },
+            {
+              $or: [
+                { 'worldsmm_comments.orderId': { $exists: false } },
+                { 'worldsmm_comments.orderId': '' },
+                { 'worldsmm_comments.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
             {
               $or: [
                 { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
-                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } }
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } }
               ]
             },
             { $or: [{ worldsmm_comments: { $exists: false } }, { 'worldsmm_comments.orderId': { $exists: false } }] }
@@ -7739,10 +9317,74 @@ app.get('/painel', requireAdmin, async (req, res) => {
         { 'fama24h_views.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h_views.status': 'error' },
         { 'fama24h_views.error': { $exists: true } },
+        {
+          $and: [
+            { fama24h_views: { $exists: true } },
+            {
+              $or: [
+                { 'fama24h_views.orderId': { $exists: false } },
+                { 'fama24h_views.orderId': '' },
+                { 'fama24h_views.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fama24h_views: { $exists: false } },
+                { 'fama24h_views.orderId': { $exists: false } },
+                { 'fama24h_views.orderId': '' },
+                { 'fama24h_views.orderId': null }
+              ]
+            }
+          ]
+        },
         { 'fama24h_likes.status': 'unknown' },
         { 'fama24h_likes.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h_likes.status': 'error' },
         { 'fama24h_likes.error': { $exists: true } },
+        {
+          $and: [
+            { fama24h_likes: { $exists: true } },
+            {
+              $or: [
+                { 'fama24h_likes.orderId': { $exists: false } },
+                { 'fama24h_likes.orderId': '' },
+                { 'fama24h_likes.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fama24h_likes: { $exists: false } },
+                { 'fama24h_likes.orderId': { $exists: false } },
+                { 'fama24h_likes.orderId': '' },
+                { 'fama24h_likes.orderId': null }
+              ]
+            }
+          ]
+        },
         {
           $and: [
             {
@@ -8211,7 +9853,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
         });
       }
 
-      const hasWorldsmmComments = (o) => !!(o && o.worldsmm_comments && (typeof o.worldsmm_comments.status !== 'undefined' || typeof o.worldsmm_comments.orderId !== 'undefined'));
+      const hasWorldsmmComments = (o) => {
+        try {
+          const bumps = parseBumps(resolveOrderBumps(o));
+          if (bumps.comments > 0) return true;
+        } catch (_) {}
+        return !!(o && o.worldsmm_comments && (typeof o.worldsmm_comments.status !== 'undefined' || typeof o.worldsmm_comments.orderId !== 'undefined'));
+      };
 
       const serviceFilter = String(req.query.service || '').toLowerCase().trim();
       const issueFilter = String(req.query.issue || '').toLowerCase().trim();
@@ -8618,23 +10266,59 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const getUpgradeExtraQty = (tipo, base) => {
         try {
           const t0 = String(tipo || '').toLowerCase().trim();
+          const b = Number(base) || 0;
+          if (!b) return 0;
+
+          const isViewsType =
+            t0 === 'visualizacoes_reels' ||
+            t0 === 'views' ||
+            t0 === 'reels' ||
+            t0.includes('visualizacoes') ||
+            t0.includes('visualiza');
+
+          if (isViewsType) {
+            const viewsMap = {
+              1000: 2500,
+              5000: 10000,
+              25000: 50000,
+              100000: 150000,
+              200000: 250000,
+              500000: 1000000
+            };
+            const target = viewsMap[b];
+            return target ? (Number(target) - b) : 0;
+          }
+
           const isFollowersType = t0.startsWith('seguidores') || t0 === 'mistos' || t0 === 'brasileiros' || t0 === 'organicos';
-          if (!isFollowersType) return 0;
+          const isLikesType = t0.startsWith('curtidas') || t0.includes('curtidas');
+          if (!isFollowersType && !isLikesType) return 0;
+
           const t = t0.startsWith('seguidores_')
             ? t0.replace(/^seguidores_/, '')
             : (t0.startsWith('seguidores') ? t0.replace(/^seguidores/, '').replace(/^_/, '') : t0);
-          const b = Number(base) || 0;
-          if (!b) return 0;
-          if (t === 'organicos' && (b === 50 || b === 100)) return 50;
-          if ((t === 'brasileiros' || t === 'organicos') && (b === 1000 || b === 2000)) return 1000;
-          const upsellTargets = { 50: 150, 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
-          const reverse = {};
-          Object.keys(upsellTargets).forEach(k => { reverse[upsellTargets[k]] = Number(k); });
-          const baseQty = upsellTargets[b] ? b : (reverse[b] ? reverse[b] : 0);
-          if (!baseQty) return 0;
-          const targetQty = upsellTargets[baseQty];
-          if (!targetQty) return 0;
-          return Number(targetQty) - Number(baseQty);
+
+          if (isFollowersType) {
+            if (t === 'organicos' && (b === 50 || b === 100)) return 50;
+            if ((t === 'brasileiros' || t === 'organicos') && (b === 1000 || b === 2000)) return 1000;
+          }
+
+          const map = {
+            50: 150,
+            150: 300,
+            300: 500,
+            500: 700,
+            700: 1000,
+            1000: 2000,
+            1200: 2000,
+            2000: 3000,
+            3000: 4000,
+            4000: 5000,
+            5000: 7500,
+            7500: 10000,
+            10000: 15000
+          };
+          const target = map[b];
+          return target ? (Number(target) - b) : 0;
         } catch (_) {
           return 0;
         }
@@ -8731,10 +10415,24 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
         { 'worldsmm_comments.error': { $regex: 'timeout', $options: 'i' } },
         {
           $and: [
+            { worldsmm_comments: { $exists: true } },
+            {
+              $or: [
+                { 'worldsmm_comments.orderId': { $exists: false } },
+                { 'worldsmm_comments.orderId': '' },
+                { 'worldsmm_comments.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
             {
               $or: [
                 { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
-                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } }
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'comments\\s*:\\s*[1-9]', $options: 'i' } }
               ]
             },
             { $or: [{ worldsmm_comments: { $exists: false } }, { 'worldsmm_comments.orderId': { $exists: false } }] }
@@ -8744,10 +10442,74 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
         { 'fama24h_views.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h_views.status': 'error' },
         { 'fama24h_views.error': { $exists: true } },
+        {
+          $and: [
+            { fama24h_views: { $exists: true } },
+            {
+              $or: [
+                { 'fama24h_views.orderId': { $exists: false } },
+                { 'fama24h_views.orderId': '' },
+                { 'fama24h_views.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'views\\s*:\\s*[1-9]', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fama24h_views: { $exists: false } },
+                { 'fama24h_views.orderId': { $exists: false } },
+                { 'fama24h_views.orderId': '' },
+                { 'fama24h_views.orderId': null }
+              ]
+            }
+          ]
+        },
         { 'fama24h_likes.status': 'unknown' },
         { 'fama24h_likes.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h_likes.status': 'error' },
-        { 'fama24h_likes.error': { $exists: true } }
+        { 'fama24h_likes.error': { $exists: true } },
+        {
+          $and: [
+            { fama24h_likes: { $exists: true } },
+            {
+              $or: [
+                { 'fama24h_likes.orderId': { $exists: false } },
+                { 'fama24h_likes.orderId': '' },
+                { 'fama24h_likes.orderId': null }
+              ]
+            }
+          ]
+        },
+        {
+          $and: [
+            {
+              $or: [
+                { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } } } },
+                { 'additionalInfoMap.order_bumps': { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } },
+                { 'additionalInfoMapPaid.order_bumps': { $regex: 'likes\\s*:\\s*[1-9]', $options: 'i' } }
+              ]
+            },
+            {
+              $or: [
+                { fama24h_likes: { $exists: false } },
+                { 'fama24h_likes.orderId': { $exists: false } },
+                { 'fama24h_likes.orderId': '' },
+                { 'fama24h_likes.orderId': null }
+              ]
+            }
+          ]
+        }
       ]
     };
 
@@ -9885,7 +11647,10 @@ async function fetchInstagramRecentPosts(username) {
     
     try {
       console.log(`[IG] Tentando (Paralelo) API autenticada com cookie ${profile.ds_user_id}`);
-      const proxyAgent = profile.proxy ? new HttpsProxyAgent(`http://${profile.proxy.auth.username}:${profile.proxy.auth.password}@${profile.proxy.host}:${profile.proxy.port}`, { rejectUnauthorized: false }) : null;
+      const proxyAgent = profile.proxy ? new HttpsProxyAgent(
+        `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
+        { rejectUnauthorized: false }
+      ) : null;
       
       const headers = {
         "User-Agent": profile.userAgent,
@@ -9956,6 +11721,43 @@ async function fetchInstagramFollowersInfo(username) {
   const MAX_ERRORS_PER_PROFILE = 5;
   const DISABLE_TIME_MS = 60 * 1000;
   const REQUEST_TIMEOUT = 3500;
+  const FALLBACK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+  const fetchFollowersPublicFallback = async () => {
+    try {
+      const url = `https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`;
+      const resp = await axios.get(url, {
+        headers: {
+          'User-Agent': FALLBACK_UA,
+          'Accept': 'application/json',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Referer': `https://www.instagram.com/${encodeURIComponent(username)}/`
+        },
+        timeout: REQUEST_TIMEOUT,
+        validateStatus: () => true
+      });
+
+      if (resp.status !== 200) return null;
+      if (typeof resp.data === 'string') return null;
+
+      const root = resp.data || {};
+      const user = (root.graphql && root.graphql.user) ? root.graphql.user : (root.user || null);
+      if (!user) return null;
+
+      const followersCount = (user.edge_followed_by && typeof user.edge_followed_by.count === 'number') ? user.edge_followed_by.count : null;
+      if (typeof followersCount !== 'number') return null;
+
+      return {
+        username: String(user.username || username),
+        followersCount,
+        isPrivate: typeof user.is_private === 'boolean' ? user.is_private : null
+      };
+    } catch (_) {
+      return null;
+    }
+  };
 
   const available = cookieProfiles.filter(p => p.disabledUntil <= now && !isCookieLocked(p.ds_user_id))
     .sort((a, b) => {
@@ -9971,7 +11773,10 @@ async function fetchInstagramFollowersInfo(username) {
     lockCookie(profile.ds_user_id);
 
     try {
-      const proxyAgent = profile.proxy ? new HttpsProxyAgent(`http://${profile.proxy.auth.username}:${profile.proxy.auth.password}@${profile.proxy.host}:${profile.proxy.port}`, { rejectUnauthorized: false }) : null;
+      const proxyAgent = profile.proxy ? new HttpsProxyAgent(
+        `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
+        { rejectUnauthorized: false }
+      ) : null;
       const headers = {
         "User-Agent": profile.userAgent,
         "X-IG-App-ID": "936619743392459",
@@ -9980,7 +11785,8 @@ async function fetchInstagramFollowersInfo(username) {
         "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        "X-Requested-With": "XMLHttpRequest"
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": `https://www.instagram.com/${encodeURIComponent(username)}/`
       };
 
       const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
@@ -10025,6 +11831,20 @@ async function fetchInstagramFollowersInfo(username) {
     try {
       return await Promise.any(candidates.map(p => tryProfile(p)));
     } catch (_) {}
+  }
+
+  const publicFallback = await fetchFollowersPublicFallback();
+  if (publicFallback) {
+    return {
+      success: true,
+      profile: {
+        username: publicFallback.username,
+        followersCount: publicFallback.followersCount,
+        isPrivate: publicFallback.isPrivate == null ? false : !!publicFallback.isPrivate,
+        checkedAt: new Date().toISOString(),
+        source: 'public_fallback'
+      }
+    };
   }
 
   return { success: false, error: 'Falha ao buscar seguidores' };

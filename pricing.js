@@ -141,15 +141,8 @@ const calculateOrderBumps = (bumpsStr) => {
             // 1 comment = R$ 1,50 (150 cents)
             total += q * 150;
             
-        } else if (key === 'warranty' || key === 'warranty30') {
-             // 30 days -> R$ 9,90
+        } else if (key === 'warranty' || key === 'warranty30' || key === 'warranty_life' || key === 'warranty_lifetime' || key === 'warranty60') {
              total += 990; 
-        } else if (key === 'warranty_life' || key === 'warranty_lifetime') {
-             // Lifetime -> R$ 19,90
-             total += 1990;
-        } else if (key === 'warranty60') {
-             // Lifetime Promo -> R$ 9,90
-             total += 990;
         }
     });
     
@@ -157,6 +150,14 @@ const calculateOrderBumps = (bumpsStr) => {
 };
 
 const calculatePrice = async (type, quantity, additionalInfo = []) => {
+    additionalInfo = Array.isArray(additionalInfo) ? additionalInfo : [];
+    const tipo = String(type || '').trim();
+    if (tipo === 'refil_extensao') {
+        const modeItem = additionalInfo.find(x => x && x.key === 'refil_mode');
+        const mode = String(modeItem?.value || '').trim().toLowerCase();
+        if (mode === 'life') return 990;
+        return 990;
+    }
     let totalCents = 0;
     const q = parseInt(quantity, 10);
     

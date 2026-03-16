@@ -25,7 +25,7 @@
     .summary-sub { font-size: 0.8rem; color: #666; margin-top: 6px; }
     .dashboard-layout { display: flex; gap: 24px; align-items: flex-start; margin-top: 16px; flex-wrap: wrap; }
     .dashboard-main { flex: 1 1 760px; min-width: 0; }
-    .dashboard-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; border: 1px solid #eee; border-radius: 8px; background: #fff; }
+    .dashboard-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #eee; border-radius: 8px; background: #fff; }
     .dashboard-table { width: 100%; min-width: 980px; border-collapse: collapse; }
     .dashboard-table th, .dashboard-table td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
     .dashboard-table th { background: #fafafa; white-space: nowrap; }
@@ -36,7 +36,7 @@
     .cost-panel { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fff; position: sticky; top: 16px; }
     @media (max-width: 1100px) { .cost-panel-wrap { max-width: 100%; } .cost-panel { position: static; } }
     .container-wide { max-width: 1800px; overflow-x: visible; }
-    .unknown-table-wrap { width: 100%; overflow-x: auto; }
+    .unknown-table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .unknown-table { min-width: 1400px; table-layout: auto; }
     .unknown-table th, .unknown-table td { padding: 8px; white-space: normal; overflow: visible; text-overflow: clip; }
     .unknown-table td small { display: block; color: #666; margin-top: 2px; }
@@ -54,8 +54,35 @@
     .unknown-table th:last-child, .unknown-table td:last-child { text-align: center; }
     .unknown-badge { display:inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
     .unknown-badge--private { background: #111827; color: #ffffff; }
+    .unknown-badge--lifetime { background: #7c3aed; color: #ffffff; }
     .followers-pager-link { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; text-decoration: none; color: #111827; }
     .followers-pager-link--disabled { pointer-events: none; opacity: 0.5; }
+
+    .panel-header { display:flex; justify-content:space-between; align-items:center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .panel-filterbar { background: #fff; padding: 15px; border-radius: 8px; border: 1px solid #ddd; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+    .panel-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    @media (max-width: 768px) {
+      .container { padding: 14px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      .panel-header h1 { font-size: 1.25rem; line-height: 1.2; }
+      .filters { gap: 8px; }
+      .filters a { padding: 8px 12px; font-size: 0.95rem; }
+      .panel-filterbar { padding: 12px; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .summary-card { padding: 10px 12px; border-radius: 10px; }
+      .summary-value { font-size: 1.1rem; }
+      .summary-label { font-size: 0.78rem; }
+    }
+
+    @media (max-width: 480px) {
+      .container { padding: 12px; }
+      .panel-header a { width: 100%; text-align:center; }
+      .panel-filterbar input,
+      .panel-filterbar select,
+      .panel-filterbar button { width: 100% !important; }
+      .panel-filterbar strong,
+      .panel-filterbar span { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -65,7 +92,7 @@
   <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : 'dashboard'))}) %>
   <div class="main-content">
   <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <div class="panel-header">
         <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isCouponsView ? 'Cupons' : 'Painel de Gerenciamento de Custos') %></h1>
         <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
     </div>
@@ -83,7 +110,7 @@
       <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
     </div>
 
-    <div style="margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #ddd; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+    <div class="panel-filterbar" style="margin-bottom: 20px;">
         <strong>Filtrar por data:</strong>
         <input type="date" id="startDate" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
         <span>até</span>
@@ -183,6 +210,7 @@
       <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
           <button type="button" id="followersRefreshAllBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Atualizar todos</button>
+          <button type="button" id="followersTestOldBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Testar 10 antigas</button>
           <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <select id="followersSearchType" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
@@ -190,9 +218,6 @@
               <option value="orderid" <%= (filters && String(filters.qType) === 'orderid') ? 'selected' : '' %>>OrderID</option>
             </select>
             <input id="followersSearch" type="text" placeholder="buscar..." value="<%= (filters && filters.q) ? String(filters.q) : '' %>" style="width:170px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            <div style="font-size:0.9rem; color:#444; font-weight:600;">Filtro % (diferença):</div>
-            <input id="followersMinPct" type="number" step="0.01" placeholder="mín" value="<%= (filters && typeof filters.minPct === 'number') ? filters.minPct : '' %>" style="width:84px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            <input id="followersMaxPct" type="number" step="0.01" placeholder="máx" value="<%= (filters && typeof filters.maxPct === 'number') ? filters.maxPct : '' %>" style="width:84px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
             <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
               <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
               <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
@@ -203,12 +228,17 @@
               <input id="followersFilledOnly" type="checkbox" <%= (filters && filters.filled) ? 'checked' : '' %> />
               <span>Somente preenchidos</span>
             </label>
-            <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
-            <button type="button" id="followersClearFiltersBtn" style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Limpar</button>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersLifetimeOnly" type="checkbox" <%= (filters && filters.lifetime) ? 'checked' : '' %> />
+              <span>Somente vitalício</span>
+            </label>
+            <div style="font-size:0.9rem; color:#444; font-weight:600;">Queda mín:</div>
             <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
             <button type="button" class="followersPctQuickBtn" data-min="20" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">20%</button>
             <button type="button" class="followersPctQuickBtn" data-min="30" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">30%</button>
-            <button type="button" class="followersPctQuickBtn" data-min="50" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">50%</button>
+            <button type="button" class="followersPctQuickBtn" data-min="40" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">40%</button>
+            <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
+            <button type="button" id="followersClearFiltersBtn" style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Limpar</button>
           </div>
           <div id="followersStatus" style="font-size: 0.9rem; color:#555;"></div>
           <div style="margin-left:auto; font-size:0.9rem; color:#555;">
@@ -221,11 +251,12 @@
       </div>
 
       <div class="dashboard-table-wrap" style="margin-top: 14px;">
-        <table class="dashboard-table" style="min-width: 1700px; font-size: 0.92rem;">
+        <table class="dashboard-table" style="min-width: 1820px; font-size: 0.92rem;">
           <thead>
             <tr>
               <th>OrderID</th>
               <th>Usuário</th>
+              <th>Reposição</th>
               <th>Tipo</th>
               <th>Fornecedor</th>
               <th style="text-align:right;">Inicial</th>
@@ -233,8 +264,12 @@
               <th style="text-align:right;">Resultado</th>
               <th style="text-align:right;">Atual</th>
               <th style="text-align:right;">Diferença</th>
-              <th style="text-align:right;">% Dif.</th>
-              <th>Compra</th>
+              <th style="text-align:right;">
+                <a href="#" class="followers-sort" data-sort="diffPct" style="color:inherit; text-decoration:none;">% Dif.<span id="followersSortIconDiff" style="margin-left:6px; color:#6b7280;"></span></a>
+              </th>
+              <th>
+                <a href="#" class="followers-sort" data-sort="lastPurchaseAtMs" style="color:inherit; text-decoration:none;">Compra<span id="followersSortIconCompra" style="margin-left:6px; color:#6b7280;"></span></a>
+              </th>
               <th>Checado em</th>
               <th>Ação</th>
             </tr>
@@ -250,7 +285,6 @@
                 const diff = (resultado !== null && current !== null) ? (resultado - current) : null;
                 const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && resultado) ? ((diff / resultado) * 100) : null);
                 const oid = row.orderId ? String(row.orderId) : '';
-                const wid = row.orderIdentifier ? String(row.orderIdentifier) : '';
                 const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
                 let lastPurchase = '-';
                 try {
@@ -265,17 +299,34 @@
                     lastPurchase = `${dd}/${mm}/${yyyy} ${hh}:${mn}`;
                   }
                 } catch(_) {}
+                let checkedAtFmt = '-';
+                try {
+                  if (row.currentCheckedAt) {
+                    const t2 = new Date(String(row.currentCheckedAt)).getTime();
+                    if (Number.isFinite(t2) && t2) {
+                      const d2 = new Date(t2 - 3 * 60 * 60 * 1000);
+                      const dd2 = String(d2.getUTCDate()).padStart(2,'0');
+                      const mm2 = String(d2.getUTCMonth()+1).padStart(2,'0');
+                      const yyyy2 = String(d2.getUTCFullYear());
+                      const hh2 = String(d2.getUTCHours()).padStart(2,'0');
+                      const mn2 = String(d2.getUTCMinutes()).padStart(2,'0');
+                      checkedAtFmt = `${dd2}/${mm2}/${yyyy2} ${hh2}:${mn2}`;
+                    }
+                  }
+                } catch(_) {}
+                const refilIsLifetime = row.refilIsLifetime === true;
+                const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
               <tr data-username="<%= username %>" data-resultado="<%= (resultado !== null ? resultado : '') %>">
                 <td style="white-space: nowrap;">
                   <div style="font-size:0.85rem; color:#111;"><%= fid ? fid : '-' %></div>
-                  <% if (wid) { %>
-                    <div style="font-size:0.78rem; color:#666;">woovi: <%= wid %></div>
-                  <% } %>
                 </td>
                 <td style="white-space: nowrap;">
                   <% if (row.isPrivate === true) { %>
                     <span class="unknown-badge unknown-badge--private">Privado</span>
+                  <% } %>
+                  <% if (refilIsLifetime) { %>
+                    <span class="unknown-badge unknown-badge--lifetime">Vitalício</span>
                   <% } %>
                   <%
                     const uRaw = String(username || '').trim();
@@ -288,6 +339,19 @@
                     @<%= username %>
                   <% } %>
                 </td>
+                <td style="white-space: nowrap;">
+                  <% if (refilIsLifetime) { %>
+                    <span style="color:#16a34a; font-weight:700;">VITALÍCIO</span>
+                  <% } else if (refilDaysLeft !== null) { %>
+                    <% if (refilDaysLeft <= 0) { %>
+                      <span style="color:#dc2626; font-weight:700;">EXPIRADO</span>
+                    <% } else { %>
+                      <%= refilDaysLeft %> <%= (refilDaysLeft === 1 ? 'dia' : 'dias') %>
+                    <% } %>
+                  <% } else { %>
+                    -
+                  <% } %>
+                </td>
                 <td style="white-space: nowrap;"><%= row.tipo ? String(row.tipo) : '-' %></td>
                 <td style="white-space: nowrap;"><%= row.fornecedor ? String(row.fornecedor) : '-' %></td>
                 <td style="text-align:right;" class="cell-initial"><%= (init !== null ? init : '-') %></td>
@@ -295,9 +359,21 @@
                 <td style="text-align:right;" class="cell-resultado"><%= (resultado !== null ? resultado : '-') %></td>
                 <td style="text-align:right;" class="cell-current"><%= (current !== null ? current : '-') %></td>
                 <td style="text-align:right;" class="cell-diff"><%= (diff !== null ? diff : '-') %></td>
-                <td style="text-align:right;" class="cell-pct"><%= (pct !== null ? (pct.toFixed(2).replace('.', ',') + '%') : '-') %></td>
+                <td style="text-align:right;" class="cell-pct">
+                  <% if (resultado !== null && current !== null) { %>
+                    <% if (current >= resultado) { %>
+                      <span style="color:#16a34a; font-weight:700;">OK</span>
+                    <% } else if (pct !== null) { %>
+                      <span style="color:#dc2626; font-weight:700;"><%= (pct.toFixed(2).replace('.', ',') + '%') %></span>
+                    <% } else { %>
+                      -
+                    <% } %>
+                  <% } else { %>
+                    -
+                  <% } %>
+                </td>
                 <td style="white-space: nowrap;"><%= lastPurchase %></td>
-                <td style="white-space: nowrap;" class="cell-checkedat"><%= row.currentCheckedAt ? String(row.currentCheckedAt) : '-' %></td>
+                <td style="white-space: nowrap;" class="cell-checkedat"><%= checkedAtFmt %></td>
                 <td style="white-space: nowrap;">
                   <button type="button" class="unknown-btn btn-refresh" data-force="0">Atualizar</button>
                   <button type="button" class="unknown-btn btn-refresh" data-force="1" style="background:#6c757d;">Forçar</button>
@@ -313,6 +389,22 @@
           function el(id){ return document.getElementById(id); }
           function setStatus(t){ var s = el('followersStatus'); if (s) s.textContent = t || ''; }
           function toNum(v){ var n = Number(v); return Number.isFinite(n) ? n : null; }
+          function fmtBr(iso){
+            try {
+              if (!iso) return '-';
+              var t = new Date(String(iso)).getTime();
+              if (!t || !isFinite(t)) return '-';
+              var d = new Date(t - 3 * 60 * 60 * 1000);
+              var dd = String(d.getUTCDate()).padStart(2,'0');
+              var mm = String(d.getUTCMonth()+1).padStart(2,'0');
+              var yyyy = String(d.getUTCFullYear());
+              var hh = String(d.getUTCHours()).padStart(2,'0');
+              var mn = String(d.getUTCMinutes()).padStart(2,'0');
+              return dd + '/' + mm + '/' + yyyy + ' ' + hh + ':' + mn;
+            } catch (_) {
+              return '-';
+            }
+          }
 
           async function refreshRow(tr, force) {
             if (!tr) return;
@@ -340,8 +432,23 @@
               var cellCheckedAt = tr.querySelector('.cell-checkedat');
               if (cellCurrent) cellCurrent.textContent = (current !== null ? String(current) : '-');
               if (cellDiff) cellDiff.textContent = (diff !== null ? String(diff) : '-');
-              if (cellPct) cellPct.textContent = (pct !== null ? (pct.toFixed(2).replace('.', ',') + '%') : '-');
-              if (cellCheckedAt) cellCheckedAt.textContent = data.checkedAt ? String(data.checkedAt) : '-';
+              if (cellPct) {
+                var ok = (resultado !== null && current !== null && current >= resultado);
+                if (ok) {
+                  cellPct.textContent = 'OK';
+                  cellPct.style.color = '#16a34a';
+                  cellPct.style.fontWeight = '700';
+                } else if (pct !== null) {
+                  cellPct.textContent = pct.toFixed(2).replace('.', ',') + '%';
+                  cellPct.style.color = '#dc2626';
+                  cellPct.style.fontWeight = '700';
+                } else {
+                  cellPct.textContent = '-';
+                  cellPct.style.color = '';
+                  cellPct.style.fontWeight = '';
+                }
+              }
+              if (cellCheckedAt) cellCheckedAt.textContent = fmtBr(data.checkedAt);
             } finally {
               for (var j=0;j<btns.length;j++){ try { btns[j].disabled = false; } catch(_) {} }
             }
@@ -380,6 +487,41 @@
             });
           }
 
+          var testOldBtn = el('followersTestOldBtn');
+          if (testOldBtn) {
+            testOldBtn.addEventListener('click', async function(){
+              testOldBtn.disabled = true;
+              try {
+                setStatus('Testando 10 compras antigas…');
+                var resp = await fetch('/api/painel/gerenciamento-seguidores/test-old', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ limit: 10 })
+                });
+                var data = await resp.json();
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                setStatus('Teste concluído. Recarregando…');
+                try {
+                  var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+                  var urlParams = new URLSearchParams(window.location.search);
+                  urlParams.set('filled', '1');
+                  urlParams.delete('minPct');
+                  urlParams.delete('maxPct');
+                  urlParams.set('page', '1');
+                  var qs = urlParams.toString();
+                  window.location.href = qs ? (base + '?' + qs) : base;
+                } catch (_) {
+                  window.location.reload();
+                }
+              } catch (e) {
+                setStatus('Erro no teste.');
+                alert('Erro ao testar 10 antigas: ' + (e && e.message ? e.message : e));
+              } finally {
+                testOldBtn.disabled = false;
+              }
+            });
+          }
+
           var applyBtn = el('followersApplyFilterBtn');
           var clearBtn = el('followersClearFiltersBtn');
           if (applyBtn) {
@@ -389,22 +531,19 @@
                 var urlParams = new URLSearchParams(window.location.search);
                 var qEl = el('followersSearch');
                 var qtEl = el('followersSearchType');
-                var minEl = el('followersMinPct');
-                var maxEl = el('followersMaxPct');
                 var sizeEl = el('followersPageSize');
                 var filledEl = el('followersFilledOnly');
+                var lifetimeEl = el('followersLifetimeOnly');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
-                var minV = minEl ? String(minEl.value || '').trim() : '';
-                var maxV = maxEl ? String(maxEl.value || '').trim() : '';
                 var sizeV = sizeEl ? String(sizeEl.value || '').trim() : '';
                 var filledV = filledEl && filledEl.checked ? '1' : '';
+                var lifetimeV = lifetimeEl && lifetimeEl.checked ? '1' : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
-                if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
-                if (minV) urlParams.set('minPct', minV); else urlParams.delete('minPct');
-                if (maxV) urlParams.set('maxPct', maxV); else urlParams.delete('maxPct');
                 if (sizeV) urlParams.set('pageSize', sizeV); else urlParams.delete('pageSize');
+                if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
+                if (lifetimeV) urlParams.set('lifetime', lifetimeV); else urlParams.delete('lifetime');
                 urlParams.set('page', '1');
                 var qs = urlParams.toString();
                 window.location.href = qs ? (base + '?' + qs) : base;
@@ -424,6 +563,18 @@
               } catch (_) {}
             });
           }
+          var filledEl2 = el('followersFilledOnly');
+          if (filledEl2 && applyBtn) {
+            filledEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var lifetimeEl2 = el('followersLifetimeOnly');
+          if (lifetimeEl2 && applyBtn) {
+            lifetimeEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
           if (clearBtn) {
             clearBtn.addEventListener('click', function(){
               try {
@@ -436,15 +587,47 @@
           document.addEventListener('click', function(ev){
             try {
               var t = ev && ev.target ? ev.target : null;
-              if (!t || !t.classList || !t.classList.contains('followersPctQuickBtn')) return;
+              if (!t) return;
+              var sortEl = (t.closest && t.closest('.followers-sort')) ? t.closest('.followers-sort') : null;
+              if (sortEl) {
+                ev.preventDefault();
+                var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+                var urlParams = new URLSearchParams(window.location.search);
+                var curSortBy = String(urlParams.get('sortBy') || 'lastPurchaseAtMs');
+                var curSortDir = String(urlParams.get('sortDir') || 'desc');
+                var nextSortBy = String(sortEl.getAttribute('data-sort') || '').trim();
+                if (!nextSortBy) return;
+                var nextDir = 'desc';
+                if (curSortBy === nextSortBy) nextDir = (curSortDir === 'asc') ? 'desc' : 'asc';
+                urlParams.set('sortBy', nextSortBy);
+                urlParams.set('sortDir', nextDir);
+                urlParams.set('page', '1');
+                var qs = urlParams.toString();
+                window.location.href = qs ? (base + '?' + qs) : base;
+                return;
+              }
+              if (!t.classList || !t.classList.contains('followersPctQuickBtn')) return;
+              var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+              var urlParams = new URLSearchParams(window.location.search);
               var min = String(t.getAttribute('data-min') || '').trim();
-              var minEl = el('followersMinPct');
-              if (minEl) minEl.value = min;
-              var maxEl = el('followersMaxPct');
-              if (maxEl) maxEl.value = '';
-              if (applyBtn) applyBtn.click();
+              if (min) urlParams.set('minPct', min); else urlParams.delete('minPct');
+              urlParams.delete('maxPct');
+              urlParams.set('page', '1');
+              var qs = urlParams.toString();
+              window.location.href = qs ? (base + '?' + qs) : base;
             } catch (_) {}
           });
+
+          try {
+            var urlParams0 = new URLSearchParams(window.location.search);
+            var sb = String(urlParams0.get('sortBy') || 'lastPurchaseAtMs');
+            var sd = String(urlParams0.get('sortDir') || 'desc');
+            var arrow = sd === 'asc' ? '▲' : '▼';
+            var dEl = el('followersSortIconDiff');
+            var cEl = el('followersSortIconCompra');
+            if (dEl) dEl.textContent = (sb === 'diffPct') ? arrow : '';
+            if (cEl) cEl.textContent = (sb === 'lastPurchaseAtMs') ? arrow : '';
+          } catch (_) {}
         })();
       </script>
 
@@ -458,6 +641,8 @@
           if (filters && filters.filled) parts.push(`filled=1`);
           if (filters && typeof filters.minPct === 'number') parts.push(`minPct=${encodeURIComponent(String(filters.minPct))}`);
           if (filters && typeof filters.maxPct === 'number') parts.push(`maxPct=${encodeURIComponent(String(filters.maxPct))}`);
+          if (filters && filters.sortBy) parts.push(`sortBy=${encodeURIComponent(String(filters.sortBy))}`);
+          if (filters && filters.sortDir) parts.push(`sortDir=${encodeURIComponent(String(filters.sortDir))}`);
           parts.push(`page=${encodeURIComponent(String(targetPage || 1))}`);
           return '/painel/gerenciamento-seguidores' + (parts.length ? ('?' + parts.join('&')) : '');
         };
@@ -502,7 +687,8 @@
         <div style="margin-top: 14px; border-top: 1px solid #eaeaea; padding-top: 12px;">
           <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 8px;">Lista</div>
           <div style="max-height: 520px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; background: #fff;">
-            <table style="width:100%; border-collapse: collapse;">
+            <div class="panel-table-scroll">
+            <table style="width:100%; border-collapse: collapse; min-width: 820px;">
               <thead>
                 <tr>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Código</th>
@@ -519,6 +705,7 @@
                 <tr><td colspan="8" style="padding:10px; color:#777; text-align:center;">Carregando…</td></tr>
               </tbody>
             </table>
+            </div>
           </div>
         </div>
 
@@ -739,7 +926,9 @@
           <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-bottom: 10px;">
             <button type="button" class="unknown-btn" onclick="hideSelectedUnknown()">Ocultar selecionados</button>
             <button type="button" class="unknown-btn" style="background:#6c757d;" onclick="clearHiddenOrders()">Mostrar tudo</button>
+            <button type="button" id="unknownRefreshBtn" class="unknown-btn" style="background:#111827;" onclick="refreshUnknownPrivatesAndLinks()">Atualizar privados/links</button>
             <div style="font-size:0.85rem; color:#666;">Ocultos: <span id="unknownHiddenCount">0</span></div>
+            <div id="unknownRefreshStatus" style="font-size:0.85rem; color:#666;"></div>
           </div>
           <div class="unknown-table-wrap">
           <table class="unknown-table">
@@ -1349,6 +1538,32 @@
         function clearHiddenOrders() {
           try { localStorage.removeItem(HIDDEN_ORDERS_KEY); } catch (_) {}
           applyHiddenOrdersToUnknownTable();
+        }
+
+        async function refreshUnknownPrivatesAndLinks() {
+          const statusEl = document.getElementById('unknownRefreshStatus');
+          const btn = document.getElementById('unknownRefreshBtn');
+          if (btn) { try { btn.disabled = true; btn.style.opacity = '0.6'; } catch(_) {} }
+          try {
+            if (statusEl) statusEl.textContent = 'Atualizando...';
+            const rows = Array.from(document.querySelectorAll('tr[data-id]')).filter(tr => tr && tr.style.display !== 'none');
+            const ids = rows.map(tr => String(tr.getAttribute('data-id') || '').trim()).filter(Boolean);
+            const res = await fetch('/api/admin/unknown_orderid/refresh', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+              body: JSON.stringify({ ids })
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.ok) throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : `HTTP ${res.status}`);
+            if (statusEl) statusEl.textContent = `OK: ${data.updated || 0} atualizados`;
+            window.location.reload();
+          } catch (e) {
+            if (statusEl) statusEl.textContent = '';
+            alert('Erro ao atualizar: ' + (e && e.message ? e.message : e));
+          } finally {
+            if (btn) { try { btn.disabled = false; btn.style.opacity = ''; } catch(_) {} }
+          }
         }
 
         document.addEventListener('DOMContentLoaded', function () {

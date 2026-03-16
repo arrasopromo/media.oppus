@@ -215,11 +215,16 @@ async function checkProfile() {
             showProfileSuccess(profile);
             showTutorialStep(3);
         } else {
-            showStatusMessage(errMsg || 'Não foi possível validar o perfil.', 'error');
+            const msg = errMsg || 'Não foi possível validar o perfil.';
+            if (/não\s+localizad|não\s+encontrad|inexist|username_invalid|user_not_found/i.test(msg)) {
+                showStatusMessage('Usuário não encontrado. configra o nome digitado e tente novamente.', 'error');
+            } else {
+                showStatusMessage(msg, 'error');
+            }
         }
     } catch (error) {
         hideLoading();
-        showStatusMessage('Erro ao verificar perfil. Tente novamente.', 'error');
+        showStatusMessage('Erro de usuário. configra o nome digitado e tente novamente.', 'error');
     } finally {
         isChecking = false;
         checkButton.disabled = false;

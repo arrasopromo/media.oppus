@@ -544,31 +544,22 @@
     });
   }
 
-  // Garantia única com slider: 30 dias (R$ 9,90) <-> Vitalícia (R$ 19,90)
-  let warrantyMode = '30';
+  let warrantyMode = 'life';
   try { window.warrantyMode = warrantyMode; } catch(_) {}
-  const wDec = document.getElementById('warrantyModeDec');
-  const wInc = document.getElementById('warrantyModeInc');
   const wLabel = document.getElementById('warrantyModeLabel');
   const wHighlight = document.getElementById('warrantyHighlight');
   const wOld = document.getElementById('warrantyOldPrice');
   const wNew = document.getElementById('warrantyNewPrice');
   const wDisc = document.getElementById('warrantyDiscount');
   function applyWarrantyMode(){
-    const isLife = warrantyMode === 'life';
-    if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
-    if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
-    if (wOld) wOld.textContent = isLife ? 'R$ 129,90' : 'R$ 39,90';
-    if (wNew) wNew.textContent = isLife ? 'R$ 19,90' : 'R$ 9,90';
-    if (wDisc) wDisc.textContent = isLife ? '85% OFF' : '75% OFF';
+    const isLife = true;
+    if (wLabel) wLabel.textContent = 'Vitalícia';
+    if (wHighlight) wHighlight.textContent = 'GARANTIA VITALÍCIA';
+    if (wOld) wOld.textContent = 'R$ 129,90';
+    if (wNew) wNew.textContent = 'R$ 19,90';
+    if (wDisc) wDisc.textContent = '85% OFF';
     try { updatePromosSummary(); } catch(_) {}
   }
-  function stepWarranty(delta){
-    const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
-    if (next !== warrantyMode) { warrantyMode = next; try { window.warrantyMode = warrantyMode; } catch(_) {} applyWarrantyMode(); }
-  }
-  if (wDec) wDec.addEventListener('click', () => stepWarranty(-1));
-  if (wInc) wInc.addEventListener('click', () => stepWarranty(1));
   applyWarrantyMode();
 
   tabela.seguidores_tiktok = tabela.mistos;
@@ -2114,10 +2105,9 @@
         promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
       if (warrantyChecked) {
-        const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
-        const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
-        const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
-        promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        const priceStr = 'R$ 19,90';
+        const label = 'Garantia vitalícia';
+        promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -3130,8 +3120,14 @@
       const cardExpiry = values.cardExpiry;
       const cardCvv = values.cardCvv;
       const cardHolder = values.cardHolderName;
-      const installments = String(document.getElementById('cardInstallments')?.value || '').trim();
-      if (!installments) throw new Error('Selecione as parcelas.');
+      const installmentsEl = document.getElementById('cardInstallments');
+      let installments = String(installmentsEl?.value || '').trim();
+      if (!installments && installmentsEl) {
+        const opts = Array.prototype.slice.call(installmentsEl.querySelectorAll('option'));
+        const firstNumeric = opts.map(o => String(o.value || '').trim()).find(v => /^\d+$/.test(v));
+        installments = firstNumeric || '1';
+        try { installmentsEl.value = installments; } catch (_) {}
+      }
       
       // 2. Tokenização Efí
       let efiLib = getEfiCreditCardLib();
@@ -3242,11 +3238,15 @@
           }
         })();
         let d = onlyDigits(inputVal || urlVal || '');
-        if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
-        if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
-        if (d.length > 11) d = d.slice(0, 11);
+        d = d.replace(/^0+/, '');
+        if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+        if (d.length > 11) d = d.slice(-11);
         if (!(d.length === 10 || d.length === 11)) return '';
         if (d.startsWith('0')) return '';
+        if (d.length === 11 && d[2] !== '9') {
+          const d2 = d.slice(0, 2) + d.slice(3);
+          if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
+        }
         return d;
       })();
       if (!phoneValue) {
@@ -3338,8 +3338,24 @@
           } catch (_) {}
       }
 
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const fetchRetry = async (url, opts, attempts) => {
+        let lastErr = null;
+        const max = Number(attempts) || 1;
+        for (let i = 0; i < max; i++) {
+          try {
+            return await fetch(url, opts);
+          } catch (e) {
+            lastErr = e;
+            if (i >= max - 1) throw e;
+            await sleep(500 * (i + 1));
+          }
+        }
+        throw lastErr || new Error('fetch_failed');
+      };
+
       try {
-        const selResp = await fetch('/api/instagram/selected-for');
+        const selResp = await fetchRetry('/api/instagram/selected-for', { headers: { 'Accept': 'application/json' } }, 3);
         const selData = await selResp.json();
         const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
         const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
@@ -3362,7 +3378,7 @@
           if (!link && instagramUsernameFinal) {
             try {
               const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
-              const pr = await fetch(url);
+              const pr = await fetchRetry(url, { headers: { 'Accept': 'application/json' } }, 2);
               const pd = await pr.json();
               const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
               const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
@@ -3380,15 +3396,29 @@
       } catch (_) {}
 
       // 4. Enviar para Backend
-      const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-      const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
-      const resp = await fetch('/api/efi/card-charge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: ctrl ? ctrl.signal : undefined
-      });
-      if (timeoutId) clearTimeout(timeoutId);
+      let resp = null;
+      let lastNetErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        try {
+          resp = await fetch('/api/efi/card-charge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+          lastNetErr = null;
+          break;
+        } catch (e) {
+          lastNetErr = e;
+          if (attempt >= 2) break;
+          await sleep(800 * (attempt + 1));
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      }
+      if (!resp) throw (lastNetErr || new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.'));
 
       const data = await resp.json();
       if (!resp.ok) {
@@ -4205,10 +4235,9 @@
           promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
         }
         if (warrantyChecked) {
-          const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
-          const priceStr = (mode === 'life') ? 'R$ 19,90' : 'R$ 9,90';
-          const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
-          promos.push({ key: (mode === 'life') ? 'warranty_lifetime' : 'warranty30', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
+          const priceStr = 'R$ 19,90';
+          const label = 'Garantia vitalícia';
+          promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';

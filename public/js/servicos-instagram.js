@@ -842,8 +842,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!warrantyItem) return;
     
     // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
-    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos') {
-        warrantyItem.style.display = 'flex';
+    if (tipo === 'mistos' || tipo === 'brasileiros') {
+        warrantyItem.style.display = '';
     } else {
         warrantyItem.style.display = 'none';
         const cb = document.getElementById('promoWarranty60');
@@ -1682,7 +1682,14 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (_) {}
         
       } else {
-        showStatusMessageCheckout(data.error || 'Falha ao verificar perfil.', 'error');
+        const msg = (data && data.error) ? String(data.error) : '';
+        if (/não\s+localizad|não\s+encontrad|inexist|username_invalid|user_not_found/i.test(msg)) {
+          showStatusMessageCheckout('Usuário não encontrado. configra o nome digitado e tente novamente.', 'error');
+        } else if (/erro\s+na\s+verifica[cç][aã]o\s+do\s+perfil/i.test(msg)) {
+          showStatusMessageCheckout('Erro de usuário. configra o nome digitado e tente novamente.', 'error');
+        } else {
+          showStatusMessageCheckout(msg || 'Falha ao verificar perfil.', 'error');
+        }
         const helpLink = document.getElementById('howToGetLinkContainer');
         if (helpLink) helpLink.style.display = 'block';
       }
@@ -1743,7 +1750,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const inp = document.getElementById('promoWarranty60');
     if (!inp) return;
     const item = inp.closest('.promo-item');
-    if (item) item.style.display = (tipo === 'mistos' || tipo === 'brasileiros') ? '' : 'none';
+    const show = (tipo === 'mistos' || tipo === 'brasileiros');
+    if (item) item.style.display = show ? '' : 'none';
+    if (!show && inp.checked) inp.checked = false;
+    try { updatePromosSummary(); } catch(_) {}
   }
 
   function applyCheckoutFlow() {
