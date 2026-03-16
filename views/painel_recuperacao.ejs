@@ -19,6 +19,11 @@
     .status-pending { background: #fff3cd; color: #856404; }
     .status-divergent { background: #f8d7da; color: #721c24; }
     .copy-btn { cursor: pointer; background: none; border: none; color: #007bff; font-size: 0.8em; }
+    @media (max-width: 480px) {
+      .container { padding: 12px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      .header-actions { flex-wrap: wrap; gap: 10px; }
+      h1 { font-size: 1.2rem; line-height: 1.2; }
+    }
   </style>
 </head>
 <body>
@@ -34,7 +39,7 @@
     
     <p>Exibindo pedidos gerados há mais de 15 minutos que não foram pagos.</p>
 
-    <div style="overflow-x: auto;">
+    <div class="panel-table-scroll">
         <table>
           <thead>
             <tr>

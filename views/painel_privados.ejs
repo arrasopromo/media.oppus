@@ -7,10 +7,10 @@
   <link href="/css/style.css" rel="stylesheet" />
   <style>
     body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
-    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .container { max-width: 100%; width: 100%; margin: 0 auto; background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); box-sizing: border-box; display: block; min-height: auto; }
     h1 { margin-bottom: 20px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; table-layout: auto; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.9rem; vertical-align: middle; }
     th { background: #f9f9f9; font-weight: 600; }
     tr:hover { background-color: #f1f1f1; }
     input[type="number"] { width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
@@ -21,6 +21,25 @@
     .whatsapp-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; background: #198754; }
     .hide-toolbar { display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-top: 10px; }
     .hide-btn { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px; }
+    .panel-table-scroll table { min-width: 1400px; }
+    th:first-child, td:first-child { width: 52px; text-align: center; }
+    th:nth-child(2), td:nth-child(2) { width: 160px; }
+    th:nth-child(3), td:nth-child(3) { width: 240px; }
+    th:nth-child(4), td:nth-child(4) { width: 240px; }
+    th:nth-child(5), td:nth-child(5) { width: 260px; }
+    th:nth-child(6), td:nth-child(6) { width: 150px; text-align: center; }
+    th:nth-child(7), td:nth-child(7) { width: 150px; text-align: center; }
+    th:nth-child(8), td:nth-child(8) { width: 170px; }
+    th:last-child, td:last-child { width: 260px; text-align: center; }
+    .actions-cell { text-align: center; }
+    .actions-buttons { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+    .actions-buttons > button { white-space: nowrap; }
+    .actions-meta { margin-top: 6px; font-size: 0.75em; color: #666; }
+    @media (max-width: 480px) {
+      .container { padding: 12px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      h1 { font-size: 1.25rem; line-height: 1.2; }
+      .hide-btn { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -90,7 +109,7 @@
         <div style="font-size:0.85rem; color:#666;">Ocultos: <span id="privadosHiddenCount">0</span></div>
     </div>
 
-    <div style="overflow-x: auto;">
+    <div class="panel-table-scroll">
         <table>
           <thead>
             <tr>
@@ -198,8 +217,7 @@
                      return Number(target) - b;
                  };
                  const baseQtyNum = toNumber(qtd);
-                 const isFollowers = (String(c || '').includes('seguidor') || tipoLower.includes('seguidor'));
-                 const upgradeAdd = (hasUpgrade && isFollowers) ? getUpgradeAddQtd(followersType, baseQtyNum) : 0;
+                 const upgradeAdd = hasUpgrade ? getUpgradeAddQtd(followersType, baseQtyNum) : 0;
                  const qtdFinal = (baseQtyNum && upgradeAdd) ? (baseQtyNum + upgradeAdd) : qtd;
                  
                  // Customer info
@@ -282,13 +300,20 @@
                       </div>
                     <% } %>
                 </td>
-                <td style="text-align:center;">
-                    <button type="button" class="whatsapp-btn" data-id="<%= order._id %>" data-phone="<%= customerPhone %>" data-insta="<%= instaUser %>" data-contactcount="<%= order.contactCount || 0 %>">Enviar msg</button>
+                <td class="actions-cell">
+                    <div class="actions-buttons">
+                      <button type="button" class="whatsapp-btn" data-id="<%= order._id %>" data-phone="<%= customerPhone %>" data-insta="<%= instaUser %>" data-contactcount="<%= order.contactCount || 0 %>">Enviar msg</button>
+                      <button type="button" class="archive-btn <%= order.archived ? 'archive-btn--on' : 'archive-btn--off' %>" data-id="<%= order._id %>" data-archived="<%= order.archived ? '1' : '0' %>">
+                        <%= order.archived ? 'Desarquivar' : 'Arquivar' %>
+                      </button>
+                    </div>
                     <span class="status-msg" id="msg-whatsapp-<%= order._id %>">Enviado!</span>
-                    <button type="button" class="archive-btn <%= order.archived ? 'archive-btn--on' : 'archive-btn--off' %>" data-id="<%= order._id %>" data-archived="<%= order.archived ? '1' : '0' %>">
-                      <%= order.archived ? 'Desarquivar' : 'Arquivar' %>
-                    </button>
                     <span class="status-msg" id="msg-archived-<%= order._id %>">Salvo!</span>
+                    <% if (lastContactStr) { %>
+                      <div class="actions-meta" <%= lastContactTitle ? ('title=\"' + lastContactTitle.replace(/\"/g, '&quot;') + '\"') : '' %>>Última msg: <%= lastContactStr %></div>
+                    <% } else { %>
+                      <div class="actions-meta">Última msg: -</div>
+                    <% } %>
                 </td>
               </tr>
             <% }) %>

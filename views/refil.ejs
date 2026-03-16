@@ -117,7 +117,15 @@
           if (!o) return
           const providerOid = (o.fama24h && (o.fama24h.orderId || o.fama24h.id)) ? (o.fama24h.orderId || o.fama24h.id)
             : ((o.fornecedor_social && (o.fornecedor_social.orderId || o.fornecedor_social.id)) ? (o.fornecedor_social.orderId || o.fornecedor_social.id) : '')
-          const finalId = String(o._id || providerOid || o.identifier || (o.woovi && o.woovi.identifier) || '').trim()
+          const is24Hex = (v) => /^[0-9a-fA-F]{24}$/.test(String(v || '').trim())
+          const providerIdStr = String(providerOid || '').trim()
+          const mongoIdStr = String(o._id || '').trim()
+          const identifierStr = String(o.identifier || '').trim()
+          const wooviIdentifierStr = String((o.woovi && o.woovi.identifier) || '').trim()
+          const finalId = providerIdStr
+            || (is24Hex(mongoIdStr) ? mongoIdStr : '')
+            || (is24Hex(identifierStr) ? identifierStr : '')
+            || (is24Hex(wooviIdentifierStr) ? wooviIdentifierStr : '')
           if (!finalId) return
           const msg = 'Perdi seguidores e preciso de reposição. ID do meu pedido: ' + finalId
           a.setAttribute('href', 'https://wa.me/553173425727?text=' + encodeURIComponent(msg))

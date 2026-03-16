@@ -1,11 +1,16 @@
 <div class="sidebar">
-    <h2>Painel Admin</h2>
-    <ul>
+    <input type="checkbox" id="sidebarToggle" class="sidebar-toggle" />
+    <div class="sidebar-top">
+        <h2>Painel Admin</h2>
+        <label for="sidebarToggle" class="sidebar-menu-btn" aria-label="Abrir menu">Menu</label>
+    </div>
+    <ul class="sidebar-menu">
         <li><a href="/painel" class="<%= typeof page !== 'undefined' && page === 'dashboard' ? 'active' : '' %>">Dashboard</a></li>
         <li><a href="/painel?view=coupons" class="<%= typeof page !== 'undefined' && page === 'coupons' ? 'active' : '' %>">Cupons</a></li>
         <li><a href="/painel/recuperacao" class="<%= typeof page !== 'undefined' && page === 'recuperacao' ? 'active' : '' %>">Recuperação</a></li>
         <li><a href="/painel/privados" class="<%= typeof page !== 'undefined' && page === 'privados' ? 'active' : '' %>">Perfis Privados</a></li>
         <li><a href="/painel/gerenciamento-seguidores" class="<%= typeof page !== 'undefined' && page === 'gerenciamento-seguidores' ? 'active' : '' %>">Gerenciamento de Seguidores</a></li>
+        <li><a href="/painel/consulta-perfil" class="<%= typeof page !== 'undefined' && page === 'consulta-perfil' ? 'active' : '' %>">Consulta de Perfil</a></li>
         <li><a href="/painel?view=unknown_orderid&period=all" class="<%= typeof page !== 'undefined' && page === 'unknown_orderid' ? 'active' : '' %>">OrderID Unknown</a></li>
         <li><a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a></li>
     </ul>
@@ -29,6 +34,9 @@
         box-sizing: border-box;
         z-index: 1000;
     }
+    .sidebar-toggle { display: none; }
+    .sidebar-top { display: block; }
+    .sidebar-menu-btn { display: none; }
     .sidebar h2 {
         color: #fff;
         margin-bottom: 30px;
@@ -37,14 +45,14 @@
         border-bottom: 1px solid #495057;
         padding-bottom: 20px;
     }
-    .sidebar ul {
+    .sidebar-menu {
         list-style: none;
         padding: 0;
     }
-    .sidebar ul li {
+    .sidebar-menu li {
         margin-bottom: 5px;
     }
-    .sidebar ul li a {
+    .sidebar-menu li a {
         display: block;
         padding: 12px 15px;
         color: #adb5bd;
@@ -53,11 +61,11 @@
         transition: all 0.2s;
         font-size: 1rem;
     }
-    .sidebar ul li a:hover {
+    .sidebar-menu li a:hover {
         background: #495057;
         color: #fff;
     }
-    .sidebar ul li a.active {
+    .sidebar-menu li a.active {
         background: #007bff;
         color: #fff;
         font-weight: 600;
@@ -68,29 +76,73 @@
         margin-left: 250px;
         padding: 30px;
         min-height: 100vh;
+        max-width: none;
+        width: auto;
+    }
+    .panel-table-scroll {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .panel-table-scroll table {
+        width: 100%;
+        border-collapse: collapse;
     }
 
     @media (max-width: 768px) {
         .sidebar {
             width: 100%;
             height: auto;
-            position: relative;
-            padding: 10px;
+            position: sticky;
+            top: 0;
+            padding: 10px 12px;
         }
-        .sidebar ul {
+        .sidebar-top {
             display: flex;
-            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
             gap: 10px;
-            justify-content: center;
         }
         .sidebar h2 {
+            display: block;
+            margin: 0;
+            font-size: 1.05rem;
+            border-bottom: 0;
+            padding-bottom: 0;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .sidebar-menu-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border: 1px solid #495057;
+            border-radius: 8px;
+            background: #495057;
+            color: #fff;
+            font-size: 0.95rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .sidebar-menu {
             display: none;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 0 0;
+            margin: 0;
+            max-height: calc(100vh - 54px);
+            overflow: auto;
+        }
+        .sidebar-toggle:checked ~ .sidebar-menu {
+            display: flex;
         }
         .main-content {
             margin-left: 0;
             padding: 15px;
+            width: 100%;
         }
-        .sidebar ul li a {
+        .sidebar-menu li a {
             padding: 8px 12px;
             font-size: 0.9rem;
             background: #495057;

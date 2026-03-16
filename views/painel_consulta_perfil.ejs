@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consulta de Perfil</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin: 0 0 10px 0; }
+    .note { color: #6b7280; font-size: 0.9rem; }
+    .card { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 14px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .stat { border: 1px solid #e8e8e8; background: #fafafa; border-radius: 10px; padding: 12px 14px; }
+    .stat .k { color: #6b7280; font-size: 0.85rem; }
+    .stat .v { font-size: 1.3rem; font-weight: 700; margin-top: 4px; }
+    label { display:block; font-size: 0.9rem; margin-bottom: 6px; }
+    input[type="text"], input[type="number"], textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+    textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 820px) { .row { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .stat { padding: 10px 12px; }
+      .stat .v { font-size: 1.05rem; }
+      .stat .k { font-size: 0.78rem; }
+    }
+    .btn { padding: 10px 14px; background: #007bff; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 12px; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.95rem; }
+    th { background: #f9f9f9; }
+    td.num, th.num { text-align: right; }
+    a.link { color: #007bff; text-decoration: underline; }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; user-select: none; }
+    @media (max-width: 480px) {
+      .container { padding: 12px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      h1 { font-size: 1.25rem; line-height: 1.2; }
+    }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', {page: 'consulta-perfil'}) %>
+  <div class="main-content">
+  <div class="container">
+    <div style="display:flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <h1>Consulta de Perfil</h1>
+      <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 6px 10px; border-radius: 6px;">Sair</a>
+    </div>
+    <div class="note">Você cola um perfil e o painel coleta os seguidores e calcula quantos parecem “suspeitos” (poucos seguidores e muitos seguindo).</div>
+    <div class="note" style="margin-top: 6px;">Modo gratuito: usa cookies rotativos do servidor para coletar seguidores e contagens.</div>
+
+    <% if (error) { %>
+      <div class="card err"><%= error %></div>
+    <% } %>
+
+    <div class="card">
+      <form method="POST" action="/painel/consulta-perfil" id="consultaPerfilForm">
+        <div class="row">
+          <div>
+            <label>Perfil (username, @username ou URL)</label>
+            <input type="text" name="username" value="<%= (input && input.username) ? String(input.username) : '' %>" placeholder="ex: @nasa ou https://instagram.com/nasa" required />
+          </div>
+          <div>
+            <label>Máximo de seguidores a coletar</label>
+            <input type="number" name="maxFollowers" value="<%= (input && input.maxFollowers != null) ? String(input.maxFollowers) : '2000' %>" min="1" max="100000" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 12px;">
+          <div>
+            <label>Limite “poucos seguidores” (ex: 10)</label>
+            <input type="number" name="followersMax" value="<%= (input && input.followersMax != null) ? String(input.followersMax) : '10' %>" min="0" max="1000000" />
+          </div>
+          <div>
+            <label>Limite “segue muita gente” (ex: 50)</label>
+            <input type="number" name="followingMin" value="<%= (input && input.followingMin != null) ? String(input.followingMin) : '50' %>" min="0" max="1000000" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 12px;">
+          <div>
+            <label>Máximo de perfis para analisar (evita timeout/custo)</label>
+            <input type="number" name="maxAnalyze" value="<%= (input && input.maxAnalyze != null) ? String(input.maxAnalyze) : '500' %>" min="1" max="100000" />
+          </div>
+          <div>
+            <label>Ordenar suspeitos por</label>
+            <select name="sortBy" style="width:100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+              <% const sb = (input && input.sortBy) ? String(input.sortBy) : 'followersAsc'; %>
+              <option value="followersAsc" <%= sb === 'followersAsc' ? 'selected' : '' %>>Menos seguidores primeiro</option>
+              <option value="ratioDesc" <%= sb === 'ratioDesc' ? 'selected' : '' %>>Maior razão seguindo/seguidores</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top: 14px; display:flex; gap:10px; flex-wrap: wrap; align-items: center;">
+          <button type="submit" class="btn" id="consultaPerfilSubmit">Rodar consulta</button>
+          <div class="note" id="consultaPerfilStatus" style="min-height: 18px;"></div>
+        </div>
+      </form>
+    </div>
+
+    <% if (result) { %>
+      <div class="grid">
+        <div class="stat"><div class="k">Perfil</div><div class="v"><%= String(result.target || '-') %></div></div>
+        <div class="stat"><div class="k">Seguidores coletados</div><div class="v"><%= (result.followersFetched != null) ? String(result.followersFetched) : '-' %></div></div>
+        <div class="stat"><div class="k">Perfis analisados</div><div class="v"><%= (result.profilesAnalyzed != null) ? String(result.profilesAnalyzed) : '-' %></div></div>
+        <div class="stat"><div class="k">Suspeitos</div><div class="v"><%= (result.suspiciousCount != null) ? String(result.suspiciousCount) : '-' %></div></div>
+        <div class="stat"><div class="k">% suspeitos</div><div class="v"><%= (result.suspiciousPct != null) ? String(result.suspiciousPct.toFixed(2)) : '-' %>%</div></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight: 700;">Critério</div>
+        <div class="note">Seguidores &lt; <%= String(result.followersMax) %> e seguindo &ge; <%= String(result.followingMin) %></div>
+      </div>
+
+      <% if (result.suspicious && result.suspicious.length) { %>
+        <div class="card">
+          <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap;">
+            <div style="font-weight: 700;">Lista (até <%= String(result.suspicious.length) %>)</div>
+            <div class="note">Clique no username para abrir no Instagram</div>
+          </div>
+          <div class="panel-table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th class="num">Seguidores</th>
+                  <th class="num">Seguindo</th>
+                  <th class="num">Razão</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% result.suspicious.forEach((u) => { %>
+                  <tr>
+                    <td><a class="link" href="https://www.instagram.com/<%= encodeURIComponent(String(u.username || '').replace(/^@/, '')) %>/" target="_blank" rel="noreferrer"><%= String(u.username || '-') %></a></td>
+                    <td class="num"><%= (u.followersCount != null) ? String(u.followersCount) : '-' %></td>
+                    <td class="num"><%= (u.followsCount != null) ? String(u.followsCount) : '-' %></td>
+                    <td class="num"><%= (u.ratio != null) ? String(u.ratio.toFixed(2)) : '-' %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      <% } else { %>
+        <div class="card">
+          <div style="font-weight: 700;">Nenhum suspeito encontrado no recorte analisado.</div>
+        </div>
+      <% } %>
+    <% } %>
+  </div>
+  </div>
+
+  <script>
+    (function(){
+      var form = document.getElementById('consultaPerfilForm');
+      var btn = document.getElementById('consultaPerfilSubmit');
+      var st = document.getElementById('consultaPerfilStatus');
+      if (!form || !btn || !st) return;
+      form.addEventListener('submit', function(){
+        try { btn.disabled = true; } catch(_) {}
+        try { st.textContent = 'Executando… (isso pode demorar)'; } catch(_) {}
+      });
+    })();
+  </script>
+</body>
+</html>
