@@ -3422,6 +3422,18 @@
 
       const data = await resp.json();
       if (!resp.ok) {
+        const codeStr = String(data?.code ?? '').trim();
+        const errId = String(data?.error || '').trim();
+        const msgLow = String(data?.message || '').toLowerCase();
+        if (codeStr === '4600037' || errId === 'efi_operational_limit' || msgLow.includes('limite operacional')) {
+          const cents = Number(data?.value_cents);
+          const valueLabel = Number.isFinite(cents) ? ` Valor: ${formatCentsToBRL(cents)}.` : '';
+          const envLabel = (data?.sandbox === true) ? 'sandbox' : ((data?.sandbox === false) ? 'produção' : '');
+          const envSuffix = envLabel ? ` Ambiente: ${envLabel}.` : '';
+          alert(`Cartão indisponível: valor acima do limite operacional da conta Efí.${valueLabel}${envSuffix} Use PIX ou aumente o limite na Efí.`);
+          try { selectPaymentMethod('pix'); } catch (_) {}
+          return;
+        }
         throw new Error(data?.message || data?.error || 'Falha ao processar pagamento');
       }
 

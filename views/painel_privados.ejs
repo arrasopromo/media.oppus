@@ -354,6 +354,37 @@
 
     let isNewOrder = false;
     const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
+    const PRIVADOS_SCROLL_Y_KEY = 'oppus_privados_scroll_y_v1';
+    const PRIVADOS_SCROLL_ID_KEY = 'oppus_privados_scroll_id_v1';
+
+    function queuePrivadosScrollRestore(orderId) {
+        try {
+            sessionStorage.setItem(PRIVADOS_SCROLL_Y_KEY, String(window.scrollY || 0));
+            if (orderId) sessionStorage.setItem(PRIVADOS_SCROLL_ID_KEY, String(orderId));
+        } catch (_) {}
+    }
+
+    function restorePrivadosScrollIfAny() {
+        let y = null;
+        let id = null;
+        try {
+            y = sessionStorage.getItem(PRIVADOS_SCROLL_Y_KEY);
+            id = sessionStorage.getItem(PRIVADOS_SCROLL_ID_KEY);
+            sessionStorage.removeItem(PRIVADOS_SCROLL_Y_KEY);
+            sessionStorage.removeItem(PRIVADOS_SCROLL_ID_KEY);
+        } catch (_) {}
+
+        const yNum = Number(y);
+        if (!Number.isNaN(yNum) && yNum > 0) {
+            window.scrollTo(0, yNum);
+        }
+        if (id) {
+            const row = document.querySelector('tr[data-id="' + String(id).replace(/"/g, '\\"') + '"]');
+            if (row && typeof row.scrollIntoView === 'function') {
+                row.scrollIntoView({ block: 'center' });
+            }
+        }
+    }
 
     function getHiddenOrdersSet() {
         try {
@@ -514,6 +545,7 @@
                 // Ideally refresh the page or update UI to show the ID, but for now just close modal
                 // Since we implemented instant search/refresh, maybe just reload logic?
                 // Or simply reload page to show the new ID label
+                queuePrivadosScrollRestore(currentOrderId);
                 window.location.reload(); 
             } else {
                 alert('Erro ao salvar: ' + (data.error || 'Erro desconhecido'));
@@ -633,6 +665,7 @@
                     const row = document.querySelector('tr[data-id=\"' + id + '\"]');
                     if (row) row.remove();
                 } else {
+                    queuePrivadosScrollRestore(id);
                     window.location.reload();
                 }
             } else {
@@ -683,6 +716,7 @@
                 msg.style.display = 'inline';
                 setTimeout(() => msg.style.display = 'none', 2000);
             }
+            queuePrivadosScrollRestore(id);
             window.location.reload();
         } catch (e) {
             alert('Erro ao enviar: ' + (e && e.message ? e.message : e));
@@ -691,6 +725,7 @@
 
     // Instant Phone Search Implementation
     document.addEventListener('DOMContentLoaded', function() {
+        restorePrivadosScrollIfAny();
         document.addEventListener('click', function(e) {
             const wbtn = e.target.closest('.whatsapp-btn');
             if (wbtn) {
