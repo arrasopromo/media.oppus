@@ -250,7 +250,7 @@
         </div>
       </div>
 
-      <div class="dashboard-table-wrap" style="margin-top: 14px;">
+      <div class="dashboard-table-wrap panel-table-scroll" style="margin-top: 14px;">
         <table class="dashboard-table" style="min-width: 1820px; font-size: 0.92rem;">
           <thead>
             <tr>
@@ -1138,7 +1138,7 @@
           </table>
           </div>
         <% } else { %>
-          <div class="dashboard-table-wrap">
+          <div class="dashboard-table-wrap panel-table-scroll">
           <table class="dashboard-table">
             <thead>
               <tr>
@@ -1392,8 +1392,8 @@
     <% } %>
 
       <% if (isUnknownOrderIdView) { %>
-      <div id="unknownOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
-        <div style="background:white; padding:20px; border-radius:8px; width:320px; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+      <div id="unknownOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; overflow:hidden;">
+        <div style="background:white; padding:20px; border-radius:8px; width:320px; max-height:90vh; overflow:auto; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
           <h3 style="margin-top:0; margin-bottom:15px;">Registrar OrderID</h3>
           <div style="margin-bottom:15px;">
             <label style="display:block; margin-bottom:5px; font-weight:bold;">Fornecedor:</label>
@@ -1410,25 +1410,31 @@
             <input type="text" id="unknownModalOrderId" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;" placeholder="Ex: 123456">
           </div>
           <div style="display:flex; justify-content:flex-end; gap:10px;">
-            <button onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
-            <button onclick="saveUnknownOrderInfo()" style="padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
+            <button type="button" onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
+            <button type="button" onclick="saveUnknownOrderInfo()" style="padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
           </div>
         </div>
       </div>
       <script>
         let currentUnknownOrderId = null;
         const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
+        let unknownModalScrollY = 0;
 
         function openUnknownOrderModal(orderId, defaultProvider, lockProvider) {
           currentUnknownOrderId = orderId;
           const modal = document.getElementById('unknownOrderModal');
           const providerEl = document.getElementById('unknownModalProvider');
           const orderIdEl = document.getElementById('unknownModalOrderId');
+          unknownModalScrollY = (typeof window.scrollY === 'number') ? window.scrollY : (document.documentElement ? document.documentElement.scrollTop : 0);
           if (providerEl && defaultProvider) providerEl.value = defaultProvider;
           if (providerEl) providerEl.disabled = (String(lockProvider || '') === '1');
           if (orderIdEl) orderIdEl.value = '';
           if (modal) modal.style.display = 'flex';
-          if (orderIdEl) orderIdEl.focus();
+          try { document.body.style.overflow = 'hidden'; } catch(_) {}
+          if (orderIdEl) {
+            try { orderIdEl.focus({ preventScroll: true }); } catch(_) { try { orderIdEl.focus(); } catch(_) {} }
+          }
+          try { window.scrollTo(0, unknownModalScrollY); } catch(_) {}
         }
 
         function closeUnknownOrderModal() {
@@ -1437,6 +1443,8 @@
           const providerEl = document.getElementById('unknownModalProvider');
           if (providerEl) providerEl.disabled = false;
           currentUnknownOrderId = null;
+          try { document.body.style.overflow = ''; } catch(_) {}
+          try { window.scrollTo(0, unknownModalScrollY); } catch(_) {}
         }
 
         async function saveUnknownOrderInfo() {

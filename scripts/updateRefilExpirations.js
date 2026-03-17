@@ -124,7 +124,7 @@ function isEligibleRefil(order) {
 
 function warrantyFromBumpKeys(keys) {
   const arr = Array.isArray(keys) ? keys : [];
-  if (arr.includes('warranty_lifetime') || arr.includes('warranty_life') || arr.includes('warranty30') || arr.includes('warranty')) return { isLifetime: true, months: null, mode: 'life', days: null };
+  if (arr.includes('warranty_lifetime') || arr.includes('warranty_life')) return { isLifetime: true, months: null, mode: 'life', days: null };
   return { isLifetime: false, months: 1, mode: '30', days: 30 };
 }
 
@@ -222,11 +222,11 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
 
     eligibleOrders.sort((a, b) => Number(orderBaseMs(b) || 0) - Number(orderBaseMs(a) || 0));
     const lastOrder = eligibleOrders[0];
-    const bumpKeys = parseBumpKeys(lastOrder);
-    const currentMode = String(link?.warrantyMode || '').trim().toLowerCase();
-    const currentExpMs0 = safeDateMs(link?.expiresAt);
-    const keepLifetime = currentMode === 'life' || currentExpMs0 >= safeDateMs('2099-01-01T00:00:00.000Z');
-    const warranty = keepLifetime ? { isLifetime: true, months: null, mode: 'life', days: null } : warrantyFromBumpKeys(bumpKeys);
+    const anyLifetime = eligibleOrders.some((o) => {
+      const bumpKeys = parseBumpKeys(o);
+      return bumpKeys.includes('warranty_lifetime') || bumpKeys.includes('warranty_life');
+    });
+    const warranty = anyLifetime ? { isLifetime: true, months: null, mode: 'life', days: null } : warrantyFromBumpKeys(parseBumpKeys(lastOrder));
     const baseMs = orderBaseMs(lastOrder);
     if (!baseMs) {
       skippedNoEligibleOrder++;

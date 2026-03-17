@@ -1235,7 +1235,7 @@ async function ensureRefilLink(identifier, correlationID, req) {
       }
       return out;
     })();
-    const hasLifetime = (Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0) || (Number(bumpQtyMap['warranty30'] || 0) > 0) || (Number(bumpQtyMap['warranty'] || 0) > 0);
+    const hasLifetime = (Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0);
     const warrantyMode = hasLifetime ? 'life' : '30';
     const warrantyDays = hasLifetime ? null : 30;
     const orderBaseMs = (() => {
@@ -2119,6 +2119,65 @@ app.get('/refil', async (req, res) => {
   let lastRefilOrderId = '';
   let refilLinkRec = null;
   let refilBaseOrderDoc = null;
+  const extractOrderBumpsStr = (o) => {
+    try {
+      const mapPaid = (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid === 'object') ? o.additionalInfoMapPaid : {};
+      if (typeof mapPaid.order_bumps !== 'undefined') return String(mapPaid.order_bumps || '').trim();
+      const map = (o && o.additionalInfoMap && typeof o.additionalInfoMap === 'object') ? o.additionalInfoMap : {};
+      if (typeof map.order_bumps !== 'undefined') return String(map.order_bumps || '').trim();
+      const arrPaid = Array.isArray(o && o.additionalInfoPaid ? o.additionalInfoPaid : null) ? o.additionalInfoPaid : [];
+      const itPaid = arrPaid.find(x => String(x?.key || '').trim().toLowerCase() === 'order_bumps');
+      if (itPaid && typeof itPaid.value !== 'undefined') return String(itPaid.value || '').trim();
+      const arr = Array.isArray(o && o.additionalInfo ? o.additionalInfo : null) ? o.additionalInfo : [];
+      const it = arr.find(x => String(x?.key || '').trim().toLowerCase() === 'order_bumps');
+      if (it && typeof it.value !== 'undefined') return String(it.value || '').trim();
+    } catch (_) {}
+    return '';
+  };
+  const hasLifetimeWarrantyFromBumpsStr = (bumpsStr) => {
+    try {
+      const s = String(bumpsStr || '').trim();
+      if (!s) return false;
+      const parts = s.split(';');
+      for (const raw of parts) {
+        const part = String(raw || '').trim();
+        if (!part) continue;
+        const segs = part.split(':');
+        const key = String(segs[0] || '').trim().toLowerCase();
+        const qtyRaw = segs.length > 1 ? String(segs[1] || '').trim() : '';
+        const qtyParsed = qtyRaw ? Number(qtyRaw) : 1;
+        const qty = Number.isFinite(qtyParsed) ? qtyParsed : 1;
+        if (!(qty > 0)) continue;
+        if (key === 'warranty_lifetime' || key === 'warranty_life') return true;
+      }
+    } catch (_) {}
+    return false;
+  };
+  const verifyLifetimeForRefilLink = async (linkRec) => {
+    try {
+      const linkedIds = new Set();
+      if (linkRec?.orderId) linkedIds.add(String(linkRec.orderId));
+      const arr = Array.isArray(linkRec?.orders) ? linkRec.orders : [];
+      for (const x of arr) { if (x) linkedIds.add(String(x)); }
+      if (!linkedIds.size) return false;
+      const { ObjectId } = require('mongodb');
+      const ids = [];
+      for (const x of linkedIds) {
+        const s = String(x || '').trim();
+        if (/^[0-9a-fA-F]{24}$/.test(s)) {
+          try { ids.push(new ObjectId(s)); } catch (_) {}
+        }
+      }
+      if (!ids.length) return false;
+      const col = await getCollection('checkout_orders');
+      const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } }] };
+      const orders = await col.find({ $and: [paidQuery, { _id: { $in: ids } }] }, { projection: { additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } }).toArray();
+      for (const o of (orders || [])) {
+        if (hasLifetimeWarrantyFromBumpsStr(extractOrderBumpsStr(o))) return true;
+      }
+    } catch (_) {}
+    return false;
+  };
   try {
     let isValid = false;
     if (token) {
@@ -2144,7 +2203,7 @@ app.get('/refil', async (req, res) => {
                 if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                     const nowMs = Date.now();
                     const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
-                    const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
+                    const isLifetime = await verifyLifetimeForRefilLink(linkRec);
                     let ok = false;
                     let shouldRenew = false;
                     if (isLifetime) {
@@ -2229,7 +2288,7 @@ app.get('/refil', async (req, res) => {
            if (linkRec && linkRec.id) {
              const nowMs = Date.now();
              const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
-             const isLifetime = String(linkRec.warrantyMode || '').toLowerCase() === 'life';
+             const isLifetime = await verifyLifetimeForRefilLink(linkRec);
              let ok = false;
              let shouldRenew = false;
              if (isLifetime) {
@@ -2314,7 +2373,7 @@ app.get('/refil', async (req, res) => {
         const tl = await getCollection('temporary_links');
         const linkRec = await tl.findOne({ id: slug }, { projection: { createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1, phone: 1, instauser: 1, instausers: 1, orderId: 1, orders: 1, order: 1 } });
         refilLinkRec = linkRec || null;
-        if (linkRec && String(linkRec.warrantyMode || '').toLowerCase() === 'life') {
+        if (linkRec && await verifyLifetimeForRefilLink(linkRec)) {
           refilIsLifetime = true;
         } else if (linkRec && linkRec.expiresAt) {
           const exp = new Date(linkRec.expiresAt).getTime();
@@ -2545,9 +2604,12 @@ app.get('/refil', async (req, res) => {
 
 // API: criar cobrança Cartão via Efí
 app.post('/api/efi/card-charge', async (req, res) => {
+    let correlationIDSafe = '';
+    let validatedValueCents = null;
+    const isSandboxEnv = process.env.EFI_SANDBOX === 'true';
     try {
         const { payment_token, installments, customer, billing_address, items, total_cents, additionalInfo, profile_is_private, comment, utms: reqUtms } = req.body;
-        const correlationIDSafe = (function () {
+        correlationIDSafe = (function () {
             try {
                 const c = String(req.body?.correlationID || '').trim();
                 if (c) return c;
@@ -2661,6 +2723,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
         if (validatedValue === null || validatedValue < 100) {
             return res.status(400).json({ error: 'invalid_amount', message: 'Valor inválido para cartão.' });
         }
+        validatedValueCents = validatedValue;
 
         const efiItems = [{
             name: sanitizeItemName(`${qtdSafe} ${tipoSafe}`),
@@ -2836,6 +2899,21 @@ app.post('/api/efi/card-charge', async (req, res) => {
         const errProp = String(errDescObj?.property || '').trim();
         const code = (typeof error?.code !== 'undefined') ? error.code : undefined;
         const status = (typeof error?.http_status !== 'undefined') ? error.http_status : undefined;
+        const codeStr = String(code ?? '').trim();
+        if (codeStr === '4600037') {
+            const cents = Number.isFinite(Number(validatedValueCents)) ? Number(validatedValueCents) : (Number.isFinite(Number(req.body?.total_cents)) ? Number(req.body.total_cents) : null);
+            const valueLabel = Number.isFinite(cents) ? ` (valor: R$ ${(cents / 100).toFixed(2).replace('.', ',')})` : '';
+            const envLabel = isSandboxEnv ? 'sandbox' : 'produção';
+            return res.status(400).json({
+                error: 'efi_operational_limit',
+                message: `O valor da cobrança${valueLabel} é superior ao limite operacional da conta Efí (${envLabel}). Aumente o limite no painel da Efí (no mesmo ambiente) ou use PIX.`,
+                code,
+                status,
+                correlationID: correlationIDSafe,
+                value_cents: Number.isFinite(cents) ? cents : undefined,
+                sandbox: isSandboxEnv
+            });
+        }
         if (String(error?.error || '') === 'validation_error') {
             if (errProp === '/payment/credit_card/customer/phone_number') {
                 const low = String(errMsg || '').toLowerCase();
@@ -3534,7 +3612,10 @@ async function processOrderFulfillment(record, col, req) {
                 );
                 if (lockUpdate.modifiedCount > 0) {
                     const axios = require('axios');
-                    const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
+                    const serviceIdRaw = String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90');
+                    const serviceIdNum = Number(serviceIdRaw);
+                    const serviceId = Number.isFinite(serviceIdNum) ? serviceIdNum : 90;
+                    const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: serviceIdRaw, link: String(commentsLink), quantity: String(commentsQty) });
                     try {
                         const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
                         const timeoutMs = 60000;
@@ -3559,12 +3640,14 @@ async function processOrderFulfillment(record, col, req) {
                             throw err;
                           }
                         }
-                        const dataComments = respComments.data || {};
-                        const orderIdComments = dataComments.order || dataComments.id || null;
-                        await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
+                        const dataComments = normalizeProviderResponseData(respComments.data);
+                        const orderIdComments = extractProviderOrderId(dataComments);
+                        const setObj = { 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataComments };
+                        if (orderIdComments) setObj['worldsmm_comments.orderId'] = orderIdComments;
+                        await col.updateOne(filter, { $set: setObj });
                     } catch (e4) {
                         try { console.error('❌ worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4), { link: commentsLink, quantity: commentsQty }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty } } });
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLink, quantity: commentsQty } } });
                     }
                 }
             }
@@ -5322,14 +5405,20 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
                 
                 if (!commentsLinkSel) {
-                  await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLinkSel, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
+                  const serviceIdRaw = String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90');
+                  const serviceIdNum = Number(serviceIdRaw);
+                  const serviceId = Number.isFinite(serviceIdNum) ? serviceIdNum : 90;
+                  await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: serviceId, link: commentsLinkSel, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
                 } else if (!alreadyComments) {
                   const lockUpdate = await col.updateOne(
                     { ...filter, $or: [{ 'worldsmm_comments.status': { $exists: false } }, { 'worldsmm_comments.status': { $in: ['error', 'unknown'] } }] },
                     { $set: { 'worldsmm_comments.status': 'processing', 'worldsmm_comments.requestedAt': new Date().toISOString() }, $unset: { 'worldsmm_comments.error': '' } }
                   );
                   if (lockUpdate.modifiedCount > 0) {
-                      const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: '90', link: String(commentsLinkSel), quantity: String(commentsQty) });
+                      const serviceIdRaw = String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90');
+                      const serviceIdNum = Number(serviceIdRaw);
+                      const serviceId = Number.isFinite(serviceIdNum) ? serviceIdNum : 90;
+                      const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: serviceIdRaw, link: String(commentsLinkSel), quantity: String(commentsQty) });
                       try {
                         const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
                         const timeoutMs = 60000;
@@ -5354,12 +5443,14 @@ app.post('/api/openpix/webhook', async (req, res) => {
                             throw err;
                           }
                         }
-                        const dataComments = respComments.data || {};
-                        const orderIdComments = dataComments.order || dataComments.id || null;
-                        await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdComments, 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLinkSel, quantity: commentsQty }, 'worldsmm_comments.response': dataComments } });
+                        const dataComments = normalizeProviderResponseData(respComments.data);
+                        const orderIdComments = extractProviderOrderId(dataComments);
+                        const setObj = { 'worldsmm_comments.status': orderIdComments ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLinkSel, quantity: commentsQty }, 'worldsmm_comments.response': dataComments };
+                        if (orderIdComments) setObj['worldsmm_comments.orderId'] = orderIdComments;
+                        await col.updateOne(filter, { $set: setObj });
                       } catch (e4) {
                         try { console.error('❌ worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4), { link: commentsLinkSel, quantity: commentsQty }); } catch(_) {}
-                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLinkSel, quantity: commentsQty } } });
+                        await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLinkSel, quantity: commentsQty } } });
                       }
                   }
                 }
@@ -6574,14 +6665,20 @@ app.post('/session/mark-paid', async (req, res) => {
           if ((process.env.WORLDSMM_API_KEY || '') && commentsQty > 0 && !alreadyComments) {
             if (!commentsLink) {
                try { console.warn('⚠️ [mark-paid] comments_link_invalid', { commentsLinkRaw }); } catch(_) {}
-               await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: 90, link: commentsLink, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
+               const serviceIdRaw = String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90');
+               const serviceIdNum = Number(serviceIdRaw);
+               const serviceId = Number.isFinite(serviceIdNum) ? serviceIdNum : 90;
+               await col.updateOne(filter, { $set: { worldsmm_comments: { error: 'invalid_link', requestPayload: { service: serviceId, link: commentsLink, quantity: commentsQty }, requestedAt: new Date().toISOString() } } });
             } else {
                const lockUpdate = await col.updateOne(
                   { ...filter, $or: [{ 'worldsmm_comments.status': { $exists: false } }, { 'worldsmm_comments.status': { $in: ['error', 'unknown'] } }] },
                   { $set: { 'worldsmm_comments.status': 'processing', 'worldsmm_comments.requestedAt': new Date().toISOString() }, $unset: { 'worldsmm_comments.error': '' } }
                );
                if (lockUpdate.modifiedCount > 0) {
-                  const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90'), link: String(commentsLink), quantity: String(commentsQty) });
+                  const serviceIdRaw = String(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90');
+                  const serviceIdNum = Number(serviceIdRaw);
+                  const serviceId = Number.isFinite(serviceIdNum) ? serviceIdNum : 90;
+                  const payloadComments = new URLSearchParams({ key: String(process.env.WORLDSMM_API_KEY), action: 'add', service: serviceIdRaw, link: String(commentsLink), quantity: String(commentsQty) });
                   try {
                     const worldsmmUrl = 'https://worldsmm.com.br/api/v2';
                     const timeoutMs = 60000;
@@ -6606,12 +6703,14 @@ app.post('/session/mark-paid', async (req, res) => {
                         throw err;
                       }
                     }
-                    const dataC = respC.data || {};
-                    const orderIdC = dataC.order || dataC.id || null;
-                    await col.updateOne(filter, { $set: { 'worldsmm_comments.orderId': orderIdC, 'worldsmm_comments.status': orderIdC ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataC } });
+                    const dataC = normalizeProviderResponseData(respC.data);
+                    const orderIdC = extractProviderOrderId(dataC);
+                    const setObj = { 'worldsmm_comments.status': orderIdC ? 'created' : 'unknown', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.response': dataC };
+                    if (orderIdC) setObj['worldsmm_comments.orderId'] = orderIdC;
+                    await col.updateOne(filter, { $set: setObj });
                   } catch (e4) {
                     try { console.error('❌ [mark-paid] worldsmm_comments_error', e4?.response?.data || e4?.message || String(e4)); } catch(_) {}
-                    await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: 90, link: commentsLink, quantity: commentsQty } } });
+                    await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLink, quantity: commentsQty } } });
                   }
                }
             }
@@ -7578,7 +7677,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           bumpQtyMap[key] = Number(bumpQtyMap[key] || 0) + qty;
         }
       }
-      if ((Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0) || (Number(bumpQtyMap['warranty30'] || 0) > 0) || (Number(bumpQtyMap['warranty'] || 0) > 0)) return { isLifetime: true, months: null, mode: 'life', days: null };
+      if ((Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0)) return { isLifetime: true, months: null, mode: 'life', days: null };
       return { isLifetime: false, months: 1, mode: '30', days: 30 };
     };
     const isEligibleRefilTipo = (tipoRaw) => {
@@ -7705,10 +7804,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return true;
     }).sort((a, b) => Number(b.lastPurchaseAtMs || 0) - Number(a.lastPurchaseAtMs || 0));
 
-    const mergeWarranty = (a, b) => {
+    const mergeWarranty = (a, b, allowLifetime) => {
       if (!a) return b;
       if (!b) return a;
-      if (a.isLifetime || b.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: a.expiresAt || b.expiresAt || null };
+      if (allowLifetime && (a.isLifetime || b.isLifetime)) return { isLifetime: true, daysLeft: null, expiresAt: a.expiresAt || b.expiresAt || null };
       const aDays = (typeof a.daysLeft === 'number') ? a.daysLeft : null;
       const bDays = (typeof b.daysLeft === 'number') ? b.daysLeft : null;
       if (aDays == null) return b;
@@ -7750,9 +7849,16 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (!best || !bestId) continue;
           const linkMode = String(d?.warrantyMode || '').trim().toLowerCase();
           const linkExpMs = safeDateMs(d?.expiresAt);
-          const computed = (linkMode === 'life' || linkExpMs >= safeDateMs('2099-01-01T00:00:00.000Z'))
+          const anyLifetime = (() => {
+            for (const oid of linked) {
+              const info = orderInfoById.get(String(oid));
+              if (info && info.eligible && info.warranty && info.warranty.isLifetime) return true;
+            }
+            return false;
+          })();
+          const computed = anyLifetime
             ? { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' }
-            : (linkExpMs
+            : (linkExpMs && linkMode !== 'life' && linkExpMs < safeDateMs('2099-01-01T00:00:00.000Z')
               ? (() => {
                 const ymd = brtYmdFromMs(linkExpMs);
                 const expDayNum = dayNumFromYmd(ymd.y, ymd.m, ymd.d);
@@ -7772,7 +7878,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             if (!orderIdSet.has(oid)) continue;
             const info = orderInfoById.get(String(oid));
             if (!info || !info.eligible) continue;
-            byOrder.set(oid, mergeWarranty(byOrder.get(oid), computed));
+            const allowLifetime = !!(info?.warranty?.isLifetime);
+            byOrder.set(oid, mergeWarranty(byOrder.get(oid), computed, allowLifetime));
           }
         }
         for (const r of allRows) {
@@ -7780,9 +7887,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (!oid) continue;
           const info = byOrder.get(oid);
           if (!info) continue;
+          const orderInfo = orderInfoById.get(oid);
+          const allowLifetime = !!(r.refilIsLifetime || (orderInfo && orderInfo.warranty && orderInfo.warranty.isLifetime));
           const merged = mergeWarranty(
             { isLifetime: !!r.refilIsLifetime, daysLeft: (typeof r.refilDaysLeft === 'number' ? r.refilDaysLeft : null), expiresAt: r.refilExpiresAt || null },
-            info
+            info,
+            allowLifetime
           );
           r.refilIsLifetime = !!merged.isLifetime;
           r.refilDaysLeft = (typeof merged.daysLeft === 'number') ? merged.daysLeft : null;
