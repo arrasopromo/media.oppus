@@ -41,6 +41,7 @@
 <body class="theme-light has-fixed-menu">
   <%- include('partials/menu') %>
   <script>window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);</script>
+  <!--
   <% if (typeof EFI_SCRIPT_URL !== 'undefined' && EFI_SCRIPT_URL) { %>
     <script type="text/javascript" src="<%= EFI_SCRIPT_URL %>" onerror="(function(){try{var fb='<%= (typeof EFI_SCRIPT_FALLBACK_URL!=='undefined'&&EFI_SCRIPT_FALLBACK_URL)?EFI_SCRIPT_FALLBACK_URL:'' %>';if(!fb)return;var s=document.createElement('script');s.type='text/javascript';s.async=true;s.src=fb;document.head.appendChild(s);}catch(_){}})();"></script>
   <% } %>
@@ -49,6 +50,10 @@
     window.EFI_SANDBOX = "<%= EFI_SANDBOX %>" === "true";
     window.EFI_SCRIPT_URL = "<%= EFI_SCRIPT_URL %>";
     window.EFI_SCRIPT_FALLBACK_URL = "<%= (typeof EFI_SCRIPT_FALLBACK_URL !== 'undefined' ? EFI_SCRIPT_FALLBACK_URL : '') %>";
+  </script>
+  -->
+  <script>
+    window.PAGARME_PUBLIC_KEY = "<%= PAGARME_PUBLIC_KEY %>";
   </script>
   <div class="container checkout-page">
     <header class="header">

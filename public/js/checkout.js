@@ -222,11 +222,8 @@
     const total = calculateTotalCents();
     const selector = document.getElementById('paymentMethodSelector');
     
-    // Check EFI Payee Code
-    const payeeCode = window.EFI_PAYEE_CODE;
-    const isPayeeCodeValid = payeeCode && payeeCode !== 'pl_change_me' && payeeCode.length > 5;
-
-    console.log('💳 updatePaymentMethodVisibility:', { total, isPayeeCodeValid, payeeCode });
+    const publicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+    const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8;
 
     if (selector) {
       // Exibir para pedidos acima de R$ 1,00 (100 centavos)
@@ -235,18 +232,17 @@
             selector.style.display = 'flex';
         }
         
-        // Show warning if Payee Code is invalid but we are showing the selector
-        let warningEl = document.getElementById('efi-config-warning');
-        if (!isPayeeCodeValid) {
+        let warningEl = document.getElementById('pagarme-config-warning');
+        if (!isPublicKeyValid) {
             if (!warningEl) {
                 warningEl = document.createElement('div');
-                warningEl.id = 'efi-config-warning';
+                warningEl.id = 'pagarme-config-warning';
                 warningEl.style.color = 'red';
                 warningEl.style.padding = '10px';
                 warningEl.style.background = '#fee2e2';
                 warningEl.style.borderRadius = '8px';
                 warningEl.style.marginTop = '10px';
-                warningEl.textContent = 'Configuração Efí incompleta: EFI_PAYEE_CODE inválido no .env. O pagamento com cartão pode falhar.';
+                warningEl.textContent = 'Configuração Pagar.me incompleta: PAGARME_PUBLIC_KEY inválida no .env. O pagamento com cartão pode falhar.';
                 selector.parentNode.insertBefore(warningEl, selector);
             }
         } else if (warningEl) {
@@ -3153,25 +3149,11 @@
         try { installmentsEl.value = installments; } catch (_) {}
       }
       
-      // 2. Tokenização Efí
-      let efiLib = getEfiCreditCardLib();
-      if (!efiLib) {
-        const ok = await ensureEfiPayLoaded();
-        efiLib = getEfiCreditCardLib();
-        if (!ok || !efiLib) {
-          throw new Error('Biblioteca de pagamento não carregada. Desative bloqueadores e recarregue a página.');
-        }
+      const pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+      if (!pagarmePublicKey) {
+        throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
       }
-      try {
-        const blocked = await efiLib.isScriptBlocked();
-        if (blocked) {
-          throw new Error('Bloqueador de scripts detectado. Desative o bloqueador e tente novamente.');
-        }
-      } catch (eBlocked) {
-        const msg = String(eBlocked?.message || '');
-        if (msg) throw eBlocked;
-      }
-      
+
       let expMonth, expYear;
       if (cardExpiry.includes('/')) {
           [expMonth, expYear] = cardExpiry.split('/');
@@ -3186,52 +3168,63 @@
       
       if (!expMonth || !expYear || expMonth > 12 || expMonth < 1) throw new Error('Data de validade inválida');
 
-      // Detect Brand (basic)
-      let brand = 'visa';
-      if (/^5[1-5]/.test(cardNum)) brand = 'mastercard';
-      else if (/^3[47]/.test(cardNum)) brand = 'amex';
-      else if (/^6011/.test(cardNum)) brand = 'discover';
-      else if (/^36/.test(cardNum)) brand = 'diners';
-      else if (/^606282|^3841/.test(cardNum)) brand = 'hipercard';
-      else if (/^50/.test(cardNum)) brand = 'elo';
-
       const cardHolderCpf = String(values.cardHolderCpf || '').replace(/\D/g, '');
       if (!/^\d{11}$/.test(cardHolderCpf)) throw new Error('CPF do titular inválido.');
 
-      const paymentToken = await (async () => {
-        const isSandbox = String(window.EFI_SANDBOX) === 'true';
-        const payeeCode = String(window.EFI_PAYEE_CODE || '').trim();
-        if (!payeeCode) {
-          throw new Error('Configuração de pagamento inválida (payee_code ausente).');
+      const cardToken = await (async () => {
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 20000) : null;
+        try {
+          const tokenUrl = `https://api.pagar.me/core/v5/tokens?appId=${encodeURIComponent(pagarmePublicKey)}`;
+          let tokenResp;
+          try {
+            tokenResp = await fetch(tokenUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                type: 'card',
+                card: {
+                  number: cardNum,
+                  holder_name: cardHolder,
+                  holder_document: cardHolderCpf,
+                  exp_month: Number(expMonth),
+                  exp_year: Number(expYear),
+                  cvv: cardCvv
+                }
+              }),
+              signal: ctrl ? ctrl.signal : undefined
+            });
+          } catch (e) {
+            const origin = (function () {
+              try { return String(window.location && window.location.origin || '').trim(); } catch (_) { return ''; }
+            })();
+            const msg = String(e && (e.message || e.name) || '').toLowerCase();
+            const isAbort = (e && e.name === 'AbortError') || msg.includes('abort');
+            if (isAbort) {
+              throw new Error('Tempo esgotado ao tokenizar o cartão. Verifique sua conexão e tente novamente.');
+            }
+            const originHint = origin ? `Domínio atual: ${origin}. Cadastre exatamente esse domínio no Pagar.me (CORS/Tokenização) e tente novamente.` : 'Cadastre o domínio do checkout no Pagar.me (CORS/Tokenização) e tente novamente.';
+            throw new Error(`Falha ao conectar com o Pagar.me para tokenizar o cartão (CORS/rede). ${originHint}`);
+          }
+          const tokenData = await tokenResp.json().catch(() => ({}));
+          if (!tokenResp.ok) {
+            const apiMsg =
+              (Array.isArray(tokenData?.errors) && tokenData.errors[0] && tokenData.errors[0].message ? String(tokenData.errors[0].message) : '') ||
+              String(tokenData?.message || tokenData?.error || '');
+            const trimmed = String(apiMsg || 'Erro ao tokenizar cartão.').trim();
+            if (trimmed.toLowerCase() === 'the request is invalid.') {
+              throw new Error('Tokenização recusada pelo Pagar.me. Cadastre o domínio do checkout na dashboard do Pagar.me e tente novamente.');
+            }
+            throw new Error(trimmed || 'Erro ao tokenizar cartão.');
+          }
+          const id = String(tokenData?.id || '').trim();
+          if (!id) throw new Error('Erro ao tokenizar cartão.');
+          return id;
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
         }
-        if (!efiLib || typeof efiLib.setAccount !== 'function' || typeof efiLib.setCreditCardData !== 'function') {
-          throw new Error('Biblioteca de pagamento inválida.');
-        }
-
-        const tokenPromise = (async () => {
-          const result = await efiLib
-            .setAccount(payeeCode)
-            .setEnvironment(isSandbox ? 'sandbox' : 'production')
-            .setCreditCardData({
-              brand: brand,
-              number: cardNum,
-              cvv: cardCvv,
-              expirationMonth: expMonth,
-              expirationYear: expYear,
-              holderName: cardHolder,
-              holderDocument: cardHolderCpf,
-              reuse: false
-            })
-            .getPaymentToken();
-
-          const token = result && (result.payment_token || result.paymentToken || result.token);
-          if (!token) throw new Error('Erro ao gerar token do cartão');
-          return String(token);
-        })();
-
-        const timeoutMs = 15000;
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Tempo esgotado ao gerar token do cartão. Tente novamente.')), timeoutMs));
-        return await Promise.race([tokenPromise, timeoutPromise]);
       })();
 
       // 3. Preparar Payload
@@ -3307,7 +3300,7 @@
       if (phoneValue) customerPayload.phone_number = phoneValue;
       const payload = {
         correlationID,
-        payment_token: paymentToken,
+        card_token: cardToken,
         installments: Number(installments) || 1,
         total_cents: totalCents,
         items: [
@@ -3382,7 +3375,25 @@
         const selResp = await fetchRetry('/api/instagram/selected-for', { headers: { 'Accept': 'application/json' } }, 3);
         const selData = await selResp.json();
         const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
-        const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
+        const normalizeIgShortcode = function (sc) {
+          const v = String(sc || '').trim();
+          if (!v) return '';
+          const m = v.match(/^[A-Za-z0-9_-]+/);
+          const code = m ? String(m[0] || '') : '';
+          if (!code) return '';
+          return code.length > 15 ? code.slice(0, 11) : code;
+        };
+        const buildIgMediaLink = function (k, sc) {
+          const code = normalizeIgShortcode(sc);
+          if (!code) return '';
+          const kindPath = (k === 'views') ? 'reel' : 'p';
+          return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+        };
+        const mapKind = function (k) {
+          const obj = sfor && sfor[k];
+          const sc = obj && obj.shortcode;
+          return sc ? buildIgMediaLink(k, sc) : '';
+        };
         const likesLink = mapKind('likes');
         const viewsLink = mapKind('views');
         const commentsLink = mapKind('comments');
@@ -3408,7 +3419,7 @@
               const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
               const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
               const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
-              if (pick && pick.shortcode) link = `https://instagram.com/p/${encodeURIComponent(pick.shortcode)}/`;
+              if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
             } catch (_) {}
           }
           if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
@@ -3426,7 +3437,7 @@
         const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
         const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
         try {
-          resp = await fetch('/api/efi/card-charge', {
+          resp = await fetch('/api/pagarme/card-charge', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -3446,24 +3457,25 @@
 
       const data = await resp.json();
       if (!resp.ok) {
-        const codeStr = String(data?.code ?? '').trim();
-        const errId = String(data?.error || '').trim();
-        const msgLow = String(data?.message || '').toLowerCase();
-        if (codeStr === '4600037' || errId === 'efi_operational_limit' || msgLow.includes('limite operacional')) {
-          const cents = Number(data?.value_cents);
-          const valueLabel = Number.isFinite(cents) ? ` Valor: ${formatCentsToBRL(cents)}.` : '';
-          const envLabel = (data?.sandbox === true) ? 'sandbox' : ((data?.sandbox === false) ? 'produção' : '');
-          const envSuffix = envLabel ? ` Ambiente: ${envLabel}.` : '';
-          alert(`Cartão indisponível: valor acima do limite operacional da conta Efí.${valueLabel}${envSuffix} Use PIX ou aumente o limite na Efí.`);
-          try { selectPaymentMethod('pix'); } catch (_) {}
-          return;
-        }
         throw new Error(data?.message || data?.error || 'Falha ao processar pagamento');
       }
 
-      // Sucesso
+      const paid = data?.paid === true || data?.success === true;
+      const identifierServer = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+      const correlationIDServer = String(data?.correlationID || correlationID || '').trim();
+
+      if (!paid) {
+        const txStatus = String(data?.pagarme?.transaction_status || data?.pagarme?.charge_status || data?.pagarme?.order_status || '').trim();
+        const idLabel = identifierServer ? ` Pedido: ${identifierServer}.` : '';
+        throw new Error((data?.message && String(data.message).trim()) || (`Pagamento não confirmado no Pagar.me${txStatus ? ` (${txStatus})` : ''}.${idLabel}`));
+      }
+
       alert('Pagamento realizado com sucesso!');
-      window.location.href = '/pedido';
+      if (typeof navigateToPedidoOrFallback === 'function') {
+        await navigateToPedidoOrFallback(identifierServer || identifier || '', correlationIDServer);
+      } else {
+        window.location.href = '/pedido';
+      }
 
     } catch (err) {
       console.error(err);

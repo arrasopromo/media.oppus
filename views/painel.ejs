@@ -2118,34 +2118,40 @@
     const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
     var unknownModalScrollY = 0;
 
+    function setUnknownModalScrollLock(locked) {
+      try { document.body.style.overflow = locked ? 'hidden' : ''; } catch(_) {}
+      try { document.documentElement.style.overflow = locked ? 'hidden' : ''; } catch(_) {}
+    }
+
     function openUnknownOrderModal(orderId, defaultProvider, lockProvider) {
       currentUnknownOrderId = orderId;
       const modal = document.getElementById('unknownOrderModal');
       const providerEl = document.getElementById('unknownModalProvider');
       const orderIdEl = document.getElementById('unknownModalOrderId');
       unknownModalScrollY = (typeof window.scrollY === 'number') ? window.scrollY : (document.documentElement ? document.documentElement.scrollTop : 0);
+      if (!modal) {
+        setUnknownModalScrollLock(false);
+        return;
+      }
       if (providerEl && defaultProvider) providerEl.value = defaultProvider;
       if (providerEl) providerEl.disabled = (String(lockProvider || '') === '1');
       if (orderIdEl) orderIdEl.value = '';
-      if (modal) {
-        try { modal.classList.add('is-open'); } catch(_) {}
-        try {
-          modal.style.position = 'fixed';
-          modal.style.top = '0';
-          modal.style.left = '0';
-          modal.style.right = '0';
-          modal.style.bottom = '0';
-          modal.style.width = '100%';
-          modal.style.height = '100%';
-          modal.style.alignItems = 'flex-start';
-          modal.style.justifyContent = 'center';
-          modal.style.display = 'flex';
-          modal.style.zIndex = '2147483647';
-          modal.style.overflowY = 'auto';
-        } catch (_) {}
-      }
-      try { document.body.style.overflow = 'hidden'; } catch(_) {}
-      try { document.documentElement.style.overflow = 'hidden'; } catch(_) {}
+      try { modal.classList.add('is-open'); } catch(_) {}
+      try {
+        modal.style.position = 'fixed';
+        modal.style.top = '0';
+        modal.style.left = '0';
+        modal.style.right = '0';
+        modal.style.bottom = '0';
+        modal.style.width = '100%';
+        modal.style.height = '100%';
+        modal.style.alignItems = 'flex-start';
+        modal.style.justifyContent = 'center';
+        modal.style.display = 'flex';
+        modal.style.zIndex = '2147483647';
+        modal.style.overflowY = 'auto';
+      } catch (_) {}
+      setUnknownModalScrollLock(true);
       if (orderIdEl) {
         try { orderIdEl.focus({ preventScroll: true }); } catch(_) { try { orderIdEl.focus(); } catch(_) {} }
       }
@@ -2155,13 +2161,26 @@
       const modal = document.getElementById('unknownOrderModal');
       if (modal) {
         try { modal.classList.remove('is-open'); } catch(_) {}
-        modal.style.display = 'none';
+        try {
+          modal.style.display = 'none';
+          modal.style.position = '';
+          modal.style.top = '';
+          modal.style.left = '';
+          modal.style.right = '';
+          modal.style.bottom = '';
+          modal.style.width = '';
+          modal.style.height = '';
+          modal.style.alignItems = '';
+          modal.style.justifyContent = '';
+          modal.style.zIndex = '';
+          modal.style.overflowY = '';
+        } catch(_) {}
       }
       const providerEl = document.getElementById('unknownModalProvider');
       if (providerEl) providerEl.disabled = false;
       currentUnknownOrderId = null;
-      try { document.body.style.overflow = ''; } catch(_) {}
-      try { document.documentElement.style.overflow = ''; } catch(_) {}
+      setUnknownModalScrollLock(false);
+      try { window.scrollTo(0, unknownModalScrollY || 0); } catch(_) {}
     }
 
     async function saveUnknownOrderInfo() {
@@ -2292,6 +2311,7 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+      try { setUnknownModalScrollLock(false); } catch(_) {}
       try {
         const modal = document.getElementById('unknownOrderModal');
         if (modal) {
@@ -2317,6 +2337,27 @@
           try { ev.preventDefault(); } catch (_) {}
           openUnknownOrderModal(id, dp, lp);
         }, true);
+      } catch (_) {}
+
+      try {
+        const modal = document.getElementById('unknownOrderModal');
+        if (modal) {
+          modal.addEventListener('click', function (ev) {
+            const t = ev && ev.target ? ev.target : null;
+            if (t && t.id === 'unknownOrderModal') closeUnknownOrderModal();
+          });
+        }
+      } catch (_) {}
+
+      try {
+        document.addEventListener('keydown', function (ev) {
+          const key = ev && (ev.key || ev.code) ? String(ev.key || ev.code) : '';
+          if (key !== 'Escape') return;
+          const modal = document.getElementById('unknownOrderModal');
+          if (!modal) return;
+          const isOpen = (modal.classList && modal.classList.contains('is-open')) || (String(modal.style.display || '') === 'flex');
+          if (isOpen) closeUnknownOrderModal();
+        });
       } catch (_) {}
 
       try {

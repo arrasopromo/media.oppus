@@ -42,6 +42,39 @@
     
     <p>Exibindo pedidos gerados há mais de 15 minutos que não foram pagos.</p>
 
+    <%
+      const baseUrl = '/painel/recuperacao';
+      const sumReais = (Number(sumCents || 0) / 100);
+    %>
+    <div class="filters" style="margin: 12px 0 14px;">
+      <a href="<%= baseUrl %>?period=all" class="<%= period === 'all' ? 'active' : '' %>">Todos</a>
+      <a href="<%= baseUrl %>?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="<%= baseUrl %>?period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+      <a href="<%= baseUrl %>?period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+      <a href="<%= baseUrl %>?period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      <a href="<%= baseUrl %>?period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
+    </div>
+
+    <div class="panel-filterbar" style="margin-bottom: 14px;">
+      <strong>Filtrar por data:</strong>
+      <input type="date" id="startDate" value="<%= startDate || '' %>" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+      <span>até</span>
+      <input type="date" id="endDate" value="<%= endDate || '' %>" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+      <button onclick="applyCustomFilter()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin: 10px 0 8px;">
+      <div style="flex:0 0 auto; min-width: 190px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Pedidos (lista)</div>
+        <div style="font-size: 1.15rem; font-weight: 700; color:#111827;"><%= Array.isArray(orders) ? orders.length : 0 %></div>
+      </div>
+      <div style="flex:0 0 auto; min-width: 240px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Soma no período (não pagos)</div>
+        <div style="font-size: 1.15rem; font-weight: 700; color:#111827;">R$ <%= sumReais.toFixed(2).replace('.', ',') %></div>
+      </div>
+    </div>
+
     <div class="panel-table-scroll">
         <table>
           <thead>
@@ -173,6 +206,17 @@
         const iu = String(btn.getAttribute('data-iu') || '').replace(/^@/, '').trim();
         copyTextToClipboard(iu).catch(function(){});
     });
+
+    function applyCustomFilter() {
+        const baseUrl = '/painel/recuperacao';
+        const startDate = String(document.getElementById('startDate')?.value || '').trim();
+        const endDate = String(document.getElementById('endDate')?.value || '').trim();
+        const params = new URLSearchParams();
+        params.set('period', 'custom');
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        window.location.href = baseUrl + '?' + params.toString();
+    }
 
     async function checkStatus(btn, id) {
         const originalText = btn.innerText;
