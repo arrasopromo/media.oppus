@@ -17,6 +17,73 @@ document.addEventListener('DOMContentLoaded', function() {
   // Coupon State
   window.couponCode = '';
   window.couponDiscount = 0;
+  (function(){
+    function getUrlCoupon(){
+      try {
+        const p = new URLSearchParams(window.location.search);
+        let code = String(p.get('cupom') || p.get('coupon') || '').trim();
+        if (!code) {
+          const m = String(window.location.pathname || '').match(/\/cupom=([^\/]+)/i);
+          if (m && m[1]) code = decodeURIComponent(m[1]);
+        }
+        return String(code || '').trim().toUpperCase();
+      } catch(_) { return ''; }
+    }
+    const pre = getUrlCoupon();
+    if (pre) {
+      try { sessionStorage.setItem('oppus_coupon_code', pre); } catch(_) {}
+      const input = document.getElementById('couponInput');
+      const msg = document.getElementById('couponMessage');
+      if (input) input.value = pre;
+      const applyNow = function(){
+        const usernameEl = document.getElementById('usernameCheckoutInput');
+        const instagram_username = usernameEl ? usernameEl.value.trim().replace(/^@+/, '') : '';
+        fetch('/api/validate-coupon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: pre, instagram_username })
+        })
+        .then(function(res){ return res.json(); })
+        .then(function(data){
+          if (data && data.valid) {
+            window.couponCode = data.code;
+            window.couponDiscount = data.discount || 0;
+            if (msg) {
+              const percent = Math.round((Number(data.discount||0)) * 100);
+              msg.textContent = 'Cupom aplicado! (' + percent + '% OFF)';
+              msg.style.color = '#22c55e';
+              msg.style.display = 'block';
+            }
+            if (input) input.disabled = true;
+            if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          } else {
+            window.couponCode = '';
+            window.couponDiscount = 0;
+            if (msg) {
+              msg.textContent = (data && data.error) ? data.error : 'Cupom inválido.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+            }
+            if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          }
+        }).catch(function(){});
+      };
+      const ue = document.getElementById('usernameCheckoutInput');
+      if (ue && ue.value && ue.value.trim()) {
+        applyNow();
+      } else if (ue) {
+        let done = false;
+        ue.addEventListener('change', function(){
+          if (!done && ue.value && ue.value.trim()) { done = true; applyNow(); }
+        });
+        ue.addEventListener('blur', function(){
+          if (!done && ue.value && ue.value.trim()) { done = true; applyNow(); }
+        });
+      } else {
+        applyNow();
+      }
+    }
+  })();
 
   const applyCouponBtn = document.getElementById('applyCouponBtn');
   if (applyCouponBtn) {

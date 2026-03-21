@@ -447,6 +447,7 @@
 
   const tabela = {
     mistos: [
+      { q: 50, p: 'R$ 0,01' },
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
       { q: 500, p: 'R$ 16,90' },
@@ -907,6 +908,29 @@
   }
 
   function getTipoDescription(tipo) {
+    const category = getServiceCategory();
+    if (category === 'curtidas') {
+      switch (tipo) {
+        case 'mistos':
+          return `
+            <p>Curtidas mistas com entrega rápida e estável, vindas também de perfis internacionais.</p>
+            <ul>
+              <li>100% seguro e confidencial, sem precisar da sua senha.</li>
+              <li>Curtidas variadas para aumentar a prova social do post.</li>
+            </ul>
+          `;
+        case 'organicos':
+          return `
+            <p>Curtidas brasileiras para reforçar credibilidade e engajamento nacional.</p>
+            <ul>
+              <li>100% seguro e confidencial, sem precisar da sua senha.</li>
+              <li>Foco em perfis brasileiros.</li>
+            </ul>
+          `;
+        default:
+          return '';
+      }
+    }
     switch (tipo) {
       case 'mistos':
         return `

@@ -42,16 +42,21 @@
     .unknown-table td small { display: block; color: #666; margin-top: 2px; }
     .unknown-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .unknown-actions a, .unknown-actions button { font-size: 0.85rem; }
-    .unknown-btn { padding: 6px 10px; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    .unknown-btn { padding: 3px 8px; background: #007bff; color: #fff; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; line-height: 1.15; font-size: 0.82rem; }
     .unknown-link { color: #007bff; text-decoration: underline; }
     .unknown-table th, .unknown-table td { vertical-align: top; }
     .unknown-table td { overflow-wrap: anywhere; word-break: break-word; }
-    .unknown-table th:first-child, .unknown-table td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; border-right: 1px solid #eee; }
-    .unknown-table th:first-child { z-index: 2; background: #f9f9f9; }
-    .unknown-table th:nth-child(2), .unknown-table td:nth-child(2) { position: sticky; left: 44px; background: #fff; z-index: 1; border-right: 1px solid #eee; }
-    .unknown-table th:nth-child(2) { z-index: 2; background: #f9f9f9; }
+    .unknown-table th:first-child, .unknown-table td:first-child { background: #fff; border-right: 1px solid #eee; }
+    .unknown-table th:first-child { background: #f9f9f9; }
+    .unknown-table th:nth-child(2), .unknown-table td:nth-child(2) { background: #fff; border-right: 1px solid #eee; }
+    .unknown-table th:nth-child(2) { background: #f9f9f9; }
     .unknown-table th:nth-child(4), .unknown-table td:nth-child(4) { text-align: right; }
     .unknown-table th:last-child, .unknown-table td:last-child { text-align: center; }
+    .unknown-table th:last-child, .unknown-table td:last-child { background: #fff; border-left: 1px solid #eee; }
+    .unknown-table th:last-child { background: #f9f9f9; }
+    .unknown-btn[data-order-id] { position: relative; z-index: 1; pointer-events: auto; }
+    .unknown-order-modal { display:none; position:fixed !important; top:0 !important; left:0 !important; right:0 !important; bottom:0 !important; width:100% !important; height:100% !important; background:rgba(0,0,0,0.5); z-index:2147483647 !important; justify-content:center; overflow-y:auto; padding: 20px 12px; }
+    .unknown-order-modal.is-open { display:flex; }
     .unknown-badge { display:inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
     .unknown-badge--private { background: #111827; color: #ffffff; }
     .unknown-badge--lifetime { background: #7c3aed; color: #ffffff; }
@@ -89,18 +94,22 @@
   <% const isUnknownOrderIdView = (typeof view !== 'undefined' && view === 'unknown_orderid'); %>
   <% const isCouponsView = (typeof view !== 'undefined' && view === 'coupons'); %>
   <% const isFollowersMgmtView = (typeof view !== 'undefined' && view === 'gerenciamento_seguidores'); %>
-  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : 'dashboard'))}) %>
+  <% const isWhatsappSalesView = (typeof view !== 'undefined' && view === 'vendas_whatsapp'); %>
+  <% const isLtvView = (typeof view !== 'undefined' && view === 'ltv'); %>
+  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : 'dashboard'))))}) %>
   <div class="main-content">
   <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
     <div class="panel-header">
-        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isCouponsView ? 'Cupons' : 'Painel de Gerenciamento de Custos') %></h1>
-        <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
+        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : 'Painel de Gerenciamento de Custos'))) %></h1>
+        <% if (!isLtvView) { %>
+          <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
+        <% } %>
     </div>
     
-    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isCouponsView ? '/painel?view=coupons' : '/painel'); %>
-    <% const sep = (isUnknownOrderIdView || isCouponsView) ? '&' : '?'; %>
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : '/painel')); %>
+    <% const sep = (isUnknownOrderIdView || isLtvView || isCouponsView) ? '&' : '?'; %>
 
-    <% if (!isCouponsView && !isFollowersMgmtView) { %>
+    <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView) { %>
     <div class="filters">
       <a href="<%= baseUrl + sep %>period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
       <a href="<%= baseUrl + sep %>period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
@@ -206,12 +215,248 @@
     </script>
     <% } %>
 
+    <% if (isWhatsappSalesView) { %>
+      <div style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; background:#fff; margin-top: 16px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size:0.95rem; color:#111827;">Venda WhatsApp (registrar como pago)</strong>
+          <div id="wppSaleMsg" style="font-size:0.9rem; color:#555;"></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap: wrap; margin-top: 10px;">
+          <input id="wppSalePhone" type="tel" placeholder="Telefone (DDD)" style="width:170px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+          <input id="wppSaleUser" type="text" placeholder="@perfil" style="width:170px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+          <select id="wppSaleTipo" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+            <option value="seguidores_mistos">Seguidores Mistos</option>
+            <option value="seguidores_brasileiros">Seguidores Brasileiros</option>
+            <option value="seguidores_organicos">Seguidores Orgânicos</option>
+          </select>
+          <input id="wppSaleQty" type="number" min="1" placeholder="Qtd" style="width:110px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+          <input id="wppSaleValue" type="number" step="0.01" min="0" placeholder="Valor (opcional)" style="width:140px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+          <button type="button" id="wppSaleSaveBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Registrar</button>
+        </div>
+      </div>
+
+      <div style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; background:#fff; margin-top: 12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size:0.95rem; color:#111827;">Filtro de compra</strong>
+          <div id="wppPurchaseMsg" style="font-size:0.9rem; color:#555;"></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap: wrap; margin-top: 10px; align-items:center;">
+          <input id="wppPurchaseFilter" type="text" placeholder="OrderID / Identifier / Telefone / @perfil" style="width:280px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+          <button type="button" id="wppSalesApplyFilterBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Filtrar lista</button>
+          <button type="button" id="wppPurchaseCheckBtn" style="padding: 6px 12px; background: #7c3aed; color: white; border: none; border-radius: 4px; cursor: pointer;">Ver atual</button>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+            <input id="wppPurchaseForce" type="checkbox" />
+            <span>Forçar</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="dashboard-table-wrap panel-table-scroll" style="margin-top: 12px;">
+        <table class="dashboard-table" style="min-width: 980px; font-size: 0.92rem;">
+          <thead>
+            <tr>
+              <th>Data (SP)</th>
+              <th>Telefone</th>
+              <th>Usuário</th>
+              <th>Tipo</th>
+              <th style="text-align:right;">Qtd</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="wppSalesTbody">
+            <tr><td colspan="6" style="padding:10px; color:#777; text-align:center;">Carregando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <script>
+        (function(){
+          function el(id){ return document.getElementById(id); }
+          function setWppMsg(text, isErr){
+            var m = el('wppSaleMsg');
+            if (!m) return;
+            m.textContent = String(text || '');
+            m.style.color = isErr ? '#dc2626' : '#16a34a';
+          }
+          function setPurchaseMsg(text, isErr){
+            var m = el('wppPurchaseMsg');
+            if (!m) return;
+            m.textContent = String(text || '');
+            m.style.color = isErr ? '#dc2626' : '#16a34a';
+          }
+          function fmtSpMs(ms){
+            try {
+              var t = Number(ms || 0);
+              if (!t) return '-';
+              var d = new Date(t - 3 * 60 * 60 * 1000);
+              var dd = String(d.getUTCDate()).padStart(2,'0');
+              var mm = String(d.getUTCMonth()+1).padStart(2,'0');
+              var yyyy = String(d.getUTCFullYear());
+              var hh = String(d.getUTCHours()).padStart(2,'0');
+              var mn = String(d.getUTCMinutes()).padStart(2,'0');
+              return dd + '/' + mm + '/' + yyyy + ' ' + hh + ':' + mn;
+            } catch(_) { return '-'; }
+          }
+          function fmtSpIso(iso){
+            try {
+              if (!iso) return '-';
+              var t = new Date(String(iso)).getTime();
+              return fmtSpMs(t);
+            } catch(_) { return '-'; }
+          }
+          function pickInfo(o, key){
+            try {
+              if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+              var arr = (o && Array.isArray(o.additionalInfoPaid)) ? o.additionalInfoPaid : [];
+              var it = arr.find(function(x){ return x && x.key === key; });
+              if (it && typeof it.value !== 'undefined') return it.value;
+            } catch(_) {}
+            return '';
+          }
+          async function loadWppSales(){
+            var tb = document.getElementById('wppSalesTbody');
+            if (!tb) return;
+            var purchaseVal = '';
+            try { purchaseVal = String((el('wppPurchaseFilter') && el('wppPurchaseFilter').value) || '').trim(); } catch(_) {}
+            try {
+              var url = '/api/painel/whatsapp-sales?limit=30';
+              if (purchaseVal) url += '&purchase=' + encodeURIComponent(purchaseVal);
+              var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+              var data = await resp.json();
+              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+              var list = Array.isArray(data.sales) ? data.sales : [];
+              if (!list.length) {
+                tb.innerHTML = '<tr><td colspan="6" style="padding:10px; color:#777; text-align:center;">Nenhuma venda WhatsApp</td></tr>';
+                return;
+              }
+              tb.innerHTML = '';
+              list.forEach(function(o){
+                var dateStr = (o && o.woovi && o.woovi.paidAt) ? o.woovi.paidAt : (o && (o.paidAt || o.createdAt));
+                var ms = dateStr ? new Date(dateStr).getTime() : 0;
+                var phone = '';
+                try {
+                  phone = (o && o.customer && o.customer.phone) ? String(o.customer.phone) : '';
+                  if (!phone) phone = String(pickInfo(o, 'phone') || '');
+                } catch(_) {}
+                var user = String(pickInfo(o, 'instagram_username') || o.instagramUsername || o.instauser || '');
+                var tipo = String(pickInfo(o, 'tipo_servico') || o.tipoServico || o.tipo || '');
+                var qtd = Number(o.quantidade || o.qtd || pickInfo(o, 'quantidade') || 0) || 0;
+                var st = String(o.status || (o && o.woovi && o.woovi.status) || '').trim() || '-';
+                var tr = document.createElement('tr');
+                tr.innerHTML = `
+                  <td style="white-space:nowrap;">${fmtSpMs(ms)}</td>
+                  <td style="white-space:nowrap;">${String(phone || '-')}</td>
+                  <td style="white-space:nowrap;">${user ? ('@' + String(user).replace(/^@+/, '')) : '-'}</td>
+                  <td style="white-space:nowrap;">${String(tipo || '-')}</td>
+                  <td style="text-align:right;">${qtd ? String(qtd) : '-'}</td>
+                  <td style="white-space:nowrap;">${String(st || '-')}</td>
+                `;
+                tb.appendChild(tr);
+              });
+            } catch (e) {
+              tb.innerHTML = '<tr><td colspan="6" style="padding:10px; color:#dc3545; text-align:center;">Erro ao carregar vendas WhatsApp</td></tr>';
+            }
+          }
+
+          var applyBtn = el('wppSalesApplyFilterBtn');
+          if (applyBtn) applyBtn.addEventListener('click', function(){ loadWppSales().catch(function(){}); });
+
+          var checkBtn = el('wppPurchaseCheckBtn');
+          if (checkBtn) {
+            checkBtn.addEventListener('click', async function(){
+              try {
+                var purchaseEl = el('wppPurchaseFilter');
+                var forceEl = el('wppPurchaseForce');
+                var purchase = purchaseEl ? String(purchaseEl.value || '').trim() : '';
+                var force = forceEl && forceEl.checked ? '1' : '0';
+                if (!purchase) { setPurchaseMsg('Informe um filtro de compra.', true); return; }
+                checkBtn.disabled = true;
+                setPurchaseMsg('Consultando…', false);
+                var url = '/api/painel/whatsapp-sales/followers-current?purchase=' + encodeURIComponent(purchase) + '&force=' + encodeURIComponent(force);
+                var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                var u = data.username ? ('@' + String(data.username).replace(/^@+/, '')) : '-';
+                var f = (typeof data.followersCount === 'number') ? String(data.followersCount) : '-';
+                var chk = data.checkedAt ? fmtSpIso(data.checkedAt) : '-';
+                setPurchaseMsg(u + ': ' + f + ' (checado em ' + chk + ')', false);
+              } catch (e) {
+                setPurchaseMsg('Erro ao consultar.', true);
+                alert('Erro ao consultar atual: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { checkBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          var wppBtn = el('wppSaleSaveBtn');
+          if (wppBtn) {
+            wppBtn.addEventListener('click', async function(){
+              try {
+                var phoneEl = el('wppSalePhone');
+                var userEl = el('wppSaleUser');
+                var tipoEl = el('wppSaleTipo');
+                var qtyEl = el('wppSaleQty');
+                var valEl = el('wppSaleValue');
+                var phone = phoneEl ? String(phoneEl.value || '').trim() : '';
+                var username = userEl ? String(userEl.value || '').trim() : '';
+                var tipo = tipoEl ? String(tipoEl.value || '').trim() : '';
+                var quantidade = qtyEl ? (Number(qtyEl.value || 0) || 0) : 0;
+                var value = valEl ? (Number(valEl.value || 0) || 0) : 0;
+                if (!phone || phone.replace(/\D/g,'').length < 10) { setWppMsg('Telefone inválido.', true); return; }
+                if (!username) { setWppMsg('Perfil inválido.', true); return; }
+                if (!tipo) { setWppMsg('Tipo inválido.', true); return; }
+                if (!quantidade || quantidade <= 0) { setWppMsg('Quantidade inválida.', true); return; }
+
+                wppBtn.disabled = true;
+                setWppMsg('Registrando…', false);
+                var resp = await fetch('/api/painel/whatsapp-sales', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ phone: phone, username: username, tipo: tipo, quantidade: quantidade, value: value })
+                });
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                if (qtyEl) qtyEl.value = '';
+                if (valEl) valEl.value = '';
+                setWppMsg('Venda registrada como paga.', false);
+                await loadWppSales();
+              } catch (e) {
+                setWppMsg('Erro ao registrar.', true);
+                alert('Erro ao registrar venda WhatsApp: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { wppBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          loadWppSales().catch(function(){});
+        })();
+      </script>
+    <% } %>
+
     <% if (isFollowersMgmtView) { %>
       <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
           <button type="button" id="followersRefreshAllBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Atualizar todos</button>
           <button type="button" id="followersTestOldBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Testar 10 antigas</button>
           <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
+            <strong style="font-size:0.9rem; color:#111827;">Verificação</strong>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Hoje:</span>
+              <input id="followersDailyLimit" type="number" min="1" max="1000" value="<%= (typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings && followersMgmtSettings.dailyLimit) ? String(followersMgmtSettings.dailyLimit) : '50' %>" style="width:90px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Ordem:</span>
+              <select id="followersDailyOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="newest" <%= (!(typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings) || String(followersMgmtSettings.order || 'newest') === 'newest') ? 'selected' : '' %>>Mais novos</option>
+                <option value="oldest" <%= (typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings && String(followersMgmtSettings.order || '') === 'oldest') ? 'selected' : '' %>>Mais velhos</option>
+              </select>
+            </label>
+            <button type="button" id="followersSaveCfgBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Salvar config</button>
+            <button type="button" id="followersRunTodayBtn" style="padding: 6px 12px; background: #7c3aed; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar hoje</button>
+          </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <select id="followersSearchType" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
               <option value="username" <%= (!filters || !filters.qType || String(filters.qType) === 'username') ? 'selected' : '' %>>Usuário</option>
@@ -389,6 +634,7 @@
           function el(id){ return document.getElementById(id); }
           function setStatus(t){ var s = el('followersStatus'); if (s) s.textContent = t || ''; }
           function toNum(v){ var n = Number(v); return Number.isFinite(n) ? n : null; }
+          function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
           function fmtBr(iso){
             try {
               if (!iso) return '-';
@@ -415,10 +661,15 @@
             for (var i=0;i<btns.length;i++){ try { btns[i].disabled = true; } catch(_) {} }
 
             try {
-              var url = '/api/painel/gerenciamento-seguidores/current?username=' + encodeURIComponent(username) + '&force=' + (force ? '1' : '0');
-              var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
-              var data = await resp.json();
-              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+              var data = null;
+              for (var attempt = 1; attempt <= 3; attempt++) {
+                var url = '/api/painel/gerenciamento-seguidores/current?username=' + encodeURIComponent(username) + '&force=' + (force ? '1' : '0');
+                var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                data = await resp.json().catch(function(){ return null; });
+                if (data && data.ok) break;
+                if (attempt < 3) await sleep(900 * attempt);
+              }
+              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : 'request_failed');
 
               var current = (typeof data.followersCount === 'number') ? data.followersCount : null;
               var resultadoRaw = tr.getAttribute('data-resultado');
@@ -476,6 +727,7 @@
                 for (var i=0;i<rows.length;i++){
                   setStatus('Atualizando ' + (i+1) + ' de ' + rows.length + '…');
                   await refreshRow(rows[i], false);
+                  await sleep(1500 + Math.floor(Math.random() * 450));
                 }
                 setStatus('Atualização concluída.');
               } catch (e) {
@@ -518,6 +770,85 @@
                 alert('Erro ao testar 10 antigas: ' + (e && e.message ? e.message : e));
               } finally {
                 testOldBtn.disabled = false;
+              }
+            });
+          }
+
+          function parseDailyLimit(){
+            try {
+              var x = el('followersDailyLimit');
+              var v = x ? String(x.value || '').trim() : '';
+              var n = parseInt(v, 10);
+              if (!isFinite(n) || n <= 0) return 50;
+              if (n > 1000) n = 1000;
+              return n;
+            } catch (_) {
+              return 50;
+            }
+          }
+
+          function getDailyOrder(){
+            try {
+              var x = el('followersDailyOrder');
+              var v = x ? String(x.value || '').trim().toLowerCase() : '';
+              return v === 'oldest' ? 'oldest' : 'newest';
+            } catch (_) {
+              return 'newest';
+            }
+          }
+
+          var saveCfgBtn = el('followersSaveCfgBtn');
+          if (saveCfgBtn) {
+            saveCfgBtn.addEventListener('click', async function(){
+              saveCfgBtn.disabled = true;
+              try {
+                setStatus('Salvando configuração…');
+                var resp = await fetch('/api/painel/gerenciamento-seguidores/settings', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ dailyLimit: parseDailyLimit(), order: getDailyOrder() })
+                });
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                setStatus('Configuração salva.');
+              } catch (e) {
+                setStatus('Falha ao salvar configuração.');
+                alert('Erro ao salvar: ' + (e && e.message ? e.message : e));
+              } finally {
+                saveCfgBtn.disabled = false;
+              }
+            });
+          }
+
+          var runTodayBtn = el('followersRunTodayBtn');
+          if (runTodayBtn) {
+            runTodayBtn.addEventListener('click', async function(){
+              runTodayBtn.disabled = true;
+              try {
+                setStatus('Iniciando verificação…');
+                try {
+                  await fetch('/api/painel/gerenciamento-seguidores/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ dailyLimit: parseDailyLimit(), order: getDailyOrder() })
+                  });
+                } catch (_) {}
+                var limit = parseDailyLimit();
+                var order = getDailyOrder();
+                var base = window.location.pathname || '/painel/gerenciamento-seguidores';
+                var urlParams = new URLSearchParams(window.location.search);
+                urlParams.set('sortBy', 'lastPurchaseAtMs');
+                urlParams.set('sortDir', order === 'oldest' ? 'asc' : 'desc');
+                urlParams.set('page', '1');
+                urlParams.set('pageSize', String(Math.min(200, Math.max(10, limit))));
+                urlParams.set('autoVerify', '1');
+                urlParams.set('autoLimit', String(limit));
+                var qs = urlParams.toString();
+                window.location.href = qs ? (base + '?' + qs) : base;
+              } catch (e) {
+                setStatus('Falha ao iniciar verificação.');
+              } finally {
+                runTodayBtn.disabled = false;
               }
             });
           }
@@ -628,6 +959,39 @@
             if (dEl) dEl.textContent = (sb === 'diffPct') ? arrow : '';
             if (cEl) cEl.textContent = (sb === 'lastPurchaseAtMs') ? arrow : '';
           } catch (_) {}
+
+          try {
+            var up = new URLSearchParams(window.location.search);
+            var autoVerify = String(up.get('autoVerify') || '') === '1';
+            var autoLimitRaw = parseInt(String(up.get('autoLimit') || ''), 10);
+            var autoLimit = (isFinite(autoLimitRaw) && autoLimitRaw > 0) ? autoLimitRaw : null;
+            if (autoVerify) {
+              var rows2 = Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
+              if (autoLimit != null) rows2 = rows2.slice(0, Math.max(0, Math.min(rows2.length, autoLimit)));
+              if (rows2.length) {
+                (async function(){
+                  try {
+                    if (allBtn) allBtn.disabled = true;
+                    if (testOldBtn) testOldBtn.disabled = true;
+                    if (runTodayBtn) runTodayBtn.disabled = true;
+                    for (var k=0;k<rows2.length;k++){
+                      setStatus('Verificando ' + (k+1) + ' de ' + rows2.length + '…');
+                      await refreshRow(rows2[k], false);
+                      await sleep(1500 + Math.floor(Math.random() * 450));
+                    }
+                    setStatus('Verificação concluída.');
+                  } catch (e) {
+                    setStatus('Erro na verificação.');
+                  } finally {
+                    try { if (allBtn) allBtn.disabled = false; } catch (_) {}
+                    try { if (testOldBtn) testOldBtn.disabled = false; } catch (_) {}
+                    try { if (runTodayBtn) runTodayBtn.disabled = false; } catch (_) {}
+                  }
+                })();
+              }
+            }
+          } catch (_) {}
+
         })();
       </script>
 
@@ -758,7 +1122,7 @@
             document.getElementById('couponMaxUsesPerProfileInput').value = (c && c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '';
             document.getElementById('couponValidFromInput').value = toLocalDateTimeInputValue(c && c.validFrom ? c.validFrom : '');
             document.getElementById('couponValidToInput').value = toLocalDateTimeInputValue(c && c.validTo ? c.validTo : '');
-            document.getElementById('couponIsActiveInput').checked = !!(c && c.isActive);
+            document.getElementById('couponIsActiveInput').checked = !(c && c.isActive === false);
           }
 
           function formatValidity(c) {
@@ -802,10 +1166,13 @@
               const usedCount = (typeof c.usedCount === 'number') ? c.usedCount : 0;
               const maxTotal = (c.maxUsesTotal != null) ? String(c.maxUsesTotal) : '-';
               const maxPer = (c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '-';
+              const isActive = !(c && c.isActive === false);
               tr.innerHTML = `
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2;"><strong>${String(c.code || '')}</strong></td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${String(c.discountPercentage || 0)}%</td>
-                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">${c.isActive ? 'Sim' : 'Não'}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">
+                  <input type="checkbox" data-role="active" ${isActive ? 'checked' : ''} />
+                </td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${usedCount}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxTotal}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxPer}</td>
@@ -817,6 +1184,29 @@
               const delBtn = tr.querySelector('button[data-role="del"]');
               if (delBtn) {
                 delBtn.onclick = (ev) => { ev.stopPropagation(); deleteCoupon(String(c._id || '')); };
+              }
+              const activeCb = tr.querySelector('input[data-role="active"]');
+              if (activeCb) {
+                activeCb.onmousedown = (ev) => { ev.stopPropagation(); };
+                activeCb.onclick = (ev) => { ev.stopPropagation(); };
+                activeCb.onchange = async (ev) => {
+                  ev.stopPropagation();
+                  try {
+                    const id = String(c._id || '').trim();
+                    if (!id) return;
+                    const res = await fetch('/api/admin/coupons/' + encodeURIComponent(id), {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ isActive: !!activeCb.checked })
+                    });
+                    const data = await res.json();
+                    if (!data || !data.success) throw new Error(data && (data.error || data.message) ? (data.error || data.message) : 'Falha ao atualizar cupom');
+                    loadCoupons();
+                  } catch (e) {
+                    activeCb.checked = !activeCb.checked;
+                    alert('Erro ao atualizar cupom: ' + (e && e.message ? e.message : e));
+                  }
+                };
               }
               tbody.appendChild(tr);
             });
@@ -870,7 +1260,7 @@
           <div class="summary-value"><%= ((unknownOrders || []).filter(o => String(o && o.worldsmmCommentsError || '').toLowerCase().includes('timeout') || String(o && o.worldsmmCommentsStatus || '').toLowerCase() === 'error').length) %></div>
         </div>
       </div>
-    <% } else { %>
+    <% } else if (!isLtvView) { %>
       <div class="summary-grid summary-grid-dashboard">
         <div class="summary-card">
           <div class="summary-label">Total de Vendas</div>
@@ -920,6 +1310,304 @@
       </div>
     <% } %>
 
+    <% if (isLtvView) { %>
+      <div style="margin-top: 12px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size: 1rem; color:#111827;">LTV</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (geral)</div>
+        </div>
+
+        <div class="summary-grid" style="margin-top: 10px;">
+          <div class="summary-card" id="ltvCardAllCustomers" style="cursor:pointer;">
+            <div class="summary-label">Clientes únicos</div>
+            <div class="summary-value"><%= typeof totalCustomers !== 'undefined' ? totalCustomers : 0 %></div>
+          </div>
+          <div class="summary-card" id="ltvCardRepeatCustomers" style="cursor:pointer;">
+            <div class="summary-label">Clientes recorrentes (2+)</div>
+            <div class="summary-value"><%= typeof repeatCustomers !== 'undefined' ? repeatCustomers : 0 %></div>
+            <div class="summary-sub"><%= (typeof repeatCustomerPct !== 'undefined' ? Number(repeatCustomerPct || 0) : 0).toFixed(1).replace('.', ',') %>% dos clientes</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Pedidos no período</div>
+            <div class="summary-value"><%= typeof totalTransactions !== 'undefined' ? totalTransactions : 0 %></div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap: 18px; align-items:flex-start; flex-wrap: wrap; margin-top: 14px;">
+          <div style="flex: 0 0 280px;">
+            <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Pedidos por tipo (pizza)</div>
+            <div id="ltvPieChart" style="width:220px; height:220px; border-radius:999px; background:conic-gradient(#e5e7eb 0 100%); border:1px solid #e5e7eb;"></div>
+            <div style="margin-top: 10px; font-size: 0.9rem; color:#111827;">
+              Mais escolhido: <strong><%= topService && topService.type ? String(topService.type) : '-' %></strong>
+            </div>
+            <div id="ltvPieLegend" style="margin-top: 8px; font-size: 0.85rem; color:#374151;">Sem dados</div>
+            <script type="application/json" id="ltvPieData"><%- JSON.stringify(Array.isArray(servicePie) ? servicePie : []) %></script>
+            <script>
+              (function(){
+                try {
+                  var pieRawEl = document.getElementById('ltvPieData');
+                  var pieRaw = pieRawEl ? String(pieRawEl.textContent || '').trim() : '[]';
+                  var pie = JSON.parse(pieRaw || '[]');
+                  var elPie = document.getElementById('ltvPieChart');
+                  var elLegend = document.getElementById('ltvPieLegend');
+                  var cur = 0;
+                  var stops = [];
+                  for (var i = 0; i < pie.length; i++) {
+                    var s = pie[i] || {};
+                    var pct = Number(s.pct || 0) || 0;
+                    var start = cur;
+                    cur += pct;
+                    var end = cur;
+                    var color = String(s.color || '#e5e7eb');
+                    stops.push(color + ' ' + start.toFixed(4) + '% ' + end.toFixed(4) + '%');
+                  }
+                  if (elPie) {
+                    elPie.style.background = stops.length ? ('conic-gradient(' + stops.join(', ') + ')') : 'conic-gradient(#e5e7eb 0 100%)';
+                  }
+                  if (elLegend) {
+                    if (!pie.length) {
+                      elLegend.textContent = 'Sem dados';
+                      return;
+                    }
+                    elLegend.innerHTML = '';
+                    for (var j = 0; j < pie.length; j++) {
+                      var it = pie[j] || {};
+                      var row = document.createElement('div');
+                      row.style.display = 'flex';
+                      row.style.alignItems = 'center';
+                      row.style.gap = '8px';
+                      row.style.marginTop = '4px';
+
+                      var box = document.createElement('span');
+                      box.style.display = 'inline-block';
+                      box.style.width = '10px';
+                      box.style.height = '10px';
+                      box.style.borderRadius = '2px';
+                      box.style.background = String(it.color || '#e5e7eb');
+
+                      var label = document.createElement('span');
+                      label.textContent = String(it.label || '-') + ' (' + String(Number(it.count || 0)) + ')';
+
+                      row.appendChild(box);
+                      row.appendChild(label);
+                      elLegend.appendChild(row);
+                    }
+                  }
+                } catch (_) {}
+              })();
+            </script>
+          </div>
+
+          <div style="flex: 1 1 520px; min-width: 320px;">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+              <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+                <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (mais pedidos)</div>
+                <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left; padding:6px 0; border-bottom:1px solid #f1f1f1;">Usuário</th>
+                      <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Pedidos</th>
+                      <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Gasto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <% (Array.isArray(topUsersByOrders) ? topUsersByOrders : []).slice(0,5).forEach(u => { %>
+                      <tr>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa;"><%= String(u && u.label ? u.label : '-') %></td>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;"><%= Number(u && u.orders ? u.orders : 0) %></td>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;">R$ <%= Number(u && u.spend ? u.spend : 0).toFixed(2).replace('.', ',') %></td>
+                      </tr>
+                    <% }) %>
+                    <% if (!(Array.isArray(topUsersByOrders) && topUsersByOrders.length)) { %>
+                      <tr><td colspan="3" style="padding:8px 0; color:#6b7280;">Sem dados</td></tr>
+                    <% } %>
+                  </tbody>
+                </table>
+              </div>
+
+              <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+                <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (maior gasto)</div>
+                <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left; padding:6px 0; border-bottom:1px solid #f1f1f1;">Usuário</th>
+                      <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Gasto</th>
+                      <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Pedidos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <% (Array.isArray(topUsersBySpend) ? topUsersBySpend : []).slice(0,5).forEach(u => { %>
+                      <tr>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa;"><%= String(u && u.label ? u.label : '-') %></td>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;">R$ <%= Number(u && u.spend ? u.spend : 0).toFixed(2).replace('.', ',') %></td>
+                        <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;"><%= Number(u && u.orders ? u.orders : 0) %></td>
+                      </tr>
+                    <% }) %>
+                    <% if (!(Array.isArray(topUsersBySpend) && topUsersBySpend.length)) { %>
+                      <tr><td colspan="3" style="padding:8px 0; color:#6b7280;">Sem dados</td></tr>
+                    <% } %>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="ltvCustomersModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; padding: 14px;">
+          <div style="background:#fff; width:min(980px, 96vw); max-height: 90vh; border-radius: 10px; overflow:hidden; box-shadow:0 8px 24px rgba(0,0,0,0.15);">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; border-bottom:1px solid #e5e7eb; gap: 10px;">
+              <strong id="ltvCustomersModalTitle" style="color:#111827;">Clientes</strong>
+              <button type="button" id="ltvCustomersModalClose" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer;">Fechar</button>
+            </div>
+            <div style="padding: 12px 14px; overflow:auto; max-height: calc(90vh - 52px);">
+              <div style="display:flex; gap: 10px; flex-wrap: wrap; align-items:center; margin-bottom: 10px;">
+                <input id="ltvCustomersSearch" type="text" placeholder="Buscar por usuário/telefone/email" style="flex:1 1 280px; padding: 8px 10px; border:1px solid #e5e7eb; border-radius: 8px;" />
+                <div id="ltvCustomersCount" style="font-size:0.9rem; color:#6b7280;"></div>
+              </div>
+              <div class="panel-table-scroll">
+                <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                  <thead>
+                    <tr>
+                      <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Usuário</th>
+                      <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Telefone</th>
+                      <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Email</th>
+                      <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Pedidos</th>
+                      <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Gasto</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ltvCustomersTbody">
+                    <tr><td colspan="5" style="padding:10px 6px; color:#6b7280;">Carregando...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <script type="application/json" id="ltvCustomersData"><%- JSON.stringify(Array.isArray(customerRows) ? customerRows : []) %></script>
+        <script>
+          (function(){
+            function readJson(id, fallback) {
+              try {
+                var el = document.getElementById(id);
+                if (!el) return fallback;
+                var raw = String(el.textContent || '').trim();
+                if (!raw) return fallback;
+                return JSON.parse(raw);
+              } catch (_) {
+                return fallback;
+              }
+            }
+            function fmtMoney(n) {
+              var x = Number(n || 0);
+              if (!isFinite(x)) x = 0;
+              return 'R$ ' + x.toFixed(2).replace('.', ',');
+            }
+            function safeStr(v) { return String(v == null ? '' : v); }
+            var all = readJson('ltvCustomersData', []);
+            var modal = document.getElementById('ltvCustomersModal');
+            var titleEl = document.getElementById('ltvCustomersModalTitle');
+            var closeBtn = document.getElementById('ltvCustomersModalClose');
+            var tbody = document.getElementById('ltvCustomersTbody');
+            var searchEl = document.getElementById('ltvCustomersSearch');
+            var countEl = document.getElementById('ltvCustomersCount');
+            var cardAll = document.getElementById('ltvCardAllCustomers');
+            var cardRepeat = document.getElementById('ltvCardRepeatCustomers');
+            if (!modal || !tbody) return;
+
+            var mode = 'all';
+
+            function open(newMode) {
+              mode = newMode || 'all';
+              if (titleEl) titleEl.textContent = mode === 'repeat' ? 'Clientes recorrentes (2+)' : 'Clientes únicos';
+              if (searchEl) searchEl.value = '';
+              modal.style.display = 'flex';
+              render();
+              if (searchEl) searchEl.focus();
+            }
+            function close() {
+              modal.style.display = 'none';
+            }
+            function matchesFilter(row, q) {
+              if (!q) return true;
+              var s = (safeStr(row.username) + ' ' + safeStr(row.phone) + ' ' + safeStr(row.email) + ' ' + safeStr(row.label)).toLowerCase();
+              return s.indexOf(q) >= 0;
+            }
+            function render() {
+              var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+              var rows = Array.isArray(all) ? all.slice() : [];
+              if (mode === 'repeat') rows = rows.filter(function(r){ return Number(r && r.orders ? r.orders : 0) > 1; });
+              rows = rows.filter(function(r){ return matchesFilter(r, q); });
+
+              if (countEl) countEl.textContent = rows.length + ' clientes';
+              tbody.innerHTML = '';
+              if (!rows.length) {
+                var tr0 = document.createElement('tr');
+                var td0 = document.createElement('td');
+                td0.colSpan = 5;
+                td0.style.padding = '10px 6px';
+                td0.style.color = '#6b7280';
+                td0.textContent = 'Sem dados';
+                tr0.appendChild(td0);
+                tbody.appendChild(tr0);
+                return;
+              }
+
+              for (var i = 0; i < rows.length; i++) {
+                var r = rows[i] || {};
+                var tr = document.createElement('tr');
+                var userTd = document.createElement('td');
+                userTd.style.padding = '8px 6px';
+                userTd.style.borderBottom = '1px solid #f3f4f6';
+                userTd.textContent = safeStr(r.username || r.label || '-');
+
+                var phoneTd = document.createElement('td');
+                phoneTd.style.padding = '8px 6px';
+                phoneTd.style.borderBottom = '1px solid #f3f4f6';
+                phoneTd.textContent = safeStr(r.phone || '-');
+
+                var emailTd = document.createElement('td');
+                emailTd.style.padding = '8px 6px';
+                emailTd.style.borderBottom = '1px solid #f3f4f6';
+                emailTd.textContent = safeStr(r.email || '-');
+
+                var ordersTd = document.createElement('td');
+                ordersTd.style.padding = '8px 6px';
+                ordersTd.style.borderBottom = '1px solid #f3f4f6';
+                ordersTd.style.textAlign = 'right';
+                ordersTd.textContent = String(Number(r.orders || 0));
+
+                var spendTd = document.createElement('td');
+                spendTd.style.padding = '8px 6px';
+                spendTd.style.borderBottom = '1px solid #f3f4f6';
+                spendTd.style.textAlign = 'right';
+                spendTd.textContent = fmtMoney(r.spend || 0);
+
+                tr.appendChild(userTd);
+                tr.appendChild(phoneTd);
+                tr.appendChild(emailTd);
+                tr.appendChild(ordersTd);
+                tr.appendChild(spendTd);
+                tbody.appendChild(tr);
+              }
+            }
+
+            if (cardAll) cardAll.addEventListener('click', function(){ open('all'); });
+            if (cardRepeat) cardRepeat.addEventListener('click', function(){ open('repeat'); });
+            if (closeBtn) closeBtn.addEventListener('click', close);
+            if (searchEl) searchEl.addEventListener('input', render);
+            modal.addEventListener('click', function(e){
+              if (e && e.target === modal) close();
+            });
+            document.addEventListener('keydown', function(e){
+              if (modal.style.display !== 'none' && e && e.key === 'Escape') close();
+            });
+          })();
+        </script>
+      </div>
+    <% } %>
+
+    <% if (!isLtvView) { %>
     <div class="dashboard-layout">
       <div class="dashboard-main">
         <% if (isUnknownOrderIdView) { %>
@@ -1120,16 +1808,16 @@
                   </td>
                   <td>
                     <% if (mainNeeds) { %>
-                      <button class="unknown-btn" onclick='openUnknownOrderModal("<%= order._id %>", "<%= defaultProvider %>", "<%= lockProvider %>")'>Cadastrar OrderID</button>
+                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-default-provider="<%= String(defaultProvider || '') %>" data-lock-provider="<%= String(lockProvider || '') %>">Cadastrar OrderID</button>
                     <% } %>
                     <% if (worldNeeds) { %>
-                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "worldsmm_comments", "1")'>Cadastrar Comentários<%= wQtyStr ? (" (" + wQtyStr + ")") : "" %></button>
+                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-default-provider="worldsmm_comments" data-lock-provider="1" style="margin-top:6px;">Cadastrar Comentários<%= wQtyStr ? (" (" + wQtyStr + ")") : "" %></button>
                     <% } %>
                     <% if (order.needsFamaViewsBump) { %>
-                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "fama24h_views", "1")'>Cadastrar Views Bump<%= vQtyStr ? (" (" + vQtyStr + ")") : "" %></button>
+                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-default-provider="fama24h_views" data-lock-provider="1" style="margin-top:6px;">Cadastrar Views Bump<%= vQtyStr ? (" (" + vQtyStr + ")") : "" %></button>
                     <% } %>
                     <% if (order.needsFamaLikesBump) { %>
-                      <button class="unknown-btn" style="margin-top:6px;" onclick='openUnknownOrderModal("<%= order._id %>", "fama24h_likes", "1")'>Cadastrar Curtidas Bump<%= lQtyStr ? (" (" + lQtyStr + ")") : "" %></button>
+                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-default-provider="fama24h_likes" data-lock-provider="1" style="margin-top:6px;">Cadastrar Curtidas Bump<%= lQtyStr ? (" (" + lQtyStr + ")") : "" %></button>
                     <% } %>
                   </td>
                 </tr>
@@ -1388,210 +2076,283 @@
           </script>
         </div>
     </div>
+    <% } %>
       <% } %>
     <% } %>
 
-      <% if (isUnknownOrderIdView) { %>
-      <div id="unknownOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; overflow:hidden;">
-        <div style="background:white; padding:20px; border-radius:8px; width:320px; max-height:90vh; overflow:auto; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
-          <h3 style="margin-top:0; margin-bottom:15px;">Registrar OrderID</h3>
-          <div style="margin-bottom:15px;">
-            <label style="display:block; margin-bottom:5px; font-weight:bold;">Fornecedor:</label>
-            <select id="unknownModalProvider" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
-              <option value="fama24h">Fama24h</option>
-              <option value="fama24h_views">Fama24h (Bump Views)</option>
-              <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
-              <option value="fornecedor_social">Fornecedor Social</option>
-              <option value="worldsmm_comments">WorldSMM (Comentários)</option>
-            </select>
-          </div>
-          <div style="margin-bottom:20px;">
-            <label style="display:block; margin-bottom:5px; font-weight:bold;">Order ID:</label>
-            <input type="text" id="unknownModalOrderId" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;" placeholder="Ex: 123456">
-          </div>
-          <div style="display:flex; justify-content:flex-end; gap:10px;">
-            <button type="button" onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
-            <button type="button" onclick="saveUnknownOrderInfo()" style="padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
-          </div>
-        </div>
+      
+  </div>
+  </div>
+  <% if (isUnknownOrderIdView) { %>
+  <div
+    id="unknownOrderModal"
+    class="unknown-order-modal<%= (typeof openUnknownModal !== 'undefined' && openUnknownModal) ? ' is-open' : '' %>"
+    data-open-id="<%= (typeof openUnknownModal !== 'undefined' && openUnknownModal) ? String(openUnknownModal) : '' %>"
+    data-default-provider="<%= (typeof openUnknownDefaultProvider !== 'undefined' && openUnknownDefaultProvider) ? String(openUnknownDefaultProvider) : '' %>"
+    data-lock-provider="<%= (typeof openUnknownLockProvider !== 'undefined' && openUnknownLockProvider) ? String(openUnknownLockProvider) : '' %>"
+  >
+    <div style="background:white; padding:20px; border-radius:8px; width:320px; max-height:90vh; overflow:auto; box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+      <h3 style="margin-top:0; margin-bottom:15px;">Registrar OrderID</h3>
+      <div style="margin-bottom:15px;">
+        <label style="display:block; margin-bottom:5px; font-weight:bold;">Fornecedor:</label>
+        <select id="unknownModalProvider" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+          <option value="fama24h">Fama24h</option>
+          <option value="fama24h_views">Fama24h (Bump Views)</option>
+          <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
+          <option value="fornecedor_social">Fornecedor Social</option>
+          <option value="worldsmm_comments">WorldSMM (Comentários)</option>
+        </select>
       </div>
-      <script>
-        let currentUnknownOrderId = null;
-        const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
-        let unknownModalScrollY = 0;
+      <div style="margin-bottom:20px;">
+        <label style="display:block; margin-bottom:5px; font-weight:bold;">Order ID:</label>
+        <input type="text" id="unknownModalOrderId" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;" placeholder="Ex: 123456">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
+        <button type="button" onclick="saveUnknownOrderInfo()" style="padding:8px 16px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    var currentUnknownOrderId = null;
+    const HIDDEN_ORDERS_KEY = 'oppus_hidden_orders_v1';
+    var unknownModalScrollY = 0;
 
-        function openUnknownOrderModal(orderId, defaultProvider, lockProvider) {
-          currentUnknownOrderId = orderId;
-          const modal = document.getElementById('unknownOrderModal');
-          const providerEl = document.getElementById('unknownModalProvider');
-          const orderIdEl = document.getElementById('unknownModalOrderId');
-          unknownModalScrollY = (typeof window.scrollY === 'number') ? window.scrollY : (document.documentElement ? document.documentElement.scrollTop : 0);
-          if (providerEl && defaultProvider) providerEl.value = defaultProvider;
-          if (providerEl) providerEl.disabled = (String(lockProvider || '') === '1');
-          if (orderIdEl) orderIdEl.value = '';
-          if (modal) modal.style.display = 'flex';
-          try { document.body.style.overflow = 'hidden'; } catch(_) {}
-          if (orderIdEl) {
-            try { orderIdEl.focus({ preventScroll: true }); } catch(_) { try { orderIdEl.focus(); } catch(_) {} }
-          }
-          try { window.scrollTo(0, unknownModalScrollY); } catch(_) {}
-        }
+    function openUnknownOrderModal(orderId, defaultProvider, lockProvider) {
+      currentUnknownOrderId = orderId;
+      const modal = document.getElementById('unknownOrderModal');
+      const providerEl = document.getElementById('unknownModalProvider');
+      const orderIdEl = document.getElementById('unknownModalOrderId');
+      unknownModalScrollY = (typeof window.scrollY === 'number') ? window.scrollY : (document.documentElement ? document.documentElement.scrollTop : 0);
+      if (providerEl && defaultProvider) providerEl.value = defaultProvider;
+      if (providerEl) providerEl.disabled = (String(lockProvider || '') === '1');
+      if (orderIdEl) orderIdEl.value = '';
+      if (modal) {
+        try { modal.classList.add('is-open'); } catch(_) {}
+        try {
+          modal.style.position = 'fixed';
+          modal.style.top = '0';
+          modal.style.left = '0';
+          modal.style.right = '0';
+          modal.style.bottom = '0';
+          modal.style.width = '100%';
+          modal.style.height = '100%';
+          modal.style.alignItems = 'flex-start';
+          modal.style.justifyContent = 'center';
+          modal.style.display = 'flex';
+          modal.style.zIndex = '2147483647';
+          modal.style.overflowY = 'auto';
+        } catch (_) {}
+      }
+      try { document.body.style.overflow = 'hidden'; } catch(_) {}
+      try { document.documentElement.style.overflow = 'hidden'; } catch(_) {}
+      if (orderIdEl) {
+        try { orderIdEl.focus({ preventScroll: true }); } catch(_) { try { orderIdEl.focus(); } catch(_) {} }
+      }
+    }
 
-        function closeUnknownOrderModal() {
-          const modal = document.getElementById('unknownOrderModal');
-          if (modal) modal.style.display = 'none';
-          const providerEl = document.getElementById('unknownModalProvider');
-          if (providerEl) providerEl.disabled = false;
-          currentUnknownOrderId = null;
-          try { document.body.style.overflow = ''; } catch(_) {}
-          try { window.scrollTo(0, unknownModalScrollY); } catch(_) {}
-        }
+    function closeUnknownOrderModal() {
+      const modal = document.getElementById('unknownOrderModal');
+      if (modal) {
+        try { modal.classList.remove('is-open'); } catch(_) {}
+        modal.style.display = 'none';
+      }
+      const providerEl = document.getElementById('unknownModalProvider');
+      if (providerEl) providerEl.disabled = false;
+      currentUnknownOrderId = null;
+      try { document.body.style.overflow = ''; } catch(_) {}
+      try { document.documentElement.style.overflow = ''; } catch(_) {}
+    }
 
-        async function saveUnknownOrderInfo() {
-          const provider = document.getElementById('unknownModalProvider').value;
-          const orderIdVal = document.getElementById('unknownModalOrderId').value.trim();
-          if (!orderIdVal) {
-            alert('Por favor, informe o Order ID do fornecedor.');
+    async function saveUnknownOrderInfo() {
+      const provider = document.getElementById('unknownModalProvider').value;
+      const orderIdVal = document.getElementById('unknownModalOrderId').value.trim();
+      if (!orderIdVal) {
+        alert('Por favor, informe o Order ID do fornecedor.');
+        return;
+      }
+      if (!currentUnknownOrderId) return;
+
+      try {
+        const res = await fetch('/api/admin/update-private-order', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({
+            id: currentUnknownOrderId,
+            field: 'supplierInfo',
+            value: { provider, orderId: orderIdVal }
+          })
+        });
+        const contentType = String(res.headers.get('content-type') || '');
+        let data = null;
+        if (contentType.includes('application/json')) {
+          try { data = await res.json(); } catch (_) { data = null; }
+        } else {
+          const raw = await res.text();
+          if (res.status === 401) {
+            window.location.href = '/login';
             return;
           }
-          if (!currentUnknownOrderId) return;
+          throw new Error(raw || `HTTP ${res.status}`);
+        }
+        if (res.ok && data && data.ok) {
+          window.location.reload();
+        } else {
+          if (res.status === 401) {
+            window.location.href = '/login';
+            return;
+          }
+          alert('Erro ao salvar: ' + ((data && data.error) || `HTTP ${res.status}`));
+        }
+      } catch (e) {
+        alert('Erro de conexão: ' + (e && e.message ? e.message : e));
+      } finally {
+        closeUnknownOrderModal();
+      }
+    }
 
-          try {
-            const res = await fetch('/api/admin/update-private-order', {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-              body: JSON.stringify({
-                id: currentUnknownOrderId,
-                field: 'supplierInfo',
-                value: { provider, orderId: orderIdVal }
-              })
-            });
-            const contentType = String(res.headers.get('content-type') || '');
-            let data = null;
-            if (contentType.includes('application/json')) {
-              try { data = await res.json(); } catch (_) { data = null; }
-            } else {
-              const raw = await res.text();
-              if (res.status === 401) {
-                window.location.href = '/login';
-                return;
-              }
-              throw new Error(raw || `HTTP ${res.status}`);
-            }
-            if (res.ok && data && data.ok) {
-              window.location.reload();
-            } else {
-              if (res.status === 401) {
-                window.location.href = '/login';
-                return;
-              }
-              alert('Erro ao salvar: ' + ((data && data.error) || `HTTP ${res.status}`));
-            }
-          } catch (e) {
-            alert('Erro de conexão: ' + (e && e.message ? e.message : e));
-          } finally {
-            closeUnknownOrderModal();
+    function getHiddenOrdersSet() {
+      try {
+        const raw = localStorage.getItem(HIDDEN_ORDERS_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(arr) ? arr.map(String) : []);
+      } catch (_) {
+        return new Set();
+      }
+    }
+
+    function saveHiddenOrdersSet(set) {
+      try {
+        const arr = Array.from(set);
+        localStorage.setItem(HIDDEN_ORDERS_KEY, JSON.stringify(arr));
+      } catch (_) {}
+    }
+
+    function applyHiddenOrdersToUnknownTable() {
+      const hidden = getHiddenOrdersSet();
+      const rows = document.querySelectorAll('tr[data-id]');
+      let hiddenCountOnPage = 0;
+      rows.forEach(tr => {
+        const id = String(tr.getAttribute('data-id') || '');
+        if (id && hidden.has(id)) {
+          tr.style.display = 'none';
+          hiddenCountOnPage += 1;
+        } else {
+          tr.style.display = '';
+        }
+      });
+      const el = document.getElementById('unknownHiddenCount');
+      if (el) el.textContent = String(hiddenCountOnPage);
+    }
+
+    function hideSelectedUnknown() {
+      const hidden = getHiddenOrdersSet();
+      const cbs = document.querySelectorAll('.unknown-hide-cb:checked');
+      cbs.forEach(cb => {
+        const id = String(cb.getAttribute('data-id') || '');
+        if (id) hidden.add(id);
+        cb.checked = false;
+      });
+      const selAll = document.getElementById('unknownSelectAll');
+      if (selAll) selAll.checked = false;
+      saveHiddenOrdersSet(hidden);
+      applyHiddenOrdersToUnknownTable();
+    }
+
+    function clearHiddenOrders() {
+      try { localStorage.removeItem(HIDDEN_ORDERS_KEY); } catch (_) {}
+      applyHiddenOrdersToUnknownTable();
+    }
+
+    async function refreshUnknownPrivatesAndLinks() {
+      const statusEl = document.getElementById('unknownRefreshStatus');
+      const btn = document.getElementById('unknownRefreshBtn');
+      if (btn) { try { btn.disabled = true; btn.style.opacity = '0.6'; } catch(_) {} }
+      try {
+        if (statusEl) statusEl.textContent = 'Atualizando...';
+        const rows = Array.from(document.querySelectorAll('tr[data-id]')).filter(tr => tr && tr.style.display !== 'none');
+        const ids = rows.map(tr => String(tr.getAttribute('data-id') || '').trim()).filter(Boolean);
+        const res = await fetch('/api/admin/unknown_orderid/refresh', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({ ids })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : `HTTP ${res.status}`);
+        if (statusEl) statusEl.textContent = `OK: ${data.updated || 0} atualizados`;
+        window.location.reload();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = '';
+        alert('Erro ao atualizar: ' + (e && e.message ? e.message : e));
+      } finally {
+        if (btn) { try { btn.disabled = false; btn.style.opacity = ''; } catch(_) {} }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        const modal = document.getElementById('unknownOrderModal');
+        if (modal) {
+          const openId = String(modal.getAttribute('data-open-id') || '').trim();
+          if (openId) {
+            const dp = String(modal.getAttribute('data-default-provider') || '').trim();
+            const lp = String(modal.getAttribute('data-lock-provider') || '').trim();
+            openUnknownOrderModal(openId, dp, lp);
           }
         }
+      } catch (_) {}
 
-        function getHiddenOrdersSet() {
-          try {
-            const raw = localStorage.getItem(HIDDEN_ORDERS_KEY);
-            const arr = raw ? JSON.parse(raw) : [];
-            return new Set(Array.isArray(arr) ? arr.map(String) : []);
-          } catch (_) {
-            return new Set();
-          }
-        }
+      try {
+        document.addEventListener('click', function (ev) {
+          const t = ev && ev.target ? ev.target : null;
+          if (!t || !t.closest) return;
+          const el = t.closest('.unknown-open-modal');
+          if (!el) return;
+          const id = String(el.getAttribute('data-order-id') || '').trim();
+          if (!id) return;
+          const dp = String(el.getAttribute('data-default-provider') || '').trim();
+          const lp = String(el.getAttribute('data-lock-provider') || '').trim();
+          try { ev.preventDefault(); } catch (_) {}
+          openUnknownOrderModal(id, dp, lp);
+        }, true);
+      } catch (_) {}
 
-        function saveHiddenOrdersSet(set) {
+      try {
+        const qs = new URLSearchParams(window.location.search || '');
+        const id = String(qs.get('openUnknownModal') || '').trim();
+        if (id) {
+          const dp = String(qs.get('defaultProvider') || '').trim();
+          const lp = String(qs.get('lockProvider') || '').trim();
+          openUnknownOrderModal(id, dp, lp);
           try {
-            const arr = Array.from(set);
-            localStorage.setItem(HIDDEN_ORDERS_KEY, JSON.stringify(arr));
+            qs.delete('openUnknownModal');
+            qs.delete('defaultProvider');
+            qs.delete('lockProvider');
+            const base = window.location.pathname || '/painel';
+            const newQs = qs.toString();
+            const newUrl = newQs ? (base + '?' + newQs) : base;
+            window.history.replaceState(null, '', newUrl);
           } catch (_) {}
         }
+      } catch (_) {}
 
-        function applyHiddenOrdersToUnknownTable() {
-          const hidden = getHiddenOrdersSet();
-          const rows = document.querySelectorAll('tr[data-id]');
-          let hiddenCountOnPage = 0;
-          rows.forEach(tr => {
-            const id = String(tr.getAttribute('data-id') || '');
-            if (id && hidden.has(id)) {
-              tr.style.display = 'none';
-              hiddenCountOnPage += 1;
-            } else {
-              tr.style.display = '';
-            }
-          });
-          const el = document.getElementById('unknownHiddenCount');
-          if (el) el.textContent = String(hiddenCountOnPage);
-        }
-
-        function hideSelectedUnknown() {
-          const hidden = getHiddenOrdersSet();
-          const cbs = document.querySelectorAll('.unknown-hide-cb:checked');
+      const selAll = document.getElementById('unknownSelectAll');
+      if (selAll) {
+        selAll.addEventListener('change', function () {
+          const checked = !!selAll.checked;
+          const cbs = document.querySelectorAll('.unknown-hide-cb');
           cbs.forEach(cb => {
-            const id = String(cb.getAttribute('data-id') || '');
-            if (id) hidden.add(id);
-            cb.checked = false;
+            const tr = cb.closest('tr[data-id]');
+            const isVisible = !tr || tr.style.display !== 'none';
+            if (isVisible) cb.checked = checked;
           });
-          const selAll = document.getElementById('unknownSelectAll');
-          if (selAll) selAll.checked = false;
-          saveHiddenOrdersSet(hidden);
-          applyHiddenOrdersToUnknownTable();
-        }
-
-        function clearHiddenOrders() {
-          try { localStorage.removeItem(HIDDEN_ORDERS_KEY); } catch (_) {}
-          applyHiddenOrdersToUnknownTable();
-        }
-
-        async function refreshUnknownPrivatesAndLinks() {
-          const statusEl = document.getElementById('unknownRefreshStatus');
-          const btn = document.getElementById('unknownRefreshBtn');
-          if (btn) { try { btn.disabled = true; btn.style.opacity = '0.6'; } catch(_) {} }
-          try {
-            if (statusEl) statusEl.textContent = 'Atualizando...';
-            const rows = Array.from(document.querySelectorAll('tr[data-id]')).filter(tr => tr && tr.style.display !== 'none');
-            const ids = rows.map(tr => String(tr.getAttribute('data-id') || '').trim()).filter(Boolean);
-            const res = await fetch('/api/admin/unknown_orderid/refresh', {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-              body: JSON.stringify({ ids })
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data || !data.ok) throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : `HTTP ${res.status}`);
-            if (statusEl) statusEl.textContent = `OK: ${data.updated || 0} atualizados`;
-            window.location.reload();
-          } catch (e) {
-            if (statusEl) statusEl.textContent = '';
-            alert('Erro ao atualizar: ' + (e && e.message ? e.message : e));
-          } finally {
-            if (btn) { try { btn.disabled = false; btn.style.opacity = ''; } catch(_) {} }
-          }
-        }
-
-        document.addEventListener('DOMContentLoaded', function () {
-          const selAll = document.getElementById('unknownSelectAll');
-          if (selAll) {
-            selAll.addEventListener('change', function () {
-              const checked = !!selAll.checked;
-              const cbs = document.querySelectorAll('.unknown-hide-cb');
-              cbs.forEach(cb => {
-                const tr = cb.closest('tr[data-id]');
-                const isVisible = !tr || tr.style.display !== 'none';
-                if (isVisible) cb.checked = checked;
-              });
-            });
-          }
-          applyHiddenOrdersToUnknownTable();
         });
-      </script>
-      <% } %>
-  </div>
-  </div>
+      }
+      applyHiddenOrdersToUnknownTable();
+    });
+  </script>
+  <% } %>
 </body>
 </html>

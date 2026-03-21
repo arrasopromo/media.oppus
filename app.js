@@ -1235,7 +1235,13 @@ async function ensureRefilLink(identifier, correlationID, req) {
       }
       return out;
     })();
-    const hasLifetime = (Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0);
+    const hasLifetime = (() => {
+      const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
+      if (get('warranty_lifetime') > 0 || get('warranty_life') > 0) return true;
+      if (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0) return true;
+      if (get('warrenty') > 0) return true;
+      return false;
+    })();
     const warrantyMode = hasLifetime ? 'life' : '30';
     const warrantyDays = hasLifetime ? null : 30;
     const orderBaseMs = (() => {
@@ -1943,6 +1949,17 @@ app.get('/termos', (req, res) => {
     if (err) {
       console.error('Erro ao renderizar termos:', err.message);
       return res.status(500).send('Erro ao abrir Termos de Uso');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+app.get('/oppus', (req, res) => {
+  res.render('oppus', {}, (err, html) => {
+    if (err) {
+      console.error('Erro ao renderizar oppus:', err.message);
+      return res.status(500).send('Erro ao abrir página Oppus');
     }
     res.type('text/html');
     res.send(html);
@@ -7151,6 +7168,39 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
     // 15 minutes ago
     const cutoffDate = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
+    const normalizeUsername = (u) => {
+      try {
+        let s = String(u || '').trim();
+        if (!s) return '';
+        s = s.replace(/\s+/g, '');
+        s = s.replace(/^@/, '');
+        s = s.split('#')[0].split('?')[0];
+        if (s.includes('/')) {
+          const parts = s.split('/').filter(Boolean);
+          s = parts.length ? parts[parts.length - 1] : s;
+        }
+        return String(s || '').toLowerCase().trim();
+      } catch (_) {
+        return '';
+      }
+    };
+
+    const extractUsername = (o) => {
+      try {
+        const paidArr = Array.isArray(o?.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const baseArr = Array.isArray(o?.additionalInfo) ? o.additionalInfo : [];
+        return o.instagramUsername
+          || o.instauser
+          || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username)
+          || (o.additionalInfoMap && o.additionalInfoMap.instagram_username)
+          || paidArr.find(i => i && i.key === 'instagram_username')?.value
+          || baseArr.find(i => i && i.key === 'instagram_username')?.value
+          || '';
+      } catch (_) {
+        return '';
+      }
+    };
+
     const query = {
       $and: [
         { status: { $ne: 'pago' } },
@@ -7166,9 +7216,9 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
       // Logic to filter out orders where the user paid in a subsequent order
       // Extract usernames and phones
       const usernames = pendingOrders
-        .map(o => o.instagramUsername || o.instauser || (o.additionalInfoPaid || []).find(i => i.key === 'instagram_username')?.value || (o.additionalInfoMap || {}).instagram_username)
+        .map(o => extractUsername(o))
         .filter(u => u && typeof u === 'string')
-        .map(u => u.toLowerCase().trim());
+        .map(u => normalizeUsername(u));
 
       const phones = pendingOrders
         .map(o => (o.customer && (o.customer.phone || o.customer.phone_number)))
@@ -7185,6 +7235,8 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
          // Find any PAID orders for these users created after the oldest pending order in this batch
          const oldestPending = pendingOrders[pendingOrders.length - 1].createdAt;
          
+         const usernameRegexes = uniqueUsernames.map(u => new RegExp(escapeRegExp(u), 'i'));
+
          const paidQuery = {
             $and: [
               {
@@ -7195,55 +7247,41 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
               },
               {
                 $or: [
-                   { instagramUsername: { $in: uniqueUsernames.map(u => new RegExp(`^${escapeRegExp(u)}$`, 'i')) } },
-                   { instauser: { $in: uniqueUsernames.map(u => new RegExp(`^${escapeRegExp(u)}$`, 'i')) } }
+                   { instagramUsername: { $in: usernameRegexes } },
+                   { instauser: { $in: usernameRegexes } },
+                   { 'additionalInfoMap.instagram_username': { $in: usernameRegexes } },
+                   { 'additionalInfoMapPaid.instagram_username': { $in: usernameRegexes } }
                 ]
               },
               { createdAt: { $gt: oldestPending } }
             ]
          };
 
-         const paidOrders = await col.find(paidQuery).project({ instagramUsername: 1, instauser: 1, createdAt: 1 }).toArray();
+         const paidOrders = await col.find(paidQuery).project({ instagramUsername: 1, instauser: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfo: 1, createdAt: 1 }).toArray();
+         const paidLatestByUser = new Map();
+         for (const paid of paidOrders) {
+           const u = normalizeUsername(extractUsername(paid));
+           if (!u) continue;
+           const ms = new Date(paid.createdAt).getTime();
+           if (!Number.isFinite(ms)) continue;
+           const prev = paidLatestByUser.get(u) || 0;
+           if (ms > prev) paidLatestByUser.set(u, ms);
+         }
          
          // Filter pending orders
          pendingOrders = pendingOrders.filter(pending => {
             // Normalize pending user
-            let pUser = (pending.instagramUsername || pending.instauser || (pending.additionalInfoPaid || []).find(i => i.key === 'instagram_username')?.value || (pending.additionalInfoMap || {}).instagram_username || '').toLowerCase().trim();
+            let pUser = normalizeUsername(extractUsername(pending));
             if (!pUser) return true; // Keep if no username to match
 
-            const pDate = new Date(pending.createdAt);
-            
-            // Check if there is a paid order for this user created AFTER the pending order
-            const hasNewerPaid = paidOrders.some(paid => {
-               // Normalize paid user (check both fields)
-               const paidUser1 = (paid.instagramUsername || '').toLowerCase().trim();
-               const paidUser2 = (paid.instauser || '').toLowerCase().trim();
-               
-               if (paidUser1 !== pUser && paidUser2 !== pUser) return false;
-               
-               const paidDate = new Date(paid.createdAt);
-               return paidDate > pDate;
-            });
+            const pendingMs = new Date(pending.createdAt).getTime();
+            const paidLatestMs = paidLatestByUser.get(pUser) || 0;
+            const hasNewerPaid = Number.isFinite(pendingMs) && paidLatestMs > pendingMs;
 
             return !hasNewerPaid;
          });
       }
     }
-
-    const normalizeUsername = (u) => {
-      const s0 = String(u || '').trim();
-      if (!s0) return '';
-      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
-      return s1.toLowerCase().trim();
-    };
-
-    const extractUsername = (o) => {
-      try {
-        return o.instagramUsername || o.instauser || (o.additionalInfoPaid || []).find(i => i && i.key === 'instagram_username')?.value || (o.additionalInfoMap || {}).instagram_username || '';
-      } catch (_) {
-        return '';
-      }
-    };
 
     const seen = new Set();
     pendingOrders = pendingOrders.filter(o => {
@@ -7367,6 +7405,16 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const monitorCol = await getCollection('followers_monitor');
     const validatedCol = await getCollection('validated_insta_users');
     const tlCol = await getCollection('temporary_links');
+    const settingsCol = await getCollection('settings');
+
+    const followersMgmtSettingsDoc = await settingsCol.findOne({ _id: 'followers_mgmt_settings' }, { projection: { _id: 0, values: 1 } });
+    const followersMgmtSettingsRaw = (followersMgmtSettingsDoc && followersMgmtSettingsDoc.values && typeof followersMgmtSettingsDoc.values === 'object')
+      ? followersMgmtSettingsDoc.values
+      : {};
+    const followersMgmtSettings = {
+      dailyLimit: Math.min(1000, Math.max(1, parseInt(String(followersMgmtSettingsRaw.dailyLimit || '50'), 10) || 50)),
+      order: (String(followersMgmtSettingsRaw.order || 'newest').toLowerCase() === 'oldest') ? 'oldest' : 'newest'
+    };
 
     const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
     const followersQuery = {
@@ -7677,7 +7725,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           bumpQtyMap[key] = Number(bumpQtyMap[key] || 0) + qty;
         }
       }
-      if ((Number(bumpQtyMap['warranty_lifetime'] || 0) > 0) || (Number(bumpQtyMap['warranty_life'] || 0) > 0)) return { isLifetime: true, months: null, mode: 'life', days: null };
+      const hasLifetime = (() => {
+        const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
+        if (get('warranty_lifetime') > 0 || get('warranty_life') > 0) return true;
+        if (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0) return true;
+        if (get('warrenty') > 0) return true;
+        return false;
+      })();
+      if (hasLifetime) return { isLifetime: true, months: null, mode: 'life', days: null };
       return { isLifetime: false, months: 1, mode: '30', days: 30 };
     };
     const isEligibleRefilTipo = (tipoRaw) => {
@@ -7974,6 +8029,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
       filters: { minPct, maxPct, q, qType, filled: filledOnly, lifetime: lifetimeOnly, sortBy: sortKey, sortDir },
+      followersMgmtSettings,
       period: 'all'
     });
   } catch (err) {
@@ -7982,29 +8038,303 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req, res) => {
+app.get('/painel/vendas-whatsapp', requireAdmin, async (req, res) => {
   try {
-    const username = String(req.query.username || '').trim().toLowerCase().replace(/^@/, '');
-    const force = String(req.query.force || '').trim() === '1';
-    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    return res.render('painel', { view: 'vendas_whatsapp', period: 'all' });
+  } catch (err) {
+    console.error('Erro em /painel/vendas-whatsapp:', err);
+    return res.status(500).send('Erro interno');
+  }
+});
+
+app.get('/api/painel/whatsapp-sales', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const limitRaw = Number(req.query?.limit || 50) || 50;
+    const limit = Math.min(200, Math.max(1, Math.floor(limitRaw)));
+    const purchaseRaw = String(req.query?.purchase || '').trim();
+
+    const wppBaseQuery = { $or: [{ saleChannel: 'whatsapp' }, { isWhatsappSale: true }, { 'additionalInfoMapPaid.saleChannel': 'whatsapp' }, { 'additionalInfoMap.saleChannel': 'whatsapp' }] };
+    let query = wppBaseQuery;
+
+    if (purchaseRaw) {
+      const safe = purchaseRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(safe, 'i');
+      const digits = purchaseRaw.replace(/\D/g, '');
+      const usernameRaw = purchaseRaw.replace(/^@+/, '').trim();
+      const orConds = [
+        { identifier: rx },
+        { correlationID: rx },
+        { instagramUsername: rx },
+        { instauser: rx },
+        { 'additionalInfoMapPaid.instagram_username': rx },
+        { 'additionalInfoMapPaid.phone': rx },
+        { 'additionalInfoPaid': { $elemMatch: { key: 'instagram_username', value: rx } } },
+        { 'additionalInfoPaid': { $elemMatch: { key: 'phone', value: rx } } }
+      ];
+
+      if (digits && digits.length >= 6) {
+        const digitsRx = new RegExp(digits.split('').join('\\D*'), 'i');
+        orConds.push({ 'customer.phone': { $regex: digitsRx } });
+      }
+
+      if (/^[0-9a-fA-F]{24}$/.test(purchaseRaw)) {
+        try {
+          const { ObjectId } = require('mongodb');
+          orConds.push({ _id: new ObjectId(purchaseRaw) });
+        } catch (_) {}
+      }
+
+      if (usernameRaw) {
+        const userSafe = usernameRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const userRx = new RegExp(userSafe, 'i');
+        orConds.push({ instagramUsername: userRx });
+        orConds.push({ instauser: userRx });
+        orConds.push({ 'additionalInfoMapPaid.instagram_username': userRx });
+      }
+
+      query = { $and: [wppBaseQuery, { $or: orConds }] };
+    }
+
+    const docs = await col.find(
+      query,
+      { projection: { _id: 1, createdAt: 1, paidAt: 1, woovi: 1, status: 1, customer: 1, instagramUsername: 1, instauser: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1 } }
+    ).sort({ createdAt: -1, _id: -1 }).limit(limit).toArray();
+    res.json({ ok: true, sales: docs });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/whatsapp-sales', requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const phoneRaw = String(body.phone || '').trim();
+    const phoneDigits = phoneRaw.replace(/\D/g, '');
+    const phone = phoneDigits ? (`+55${phoneDigits.replace(/^55/, '')}`) : '';
+    const usernameRaw = String(body.username || body.instauser || body.instagram_username || '').trim();
+    const username = usernameRaw.replace(/^@+/, '').trim();
+    const tipoRaw = String(body.tipo || body.tipoServico || body.serviceType || '').trim();
+    const tipo = tipoRaw ? tipoRaw : '';
+    const qty = Math.max(0, Math.floor(Number(body.quantidade || body.qtd || 0) || 0));
+    const parseMoneyToCents = (v) => {
+      const raw = String(v == null ? '' : v).trim();
+      if (!raw) return 0;
+      let s = raw.replace(/[^\d,.\-]/g, '');
+      const hasComma = s.includes(',');
+      const hasDot = s.includes('.');
+      if (hasComma && hasDot) {
+        if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+          s = s.replace(/\./g, '').replace(/,/g, '.');
+        } else {
+          s = s.replace(/,/g, '');
+        }
+      } else if (hasComma && !hasDot) {
+        s = s.replace(/,/g, '.');
+      }
+      const n = Number(s);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      return Math.round(n * 100);
+    };
+    const valueCents = parseMoneyToCents(body.value || body.valor || 0);
+
+    if (!phone || phone.replace(/\D/g, '').length < 10) return res.status(400).json({ ok: false, error: 'Telefone inválido' });
+    if (!username) return res.status(400).json({ ok: false, error: 'Perfil inválido' });
+    if (!tipo) return res.status(400).json({ ok: false, error: 'Tipo inválido' });
+    if (!qty) return res.status(400).json({ ok: false, error: 'Quantidade inválida' });
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const rand = Math.random().toString(36).slice(2, 8);
+    const identifier = `wpp_${Date.now()}_${rand}`;
+    const correlationID = `wpp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    const additionalInfoMapPaid = {
+      phone: phoneDigits.replace(/^55/, ''),
+      instagram_username: username,
+      categoria_servico: 'seguidores',
+      tipo_servico: tipo,
+      quantidade: String(qty),
+      saleChannel: 'whatsapp'
+    };
+    if (valueCents) additionalInfoMapPaid.valor = String((valueCents / 100).toFixed(2));
+
+    const additionalInfoPaid = Object.keys(additionalInfoMapPaid).map((k) => ({ key: k, value: String(additionalInfoMapPaid[k]) }));
+
+    const doc = {
+      createdAt: now,
+      paidAt: nowIso,
+      status: 'pago',
+      woovi: { status: 'pago', paidAt: nowIso, paymentMethods: { pix: { value: valueCents || 0 } } },
+      valueCents: valueCents || 0,
+      identifier,
+      correlationID,
+      customer: { phone },
+      instagramUsername: username,
+      instauser: username,
+      tipo,
+      tipoServico: tipo,
+      qtd: qty,
+      quantidade: qty,
+      additionalInfoPaid,
+      additionalInfoMapPaid,
+      saleChannel: 'whatsapp',
+      isWhatsappSale: true
+    };
 
     const { getCollection } = require('./mongodbClient');
-    const monitorCol = await getCollection('followers_monitor');
+    const col = await getCollection('checkout_orders');
+    const ins = await col.insertOne(doc);
+    res.json({ ok: true, id: ins?.insertedId ? String(ins.insertedId) : null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
+app.get('/api/painel/whatsapp-sales/followers-current', requireAdmin, async (req, res) => {
+  try {
+    const purchaseRaw = String(req.query?.purchase || '').trim();
+    const force = String(req.query?.force || '').trim() === '1';
+    if (!purchaseRaw) return res.status(400).json({ ok: false, error: 'missing_purchase' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const wppBaseQuery = { $or: [{ saleChannel: 'whatsapp' }, { isWhatsappSale: true }, { 'additionalInfoMapPaid.saleChannel': 'whatsapp' }, { 'additionalInfoMap.saleChannel': 'whatsapp' }] };
+
+    const safe = purchaseRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(safe, 'i');
+    const digits = purchaseRaw.replace(/\D/g, '');
+    const usernameCandidate = purchaseRaw.replace(/^@+/, '').trim();
+    const orConds = [
+      { identifier: rx },
+      { correlationID: rx },
+      { instagramUsername: rx },
+      { instauser: rx },
+      { 'additionalInfoMapPaid.instagram_username': rx },
+      { 'additionalInfoMapPaid.phone': rx },
+      { 'additionalInfoPaid': { $elemMatch: { key: 'instagram_username', value: rx } } },
+      { 'additionalInfoPaid': { $elemMatch: { key: 'phone', value: rx } } }
+    ];
+
+    if (digits && digits.length >= 6) {
+      const digitsRx = new RegExp(digits.split('').join('\\D*'), 'i');
+      orConds.push({ 'customer.phone': { $regex: digitsRx } });
+    }
+
+    if (/^[0-9a-fA-F]{24}$/.test(purchaseRaw)) {
+      try {
+        const { ObjectId } = require('mongodb');
+        orConds.push({ _id: new ObjectId(purchaseRaw) });
+      } catch (_) {}
+    }
+
+    if (usernameCandidate) {
+      const userSafe = usernameCandidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const userRx = new RegExp(userSafe, 'i');
+      orConds.push({ instagramUsername: userRx });
+      orConds.push({ instauser: userRx });
+      orConds.push({ 'additionalInfoMapPaid.instagram_username': userRx });
+    }
+
+    const doc = await col.findOne(
+      { $and: [wppBaseQuery, { $or: orConds }] },
+      { projection: { _id: 1, createdAt: 1, paidAt: 1, woovi: 1, identifier: 1, correlationID: 1, status: 1, customer: 1, instagramUsername: 1, instauser: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1 } }
+    );
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    const pickInfoPaid = (o, key) => {
+      try {
+        if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        const arrPaid = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const usernameRaw = String(pickInfoPaid(doc, 'instagram_username') || doc.instagramUsername || doc.instauser || '').trim();
+    const username = usernameRaw.toLowerCase().replace(/^@+/, '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+
+    const out = await followersMgmtGetCurrent(req, username, force);
+    return res.status(out.code).json({
+      purchase: purchaseRaw,
+      sale: {
+        id: doc._id ? String(doc._id) : null,
+        identifier: doc.identifier ? String(doc.identifier) : null,
+        correlationID: doc.correlationID ? String(doc.correlationID) : null,
+        phone: (doc.customer && doc.customer.phone) ? String(doc.customer.phone) : null,
+        paidAt: doc.woovi?.paidAt || doc.paidAt || doc.createdAt || null,
+        tipo: String(pickInfoPaid(doc, 'tipo_servico') || doc.tipoServico || doc.tipo || '').trim() || null,
+        quantidade: Number(doc.quantidade || doc.qtd || pickInfoPaid(doc, 'quantidade') || 0) || null
+      },
+      ...out.body
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+const followersMgmtSerial = new Map();
+const followersMgmtThrottle = new Map();
+const followersMgmtEnqueue = (key, fn) => {
+  const prev = followersMgmtSerial.get(key) || Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  followersMgmtSerial.set(key, next.finally(() => {
+    try {
+      if (followersMgmtSerial.get(key) === next) followersMgmtSerial.delete(key);
+    } catch (_) {}
+  }));
+  return next;
+};
+
+const followersMgmtGetCurrent = async (req, username, force) => {
+  const { getCollection } = require('./mongodbClient');
+  const monitorCol = await getCollection('followers_monitor');
+
+  const key = String((req.session && req.session.adminUser && req.session.adminUser.username) ? req.session.adminUser.username : 'admin') + '|' + String(req.realIP || req.ip || '');
+
+  return followersMgmtEnqueue(key, async () => {
     const cached = await monitorCol.findOne({ username }, { projection: { _id: 0 } });
     if (!force && cached && cached.checkedAt) {
       const ageMs = Date.now() - new Date(String(cached.checkedAt)).getTime();
       if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < (5 * 60 * 1000)) {
-        return res.json({ ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null });
+        return { code: 200, body: { ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null } };
       }
     }
 
-    let result = await fetchInstagramFollowersInfo(username);
-    let profile = result && result.success ? result.profile : null;
-    let source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
-    let isPrivate = profile ? !!profile.isPrivate : null;
-    let followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
-    let error = result && !result.success ? (result.error || 'unknown_error') : null;
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const minIntervalMs = 1500;
+    const now = Date.now();
+    const nextAllowedAt = Number(followersMgmtThrottle.get(key) || 0) || 0;
+    const waitMs = Math.max(0, nextAllowedAt - now);
+    if (waitMs > 0) await sleep(waitMs);
+    await sleep(Math.floor(Math.random() * 350));
+    followersMgmtThrottle.set(key, Date.now() + minIntervalMs);
+
+    let result = null;
+    let profile = null;
+    let source = 'web_profile_info';
+    let isPrivate = null;
+    let followersCount = null;
+    let error = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        result = await fetchInstagramFollowersInfo(username);
+        profile = result && result.success ? result.profile : null;
+        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+        isPrivate = profile ? !!profile.isPrivate : null;
+        followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
+        error = result && !result.success ? (result.error || 'unknown_error') : null;
+        if (profile) break;
+      } catch (e) {
+        error = e?.message || String(e);
+      }
+      if (attempt < 3) await sleep(900 * attempt);
+    }
 
     if (!profile) {
       try {
@@ -8022,14 +8352,64 @@ app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req
       } catch (_) {}
     }
 
-    const checkedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    const hasFresh = !!(profile && (typeof followersCount === 'number' || typeof isPrivate === 'boolean'));
+
+    if (!hasFresh) {
+      const prevFollowers = (cached && typeof cached.followersCount === 'number') ? cached.followersCount : null;
+      const prevPrivate = (cached && typeof cached.isPrivate === 'boolean') ? cached.isPrivate : null;
+      const prevCheckedAt = (cached && cached.checkedAt) ? cached.checkedAt : null;
+
+      if (followersCount == null && prevFollowers != null) followersCount = prevFollowers;
+      if (isPrivate == null && prevPrivate != null) isPrivate = prevPrivate;
+
+      await monitorCol.updateOne(
+        { username },
+        { $set: { username, followersCount, isPrivate, source, error, lastAttemptAt: nowIso } },
+        { upsert: true }
+      );
+
+      return { code: 200, body: { ok: true, cached: !!prevCheckedAt, stale: true, username, followersCount, isPrivate, checkedAt: prevCheckedAt, source, error } };
+    }
+
     await monitorCol.updateOne(
       { username },
-      { $set: { username, followersCount, isPrivate, checkedAt, source, error } },
+      { $set: { username, followersCount, isPrivate, checkedAt: nowIso, source, error, lastAttemptAt: nowIso } },
       { upsert: true }
     );
 
-    return res.json({ ok: true, cached: false, username, followersCount, isPrivate, checkedAt, source, error });
+    return { code: 200, body: { ok: true, cached: false, username, followersCount, isPrivate, checkedAt: nowIso, source, error } };
+  });
+};
+
+app.post('/api/painel/gerenciamento-seguidores/settings', requireAdmin, async (req, res) => {
+  try {
+    const dailyLimitRaw = parseInt(String((req.body && req.body.dailyLimit) || '50'), 10);
+    const dailyLimit = Math.min(1000, Math.max(1, Number.isFinite(dailyLimitRaw) ? dailyLimitRaw : 50));
+    const orderRaw = String((req.body && req.body.order) || 'newest').trim().toLowerCase();
+    const order = (orderRaw === 'oldest') ? 'oldest' : 'newest';
+
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    await settingsCol.updateOne(
+      { _id: 'followers_mgmt_settings' },
+      { $set: { values: { dailyLimit, order }, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    return res.json({ ok: true, dailyLimit, order });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req, res) => {
+  try {
+    const username = String(req.query.username || '').trim().toLowerCase().replace(/^@/, '');
+    const force = String(req.query.force || '').trim() === '1';
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+
+    const out = await followersMgmtGetCurrent(req, username, force);
+    return res.status(out.code).json(out.body);
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -8172,8 +8552,10 @@ app.post('/api/painel/gerenciamento-seguidores/test-old', requireAdmin, async (r
     }
 
     const results = [];
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     for (const u of usernames) {
       const started = Date.now();
+      let cached = null;
       let profile = null;
       let source = null;
       let followersCount = null;
@@ -8181,12 +8563,25 @@ app.post('/api/painel/gerenciamento-seguidores/test-old', requireAdmin, async (r
       let error = null;
 
       try {
-        const r = await fetchInstagramFollowersInfo(u);
-        profile = r && r.success ? r.profile : null;
-        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
-        isPrivate = profile ? !!profile.isPrivate : null;
-        followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
-        error = r && !r.success ? (r.error || 'unknown_error') : null;
+        cached = await monitorCol.findOne({ username: u }, { projection: { _id: 0 } });
+      } catch (_) {}
+
+      try {
+        let r = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            r = await fetchInstagramFollowersInfo(u);
+            profile = r && r.success ? r.profile : null;
+            source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+            isPrivate = profile ? !!profile.isPrivate : null;
+            followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
+            error = r && !r.success ? (r.error || 'unknown_error') : null;
+            if (profile) break;
+          } catch (e) {
+            error = e?.message || String(e);
+          }
+          if (attempt < 3) await sleep(900 * attempt);
+        }
       } catch (e) {
         error = e?.message || String(e);
       }
@@ -8207,11 +8602,20 @@ app.post('/api/painel/gerenciamento-seguidores/test-old', requireAdmin, async (r
         } catch (_) {}
       }
 
-      const checkedAt = new Date().toISOString();
+      const nowIso = new Date().toISOString();
+      const hasFresh = !!(profile && (typeof followersCount === 'number' || typeof isPrivate === 'boolean'));
+      const prevFollowers = (cached && typeof cached.followersCount === 'number') ? cached.followersCount : null;
+      const prevPrivate = (cached && typeof cached.isPrivate === 'boolean') ? cached.isPrivate : null;
+      const prevCheckedAt = (cached && cached.checkedAt) ? cached.checkedAt : null;
+      if (!hasFresh) {
+        if (followersCount == null && prevFollowers != null) followersCount = prevFollowers;
+        if (isPrivate == null && prevPrivate != null) isPrivate = prevPrivate;
+      }
+
       try {
         await monitorCol.updateOne(
           { username: u },
-          { $set: { username: u, followersCount, isPrivate, checkedAt, source: source || null, error: error || null } },
+          { $set: { username: u, followersCount, isPrivate, source: source || null, error: error || null, lastAttemptAt: nowIso, ...(hasFresh ? { checkedAt: nowIso } : {}) } },
           { upsert: true }
         );
       } catch (_) {}
@@ -8223,8 +8627,11 @@ app.post('/api/painel/gerenciamento-seguidores/test-old', requireAdmin, async (r
         isPrivate,
         source,
         error,
+        checkedAt: hasFresh ? nowIso : (prevCheckedAt || null),
         ms: Date.now() - started
       });
+
+      await sleep(1500 + Math.floor(Math.random() * 450));
     }
 
     return res.json({ ok: true, limit, tested: results.length, results });
@@ -9384,6 +9791,365 @@ app.get('/painel', requireAdmin, async (req, res) => {
       ]
     };
 
+    const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
+    const nowUTC = new Date();
+    const nowSP = toSP(nowUTC);
+    const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
+    const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
+
+    const matchesPeriod = (o, period) => {
+      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      if (!dateStr) return false;
+      const orderDateUTC = new Date(dateStr);
+      const orderDateSP = toSP(orderDateUTC);
+      if (period === 'all') return true;
+      if (period === 'today') return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+      if (period === 'last3days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 2); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
+      if (period === 'last7days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 6); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
+      if (period === 'thismonth') { const start = new Date(startOfTodaySP); start.setUTCDate(1); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
+      if (period === 'lastmonth') {
+        const start = new Date(startOfTodaySP);
+        start.setUTCMonth(start.getUTCMonth() - 1);
+        start.setUTCDate(1);
+        const end = new Date(startOfTodaySP);
+        end.setUTCDate(1);
+        return orderDateSP >= start && orderDateSP < end;
+      }
+      if (period === 'custom') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = startStr.split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+          const [eY, eM, eD] = endStr.split('-').map(Number);
+          const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
+          return orderDateSP >= start && orderDateSP <= end;
+        }
+        return true;
+      }
+      return true;
+    };
+
+    if (view === 'ltv') {
+      const period = 'all';
+      const normalizePersonKey = (v) => String(v == null ? '' : v).trim().replace(/^@+/, '').toLowerCase();
+      const isTestUser = (ig, customerName) => {
+        const key1 = normalizePersonKey(ig);
+        const key2 = normalizePersonKey(customerName);
+        return key1 === 'biel' || key1 === 'virginia' || key1 === 'pedro' || key2 === 'biel' || key2 === 'virginia' || key2 === 'pedro';
+      };
+      const normalizeInstaUser = (v) => {
+        const raw = String(v == null ? '' : v).trim();
+        if (!raw) return '';
+        const cleaned = raw.replace(/^@+/, '').replace(/\/+$/, '').split('/').pop().trim();
+        return cleaned.toLowerCase();
+      };
+      const onlyDigits = (v) => String(v == null ? '' : v).replace(/\D/g, '');
+      const normalizeEmail = (v) => {
+        const raw = String(v == null ? '' : v).trim().toLowerCase();
+        if (!raw) return '';
+        const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw);
+        return ok ? raw : '';
+      };
+      const pickInfoFromArray = (arr, key) => {
+        try {
+          if (!Array.isArray(arr)) return '';
+          const it = arr.find(x => x && x.key === key);
+          return it && typeof it.value !== 'undefined' ? String(it.value) : '';
+        } catch (_) {
+          return '';
+        }
+      };
+      const resolvePhone = (o) => {
+        try {
+          const c = o && o.customer ? o.customer : null;
+          const direct = c && (c.phone || c.phone_number || c.phoneNumber) ? String(c.phone || c.phone_number || c.phoneNumber) : '';
+          if (direct) return direct;
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          const mp = mapPaid && (mapPaid.phone || mapPaid.telefone || mapPaid.celular) ? String(mapPaid.phone || mapPaid.telefone || mapPaid.celular) : '';
+          if (mp) return mp;
+          const m = map && (map.phone || map.telefone || map.celular) ? String(map.phone || map.telefone || map.celular) : '';
+          if (m) return m;
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'phone') || pickInfoFromArray(o && o.additionalInfoPaid, 'telefone') || pickInfoFromArray(o && o.additionalInfoPaid, 'celular');
+          if (ap) return ap;
+          const a = pickInfoFromArray(o && o.additionalInfo, 'phone') || pickInfoFromArray(o && o.additionalInfo, 'telefone') || pickInfoFromArray(o && o.additionalInfo, 'celular');
+          if (a) return a;
+        } catch (_) {}
+        return '';
+      };
+      const resolveInsta = (o) => {
+        try {
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          const mp = mapPaid && (mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil) ? String(mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil) : '';
+          if (mp) return mp;
+          const m = map && (map.instagram_username || map.instauser || map.username || map.perfil) ? String(map.instagram_username || map.instauser || map.username || map.perfil) : '';
+          if (m) return m;
+          const direct = o && (o.instagramUsername || o.instauser) ? String(o.instagramUsername || o.instauser) : '';
+          if (direct) return direct;
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'instagram_username') || pickInfoFromArray(o && o.additionalInfoPaid, 'instauser') || pickInfoFromArray(o && o.additionalInfoPaid, 'username');
+          if (ap) return ap;
+          const a = pickInfoFromArray(o && o.additionalInfo, 'instagram_username') || pickInfoFromArray(o && o.additionalInfo, 'instauser') || pickInfoFromArray(o && o.additionalInfo, 'username');
+          if (a) return a;
+        } catch (_) {}
+        return '';
+      };
+      const resolveEmail = (o) => {
+        try {
+          const c = o && o.customer ? o.customer : null;
+          const direct = c && c.email ? String(c.email) : '';
+          if (direct) return direct;
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          const mp = mapPaid && mapPaid.email ? String(mapPaid.email) : '';
+          if (mp) return mp;
+          const m = map && map.email ? String(map.email) : '';
+          if (m) return m;
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'email');
+          if (ap) return ap;
+          const a = pickInfoFromArray(o && o.additionalInfo, 'email');
+          if (a) return a;
+        } catch (_) {}
+        return '';
+      };
+      const resolveCustomerName = (o) => {
+        try {
+          const c = o && o.customer ? o.customer : null;
+          const direct = c && c.name ? String(c.name) : '';
+          if (direct) return direct;
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          const mp = mapPaid && (mapPaid.nome || mapPaid.name) ? String(mapPaid.nome || mapPaid.name) : '';
+          if (mp) return mp;
+          const m = map && (map.nome || map.name) ? String(map.nome || map.name) : '';
+          if (m) return m;
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'nome') || pickInfoFromArray(o && o.additionalInfoPaid, 'name');
+          if (ap) return ap;
+          const a = pickInfoFromArray(o && o.additionalInfo, 'nome') || pickInfoFromArray(o && o.additionalInfo, 'name');
+          if (a) return a;
+        } catch (_) {}
+        return '';
+      };
+      const resolveTypeKey = (o) => {
+        try {
+          let type = o.tipo || o.tipoServico;
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          if (!type && mapPaid && mapPaid.tipo_servico) type = mapPaid.tipo_servico;
+          if (!type && map && map.tipo_servico) type = map.tipo_servico;
+          if (!type) type = pickInfoFromArray(o && o.additionalInfoPaid, 'tipo_servico') || pickInfoFromArray(o && o.additionalInfo, 'tipo_servico');
+          const cat = (() => {
+            const c1 = mapPaid && mapPaid.categoria_servico ? String(mapPaid.categoria_servico) : '';
+            if (c1) return c1;
+            const c2 = map && map.categoria_servico ? String(map.categoria_servico) : '';
+            if (c2) return c2;
+            return pickInfoFromArray(o && o.additionalInfoPaid, 'categoria_servico') || pickInfoFromArray(o && o.additionalInfo, 'categoria_servico');
+          })();
+          const categoryRaw = String(cat || '').toLowerCase().trim();
+          const t = String(type || '').toLowerCase().trim();
+          const category = (() => {
+            if (categoryRaw.includes('segu')) return 'seguidores';
+            if (categoryRaw.includes('curti')) return 'curtidas';
+            return categoryRaw;
+          })();
+          if (category === 'curtidas' && t === 'mistos') return 'curtidas_mistos';
+          if (category === 'curtidas' && t === 'organicos') return 'curtidas_organicas';
+          if (category === 'seguidores' && t === 'mistos') return 'seguidores_mistos';
+          if (category === 'seguidores' && t === 'brasileiros') return 'seguidores_brasileiros';
+          if (category === 'seguidores' && t === 'organicos') return 'seguidores_organicos';
+          if (!category && (t === 'mistos' || t === 'organicos' || t === 'brasileiros')) return `${t}_sem_categoria`;
+          return t || '-';
+        } catch (_) {
+          return '-';
+        }
+      };
+      const resolveOrderBumpsRaw = (o) => {
+        try {
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          if (mapPaid && typeof mapPaid.order_bumps !== 'undefined') return String(mapPaid.order_bumps || '').trim();
+          if (map && typeof map.order_bumps !== 'undefined') return String(map.order_bumps || '').trim();
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'order_bumps');
+          if (ap) return String(ap || '').trim();
+          const a = pickInfoFromArray(o && o.additionalInfo, 'order_bumps');
+          if (a) return String(a || '').trim();
+        } catch (_) {}
+        return '';
+      };
+      const parseBumps = (raw) => {
+        const text = String(raw || '');
+        const parts = text.split(';').map(p => p.trim()).filter(Boolean);
+        const res = { views: 0, likes: 0, comments: 0, upgrade: 0 };
+        for (const p of parts) {
+          const [kRaw, vRaw] = p.split(':');
+          const k = String(kRaw || '').toLowerCase().trim();
+          const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+          if (k === 'views') res.views = v;
+          else if (k === 'likes') res.likes = v;
+          else if (k === 'comments') res.comments = v;
+          else if (k === 'upgrade') res.upgrade = v || 1;
+        }
+        return res;
+      };
+      const toMoney = (v) => {
+        const raw = String(v == null ? '' : v).trim();
+        if (!raw) return 0;
+        let s = raw.replace(/[^\d,.\-]/g, '');
+        const hasComma = s.includes(',');
+        const hasDot = s.includes('.');
+        if (hasComma && hasDot) {
+          if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(/,/g, '.');
+          else s = s.replace(/,/g, '');
+        } else if (hasComma && !hasDot) {
+          s = s.replace(/,/g, '.');
+        }
+        const n = Number(s);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const cursor = col.find(paidQuery, {
+        projection: {
+          _id: 1,
+          createdAt: 1,
+          paidAt: 1,
+          woovi: 1,
+          valueCents: 1,
+          customer: 1,
+          instagramUsername: 1,
+          instauser: 1,
+          tipo: 1,
+          tipoServico: 1,
+          additionalInfoMapPaid: 1,
+          additionalInfoMap: 1,
+          additionalInfoPaid: 1,
+          additionalInfo: 1
+        }
+      });
+
+      const customerAgg = new Map();
+      const serviceAgg = new Map();
+      let unknownCustomerOrders = 0;
+      let consideredOrders = 0;
+      let bumpOnlyOrders = 0;
+
+      for await (const o of cursor) {
+        const ig = normalizeInstaUser(resolveInsta(o));
+        const customerName = String(resolveCustomerName(o) || '').trim();
+        if (isTestUser(ig, customerName)) continue;
+
+        consideredOrders += 1;
+
+        const phoneDigits = onlyDigits(resolvePhone(o));
+        const email = normalizeEmail(resolveEmail(o));
+        const customerKey = ig ? `ig:${ig}` : (phoneDigits ? `ph:${phoneDigits}` : '');
+        if (!customerKey) {
+          unknownCustomerOrders += 1;
+        } else {
+          const username = ig ? (`@${ig}`) : (customerName ? customerName : '');
+          const label = username || (phoneDigits ? (`+${phoneDigits}`) : '-');
+          const cur = customerAgg.get(customerKey) || { orders: 0, spend: 0, label, username, phone: phoneDigits ? (`+${phoneDigits}`) : '', email };
+          cur.orders += 1;
+          if (!cur.username && username) cur.username = username;
+          if (!cur.phone && phoneDigits) cur.phone = `+${phoneDigits}`;
+          if (!cur.email && email) cur.email = email;
+
+          let revenue = 0;
+          if (o.valueCents) revenue = Number(o.valueCents) / 100;
+          else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && o.woovi.paymentMethods.pix.value) revenue = Number(o.woovi.paymentMethods.pix.value) / 100;
+          const bumpTotalRaw = (o.additionalInfoMapPaid && o.additionalInfoMapPaid.order_bumps_total) ? o.additionalInfoMapPaid.order_bumps_total
+            : ((o.additionalInfoMap && o.additionalInfoMap.order_bumps_total) ? o.additionalInfoMap.order_bumps_total
+              : (pickInfoFromArray(o.additionalInfoPaid, 'order_bumps_total') || pickInfoFromArray(o.additionalInfo, 'order_bumps_total')));
+          const bumpRevenue = toMoney(bumpTotalRaw);
+          const totalPaid = (!o.valueCents && bumpRevenue) ? (Number(revenue || 0) + Number(bumpRevenue || 0)) : Number(revenue || 0);
+          cur.spend += totalPaid;
+          customerAgg.set(customerKey, cur);
+        }
+
+        const typeKey = resolveTypeKey(o);
+        const bumpsRaw = resolveOrderBumpsRaw(o);
+        const bumps = parseBumps(bumpsRaw);
+        const hasBumps = (bumps.views || bumps.likes || bumps.comments || bumps.upgrade) ? true : false;
+        const typeStr = String(typeKey || '').toLowerCase().trim();
+        const typeIsEmpty = !typeStr || typeStr === '-' || typeStr === 'null' || typeStr === 'undefined';
+        const typeIsBump = typeStr.includes('orderbump') || typeStr.includes('order_bump') || typeStr === 'bump';
+        const bumpOnly = hasBumps && (typeIsEmpty || typeIsBump);
+        if (bumpOnly) bumpOnlyOrders += 1;
+        if (!bumpOnly) serviceAgg.set(typeKey, (serviceAgg.get(typeKey) || 0) + 1);
+      }
+
+      const totalCustomers = customerAgg.size;
+      let repeatCustomers = 0;
+      for (const v of customerAgg.values()) if (v && v.orders > 1) repeatCustomers += 1;
+      const repeatCustomerPct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+
+      const topUsersByOrders = Array.from(customerAgg.values())
+        .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend))
+        .slice(0, 5);
+
+      const topUsersBySpend = Array.from(customerAgg.values())
+        .sort((a, b) => (b.spend - a.spend) || (b.orders - a.orders))
+        .slice(0, 5);
+
+      const prettyServiceLabel = (typeKey) => {
+        const raw = String(typeKey == null ? '' : typeKey).trim();
+        if (!raw || raw === '-' || raw === 'null' || raw === 'undefined') return '-';
+        const key = raw.toLowerCase().trim();
+        if (key === 'seguidores_organicos') return 'Seguidores orgânicos';
+        if (key === 'seguidores_mistos') return 'Seguidores mistos';
+        if (key === 'seguidores_brasileiros') return 'Seguidores brasileiros';
+        if (key === 'curtidas_organicas') return 'Curtidas orgânicas';
+        if (key === 'curtidas_mistos') return 'Curtidas mistos';
+        if (key === 'mistos_sem_categoria') return 'Mistos (sem categoria)';
+        if (key === 'organicos_sem_categoria') return 'Orgânicos (sem categoria)';
+        if (key === 'brasileiros_sem_categoria') return 'Brasileiros (sem categoria)';
+        const s = raw.replace(/_/g, ' ');
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      };
+
+      const serviceEntries = Array.from(serviceAgg.entries())
+        .map(([type, count]) => ({ type, count }))
+        .filter(it => it && it.type && it.type !== '-' && it.type !== 'null' && it.type !== 'undefined');
+      serviceEntries.sort((a, b) => b.count - a.count);
+      const topService = serviceEntries.length ? { type: prettyServiceLabel(serviceEntries[0].type), count: serviceEntries[0].count } : null;
+      const colors = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b', '#dc2626', '#64748b', '#06b6d4', '#a855f7'];
+      const top5Entries = serviceEntries.slice(0, 5);
+      const totalForPie = top5Entries.reduce((acc, it) => acc + (it.count || 0), 0);
+      const servicePie = top5Entries.map((it, idx) => ({
+        label: prettyServiceLabel(it.type),
+        count: it.count,
+        color: colors[idx % colors.length],
+        pct: totalForPie > 0 ? (it.count / totalForPie) * 100 : 0
+      }));
+
+      const customerRows = Array.from(customerAgg.values())
+        .map(v => ({
+          label: String(v && v.label ? v.label : ''),
+          username: String(v && v.username ? v.username : ''),
+          phone: String(v && v.phone ? v.phone : ''),
+          email: String(v && v.email ? v.email : ''),
+          orders: Number(v && v.orders ? v.orders : 0),
+          spend: Number(v && v.spend ? v.spend : 0)
+        }))
+        .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend) || String(a.label).localeCompare(String(b.label)));
+
+      return res.render('painel', {
+        view: 'ltv',
+        period,
+        totalTransactions: consideredOrders,
+        totalCustomers,
+        repeatCustomers,
+        repeatCustomerPct,
+        topUsersByOrders,
+        topUsersBySpend,
+        topService,
+        servicePie,
+        unknownCustomerOrders,
+        bumpOnlyOrders,
+        customerRows
+      });
+    }
+
     const unknownProviderQuery = {
       $or: [
         { 'fama24h.status': 'unknown' },
@@ -9551,10 +10317,6 @@ app.get('/painel', requireAdmin, async (req, res) => {
     let costSettingsDoc = await settingsCol.findOne({ _id: 'cost_settings' });
     const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, (costSettingsDoc && costSettingsDoc.values) || {});
 
-    // Timezone correction (-3 hours) helper
-    // Returns a Date object shifted by -3 hours so that UTC methods return SP components
-    const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
-
     // Filter logic
     const periodDefault = view === 'unknown_orderid' ? 'all' : 'today';
     const period = req.query.period || periodDefault;
@@ -9571,12 +10333,6 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return ignoreBumps ? '/painel' : '/painel?ignoreBumps=1';
       }
     })();
-    const nowUTC = new Date();
-    const nowSP = toSP(nowUTC);
-    
-    // Start of today in SP (00:00 SP time)
-    const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
-    const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
     const startOfTodayUtc = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 3, 0, 0, 0));
     const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
@@ -10155,7 +10911,22 @@ app.get('/painel', requireAdmin, async (req, res) => {
         })()
       }));
 
-      return res.render('painel', { view, period, unknownOrders, totalUnknown: unknownOrders.length, costSettings });
+      const openUnknownModal = String(req.query.openUnknownModal || '').trim();
+      const openUnknownDefaultProviderRaw = String(req.query.defaultProvider || '').trim();
+      const openUnknownLockProvider = String(req.query.lockProvider || '').trim() === '1' ? '1' : '';
+      const allowedProviders = new Set(['fama24h', 'fama24h_views', 'fama24h_likes', 'fornecedor_social', 'worldsmm_comments']);
+      const openUnknownDefaultProvider = allowedProviders.has(openUnknownDefaultProviderRaw) ? openUnknownDefaultProviderRaw : '';
+
+      return res.render('painel', {
+        view,
+        period,
+        unknownOrders,
+        totalUnknown: unknownOrders.length,
+        costSettings,
+        openUnknownModal,
+        openUnknownDefaultProvider,
+        openUnknownLockProvider
+      });
     }
 
     const paidOrdersToday = orders.filter(o => {
@@ -10457,6 +11228,32 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
       totalRevenue += revenue;
 
+      let igUser = '';
+      try {
+        igUser = String(extractInfo('instagram_username') || o.instagramUsername || o.instauser || '').trim();
+      } catch (_) {
+        igUser = '';
+      }
+      igUser = igUser.replace(/^@+/, '').trim();
+
+      let phone = '';
+      try {
+        phone = String((o && o.customer && o.customer.phone) ? o.customer.phone : '').trim();
+      } catch (_) {
+        phone = '';
+      }
+      if (!phone) {
+        try {
+          phone = String(extractInfo('phone') || '').trim();
+        } catch (_) {
+          phone = '';
+        }
+      }
+
+      const customerKey = igUser ? (`ig:${igUser.toLowerCase()}`) : (phone ? (`ph:${String(phone).replace(/\D/g, '')}`) : '');
+      const customerLabel = igUser ? (`@${igUser}`) : (phone || '-');
+      const totalPaid = (!o.valueCents && bumpRevenue) ? (Number(revenue || 0) + Number(bumpRevenue || 0)) : Number(revenue || 0);
+
       return {
         _id: o._id,
         createdAt: o.createdAt,
@@ -10468,9 +11265,62 @@ app.get('/painel', requireAdmin, async (req, res) => {
         orderBumps: String(bumpStrRaw || ''),
         orderBumpsTotal: String(bumpTotalRaw || ''),
         bumpRevenue,
-        revenue
+        revenue,
+        totalPaid,
+        customerKey,
+        customerLabel,
+        instagramUsername: igUser,
+        phone
       };
     });
+
+    const customerAgg = new Map();
+    const serviceAgg = new Map();
+    for (const r of report) {
+      const k = String(r && r.customerKey ? r.customerKey : '').trim();
+      if (k) {
+        const cur = customerAgg.get(k) || { orders: 0, spend: 0, label: String(r.customerLabel || k) };
+        cur.orders += 1;
+        cur.spend += Number(r.totalPaid || 0);
+        customerAgg.set(k, cur);
+      }
+      const t = String(r && r.type ? r.type : '').trim();
+      if (t) serviceAgg.set(t, (serviceAgg.get(t) || 0) + 1);
+    }
+
+    const totalCustomers = customerAgg.size;
+    let repeatCustomers = 0;
+    for (const v of customerAgg.values()) {
+      if (v && v.orders > 1) repeatCustomers += 1;
+    }
+    const repeatCustomerPct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+
+    const topUsersByOrders = Array.from(customerAgg.values())
+      .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend))
+      .slice(0, 5);
+
+    const topUsersBySpend = Array.from(customerAgg.values())
+      .sort((a, b) => (b.spend - a.spend) || (b.orders - a.orders))
+      .slice(0, 5);
+
+    const serviceEntries = Array.from(serviceAgg.entries()).map(([type, count]) => ({ type, count }));
+    serviceEntries.sort((a, b) => b.count - a.count);
+    const topService = serviceEntries.length ? serviceEntries[0] : null;
+    const totalOrdersForPie = serviceEntries.reduce((acc, it) => acc + (it.count || 0), 0);
+    const colors = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b', '#dc2626', '#64748b', '#06b6d4', '#a855f7'];
+    const pieBase = serviceEntries.slice(0, 5).map((it, idx) => ({
+      label: it.type,
+      count: it.count,
+      color: colors[idx % colors.length],
+      pct: totalOrdersForPie > 0 ? (it.count / totalOrdersForPie) * 100 : 0
+    }));
+    const otherCount = serviceEntries.slice(5).reduce((acc, it) => acc + (it.count || 0), 0);
+    const servicePie = otherCount > 0 ? pieBase.concat([{
+      label: 'outros',
+      count: otherCount,
+      color: colors[5 % colors.length],
+      pct: totalOrdersForPie > 0 ? (otherCount / totalOrdersForPie) * 100 : 0
+    }]) : pieBase;
 
     const ignoreBumpRevenue = String(req.query.ignoreBumpRevenue || '') === '1';
     const revenueWithoutBumps = Math.max(0, Number(totalRevenue || 0) - Number(totalBumpRevenue || 0));
@@ -10490,7 +11340,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     })();
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl });
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie });
   } catch (e) {
     res.status(500).send(e.toString());
   }
@@ -11120,8 +11970,10 @@ function parseOptionalDate(value) {
 async function getCouponEligibility(code, profileKey) {
   const { getCollection } = require('./mongodbClient');
   const couponsCol = await getCollection('coupons');
-  const coupon = await couponsCol.findOne({ code: normalizeCouponCode(code), isActive: true });
+  const coupon = await couponsCol.findOne({ code: normalizeCouponCode(code) });
   if (!coupon) return { ok: false, error: 'Cupom inválido ou inativo' };
+  const inactive = (coupon.isActive === false) || (String(coupon.isActive || '').toLowerCase() === 'false');
+  if (inactive) return { ok: false, error: 'Cupom inválido ou inativo' };
 
   const now = new Date();
   const validFrom = coupon.validFrom ? new Date(coupon.validFrom) : null;
@@ -11260,20 +12112,20 @@ app.put('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
     if (req.body?.validTo !== undefined) update.validTo = parseOptionalDate(req.body.validTo);
     if (req.body?.isActive !== undefined) update.isActive = !(req.body.isActive === false || req.body.isActive === 'false');
 
-    if (!update.code || !update.discountPercentage) {
-      return res.status(400).json({ success: false, error: 'Código e porcentagem são obrigatórios' });
-    }
-    if (update.discountPercentage <= 0 || update.discountPercentage > 100) {
+    if (!Object.keys(update).length) return res.status(400).json({ success: false, error: 'Nenhum campo para atualizar' });
+    if (update.code != null && !update.code) return res.status(400).json({ success: false, error: 'Código é obrigatório' });
+    if (update.discountPercentage != null && !update.discountPercentage) return res.status(400).json({ success: false, error: 'Porcentagem é obrigatória' });
+    if (update.discountPercentage != null && (update.discountPercentage <= 0 || update.discountPercentage > 100)) {
       return res.status(400).json({ success: false, error: 'Porcentagem inválida' });
     }
-    if (update.validFrom && update.validTo && update.validFrom.getTime() > update.validTo.getTime()) {
-      return res.status(400).json({ success: false, error: 'Validade inválida' });
-    }
+    if (update.validFrom && update.validTo && update.validFrom.getTime() > update.validTo.getTime()) return res.status(400).json({ success: false, error: 'Validade inválida' });
     if (update.maxUsesTotal != null && update.maxUsesTotal <= 0) update.maxUsesTotal = null;
     if (update.maxUsesPerProfile != null && update.maxUsesPerProfile <= 0) update.maxUsesPerProfile = null;
 
-    const existing = await col.findOne({ code: update.code, _id: { $ne: new ObjectId(id) } });
-    if (existing) return res.status(400).json({ success: false, error: 'Cupom já existe' });
+    if (update.code != null) {
+      const existing = await col.findOne({ code: update.code, _id: { $ne: new ObjectId(id) } });
+      if (existing) return res.status(400).json({ success: false, error: 'Cupom já existe' });
+    }
 
     await col.updateOne({ _id: new ObjectId(id) }, { $set: update });
     res.json({ success: true });

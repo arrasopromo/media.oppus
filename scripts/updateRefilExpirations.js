@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const { getCollection } = require('../mongodbClient');
 const { ObjectId } = require('mongodb');
+const crypto = require('crypto');
 
 function safeDateMs(iso) {
   try {
@@ -124,7 +125,13 @@ function isEligibleRefil(order) {
 
 function warrantyFromBumpKeys(keys) {
   const arr = Array.isArray(keys) ? keys : [];
-  if (arr.includes('warranty_lifetime') || arr.includes('warranty_life')) return { isLifetime: true, months: null, mode: 'life', days: null };
+  const hasLifetime = (() => {
+    if (arr.includes('warranty_lifetime') || arr.includes('warranty_life')) return true;
+    if (arr.includes('warranty60') || arr.includes('warranty_60') || arr.includes('warrenty60') || arr.includes('warrenty_60')) return true;
+    if (arr.includes('warrenty')) return true;
+    return false;
+  })();
+  if (hasLifetime) return { isLifetime: true, months: null, mode: 'life', days: null };
   return { isLifetime: false, months: 1, mode: '30', days: 30 };
 }
 
@@ -224,7 +231,7 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
     const lastOrder = eligibleOrders[0];
     const anyLifetime = eligibleOrders.some((o) => {
       const bumpKeys = parseBumpKeys(o);
-      return bumpKeys.includes('warranty_lifetime') || bumpKeys.includes('warranty_life');
+      return warrantyFromBumpKeys(bumpKeys).isLifetime;
     });
     const warranty = anyLifetime ? { isLifetime: true, months: null, mode: 'life', days: null } : warrantyFromBumpKeys(parseBumpKeys(lastOrder));
     const baseMs = orderBaseMs(lastOrder);
@@ -261,7 +268,138 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
     }
   }
 
-  console.log(JSON.stringify({ ok: errors === 0, scanned, updated, skippedNoOrder, skippedNoEligibleOrder, errors }));
+  const bumpRe = /(warrenty|warranty60|warranty_life|warranty_lifetime)/i;
+  const paidFilter = { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } } ] };
+  const bumpFilter = {
+    $or: [
+      { 'additionalInfoMapPaid.order_bumps': { $regex: bumpRe } },
+      { 'additionalInfoMap.order_bumps': { $regex: bumpRe } },
+      { additionalInfoPaid: { $elemMatch: { key: 'order_bumps', value: { $regex: bumpRe } } } },
+      { additionalInfo: { $elemMatch: { key: 'order_bumps', value: { $regex: bumpRe } } } }
+    ]
+  };
+  const ordersCursor = ordersCol.find(
+    { $and: [paidFilter, bumpFilter] },
+    { projection: { _id: 1, status: 1, woovi: 1, paidAt: 1, createdAt: 1, instauser: 1, instagramUsername: 1, customer: 1, additionalInfoPaid: 1, additionalInfo: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, tipoServico: 1, tipo: 1, categoriaServico: 1 } }
+  );
+
+  let scannedOrders = 0;
+  let matchedLifetimeOrders = 0;
+  let createdLinks = 0;
+  let updatedLinks = 0;
+  let updatedOrders = 0;
+
+  const safeToken = () => crypto.randomBytes(10).toString('hex');
+  const findUniqueToken = async () => {
+    for (let i = 0; i < 6; i++) {
+      const id = safeToken();
+      const exists = await tl.findOne({ id }, { projection: { _id: 1 } }).catch(() => null);
+      if (!exists) return id;
+    }
+    return safeToken();
+  };
+
+  const orderPhoneDigits = (order) => {
+    try {
+      const raw = order?.customer?.phone ? String(order.customer.phone) : '';
+      const d = raw.replace(/\D/g, '');
+      return d ? d.replace(/^55/, '') : '';
+    } catch (_) {
+      return '';
+    }
+  };
+
+  while (await ordersCursor.hasNext()) {
+    const o = await ordersCursor.next();
+    scannedOrders++;
+    if (!isPaid(o)) continue;
+    if (!isEligibleRefil(o)) continue;
+    const bumpKeys = parseBumpKeys(o);
+    const warranty = warrantyFromBumpKeys(bumpKeys);
+    if (!warranty.isLifetime) continue;
+    matchedLifetimeOrders++;
+
+    const iu = orderInstaKey(o);
+    const phoneDigits = orderPhoneDigits(o);
+    const orderIdStr = o && o._id ? String(o._id) : '';
+    if (!orderIdStr) continue;
+
+    const desiredExpiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
+    const baseMs = orderBaseMs(o) || Date.now();
+    const desiredCreatedAt = new Date(baseMs).toISOString();
+
+    let link = null;
+    try {
+      if (iu) link = await tl.findOne({ purpose: 'refil', $or: [{ instauser: iu }, { instausers: iu }] });
+    } catch (_) {}
+    try {
+      if (!link && phoneDigits) link = await tl.findOne({ purpose: 'refil', phone: phoneDigits });
+    } catch (_) {}
+    try {
+      if (!link) link = await tl.findOne({ purpose: 'refil', orderId: orderIdStr });
+    } catch (_) {}
+
+    if (link) {
+      const sets = { warrantyMode: 'life', warrantyDays: null };
+      const curExpMs = safeDateMs(link.expiresAt);
+      const desiredExpMs = safeDateMs(desiredExpiresAt);
+      if (!curExpMs || (desiredExpMs && desiredExpMs > curExpMs)) sets.expiresAt = desiredExpiresAt;
+      const curCreatedMs = safeDateMs(link.createdAt);
+      const desiredCreatedMs = safeDateMs(desiredCreatedAt);
+      if (!curCreatedMs || (desiredCreatedMs && desiredCreatedMs > curCreatedMs)) sets.createdAt = desiredCreatedAt;
+      if (!link.orderId) sets.orderId = orderIdStr;
+      if (!link.instauser && iu) sets.instauser = iu;
+      if (!link.phone && phoneDigits) sets.phone = phoneDigits;
+
+      const addToSet = { orders: orderIdStr };
+      if (iu) addToSet.instausers = iu;
+
+      try {
+        const updateFilter = link._id ? { _id: link._id } : { id: link.id };
+        await tl.updateOne(updateFilter, { $set: sets, $addToSet: addToSet });
+        updatedLinks++;
+      } catch (e) {
+        errors++;
+        try { console.error('update_link_failed', link?.id, e?.message || String(e)); } catch (_) {}
+      }
+    } else {
+      const token = await findUniqueToken();
+      const rec = {
+        id: token,
+        purpose: 'refil',
+        orderId: orderIdStr,
+        phone: phoneDigits || null,
+        orders: [orderIdStr],
+        instauser: iu || null,
+        instausers: iu ? [iu] : [],
+        warrantyMode: 'life',
+        warrantyDays: null,
+        createdAt: desiredCreatedAt,
+        expiresAt: desiredExpiresAt
+      };
+      try {
+        await tl.insertOne(rec);
+        createdLinks++;
+        link = rec;
+      } catch (e) {
+        errors++;
+        try { console.error('insert_link_failed', orderIdStr, e?.message || String(e)); } catch (_) {}
+      }
+    }
+
+    if (link && link.id) {
+      try {
+        const orderDoc = await ordersCol.findOne({ _id: new ObjectId(orderIdStr) }, { projection: { refilLinkId: 1 } });
+        const cur = orderDoc && orderDoc.refilLinkId ? String(orderDoc.refilLinkId) : '';
+        if (cur !== String(link.id)) {
+          await ordersCol.updateOne({ _id: new ObjectId(orderIdStr) }, { $set: { refilLinkId: String(link.id) } });
+          updatedOrders++;
+        }
+      } catch (_) {}
+    }
+  }
+
+  console.log(JSON.stringify({ ok: errors === 0, scanned, updated, skippedNoOrder, skippedNoEligibleOrder, scannedOrders, matchedLifetimeOrders, createdLinks, updatedLinks, updatedOrders, errors }));
   process.exit(errors ? 1 : 0);
 })().catch((e) => {
   try { console.error(e?.message || String(e)); } catch (_) {}
