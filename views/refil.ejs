@@ -23,16 +23,6 @@
     </header>
     <main class="main-content">
       <% const waHref = (typeof whatsappHref === 'string' && whatsappHref) ? whatsappHref : ('https://wa.me/553173425727?text=' + encodeURIComponent('Perdi seguidores e preciso de reposição. ID do meu pedido: ')); %>
-      <section class="section-block" style="padding-top: 0;">
-        <div class="service-card" style="width: 100%; max-width: 980px; margin: 0 auto; border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.35); backdrop-filter: blur(8px);">
-          <div class="card-content" style="text-align: center;">
-            <div style="font-weight: 400; color: var(--text-primary);">Ferramenta temporariamente indisponível</div>
-            <div style="margin-top: 0.35rem; color: var(--text-secondary);">
-              Para solicitar reposição, <a id="refilWhatsAppLink" href="<%= waHref %>" target="_blank" rel="noopener noreferrer" style="color: #16a34a; font-weight: 400; text-decoration: underline;">clique aqui</a>.
-            </div>
-          </div>
-        </div>
-      </section>
       <section class="section-block">
         <div class="service-card" id="refilCard">
           <div class="card-content">
@@ -48,8 +38,9 @@
                     <span class="button-text">Solicitar Refil</span>
                   </button>
                 </div>
-              <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
-              <div id="refilResult" class="card-desc" style="display:none; margin-top:0.75rem;"></div>
+                <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                <div id="refilResult" class="card-desc" style="display:none; margin-top:0.75rem;"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -97,40 +88,42 @@
   
   <script>
     (function(){
-      const a = document.getElementById('refilWhatsAppLink')
-      if (!a) return
-      const href = String(a.getAttribute('href') || '')
-      if (!href || !/ID%20do%20meu%20pedido%3A%20?$/.test(href)) return
-      const rawOrderId = '<%= (typeof refilOrderMongoId === "string" ? refilOrderMongoId : "") %>'
-      const rawToken = '<%= (typeof refilToken === "string" ? refilToken : "") %>'
-      let apiUrl = ''
-      if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
-        apiUrl = '/api/order?orderID=' + encodeURIComponent(rawOrderId)
-      } else if (rawToken && !/^liberado$/i.test(rawToken)) {
-        apiUrl = '/api/refil/order?token=' + encodeURIComponent(rawToken)
-      }
-      if (!apiUrl) return
-      fetch(apiUrl)
-        .then(r => r.json().catch(() => ({})))
-        .then(d => {
-          const o = d && d.order ? d.order : null
-          if (!o) return
-          const providerOid = (o.fama24h && (o.fama24h.orderId || o.fama24h.id)) ? (o.fama24h.orderId || o.fama24h.id)
-            : ((o.fornecedor_social && (o.fornecedor_social.orderId || o.fornecedor_social.id)) ? (o.fornecedor_social.orderId || o.fornecedor_social.id) : '')
-          const is24Hex = (v) => /^[0-9a-fA-F]{24}$/.test(String(v || '').trim())
-          const providerIdStr = String(providerOid || '').trim()
-          const mongoIdStr = String(o._id || '').trim()
-          const identifierStr = String(o.identifier || '').trim()
-          const wooviIdentifierStr = String((o.woovi && o.woovi.identifier) || '').trim()
-          const finalId = providerIdStr
-            || (is24Hex(mongoIdStr) ? mongoIdStr : '')
-            || (is24Hex(identifierStr) ? identifierStr : '')
-            || (is24Hex(wooviIdentifierStr) ? wooviIdentifierStr : '')
-          if (!finalId) return
-          const msg = 'Perdi seguidores e preciso de reposição. ID do meu pedido: ' + finalId
-          a.setAttribute('href', 'https://wa.me/553173425727?text=' + encodeURIComponent(msg))
-        })
-        .catch(() => {})
+      try {
+        const a = document.getElementById('refilWhatsAppLink')
+        if (!a) return
+        const href = String(a.getAttribute('href') || '')
+        if (!href || !/ID%20do%20meu%20pedido%3A%20?$/.test(href)) return
+        const rawOrderId = '<%= (typeof refilOrderMongoId === "string" ? refilOrderMongoId : "") %>'
+        const rawToken = '<%= (typeof refilToken === "string" ? refilToken : "") %>'
+        let apiUrl = ''
+        if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
+          apiUrl = '/api/order?orderID=' + encodeURIComponent(rawOrderId)
+        } else if (rawToken && !/^liberado$/i.test(rawToken)) {
+          apiUrl = '/api/refil/order?token=' + encodeURIComponent(rawToken)
+        }
+        if (!apiUrl) return
+        fetch(apiUrl)
+          .then(r => r.json().catch(() => ({})))
+          .then(d => {
+            const o = d && d.order ? d.order : null
+            if (!o) return
+            const providerOid = (o.fama24h && (o.fama24h.orderId || o.fama24h.id)) ? (o.fama24h.orderId || o.fama24h.id)
+              : ((o.fornecedor_social && (o.fornecedor_social.orderId || o.fornecedor_social.id)) ? (o.fornecedor_social.orderId || o.fornecedor_social.id) : '')
+            const is24Hex = (v) => /^[0-9a-fA-F]{24}$/.test(String(v || '').trim())
+            const providerIdStr = String(providerOid || '').trim()
+            const mongoIdStr = String(o._id || '').trim()
+            const identifierStr = String(o.identifier || '').trim()
+            const wooviIdentifierStr = String((o.woovi && o.woovi.identifier) || '').trim()
+            const finalId = providerIdStr
+              || (is24Hex(mongoIdStr) ? mongoIdStr : '')
+              || (is24Hex(identifierStr) ? identifierStr : '')
+              || (is24Hex(wooviIdentifierStr) ? wooviIdentifierStr : '')
+            if (!finalId) return
+            const msg = 'Perdi seguidores e preciso de reposição. ID do meu pedido: ' + finalId
+            a.setAttribute('href', 'https://wa.me/553173425727?text=' + encodeURIComponent(msg))
+          })
+          .catch(() => {})
+      } catch(_) {}
     })()
     (function(){
       const orderInput = document.getElementById('refilOrderIdInput')
@@ -155,7 +148,7 @@
         statusEl.textContent = sanitizeSupplierName(msg)
         statusEl.style.display = 'block'
         statusEl.style.textAlign = 'center'
-        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ffb4b4' : '#ffffff')
+        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ef4444' : 'var(--text-primary)')
       }
       function syncTipVisibility(){
         if (!tipEl || !orderInput) return
@@ -234,7 +227,7 @@
         const orderId = (orderInput && orderInput.value || '').trim()
         if (!orderId) { setStatus('Cole o ID do pedido', 'error'); return }
         setStatus('Solicitando refil...', 'info')
-        resultEl.style.display = 'none'
+        if (resultEl) resultEl.style.display = 'none'
         try {
           const resp = await fetch('/api/refil/create', {
             method: 'POST',
@@ -247,14 +240,14 @@
             throw new Error(errMsg)
           }
           setStatus('Refil processado com sucesso', 'success')
-          resultEl.style.display = 'block'
+          if (resultEl) resultEl.style.display = 'block'
           const item = Array.isArray(data) ? data[0] : data
           const msg = sanitizeSupplierName(item?.message || 'OK') || 'OK'
           const drop = item?.data?.drop_amount ?? '—'
           const qtd = item?.data?.quantidade_reposta ?? '—'
           const status = sanitizeSupplierName(item?.data?.status ?? '—') || '—'
           const extId = item?.data?.external_refill_id ?? '—'
-          resultEl.innerHTML = `<div style="text-align:left;">
+          if (resultEl) resultEl.innerHTML = `<div style="text-align:left;">
             <div><strong>Mensagem:</strong> ${msg}</div>
             <div><strong>Queda detectada:</strong> ${drop}</div>
             <div><strong>Quantidade reposta:</strong> ${qtd}</div>
