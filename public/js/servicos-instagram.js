@@ -2067,7 +2067,25 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selResp.ok) {
           const selData = await selResp.json();
           const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
-          const mapKind = function(k){ const obj = sfor && sfor[k]; const sc = obj && obj.shortcode; return sc ? `https://instagram.com/p/${encodeURIComponent(sc)}/` : ''; };
+          const normalizeIgShortcode = function (sc) {
+            const v = String(sc || '').trim();
+            if (!v) return '';
+            const m = v.match(/^[A-Za-z0-9_-]+/);
+            const code = m ? String(m[0] || '') : '';
+            if (!code) return '';
+            return code.length > 15 ? code.slice(0, 11) : code;
+          };
+          const buildIgMediaLink = function (k, sc) {
+            const code = normalizeIgShortcode(sc);
+            if (!code) return '';
+            const kindPath = (k === 'views') ? 'reel' : 'p';
+            return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+          };
+          const mapKind = function (k) {
+            const obj = sfor && sfor[k];
+            const sc = obj && obj.shortcode;
+            return sc ? buildIgMediaLink(k, sc) : '';
+          };
 
           const likesLink = mapKind('likes');
           const viewsLink = mapKind('views');
@@ -2094,7 +2112,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
                 const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
                 const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
-                if (pick && pick.shortcode) link = `https://instagram.com/p/${encodeURIComponent(pick.shortcode)}/`;
+                if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
               } catch (_) {}
             }
             if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });

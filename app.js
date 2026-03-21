@@ -38,6 +38,7 @@ app.use((req, res, next) => {
     : 'https://payment-token.efipay.com.br/v1/payment-token.js';
   res.locals.EFI_SCRIPT_URL = official;
   res.locals.EFI_SCRIPT_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/efipay/js-payment-token-efi/dist/payment-token-efi.min.js';
+  res.locals.PAGARME_PUBLIC_KEY = process.env.PAGARME_PUBLIC_KEY || '';
   next();
 });
 
@@ -197,15 +198,15 @@ app.set("views", path.join(__dirname, "views"));
 app.use((req, res, next) => { res.locals.PIXEL_ID = process.env.PIXEL_ID || ''; next(); });
 
 // Configuração Efí Bank (Homologação/Produção)
+/*
 const efiOptions = {
     sandbox: process.env.EFI_SANDBOX === 'true',
     client_id: process.env.EFI_CLIENT_ID_HM,
     client_secret: process.env.EFI_CLIENT_SECRET_HM,
-    certificate: path.join(__dirname, 'certs', 'productionCertificate.p12'), // Opcional para cartão se não usar PIX com certificado, mas o SDK pode exigir
-    pem: false // Para cartão geralmente não precisa de certificado mTLS obrigatório como Pix, mas vamos ver
+    certificate: path.join(__dirname, 'certs', 'productionCertificate.p12'),
+    pem: false
 };
-// Nota: Para cartão de crédito, o SDK usa apenas client_id e client_secret para OAuth.
-// Se der erro de certificado, ajustamos.
+*/
 
 const cookieProfiles = require("./instagramProfiles.json");
 
@@ -2946,6 +2947,382 @@ app.post('/api/efi/card-charge', async (req, res) => {
     }
 });
 
+app.post('/api/pagarme/card-charge', async (req, res) => {
+    let correlationIDSafe = '';
+    let validatedValueCents = null;
+    try {
+        const { card_token, card_id, installments, customer, billing_address, total_cents, additionalInfo, profile_is_private, comment, utms: reqUtms } = req.body;
+        correlationIDSafe = (function () {
+            try {
+                const c = String(req.body?.correlationID || '').trim();
+                if (c) return c;
+            } catch (_) {}
+            try {
+                const crypto = require('crypto');
+                if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+            } catch (_) {}
+            return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        })();
+
+        if (!total_cents || total_cents < 100) {
+            return res.status(400).json({
+                error: 'invalid_amount',
+                message: 'Valor mínimo para cartão de crédito é R$ 1,00.'
+            });
+        }
+
+        const pagarmeSecret = String(process.env.PAGARME_SECRET_KEY || '').trim();
+        if (!pagarmeSecret) {
+            return res.status(500).json({ error: 'missing_pagarme_secret', message: 'Configuração do Pagar.me ausente (PAGARME_SECRET_KEY).' });
+        }
+
+        const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+        try {
+            const hasTc = addInfoArr.some((it) => String(it?.key || '').trim() === 'tc_code');
+            if (!hasTc) {
+                const cookieHeader = req.headers['cookie'] || '';
+                const m = cookieHeader && cookieHeader.match(/(?:^|;\s*)tc_code=([^;]+)/);
+                const tc = m && m[1] ? decodeURIComponent(m[1]) : '';
+                if (tc) addInfoArr.push({ key: 'tc_code', value: String(tc) });
+            }
+        } catch (_) {}
+        const addInfoMap = addInfoArr.reduce((acc, item) => {
+            const k = String(item?.key || '').trim();
+            const v = String(item?.value || '').trim();
+            acc[k] = v;
+            return acc;
+        }, {});
+
+        const tipoVal = addInfoMap['tipo_servico'] || '';
+        const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
+
+        const verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        if (!verification.isValid) {
+            console.warn(`⚠️ Bloqueio de Pagamento (Pagar.me Cartão): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${total_cents}, Esperado=${verification.expectedPrice}`);
+            return res.status(400).json({
+                error: 'value_mismatch',
+                message: 'O valor do pagamento não corresponde ao preço oficial calculado pelo sistema.'
+            });
+        }
+        const validatedPriceCents = verification.matchedPrice;
+        if (!Number.isFinite(Number(validatedPriceCents)) || Number(validatedPriceCents) < 100) {
+            return res.status(400).json({ error: 'invalid_amount', message: 'Valor inválido para cartão.' });
+        }
+        validatedValueCents = Number(validatedPriceCents);
+
+        const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+        const isValidCPF = (cpfRaw) => {
+            const cpf = normalizeDigits(cpfRaw);
+            if (cpf.length !== 11) return false;
+            if (/^(\d)\1+$/.test(cpf)) return false;
+            const calc = (base, factor) => {
+                let sum = 0;
+                for (let i = 0; i < base.length; i++) sum += Number(base[i]) * (factor - i);
+                const mod = (sum * 10) % 11;
+                return mod === 10 ? 0 : mod;
+            };
+            const d1 = calc(cpf.slice(0, 9), 10);
+            const d2 = calc(cpf.slice(0, 10), 11);
+            return d1 === Number(cpf[9]) && d2 === Number(cpf[10]);
+        };
+        const normalizeBrMobilePhone = (raw) => {
+            let d = normalizeDigits(raw);
+            if (!d) return { areaCode: '', number: '' };
+            d = d.replace(/^0+/, '');
+            if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+            if (d.length > 11) d = d.slice(-11);
+            if (!(d.length === 10 || d.length === 11)) return { areaCode: '', number: '' };
+            if (d.startsWith('0')) return { areaCode: '', number: '' };
+            if (d.length === 11 && d[2] !== '9') {
+                const d2 = d.slice(0, 2) + d.slice(3);
+                if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
+            }
+            const areaCode = d.slice(0, 2);
+            const number = d.slice(2);
+            if (!/^[1-9]{2}$/.test(areaCode) || !/^\d{8,9}$/.test(number)) return { areaCode: '', number: '' };
+            return { areaCode, number };
+        };
+
+        const cpfDigits = normalizeDigits(customer?.cpf);
+        if (!cpfDigits) return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é obrigatório.' });
+        if (!isValidCPF(cpfDigits)) return res.status(400).json({ error: 'invalid_cpf', message: 'CPF do titular do cartão é inválido.' });
+
+        const phoneRaw = customer?.phone_number || customer?.phone || customer?.telefone || customer?.whatsapp || '';
+        const phoneDigits = normalizeDigits(phoneRaw);
+        const phoneHasInput = phoneDigits.length > 0;
+        const phone = normalizeBrMobilePhone(phoneRaw);
+        if (phoneHasInput && (!phone.areaCode || !phone.number)) {
+            return res.status(400).json({ error: 'invalid_phone', message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).' });
+        }
+        if (!phone.areaCode || !phone.number) {
+            return res.status(400).json({ error: 'missing_phone', message: 'Telefone (DDD + número) é obrigatório para pagamento no cartão.' });
+        }
+
+        const customerName = String(customer?.name || '').trim() || 'Cliente';
+        const customerEmail = String(customer?.email || '').trim() || 'cliente@email.com';
+
+        const billingAddress = (function () {
+            const b = billing_address && typeof billing_address === 'object' ? billing_address : null;
+            const line1 = String(b?.line_1 || b?.street || '').trim() || 'Av. Paulista, 1000';
+            const zip = normalizeDigits(b?.zip_code || b?.zipcode || '') || '01310100';
+            const city = String(b?.city || '').trim() || 'São Paulo';
+            const state = String(b?.state || '').trim() || 'SP';
+            const country = String(b?.country || '').trim() || 'BR';
+            const out = { line_1: line1, zip_code: zip, city, state, country };
+            if (b?.line_2) out.line_2 = String(b.line_2 || '').trim();
+            if (b?.neighborhood) out.neighborhood = String(b.neighborhood || '').trim();
+            return out;
+        })();
+
+        const token = String(card_token || '').trim();
+        const cardId = String(card_id || '').trim();
+        if (!token && !cardId) {
+            return res.status(400).json({ error: 'missing_card_token', message: 'Token do cartão é obrigatório.' });
+        }
+
+        let utms = {};
+        try {
+            if (reqUtms && Object.keys(reqUtms).length > 0) {
+                utms = reqUtms;
+                if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+            } else {
+                const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                utms = { ref: refUrl };
+            }
+        } catch (_) {
+            const refUrl = req.get('Referer') || req.headers['referer'] || '';
+            utms = { ref: refUrl };
+        }
+
+        const tipo = addInfoMap['tipo_servico'] || '';
+        const qtd = Number(addInfoMap['quantidade'] || 0) || 0;
+        const instauserFromClient = addInfoMap['instagram_username'] || '';
+        const userAgent = req.get('User-Agent') || '';
+        const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+        const slug = req.session?.linkSlug || '';
+        const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfoMap['profile_is_private'] === 'true';
+        const createdIso = new Date().toISOString();
+
+        let geolocation = null;
+        try { geolocation = await geoLookupIp(ip); } catch (_) {}
+
+        const itemCode = (function () {
+            const raw = `${tipo || 'item'}_${qtd || 1}`;
+            const cleaned = raw
+                .toLowerCase()
+                .replace(/[^a-z0-9_-]+/g, '_')
+                .replace(/_+/g, '_')
+                .replace(/^_+|_+$/g, '');
+            const fallback = `item_${qtd || 1}`;
+            const out = (cleaned || fallback).slice(0, 52);
+            return out;
+        })();
+
+        const orderBody = {
+            code: correlationIDSafe,
+            items: [
+                {
+                    amount: Number(validatedValueCents),
+                    code: itemCode,
+                    description: String(addInfoMap['pacote'] || `${qtd || 1} ${tipo || 'serviço'}`).trim() || 'Checkout OPPUS',
+                    quantity: 1
+                }
+            ],
+            customer: {
+                name: customerName,
+                email: customerEmail,
+                document_type: 'CPF',
+                document: cpfDigits,
+                type: 'Individual',
+                address: billingAddress,
+                phones: {
+                    mobile_phone: {
+                        country_code: '55',
+                        area_code: phone.areaCode,
+                        number: phone.number
+                    }
+                }
+            },
+            payments: [
+                {
+                    amount: Number(validatedValueCents),
+                    payment_method: 'credit_card',
+                    credit_card: Object.assign(
+                        {
+                            installments: Number(installments) || 1,
+                            statement_descriptor: 'AGENCIA OPPUS',
+                            operation_type: 'auth_and_capture',
+                            billing_address: billingAddress
+                        },
+                        token ? { card_token: token } : {},
+                        cardId ? { card_id: cardId } : {}
+                    )
+                }
+            ],
+            closed: true,
+            ip
+        };
+
+        const auth = Buffer.from(`${pagarmeSecret}:`).toString('base64');
+        const resp = await axios.post('https://api.pagar.me/core/v5/orders', orderBody, {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': `Basic ${auth}`
+            },
+            timeout: 45000
+        });
+
+        const order = resp && resp.data ? resp.data : null;
+        if (!order) return res.status(500).json({ error: 'pagarme_empty_response', message: 'Resposta vazia do Pagar.me.' });
+
+        const orderStatus = String(order.status || '').toLowerCase();
+        const charge = Array.isArray(order.charges) ? order.charges[0] : null;
+        const chargeStatus = String(charge?.status || '').toLowerCase();
+        const lastTxStatus = String(charge?.last_transaction?.status || '').toLowerCase();
+
+        const normalizedTxStatus = (function () {
+            const s = String(lastTxStatus || chargeStatus || orderStatus || '').toLowerCase().trim();
+            if (!s) return 'unknown';
+            if (s === 'paid' || s === 'captured') return 'paid';
+            if (s === 'failed' || s === 'refused' || s === 'canceled' || s === 'cancelled' || s === 'voided') return 'failed';
+            if (s === 'authorized' || s === 'pending' || s === 'processing' || s === 'analyzing' || s === 'analysis') return 'pending';
+            return s;
+        })();
+
+        let sysStatus = 'pendente';
+        if (normalizedTxStatus === 'paid') sysStatus = 'pago';
+
+        const record = {
+            nomeUsuario: null,
+            telefone: `${phone.areaCode}${phone.number}`,
+            instauser: instauserFromClient,
+            profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
+            isPrivate: isPrivate,
+            criado: createdIso,
+            identifier: String(order.id || charge?.id || ''),
+            correlationID: correlationIDSafe,
+            status: sysStatus,
+            qtd,
+            tipo,
+            utms,
+            geolocation,
+            valueCents: total_cents,
+            expectedValueCents: validatedValueCents,
+            customer: Object.assign({}, customer || {}, { cpf: cpfDigits }, { phone_number: `${phone.areaCode}${phone.number}` }),
+            additionalInfo: addInfoArr,
+            tipoServico: tipo,
+            quantidade: qtd,
+            instagramUsername: instauserFromClient,
+            slug,
+            userAgent,
+            ip,
+            createdAt: createdIso,
+            paymentMethod: 'credit_card',
+            pagarme: {
+                order_id: order.id,
+                order_status: order.status,
+                charge_id: charge?.id,
+                charge_status: charge?.status,
+                transaction_id: charge?.last_transaction?.id,
+                transaction_status: charge?.last_transaction?.status,
+                installments: charge?.last_transaction?.installments
+            }
+        };
+
+        const col = await getCollection('checkout_orders');
+        const insertResult = await col.insertOne(record);
+        try { record._id = insertResult?.insertedId; } catch (_) {}
+
+        try {
+            if (sysStatus === 'pago') {
+                await processOrderFulfillment(record, col, req);
+            }
+        } catch (_) {}
+
+        const responsePayload = {
+            success: sysStatus === 'pago',
+            paid: sysStatus === 'pago',
+            correlationID: correlationIDSafe,
+            identifier: String(record.identifier || ''),
+            pagarme: {
+                order_id: order?.id,
+                order_status: order?.status,
+                charge_id: charge?.id,
+                charge_status: charge?.status,
+                transaction_id: charge?.last_transaction?.id,
+                transaction_status: charge?.last_transaction?.status
+            },
+            order
+        };
+
+        if (sysStatus === 'pago') return res.json(responsePayload);
+
+        if (normalizedTxStatus === 'pending') {
+            return res.status(202).json(Object.assign({}, responsePayload, {
+                error: 'payment_pending',
+                message: `Pagamento em análise no Pagar.me (${String(charge?.last_transaction?.status || charge?.status || order?.status || '').trim() || 'pendente'}).`
+            }));
+        }
+
+        return res.status(402).json(Object.assign({}, responsePayload, {
+            error: 'payment_failed',
+            message: `Pagamento não aprovado no Pagar.me (${String(charge?.last_transaction?.status || charge?.status || order?.status || '').trim() || 'falhou'}).`
+        }));
+    } catch (error) {
+        const status = error?.response?.status;
+        const data = error?.response?.data;
+        const msg = String(
+            (Array.isArray(data?.errors) && data.errors[0] && data.errors[0].message ? data.errors[0].message : '') ||
+            data?.message ||
+            data?.error ||
+            error?.message ||
+            ''
+        ).trim();
+        console.error('❌ Erro pagamento cartão Pagar.me:', { status, msg });
+        if (status && status >= 400 && status < 500) {
+            return res.status(status).json({ error: 'pagarme_request_error', message: msg || 'Erro na requisição ao Pagar.me.', details: data, correlationID: correlationIDSafe });
+        }
+        return res.status(500).json({ error: 'payment_error', message: msg || 'Erro ao processar pagamento.', details: data, correlationID: correlationIDSafe });
+    }
+});
+
+app.post('/api/pagarme/capture-charge', async (req, res) => {
+    try {
+        const pagarmeSecret = String(process.env.PAGARME_SECRET_KEY || '').trim();
+        if (!pagarmeSecret) return res.status(500).json({ error: 'missing_pagarme_secret', message: 'Configuração do Pagar.me ausente (PAGARME_SECRET_KEY).' });
+
+        const chargeId = String(req.body?.charge_id || req.body?.chargeId || '').trim();
+        if (!chargeId) return res.status(400).json({ error: 'missing_charge_id', message: 'charge_id é obrigatório.' });
+
+        const auth = Buffer.from(`${pagarmeSecret}:`).toString('base64');
+        const url = `https://api.pagar.me/core/v5/charges/${encodeURIComponent(chargeId)}/capture`;
+        const resp = await axios.post(url, {}, {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': `Basic ${auth}`
+            },
+            timeout: 45000
+        });
+        return res.json({ success: true, charge: resp?.data });
+    } catch (error) {
+        const status = error?.response?.status;
+        const data = error?.response?.data;
+        const msg = String(
+            (Array.isArray(data?.errors) && data.errors[0] && data.errors[0].message ? data.errors[0].message : '') ||
+            data?.message ||
+            data?.error ||
+            error?.message ||
+            ''
+        ).trim();
+        if (status && status >= 400 && status < 500) {
+            return res.status(status).json({ error: 'pagarme_request_error', message: msg || 'Erro na requisição ao Pagar.me.', details: data });
+        }
+        return res.status(500).json({ error: 'pagarme_error', message: msg || 'Erro ao capturar cobrança.', details: data });
+    }
+});
+
 // API: criar cobrança PIX via Woovi
 app.post('/api/woovi/charge', async (req, res) => {
     // DEBUG: Log incoming request body
@@ -3489,8 +3866,13 @@ async function processOrderFulfillment(record, col, req) {
                 else if (/^\/\/+/i.test(v)) v = `https:${v}`;
             }
             v = v.split('#')[0].split('?')[0];
-            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
-            return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+            const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+            if (!m) return '';
+            const kind = String(m[2] || '').toLowerCase();
+            let code = String(m[3] || '');
+            if (!kind || !code) return '';
+            if (code.length > 15) code = code.slice(0, 11);
+            return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
         };
         let viewsLink = sanitizeLink(viewsLinkRaw);
         let likesLink = sanitizeLink(likesLinkRaw);
@@ -3510,11 +3892,11 @@ async function processOrderFulfillment(record, col, req) {
                      const codeAny = lpAny && (lpAny.shortcode || lpAny.code);
                      const codeVideo = lpVideo && (lpVideo.shortcode || lpVideo.code);
                      if (viewsQty > 0 && !viewsLink && codeVideo) {
-                         viewsLink = `https://www.instagram.com/p/${codeVideo}/`;
+                         viewsLink = sanitizeLink(`https://www.instagram.com/reel/${codeVideo}/`);
                          console.log('🔄 [OrderBump] Recuperado link de vídeo via cache para:', instaUser, viewsLink);
                      }
                      if (codeAny) {
-                         const latestUrl = `https://www.instagram.com/p/${codeAny}/`;
+                         const latestUrl = sanitizeLink(`https://www.instagram.com/p/${codeAny}/`);
                          if (likesQty > 0 && !likesLink) likesLink = latestUrl;
                          if (commentsQty > 0 && !commentsLink) commentsLink = latestUrl;
                          if ((likesQty > 0 && !likesLink) || (commentsQty > 0 && !commentsLink)) {
@@ -5299,8 +5681,13 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   else if (/^\/\/+/i.test(v)) v = `https:${v}`;
                 }
                 v = v.split('#')[0].split('?')[0];
-                const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
-                return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+                const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+                if (!m) return '';
+                const kind = String(m[2] || '').toLowerCase();
+                let code = String(m[3] || '');
+                if (!kind || !code) return '';
+                if (code.length > 15) code = code.slice(0, 11);
+                return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
               };
               const mapPaid2 = record?.additionalInfoMapPaid || {};
               const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
@@ -5806,7 +6193,23 @@ app.post('/api/orderbump/resend', async (req, res) => {
     const lPart = parts.find(p => /^likes:\d+$/i.test(String(p||'').trim()));
     const viewsQty = vPart ? Number(String(vPart).split(':')[1]) : 0;
     const likesQty = lPart ? Number(String(lPart).split(':')[1]) : 0;
-    const sanitize = (s) => { const v = String(s || '').replace(/[`\s]/g, '').trim(); const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(v); return ok ? (v.endsWith('/') ? v : (v + '/')) : ''; };
+    const sanitize = (s) => {
+      let v = String(s || '').replace(/[`\s]/g, '').trim();
+      if (!v) return '';
+      if (!/^https?:\/\//i.test(v)) {
+        if (/^www\./i.test(v)) v = `https://${v}`;
+        else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+        else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+      }
+      v = v.split('#')[0].split('?')[0];
+      const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+      if (!m) return '';
+      const kind = String(m[2] || '').toLowerCase();
+      let code = String(m[3] || '');
+      if (!kind || !code) return '';
+      if (code.length > 15) code = code.slice(0, 11);
+      return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
+    };
     const viewsLink = sanitize(map['orderbump_post_views']);
     const likesLink = sanitize(map['orderbump_post_likes'] || map['orderbump_post_views']);
     const key = process.env.FAMA24H_API_KEY || '';
@@ -6589,8 +6992,13 @@ app.post('/session/mark-paid', async (req, res) => {
               else if (/^\/\/+/i.test(v)) v = `https:${v}`;
             }
             v = v.split('#')[0].split('?')[0];
-            const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
-            return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+            const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+            if (!m) return '';
+            const kind = String(m[2] || '').toLowerCase();
+            let code = String(m[3] || '');
+            if (!kind || !code) return '';
+            if (code.length > 15) code = code.slice(0, 11);
+            return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
           };
           const selectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
           const selViews = selectedFor && selectedFor.views && selectedFor.views.link ? String(selectedFor.views.link) : '';
@@ -7165,8 +7573,76 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
 
-    // 15 minutes ago
     const cutoffDate = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const period = String(req.query.period || '').trim() || 'all';
+    const startDate = String(req.query.startDate || '').trim();
+    const endDate = String(req.query.endDate || '').trim();
+
+    const now = new Date();
+    const nowSP = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const startOfTodayUtc = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 3, 0, 0, 0));
+    const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
+
+    const dateRange = { $lt: cutoffDate };
+    const minIso = (a, b) => {
+      const aa = String(a || '').trim();
+      const bb = String(b || '').trim();
+      if (!aa) return bb;
+      if (!bb) return aa;
+      return aa < bb ? aa : bb;
+    };
+
+    if (period && period !== 'all') {
+      if (period === 'today') {
+        dateRange.$gte = startOfTodayUtc.toISOString();
+      } else if (period === 'last3days') {
+        const s = new Date(startOfTodayUtc);
+        s.setUTCDate(s.getUTCDate() - 2);
+        dateRange.$gte = s.toISOString();
+      } else if (period === 'last7days') {
+        const s = new Date(startOfTodayUtc);
+        s.setUTCDate(s.getUTCDate() - 6);
+        dateRange.$gte = s.toISOString();
+      } else if (period === 'thismonth') {
+        const sSp = new Date(nowSP.getTime());
+        sSp.setUTCDate(1);
+        const sUtc = new Date(Date.UTC(sSp.getUTCFullYear(), sSp.getUTCMonth(), sSp.getUTCDate(), 3, 0, 0, 0));
+        dateRange.$gte = sUtc.toISOString();
+      } else if (period === 'lastmonth') {
+        const startSp = new Date(nowSP.getTime());
+        startSp.setUTCDate(1);
+        startSp.setUTCMonth(startSp.getUTCMonth() - 1);
+        const endSp = new Date(nowSP.getTime());
+        endSp.setUTCDate(1);
+
+        const sUtc = new Date(Date.UTC(startSp.getUTCFullYear(), startSp.getUTCMonth(), startSp.getUTCDate(), 3, 0, 0, 0));
+        const eUtc = new Date(Date.UTC(endSp.getUTCFullYear(), endSp.getUTCMonth(), endSp.getUTCDate(), 3, 0, 0, 0));
+        dateRange.$gte = sUtc.toISOString();
+        dateRange.$lt = minIso(dateRange.$lt, eUtc.toISOString());
+      } else if (period === 'custom') {
+        if (startDate) {
+          const start = new Date(`${startDate}T00:00:00.000Z`);
+          start.setUTCHours(start.getUTCHours() + 3);
+          dateRange.$gte = start.toISOString();
+        }
+        if (endDate) {
+          const end = new Date(`${endDate}T23:59:59.999Z`);
+          end.setUTCHours(end.getUTCHours() + 3);
+          dateRange.$lt = minIso(dateRange.$lt, end.toISOString());
+        }
+      }
+    } else if (startDate || endDate) {
+      if (startDate) {
+        const start = new Date(`${startDate}T00:00:00.000Z`);
+        start.setUTCHours(start.getUTCHours() + 3);
+        dateRange.$gte = start.toISOString();
+      }
+      if (endDate) {
+        const end = new Date(`${endDate}T23:59:59.999Z`);
+        end.setUTCHours(end.getUTCHours() + 3);
+        dateRange.$lt = minIso(dateRange.$lt, end.toISOString());
+      }
+    }
 
     const normalizeUsername = (u) => {
       try {
@@ -7205,7 +7681,7 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
       $and: [
         { status: { $ne: 'pago' } },
         { 'woovi.status': { $ne: 'pago' } },
-        { createdAt: { $lt: cutoffDate } }
+        { createdAt: dateRange }
       ]
     };
 
@@ -7292,7 +7768,12 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
       return true;
     });
 
-    res.render('painel_recuperacao', { orders: pendingOrders });
+    const sumCents = pendingOrders.reduce((acc, o) => {
+      const v = Number(o?.valueCents || o?.total_cents || 0);
+      return acc + (Number.isFinite(v) ? v : 0);
+    }, 0);
+
+    res.render('painel_recuperacao', { orders: pendingOrders, period, startDate, endDate, sumCents });
   } catch (err) {
     console.error('Error in /painel/recuperacao:', err);
     res.status(500).send('Internal Server Error');
@@ -12399,8 +12880,13 @@ app.post('/api/payment/confirm', async (req, res) => {
             else if (/^\/\/+/i.test(v)) v = `https:${v}`;
           }
           v = v.split('#')[0].split('?')[0];
-          const ok = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(v);
-          return ok ? (v.endsWith('/') ? v : (v + '/')) : '';
+          const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+          if (!m) return '';
+          const kind = String(m[2] || '').toLowerCase();
+          let code = String(m[3] || '');
+          if (!kind || !code) return '';
+          if (code.length > 15) code = code.slice(0, 11);
+          return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
         };
         const mapPaid3 = record?.additionalInfoMapPaid || {};
         const viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
