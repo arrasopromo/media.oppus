@@ -245,9 +245,18 @@
         <% } %>
 
         <%
-          // Logic for Organic Service Delay Message
           var tServCheck = String(order.tipo || order.tipoServico || '').toLowerCase();
-          var isOrganicCheck = tServCheck.includes('organico');
+          var catServCheck = (function(){
+            try {
+              var m = order.additionalInfoMapPaid || {};
+              if (m && typeof m['categoria_servico'] === 'string' && m['categoria_servico']) return String(m['categoria_servico']).toLowerCase();
+              var arr = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : (Array.isArray(order.additionalInfo) ? order.additionalInfo : []);
+              var it = arr.find(function(x){ return x && x.key === 'categoria_servico' && x.value; });
+              if (it && typeof it.value === 'string') return String(it.value).toLowerCase();
+            } catch(_) {}
+            return '';
+          })();
+          var isOrganicFollowersCheck = catServCheck !== 'curtidas' && catServCheck !== 'visualizacoes' && tServCheck.includes('organico');
           
           // Check payment status (must be paid)
           var paymentStatus = String(order.status || (order.woovi && order.woovi.status) || '').toLowerCase();
@@ -268,7 +277,7 @@
           var statusLowerCheck = String(statusRawCheck || '').toLowerCase().trim();
           var isCompletedStatus = /complete|success|finished|done|conclu/.test(statusLowerCheck);
         %>
-        <% if (isOrganicCheck && isPaid && !isCompletedStatus) { %>
+        <% if (isOrganicFollowersCheck && isPaid && !isCompletedStatus) { %>
         <div id="organicDelayAlert" style="border: 1px solid #93c5fd; background: #eff6ff; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem;">
             <div style="color: #2563eb; flex-shrink: 0;">
                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 9V11M12 15H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -292,7 +301,7 @@
                 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Serviço Contratado</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary); text-transform: capitalize;" id="orderTipo"><%= (function(){ var map=order.additionalInfoMapPaid||{}; var t=String(map['tipo_servico']||order.tipo||order.tipoServico||'-').toLowerCase(); var c=String(map['categoria_servico']||'').toLowerCase(); var lbl=t; if(c==='curtidas'){ if(t==='mistos') lbl='Curtidas Mistas'; else if(t==='brasileiros') lbl='Curtidas Brasileiras'; else if(t==='organicos') lbl='Curtidas Orgânicas'; } else if(c==='visualizacoes'){ if(t==='visualizacoes_reels'||t==='views'||t==='reels') lbl='Visualizações Reels'; else lbl='Visualizações'; } else { if(t==='mistos') lbl='Seguidores Mistos'; else if(t==='brasileiros') lbl='Seguidores Brasileiros'; else if(t==='organicos') lbl='Seguidores brasileiros e reais'; } return lbl; })() %></div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary); text-transform: capitalize;" id="orderTipo"><%= (function(){ var map=order.additionalInfoMapPaid||{}; var t=String(map['tipo_servico']||order.tipo||order.tipoServico||'-').toLowerCase(); var c=String(map['categoria_servico']||'').toLowerCase(); var lbl=t; if(c==='curtidas'){ if(t==='mistos') lbl='Curtidas Mistas'; else if(t==='brasileiros'||t==='curtidas_brasileiras') lbl='Curtidas Brasileiras'; else if(t==='organicos'||t==='curtidas_reais') lbl='Curtidas Brasileiras Reais'; } else if(c==='visualizacoes'){ if(t==='visualizacoes_reels'||t==='views'||t==='reels') lbl='Visualizações Reels'; else lbl='Visualizações'; } else { if(t==='mistos') lbl='Seguidores Mistos'; else if(t==='brasileiros') lbl='Seguidores Brasileiros'; else if(t==='organicos') lbl='Seguidores brasileiros e reais'; } return lbl; })() %></div>
                 </div>
 
                 <div class="info-item">
@@ -302,12 +311,36 @@
 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Perfil Instagram</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--primary-purple);" id="orderInsta">@<%= (function(){ var map=order.additionalInfoMapPaid||{}; var v=String(map['instagram_username']||'').trim(); if(v){ return v; } return String(order.instagramUsername || order.instauser || '-'); })() %></div>
+                    <%
+                      var iuRawPedido = (function(){
+                        var map = order.additionalInfoMapPaid || {};
+                        var v = String(map['instagram_username'] || '').trim();
+                        if (v) return v;
+                        return String(order.instagramUsername || order.instauser || '').trim();
+                      })();
+                      var iuCleanPedido = String(iuRawPedido || '').replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                      var iuHrefPedido = iuCleanPedido ? ('https://instagram.com/' + encodeURIComponent(iuCleanPedido)) : '';
+                    %>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--primary-purple);" id="orderInsta">
+                      <% if (iuCleanPedido) { %>
+                        <span style="display:inline-flex; align-items:center; gap:6px;">
+                          <a href="<%= iuHrefPedido %>" target="_blank" rel="noopener noreferrer" style="color: var(--primary-purple); text-decoration: none;">@<%= iuCleanPedido %></a>
+                          <button type="button" class="copy-iu-btn" data-copy="<%= iuCleanPedido %>" title="Copiar usuário" aria-label="Copiar usuário" style="border:0; background:transparent; padding:2px; cursor:pointer; line-height:0;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
+                        </span>
+                      <% } else { %>
+                        -
+                      <% } %>
+                    </div>
                 </div>
 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Data Pagamento</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw && String(order.status||'').toLowerCase()==='pago') raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
                 </div>
 
                 <div class="info-item" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 1rem;">
@@ -327,7 +360,7 @@
                            var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId):''; 
                            var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId):''; 
                            var providerOid = oidF||oidFS;
-                           return providerOid || '-'; 
+                           return providerOid || 'unknown'; 
                        })() %></span>
                        <div style="position: relative; display: flex; align-items: center;">
                            <button id="copyOrderBtn" class="copy-icon-btn" aria-label="Copiar número do pedido" style="background: transparent; border: none; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; cursor: pointer;">
@@ -351,6 +384,17 @@
                     <span style="font-size: 1rem; font-weight: 500; color: var(--primary-purple); font-family: inherit;">Status do Serviço</span>
                     <span id="famaServicoStatus" class="status-badge <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>" style="font-size: 1rem; font-weight: 500; letter-spacing: 0.05em; font-family: inherit;"><%= stMap %></span>
                 </div>
+                <%
+                  var provName = '';
+                  var provObj = null;
+                  if (order && order.fama24h && (order.fama24h.status || order.fama24h.orderId || order.fama24h.error || order.fama24h.response)) { provName = 'Fama24h'; provObj = order.fama24h; }
+                  else if (order && order.fornecedor_social && (order.fornecedor_social.status || order.fornecedor_social.orderId || order.fornecedor_social.error || order.fornecedor_social.response)) { provName = 'Fornecedor Social'; provObj = order.fornecedor_social; }
+                 var provStatus = provObj && provObj.status ? String(provObj.status) : '';
+                 var provErr = null;
+                 var provResp = null;
+                 var shouldShowTech = false;
+                %>
+                <% if (shouldShowTech) { %><% } %>
 
             </div>
             
@@ -487,7 +531,6 @@
       try {
         var tabelaSeguidoresBase = {
           mistos: [
-            { q: 50, p: 'R$ 0,10' },
             // { q: 500, p: 'R$ 32,90' },
             // { q: 700, p: 'R$ 39,90' },
             // { q: 1000, p: 'R$ 45,90' },
@@ -1056,7 +1099,7 @@
                 var mapPaid = o && o.additionalInfoMapPaid || {};
                 var cat0 = String(mapPaid['categoria_servico'] || '').toLowerCase();
                 var t0 = String(mapPaid['tipo_servico'] || o.tipo || o.tipoServico || '-').toLowerCase();
-                var tipo = (function(){ if(cat0==='curtidas'){ if(t0==='mistos') return 'Curtidas Mistas'; if(t0==='brasileiros') return 'Curtidas Brasileiras'; if(t0==='organicos') return 'Curtidas Orgânicas'; } else if(cat0==='visualizacoes'){ if(t0==='visualizacoes_reels'||t0==='views'||t0==='reels') return 'Visualizações Reels'; return 'Visualizações'; } else { if(t0==='mistos') return 'Seguidores Mistos'; if(t0==='brasileiros') return 'Seguidores Brasileiros'; if(t0==='organicos') return 'Seguidores brasileiros e reais'; } return t0; })();
+                var tipo = (function(){ if(cat0==='curtidas'){ if(t0==='mistos') return 'Curtidas Mistas'; if(t0==='brasileiros'||t0==='curtidas_brasileiras') return 'Curtidas Brasileiras'; if(t0==='organicos'||t0==='curtidas_reais') return 'Curtidas Brasileiras Reais'; } else if(cat0==='visualizacoes'){ if(t0==='visualizacoes_reels'||t0==='views'||t0==='reels') return 'Visualizações Reels'; return 'Visualizações'; } else { if(t0==='mistos') return 'Seguidores Mistos'; if(t0==='brasileiros') return 'Seguidores Brasileiros'; if(t0==='organicos') return 'Seguidores brasileiros e reais'; } return t0; })();
               var qtd = String(o.qtd || o.quantidade || '0');
               var insta = String(o.instagramUsername || o.instauser || '-');
               var paidStr = formatDateTimeSP(paidRaw);
@@ -1292,18 +1335,76 @@
       var btn = document.getElementById('copyOrderBtn');
       var span = document.getElementById('orderNumberId');
       if (!btn || !span) return;
+      function copyTextToClipboard(text) {
+        var v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(v);
+        }
+        return new Promise(function(resolve, reject){
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = v;
+            ta.setAttribute('readonly', 'readonly');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.left = '-1000px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (ok) resolve();
+            else reject(new Error('copy_failed'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
       btn.addEventListener('click', function(){
         try {
           var val = (span.textContent || '').trim();
           if (!val) return;
-          navigator.clipboard.writeText(val).then(function(){
+          copyTextToClipboard(val).then(function(){
             try { 
                 var fb = document.getElementById('copyFeedback');
                 if (fb) fb.style.opacity = '1';
                 setTimeout(function(){ if (fb) fb.style.opacity = '0'; }, 2000);
             } catch(_) {}
-          });
+          }).catch(function(){});
         } catch(_) {}
+      });
+    })();
+    (function initCopyIU(){
+      function copyTextToClipboard(text) {
+        var v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(v);
+        }
+        return new Promise(function(resolve, reject){
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = v;
+            ta.setAttribute('readonly', 'readonly');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.left = '-1000px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (ok) resolve();
+            else reject(new Error('copy_failed'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+      document.addEventListener('click', function(e){
+        var btn = e && e.target ? e.target.closest('.copy-iu-btn') : null;
+        if (!btn) return;
+        var v = String(btn.getAttribute('data-copy') || '').replace(/^@/, '').trim();
+        copyTextToClipboard(v).catch(function(){});
       });
     })();
     (function forceProviderStatusOnLoad(){

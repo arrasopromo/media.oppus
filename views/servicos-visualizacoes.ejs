@@ -46,6 +46,9 @@
       }
     } catch(e) { console.error('Erro ao restaurar UTMs:', e); }
   </script>
+  <script>
+    window.PAGARME_PUBLIC_KEY = "<%= PAGARME_PUBLIC_KEY %>";
+  </script>
   <link href="/css/style.css?v=6" rel="stylesheet" />
   <link href="/css/badges.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
@@ -346,12 +349,12 @@
                     <label class="promo-item warranty60">
                       <input type="checkbox" id="promoWarranty60" data-promo="warranty60" />
                       <div class="promo-content">
-                        <div id="warrantyHighlight" class="promo-highlight">GARANTIA VITALÍCIA</div>
+                        <div id="warrantyHighlight" class="promo-highlight">REPOSIÇÃO POR 1 ANO</div>
                         <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
-                          <span>Garantia Vitalícia</span>
+                          <span>Reposição por 1 ano</span>
                           <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
                         </div>
-                        <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                        <div id="warrantyDesc" class="promo-desc">Reposição garantida por 12 meses</div>
                         <div class="promo-prices" data-promo="warranty60">
                           <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
                           <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
@@ -359,7 +362,7 @@
                         </div>
                         <div class="likes-control" style="display:none;" aria-label="Garantia estendida">
                           <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
-                          <span id="warrantyModeLabel" class="likes-qty">Vitalícia</span>
+                          <span id="warrantyModeLabel" class="likes-qty">1 ano</span>
                           <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
                         </div>
                       </div>
@@ -395,10 +398,97 @@
                 <span id="resTotalFinal" style="color: #22c55e;">-</span>
               </div>
               <div id="grupoPedido" style="margin-top: 1.5rem; display:none;">
-                <button id="realizarPedidoBtn" class="continue-button pulse-animation" style="width: 100%; padding: 1rem; font-size: 1.1rem; border-radius: 8px; display: flex; justify-content: center; align-items: center;">
-                    <span class="button-text">Realizar Pagamento</span>
-                    <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; margin-left: 10px; display: none;"></div>
-                </button>
+                <div id="paymentMethodSelector" style="display:none; gap:0.6rem; margin-bottom:1.25rem; align-items:stretch; justify-content:center; width:100%;">
+                    <label class="payment-option" id="optionPix" style="flex:1; max-width:220px; cursor:pointer; border:2px solid #10b981; background:#ecfdf5; border-radius:12px; padding:0.55rem 0.6rem; text-align:center; transition:all 0.2s; position:relative; box-shadow:0 4px 14px rgba(0,0,0,0.06);">
+                      <input type="radio" name="paymentMethod" value="pix" checked style="display:none;">
+                      <div class="pm-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px; min-height:64px;">
+                        <div class="pm-icon" style="display:flex;align-items:center;justify-content:center;">
+                          <img src="/images/icone%20pix.png" alt="Pix" style="width:28px;height:28px;object-fit:contain;display:block;" />
+                        </div>
+                        <div class="pm-title" style="font-weight:600; color:#065f46; font-size:0.95rem; letter-spacing:0.5px; line-height:1;">PIX</div>
+                        <div class="pm-subtitle" style="font-size:0.85rem; color:#065f46; font-weight:600; line-height:1;">5% de desconto</div>
+                      </div>
+                    </label>
+                    <label class="payment-option" id="optionCard" style="flex:1; max-width:220px; cursor:pointer; border:2px solid #e5e7eb; background:#ffffff; border-radius:12px; padding:0.55rem 0.6rem; text-align:center; transition:all 0.2s; position:relative; box-shadow:0 4px 14px rgba(0,0,0,0.06);">
+                      <input type="radio" name="paymentMethod" value="credit_card" style="display:none;">
+                      <div class="pm-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px; min-height:64px;">
+                        <div class="pm-icon" style="display:flex;align-items:center;justify-content:center;">
+                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="2" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                        </div>
+                        <div class="pm-title" style="font-weight:600; color:#111827; font-size:0.92rem; line-height:1;">Cartão de Crédito</div>
+                      </div>
+                    </label>
+                </div>
+                <style>
+                  @media (max-width: 640px) {
+                    #paymentMethodSelector { gap: 0.6rem !important; }
+                    #paymentMethodSelector .payment-option { max-width: none !important; }
+                  }
+                  @media (min-width: 641px) {
+                    #paymentMethodSelector .payment-option { max-width: 240px !important; }
+                  }
+                </style>
+
+                <div id="cardPaymentContent" style="display:none; margin-bottom:1.5rem;">
+                    <form id="cardPaymentForm" onsubmit="event.preventDefault();">
+                        <div class="form-group" style="margin-bottom:1rem;">
+                            <label for="cardNumber" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Número do Cartão</label>
+                            <div style="position:relative;">
+                                <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" maxlength="19" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 44px 0 14px; font-size:1rem; outline:none;">
+                                <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none;">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+                            <div style="flex:1;">
+                                <label for="cardExpiry" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Validade</label>
+                                <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AA" maxlength="5" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                            </div>
+                            <div style="flex:1;">
+                                <label for="cardCvv" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">CVV</label>
+                                <input type="text" id="cardCvv" class="select-input" placeholder="123" maxlength="4" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:1rem;">
+                            <label for="cardInstallments" style="display:block; font-weight:600; margin-bottom:0.25rem;">Parcelas</label>
+                            <select id="cardInstallments" class="select-input" style="width:100%;">
+                                <option value="1">1x</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:1rem;">
+                            <label for="cardHolderName" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Nome no Cartão</label>
+                            <input type="text" id="cardHolderName" class="select-input" placeholder="Nome impresso no cartão" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:1rem;">
+                            <label for="cardHolderCpf" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">CPF do Titular</label>
+                            <input type="text" id="cardHolderCpf" class="select-input" placeholder="000.000.000-00" maxlength="14" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                            <div style="margin-top:6px; font-size:0.85rem; color:#6b7280;">Obrigatório para transações nacionais (antifraude dos emissores).</div>
+                        </div>
+
+                        <div id="pagarmeBadgeCard" style="display:none; align-items:center; justify-content:center; gap:10px; margin-top:8px; margin-bottom:10px; color:#6b7280; font-size:0.85rem; text-align:center;">
+                          <img src="/images/logo-pagarme.png" alt="Pagar.me" style="height:18px; width:auto; display:inline-block;"/>
+                          <span>Pagamento processado pela Pagar.me</span>
+                        </div>
+                        <button id="payWithCardBtn" type="submit" class="continue-button" style="margin-top:0.5rem; display:flex; align-items:center; justify-content:center; position:relative; padding-right:52px;">
+                             <span class="button-text">Realizar pedido</span>
+                             <svg class="button-icon" style="position:absolute; right:16px;" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </button>
+                    </form>
+                </div>
+
+                <div class="button-container" id="pixPaymentBtnContainer" style="display:flex; flex-direction:column; align-items:center;">
+                  <button id="realizarPedidoBtn" class="continue-button" style="width:100%; max-width:420px; display:flex; align-items:center; justify-content:center; position:relative; padding-right:52px;">
+                    <span class="button-text">Realizar pedido</span>
+                    <svg class="button-icon" style="position:absolute; right:16px;" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>

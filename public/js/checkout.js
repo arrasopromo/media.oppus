@@ -34,6 +34,7 @@
   window.populateInstallments = populateInstallments;
   window.selectPaymentMethod = selectPaymentMethod;
   window.calculateTotalCents = calculateTotalCents;
+  window.calculateSubtotalCents = calculateSubtotalCents;
   window.showTutorialStep = showTutorialStep;
 
   let paymentPollInterval = null;
@@ -140,14 +141,40 @@
   }
 
 
-  function calculateTotalCents() {
+  function getPagarmeInstallmentConfig() {
+    const max = Math.max(1, Math.min(18, Number(window.PAGARME_INSTALLMENTS_MAX || 12) || 12));
+    // Política: limitar parcelas por ticket (subtotal, sem acréscimo)
+    function capBySubtotal(subtotal) {
+      const n = Number(subtotal) || 0;
+      if (n < 1500) return 1;        // < R$15
+      if (n < 3000) return 2;        // R$15–29,99
+      if (n < 6000) return 6;        // R$30–59,99
+      if (n < 10000) return 8;       // R$60–99,99
+      if (n < 15000) return 10;      // R$100–149,99
+      return 12;                     // >= R$150
+    }
+    const subtotal = calculateSubtotalCents();
+    const policyCap = capBySubtotal(subtotal);
+    return { max: Math.min(max, policyCap) };
+  }
+
+  function getSelectedInstallments() {
+    try {
+      const el = document.getElementById('cardInstallments');
+      const v = String(el && el.value ? el.value : '').trim();
+      const n = parseInt(v || '1', 10);
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  function calculateSubtotalCents() {
     let promosTotal = 0;
     try { promosTotal = calcPromosTotalCents(getSelectedPromos()); } catch(_) {}
     
-    // Use global if available, otherwise local
     let price = window.basePriceCents !== undefined ? window.basePriceCents : localBasePriceCents;
 
-    // Fallback: se price for 0, tentar recalcular do select atual
     if (!price) {
         try {
             const qs = document.getElementById('quantidadeSelect');
@@ -156,7 +183,6 @@
                 const p = opt ? opt.dataset.preco : '';
                 if (p) {
                     price = parsePrecoToCents(p);
-                    // Update local/global to avoid re-parsing
                     if (window.basePriceCents !== undefined) window.basePriceCents = price;
                     else localBasePriceCents = price;
                 }
@@ -181,18 +207,44 @@
       base = Math.max(0, Math.round(base * (1 - discount)));
     }
 
-    const total = Math.max(0, Number(base) + Number(promosTotal));
-    return total;
+    return Math.max(0, Number(base) + Number(promosTotal));
   }
 
-  function populateInstallments(totalCents) {
+  // Tabela de acréscimo por parcelas (cartão)
+  function cardSurchargeRate(inst) {
+    const table = {
+      1: 4.97, 2: 6.33, 3: 7.24, 4: 8.14, 5: 9.05, 6: 9.95,
+      7: 11.10, 8: 12.00, 9: 12.91, 10: 13.81, 11: 14.71, 12: 15.62
+    };
+    const keys = Object.keys(table).map(k => parseInt(k,10)).sort((a,b)=>a-b);
+    const maxKey = keys[keys.length-1] || 12;
+    const k = Math.max(1, Math.min(maxKey, Number(inst) || 1));
+    return Number(table[k] || 0);
+  }
+
+  function calculateTotalCents() {
+    const subtotal = calculateSubtotalCents();
+    try {
+      const method = String(window.currentPaymentMethod || '').trim();
+      if (method !== 'credit_card') return subtotal;
+      const cfg = getPagarmeInstallmentConfig();
+      const inst = Math.max(1, Math.min(cfg.max, getSelectedInstallments()));
+      const rate = cardSurchargeRate(inst);
+      return Math.round(Number(subtotal) * (1 + Math.max(0, rate)/100));
+    } catch(_) {
+      return subtotal;
+    }
+  }
+
+  function populateInstallments(subtotalCents) {
     const select = document.getElementById('cardInstallments');
     if (!select) return;
     
+    const prevValue = String(select.value || '').trim();
     select.innerHTML = '';
     
     const minInstallment = 500;
-    const maxInstallments = 12;
+    const maxInstallments = getPagarmeInstallmentConfig().max;
 
     // Adiciona opção padrão placeholder
     const defaultOption = document.createElement('option');
@@ -202,20 +254,36 @@
     defaultOption.textContent = "Selecione as parcelas...";
     select.appendChild(defaultOption);
 
-    // Se total for 0, não adiciona parcelas
-    if (!totalCents || totalCents <= 0) return;
+    if (!subtotalCents || subtotalCents <= 0) return;
+    const base = Math.round(Number(subtotalCents) || 0);
 
     for (let i = 1; i <= maxInstallments; i++) {
-      const installmentValue = Math.floor(totalCents / i);
+      const rate = cardSurchargeRate(i);
+      const totalForI = Math.round(base * (1 + Math.max(0, rate)/100));
+      const installmentValue = Math.floor(totalForI / i);
       
       // Regra: Parcela mínima de R$ 5,00
       if (installmentValue < minInstallment && i > 1) break;
       
       const option = document.createElement('option');
       option.value = i;
-      option.textContent = `${i}x de ${formatCentsToBRL(installmentValue)} sem juros`;
+      const labelExtra = i === 1 ? 'à vista no crédito' : 'com juros';
+      option.textContent = `${i}x de ${formatCentsToBRL(installmentValue)} (${labelExtra})`;
       select.appendChild(option);
     }
+    
+    try {
+      if (prevValue) {
+        const exists = Array.from(select.options).some(o => String(o.value) === prevValue);
+        if (exists) select.value = prevValue;
+      }
+    } catch (_) {}
+
+    try {
+      select.onchange = () => {
+        try { updatePromosSummary(); } catch(_) {}
+      };
+    } catch(_) {}
   }
 
   function updatePaymentMethodVisibility() {
@@ -223,7 +291,7 @@
     const selector = document.getElementById('paymentMethodSelector');
     
     const publicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
-    const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8;
+    const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8 && /^pk_/i.test(publicKey);
 
     if (selector) {
       // Exibir para pedidos acima de R$ 1,00 (100 centavos)
@@ -249,8 +317,7 @@
             warningEl.remove();
         }
 
-        // Sempre repopular parcelas pois o total pode ter mudado
-        populateInstallments(total);
+        populateInstallments(calculateSubtotalCents());
         
         // Se nenhum método selecionado, define Pix como padrão
         if (typeof currentPaymentMethod === 'undefined' || !currentPaymentMethod) selectPaymentMethod('pix');
@@ -283,11 +350,9 @@
         if (!el) return;
         el.style.borderColor = '#e5e7eb';
         el.style.backgroundColor = '#fff';
-        const icon = el.querySelector('.check-icon');
-        if (icon) icon.style.display = 'none';
-        const title = el.querySelector('div:nth-child(2)');
-        if (title) title.style.color = '#374151';
-        const subtitle = el.querySelector('div:nth-child(3)');
+        const title = el.querySelector('.pm-title');
+        if (title) title.style.color = '#111827';
+        const subtitle = el.querySelector('.pm-subtitle');
         if (subtitle) subtitle.style.color = '#6b7280';
     };
 
@@ -298,26 +363,22 @@
     if (method === 'pix' && optionPix) {
         optionPix.style.borderColor = '#10b981';
         optionPix.style.backgroundColor = '#ecfdf5';
-        const icon = optionPix.querySelector('.check-icon');
-        if (icon) icon.style.display = 'block';
-        const title = optionPix.querySelector('div:nth-child(2)');
+        const title = optionPix.querySelector('.pm-title');
         if (title) title.style.color = '#065f46';
-        const subtitle = optionPix.querySelector('div:nth-child(3)');
-        if (subtitle) subtitle.style.color = '#047857';
+        const subtitle = optionPix.querySelector('.pm-subtitle');
+        if (subtitle) subtitle.style.color = '#065f46';
     } else if (method === 'credit_card' && optionCard) {
         optionCard.style.borderColor = '#3b82f6';
         optionCard.style.backgroundColor = '#eff6ff';
-        const icon = optionCard.querySelector('.check-icon');
-        if (icon) icon.style.display = 'block';
-        const title = optionCard.querySelector('div:nth-child(2)');
+        const title = optionCard.querySelector('.pm-title');
         if (title) title.style.color = '#1e40af';
-        const subtitle = optionCard.querySelector('div:nth-child(3)');
+        const subtitle = optionCard.querySelector('.pm-subtitle');
         if (subtitle) subtitle.style.color = '#1d4ed8';
         
         // Populate Installments when Card is selected
         if (typeof populateInstallments === 'function') {
-            const total = (typeof window.calculateTotalCents === 'function') ? window.calculateTotalCents() : (window.basePriceCents || 0);
-            populateInstallments(total);
+            const subtotal = (typeof window.calculateSubtotalCents === 'function') ? window.calculateSubtotalCents() : (window.basePriceCents || 0);
+            populateInstallments(subtotal);
         }
     }
 
@@ -325,11 +386,13 @@
     const cardForm = document.getElementById('cardPaymentContent');
     const pixBtnContainer = document.getElementById('pixPaymentBtnContainer');
     const contentPix = document.getElementById('pixPaymentContent'); // Success Screen QR
+    const pagarmeBadgeCard = document.getElementById('pagarmeBadgeCard');
 
     if (method === 'credit_card') {
         if (cardForm) cardForm.style.display = 'block';
         if (pixBtnContainer) pixBtnContainer.style.display = 'none';
         if (contentPix) contentPix.style.display = 'none';
+        if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'flex';
         
         // Auto-focus first field if needed
         // setTimeout(() => document.getElementById('cardNumber')?.focus(), 100);
@@ -337,6 +400,7 @@
         if (cardForm) cardForm.style.display = 'none';
         if (pixBtnContainer) pixBtnContainer.style.display = 'block';
         if (contentPix) contentPix.style.display = 'block';
+        if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'none';
     }
     
     // Update Step 5 Tutorial Highlight
@@ -485,19 +549,46 @@
       { q: 10000, p: 'R$ 899,90' },
       { q: 15000, p: 'R$ 1.299,90' },
     ],
-    curtidas_reais: [
+    curtidas_brasileiras: [
       { q: 150, p: 'R$ 4,90' },
       { q: 300, p: 'R$ 9,90' },
       { q: 500, p: 'R$ 14,90' },
-      { q: 700, p: 'R$ 19,90' },
-      { q: 1000, p: 'R$ 24,90' },
-      { q: 2000, p: 'R$ 34,90' },
-      { q: 3000, p: 'R$ 49,90' },
-      { q: 4000, p: 'R$ 59,90' },
-      { q: 5000, p: 'R$ 69,90' },
-      { q: 7500, p: 'R$ 89,90' },
-      { q: 10000, p: 'R$ 109,90' },
-      { q: 15000, p: 'R$ 159,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 59,90' },
+      { q: 4000, p: 'R$ 69,90' },
+      { q: 5000, p: 'R$ 79,90' },
+      { q: 7500, p: 'R$ 109,90' },
+      { q: 10000, p: 'R$ 139,90' },
+      { q: 15000, p: 'R$ 199,90' },
+    ],
+    curtidas_mistos: [
+      { q: 150, p: 'R$ 5,90' },
+      { q: 300, p: 'R$ 7,90' },
+      { q: 500, p: 'R$ 9,90' },
+      { q: 700, p: 'R$ 14,90' },
+      { q: 1000, p: 'R$ 19,90' },
+      { q: 2000, p: 'R$ 24,90' },
+      { q: 3000, p: 'R$ 29,90' },
+      { q: 4000, p: 'R$ 34,90' },
+      { q: 5000, p: 'R$ 39,90' },
+      { q: 7500, p: 'R$ 49,90' },
+      { q: 10000, p: 'R$ 69,90' },
+      { q: 15000, p: 'R$ 89,90' },
+    ],
+    curtidas_organicos: [
+      { q: 150, p: 'R$ 16,90' },
+      { q: 300, p: 'R$ 28,90' },
+      { q: 500, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 69,90' },
+      { q: 2000, p: 'R$ 104,90' },
+      { q: 3000, p: 'R$ 139,90' },
+      { q: 4000, p: 'R$ 174,90' },
+      { q: 5000, p: 'R$ 224,90' },
+      { q: 7500, p: 'R$ 279,90' },
+      { q: 10000, p: 'R$ 349,90' },
+      { q: 15000, p: 'R$ 449,90' },
     ],
     visualizacoes_reels: [
       { q: 1000, p: 'R$ 4,90' },
@@ -550,8 +641,8 @@
   const wDisc = document.getElementById('warrantyDiscount');
   function applyWarrantyMode(){
     const isLife = true;
-    if (wLabel) wLabel.textContent = 'Vitalícia';
-    if (wHighlight) wHighlight.textContent = 'GARANTIA VITALÍCIA';
+    if (wLabel) wLabel.textContent = '1 ano';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
     if (wOld) wOld.textContent = 'R$ 129,90';
     if (wNew) wNew.textContent = 'R$ 19,90';
     if (wDisc) wDisc.textContent = '85% OFF';
@@ -564,7 +655,7 @@
     const without50 = [150, 500, 1000, 3000, 5000, 10000];
     const base = [50, 150, 500, 1000, 3000, 5000, 10000];
     if (tipo === 'mistos') {
-      return base;
+      return without50;
     }
     if (tipo === 'seguidores_tiktok') {
       return without50;
@@ -579,8 +670,17 @@
     return ['mistos', 'brasileiros', 'organicos', 'seguidores_tiktok'].includes(tipo);
   }
 
+  function getPricingTipoKey(tipo) {
+    const t = String(tipo || '');
+    const cat = getServiceCategory();
+    if (cat === 'curtidas' && t === 'organicos') return 'curtidas_organicos';
+    if (cat === 'curtidas' && t === 'mistos') return 'curtidas_mistos';
+    return t;
+  }
+
   function findPrice(tipo, qtd) {
-    const arr = tabela[tipo] || [];
+    const key = getPricingTipoKey(tipo);
+    const arr = tabela[key] || [];
     const it = arr.find(x => Number(x.q) === Number(qtd));
     return it ? it.p : '';
   }
@@ -626,18 +726,6 @@
       }
       return;
     }
-
-    // Promo específica: organicos 50 -> +50 (total 100) para teste
-    /* if (tipo === 'organicos' && Number(baseQtd) === 50) {
-      const addQtd = 50;
-      const diffStr = findPrice('organicos', 50) || 'R$ 0,10';
-      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para 100.`;
-      if (upHighlight) upHighlight.textContent = `+ ${addQtd} seguidores`;
-      if (upOld) upOld.textContent = '—';
-      if (upNew) upNew.textContent = diffStr;
-      if (upDisc) upDisc.textContent = 'OFERTA';
-      return;
-    } */
 
     // Upgrade genérico para demais pacotes
     const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
@@ -780,8 +868,9 @@
     if (!planCards) return;
     planCards.innerHTML = '';
     if (tipo === 'seguidores_tiktok') { planCards.style.display = 'none'; return; }
-    let plans = tabela[tipo] || [];
-    if (isFollowersTipo(tipo)) {
+    const pricingKey = getPricingTipoKey(tipo);
+    let plans = tabela[pricingKey] || [];
+    if (isFollowersTipo(tipo) && getServiceCategory() === 'seguidores') {
       const allowed = getAllowedQuantities(tipo);
       plans = plans.filter(x => allowed.includes(Number(x.q)));
     }
@@ -808,6 +897,8 @@
 
       // Mapa base de badges (copiado de servicos-instagram.js para consistência, se não existir globalmente)
       const quantityBadges = {
+        20: 'PACOTE TESTE',
+        50: 'PACOTE TESTE',
         150: 'PACOTE INICIAL',
         500: 'PACOTE BÁSICO',
         1000: 'MAIS PEDIDO',
@@ -892,35 +983,54 @@
   }
 
   function getLabelForTipo(t) {
+    const category = getServiceCategory();
+    if (category === 'curtidas') {
+      if (t === 'mistos') return 'Curtidas Mistas';
+      if (t === 'organicos') return 'Curtidas Brasileiras Reais';
+    }
     switch (t) {
       case 'mistos': return 'Seguidores Mistos';
       case 'brasileiros': return 'Seguidores Brasileiros';
       case 'organicos': return 'Seguidores brasileiros e reais';
       case 'seguidores_tiktok': return 'Seguidores';
-      case 'curtidas_reais': return 'Curtidas Brasileiras';
+      case 'curtidas_brasileiras': return 'Curtidas Brasileiras';
+      case 'curtidas_organicos': return 'Curtidas Brasileiras Reais';
       case 'visualizacoes_reels': return 'Visualizações Reels';
       default: return String(t).replace(/_/g, ' ');
     }
   }
 
   function getTipoDescription(tipo) {
-    const category = getServiceCategory();
+    const t = String(tipo || '');
+    const category = (t.indexOf('curtidas_') === 0 || t === 'curtidas_brasileiras') ? 'curtidas' : getServiceCategory();
     if (category === 'curtidas') {
-      switch (tipo) {
+      const curtTipo = (t === 'curtidas_brasileiras') ? 'brasileiros' : ((t === 'curtidas_organicos') ? 'organicos' : t);
+      switch (curtTipo) {
         case 'mistos':
           return `
-            <p>Curtidas mistas com entrega rápida e estável, vindas também de perfis internacionais.</p>
+            <p>Curtidas com entrega rápida e estável para impulsionar suas publicações.</p>
             <ul>
-              <li>100% seguro e confidencial, sem precisar da sua senha.</li>
-              <li>Curtidas variadas para aumentar a prova social do post.</li>
+              <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+              <li>🌍 Curtidas de perfis internacionais para melhorar a prova social do post.</li>
+              <li>📈 Ideal para dar força inicial em conteúdos estratégicos.</li>
+            </ul>
+          `;
+        case 'brasileiros':
+          return `
+            <p>Curtidas de perfis brasileiros para impulsionar suas publicações.</p>
+            <ul>
+              <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+              <li>🇧🇷 Perfis brasileiros para reforçar prova social.</li>
+              <li>📈 Ideal para posts que você quer destacar.</li>
             </ul>
           `;
         case 'organicos':
           return `
-            <p>Curtidas brasileiras para reforçar credibilidade e engajamento nacional.</p>
+            <p>Curtidas de perfis brasileiros, reais e ativos para máxima qualidade e credibilidade nas suas publicações.</p>
             <ul>
-              <li>100% seguro e confidencial, sem precisar da sua senha.</li>
-              <li>Foco em perfis brasileiros.</li>
+              <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+              <li>🇧🇷 Perfis brasileiros, reais e ativos para reforçar autoridade.</li>
+              <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
             </ul>
           `;
         default:
@@ -930,10 +1040,10 @@
     switch (tipo) {
       case 'mistos':
         return `
-          <p>Perfis variados com entrega rápida e estável, com seguidores reais de vários países.</p>
+          <p>Perfis variados com entrega rápida e estável, com alguns seguidores reais de vários países.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🌍 Seguidores reais de vários países para crescer sua base.</li>
+            <li>🌍 Alguns seguidores reais de vários países para crescer sua base.</li>
             <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
           </ul>
         `;
@@ -971,13 +1081,16 @@
   }
 
   function getUnitForTipo(tipo) {
+    const category = getServiceCategory();
+    if (category === 'curtidas' && (tipo === 'mistos' || tipo === 'organicos')) return 'curtidas';
     switch (tipo) {
       case 'mistos':
       case 'brasileiros':
       case 'organicos':
       case 'seguidores_tiktok':
         return 'seguidores';
-      case 'curtidas_reais':
+      case 'curtidas_brasileiras':
+      case 'curtidas_organicos':
         return 'curtidas';
       case 'visualizacoes_reels':
         return 'visualizações';
@@ -1521,7 +1634,8 @@
 
   function popularQuantidades(tipo) {
     qtdSelect.innerHTML = '';
-    if (!tipo || !tabela[tipo]) {
+    const pricingKey = getPricingTipoKey(tipo);
+    if (!tipo || !tabela[pricingKey]) {
       qtdSelect.disabled = true;
       const opt = document.createElement('option');
       opt.value = '';
@@ -1531,8 +1645,8 @@
       return;
     }
     qtdSelect.disabled = false;
-    let opts = tabela[tipo];
-    if (isFollowersTipo(tipo)) {
+    let opts = tabela[pricingKey];
+    if (isFollowersTipo(tipo) && getServiceCategory() === 'seguidores') {
       const allowed = getAllowedQuantities(tipo);
       opts = opts.filter(x => allowed.includes(Number(x.q)));
     }
@@ -1567,7 +1681,7 @@
   }
 
   function computePostFieldsCount(tipo, qtd) {
-    if (tipo === 'curtidas_reais') {
+    if (tipo === 'curtidas_brasileiras') {
       if (qtd >= 1000) return 3;
       if (qtd >= 500) return 2;
       return 1;
@@ -2111,7 +2225,14 @@
         const qty = Number(document.getElementById('likesQty')?.textContent || 150);
         let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
         if (!priceStr) priceStr = promoPricing.likes?.price || '';
-        promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+        const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+        const label = (function(t){
+          if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+          if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
+          if (t === 'mistos') return `Curtidas mistas (${qty})`;
+          return `Curtidas (${qty})`;
+        })(tipo);
+        promos.push({ key: 'likes', qty, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (viewsChecked) {
         const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
@@ -2126,7 +2247,7 @@
       }
       if (warrantyChecked) {
         const priceStr = 'R$ 19,90';
-        const label = 'Garantia vitalícia';
+        const label = 'Reposição por 1 ano';
         promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
@@ -2632,6 +2753,13 @@
         ],
         profile_is_private: isInstagramPrivate
       };
+      const pushAdditionalInfoIfMissing = (k, v) => {
+        const kk = String(k || '').trim();
+        const vv = String(v || '').trim();
+        if (!kk || !vv) return;
+        if (payload.additionalInfo.some(it => it && it.key === kk)) return;
+        payload.additionalInfo.push({ key: kk, value: vv });
+      };
       try {
         const cc = String(window.couponCode || '').trim();
         if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
@@ -2646,6 +2774,16 @@
       } catch(_) {}
 
       try {
+        if ((serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') && typeof collectValidPostLinks === 'function') {
+          const linksNow = collectValidPostLinks();
+          if (Array.isArray(linksNow) && linksNow.length) {
+            pushAdditionalInfoIfMissing('post_link', linksNow[0]);
+            pushAdditionalInfoIfMissing('post_links', linksNow.join(','));
+          }
+        }
+      } catch (_) {}
+
+      try {
         const selResp = await fetch('/api/instagram/selected-for');
         const selData = await selResp.json();
         const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
@@ -2654,6 +2792,10 @@
         const viewsLink = mapKind('views');
         const commentsLink = mapKind('comments');
         const anyLink = viewsLink || likesLink || commentsLink;
+        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+          const mainCandidate = (serviceCategory === 'visualizacoes') ? (viewsLink || anyLink) : (likesLink || anyLink);
+          if (mainCandidate) pushAdditionalInfoIfMissing('post_link', mainCandidate);
+        }
         
         const hasLikes = promos.some(p => p.key === 'likes');
         const hasViews = promos.some(p => p.key === 'views');
@@ -2720,7 +2862,7 @@
              if (selector) {
                  if (totalCents >= 100) {
                      selector.style.display = 'flex';
-                     populateInstallments(totalCents);
+                     populateInstallments((typeof window.calculateSubtotalCents === 'function') ? window.calculateSubtotalCents() : totalCents);
                      // Se não houver método selecionado, define Pix (mas o seletor estará visível)
                      if (!currentPaymentMethod) currentPaymentMethod = 'pix';
                  } else {
@@ -2798,7 +2940,7 @@
           const sName = document.getElementById('summaryItemName');
           if (sName) {
              const tipoLabel = (tipo === 'seguidores_tiktok') ? 'Seguidores TikTok' : 
-                              (tipo === 'curtidas_reais' ? 'Curtidas Brasileiras' : 
+                              (tipo === 'curtidas_brasileiras' ? 'Curtidas Brasileiras' : 
                                (tipo === 'visualizacoes_reels' ? 'Visualizações Reels' : 'Seguidores Instagram'));
              sName.textContent = tipoLabel;
           }
@@ -2884,9 +3026,9 @@
             // Silencioso: mantém próximo ciclo
           }
         };
-        // Executa imediatamente e depois a cada 30s
+        // Executa imediatamente e depois mais frequente
         checkPaid();
-        paymentPollInterval = setInterval(checkPaid, 30000);
+        paymentPollInterval = setInterval(checkPaid, 7000);
       } else {
         const checkPaidDb = async () => {
           try {
@@ -2905,7 +3047,7 @@
           } catch (e) {}
         };
         checkPaidDb();
-        paymentPollInterval = setInterval(checkPaidDb, 12000);
+        paymentPollInterval = setInterval(checkPaidDb, 3000);
         try {
           if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
           const sseUrl = `/api/payment/subscribe?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
@@ -3168,8 +3310,35 @@
       
       if (!expMonth || !expYear || expMonth > 12 || expMonth < 1) throw new Error('Data de validade inválida');
 
-      const cardHolderCpf = String(values.cardHolderCpf || '').replace(/\D/g, '');
-      if (!/^\d{11}$/.test(cardHolderCpf)) throw new Error('CPF do titular inválido.');
+      const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+      const isValidCPF = (cpfRaw) => {
+        const cpf = normalizeDigits(cpfRaw);
+        if (cpf.length !== 11) return false;
+        if (/^(\d)\1+$/.test(cpf)) return false;
+        const calc = (base, factor) => {
+          let sum = 0;
+          for (let i = 0; i < base.length; i++) sum += Number(base[i]) * (factor - i);
+          const mod = (sum * 10) % 11;
+          return mod === 10 ? 0 : mod;
+        };
+        const d1 = calc(cpf.slice(0, 9), 10);
+        const d2 = calc(cpf.slice(0, 10), 11);
+        return d1 === Number(cpf[9]) && d2 === Number(cpf[10]);
+      };
+
+      const cardHolderCpf = normalizeDigits(values.cardHolderCpf || '');
+      if (!/^\d{11}$/.test(cardHolderCpf) || !isValidCPF(cardHolderCpf)) {
+        try {
+          const cpfEl = document.getElementById('cardHolderCpf');
+          if (cpfEl) {
+            cpfEl.classList.add('input-error');
+            cpfEl.classList.add('tutorial-highlight');
+            try { cpfEl.focus(); } catch (_) {}
+            try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+          }
+        } catch (_) {}
+        throw new Error('CPF do titular inválido. Digite um CPF válido (11 dígitos).');
+      }
 
       const cardToken = await (async () => {
         const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -3214,10 +3383,67 @@
               (Array.isArray(tokenData?.errors) && tokenData.errors[0] && tokenData.errors[0].message ? String(tokenData.errors[0].message) : '') ||
               String(tokenData?.message || tokenData?.error || '');
             const trimmed = String(apiMsg || 'Erro ao tokenizar cartão.').trim();
-            if (trimmed.toLowerCase() === 'the request is invalid.') {
-              throw new Error('Tokenização recusada pelo Pagar.me. Cadastre o domínio do checkout na dashboard do Pagar.me e tente novamente.');
+            const origin = (function () {
+              try { return String(window.location && window.location.origin || '').trim(); } catch (_) { return ''; }
+            })();
+            const lower = trimmed.toLowerCase();
+            const firstErr = (Array.isArray(tokenData?.errors) && tokenData.errors[0]) ? tokenData.errors[0] : null;
+            const firstErrMsg = firstErr && firstErr.message ? String(firstErr.message).trim() : '';
+            const looksLikeOriginError = /origin|dom[ií]nio|domain|cors|allowlist|whitelist|unauthorized/i.test(lower) || /origin|dom[ií]nio|domain|cors|allowlist|whitelist|unauthorized/i.test(String(firstErrMsg || '').toLowerCase());
+            const statusCode = Number(tokenResp.status || 0);
+            const reqId = (function () {
+              try {
+                const h = tokenResp.headers;
+                if (!h || !h.get) return '';
+                return String(h.get('x-request-id') || h.get('request-id') || h.get('x-kong-request-id') || '').trim();
+              } catch (_) { return ''; }
+            })();
+            const hintParts = [];
+            if (origin) hintParts.push(`Domínio atual: ${origin}`);
+            hintParts.push('No Pagar.me, cadastre exatamente esse domínio (sem /caminho) e confirme com Enter/Tab');
+            hintParts.push('Se você preencheu IPs permitidos, teste com a lista vazia ou adicione seu IP público atual');
+            const hint = hintParts.join('. ') + '.';
+            const debugBits = [];
+            if (statusCode) debugBits.push(`HTTP ${statusCode}`);
+            if (reqId) debugBits.push(`Request-ID ${reqId}`);
+            const debug = debugBits.length ? ` (${debugBits.join(', ')})` : '';
+            if (looksLikeOriginError) {
+              throw new Error(`Tokenização recusada pelo Pagar.me${debug}. ${hint}`);
             }
-            throw new Error(trimmed || 'Erro ao tokenizar cartão.');
+            if (lower === 'the request is invalid.') {
+              const errs = (function () {
+                try {
+                  if (!Array.isArray(tokenData?.errors)) return '';
+                  const parts = tokenData.errors
+                    .map(e => {
+                      const param = e && e.parameter ? String(e.parameter).trim() : '';
+                      const m = e && e.message ? String(e.message).trim() : '';
+                      if (!param && !m) return '';
+                      return param ? `${param}: ${m || 'inválido'}` : (m || '');
+                    })
+                    .filter(Boolean);
+                  return parts.length ? parts.join(' | ') : '';
+                } catch (_) {
+                  return '';
+                }
+              })();
+              const errsLower = String((firstErrMsg || errs || '')).toLowerCase();
+              if (/(holder_document|holder document|documento|cpf)/i.test(errsLower)) {
+                try {
+                  const cpfEl = document.getElementById('cardHolderCpf');
+                  if (cpfEl) {
+                    cpfEl.classList.add('input-error');
+                    cpfEl.classList.add('tutorial-highlight');
+                    try { cpfEl.focus(); } catch (_) {}
+                    try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+                  }
+                } catch (_) {}
+                throw new Error(`CPF do titular inválido no Pagar.me${debug}. Digite um CPF válido e tente novamente.`);
+              }
+              const msg = firstErrMsg || (errs ? `Requisição inválida no Pagar.me. ${errs}` : 'Requisição inválida no Pagar.me.');
+              throw new Error(`${msg}${debug}. Verifique os dados do cartão e do titular e tente novamente.`);
+            }
+            throw new Error((trimmed || (firstErrMsg ? String(firstErrMsg) : 'Erro ao tokenizar cartão.')) + (debug ? debug : ''));
           }
           const id = String(tokenData?.id || '').trim();
           if (!id) throw new Error('Erro ao tokenizar cartão.');
@@ -3298,6 +3524,33 @@
 
       const customerPayload = { name: cardHolder, cpf: cardHolderCpf };
       if (phoneValue) customerPayload.phone_number = phoneValue;
+      const buildUtmsFromLocation = function () {
+        try {
+          const sp = new URLSearchParams(window.location.search || '');
+          return {
+            source: sp.get('utm_source') || '',
+            medium: sp.get('utm_medium') || '',
+            campaign: sp.get('utm_campaign') || '',
+            term: sp.get('utm_term') || '',
+            content: sp.get('utm_content') || '',
+            gclid: sp.get('gclid') || '',
+            fbclid: sp.get('fbclid') || '',
+            ref: window.location.href || ''
+          };
+        } catch (_) {
+          return { ref: (window.location && window.location.href) ? String(window.location.href) : '' };
+        }
+      };
+      const promos = getSelectedPromos();
+      const promosTotalCents = (function () {
+        try {
+          const cents = (typeof calcPromosTotalCents === 'function') ? calcPromosTotalCents(promos) : 0;
+          return Number.isFinite(Number(cents)) ? Number(cents) : 0;
+        } catch (_) {
+          return 0;
+        }
+      })();
+      const totalLabel = (typeof formatCentsToBRL === 'function') ? formatCentsToBRL(totalCents) : String(totalCents);
       const payload = {
         correlationID,
         card_token: cardToken,
@@ -3311,16 +3564,34 @@
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtd) },
-          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)}` },
-          { key: 'instagram_username', value: instagramUsernameFinal }
+          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${totalLabel}` },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'order_bumps_total', value: (typeof formatCentsToBRL === 'function') ? formatCentsToBRL(promosTotalCents) : String(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') },
+          { key: 'cupom', value: window.couponCode || '' },
+          { key: 'payment_method', value: 'credit_card' },
+          { key: 'installments', value: String(Number(installments) || 1) }
         ],
         profile_is_private: !!window.isInstagramPrivate,
-        comment: 'Checkout OPPUS Card'
+        comment: 'Checkout OPPUS Card',
+        utms: buildUtmsFromLocation()
       };
-      if (phoneValue) payload.additionalInfo.push({ key: 'phone', value: phoneValue });
+      const pushAdditionalInfoIfMissing = (k, v) => {
+        const kk = String(k || '').trim();
+        const vv = String(v || '').trim();
+        if (!kk || !vv) return;
+        if (payload.additionalInfo.some(it => it && it.key === kk)) return;
+        payload.additionalInfo.push({ key: kk, value: vv });
+      };
       try {
         const cc = String(window.couponCode || '').trim();
-        if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+        if (cc) {
+          for (let i = payload.additionalInfo.length - 1; i >= 0; i--) {
+            if (payload.additionalInfo[i] && payload.additionalInfo[i].key === 'cupom') payload.additionalInfo.splice(i, 1);
+          }
+          payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+        }
       } catch (_) {}
 
       try {
@@ -3343,17 +3614,24 @@
         if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
       } catch(_) {}
       
-      // Add Order Bumps to Additional Info if present
-      const promos = getSelectedPromos();
-      if (promos.length > 0) {
-          payload.additionalInfo.push({ key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') });
-          try {
-            const promosTotalCents = (typeof calcPromosTotalCents === 'function') ? calcPromosTotalCents(promos) : 0;
-            if (Number.isFinite(promosTotalCents) && promosTotalCents > 0) {
-              payload.additionalInfo.push({ key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) });
-            }
-          } catch (_) {}
-      }
+      try {
+        for (let i = payload.additionalInfo.length - 1; i >= 0; i--) {
+          const k = payload.additionalInfo[i] && payload.additionalInfo[i].key ? String(payload.additionalInfo[i].key) : '';
+          if (k === 'order_bumps' || k === 'order_bumps_total') payload.additionalInfo.splice(i, 1);
+        }
+        payload.additionalInfo.push({ key: 'order_bumps_total', value: (typeof formatCentsToBRL === 'function') ? formatCentsToBRL(promosTotalCents) : String(promosTotalCents) });
+        payload.additionalInfo.push({ key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') });
+      } catch (_) {}
+
+      try {
+        if ((serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') && typeof collectValidPostLinks === 'function') {
+          const linksNow = collectValidPostLinks();
+          if (Array.isArray(linksNow) && linksNow.length) {
+            pushAdditionalInfoIfMissing('post_link', linksNow[0]);
+            pushAdditionalInfoIfMissing('post_links', linksNow.join(','));
+          }
+        }
+      } catch (_) {}
 
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const fetchRetry = async (url, opts, attempts) => {
@@ -3398,6 +3676,10 @@
         const viewsLink = mapKind('views');
         const commentsLink = mapKind('comments');
         const anyLink = viewsLink || likesLink || commentsLink;
+        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+          const mainCandidate = (serviceCategory === 'visualizacoes') ? (viewsLink || anyLink) : (likesLink || anyLink);
+          if (mainCandidate) pushAdditionalInfoIfMissing('post_link', mainCandidate);
+        }
 
         const hasLikes = promos.some(p => p.key === 'likes');
         const hasViews = promos.some(p => p.key === 'views');
@@ -3457,7 +3739,36 @@
 
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data?.message || data?.error || 'Falha ao processar pagamento');
+        const errCode = String(data?.error || '').trim().toLowerCase();
+        if (errCode === 'invalid_cpf') {
+          try {
+            const cpfEl = document.getElementById('cardHolderCpf');
+            if (cpfEl) {
+              cpfEl.classList.add('input-error');
+              cpfEl.classList.add('tutorial-highlight');
+              try { cpfEl.focus(); } catch (_) {}
+              try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+          try {
+            if (checkoutPhoneInput) {
+              checkoutPhoneInput.classList.add('input-error');
+              checkoutPhoneInput.classList.add('tutorial-highlight');
+              try { checkoutPhoneInput.focus(); } catch (_) {}
+              try { checkoutPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        const baseMsg = data?.message || data?.error || 'Falha ao processar pagamento';
+        const pf = data && data.pagarme_failure ? data.pagarme_failure : null;
+        const extra = (pf && (pf.acquirer_message || pf.gateway_message || pf.acquirer_return_code || pf.refusal_reason))
+          ? ` Motivo: ${String(pf.acquirer_message || pf.gateway_message || pf.refusal_reason || '').trim()}${(pf.acquirer_return_code || pf.gateway_response_code) ? ` (código: ${String(pf.acquirer_return_code || pf.gateway_response_code).trim()})` : ''}`
+          : '';
+        const identifierErr = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+        const idPart = identifierErr ? ` Pedido: ${identifierErr}.` : '';
+        throw new Error(`${String(baseMsg)}${extra}${idPart}`);
       }
 
       const paid = data?.paid === true || data?.success === true;
@@ -4269,7 +4580,14 @@
           const qty = Number(document.getElementById('likesQty')?.textContent || 150);
           let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
           if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.likes ? window.promoPricing.likes.price : '') || '';
-          promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: window.parsePrecoToCents(priceStr) });
+          const tipo = String((document.getElementById('tipoSelect') && document.getElementById('tipoSelect').value) || '').toLowerCase();
+          const label = (function(t){
+            if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+            if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
+            if (t === 'mistos') return `Curtidas mistas (${qty})`;
+            return `Curtidas (${qty})`;
+          })(tipo);
+          promos.push({ key: 'likes', qty, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (viewsChecked) {
           const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
@@ -4284,7 +4602,7 @@
         }
         if (warrantyChecked) {
           const priceStr = 'R$ 19,90';
-          const label = 'Garantia vitalícia';
+          const label = 'Reposição por 1 ano';
           promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {

@@ -180,20 +180,45 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabelaCurtidas = {
     mistos: [
-      { q: 150, p: 'R$ 5,90' },
+      { q: 150, p: 'R$ 4,90' },
+      { q: 300, p: 'R$ 7,90' },
       { q: 500, p: 'R$ 9,90' },
+      { q: 700, p: 'R$ 14,90' },
       { q: 1000, p: 'R$ 19,90' },
+      { q: 2000, p: 'R$ 24,90' },
       { q: 3000, p: 'R$ 29,90' },
+      { q: 4000, p: 'R$ 34,90' },
       { q: 5000, p: 'R$ 39,90' },
+      { q: 7500, p: 'R$ 49,90' },
       { q: 10000, p: 'R$ 69,90' },
+      { q: 15000, p: 'R$ 89,90' }
+    ],
+    curtidas_brasileiras: [
+      { q: 150, p: 'R$ 5,90' },
+      { q: 300, p: 'R$ 9,90' },
+      { q: 500, p: 'R$ 14,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 59,90' },
+      { q: 4000, p: 'R$ 69,90' },
+      { q: 5000, p: 'R$ 79,90' },
+      { q: 7500, p: 'R$ 109,90' },
+      { q: 10000, p: 'R$ 139,90' },
+      { q: 15000, p: 'R$ 199,90' }
     ],
     organicos: [
-      { q: 150, p: 'R$ 4,90' },
-      { q: 500, p: 'R$ 14,90' },
-      { q: 1000, p: 'R$ 39,90' },
-      { q: 3000, p: 'R$ 59,90' },
-      { q: 5000, p: 'R$ 79,90' },
-      { q: 10000, p: 'R$ 139,90' },
+      { q: 150, p: 'R$ 16,90' },
+      { q: 300, p: 'R$ 28,90' },
+      { q: 500, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 69,90' },
+      { q: 2000, p: 'R$ 104,90' },
+      { q: 3000, p: 'R$ 139,90' },
+      { q: 4000, p: 'R$ 174,90' },
+      { q: 5000, p: 'R$ 224,90' },
+      { q: 7500, p: 'R$ 279,90' },
+      { q: 10000, p: 'R$ 349,90' },
+      { q: 15000, p: 'R$ 449,90' }
     ]
   };
 
@@ -227,12 +252,45 @@ document.addEventListener('DOMContentLoaded', function() {
   try { window.promoPricing = promoPricing; } catch(_) {}
 
   // --- Logic for Quantity Controls (Step 3 Parity) ---
-  const likesTable = [
-    { q: 150, price: 'R$ 4,90' }, { q: 300, price: 'R$ 9,90' }, { q: 500, price: 'R$ 14,90' },
-    { q: 700, price: 'R$ 19,90' }, { q: 1000, price: 'R$ 24,90' }, { q: 2000, price: 'R$ 34,90' },
-    { q: 3000, price: 'R$ 49,90' }, { q: 4000, price: 'R$ 59,90' }, { q: 5000, price: 'R$ 69,90' },
-    { q: 7500, price: 'R$ 89,90' }, { q: 10000, price: 'R$ 109,90' }, { q: 15000, price: 'R$ 159,90' }
-  ];
+  let likesTable = [];
+  function getLikesPromoVariantKey() {
+    const tipo = String(window.selectedType || '').toLowerCase();
+    if (tipo === 'organicos') return 'organicos';
+    if (tipo === 'curtidas_brasileiras') return 'brasileiros';
+    if (tipo === 'brasileiros') return 'brasileiros';
+    return 'mistos';
+  }
+  function refreshLikesTable() {
+    const byVariant = {
+      mistos: [
+        { q: 150, price: 'R$ 4,90' }, { q: 300, price: 'R$ 9,90' }, { q: 500, price: 'R$ 14,90' },
+        { q: 700, price: 'R$ 19,90' }, { q: 1000, price: 'R$ 24,90' }, { q: 2000, price: 'R$ 34,90' },
+        { q: 3000, price: 'R$ 49,90' }, { q: 4000, price: 'R$ 59,90' }, { q: 5000, price: 'R$ 69,90' },
+        { q: 7500, price: 'R$ 89,90' }, { q: 10000, price: 'R$ 109,90' }, { q: 15000, price: 'R$ 159,90' }
+      ],
+      brasileiros: [
+        { q: 150, price: 'R$ 5,90' }, { q: 300, price: 'R$ 9,90' }, { q: 500, price: 'R$ 14,90' },
+        { q: 700, price: 'R$ 29,90' }, { q: 1000, price: 'R$ 39,90' }, { q: 2000, price: 'R$ 49,90' },
+        { q: 3000, price: 'R$ 59,90' }, { q: 4000, price: 'R$ 69,90' }, { q: 5000, price: 'R$ 79,90' },
+        { q: 7500, price: 'R$ 109,90' }, { q: 10000, price: 'R$ 139,90' }, { q: 15000, price: 'R$ 199,90' }
+      ],
+      organicos: [
+        { q: 150, price: 'R$ 16,90' }, { q: 300, price: 'R$ 28,90' }, { q: 500, price: 'R$ 49,90' },
+        { q: 1000, price: 'R$ 69,90' }, { q: 2000, price: 'R$ 104,90' }, { q: 3000, price: 'R$ 139,90' },
+        { q: 4000, price: 'R$ 174,90' }, { q: 5000, price: 'R$ 224,90' }, { q: 7500, price: 'R$ 279,90' },
+        { q: 10000, price: 'R$ 349,90' }, { q: 15000, price: 'R$ 449,90' }
+      ]
+    };
+    const key = getLikesPromoVariantKey();
+    const arr = byVariant[key] || byVariant.mistos;
+    likesTable = Array.isArray(arr) ? arr.slice() : [];
+    try {
+      const likesQtyEl = document.getElementById('likesQty');
+      const current = Number(likesQtyEl?.textContent || 150);
+      const exists = likesTable.some(e => Number(e.q) === current);
+      if (!exists && likesQtyEl && likesTable[0]) likesQtyEl.textContent = String(likesTable[0].q);
+    } catch (_) {}
+  }
   
   const viewsTable = [
     { q: 1000, price: 'R$ 4,90' }, { q: 2500, price: 'R$ 9,90' }, { q: 5000, price: 'R$ 14,90' },
@@ -245,6 +303,22 @@ document.addEventListener('DOMContentLoaded', function() {
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
 
   // Likes Logic
+  function applyLikesPromoVariant() {
+    const titleEl = document.querySelector('.promo-item.likes .promo-title');
+    const descEl = document.querySelector('.promo-item.likes .promo-desc');
+    if (!titleEl && !descEl) return;
+    const tipo = String(window.selectedType || '').toLowerCase();
+    if (tipo === 'organicos') {
+      if (titleEl) titleEl.textContent = 'Curtidas reais promocionais';
+      if (descEl) descEl.textContent = 'Adicionar curtidas de perfis brasileiros reais e ativos.';
+    } else if (tipo === 'brasileiros') {
+      if (titleEl) titleEl.textContent = 'Curtidas brasileiras promocionais';
+      if (descEl) descEl.textContent = 'Adicionar curtidas brasileiras ao post.';
+    } else {
+      if (titleEl) titleEl.textContent = 'Curtidas promocionais';
+      if (descEl) descEl.textContent = 'Adicionar curtidas ao post.';
+    }
+  }
   function updateLikesPrice(q) {
     const entry = likesTable.find(e => e.q === q);
     const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
@@ -253,7 +327,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newEl && entry) newEl.textContent = entry.price;
     if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
     const hl = document.querySelector('.promo-item.likes .promo-highlight');
-    if (hl) hl.textContent = `+ ${q} CURTIDAS`;
+    if (hl) {
+      const tipo = String(window.selectedType || '').toLowerCase();
+      if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS REAIS`;
+      else if (tipo === 'brasileiros') hl.textContent = `+ ${q} CURTIDAS BRASILEIRAS`;
+      else hl.textContent = `+ ${q} CURTIDAS`;
+    }
+    try { applyLikesPromoVariant(); } catch(_) {}
   }
 
   window.stepLikes = function(dir) {
@@ -320,15 +400,15 @@ document.addEventListener('DOMContentLoaded', function() {
   // Warranty Logic
   let warrantyMode = 'life';
   function applyWarrantyMode() {
-    const isLife = warrantyMode === 'life';
+    const isLife = true;
     const wLabel = document.getElementById('warrantyModeLabel');
     const wHighlight = document.getElementById('warrantyHighlight');
     const wOld = document.getElementById('warrantyOldPrice');
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
-    if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
+    if (wLabel) wLabel.textContent = '1 ano';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
     
     // Custom Price for Followers (Mistos/Brasileiros)
     const isFollowers = window.currentService === 'followers';
@@ -409,9 +489,11 @@ document.addEventListener('DOMContentLoaded', function() {
       
       if (service === 'followers') {
           if (type === 'mistos') targetId = 'section-followers';
+          else if (type === 'brasileiros') targetId = 'section-followers-br';
           else if (type === 'organicos') targetId = 'section-followers-org';
       } else if (service === 'likes') {
           if (type === 'mistos') targetId = 'section-likes';
+          else if (type === 'curtidas_brasileiras') targetId = 'section-likes-br';
           else if (type === 'organicos') targetId = 'section-likes-org';
       } else if (service === 'views') {
           targetId = 'section-views';
@@ -476,11 +558,20 @@ document.addEventListener('DOMContentLoaded', function() {
         badgeType: 'mistos'
       },
       { 
+        id: 'section-likes-br',
+        service: 'likes', 
+        type: 'curtidas_brasileiras', 
+        title: 'Curtidas Brasileiras', 
+        desc: 'Curtidas focadas no público brasileiro para impulsionar suas publicações.',
+        tabela: tabelaCurtidas.curtidas_brasileiras,
+        badgeType: 'brasileiros'
+      },
+      { 
         id: 'section-likes-org',
         service: 'likes', 
         type: 'organicos', 
-        title: 'Curtidas Brasileiras', 
-        desc: 'Curtidas focadas no público brasileiro para impulsionar suas publicações.',
+        title: 'Curtidas Brasileiras Reais', 
+        desc: 'Curtidas de perfis brasileiros, reais e ativos para máxima credibilidade nas suas publicações.',
         tabela: tabelaCurtidas.organicos,
         badgeType: 'organicos'
       },
@@ -529,6 +620,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // --- Badge Logic (Fixed & Robust) ---
             const localQuantityBadges = {
+                20: 'PACOTE TESTE',
                 50: 'PACOTE TESTE',
                 150: 'PACOTE INICIAL',
                 500: 'PACOTE BÁSICO',
@@ -621,6 +713,11 @@ document.addEventListener('DOMContentLoaded', function() {
           window.selectedType = config.type;
           window.selectedPlan = plano;
           try { localStorage.setItem('oppus_selected_plan', JSON.stringify(plano)); } catch(e) {}
+          try {
+            refreshLikesTable();
+            applyLikesPromoVariant();
+            updateLikesPrice(Number(document.getElementById('likesQty')?.textContent || 150));
+          } catch(_) {}
           
           console.log('DEBUG: Card Clicked', {
               service: config.service,
@@ -942,7 +1039,8 @@ document.addEventListener('DOMContentLoaded', function() {
       if (window.currentService === 'likes') {
           const labels = {
               'mistos': 'Curtidas Mundiais',
-              'organicos': 'Curtidas Brasileiras'
+              'curtidas_brasileiras': 'Curtidas Brasileiras',
+              'organicos': 'Curtidas Brasileiras Reais'
           };
           return labels[tipo] || tipo;
       }
@@ -1252,7 +1350,7 @@ document.addEventListener('DOMContentLoaded', function() {
   
       const isFollowers = window.currentService === 'followers';
       // 'mistos' = Mundiais, 'organicos' = Brasileiros Reais, 'brasileiros' = Brasileiros
-    const isEligibleType = window.selectedType === 'mistos' || window.selectedType === 'organicos' || window.selectedType === 'brasileiros';
+    const isEligibleType = window.selectedType === 'mistos' || window.selectedType === 'organicos' || window.selectedType === 'brasileiros' || window.selectedType === 'curtidas_brasileiras';
   
       if (isFollowers && isEligibleType) {
           warrantyCard.style.display = 'flex';
@@ -1469,6 +1567,10 @@ document.addEventListener('DOMContentLoaded', function() {
           if (label) label.textContent = next === 'light' ? 'Tema: Claro' : 'Tema: Escuro';
       }
   });
+  try {
+    refreshLikesTable();
+    updateLikesPrice(Number(document.getElementById('likesQty')?.textContent || 150));
+  } catch (_) {}
   const promoCheckboxes = ['promoLikes', 'promoViews', 'promoComments', 'promoWarranty60', 'orderBumpCheckboxInline'];
   promoCheckboxes.forEach(id => {
       const el = document.getElementById(id);
@@ -1510,7 +1612,14 @@ document.addEventListener('DOMContentLoaded', function() {
        const qty = Number(document.getElementById('likesQty')?.textContent || 150);
        let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
        if (!priceStr && window.promoPricing && window.promoPricing.likes) priceStr = window.promoPricing.likes.price;
-       promos.push({ key: 'likes', qty: qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+       const tipo = String((document.getElementById('tipoSelect') && document.getElementById('tipoSelect').value) || '').toLowerCase();
+       const label = (function(t){
+         if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+         if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
+         if (t === 'mistos') return `Curtidas mistas (${qty})`;
+         return `Curtidas (${qty})`;
+       })(tipo);
+       promos.push({ key: 'likes', qty: qty, label, priceCents: parsePrecoToCents(priceStr) });
     }
     if (promoViews && promoViews.checked) {
        const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
@@ -1530,7 +1639,7 @@ document.addEventListener('DOMContentLoaded', function() {
        promos.push({ 
            key: 'warranty60', 
            qty: 1, 
-           label: 'Garantia Vitalícia', 
+           label: 'Reposição por 1 ano', 
            priceCents: 990 // R$ 9,90
        });
     }

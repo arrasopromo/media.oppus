@@ -528,6 +528,33 @@ html, body { overflow-x: hidden; }
     margin-top: 2rem;
 }
 
+.checkout-page #pixPaymentBtnContainer {
+    width: 100%;
+    margin-top: calc(2rem + 70px) !important;
+}
+
+.checkout-page #realizarPedidoBtn,
+.checkout-page #payWithCardBtn {
+    width: 100% !important;
+    max-width: 420px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+.checkout-page #payWithCardBtn {
+    margin-top: 1.25rem !important;
+}
+
+@media (min-width: 1024px) {
+    .checkout-page #realizarPedidoBtn,
+    .checkout-page #payWithCardBtn {
+        max-width: 520px !important;
+    }
+    .checkout-page #pixPaymentBtnContainer {
+        margin-top: calc(2rem + 80px) !important;
+    }
+}
+
 /* Botão continuar com estilo Instagram */
 .continue-button {
     background: var(--instagram-gradient);
