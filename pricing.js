@@ -69,8 +69,7 @@ const tabelaCurtidas = {
         { q: 10000, p: 'R$ 69,90' },
         { q: 15000, p: 'R$ 89,90' },
     ],
-    brasileiros: tabelaSeguidores.brasileiros, // Reused in frontend
-    organicos: [
+    brasileiros: [
         { q: 150, p: 'R$ 4,90' },
         { q: 300, p: 'R$ 9,90' },
         { q: 500, p: 'R$ 14,90' },
@@ -84,19 +83,45 @@ const tabelaCurtidas = {
         { q: 10000, p: 'R$ 139,90' },
         { q: 15000, p: 'R$ 199,90' },
     ],
-    curtidas_reais: [
+    curtidas_brasileiras: [
         { q: 150, p: 'R$ 4,90' },
         { q: 300, p: 'R$ 9,90' },
         { q: 500, p: 'R$ 14,90' },
-        { q: 700, p: 'R$ 19,90' },
-        { q: 1000, p: 'R$ 24,90' },
-        { q: 2000, p: 'R$ 34,90' },
-        { q: 3000, p: 'R$ 49,90' },
-        { q: 4000, p: 'R$ 59,90' },
-        { q: 5000, p: 'R$ 69,90' },
-        { q: 7500, p: 'R$ 89,90' },
-        { q: 10000, p: 'R$ 109,90' },
-        { q: 15000, p: 'R$ 159,90' },
+        { q: 700, p: 'R$ 29,90' },
+        { q: 1000, p: 'R$ 39,90' },
+        { q: 2000, p: 'R$ 49,90' },
+        { q: 3000, p: 'R$ 59,90' },
+        { q: 4000, p: 'R$ 69,90' },
+        { q: 5000, p: 'R$ 79,90' },
+        { q: 7500, p: 'R$ 109,90' },
+        { q: 10000, p: 'R$ 139,90' },
+        { q: 15000, p: 'R$ 199,90' },
+    ],
+    organicos: [
+        { q: 150, p: 'R$ 16,90' },
+        { q: 300, p: 'R$ 28,90' },
+        { q: 500, p: 'R$ 49,90' },
+        { q: 1000, p: 'R$ 69,90' },
+        { q: 2000, p: 'R$ 104,90' },
+        { q: 3000, p: 'R$ 139,90' },
+        { q: 4000, p: 'R$ 174,90' },
+        { q: 5000, p: 'R$ 224,90' },
+        { q: 7500, p: 'R$ 279,90' },
+        { q: 10000, p: 'R$ 349,90' },
+        { q: 15000, p: 'R$ 449,90' },
+    ],
+    curtidas_reais: [
+        { q: 150, p: 'R$ 16,90' },
+        { q: 300, p: 'R$ 28,90' },
+        { q: 500, p: 'R$ 49,90' },
+        { q: 1000, p: 'R$ 69,90' },
+        { q: 2000, p: 'R$ 104,90' },
+        { q: 3000, p: 'R$ 139,90' },
+        { q: 4000, p: 'R$ 174,90' },
+        { q: 5000, p: 'R$ 224,90' },
+        { q: 7500, p: 'R$ 279,90' },
+        { q: 10000, p: 'R$ 349,90' },
+        { q: 15000, p: 'R$ 449,90' },
     ],
 };
 
@@ -118,18 +143,63 @@ const tabelaVisualizacoes = {
 };
 
 // Order Bumps / Upsells logic
-const calculateOrderBumps = (bumpsStr) => {
+const tabelaCurtidasPromo = {
+    mistos: [
+        { q: 150, p: 'R$ 4,90' },
+        { q: 300, p: 'R$ 9,90' },
+        { q: 500, p: 'R$ 14,90' },
+        { q: 700, p: 'R$ 19,90' },
+        { q: 1000, p: 'R$ 24,90' },
+        { q: 2000, p: 'R$ 34,90' },
+        { q: 3000, p: 'R$ 49,90' },
+        { q: 4000, p: 'R$ 59,90' },
+        { q: 5000, p: 'R$ 69,90' },
+        { q: 7500, p: 'R$ 89,90' },
+        { q: 10000, p: 'R$ 109,90' },
+        { q: 15000, p: 'R$ 159,90' },
+    ],
+    brasileiros: [
+        { q: 150, p: 'R$ 5,90' },
+        { q: 300, p: 'R$ 9,90' },
+        { q: 500, p: 'R$ 14,90' },
+        { q: 700, p: 'R$ 29,90' },
+        { q: 1000, p: 'R$ 39,90' },
+        { q: 2000, p: 'R$ 49,90' },
+        { q: 3000, p: 'R$ 59,90' },
+        { q: 4000, p: 'R$ 69,90' },
+        { q: 5000, p: 'R$ 79,90' },
+        { q: 7500, p: 'R$ 109,90' },
+        { q: 10000, p: 'R$ 139,90' },
+        { q: 15000, p: 'R$ 199,90' },
+    ],
+    organicos: [
+        { q: 150, p: 'R$ 16,90' },
+        { q: 300, p: 'R$ 28,90' },
+        { q: 500, p: 'R$ 49,90' },
+        { q: 1000, p: 'R$ 69,90' },
+        { q: 2000, p: 'R$ 104,90' },
+        { q: 3000, p: 'R$ 139,90' },
+        { q: 4000, p: 'R$ 174,90' },
+        { q: 5000, p: 'R$ 224,90' },
+        { q: 7500, p: 'R$ 279,90' },
+        { q: 10000, p: 'R$ 349,90' },
+        { q: 15000, p: 'R$ 449,90' },
+    ],
+};
+
+const calculateOrderBumps = (bumpsStr, baseType) => {
     if (!bumpsStr) return 0;
     let total = 0;
     const bumps = bumpsStr.split(';'); // "likes:150;views:1000"
+    const base = String(baseType || '').toLowerCase();
     
     bumps.forEach(bump => {
         const [key, qtyStr] = bump.split(':');
         const q = parseInt(qtyStr, 10) || 1;
         
         if (key === 'likes') {
-            // Reutiliza tabela de curtidas_reais (preço promocional usado no upsell do frontend)
-            const table = tabelaCurtidas.curtidas_reais;
+            const variant = base.includes('organicos') ? 'organicos' : ((base.includes('brasileiros') || base.includes('curtidas_brasileiras')) ? 'brasileiros' : 'mistos');
+            const table = tabelaCurtidasPromo[variant] || tabelaCurtidasPromo.mistos;
             const item = table.find(x => x.q === q);
             if (item) total += parsePrecoToCents(item.p);
             
@@ -257,7 +327,7 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
     }
     
     if (bumpsStr) {
-        totalCents += calculateOrderBumps(bumpsStr);
+        totalCents += calculateOrderBumps(bumpsStr, tipo);
 
         // --- UPGRADE LOGIC START ---
         // Mirroring logic from servicos-instagram.js updateOrderBump
@@ -301,6 +371,29 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
         }
         // --- UPGRADE LOGIC END ---
     }
+
+    try {
+        const pmItem = Array.isArray(additionalInfo) ? additionalInfo.find(x => x && x.key === 'payment_method') : null;
+        const pm = String(pmItem?.value || '').trim().toLowerCase();
+        if (pm === 'credit_card') {
+            const maxInstallments = (function () {
+                const n = parseInt(String(process.env.PAGARME_INSTALLMENTS_MAX || '12'), 10);
+                if (!Number.isFinite(n) || n <= 0) return 12;
+                return Math.max(1, Math.min(18, n));
+            })();
+            const installmentsRaw = (Array.isArray(additionalInfo) ? (additionalInfo.find(x => x && (x.key === 'installments' || x.key === 'parcelas'))?.value) : null);
+            const installments = Math.max(1, Math.min(maxInstallments, parseInt(String(installmentsRaw || '1'), 10) || 1));
+            const rateTable = {
+                1: 4.97, 2: 6.33, 3: 7.24, 4: 8.14, 5: 9.05, 6: 9.95,
+                7: 11.10, 8: 12.00, 9: 12.91, 10: 13.81, 11: 14.71, 12: 15.62
+            };
+            const keys = Object.keys(rateTable).map(k => parseInt(k, 10)).filter(Number.isFinite).sort((a,b)=>a-b);
+            const maxKey = keys[keys.length - 1] || 12;
+            const instKey = Math.min(installments, maxKey);
+            const surcharge = Number(rateTable[instKey] || 0);
+            totalCents = Math.round(Number(totalCents) * (1 + Math.max(0, surcharge) / 100));
+        }
+    } catch(_) {}
 
     return totalCents;
 };

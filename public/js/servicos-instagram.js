@@ -226,7 +226,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabelaCurtidas = {
     mistos: [
-      { q: 150, p: 'R$ 5,90' },
+      { q: 150, p: 'R$ 4,90' },
       { q: 300, p: 'R$ 7,90' },
       { q: 500, p: 'R$ 9,90' },
       { q: 700, p: 'R$ 14,90' },
@@ -239,9 +239,8 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 10000, p: 'R$ 69,90' },
       { q: 15000, p: 'R$ 89,90' },
     ],
-    brasileiros: tabelaSeguidores.brasileiros,
-    organicos: [
-      { q: 150, p: 'R$ 4,90' },
+    curtidas_brasileiras: [
+      { q: 150, p: 'R$ 5,90' },
       { q: 300, p: 'R$ 9,90' },
       { q: 500, p: 'R$ 14,90' },
       { q: 700, p: 'R$ 29,90' },
@@ -253,6 +252,19 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 7500, p: 'R$ 109,90' },
       { q: 10000, p: 'R$ 139,90' },
       { q: 15000, p: 'R$ 199,90' },
+    ],
+    organicos: [
+      { q: 150, p: 'R$ 16,90' },
+      { q: 300, p: 'R$ 28,90' },
+      { q: 500, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 69,90' },
+      { q: 2000, p: 'R$ 104,90' },
+      { q: 3000, p: 'R$ 139,90' },
+      { q: 4000, p: 'R$ 174,90' },
+      { q: 5000, p: 'R$ 224,90' },
+      { q: 7500, p: 'R$ 279,90' },
+      { q: 10000, p: 'R$ 349,90' },
+      { q: 15000, p: 'R$ 449,90' },
     ],
   };
 
@@ -300,6 +312,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   let paymentPollInterval = null;
   let paymentEventSource = null;
+  let currentPaymentMethod = 'pix';
+  window.currentPaymentMethod = currentPaymentMethod;
 
   // --- UTM Tracking Persistence ---
   try {
@@ -404,6 +418,572 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  function cardSurchargeRate(inst) {
+    const table = {
+      1: 4.97, 2: 6.33, 3: 7.24, 4: 8.14, 5: 9.05, 6: 9.95,
+      7: 11.10, 8: 12.00, 9: 12.91, 10: 13.81, 11: 14.71, 12: 15.62
+    };
+    const keys = Object.keys(table).map(k => parseInt(k, 10)).filter(Number.isFinite).sort((a, b) => a - b);
+    const maxKey = keys[keys.length - 1] || 12;
+    const k = Math.max(1, Math.min(maxKey, Number(inst) || 1));
+    return Number(table[k] || 0);
+  }
+
+  function capInstallmentsBySubtotal(subtotalCents) {
+    const n = Number(subtotalCents) || 0;
+    if (n < 1500) return 1;
+    if (n < 3000) return 2;
+    if (n < 6000) return 6;
+    if (n < 10000) return 8;
+    if (n < 15000) return 10;
+    return 12;
+  }
+
+  function getSelectedInstallments() {
+    try {
+      const el = document.getElementById('cardInstallments');
+      const v = String(el && el.value ? el.value : '').trim();
+      const n = parseInt(v || '1', 10);
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  function calculateSubtotalCents() {
+    let base = Number(basePriceCents || 0);
+    const promos = getSelectedPromos();
+    const promosTotal = calcPromosTotalCents(promos);
+
+    let subtotal = Math.max(0, base + promosTotal);
+    if (window.couponDiscount && window.couponDiscount > 0) {
+      const discountVal = Math.round(subtotal * window.couponDiscount);
+      subtotal -= discountVal;
+    }
+    return Math.max(0, Number(subtotal) || 0);
+  }
+
+  function calculateTotalCents() {
+    let total = calculateSubtotalCents();
+    try {
+      const method = String(window.currentPaymentMethod || '').trim();
+      if (method === 'credit_card') {
+        const cap = capInstallmentsBySubtotal(total);
+        const inst = Math.max(1, Math.min(cap, getSelectedInstallments()));
+        const rate = cardSurchargeRate(inst);
+        total = Math.round(total * (1 + Math.max(0, rate) / 100));
+      }
+    } catch(_) {}
+    return Math.max(0, Number(total) || 0);
+  }
+  window.calculateTotalCents = calculateTotalCents;
+
+  function populateInstallments(subtotalCents) {
+    const select = document.getElementById('cardInstallments');
+    if (!select) return;
+
+    select.innerHTML = '';
+
+    const minInstallment = 500;
+    const maxInstallments = Math.min(12, capInstallmentsBySubtotal(subtotalCents));
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = "";
+    defaultOption.disabled = true;
+    defaultOption.selected = true;
+    defaultOption.textContent = "Selecione as parcelas...";
+    select.appendChild(defaultOption);
+
+    if (!subtotalCents || subtotalCents <= 0) return;
+
+    for (let i = 1; i <= maxInstallments; i++) {
+      const rate = cardSurchargeRate(i);
+      const totalForI = Math.round(Number(subtotalCents) * (1 + Math.max(0, rate) / 100));
+      const installmentValue = Math.floor(totalForI / i);
+      if (installmentValue < minInstallment && i > 1) break;
+
+      const option = document.createElement('option');
+      option.value = i;
+      option.textContent = `${i}x de ${formatCentsToBRL(installmentValue)}`;
+      select.appendChild(option);
+    }
+  }
+  window.populateInstallments = populateInstallments;
+
+  function selectPaymentMethod(method, opts) {
+    const o = opts || {};
+    if (method === currentPaymentMethod && !o.force) return;
+    currentPaymentMethod = method;
+    window.currentPaymentMethod = method;
+
+    const radioPix = document.querySelector('input[name="paymentMethod"][value="pix"]');
+    const radioCard = document.querySelector('input[name="paymentMethod"][value="credit_card"]');
+    if (radioPix) radioPix.checked = (method === 'pix');
+    if (radioCard) radioCard.checked = (method === 'credit_card');
+
+    const optionPix = document.getElementById('optionPix');
+    const optionCard = document.getElementById('optionCard');
+
+    const resetStyle = (el) => {
+      if (!el) return;
+      el.style.borderColor = '#e5e7eb';
+      el.style.backgroundColor = '#fff';
+      const title = el.querySelector('.pm-title');
+      if (title) title.style.color = '#111827';
+      const subtitle = el.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#6b7280';
+    };
+
+    resetStyle(optionPix);
+    resetStyle(optionCard);
+
+    if (method === 'pix' && optionPix) {
+      optionPix.style.borderColor = '#10b981';
+      optionPix.style.backgroundColor = '#ecfdf5';
+      const title = optionPix.querySelector('.pm-title');
+      if (title) title.style.color = '#065f46';
+      const subtitle = optionPix.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#065f46';
+    } else if (method === 'credit_card' && optionCard) {
+      optionCard.style.borderColor = '#3b82f6';
+      optionCard.style.backgroundColor = '#eff6ff';
+      const title = optionCard.querySelector('.pm-title');
+      if (title) title.style.color = '#1e40af';
+      const subtitle = optionCard.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#1d4ed8';
+
+      try { populateInstallments(calculateSubtotalCents()); } catch(_) {}
+    }
+
+    const cardForm = document.getElementById('cardPaymentContent');
+    const pixBtnContainer = document.getElementById('pixPaymentBtnContainer');
+    const contentPix = document.getElementById('pixContainer');
+    const pagarmeBadgeCard = document.getElementById('pagarmeBadgeCard');
+    const pixResultado = document.getElementById('pixResultado');
+
+    if (method === 'credit_card') {
+      try {
+        let pixVisible = false;
+        if (contentPix && window.getComputedStyle) {
+          const cs = window.getComputedStyle(contentPix);
+          pixVisible = cs && cs.display !== 'none' && contentPix.getClientRects && contentPix.getClientRects().length > 0;
+        } else if (pixResultado && window.getComputedStyle) {
+          const cs = window.getComputedStyle(pixResultado);
+          const hasContent = String(pixResultado.innerHTML || '').trim().length > 0 || String(pixResultado.textContent || '').trim().length > 0;
+          pixVisible = hasContent && cs && cs.display !== 'none' && pixResultado.getClientRects && pixResultado.getClientRects().length > 0;
+        }
+        window.__oppus_pix_was_visible = pixVisible;
+      } catch(_) {}
+      if (cardForm) cardForm.style.display = 'block';
+      if (pixBtnContainer) pixBtnContainer.style.display = 'none';
+      if (contentPix) contentPix.style.display = 'none';
+      if (pixResultado) pixResultado.style.display = 'none';
+      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'flex';
+    } else {
+      if (cardForm) cardForm.style.display = 'none';
+      if (pixBtnContainer) pixBtnContainer.style.display = 'flex';
+      try {
+        const shouldRestorePix = (window.__oppus_pix_started === true) && (window.__oppus_pix_was_visible === true);
+        if (shouldRestorePix) {
+          if (contentPix) contentPix.style.display = 'block';
+          if (pixResultado) pixResultado.style.display = 'block';
+        } else {
+          if (contentPix) contentPix.style.display = 'none';
+          if (pixResultado) pixResultado.style.display = 'none';
+        }
+      } catch(_) {}
+      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'none';
+    }
+
+    if (!o.skipSummary) {
+      try { updatePromosSummary(); } catch(_) {}
+    }
+  }
+  window.selectPaymentMethod = selectPaymentMethod;
+
+  function updatePaymentMethodVisibility() {
+    let total = 0;
+    try {
+      const base = Number(basePriceCents || 0);
+      const promos = getSelectedPromos();
+      const promosTotal = calcPromosTotalCents(promos);
+      total = Math.max(0, base + promosTotal);
+      if (window.couponDiscount && window.couponDiscount > 0) {
+        const discountVal = Math.round(total * window.couponDiscount);
+        total -= discountVal;
+      }
+      total = Math.max(0, Number(total) || 0);
+    } catch(_) { total = 0; }
+    const selector = document.getElementById('paymentMethodSelector');
+
+    const publicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+    const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8 && /^pk_/i.test(publicKey);
+
+    if (selector) {
+      if (total >= 100 && isPublicKeyValid) {
+        if (selector.style.display !== 'flex') selector.style.display = 'flex';
+      } else {
+        selector.style.display = 'none';
+        if (String(window.currentPaymentMethod || '').trim() !== 'pix') {
+          selectPaymentMethod('pix', { skipSummary: true, force: true });
+        }
+      }
+    }
+  }
+  window.updatePaymentMethodVisibility = updatePaymentMethodVisibility;
+
+  function maskCardNumber(v) {
+    v = String(v || '').replace(/\D/g, "");
+    v = v.substring(0, 16);
+    return v.replace(/(\d{4})(\d{4})(\d{4})(\d{4})/, "$1 $2 $3 $4").trim();
+  }
+  function maskExpiry(v) {
+    v = String(v || '').replace(/\D/g, "");
+    if (v.length > 4) v = v.substring(0, 4);
+    if (v.length > 2) return v.substring(0, 2) + '/' + v.substring(2);
+    return v;
+  }
+  function maskCpf(v) {
+    v = String(v || '').replace(/\D/g, "");
+    if (v.length > 11) v = v.substring(0, 11);
+    if (v.length <= 3) return v;
+    if (v.length <= 6) return v.replace(/(\d{3})(\d+)/, "$1.$2");
+    if (v.length <= 9) return v.replace(/(\d{3})(\d{3})(\d+)/, "$1.$2.$3");
+    return v.replace(/(\d{3})(\d{3})(\d{3})(\d+)/, "$1.$2.$3-$4");
+  }
+
+  async function handleCardPayment(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+
+    const payWithCardBtn = document.getElementById('payWithCardBtn');
+    if (payWithCardBtn) {
+      payWithCardBtn.disabled = true;
+      payWithCardBtn.classList.add('loading');
+      const span = payWithCardBtn.querySelector('.button-text');
+      if (span) {
+        if (!span.dataset.original) span.dataset.original = span.textContent;
+        span.textContent = 'Processando...';
+      }
+    }
+
+    try {
+      const fields = [
+        { id: 'cardNumber', type: 'text' },
+        { id: 'cardExpiry', type: 'text' },
+        { id: 'cardCvv', type: 'text' },
+        { id: 'cardHolderName', type: 'text' },
+        { id: 'cardHolderCpf', type: 'text' }
+      ];
+
+      let firstError = null;
+      let values = {};
+
+      fields.forEach(f => {
+        const el = document.getElementById(f.id);
+        if (el) {
+          el.classList.remove('input-error');
+          el.classList.remove('tutorial-highlight');
+          const val = el.value.trim();
+          let isValid = true;
+          if (!val) isValid = false;
+          if (!isValid) {
+            el.classList.add('input-error');
+            el.classList.add('tutorial-highlight');
+            if (!firstError) firstError = el;
+          }
+          values[f.id] = val;
+        }
+      });
+
+      if (firstError) {
+        firstError.focus();
+        try { firstError.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+        throw new Error('Por favor, preencha todos os campos obrigatórios destacados.');
+      }
+
+      const cardNum = values.cardNumber.replace(/\D/g, '');
+      const cardExpiry = values.cardExpiry;
+      const cardCvv = values.cardCvv;
+      const cardHolder = values.cardHolderName;
+      const cardHolderCpf = values.cardHolderCpf;
+
+      const pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+      if (!pagarmePublicKey) {
+        throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
+      }
+
+      let expMonth, expYear;
+      if (cardExpiry.includes('/')) {
+        [expMonth, expYear] = cardExpiry.split('/');
+      } else {
+        expMonth = cardExpiry.substring(0, 2);
+        expYear = cardExpiry.substring(2);
+      }
+
+      if (expYear && expYear.length === 2) expYear = '20' + expYear;
+      if (!expMonth || !expYear || Number(expMonth) > 12 || Number(expMonth) < 1) throw new Error('Data de validade inválida');
+
+      const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+      const cpfDigits = normalizeDigits(cardHolderCpf);
+      if (cpfDigits.length !== 11) throw new Error('CPF inválido');
+
+      const installmentsEl = document.getElementById('cardInstallments');
+      let installments = String(installmentsEl?.value || '').trim();
+      if (!installments && installmentsEl) {
+        const opts = Array.prototype.slice.call(installmentsEl.querySelectorAll('option'));
+        const firstNumeric = opts.map(o => String(o.value || '').trim()).find(v => /^\d+$/.test(v));
+        installments = firstNumeric || '1';
+        try { installmentsEl.value = installments; } catch (_) {}
+      }
+
+      let correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      let wooviComment = 'Checkout OPPUS Instagram';
+      try {
+        const hn = (window.location && window.location.hostname) ? String(window.location.hostname).toLowerCase() : '';
+        const isLocal = hn === 'localhost' || hn === '127.0.0.1';
+        if (isLocal && Number(totalCents) > 0 && Number(totalCents) <= 100) {
+          correlationID = 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          wooviComment = 'teste pix';
+        }
+      } catch(_) {}
+
+      const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
+      const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+      if (!instagramUsernameFinal) {
+        throw new Error('Nome de usuário do Instagram não identificado.');
+      }
+
+      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+
+      const tipo = tipoSelect ? tipoSelect.value : '';
+      const qtdSelectVal = qtdSelect ? qtdSelect.value : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      if (!tipo || !qtd || qtd <= 0) throw new Error('Selecione um pacote antes de pagar.');
+
+      selectPaymentMethod('credit_card');
+      const totalCents = calculateTotalCents();
+      if (!totalCents || totalCents < 100) throw new Error('O valor mínimo para cartão é R$ 1,00.');
+      const totalLabel = formatCentsToBRL(totalCents);
+
+      const cardToken = await (async () => {
+        const tokenUrl = `https://api.pagar.me/core/v5/tokens?appId=${encodeURIComponent(pagarmePublicKey)}`;
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        let tokenResp = null;
+        try {
+          tokenResp = await fetch(tokenUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'card',
+              card: {
+                number: cardNum,
+                holder_name: cardHolder,
+                holder_document: cpfDigits,
+                exp_month: Number(expMonth),
+                exp_year: Number(expYear),
+                cvv: cardCvv
+              }
+            }),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+        } catch (_) {
+          throw new Error('Falha ao conectar no Pagar.me. Verifique sua internet e tente novamente.');
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+        let tokenData = null;
+        try { tokenData = await tokenResp.json(); } catch(_) {}
+        if (!tokenResp.ok) {
+          const msg = (tokenData && (tokenData.message || tokenData.error)) ? String(tokenData.message || tokenData.error) : 'Falha ao tokenizar cartão';
+          throw new Error(msg);
+        }
+        const t = tokenData && tokenData.id ? String(tokenData.id).trim() : '';
+        if (!t) throw new Error('Token do cartão não retornou no Pagar.me.');
+        return t;
+      })();
+
+      const customerPayload = { name: cardHolder, cpf: cpfDigits };
+      if (phoneValue) customerPayload.phone_number = phoneValue;
+
+      const buildUtmsFromLocation = function () {
+        try {
+          const sp = new URLSearchParams(window.location.search || '');
+          return {
+            source: sp.get('utm_source') || '',
+            medium: sp.get('utm_medium') || '',
+            campaign: sp.get('utm_campaign') || '',
+            term: sp.get('utm_term') || '',
+            content: sp.get('utm_content') || '',
+            gclid: sp.get('gclid') || '',
+            fbclid: sp.get('fbclid') || '',
+            ref: window.location.href || ''
+          };
+        } catch (_) {
+          return { ref: (window.location && window.location.href) ? String(window.location.href) : '' };
+        }
+      };
+
+      const promos = getSelectedPromos();
+      const promosTotalCents = (function () {
+        try {
+          const cents = (typeof calcPromosTotalCents === 'function') ? calcPromosTotalCents(promos) : 0;
+          return Number.isFinite(Number(cents)) ? Number(cents) : 0;
+        } catch (_) {
+          return 0;
+        }
+      })();
+
+      const payload = {
+        correlationID,
+        card_token: cardToken,
+        installments: Number(installments) || 1,
+        total_cents: totalCents,
+        items: [
+          { title: `${qtd} ${getUnitForTipo(tipo)}`, quantity: 1, price_cents: totalCents }
+        ],
+        customer: customerPayload,
+        additionalInfo: [
+          { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
+          { key: 'quantidade', value: String(qtd) },
+          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${totalLabel}` },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') },
+          { key: 'cupom', value: window.couponCode || '' },
+          { key: 'payment_method', value: 'credit_card' }
+        ],
+        profile_is_private: !!isInstagramPrivate,
+        comment: 'Checkout OPPUS Card',
+        utms: buildUtmsFromLocation()
+      };
+
+      try {
+        const cc = String(window.couponCode || '').trim();
+        if (cc) {
+          for (let i = payload.additionalInfo.length - 1; i >= 0; i--) {
+            if (payload.additionalInfo[i] && payload.additionalInfo[i].key === 'cupom') payload.additionalInfo.splice(i, 1);
+          }
+          payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+        }
+      } catch (_) {}
+
+      try {
+        const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
+        const tc = m && m[1] ? m[1] : '';
+        if (tc) payload.additionalInfo.push({ key: 'tc_code', value: tc });
+      } catch(_) {}
+
+      try {
+        let sckValue = '';
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          sckValue = params.get('sck') || '';
+        } catch (_) {}
+        if (!sckValue) {
+          try {
+            const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+            sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+          } catch (_) {}
+        }
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
+      } catch(_) {}
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      let resp = null;
+      let lastNetErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        try {
+          resp = await fetch('/api/pagarme/card-charge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+          lastNetErr = null;
+          break;
+        } catch (e) {
+          lastNetErr = e;
+          if (attempt >= 2) break;
+          await sleep(800 * (attempt + 1));
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      }
+      if (!resp) throw (lastNetErr || new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.'));
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        const errCode = String(data?.error || '').trim().toLowerCase();
+        if (errCode === 'invalid_cpf') {
+          try {
+            const cpfEl = document.getElementById('cardHolderCpf');
+            if (cpfEl) {
+              cpfEl.classList.add('input-error');
+              cpfEl.classList.add('tutorial-highlight');
+              try { cpfEl.focus(); } catch (_) {}
+              try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+          try {
+            if (contactPhoneInput) {
+              contactPhoneInput.classList.add('input-error');
+              contactPhoneInput.classList.add('tutorial-highlight');
+              try { contactPhoneInput.focus(); } catch (_) {}
+              try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        const baseMsg = data?.message || data?.error || 'Falha ao processar pagamento';
+        const pf = data && data.pagarme_failure ? data.pagarme_failure : null;
+        const extra = (pf && (pf.acquirer_message || pf.gateway_message || pf.acquirer_return_code || pf.refusal_reason))
+          ? ` Motivo: ${String(pf.acquirer_message || pf.gateway_message || pf.refusal_reason || '').trim()}${(pf.acquirer_return_code || pf.gateway_response_code) ? ` (código: ${String(pf.acquirer_return_code || pf.gateway_response_code).trim()})` : ''}`
+          : '';
+        const identifierErr = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+        const idPart = identifierErr ? ` Pedido: ${identifierErr}.` : '';
+        throw new Error(`${String(baseMsg)}${extra}${idPart}`);
+      }
+
+      const paid = data?.paid === true || data?.success === true;
+      const identifierServer = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+      const correlationIDServer = String(data?.correlationID || correlationID || '').trim();
+
+      if (!paid) {
+        const txStatus = String(data?.pagarme?.transaction_status || data?.pagarme?.charge_status || data?.pagarme?.order_status || '').trim();
+        const idLabel = identifierServer ? ` Pedido: ${identifierServer}.` : '';
+        throw new Error((data?.message && String(data.message).trim()) || (`Pagamento não confirmado no Pagar.me${txStatus ? ` (${txStatus})` : ''}.${idLabel}`));
+      }
+
+      alert('Pagamento realizado com sucesso!');
+      if (typeof navigateToPedidoOrFallback === 'function') {
+        await navigateToPedidoOrFallback(identifierServer || '', correlationIDServer);
+      } else {
+        window.location.href = '/pedido';
+      }
+    } catch (err) {
+      alert('Erro ao processar pagamento: ' + (err?.message || err));
+    } finally {
+      if (payWithCardBtn) {
+        payWithCardBtn.disabled = false;
+        payWithCardBtn.classList.remove('loading');
+        const span = payWithCardBtn.querySelector('.button-text');
+        if (span && span.dataset.original) span.textContent = span.dataset.original;
+      }
+    }
+  }
+
   function normalizeInstagramUsername(input) {
     let username = input.trim();
     if (username.includes('instagram.com/')) {
@@ -432,8 +1012,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isCurtidasContext) {
         const map = {
           'mistos': 'Curtidas Mistas',
-          'brasileiros': 'Curtidas Brasileiras',
-          'organicos': 'Curtidas Brasileiras'
+          'curtidas_brasileiras': 'Curtidas Brasileiras',
+          'organicos': 'Curtidas Brasileiras Reais'
         };
         return map[tipo] || tipo;
     }
@@ -581,6 +1161,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (step3Container) step3Container.style.display = 'block';
         window.scrollTo({ top: 0, behavior: 'smooth' });
         try { updatePromosSummary(); } catch(_) {}
+        try { updatePaymentMethodVisibility(); } catch(_) {}
+        try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
 
         if (isCurtidasContext || isViewsContext) {
           const srcContainer = document.getElementById('selectedPostPreview');
@@ -621,7 +1203,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const tipos = Object.keys(tabela).filter(t => {
       if (t === 'seguidores_tiktok') return false;
-      if (isCurtidasContext && t === 'brasileiros') return false;
       return true;
     });
 
@@ -658,10 +1239,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function getAllowedQuantities(tipo) {
     const base = [50, 150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
-    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
-        // Para curtidas mantemos apenas a partir de 150
-        return base.filter(function(q){ return q >= 150; }).slice(0, 6);
+        if (tipo === 'curtidas_brasileiras') return [50, 150, 500, 1000, 3000, 5000, 10000];
+        if (tipo === 'organicos') return [20].concat(base.filter(function(q){ return q >= 150 && q !== 700; }));
+        return [50].concat(base.filter(function(q){ return q >= 150; }));
       }
       return base;
     }
@@ -670,6 +1252,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const quantityBadges = {
     50: 'PACOTE TESTE',
+    20: 'PACOTE TESTE',
     150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',
@@ -690,7 +1273,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isFollowersTipo(tipo)) {
       const allowed = getAllowedQuantities(tipo);
       if (isCurtidasContext) {
-        arr = arr.filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
+        arr = arr
+          .filter(x => allowed.includes(Number(x.q)))
+          .filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
       } else {
         arr = arr
           .filter(x => allowed.includes(Number(x.q)))
@@ -701,6 +1286,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isViewsContext && tipo === 'visualizacoes_reels') {
       const allowedViews = [1000, 5000, 25000, 100000, 200000, 500000];
       arr = arr.filter(x => allowedViews.includes(Number(x.q)));
+    }
+
+    if (isCurtidasContext && (tipo === 'mistos' || tipo === 'curtidas_brasileiras' || tipo === 'organicos')) {
+      if (tipo === 'curtidas_brasileiras') {
+        const allowed = [50, 150, 500, 1000, 3000, 5000, 10000];
+        arr = arr.filter(x => allowed.includes(Number(x.q)));
+      } else {
+        arr = arr.slice(0, 6);
+      }
     }
     
     arr.forEach(item => {
@@ -724,23 +1318,28 @@ document.addEventListener('DOMContentLoaded', function() {
       let badgeHtml = '';
       let badgeText = '';
 
-      if (tipo === 'mistos') {
-        if (qNum === 1000) badgeText = 'MELHOR PREÇO';
-        if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-      } else if (tipo === 'brasileiros') {
-        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-      } else if (tipo === 'organicos') {
-        if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-      } else if (tipo === 'visualizacoes_reels') {
-        if (qNum === 1000) badgeText = 'PACOTE INICIAL';
-        if (qNum === 5000) badgeText = 'PACOTE BÁSICO';
-        if (qNum === 25000) badgeText = 'MELHOR PREÇO';
-        if (qNum === 100000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
-        if (qNum === 200000) badgeText = 'VIP';
-        if (qNum === 500000) badgeText = 'ELITE';
+      if (!isCurtidasContext) {
+        if (tipo === 'mistos') {
+          if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+          if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'brasileiros') {
+          if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'organicos') {
+          if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'visualizacoes_reels') {
+          if (qNum === 1000) badgeText = 'PACOTE INICIAL';
+          if (qNum === 5000) badgeText = 'PACOTE BÁSICO';
+          if (qNum === 25000) badgeText = 'MELHOR PREÇO';
+          if (qNum === 100000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+          if (qNum === 200000) badgeText = 'VIP';
+          if (qNum === 500000) badgeText = 'ELITE';
+        }
+      } else if (tipo === 'mistos' || tipo === 'curtidas_brasileiras' || tipo === 'organicos') {
+        if (quantityBadges[qNum]) badgeText = quantityBadges[qNum];
+        if (badgeText === 'MAIS PEDIDO') card.classList.add('gold-card');
       }
 
-      if (!badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
+      if (!isCurtidasContext && !badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
         badgeText = quantityBadges[qNum];
       }
 
@@ -768,6 +1367,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Update Order Bump e Promos
         updateOrderBump(tipo, Number(item.q));
         updatePromosSummary();
+        try { updatePaymentMethodVisibility(); } catch(_) {}
         
         // Marcar ativo
         const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
@@ -798,20 +1398,28 @@ document.addEventListener('DOMContentLoaded', function() {
           <p>Curtidas com entrega rápida e estável para impulsionar suas publicações.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🌍 Alcance global para melhorar a prova social do post.</li>
+            <li>🌍 Curtidas de perfis internacionais para melhorar a prova social do post.</li>
             <li>📈 Ideal para dar força inicial em conteúdos estratégicos.</li>
           </ul>
         ` : `
-          <p>Perfis variados com entrega rápida e estável, com seguidores reais de vários países.</p>
+          <p>Perfis variados com entrega rápida e estável, com seguidores de outros países.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🌍 Seguidores reais de vários países para crescer sua base.</li>
+            <li>🌍 Seguidores de vários países para crescer sua base.</li>
             <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
           </ul>
         `;
         break;
       case 'brasileiros':
-        html = `
+      case 'curtidas_brasileiras':
+        html = isCurtidasContext ? `
+          <p>Curtidas de perfis brasileiros para impulsionar suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🇧🇷 Perfis brasileiros para reforçar prova social.</li>
+            <li>📈 Ideal para posts que você quer destacar.</li>
+          </ul>
+        ` : `
           <p>Base nacional com nomes locais e seguidores brasileiros.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
@@ -822,11 +1430,11 @@ document.addEventListener('DOMContentLoaded', function() {
         break;
       case 'organicos':
         html = isCurtidasContext ? `
-          <p>Curtidas focadas no público brasileiro para impulsionar suas publicações.</p>
+          <p>Curtidas de perfis brasileiros, reais e ativos para máxima qualidade e credibilidade nas suas publicações.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🇧🇷 Foco no Brasil para reforçar prova social no seu público.</li>
-            <li>📈 Ideal para posts que você quer destacar.</li>
+            <li>🇧🇷 Perfis brasileiros, reais e ativos para reforçar autoridade.</li>
+            <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
           </ul>
         ` : `
           <p>Brasileiros e reais: perfis ativos e selecionados, com maior credibilidade.</p>
@@ -875,15 +1483,15 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function applyWarrantyMode() {
-    const isLife = warrantyMode === 'life';
+    const isLife = true;
     const wLabel = document.getElementById('warrantyModeLabel');
     const wHighlight = document.getElementById('warrantyHighlight');
     const wOld = document.getElementById('warrantyOldPrice');
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = isLife ? 'Vitalícia' : '30 dias';
-    if (wHighlight) wHighlight.textContent = isLife ? 'GARANTIA VITALÍCIA' : '+ 30 DIAS DE REPOSIÇÃO';
+    if (wLabel) wLabel.textContent = '1 ano';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
     if (wOld) wOld.textContent = 'R$ 39,90';
     if (wNew) wNew.textContent = 'R$ 9,90';
     if (wDisc) wDisc.textContent = '75% OFF';
@@ -892,11 +1500,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function stepWarranty(delta) {
     const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
-    if (next !== warrantyMode) { 
-        warrantyMode = next; 
-        try { window.warrantyMode = warrantyMode; } catch(_) {} 
-        applyWarrantyMode(); 
-    }
+    if (next !== warrantyMode) { applyWarrantyMode(); }
   }
 
   const wDec = document.getElementById('warrantyModeDec');
@@ -909,7 +1513,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!warrantyItem) return;
     
     // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
-    if (tipo === 'mistos' || tipo === 'brasileiros') {
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') {
         warrantyItem.style.display = '';
     } else {
         warrantyItem.style.display = 'none';
@@ -932,6 +1536,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
     const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
     const upHighlight = document.getElementById('orderBumpHighlight');
+    const curtidasSeal = isCurtidasContext ? (quantityBadges[Number(baseQtd)] || '') : '';
 
     // Upgrades específicos para visualizações de Reels
     if (tipo === 'visualizacoes_reels' && baseQtd) {
@@ -983,19 +1588,20 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    if (!isFollowersTipo(tipo) || !baseQtd) { orderInline.style.display = 'none'; return; }
+    const isUpgradeEligible = isFollowersTipo(tipo) || (isCurtidasContext && tipo === 'curtidas_brasileiras');
+    if (!isUpgradeEligible || !baseQtd) { orderInline.style.display = 'none'; return; }
     orderInline.style.display = 'block';
     if (checkbox) checkbox.checked = false;
 
     // Promos específicas: 1000 -> 2000 com extras para brasileiros/organicos
-    if ((tipo === 'brasileiros' || tipo === 'organicos') && Number(baseQtd) === 1000) {
+    if ((tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos') && Number(baseQtd) === 1000) {
       const targetQtd = 2000;
       const basePrice = findPrice(tipo, 1000);
       const targetPrice = findPrice(tipo, 2000);
       const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
       const diffStr = formatCentsToBRL(diffCents);
       if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${unit}.`;
-      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} ${unit}`;
+      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} ${unit}${curtidasSeal ? ` • ${curtidasSeal}` : ''}`;
       if (upOld) upOld.textContent = targetPrice || '—';
       if (upNew) upNew.textContent = diffStr;
       if (upDisc) {
@@ -1026,7 +1632,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const addQtd = targetQtd - baseQtd;
     const diffStr = formatCentsToBRL(diffCents);
     if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} ${unit} e atualize para ${targetQtd}.`;
-    if (upHighlight) upHighlight.textContent = `+ ${addQtd} ${unit}`;
+    if (upHighlight) upHighlight.textContent = `+ ${addQtd} ${unit}${curtidasSeal ? ` • ${curtidasSeal}` : ''}`;
     if (upOld) upOld.textContent = targetPrice || '—';
     if (upNew) upNew.textContent = diffStr;
     if (upDisc) {
@@ -1036,26 +1642,63 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  const likesTable = [
-    { q: 150, price: 'R$ 4,90' },
-    { q: 300, price: 'R$ 9,90' },
-    { q: 500, price: 'R$ 14,90' },
-    { q: 700, price: 'R$ 19,90' },
-    { q: 1000, price: 'R$ 24,90' },
-    { q: 2000, price: 'R$ 34,90' },
-    { q: 3000, price: 'R$ 49,90' },
-    { q: 4000, price: 'R$ 59,90' },
-    { q: 5000, price: 'R$ 69,90' },
-    { q: 7500, price: 'R$ 89,90' },
-    { q: 10000, price: 'R$ 109,90' },
-    { q: 15000, price: 'R$ 159,90' }
-  ];
+  let likesTable = [];
   const likesQtyEl = document.getElementById('likesQty');
   const likesDec = document.getElementById('likesDec');
   const likesInc = document.getElementById('likesInc');
   const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
   function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
+  function getLikesVariantKey() {
+    const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    if (tipo === 'organicos') return 'organicos';
+    if (tipo === 'curtidas_brasileiras') return 'curtidas_brasileiras';
+    return 'mistos';
+  }
+  function refreshLikesTable() {
+    try {
+      const key = getLikesVariantKey();
+      const src = (tabelaCurtidas && tabelaCurtidas[key]) ? tabelaCurtidas[key] : null;
+      likesTable = Array.isArray(src) ? src.map(x => ({ q: Number(x.q), price: String(x.p || '') })).filter(x => !!x.q && !!x.price) : [];
+    } catch (_) {
+      likesTable = [];
+    }
+    if (!Array.isArray(likesTable) || likesTable.length === 0) {
+      likesTable = [
+        { q: 150, price: 'R$ 4,90' },
+        { q: 300, price: 'R$ 9,90' },
+        { q: 500, price: 'R$ 14,90' },
+        { q: 700, price: 'R$ 19,90' },
+        { q: 1000, price: 'R$ 24,90' },
+        { q: 2000, price: 'R$ 34,90' },
+        { q: 3000, price: 'R$ 49,90' },
+        { q: 4000, price: 'R$ 59,90' },
+        { q: 5000, price: 'R$ 69,90' },
+        { q: 7500, price: 'R$ 89,90' },
+        { q: 10000, price: 'R$ 109,90' },
+        { q: 15000, price: 'R$ 159,90' }
+      ];
+    }
+    try {
+      const current = Number(likesQtyEl?.textContent || 150);
+      const exists = likesTable.some(e => Number(e.q) === current);
+      if (!exists && likesQtyEl && likesTable[0]) likesQtyEl.textContent = String(likesTable[0].q);
+    } catch (_) {}
+  }
+  function applyLikesPromoVariant() {
+    const titleEl = document.querySelector('.promo-item.likes .promo-title');
+    const descEl = document.querySelector('.promo-item.likes .promo-desc');
+    if (!titleEl && !descEl) return;
+    const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    const variant = (function(t){
+      if (t === 'organicos') return { title: 'Curtidas orgânicas promocionais', desc: 'Adicionar curtidas orgânicas (brasileiras reais) ao post.' };
+      if (t === 'brasileiros' || t === 'curtidas_brasileiras') return { title: 'Curtidas brasileiras promocionais', desc: 'Adicionar curtidas brasileiras ao post.' };
+      if (t === 'mistos') return { title: 'Curtidas mistas promocionais', desc: 'Adicionar curtidas mistas ao post.' };
+      return { title: 'Curtidas promocionais', desc: 'Adicionar curtidas ao post.' };
+    })(tipo);
+    if (titleEl) titleEl.textContent = variant.title;
+    if (descEl) descEl.textContent = variant.desc;
+  }
   function updateLikesPrice(q) {
     const entry = likesTable.find(e => e.q === q);
     const newEl = likesPrices ? likesPrices.querySelector('.new-price') : null;
@@ -1063,7 +1706,14 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newEl && entry) newEl.textContent = entry.price;
     if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
     const hl = document.querySelector('.promo-item.likes .promo-highlight');
-    if (hl) hl.textContent = `+ ${q} CURTIDAS`;
+    if (hl) {
+      const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+      if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS ORGÂNICAS`;
+      else if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') hl.textContent = `+ ${q} CURTIDAS BRASILEIRAS`;
+      else if (tipo === 'mistos') hl.textContent = `+ ${q} CURTIDAS MISTAS`;
+      else hl.textContent = `+ ${q} CURTIDAS`;
+    }
+    try { applyLikesPromoVariant(); } catch(_) {}
   }
   function stepLikes(dir) {
     const current = Number(likesQtyEl?.textContent || 150);
@@ -1078,6 +1728,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   if (likesDec) likesDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(-1); });
   if (likesInc) likesInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(1); });
+  try { refreshLikesTable(); } catch(_) {}
   if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
 
   const viewsTable = [
@@ -1174,7 +1825,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const qty = Number(document.getElementById('likesQty')?.textContent || 150);
         let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
         if (!priceStr) priceStr = promoPricing.likes?.price || '';
-        promos.push({ key: 'likes', qty, label: `Curtidas (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+        const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+        const label = (function(t){
+          if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+          if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
+          if (t === 'mistos') return `Curtidas mistas (${qty})`;
+          return `Curtidas (${qty})`;
+        })(tipo);
+        promos.push({ key: 'likes', qty, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (viewsChecked) {
         const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
@@ -1191,8 +1849,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
         let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
         if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 9,90';
-        const label = (mode === 'life') ? 'Garantia vitalícia' : '+30 dias de reposição';
-        promos.push({ key: (mode === 'life') ? 'warranty60' : 'warranty30', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        const label = 'Reposição por 1 ano';
+        promos.push({ key: 'warranty60', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -1285,6 +1943,17 @@ document.addEventListener('DOMContentLoaded', function() {
         const discountVal = Math.round(totalCents * window.couponDiscount);
         totalCents -= discountVal;
     }
+
+    try {
+      const method = String(window.currentPaymentMethod || '').trim();
+      if (method === 'credit_card') {
+        try { populateInstallments(totalCents); } catch(_) {}
+        const cap = capInstallmentsBySubtotal(totalCents);
+        const inst = Math.max(1, Math.min(cap, getSelectedInstallments()));
+        const rate = cardSurchargeRate(inst);
+        totalCents = Math.round(totalCents * (1 + Math.max(0, rate) / 100));
+      }
+    } catch(_) {}
     
     // Atualiza Total Final com Desconto
     if (resTotalFinal) {
@@ -1323,6 +1992,12 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
         }
     }
+
+    try {
+      if (String(window.currentPaymentMethod || '').trim() === 'credit_card') {
+        populateInstallments(calculateSubtotalCents());
+      }
+    } catch(_) {}
   }
 
   // --- Funções de Post Select Modal ---
@@ -1817,7 +2492,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const inp = document.getElementById('promoWarranty60');
     if (!inp) return;
     const item = inp.closest('.promo-item');
-    const show = (tipo === 'mistos' || tipo === 'brasileiros');
+    const show = (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras');
     if (item) item.style.display = show ? '' : 'none';
     if (!show && inp.checked) inp.checked = false;
     try { updatePromosSummary(); } catch(_) {}
@@ -1942,6 +2617,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function criarPixWoovi() {
+    try { window.__oppus_pix_started = true; } catch(_) {}
     if (btnPedido) {
         btnPedido.disabled = true;
         btnPedido.classList.add('loading');
@@ -2009,7 +2685,16 @@ document.addEventListener('DOMContentLoaded', function() {
       // usamos a quantidade base + info de upgrade.
       const qtdEffective = qtd; 
 
-      const correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      let correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      let wooviComment = 'Checkout OPPUS Instagram';
+      try {
+        const hn = (window.location && window.location.hostname) ? String(window.location.hostname).toLowerCase() : '';
+        const isLocal = hn === 'localhost' || hn === '127.0.0.1';
+        if (isLocal && Number(totalCents) > 0 && Number(totalCents) <= 100) {
+          correlationID = 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          wooviComment = 'teste pix';
+        }
+      } catch(_) {}
       
       // Phone
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
@@ -2032,7 +2717,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const payload = {
         correlationID,
         value: totalCents,
-        comment: 'Checkout OPPUS Instagram',
+        comment: wooviComment,
         customer: {
           name: 'Cliente Instagram',
           phone: phoneValue,
@@ -2106,7 +2791,21 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!link && instagramUsernameFinal) {
               try {
                 const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
-                const pr = await fetch(url);
+                let pr = null;
+                if (window.AbortController) {
+                  const controller = new AbortController();
+                  const to = setTimeout(() => {
+                    try { controller.abort(); } catch (_) {}
+                  }, 650);
+                  try {
+                    pr = await fetch(url, { signal: controller.signal });
+                  } finally {
+                    clearTimeout(to);
+                  }
+                } else {
+                  pr = await fetch(url);
+                }
+                if (!pr || !pr.ok) throw new Error('posts_fetch_failed');
                 const pd = await pr.json();
                 const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
                 const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
@@ -2140,7 +2839,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data?.details?.message || 'Falha ao criar cobrança');
+        const errMsg = (data && (data.message || (data.details && data.details.message) || data.error)) || 'Falha ao criar cobrança';
+        throw new Error(errMsg);
       }
 
       // Renderização do PIX
@@ -2286,7 +2986,7 @@ document.addEventListener('DOMContentLoaded', function() {
          if (chargeId) checkPaid();
          else checkPaidDb();
 
-         paymentPollInterval = setInterval(checkPaidDb, 5000); 
+         paymentPollInterval = setInterval(checkPaidDb, 2000); 
          
          // SSE Listener (Real-time)
          try {
@@ -2324,6 +3024,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Inicialização ---
 
+  function smoothScrollToY(targetY, durationMs) {
+    const dur = Math.max(200, Number(durationMs) || 1100);
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        window.scrollTo(0, targetY);
+        return;
+      }
+    } catch (_) {}
+    const startY = window.scrollY || window.pageYOffset || 0;
+    const delta = targetY - startY;
+    if (!delta) return;
+    const startT = (window.performance && performance.now) ? performance.now() : Date.now();
+    const ease = function(t) { return t < 0.5 ? (2 * t * t) : (1 - Math.pow(-2 * t + 2, 2) / 2); };
+    const step = function(now) {
+      const tNow = (window.performance && performance.now) ? now : Date.now();
+      const p = Math.min(1, Math.max(0, (tNow - startT) / dur));
+      window.scrollTo(0, startY + (delta * ease(p)));
+      if (p < 1) window.requestAnimationFrame(step);
+    };
+    window.requestAnimationFrame(step);
+  }
+
   function scrollToCardsMobile() {
     try {
       const isMobile = window.innerWidth <= 640;
@@ -2335,7 +3057,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
             // Deixa uma beirada da descrição (aprox 120px acima do topo dos cards)
             const targetTop = (rect.top + scrollTop) - 120;
-            window.scrollTo({ top: targetTop, behavior: 'smooth' });
+            smoothScrollToY(targetTop, 1100);
           }
         }, 500);
       }
@@ -2350,6 +3072,11 @@ document.addEventListener('DOMContentLoaded', function() {
       renderTipoDescription(tipo);
       updatePerfilVisibility();
       updateWarrantyVisibility();
+      try {
+        refreshLikesTable();
+        applyLikesPromoVariant();
+        if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
+      } catch(_) {}
       
       // Update visual active state of type cards
       if (tipoCards) {
@@ -2388,6 +3115,32 @@ document.addEventListener('DOMContentLoaded', function() {
   if (btnPedido) {
     btnPedido.addEventListener('click', criarPixWoovi);
   }
+
+  const optionPixToggle = document.getElementById('optionPix');
+  const optionCardToggle = document.getElementById('optionCard');
+  if (optionPixToggle) optionPixToggle.addEventListener('click', () => selectPaymentMethod('pix'));
+  if (optionCardToggle) optionCardToggle.addEventListener('click', () => selectPaymentMethod('credit_card'));
+
+  const radioInputs = document.querySelectorAll('input[name="paymentMethod"]');
+  radioInputs.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      selectPaymentMethod(e.target.value);
+    });
+  });
+
+  try {
+    const cardNumberEl = document.getElementById('cardNumber');
+    if (cardNumberEl) cardNumberEl.addEventListener('input', () => { cardNumberEl.value = maskCardNumber(cardNumberEl.value); });
+    const cardExpiryEl = document.getElementById('cardExpiry');
+    if (cardExpiryEl) cardExpiryEl.addEventListener('input', () => { cardExpiryEl.value = maskExpiry(cardExpiryEl.value); });
+    const cardCpfEl = document.getElementById('cardHolderCpf');
+    if (cardCpfEl) cardCpfEl.addEventListener('input', () => { cardCpfEl.value = maskCpf(cardCpfEl.value); });
+  } catch(_) {}
+
+  const payWithCardBtn = document.getElementById('payWithCardBtn');
+  if (payWithCardBtn) payWithCardBtn.addEventListener('click', handleCardPayment);
+  const cardPaymentForm = document.getElementById('cardPaymentForm');
+  if (cardPaymentForm) cardPaymentForm.addEventListener('submit', handleCardPayment);
   
   if (usernameCheckoutInput) {
     usernameCheckoutInput.addEventListener('keydown', (e) => {
@@ -2464,6 +3217,8 @@ document.addEventListener('DOMContentLoaded', function() {
   applyWarrantyMode();
   renderTipoCards();
   initPromoListeners();
+  try { updatePaymentMethodVisibility(); } catch(_) {}
+  try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
   
   // Default selection (Mistos)
   if (tipoSelect) {

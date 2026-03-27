@@ -10,7 +10,7 @@
   <div class="container checkout-page">
     <header class="header">
       <h1 class="title">Refil</h1>
-      <p class="subtitle">Informe o ID do pedido para repor seguidores (Mistos ou Brasileiros)</p>
+      <p class="subtitle">Informe o @ do Instagram para solicitar reposição</p>
       <% if (typeof refilIsLifetime !== 'undefined' && refilIsLifetime) { %>
         <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Vitalícia</strong></p>
       <% } else if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
@@ -26,16 +26,16 @@
       <section class="section-block">
         <div class="service-card" id="refilCard">
           <div class="card-content">
-            <h3 class="card-title">Refil de Pedido</h3>
+            <h3 class="card-title">Reposição</h3>
             <div class="card-desc">
               <div class="input-group" id="grupoRefil">
                 <div id="tutorialRefilPedidoId" class="tutorial-pop tutorial-pop-input">
-                  <div class="tutorial-pop-text">Cole o ID do pedido aqui</div>
+                  <div class="tutorial-pop-text">Digite o @ aqui</div>
                 </div>
                 <div class="refil-input-row">
-                  <input type="text" id="refilOrderIdInput" class="select-input" placeholder="Cole o ID do pedido aqui..." maxlength="24" />
+                  <input type="text" id="refilUsernameInput" class="select-input" placeholder="Digite o @ do Instagram..." value="<%= (typeof lastRefilUsername !== 'undefined' && lastRefilUsername) ? String(lastRefilUsername) : '' %>" maxlength="60" />
                   <button id="refilSubmitBtn" class="continue-button" type="button">
-                    <span class="button-text">Solicitar Refil</span>
+                    <span class="button-text">Solicitar Reposição</span>
                   </button>
                 </div>
                 <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
@@ -88,189 +88,227 @@
   
   <script>
     (function(){
-      try {
-        const a = document.getElementById('refilWhatsAppLink')
-        if (!a) return
-        const href = String(a.getAttribute('href') || '')
-        if (!href || !/ID%20do%20meu%20pedido%3A%20?$/.test(href)) return
-        const rawOrderId = '<%= (typeof refilOrderMongoId === "string" ? refilOrderMongoId : "") %>'
-        const rawToken = '<%= (typeof refilToken === "string" ? refilToken : "") %>'
-        let apiUrl = ''
-        if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
-          apiUrl = '/api/order?orderID=' + encodeURIComponent(rawOrderId)
-        } else if (rawToken && !/^liberado$/i.test(rawToken)) {
-          apiUrl = '/api/refil/order?token=' + encodeURIComponent(rawToken)
-        }
-        if (!apiUrl) return
-        fetch(apiUrl)
-          .then(r => r.json().catch(() => ({})))
-          .then(d => {
-            const o = d && d.order ? d.order : null
-            if (!o) return
-            const providerOid = (o.fama24h && (o.fama24h.orderId || o.fama24h.id)) ? (o.fama24h.orderId || o.fama24h.id)
-              : ((o.fornecedor_social && (o.fornecedor_social.orderId || o.fornecedor_social.id)) ? (o.fornecedor_social.orderId || o.fornecedor_social.id) : '')
-            const is24Hex = (v) => /^[0-9a-fA-F]{24}$/.test(String(v || '').trim())
-            const providerIdStr = String(providerOid || '').trim()
-            const mongoIdStr = String(o._id || '').trim()
-            const identifierStr = String(o.identifier || '').trim()
-            const wooviIdentifierStr = String((o.woovi && o.woovi.identifier) || '').trim()
-            const finalId = providerIdStr
-              || (is24Hex(mongoIdStr) ? mongoIdStr : '')
-              || (is24Hex(identifierStr) ? identifierStr : '')
-              || (is24Hex(wooviIdentifierStr) ? wooviIdentifierStr : '')
-            if (!finalId) return
-            const msg = 'Perdi seguidores e preciso de reposição. ID do meu pedido: ' + finalId
-            a.setAttribute('href', 'https://wa.me/553173425727?text=' + encodeURIComponent(msg))
-          })
-          .catch(() => {})
-      } catch(_) {}
-    })()
-    (function(){
-      const orderInput = document.getElementById('refilOrderIdInput')
-      const submitBtn = document.getElementById('refilSubmitBtn')
-      const statusEl = document.getElementById('refilStatus')
-      const resultEl = document.getElementById('refilResult')
-      const tipEl = document.getElementById('tutorialRefilPedidoId')
-      const historyCardEl = document.getElementById('refilHistoryCard')
-      const historyListEl = document.getElementById('refilHistoryList')
+      function safeTrim(v) {
+        try { return String(v || '').replace(/^\s+|\s+$/g, ''); } catch(_) { return ''; }
+      }
+      function hasClass(el, cls) {
+        if (!el) return false;
+        var c = el.className || '';
+        return (' ' + c + ' ').indexOf(' ' + cls + ' ') >= 0;
+      }
+      function addClass(el, cls) {
+        if (!el || !cls) return;
+        if (el.classList && el.classList.add) { el.classList.add(cls); return; }
+        if (hasClass(el, cls)) return;
+        el.className = safeTrim((el.className || '') + ' ' + cls);
+      }
+      function removeClass(el, cls) {
+        if (!el || !cls) return;
+        if (el.classList && el.classList.remove) { el.classList.remove(cls); return; }
+        var c = ' ' + (el.className || '') + ' ';
+        while (c.indexOf(' ' + cls + ' ') >= 0) c = c.replace(' ' + cls + ' ', ' ');
+        el.className = safeTrim(c);
+      }
       function sanitizeSupplierName(input){
-        const s = String(input || '')
-        return s
-          .replace(/\bfama24h\b\s*[:\-–—]?\s*/ig, '')
-          .replace(/\(\s*fama24h\s*\)/ig, '')
-          .replace(/\[\s*fama24h\s*\]/ig, '')
-          .replace(/\{\s*fama24h\s*\}/ig, '')
-          .replace(/\s{2,}/g, ' ')
-          .trim()
+        var s = '';
+        try { s = String(input || ''); } catch(_) { s = ''; }
+        return safeTrim(
+          s
+            .replace(/\bfama24h\b\s*[:\-–—]?\s*/ig, '')
+            .replace(/\(\s*fama24h\s*\)/ig, '')
+            .replace(/\[\s*fama24h\s*\]/ig, '')
+            .replace(/\{\s*fama24h\s*\}/ig, '')
+            .replace(/\s{2,}/g, ' ')
+        );
       }
-      function setStatus(msg, type){
-        if (!statusEl) return
-        statusEl.textContent = sanitizeSupplierName(msg)
-        statusEl.style.display = 'block'
-        statusEl.style.textAlign = 'center'
-        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ef4444' : 'var(--text-primary)')
-      }
-      function syncTipVisibility(){
-        if (!tipEl || !orderInput) return
-        const hasValue = !!String(orderInput.value || '').trim()
-        if (hasValue) tipEl.classList.add('hide')
-        else tipEl.classList.remove('hide')
+      function setStatus(statusEl, msg, type){
+        if (!statusEl) return;
+        statusEl.textContent = sanitizeSupplierName(msg);
+        statusEl.style.display = 'block';
+        statusEl.style.textAlign = 'center';
+        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ef4444' : 'var(--text-primary)');
       }
       function formatDatePtBR(iso){
         try {
-          const d = new Date(iso)
-          if (Number.isNaN(d.getTime())) return String(iso || '')
-          return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(d)
+          var d = new Date(iso);
+          if (!d || isNaN(d.getTime())) return String(iso || '');
+          var day = String(d.getDate()).padStart ? String(d.getDate()).padStart(2, '0') : ('0' + d.getDate()).slice(-2);
+          var month = String(d.getMonth() + 1).padStart ? String(d.getMonth() + 1).padStart(2, '0') : ('0' + (d.getMonth() + 1)).slice(-2);
+          var year = String(d.getFullYear()).slice(-2);
+          var hh = String(d.getHours()).padStart ? String(d.getHours()).padStart(2, '0') : ('0' + d.getHours()).slice(-2);
+          var mm = String(d.getMinutes()).padStart ? String(d.getMinutes()).padStart(2, '0') : ('0' + d.getMinutes()).slice(-2);
+          return day + '/' + month + '/' + year + ' ' + hh + ':' + mm;
         } catch(_) {
-          return String(iso || '')
+          return String(iso || '');
         }
       }
-      function renderHistory(items){
-        if (!historyCardEl || !historyListEl) return
-        const arr = Array.isArray(items) ? items : []
-        historyCardEl.style.display = 'block'
-        if (!arr.length) {
-          historyListEl.innerHTML = `<div style="text-align:center; color: var(--text-secondary);">Nenhuma reposição com sucesso ainda.</div>`
-          return
-        }
-        historyListEl.innerHTML = arr.map((it) => {
-          const when = formatDatePtBR(it?.requestedAt)
-          const rid = it?.refillId ? String(it.refillId) : '—'
-          return `<div style="display:flex; justify-content:space-between; gap: 0.75rem; padding: 0.6rem 0; border-top: 1px solid var(--border-color);">
-            <div style="min-width: 0;">
-              <div style="font-weight: 700;">Reposição solicitada</div>
-              <div style="color: var(--text-secondary); font-size: 0.9rem;">${when}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-weight: 700;">ID</div>
-              <div style="color: var(--text-secondary); font-size: 0.9rem;">${rid}</div>
-            </div>
-          </div>`
-        }).join('')
-      }
-      async function loadHistory(orderId){
-        if (!historyCardEl || !historyListEl) return
-        const v = String(orderId || '').trim()
-        if (!v) {
-          historyCardEl.style.display = 'none'
-          return
-        }
+      function httpJson(url, method, bodyObj, cb) {
         try {
-          const resp = await fetch('/api/refil/history', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order_id: v })
-          })
-          const data = await resp.json().catch(() => ({}))
-          if (!resp.ok || !data || data.ok !== true) {
-            historyCardEl.style.display = 'none'
-            return
-          }
-          renderHistory(data.history)
-        } catch(_) {
-          historyCardEl.style.display = 'none'
+          var xhr = new XMLHttpRequest();
+          xhr.open(method || 'GET', url, true);
+          xhr.setRequestHeader('Accept', 'application/json');
+          if (method === 'POST') xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            var status = xhr.status || 0;
+            var raw = '';
+            try { raw = xhr.responseText || ''; } catch(_) { raw = ''; }
+            var data = null;
+            try { data = raw ? JSON.parse(raw) : null; } catch(_) { data = null; }
+            if (!data && raw) data = { raw: raw };
+            cb(status >= 200 && status < 300, data || {}, status);
+          };
+          xhr.send(method === 'POST' ? JSON.stringify(bodyObj || {}) : null);
+        } catch (e) {
+          cb(false, { error: (e && e.message) ? e.message : String(e) }, 0);
         }
       }
+
+      var orderInput = document.getElementById('refilUsernameInput');
+      var submitBtn = document.getElementById('refilSubmitBtn');
+      var statusEl = document.getElementById('refilStatus');
+      var resultEl = document.getElementById('refilResult');
+      var tipEl = document.getElementById('tutorialRefilPedidoId');
+      var historyCardEl = document.getElementById('refilHistoryCard');
+      var historyListEl = document.getElementById('refilHistoryList');
+      var refilToken = "<%= (typeof refilToken !== 'undefined' && refilToken) ? String(refilToken) : '' %>";
+
+      function syncTipVisibility(){
+        if (!tipEl || !orderInput) return;
+        var hasValue = !!safeTrim(orderInput.value);
+        if (hasValue) addClass(tipEl, 'hide');
+        else removeClass(tipEl, 'hide');
+      }
+
+      function renderHistory(items){
+        if (!historyCardEl || !historyListEl) return;
+        var arr = (items && items.length && typeof items.length === 'number') ? items : (Array.isArray && Array.isArray(items) ? items : []);
+        historyCardEl.style.display = 'block';
+        if (!arr.length) {
+          historyListEl.innerHTML = '<div style="text-align:center; color: var(--text-secondary);">Nenhuma reposição com sucesso ainda.</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < arr.length; i++) {
+          var it = arr[i] || {};
+          var when = formatDatePtBR(it && it.requestedAt ? it.requestedAt : '');
+          html += '<div style="display:flex; justify-content:space-between; gap: 0.75rem; padding: 0.6rem 0; border-top: 1px solid var(--border-color);">' +
+            '<div style="min-width: 0;">' +
+              '<div style="font-weight: 700;">Reposição solicitada</div>' +
+              '<div style="color: var(--text-secondary); font-size: 0.9rem;">' + when + '</div>' +
+            '</div>' +
+          '</div>';
+        }
+        historyListEl.innerHTML = html;
+      }
+
+      function loadHistory(username){
+        if (!historyCardEl || !historyListEl) return;
+        var v = safeTrim(username);
+        if (!v) {
+          historyCardEl.style.display = 'none';
+          return;
+        }
+        httpJson('/api/refil/history', 'POST', { username: v }, function (ok, data) {
+          if (!ok || !data || data.ok !== true) {
+            historyCardEl.style.display = 'none';
+            return;
+          }
+          renderHistory(data.history);
+        });
+      }
+
       function extractErrorMessage(data){
         try {
-          if (!data) return 'Falha ao solicitar refil'
-          const main = (data.message || data.error || '').toString().trim()
-          const details = data.details
-          const sub = (typeof details === 'string') ? details
-            : (details && (details.message || details.error || details.detail || details.reason))
-            || ''
-          const merged = [main, sub].map(s => String(s || '').trim()).filter(Boolean)
-          return sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil')
-        } catch(_) { return 'Falha ao solicitar refil' }
+          if (!data) return 'Falha ao solicitar refil';
+          var main = safeTrim((data.message || data.error || ''));
+          if (!main && data.raw) main = safeTrim(String(data.raw || ''));
+          var details = data.details;
+          var sub = '';
+          if (typeof details === 'string') sub = details;
+          else if (details && typeof details === 'object') sub = (details.message || details.error || details.detail || details.reason || '');
+          var merged = [];
+          if (safeTrim(main)) merged.push(main);
+          if (safeTrim(sub)) merged.push(sub);
+          return sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil');
+        } catch(_) { return 'Falha ao solicitar refil'; }
       }
-      async function submitRefil(){
-        const orderId = (orderInput && orderInput.value || '').trim()
-        if (!orderId) { setStatus('Cole o ID do pedido', 'error'); return }
-        setStatus('Solicitando refil...', 'info')
-        if (resultEl) resultEl.style.display = 'none'
-        try {
-          const resp = await fetch('/api/refil/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order_id: orderId, username: 'arraso' })
-          })
-          const data = await resp.json()
-          if (!resp.ok) {
-            const errMsg = extractErrorMessage(data)
-            throw new Error(errMsg)
+
+      function submitRefil(){
+        var username = safeTrim(orderInput && orderInput.value ? orderInput.value : '');
+        if (!username) { setStatus(statusEl, 'Digite o @ do Instagram', 'error'); return; }
+        setStatus(statusEl, 'Solicitando reposição...', 'info');
+        if (resultEl) resultEl.style.display = 'none';
+        if (submitBtn) { try { submitBtn.disabled = true; submitBtn.style.opacity = '0.7'; } catch(_) {} }
+
+        httpJson('/api/refil/history', 'POST', { username: username, preview: true }, function (ok, data) {
+          if (!ok) {
+            setStatus(statusEl, extractErrorMessage(data), 'error');
+            if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+            return;
           }
-          setStatus('Refil processado com sucesso', 'success')
-          if (resultEl) resultEl.style.display = 'block'
-          const item = Array.isArray(data) ? data[0] : data
-          const msg = sanitizeSupplierName(item?.message || 'OK') || 'OK'
-          const drop = item?.data?.drop_amount ?? '—'
-          const qtd = item?.data?.quantidade_reposta ?? '—'
-          const status = sanitizeSupplierName(item?.data?.status ?? '—') || '—'
-          const extId = item?.data?.external_refill_id ?? '—'
-          if (resultEl) resultEl.innerHTML = `<div style="text-align:left;">
-            <div><strong>Mensagem:</strong> ${msg}</div>
-            <div><strong>Queda detectada:</strong> ${drop}</div>
-            <div><strong>Quantidade reposta:</strong> ${qtd}</div>
-            <div><strong>Status:</strong> ${status}</div>
-            <div><strong>ID externo:</strong> ${extId}</div>
-          </div>`
-          await loadHistory(orderId)
-        } catch (e) {
-          setStatus(e?.message || 'Erro ao solicitar refil', 'error')
-        }
+          var st = (data && data.status) ? String(data.status) : '';
+          var msg = (data && data.message) ? String(data.message) : 'OK';
+          if (st === 'above_target') {
+            setStatus(statusEl, 'Acima da meta: reposição indisponível', 'warning');
+          } else if (st === 'below_threshold') {
+            setStatus(statusEl, 'Queda abaixo do mínimo para reposição (mínimo: 50).', 'warning');
+          } else if (st === 'deficit') {
+            setStatus(statusEl, 'Reposição calculada', 'success');
+          } else if (st === 'no_followers_purchase') {
+            setStatus(statusEl, 'Nenhuma compra de seguidores encontrada', 'error');
+          } else if (st === 'no_orders') {
+            setStatus(statusEl, 'Nenhum pedido encontrado', 'error');
+          } else {
+            setStatus(statusEl, 'Consulta realizada', 'info');
+          }
+          if (resultEl) resultEl.style.display = 'block';
+          var item = data;
+          var d = item && item.data ? item.data : {};
+          var target = (typeof d.target_followers !== 'undefined') ? d.target_followers : '—';
+          var current = (typeof d.current_followers !== 'undefined') ? d.current_followers : '—';
+          var deficit = (typeof d.deficit !== 'undefined') ? d.deficit : '—';
+          var minDrop = (typeof d.min_drop !== 'undefined') ? d.min_drop : 50;
+          var base = (typeof d.base_followers !== 'undefined' && d.base_followers !== null) ? d.base_followers : '—';
+          var note = (st === 'below_threshold') ? ('<div style="color:#b45309; margin-top:4px;">Obs: Para repor, a queda mínima é de ' + minDrop + ' seguidores.</div>') : '';
+          if (resultEl) resultEl.innerHTML = '<div style="text-align:left;">' +
+            '<div><strong>Mensagem:</strong> ' + msg + '</div>' +
+            '<div><strong>Base da compra:</strong> ' + base + '</div>' +
+            '<div><strong>Meta de seguidores:</strong> ' + target + '</div>' +
+            '<div><strong>Seguidores atuais:</strong> ' + current + '</div>' +
+            '<div><strong>Falta repor:</strong> ' + deficit + '</div>' +
+            note +
+          '</div>';
+
+          loadHistory(username);
+          if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+        });
       }
+
+      try { window.submitRefil = submitRefil; } catch(_) {}
+      try { window.syncRefilTip = syncTipVisibility; } catch(_) {}
+
       if (orderInput) {
-        let historyTimer = null
-        orderInput.addEventListener('input', () => {
-          syncTipVisibility()
-          const v = String(orderInput.value || '').trim()
-          if (historyTimer) clearTimeout(historyTimer)
-          historyTimer = setTimeout(() => loadHistory(v), 650)
-        })
-        syncTipVisibility()
+        var historyTimer = null;
+        orderInput.oninput = function () {
+          syncTipVisibility();
+          var v = safeTrim(orderInput.value);
+          try { if (historyTimer) clearTimeout(historyTimer); } catch(_) {}
+          historyTimer = setTimeout(function () { loadHistory(v); }, 650);
+        };
+        orderInput.onkeyup = orderInput.oninput;
+        orderInput.onchange = orderInput.oninput;
+        syncTipVisibility();
+        try { if (safeTrim(orderInput.value)) loadHistory(orderInput.value); } catch(_) {}
       }
-      if (submitBtn) submitBtn.addEventListener('click', submitRefil)
-    })()
+      if (submitBtn) {
+        submitBtn.onclick = function (ev) {
+          try { if (ev && ev.preventDefault) ev.preventDefault(); } catch(_) {}
+          submitRefil();
+          return false;
+        };
+      }
+    })();
   </script>
 </body>
 </html>
