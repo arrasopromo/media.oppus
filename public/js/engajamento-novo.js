@@ -310,7 +310,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const tipo = String(window.selectedType || '').toLowerCase();
     if (tipo === 'organicos') {
       if (titleEl) titleEl.textContent = 'Curtidas reais promocionais';
-      if (descEl) descEl.textContent = 'Adicionar curtidas de perfis brasileiros reais e ativos.';
+      if (descEl) descEl.textContent = 'Adicionar curtidas de perfis brasileiros reais.';
     } else if (tipo === 'brasileiros') {
       if (titleEl) titleEl.textContent = 'Curtidas brasileiras promocionais';
       if (descEl) descEl.textContent = 'Adicionar curtidas brasileiras ao post.';
@@ -456,6 +456,31 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // --- Função para rolar até a seção do serviço ---
+  function smoothScrollToY(targetY, durationMs) {
+    try {
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        window.scrollTo(0, targetY);
+        return;
+      }
+      const startY = window.scrollY || window.pageYOffset || 0;
+      const delta = targetY - startY;
+      if (Math.abs(delta) < 2) {
+        window.scrollTo(0, targetY);
+        return;
+      }
+      const start = performance.now();
+      function ease(t){ return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+      function step(now){
+        const p = Math.min(1, (now - start) / durationMs);
+        window.scrollTo(0, startY + (delta * ease(p)));
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    } catch(_) {
+      window.scrollTo(0, targetY);
+    }
+  }
+
   window.scrollToService = function(service) {
       window.currentService = service;
       
@@ -478,7 +503,11 @@ document.addEventListener('DOMContentLoaded', function() {
       if (el) {
           // Ajuste de scroll com offset para header
           const y = el.getBoundingClientRect().top + window.scrollY - 100;
-          window.scrollTo({top: y, behavior: 'smooth'});
+          if (window.innerWidth && window.innerWidth <= 767) {
+            smoothScrollToY(y, 1300);
+          } else {
+            window.scrollTo({top: y, behavior: 'smooth'});
+          }
       }
   };
 
@@ -502,7 +531,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const el = document.getElementById(targetId);
       if (el) {
           const y = el.getBoundingClientRect().top + window.scrollY - 100;
-          window.scrollTo({top: y, behavior: 'smooth'});
+          if (window.innerWidth && window.innerWidth <= 767) {
+            smoothScrollToY(y, 1300);
+          } else {
+            window.scrollTo({top: y, behavior: 'smooth'});
+          }
       } else {
           // Fallback se a seção não existir (tenta o serviço genérico)
           window.scrollToService(service);
@@ -571,7 +604,7 @@ document.addEventListener('DOMContentLoaded', function() {
         service: 'likes', 
         type: 'organicos', 
         title: 'Curtidas Brasileiras Reais', 
-        desc: 'Curtidas de perfis brasileiros, reais e ativos para máxima credibilidade nas suas publicações.',
+        desc: 'Curtidas de perfis brasileiros e reais para máxima credibilidade nas suas publicações.',
         tabela: tabelaCurtidas.organicos,
         badgeType: 'organicos'
       },

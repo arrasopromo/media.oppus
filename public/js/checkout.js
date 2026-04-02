@@ -1026,10 +1026,10 @@
           `;
         case 'organicos':
           return `
-            <p>Curtidas de perfis brasileiros, reais e ativos para máxima qualidade e credibilidade nas suas publicações.</p>
+            <p>Curtidas de perfis brasileiros e reais para máxima qualidade e credibilidade nas suas publicações.</p>
             <ul>
               <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-              <li>🇧🇷 Perfis brasileiros, reais e ativos para reforçar autoridade.</li>
+              <li>🇧🇷 Perfis brasileiros e reais para reforçar autoridade.</li>
               <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
             </ul>
           `;

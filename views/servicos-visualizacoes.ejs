@@ -567,7 +567,37 @@
    <script src="/js/servicos-instagram.js?v=<%= Date.now() %>"></script>
    <div id="toastContainer" class="toast-container"></div>
 
+   <script>
+     (function(){
+       try {
+         var key = 'oppus_client_id';
+         var cid = '';
+         try { cid = String(localStorage.getItem(key) || ''); } catch (_) {}
+         if (!cid) {
+           cid = (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function')
+             ? crypto.randomUUID()
+             : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+           try { localStorage.setItem(key, cid); } catch (_) {}
+         }
+         var ping = function() {
+           try {
+             var payload = JSON.stringify({ clientId: cid, path: (location && location.pathname) ? location.pathname : '' });
+             if (navigator && typeof navigator.sendBeacon === 'function') {
+               navigator.sendBeacon('/api/online/ping', new Blob([payload], { type: 'application/json' }));
+               return;
+             }
+             fetch('/api/online/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function(){});
+           } catch (_) {}
+         };
+         ping();
+         setInterval(ping, 15000);
+         document.addEventListener('visibilitychange', function(){ if (!document.hidden) ping(); });
+       } catch (_) {}
+     })();
+   </script>
+
 
 
 </body>
+</html>
 </html>

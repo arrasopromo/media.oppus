@@ -295,22 +295,6 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
             priceCents = Math.round(priceCents * 0.75);
         }
 
-        // --- COUPON LOGIC START ---
-        if (coupon) {
-            try {
-                const col = await getCollection('coupons');
-                const couponDoc = await col.findOne({ code: coupon, isActive: true });
-                
-                if (couponDoc) {
-                    const discount = couponDoc.discountPercentage / 100;
-                    priceCents = Math.round(priceCents * (1 - discount));
-                }
-            } catch (error) {
-                console.error('Error fetching coupon:', error);
-            }
-        }
-        // --- COUPON LOGIC END ---
-
         totalCents = priceCents;
     } else {
         // Price not found for quantity
@@ -371,6 +355,23 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
         }
         // --- UPGRADE LOGIC END ---
     }
+
+    // --- COUPON LOGIC (APPLY AFTER BUMPS) START ---
+    if (coupon) {
+        try {
+            const col = await getCollection('coupons');
+            const couponDoc = await col.findOne({ code: coupon, isActive: true });
+            if (couponDoc) {
+                const discount = Number(couponDoc.discountPercentage || 0) / 100;
+                if (discount > 0) {
+                    totalCents = Math.round(Number(totalCents) * (1 - discount));
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching coupon:', error);
+        }
+    }
+    // --- COUPON LOGIC (APPLY AFTER BUMPS) END ---
 
     try {
         const pmItem = Array.isArray(additionalInfo) ? additionalInfo.find(x => x && x.key === 'payment_method') : null;

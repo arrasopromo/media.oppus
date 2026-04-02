@@ -6,13 +6,13 @@
     </div>
     <ul class="sidebar-menu">
         <li><a href="/painel" class="<%= typeof page !== 'undefined' && page === 'dashboard' ? 'active' : '' %>">Dashboard</a></li>
+        <li><a href="/painel?view=vendas" class="<%= typeof page !== 'undefined' && page === 'vendas' ? 'active' : '' %>">Vendas</a></li>
         <li><a href="/painel?view=coupons" class="<%= typeof page !== 'undefined' && page === 'coupons' ? 'active' : '' %>">Cupons</a></li>
         <li><a href="/painel/recuperacao" class="<%= typeof page !== 'undefined' && page === 'recuperacao' ? 'active' : '' %>">Recuperação</a></li>
         <li><a href="/painel/privados" class="<%= typeof page !== 'undefined' && page === 'privados' ? 'active' : '' %>">Perfis Privados</a></li>
         <li><a href="/painel/gerenciamento-seguidores" class="<%= typeof page !== 'undefined' && page === 'gerenciamento-seguidores' ? 'active' : '' %>">Gerenciamento de Seguidores</a></li>
         <li><a href="/painel/vendas-whatsapp" class="<%= typeof page !== 'undefined' && page === 'vendas-whatsapp' ? 'active' : '' %>">Vendas WhatsApp</a></li>
         <li><a href="/painel/consulta-perfil" class="<%= typeof page !== 'undefined' && page === 'consulta-perfil' ? 'active' : '' %>">Consulta de Perfil</a></li>
-        <li><a href="/painel?view=ltv" class="<%= typeof page !== 'undefined' && page === 'ltv' ? 'active' : '' %>">LTV</a></li>
         <li><a href="/painel?view=unknown_orderid&period=all" class="<%= typeof page !== 'undefined' && page === 'unknown_orderid' ? 'active' : '' %>">OrderID Unknown</a></li>
         <li><a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a></li>
     </ul>

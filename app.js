@@ -13,6 +13,7 @@ const axios = require('axios');
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
 const { validatePrice, verifyPrice } = require('./pricing');
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
@@ -112,6 +113,790 @@ const requireAdmin = (req, res, next) => {
     }
     return res.redirect('/login');
 };
+
+const onlinePresence = new Map();
+const onlinePresenceTtlMs = 45 * 1000;
+const pageViewDedupe = new Map();
+const pageViewDedupeTtlMs = 30 * 60 * 1000;
+const geoCache = new Map();
+const geoCacheTtlMs = 12 * 60 * 60 * 1000;
+
+let smtpTransporter = null;
+const getSmtpTransporter = () => {
+    const host = String(process.env.SMTP_HOST || 'smtp.hostinger.com').trim();
+    const port = parseInt(String(process.env.SMTP_PORT || '465'), 10);
+    const secureEnv = String(process.env.SMTP_SECURE || '').toLowerCase().trim();
+    const secure = (secureEnv === '1' || secureEnv === 'true' || secureEnv === 'yes') ? true : (secureEnv === '0' || secureEnv === 'false' || secureEnv === 'no') ? false : (port === 465);
+    const user = String(process.env.SMTP_USER || '').trim();
+    const pass = String(process.env.SMTP_PASS || '').trim();
+    if (!user || !pass) return null;
+    if (smtpTransporter) return smtpTransporter;
+    smtpTransporter = nodemailer.createTransport({
+        host,
+        port: Number.isFinite(port) ? port : 465,
+        secure,
+        auth: { user, pass }
+    });
+    return smtpTransporter;
+};
+
+const getOppusFromHeader = () => {
+    const raw = String(process.env.SMTP_FROM || process.env.SMTP_USER || 'meu-pedido@agenciaoppus.site').trim();
+    if (!raw) return '';
+    let email = raw;
+    const m = raw.match(/<([^>]+)>/);
+    if (m && m[1]) email = m[1];
+    email = String(email || '').trim();
+    if (!email) return '';
+    return `Agência Oppus <${email}>`;
+};
+
+const sendOrderCreatedEmail = async ({ record, insertedId }) => {
+    const transporter = getSmtpTransporter();
+    if (!transporter) return;
+
+    const from = getOppusFromHeader();
+    const to = String(process.env.ORDER_NOTIFY_TO || process.env.SMTP_USER || '').trim();
+    if (!from || !to) return;
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const centsToBRL = (c) => {
+        const n = Number(c);
+        if (!Number.isFinite(n)) return 'R$ 0,00';
+        const val = (n / 100);
+        return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+
+    const tipo = safe(record && (record.tipo || record.tipoServico));
+    const qtd = Number(record && (record.qtd || record.quantidade || 0)) || 0;
+    const insta = safe(record && (record.instagramUsername || record.instauser || ''));
+    const telefone = safe(record && (record.telefone || (record.customer && record.customer.phone) || ''));
+    const emailCliente = safe(record && ((record.customer && record.customer.email) || ''));
+    const status = safe(record && record.status);
+    const createdAt = safe(record && (record.createdAt || record.criado || ''));
+    const identifier = safe(record && record.identifier);
+    const corr = safe(record && record.correlationID);
+    const utms = (record && record.utms && typeof record.utms === 'object') ? record.utms : {};
+
+    const subject = `Novo pedido gerado${insta ? ` - @${insta.replace(/^@+/, '')}` : ''}${tipo ? ` - ${tipo}` : ''}${qtd ? ` (${qtd})` : ''}`;
+    const lines = [
+        'Um novo pedido foi gerado no checkout.',
+        '',
+        `ID: ${insertedId ? String(insertedId) : '-'}`,
+        `Status: ${status || '-'}`,
+        `Data: ${createdAt || '-'}`,
+        `Identifier: ${identifier || '-'}`,
+        `CorrelationID: ${corr || '-'}`,
+        `Tipo: ${tipo || '-'}`,
+        `Quantidade: ${qtd || 0}`,
+        `Instagram: ${insta ? `@${insta.replace(/^@+/, '')}` : '-'}`,
+        `Telefone: ${telefone || '-'}`,
+        `Email cliente: ${emailCliente || '-'}`,
+        `Valor: ${centsToBRL(record && record.valueCents)} (Esperado: ${centsToBRL(record && record.expectedValueCents)})`,
+        '',
+        `UTM source: ${safe(utms.source) || '-'}`,
+        `UTM medium: ${safe(utms.medium) || '-'}`,
+        `UTM campaign: ${safe(utms.campaign) || '-'}`,
+        `UTM content: ${safe(utms.content) || '-'}`,
+        `fbclid: ${safe(utms.fbclid) || '-'}`,
+        `gclid: ${safe(utms.gclid) || '-'}`,
+        `ref: ${safe(utms.ref) || '-'}`,
+    ];
+    const text = lines.join('\n');
+
+    await transporter.sendMail({
+        from,
+        to,
+        subject,
+        text
+    });
+};
+
+const sendPixOrderEmailToCustomer = async ({ record }) => {
+    const transporter = getSmtpTransporter();
+    if (!transporter) return;
+
+    const from = getOppusFromHeader();
+    if (!from) return;
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const escapeHtml = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    const centsToBRL = (c) => {
+        const n = Number(c);
+        if (!Number.isFinite(n)) return 'R$ 0,00';
+        const val = (n / 100);
+        return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+    const normalizeKey = (v) => safe(v).toLowerCase().replace(/\s+/g, '_').replace(/-+/g, '_').trim();
+    const capitalizeFirst = (raw) => {
+        const t = safe(raw).replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!t) return '';
+        return t.charAt(0).toUpperCase() + t.slice(1);
+    };
+
+    const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
+    const to = safe(customer.email);
+    if (!to) return;
+
+    const additionalArr = Array.isArray(record && record.additionalInfo) ? record.additionalInfo : [];
+    const getAdd = (key) => {
+        const k = String(key || '').trim();
+        if (!k) return '';
+        const it = additionalArr.find(x => x && String(x.key || '').trim() === k);
+        return it && typeof it.value !== 'undefined' ? safe(it.value) : '';
+    };
+
+    const instagramRaw = safe(
+        getAdd('instagram_username') ||
+        getAdd('instagramUsername') ||
+        (record && (record.instagramUsername || record.instauser || ''))
+    );
+    const instagramUser = instagramRaw.replace(/^@+/, '').trim();
+    const saudacaoNome = instagramUser ? `@${instagramUser}` : (safe(customer.name) || 'Cliente');
+    const qtd = Number(record && (record.qtd || record.quantidade || 0)) || 0;
+    const valueLabel = centsToBRL(record && record.valueCents);
+
+    const serviceLabel = (function () {
+        const categoria = normalizeKey(getAdd('categoria_servico') || (record && (record.categoriaServico || record.categoria)) || '');
+        const tipoRaw = normalizeKey(getAdd('tipo_servico') || (record && (record.tipoServico || record.tipo)) || '');
+        const tipo = (function () {
+            const t = String(tipoRaw || '').trim();
+            if (!t) return '';
+            if (/curtidas?_brasileiras?/.test(t)) return 'curtidas_brasileiras';
+            if (/visualizacoes?_reels|views?_reels|reels/.test(t)) return 'visualizacoes_reels';
+            if (/organ|reais/.test(t)) return 'organicos';
+            if (/brasil/.test(t)) return 'brasileiros';
+            if (/mist/.test(t)) return 'mistos';
+            return t;
+        })();
+
+        if (categoria === 'curtidas' || categoria === 'likes') {
+            if (tipo === 'mistos') return 'Curtidas mistas';
+            if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') return 'Curtidas brasileiras';
+            if (tipo === 'organicos' || tipo === 'curtidas_reais') return 'Curtidas brasileiras reais';
+            return 'Curtidas';
+        }
+        if (categoria === 'visualizacoes' || categoria === 'views') {
+            if (tipo === 'visualizacoes_reels' || tipo === 'reels') return 'Visualizações Reels';
+            return 'Visualizações';
+        }
+        if (categoria === 'comentarios' || categoria === 'comments') {
+            return 'Comentários';
+        }
+        if (categoria === 'seguidores' || categoria === 'followers' || !categoria) {
+            if (tipo === 'mistos') return 'Seguidores mistos';
+            if (tipo === 'brasileiros') return 'Seguidores brasileiros';
+            if (tipo === 'organicos') return 'Seguidores brasileiros reais';
+            return 'Seguidores';
+        }
+
+        const fallback = getAdd('pacote') || getAdd('produto') || getAdd('descricao') || '';
+        if (fallback) {
+            let t = safe(fallback);
+            if (!t) return 'Produto';
+            if (qtd && new RegExp(`^\\s*${qtd}\\s+`, 'i').test(t)) t = t.replace(new RegExp(`^\\s*${qtd}\\s+`, 'i'), '').trim();
+            t = t.replace(/\s*-\s*R\$\s*[\d.,]+$/i, '').trim();
+            return capitalizeFirst(t) || 'Produto';
+        }
+
+        return 'Produto';
+    })();
+    const serviceLabelLower = (function () {
+        let t = safe(serviceLabel);
+        if (!t) return 'produto';
+        t = t.replace(/^\d+\s+/, '').trim();
+        return t.charAt(0).toLowerCase() + t.slice(1);
+    })();
+    const productTitle = `${qtd || 0} ${serviceLabelLower} - ${valueLabel}`;
+    const identifier = safe(record && (record.identifier || (record.woovi && record.woovi.identifier) || ''));
+    const correlationID = safe(record && record.correlationID);
+    const baseUrl = (function () {
+        const candidates = [
+            process.env.SITE_URL,
+            process.env.PUBLIC_URL,
+            process.env.APP_URL,
+            process.env.BASE_URL
+        ];
+        const picked = candidates.map(s => String(s || '').trim()).find(Boolean);
+        const u = picked || 'https://agenciaoppus.site';
+        return u.replace(/\/+$/, '');
+    })();
+    const pixPageUrl = (function () {
+        const qs = new URLSearchParams();
+        if (identifier) qs.set('identifier', identifier);
+        if (correlationID) qs.set('correlationID', correlationID);
+        const q = qs.toString();
+        return q ? `${baseUrl}/pix?${q}` : `${baseUrl}/checkout`;
+    })();
+    const brCodeMasked = (function () {
+        const c = safe((record && record.woovi && record.woovi.brCode) || '');
+        if (!c) return '';
+        if (c.length <= 36) return c;
+        return `${c.slice(0, 16)}…${c.slice(-16)}`;
+    })();
+
+    const woovi = (record && record.woovi && typeof record.woovi === 'object') ? record.woovi : {};
+    const qrCodeImage = safe(woovi.qrCodeImage);
+    const brCode = safe(woovi.brCode);
+
+    const subject = 'Agência Oppus - Pedido recebido';
+
+    const text = [
+        'Pedido recebido',
+        '',
+        `Olá, ${saudacaoNome}`,
+        '',
+        `O seu pedido de ${productTitle} foi recebido com sucesso.`,
+        'Para concluir, efetue o pagamento via Pix (QR Code ou Pix Copia e Cola).',
+        '',
+        `Produto: ${productTitle}`,
+        `QTD: ${qtd || 0}`,
+        `Valor: ${valueLabel}`,
+        '',
+        'Pagamento via Pix:',
+        brCode ? `Código Pix (copia e cola): ${brCode}` : '',
+        pixPageUrl ? `Link para copiar o código Pix: ${pixPageUrl}` : '',
+        '',
+        '1. Abra o aplicativo do seu banco e entre na opção Pix.',
+        '2. Escolha a opção Pagar / Pix copia e cola.',
+        '3. Escaneie o Qr code. Se preferir, copie e cole o código.',
+        '4. Confirme o pagamento.',
+        '',
+        'Se você já pagou, aguarde alguns minutos para a confirmação automática.',
+        'Dúvidas: suporte@agenciaoppus.site'
+    ].filter(Boolean).join('\n');
+
+    let logoAttachment = null;
+    try {
+        const logoPath = path.join(__dirname, 'public', 'images', 'logo.png');
+        const buf = fs.readFileSync(logoPath);
+        if (buf && buf.length) {
+            logoAttachment = { filename: 'logo.png', content: buf, cid: 'oppus-logo' };
+        }
+    } catch (_) {}
+
+    const html = `
+<div style="margin:0;padding:0;background:#f5f7fb;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background:#f5f7fb;padding:16px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td bgcolor="#111827" style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;background:#111827;background-color:#111827;color:#ffffff;text-align:center;">
+              ${logoAttachment ? `<img src="cid:oppus-logo" alt="Agência Oppus" style="height:42px;width:auto;display:inline-block;" />` : ''}
+              <div style="margin-top:${logoAttachment ? '8px' : '0'};font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+              <div style="font-size:16px;font-weight:700;margin:0 0 10px 0;">Olá, ${escapeHtml(saudacaoNome)}</div>
+              <div style="font-size:14px;line-height:1.5;margin:0 0 16px 0;">
+                O seu pedido de <strong>${escapeHtml(productTitle)}</strong> foi recebido com sucesso.
+                Para concluir, efetue o pagamento via Pix.
+              </div>
+
+              <div style="margin:14px 0 10px 0;font-size:14px;font-weight:700;">Resumo do pedido</div>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
+                <tr>
+                  <th align="left" style="padding:10px;border:1px solid #e5e7eb;background:#f9fafb;">Produto</th>
+                  <th align="center" style="padding:10px;border:1px solid #e5e7eb;background:#f9fafb;">QTD</th>
+                  <th align="right" style="padding:10px;border:1px solid #e5e7eb;background:#f9fafb;">Valor</th>
+                </tr>
+                <tr>
+                  <td style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(productTitle)}</td>
+                  <td align="center" style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(String(qtd || 0))}</td>
+                  <td align="right" style="padding:10px;border:1px solid #e5e7eb;font-weight:700;">${escapeHtml(valueLabel)}</td>
+                </tr>
+              </table>
+
+              <div style="margin:18px 0 8px 0;font-size:14px;font-weight:700;color:#166534;">Pagamento via Pix</div>
+              <div style="margin:0 0 10px 0;font-size:13px;color:#111827;">Valor do Pix: <strong>${escapeHtml(valueLabel)}</strong></div>
+              ${qrCodeImage ? `<div style="margin:8px 0 10px 0;text-align:center;">
+                <img src="${escapeHtml(qrCodeImage)}" alt="QR Code Pix" width="180" height="180" style="width:180px;height:180px;border-radius:10px;border:1px solid #e5e7eb;background:#ffffff;" />
+              </div>` : ''}
+
+              ${brCode ? `<div style="margin:0 0 8px 0;font-size:12px;color:#374151;">Código Pix (copia e cola)</div>
+              <div style="padding:10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;line-height:1.35;color:#052e16;word-break:break-all;">
+                ${escapeHtml(brCode)}
+              </div>
+              <div style="margin:8px 0 0 0;text-align:center;">
+                <a href="${escapeHtml(pixPageUrl)}" style="display:inline-block;padding:9px 12px;background:#2563eb;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Copiar código Pix</a>
+              </div>
+              <div style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">Se preferir, abra o link para copiar o código completo.</div>` : ''}
+
+              <div style="margin:16px 0 6px 0;font-size:13px;font-weight:700;">Como pagar</div>
+              <ol style="margin:0 0 0 18px;padding:0;font-size:13px;line-height:1.6;color:#111827;">
+                <li>Abra o aplicativo do seu banco e entre na opção Pix.</li>
+                <li>Escolha a opção Pagar / Pix copia e cola.</li>
+                <li>Escaneie o Qr code. Se preferir, copie e cole o código.</li>
+                <li>Confirme o pagamento.</li>
+              </ol>
+
+              <div style="margin:14px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
+                Para retirar dúvidas ou ajuda entre em contato com <a href="mailto:suporte@agenciaoppus.site" style="color:#2563eb;text-decoration:none;">suporte@agenciaoppus.site</a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>`;
+
+    await transporter.sendMail({
+        from,
+        to,
+        subject,
+        text,
+        html,
+        attachments: logoAttachment ? [logoAttachment] : undefined
+    });
+};
+
+const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceLinesOverride }) => {
+    const transporter = getSmtpTransporter();
+    if (!transporter) return false;
+
+    const from = getOppusFromHeader();
+    if (!from) return false;
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const escapeHtml = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    const centsToBRL = (c) => {
+        const n = Number(c);
+        if (!Number.isFinite(n)) return 'R$ 0,00';
+        const val = (n / 100);
+        return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+    const formatDateBR = (isoLike) => {
+        const d = new Date(isoLike || 0);
+        if (!Number.isFinite(d.getTime())) return '';
+        try { return d.toLocaleDateString('pt-BR'); } catch (_) {}
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${day}/${m}/${y}`;
+    };
+
+    const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
+    const to = safe(toOverride || customer.email);
+    if (!to) return false;
+
+    const payerName = safe(
+        record?.woovi?.payer?.name ||
+        record?.woovi?.payer?.nome ||
+        record?.payer?.name ||
+        record?.payer?.nome ||
+        record?.nomeUsuario ||
+        customer?.name ||
+        ''
+    ) || 'Cliente';
+
+    const paymentMethod = String((record && (record.paymentMethod || record.payment_method || record.method)) || '').toLowerCase();
+    const hasCardInfo = !!safe(record?.efi?.card_mask || record?.pagarme?.card_mask || '');
+    const hasPixInfo = !!(record?.woovi?.paymentMethods?.pix || record?.woovi?.brCode || record?.woovi?.qrCodeImage);
+    const methodLabel = (function () {
+        if (paymentMethod === 'credit_card' || paymentMethod.includes('credit') || paymentMethod.includes('card') || paymentMethod.includes('cart')) return 'Cartão de crédito';
+        if (hasCardInfo) return 'Cartão de crédito';
+        if (hasPixInfo) return 'PIX';
+        return 'PIX';
+    })();
+
+    const paidAt = safe((record && (record.woovi && record.woovi.paidAt)) || (record && record.paidAt) || (record && record.createdAt) || (record && record.criado) || '');
+    const dateLabel = formatDateBR(paidAt) || '';
+    const valueCents = (function () {
+        const v0 = record && typeof record.valueCents !== 'undefined' ? Number(record.valueCents) : NaN;
+        if (Number.isFinite(v0) && v0 > 0) return v0;
+        const wv = record?.woovi?.paymentMethods?.pix?.value;
+        const v1 = typeof wv !== 'undefined' ? Number(wv) : NaN;
+        if (Number.isFinite(v1) && v1 > 0) return v1;
+        const et = record?.efi?.total;
+        const v2 = typeof et !== 'undefined' ? Number(et) : NaN;
+        if (Number.isFinite(v2) && v2 > 0) return v2;
+        const pa = record?.pagarme?.amount;
+        const v3 = typeof pa !== 'undefined' ? Number(pa) : NaN;
+        if (Number.isFinite(v3) && v3 > 0) return v3;
+        return 0;
+    })();
+    const valueLabel = centsToBRL(valueCents);
+
+    const serviceOrderId = (function () {
+        if (record && (record.isPrivate === true || record?.profilePrivacy?.isPrivate === true)) return '';
+        const picked = safe(record?.orderId);
+        if (!picked) return '';
+        if (/^(unknown|unknow|null|undefined|0|-)$/.test(String(picked).toLowerCase().trim())) return '';
+        return String(picked);
+    })();
+
+    const cardDetails = (function () {
+        if (!hasCardInfo && !(paymentMethod === 'credit_card' || paymentMethod.includes('credit') || paymentMethod.includes('card') || paymentMethod.includes('cart'))) return '';
+        const mask = safe(record?.efi?.card_mask || record?.pagarme?.card_mask || '');
+        const inst = safe(record?.efi?.installments || record?.pagarme?.installments || '');
+        const parts = [];
+        if (mask) parts.push(`Cartão: ${mask}`);
+        if (inst) parts.push(`Parcelas: ${inst}x`);
+        return parts.join(' • ');
+    })();
+
+    const serviceLines = (function () {
+        try {
+            if (Array.isArray(serviceLinesOverride) && serviceLinesOverride.length) {
+                return serviceLinesOverride.map(safe).filter(Boolean);
+            }
+
+            const pickFromArray = (arr, key) => {
+                const list = Array.isArray(arr) ? arr : [];
+                const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+                return it && typeof it.value !== 'undefined' ? it.value : undefined;
+            };
+            const mapPaid = (record && record.additionalInfoMapPaid && typeof record.additionalInfoMapPaid === 'object') ? record.additionalInfoMapPaid : {};
+            const map = (record && record.additionalInfoMap && typeof record.additionalInfoMap === 'object') ? record.additionalInfoMap : {};
+            const arrPaid = Array.isArray(record && record.additionalInfoPaid) ? record.additionalInfoPaid : [];
+            const arr = Array.isArray(record && record.additionalInfo) ? record.additionalInfo : [];
+            const getAdd = (key) => {
+                if (typeof mapPaid[key] !== 'undefined') return mapPaid[key];
+                if (typeof map[key] !== 'undefined') return map[key];
+                const v1 = pickFromArray(arrPaid, key);
+                if (typeof v1 !== 'undefined') return v1;
+                return pickFromArray(arr, key);
+            };
+            const rawTipo = safe(getAdd('tipo_servico') || getAdd('tipoServico') || getAdd('tipo') || (record && (record.tipoServico || record.tipo)) || '');
+            const rawCategoria = safe(getAdd('categoria_servico') || getAdd('categoriaServico') || '');
+            const tipoKey = safe(rawTipo).toLowerCase().trim();
+            const categoriaKey = safe(rawCategoria).toLowerCase().trim();
+            const tipoLabel = (function () {
+                if (categoriaKey === 'curtidas') {
+                    if (tipoKey === 'mistos') return 'curtidas mistas';
+                    if (tipoKey === 'organicos') return 'curtidas brasileiras reais';
+                }
+                if (tipoKey === 'mistos') return 'seguidores mistos';
+                if (tipoKey === 'brasileiros') return 'seguidores brasileiros';
+                if (tipoKey === 'organicos') return 'seguidores brasileiros e reais';
+                if (tipoKey === 'curtidas_brasileiras') return 'curtidas brasileiras';
+                if (tipoKey === 'curtidas_organicos') return 'curtidas brasileiras reais';
+                if (tipoKey === 'visualizacoes_reels') return 'visualizações reels';
+                return safe(rawTipo).replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+            })();
+            const qtyRaw = getAdd('quantidade') || getAdd('qtd') || (record && (record.quantidade || record.qtd)) || '';
+            const qtyNum = (function () {
+                const n0 = Number(qtyRaw);
+                if (Number.isFinite(n0) && n0 > 0) return Math.floor(n0);
+                const m = String(qtyRaw || '').match(/\d+/);
+                const n1 = m ? Number(m[0]) : 0;
+                if (Number.isFinite(n1) && n1 > 0) return Math.floor(n1);
+                return 0;
+            })();
+
+            const parseBumps = (raw) => {
+                const text = String(raw || '');
+                const parts = text.split(';').map(p => p.trim()).filter(Boolean);
+                const res = { views: 0, likes: 0, comments: 0, upgrade: 0 };
+                for (const p of parts) {
+                    const [kRaw, vRaw] = p.split(':');
+                    const k = String(kRaw || '').toLowerCase().trim();
+                    const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+                    if (k === 'views') res.views = v;
+                    else if (k === 'likes') res.likes = v;
+                    else if (k === 'comments') res.comments = v;
+                    else if (k === 'upgrade') res.upgrade = v || 1;
+                }
+                return res;
+            };
+            const bumps = parseBumps(getAdd('order_bumps') || '');
+
+            const lines = [];
+            if (qtyNum && tipoLabel) lines.push(`${qtyNum} ${tipoLabel}`);
+            else if (qtyNum) lines.push(String(qtyNum));
+            else if (tipoLabel) lines.push(tipoLabel);
+
+            if (bumps.likes > 0) lines.push(`${bumps.likes} curtidas brasileiras`);
+            if (bumps.views > 0) lines.push(`${bumps.views} visualizações`);
+            if (bumps.comments > 0) lines.push(`${bumps.comments} comentários`);
+
+            return lines.filter(Boolean);
+        } catch (_) {
+            return [];
+        }
+    })();
+    const serviceSummaryText = serviceLines.join('\n');
+    const serviceSummaryHtml = serviceLines.map(escapeHtml).join('<br/>');
+    const baseServiceLine = serviceLines.length ? String(serviceLines[0] || '').trim() : '';
+    const bumpLines = serviceLines.length > 1 ? serviceLines.slice(1).map(safe).filter(Boolean) : [];
+    const bumpText = bumpLines.join('\n');
+    const bumpHtml = bumpLines.map(escapeHtml).join('<br/>');
+
+    let logoAttachment = null;
+    try {
+        const logoPath = path.join(__dirname, 'public', 'images', 'logo.png');
+        const buf = fs.readFileSync(logoPath);
+        if (buf && buf.length) {
+            logoAttachment = { filename: 'logo.png', content: buf, cid: 'oppus-logo' };
+        }
+    } catch (_) {}
+
+    const baseUrl = (function () {
+        const candidates = [
+            process.env.SITE_URL,
+            process.env.PUBLIC_URL,
+            process.env.APP_URL,
+            process.env.BASE_URL
+        ];
+        const picked = candidates.map(s => String(s || '').trim()).find(Boolean);
+        const u = picked || 'https://agenciaoppus.site';
+        return u.replace(/\/+$/, '');
+    })();
+    const clientUrl = `${baseUrl}/cliente`;
+    const whatsappPrefillText = 'Olá, vim pelo e-mail de compra e preciso de ajuda';
+    const whatsappHref = `https://wa.me/553173425727?text=${encodeURIComponent(whatsappPrefillText)}`;
+
+    const subject = `Agência Oppus - Pagamento aprovado${serviceOrderId ? ` - Pedido #${serviceOrderId}` : ''}`;
+    const text = [
+        `Olá ${payerName}, tudo bem?`,
+        '',
+        'Seu pagamento foi aprovado com sucesso!',
+        'Estamos muito felizes em ter você conosco.',
+        '',
+        'Detalhes do pedido',
+        serviceOrderId ? `Pedido: #${serviceOrderId}` : '',
+        dateLabel ? `Data: ${dateLabel}` : '',
+        baseServiceLine ? `Serviço: ${baseServiceLine}` : '',
+        bumpLines.length ? ['Extras:', ...bumpLines].join('\n') : '',
+        `Valor: ${valueLabel}`,
+        `Forma de pagamento: ${methodLabel}`,
+        cardDetails ? `Detalhes do pagamento: ${cardDetails}` : '',
+        '',
+        'Acompanhe seu pedido por dentro do nosso site',
+        '1. Clique no botão Clientes no menu superior do site.',
+        '2. Informe o número de telefone que você registrou para compra.',
+        '3. Abra o detalhamento do pedido e veja o status.',
+        `Link: ${clientUrl}`,
+        '',
+        'Precisa de ajuda?',
+        'Email: suporte@agenciaoppus.site',
+        `Chat de suporte: ${whatsappHref}`,
+    ].filter(Boolean).join('\n');
+
+    const detailsRows = [
+        serviceOrderId ? `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Pedido</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">#${escapeHtml(serviceOrderId)}</td></tr>` : '',
+        dateLabel ? `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Data</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${escapeHtml(dateLabel)}</td></tr>` : '',
+        baseServiceLine ? `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Serviço</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${escapeHtml(baseServiceLine)}</td></tr>` : '',
+        bumpLines.length ? `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Extras</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${bumpHtml}</td></tr>` : '',
+        `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Valor</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${escapeHtml(valueLabel)}</td></tr>`,
+        `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Forma de pagamento</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${escapeHtml(methodLabel)}</td></tr>`,
+        cardDetails ? `<tr><td style="padding:8px 10px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:700;">Detalhes</td><td style="padding:8px 10px;border:1px solid #e5e7eb;">${escapeHtml(cardDetails)}</td></tr>` : ''
+    ].filter(Boolean).join('');
+
+    const uniqueEmailMarker = (function () {
+        const now = Date.now();
+        const id = safe(record?._id || '');
+        const ord = safe(serviceOrderId || '');
+        const rnd = Math.random().toString(36).slice(2);
+        return `id=${id || '-'};order=${ord || '-'};ts=${now};r=${rnd}`;
+    })();
+
+    const html = `
+<div style="margin:0;padding:0;background:#f5f7fb;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background:#f5f7fb;padding:16px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td bgcolor="#111827" style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;background:#111827;background-color:#111827;color:#ffffff;text-align:center;">
+              ${logoAttachment ? `<img src="cid:oppus-logo" alt="Agência Oppus" style="height:42px;width:auto;display:inline-block;" />` : ''}
+              <div style="margin-top:${logoAttachment ? '8px' : '0'};font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+              <div style="font-size:16px;font-weight:700;margin:0 0 8px 0;">Olá, ${escapeHtml(payerName)}, tudo bem?</div>
+              <div style="font-size:14px;line-height:1.5;margin:0 0 12px 0;">
+                Seu pagamento foi aprovado com sucesso!
+                <br/>
+                Estamos muito felizes em ter você conosco.
+              </div>
+
+              <div style="margin:14px 0 10px 0;font-size:14px;font-weight:700;">Detalhes do pedido</div>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
+                ${detailsRows}
+              </table>
+
+              <div style="margin:14px 0 0 0;padding:12px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+                <div style="font-size:13px;font-weight:800;margin:0 0 8px 0;color:#111827;">Acompanhe seu pedido por dentro do nosso site</div>
+                <ol style="margin:0 0 0 18px;padding:0;font-size:12px;line-height:1.6;color:#111827;">
+                  <li>Clique no botão <strong>Clientes</strong> no menu superior do site.</li>
+                  <li>Informe o número de telefone que você registrou para compra.</li>
+                  <li>Abra o detalhamento do pedido e veja o status.</li>
+                </ol>
+                <div style="margin-top:10px;">
+                  <a href="${escapeHtml(clientUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir Clientes</a>
+                </div>
+              </div>
+
+              <div style="margin:14px 0 0 0;padding:12px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
+                <div style="font-size:13px;font-weight:800;margin:0 0 6px 0;color:#111827;">Precisa de ajuda?</div>
+                <div style="font-size:13px;color:#111827;line-height:1.6;">
+                  <div>Email: <a href="mailto:suporte@agenciaoppus.site" style="color:#2563eb;text-decoration:none;">suporte@agenciaoppus.site</a></div>
+                  <div>Chat de suporte: <a href="${escapeHtml(whatsappHref)}" style="color:#2563eb;text-decoration:none;">Clique aqui para acessar</a></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>
+<div style="display:none;white-space:nowrap;font:15px courier;line-height:0;max-height:0;overflow:hidden;">
+  ${escapeHtml(uniqueEmailMarker)}
+</div>`;
+
+    await transporter.sendMail({
+        from,
+        to,
+        subject,
+        text,
+        html,
+        attachments: logoAttachment ? [logoAttachment] : undefined
+    });
+    return true;
+};
+
+const pruneOnlinePresence = () => {
+    const now = Date.now();
+    for (const [k, v] of onlinePresence.entries()) {
+        if (!v || typeof v.lastSeen !== 'number' || (now - v.lastSeen) > onlinePresenceTtlMs) {
+            onlinePresence.delete(k);
+        }
+    }
+};
+
+const prunePageViewDedupe = () => {
+    const now = Date.now();
+    for (const [k, ts] of pageViewDedupe.entries()) {
+        if (!Number.isFinite(Number(ts)) || (now - Number(ts)) > pageViewDedupeTtlMs) {
+            pageViewDedupe.delete(k);
+        }
+    }
+};
+
+const updateOnlinePresence = (clientId, path) => {
+    const id = String(clientId || '').trim();
+    if (!id) return;
+    const p = String(path || '').trim();
+    onlinePresence.set(id, { lastSeen: Date.now(), path: p });
+};
+
+const readJsonBody = (req) => new Promise((resolve) => {
+    try {
+        if (!req) return resolve({});
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => {
+            raw += String(chunk || '');
+            if (raw.length > 4096) {
+                try { req.destroy(); } catch (_) {}
+                resolve({});
+            }
+        });
+        req.on('end', () => {
+            try {
+                const t = String(raw || '').trim();
+                if (!t) return resolve({});
+                resolve(JSON.parse(t));
+            } catch (_) {
+                resolve({});
+            }
+        });
+        req.on('error', () => resolve({}));
+    } catch (_) {
+        resolve({});
+    }
+});
+
+const insertPageViewIfNeeded = (clientId, path, req) => {
+    try {
+        prunePageViewDedupe();
+        const cid = String(clientId || '').trim();
+        const p = String(path || '').trim();
+        if (!cid || !p) return;
+        const key = `${cid}|${p}`;
+        const now = Date.now();
+        const last = Number(pageViewDedupe.get(key) || 0);
+        if (Number.isFinite(last) && last > 0 && (now - last) < pageViewDedupeTtlMs) return;
+        pageViewDedupe.set(key, now);
+        const ip = String((req && (req.realIP || req.ip)) || '').trim();
+        const ua = String((req && req.headers && req.headers['user-agent']) || '').trim();
+        (async () => {
+            try {
+                const { getCollection } = require('./mongodbClient');
+                const col = await getCollection('page_views');
+                if (!col || typeof col.insertOne !== 'function') return;
+                let geo = null;
+                try {
+                    const geoPromise = geoLookupIp(ip);
+                    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+                    geo = await Promise.race([geoPromise, timeout]);
+                } catch (_) { geo = null; }
+                const doc = { path: p, clientId: cid, ip, ua, createdAt: new Date() };
+                if (geo && (geo.city || geo.region || geo.country)) {
+                    doc.city = geo.city || '';
+                    doc.region = geo.region || '';
+                    doc.country = geo.country || '';
+                    if (typeof geo.lat === 'number') doc.lat = geo.lat;
+                    if (typeof geo.lon === 'number') doc.lon = geo.lon;
+                    doc.geoSource = geo.source || '';
+                }
+                await col.insertOne(doc);
+            } catch (_) {}
+        })();
+    } catch (_) {}
+};
+
+app.post('/api/online/ping', async (req, res) => {
+    try {
+        pruneOnlinePresence();
+        prunePageViewDedupe();
+        let body = (req && req.body && typeof req.body === 'object') ? req.body : null;
+        if (!body || typeof body !== 'object') {
+            const ct = String((req && req.headers && req.headers['content-type']) || '').toLowerCase();
+            if (ct.includes('application/json')) {
+                body = await readJsonBody(req);
+            }
+        }
+        body = (body && typeof body === 'object') ? body : {};
+        updateOnlinePresence(body.clientId, body.path);
+        insertPageViewIfNeeded(body.clientId, body.path, req);
+    } catch (_) {}
+    return res.json({ ok: true });
+});
+
+app.get('/api/online/stats', requireAdmin, (req, res) => {
+    try {
+        pruneOnlinePresence();
+        const now = Date.now();
+        let total = 0;
+        const byPath = {};
+        for (const v of onlinePresence.values()) {
+            if (!v || typeof v.lastSeen !== 'number' || (now - v.lastSeen) > onlinePresenceTtlMs) continue;
+            total += 1;
+            const p = String(v.path || '').trim() || '/';
+            byPath[p] = (byPath[p] || 0) + 1;
+        }
+        return res.json({ online: total, byPath });
+    } catch (e) {
+        return res.json({ online: 0, byPath: {} });
+    }
+});
 
 // Helper: Hash password (SHA-256)
 function hashPassword(password) {
@@ -1387,19 +2172,71 @@ async function ensureRefilLink(identifier, correlationID, req) {
 
 async function geoLookupIp(ipRaw) {
   try {
-    const ip = String(ipRaw || '').split(',')[0].replace('::ffff:', '').trim();
+    let ip = String(ipRaw || '').split(',')[0].trim();
+    ip = ip.replace('::ffff:', '').trim();
+    if (ip.startsWith('[') && ip.includes(']')) {
+      ip = ip.slice(1, ip.indexOf(']')).trim();
+    }
+    if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) {
+      ip = ip.split(':')[0].trim();
+    }
     if (!ip || ip === 'unknown') return null;
-    // Use ip-api.com (free, 45 req/min) - more reliable than ipapi.co free tier
-    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    
-    if (data.status === 'fail') return null;
-
-    const city = String(data.city || '').trim();
-    const region = String(data.regionName || data.region || '').trim();
-    const country = String(data.country || '').trim();
-    return { city, region, country, source: 'ip-api.com' };
+    if (ip === '::1' || ip === '127.0.0.1') return null;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(ip)) return null;
+    const cached = geoCache.get(ip);
+    if (cached && typeof cached.ts === 'number' && (Date.now() - cached.ts) < geoCacheTtlMs) {
+      return cached.geo || null;
+    }
+    const axios = require('axios');
+    const tryIpApi = async () => {
+      const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,regionName,city,lat,lon`;
+      const resp = await axios.get(url, { timeout: 2500, validateStatus: () => true });
+      const data = resp && resp.data ? resp.data : null;
+      if (!data || data.status === 'fail') return null;
+      const city = String(data.city || '').trim();
+      const region = String(data.regionName || data.region || '').trim();
+      const country = String(data.country || '').trim();
+      const lat = Number.isFinite(Number(data.lat)) ? Number(data.lat) : null;
+      const lon = Number.isFinite(Number(data.lon)) ? Number(data.lon) : null;
+      if (!city && !region && !country) return null;
+      return { city, region, country, lat, lon, source: 'ip-api.com' };
+    };
+    const tryIpApiCo = async () => {
+      const url = `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
+      const resp = await axios.get(url, { timeout: 2500, validateStatus: () => true });
+      const data = resp && resp.data ? resp.data : null;
+      if (!data || data.error) return null;
+      const city = String(data.city || '').trim();
+      const region = String(data.region || '').trim();
+      const country = String(data.country_name || data.country || '').trim();
+      const lat = Number.isFinite(Number(data.latitude)) ? Number(data.latitude) : null;
+      const lon = Number.isFinite(Number(data.longitude)) ? Number(data.longitude) : null;
+      if (!city && !region && !country) return null;
+      return { city, region, country, lat, lon, source: 'ipapi.co' };
+    };
+    const tryIpWhoIs = async () => {
+      const url = `https://ipwho.is/${encodeURIComponent(ip)}?fields=success,city,region,country,latitude,longitude`;
+      const resp = await axios.get(url, { timeout: 2500, validateStatus: () => true });
+      const data = resp && resp.data ? resp.data : null;
+      if (!data || data.success !== true) return null;
+      const city = String(data.city || '').trim();
+      const region = String(data.region || '').trim();
+      const country = String(data.country || '').trim();
+      const lat = Number.isFinite(Number(data.latitude)) ? Number(data.latitude) : null;
+      const lon = Number.isFinite(Number(data.longitude)) ? Number(data.longitude) : null;
+      if (!city && !region && !country) return null;
+      return { city, region, country, lat, lon, source: 'ipwho.is' };
+    };
+    let out = null;
+    try { out = await tryIpApi(); } catch (_) { out = null; }
+    if (!out) {
+      try { out = await tryIpApiCo(); } catch (_) { out = null; }
+    }
+    if (!out) {
+      try { out = await tryIpWhoIs(); } catch (_) { out = null; }
+    }
+    geoCache.set(ip, { ts: Date.now(), geo: out });
+    return out;
   } catch (_) { return null; }
 }
 
@@ -1988,6 +2825,129 @@ app.get('/checkout', (req, res) => {
     });
 });
 
+app.get('/pix', async (req, res) => {
+  try {
+    const identifier = String(req.query?.identifier || '').trim();
+    const correlationID = String(req.query?.correlationID || '').trim();
+    if (!identifier && !correlationID) {
+      res.status(400).type('text/plain').send('Parâmetros ausentes.');
+      return;
+    }
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (identifier) { conds.push({ identifier }); conds.push({ 'woovi.identifier': identifier }); }
+    if (correlationID) conds.push({ correlationID });
+    const order = await col.findOne(conds.length ? { $or: conds } : {});
+    if (!order) {
+      res.status(404).type('text/plain').send('Pedido não encontrado.');
+      return;
+    }
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const centsToBRL = (c) => {
+      const n = Number(c);
+      if (!Number.isFinite(n)) return 'R$ 0,00';
+      const val = (n / 100);
+      return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+
+    const woovi = (order && order.woovi && typeof order.woovi === 'object') ? order.woovi : {};
+    const pix = (woovi && woovi.paymentMethods && woovi.paymentMethods.pix && typeof woovi.paymentMethods.pix === 'object') ? woovi.paymentMethods.pix : {};
+    const brCode = safe(pix.brCode || woovi.brCode || '');
+    const qrCodeImage = safe(pix.qrCodeImage || woovi.qrCodeImage || '');
+    const valueLabel = centsToBRL(order && order.valueCents);
+    const masked = (function () {
+      if (!brCode) return '';
+      if (brCode.length <= 36) return brCode;
+      return `${brCode.slice(0, 16)}…${brCode.slice(-16)}`;
+    })();
+
+    const html = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Pix - Agência Oppus</title>
+</head>
+<body style="margin:0;padding:24px;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
+    <div style="padding:18px 20px;text-align:center;background:#111827;color:#ffffff;">
+      <img src="/images/logo.png" alt="Agência Oppus" style="height:42px;width:auto;display:inline-block;" onerror="this.style.display='none'">
+      <div style="margin-top:8px;font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>
+    </div>
+    <div style="padding:0 20px 20px 20px;">
+      <div style="font-size:18px;font-weight:800;margin:0 0 6px 0;">Pagamento via Pix</div>
+      <div style="font-size:13px;color:#374151;margin:0 0 14px 0;">Valor do Pix: <strong>${esc(valueLabel)}</strong></div>
+      ${qrCodeImage ? `<div style="text-align:center;margin:0 0 14px 0;"><img src="${esc(qrCodeImage)}" alt="QR Code Pix" style="width:240px;height:240px;max-width:100%;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;"></div>` : ''}
+      ${brCode ? `<div style="font-size:12px;color:#374151;margin:0 0 8px 0;">Código Pix (copia e cola)</div>
+      <div style="padding:12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.5;color:#052e16;word-break:break-all;margin:0 0 10px 0;">
+        <span id="maskedCode">${esc(masked)}</span>
+        <span id="fullCode" style="display:none;">${esc(brCode)}</span>
+      </div>
+      <button id="toggleBtn" type="button" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #e5e7eb;background:#ffffff;font-weight:800;cursor:pointer;margin:0 0 10px 0;">Mostrar código completo</button>
+      <button id="copyBtn" type="button" style="width:100%;padding:12px 14px;border-radius:10px;border:0;background:#2563eb;color:#ffffff;font-weight:900;cursor:pointer;">Copiar código Pix</button>
+      <div id="hint" style="margin-top:10px;font-size:12px;color:#6b7280;text-align:center;">Se o botão não funcionar, selecione o código e copie.</div>
+      <textarea id="codeArea" readonly style="position:absolute;left:-9999px;top:-9999px;">${esc(brCode)}</textarea>
+      <script>
+        (function(){
+          var toggleBtn = document.getElementById('toggleBtn');
+          var masked = document.getElementById('maskedCode');
+          var full = document.getElementById('fullCode');
+          var copyBtn = document.getElementById('copyBtn');
+          var codeArea = document.getElementById('codeArea');
+          var hint = document.getElementById('hint');
+          var showing = false;
+          if (toggleBtn && masked && full) {
+            toggleBtn.addEventListener('click', function(){
+              showing = !showing;
+              try {
+                masked.style.display = showing ? 'none' : 'inline';
+                full.style.display = showing ? 'inline' : 'none';
+                toggleBtn.textContent = showing ? 'Ocultar código' : 'Mostrar código completo';
+              } catch(e){}
+            });
+          }
+          if (copyBtn && codeArea) {
+            copyBtn.addEventListener('click', function(){
+              try {
+                var code = codeArea.value || '';
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  navigator.clipboard.writeText(code);
+                } else {
+                  codeArea.focus();
+                  codeArea.select();
+                  document.execCommand('copy');
+                }
+                copyBtn.textContent = 'Pix copiado';
+                if (hint) hint.textContent = 'Código copiado. Cole no app do seu banco.';
+                setTimeout(function(){ try { copyBtn.textContent = 'Copiar código Pix'; } catch(e){} }, 1600);
+              } catch(e) {
+                if (hint) hint.textContent = 'Não foi possível copiar automaticamente. Selecione o código e copie.';
+              }
+            });
+          }
+        })();
+      </script>` : `<div style="padding:12px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;color:#991b1b;">Código Pix indisponível neste pedido.</div>`}
+    </div>
+  </div>
+</body>
+</html>`;
+    res.type('text/html').send(html);
+  } catch (e) {
+    res.status(500).type('text/plain').send('Erro ao abrir Pix.');
+  }
+});
+
 // Página Engajamento (duplicada da checkout até plataforma)
 app.get('/engajamento', (req, res) => {
   console.log('📈 Acessando rota /engajamento');
@@ -2020,6 +2980,38 @@ app.get('/engajamento-novo', (req, res) => {
   });
 });
 
+const trackPageView = (req, path) => {
+  try {
+    const p = String(path || '').trim();
+    if (!p) return;
+    const ip = String((req && (req.realIP || req.ip)) || '').trim();
+    const ua = String((req && req.headers && req.headers['user-agent']) || '').trim();
+    (async () => {
+      try {
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('page_views');
+        if (!col || typeof col.insertOne !== 'function') return;
+        let geo = null;
+        try {
+          const geoPromise = geoLookupIp(ip);
+          const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+          geo = await Promise.race([geoPromise, timeout]);
+        } catch (_) { geo = null; }
+        const doc = { path: p, ip, ua, createdAt: new Date() };
+        if (geo && (geo.city || geo.region || geo.country)) {
+          doc.city = geo.city || '';
+          doc.region = geo.region || '';
+          doc.country = geo.country || '';
+          if (typeof geo.lat === 'number') doc.lat = geo.lat;
+          if (typeof geo.lon === 'number') doc.lon = geo.lon;
+          doc.geoSource = geo.source || '';
+        }
+        await col.insertOne(doc);
+      } catch (_) {}
+    })();
+  } catch (_) {}
+};
+
 // Página Serviços (três serviços iguais ao principal)
 app.get('/servicos', (req, res) => {
   console.log('🧩 Acessando rota /servicos');
@@ -2036,6 +3028,7 @@ app.get('/servicos', (req, res) => {
 // Página Serviços Instagram (cópia do checkout)
 app.get('/servicos-instagram', (req, res) => {
   console.log('📸 Acessando rota /servicos-instagram');
+  trackPageView(req, '/servicos-instagram');
   res.render('servicos-instagram', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
     queryParams: req.query 
@@ -2052,6 +3045,7 @@ app.get('/servicos-instagram', (req, res) => {
 // Página Serviços Visualizações (baseada em servicos-curtidas)
 app.get('/servicos-visualizacoes', (req, res) => {
   console.log('▶️ Acessando rota /servicos-visualizacoes');
+  trackPageView(req, '/servicos-visualizacoes');
   res.render('servicos-visualizacoes', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
     queryParams: req.query 
@@ -2068,6 +3062,7 @@ app.get('/servicos-visualizacoes', (req, res) => {
 // Página Serviços Curtidas (estrutura similar à de serviços Instagram)
 app.get('/servicos-curtidas', (req, res) => {
   console.log('❤️ Acessando rota /servicos-curtidas');
+  trackPageView(req, '/servicos-curtidas');
   res.render('servicos-curtidas', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
     queryParams: req.query 
@@ -2081,9 +3076,113 @@ app.get('/servicos-curtidas', (req, res) => {
   });
 });
 
+// API: agregação de geolocalização para painel
+app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const pageCol = await getCollection('page_views');
+    const orderCol = await getCollection('checkout_orders');
+    const validatedCol = await getCollection('validated_insta_users');
+
+    const safeStr = (v) => String(v == null ? '' : v).trim();
+    const geoKey = (g) => {
+      const city = safeStr(g && g.city);
+      const region = safeStr(g && g.region);
+      const country = safeStr(g && g.country);
+      const lat = (g && typeof g.lat === 'number') ? g.lat : null;
+      const lon = (g && typeof g.lon === 'number') ? g.lon : null;
+      return `${city}|${region}|${country}|${lat == null ? '' : lat}|${lon == null ? '' : lon}`;
+    };
+    const addGeoCount = (map, g, c) => {
+      const city = safeStr(g && g.city);
+      const region = safeStr(g && g.region);
+      const country = safeStr(g && g.country);
+      if (!city && !region && !country) return;
+      const key = geoKey(g);
+      const cur = map.get(key) || { city, region, country, lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null), count: 0 };
+      cur.count += Number(c || 0) || 0;
+      map.set(key, cur);
+    };
+    const mapToSorted = (map) => Array.from(map.values()).sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 1000);
+
+    const computeFromRecent = async ({ col, sortField, limit, getGeoFromDoc, getIpFromDoc }) => {
+      const geoMap = new Map();
+      const ipCount = new Map();
+      const cursor = col.find({}, { projection: { ip: 1, city: 1, region: 1, country: 1, lat: 1, lon: 1, geolocation: 1, checkedAt: 1, createdAt: 1 } })
+        .sort({ [sortField]: -1 })
+        .limit(limit);
+      const docs = await cursor.toArray();
+      for (const d of (Array.isArray(docs) ? docs : [])) {
+        const g = getGeoFromDoc(d);
+        if (g && (safeStr(g.city) || safeStr(g.region) || safeStr(g.country))) {
+          addGeoCount(geoMap, g, 1);
+          continue;
+        }
+        const ip = safeStr(getIpFromDoc(d));
+        if (!ip) continue;
+        ipCount.set(ip, (ipCount.get(ip) || 0) + 1);
+      }
+      const topIps = Array.from(ipCount.entries()).sort((a, b) => b[1] - a[1]).slice(0, 180);
+      for (const [ip, cnt] of topIps) {
+        let g = null;
+        try { g = await geoLookupIp(ip); } catch (_) { g = null; }
+        if (!g) continue;
+        addGeoCount(geoMap, g, cnt);
+      }
+      return mapToSorted(geoMap);
+    };
+
+    const visits = await computeFromRecent({
+      col: pageCol,
+      sortField: 'createdAt',
+      limit: 8000,
+      getGeoFromDoc: (d) => ({
+        city: safeStr(d && d.city),
+        region: safeStr(d && d.region),
+        country: safeStr(d && d.country),
+        lat: (d && typeof d.lat === 'number') ? d.lat : null,
+        lon: (d && typeof d.lon === 'number') ? d.lon : null
+      }),
+      getIpFromDoc: (d) => (d && d.ip) ? d.ip : ''
+    });
+
+    const profilesFromOrders = await computeFromRecent({
+      col: orderCol,
+      sortField: 'createdAt',
+      limit: 6000,
+      getGeoFromDoc: (d) => {
+        const g = d && d.geolocation && typeof d.geolocation === 'object' ? d.geolocation : null;
+        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null) } : null;
+      },
+      getIpFromDoc: (d) => (d && (d.ip || d.realIP)) ? (d.ip || d.realIP) : ''
+    });
+
+    const profilesFromValidated = await computeFromRecent({
+      col: validatedCol,
+      sortField: 'checkedAt',
+      limit: 6000,
+      getGeoFromDoc: (d) => {
+        const g = d && d.geolocation && typeof d.geolocation === 'object' ? d.geolocation : null;
+        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null) } : null;
+      },
+      getIpFromDoc: (d) => (d && d.ip) ? d.ip : ''
+    });
+
+    const profMap = new Map();
+    for (const r of profilesFromOrders) addGeoCount(profMap, r, r.count);
+    for (const r of profilesFromValidated) addGeoCount(profMap, r, r.count);
+    const profiles = mapToSorted(profMap);
+
+    res.json({ ok: true, visits, profiles });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // Página de Refil
-app.get('/refil', async (req, res) => {
-  console.log('🔁 Acessando rota /refil');
+const refilPageHandler = (fromPath) => async (req, res) => {
+  const effectiveFromPath = (req && req.__refilFromPath) ? String(req.__refilFromPath) : fromPath;
+  console.log(`🔁 Acessando rota ${effectiveFromPath}`);
   const normalizeRefilToken = (v) => String(v || '').trim().replace(/[^0-9a-z]/gi, '');
   let token = normalizeRefilToken(req.query.token || '');
   const phoneRaw = String(req.query.phone || '').trim();
@@ -2401,7 +3500,7 @@ app.get('/refil', async (req, res) => {
     } catch(_) {}
   } catch(_) {}
   if (!(req.session && req.session.refilAccessAllowed)) {
-    const from = '/refil';
+    const from = effectiveFromPath;
     const qs = token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`;
     return res.redirect(`/restrito?${qs}`);
   }
@@ -2575,7 +3674,9 @@ app.get('/refil', async (req, res) => {
     res.type('text/html');
     res.send(html);
   });
-});
+};
+app.get('/refil', refilPageHandler('/refil'));
+app.get(['/refil2', '/refil2/'], refilPageHandler('/refil2'));
 
 // Rota antiga de refil removida em favor da nova implementação (ver final do arquivo)
 
@@ -2646,7 +3747,29 @@ app.post('/api/efi/card-charge', async (req, res) => {
         let validatedPriceCents = null;
 
         // Tenta validar TODOS os pedidos usando pricing.js
-        const verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        let verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        if (!verification.isValid) {
+            try {
+                const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+                const couponCode = normalizeCouponCode(couponCodeRaw);
+                if (couponCode) {
+                    const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    if (eligibility && eligibility.ok && eligibility.coupon) {
+                        const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+                        const rate = pct > 0 ? (pct / 100) : 0;
+                        if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+                            const expected = Number(verification.expectedPrice);
+                            const discountVal = Math.round(expected * rate);
+                            const discountedExpected = Math.max(0, expected - discountVal);
+                            if (Number(total_cents) === discountedExpected) {
+                                verification = { isValid: true, matchedPrice: Number(total_cents), expectedPrice: Number(total_cents), mismatchDetails: null };
+                            }
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
         
         if (verification.isValid) {
              // Preço validado com sucesso
@@ -2902,6 +4025,11 @@ app.post('/api/efi/card-charge', async (req, res) => {
             const insertResult = await col.insertOne(record);
             try { record._id = insertResult?.insertedId; } catch (_) {}
             console.log('🗃️ MongoDB: pedido cartão persistido (Efí charge_id=', charge.data.charge_id, ')');
+            Promise.resolve()
+              .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
+              .catch((e) => {
+                try { console.warn('⚠️ Falha ao enviar email SMTP (pedido cartão Efí):', e && e.message ? e.message : e); } catch (_) {}
+              });
             try {
               if (sysStatus === 'pago') {
                 await processOrderFulfillment(record, col, req);
@@ -3021,11 +4149,33 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         const tipoVal = addInfoMap['tipo_servico'] || '';
         const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
 
-        const verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        let verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+        if (!verification.isValid) {
+            try {
+                const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+                const couponCode = normalizeCouponCode(couponCodeRaw);
+                if (couponCode) {
+                    const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    if (eligibility && eligibility.ok && eligibility.coupon) {
+                        const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+                        const rate = pct > 0 ? (pct / 100) : 0;
+                        if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+                            const expected = Number(verification.expectedPrice);
+                            const discountVal = Math.round(expected * rate);
+                            const discountedExpected = Math.max(0, expected - discountVal);
+                            if (Number(total_cents) === discountedExpected) {
+                                verification = { isValid: true, matchedPrice: Number(total_cents), expectedPrice: Number(total_cents), mismatchDetails: null };
+                            }
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
         if (!verification.isValid) {
             return res.status(400).json({ error: 'invalid_amount', message: 'Valor divergente do esperado.' , details: verification.mismatchDetails });
         }
-        validatedValueCents = Number(verification.expectedPrice || 0);
+        validatedValueCents = Number(verification.matchedPrice || verification.expectedPrice || 0);
         // Política de limite de parcelas por ticket (valor final)
         const policyCap = (function (v) {
             const n = Number(v) || 0;
@@ -3039,13 +4189,6 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         const effectiveCap = Math.max(1, Math.min(installmentsMaxEnv, policyCap));
         if (installmentsSafe > effectiveCap) {
             return res.status(400).json({ error: 'installments_not_allowed', message: `Parcelamento máximo permitido para este valor é ${effectiveCap}x.` });
-        }
-        if (!verification.isValid) {
-            console.warn(`⚠️ Bloqueio de Pagamento (Pagar.me Cartão): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${total_cents}, Esperado=${verification.expectedPrice}`);
-            return res.status(400).json({
-                error: 'value_mismatch',
-                message: 'O valor do pagamento não corresponde ao preço oficial calculado pelo sistema.'
-            });
         }
         const validatedPriceCents = verification.matchedPrice;
         if (!Number.isFinite(Number(validatedPriceCents)) || Number(validatedPriceCents) < 100) {
@@ -3428,6 +4571,11 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         const col = await getCollection('checkout_orders');
         const insertResult = await col.insertOne(record);
         try { record._id = insertResult?.insertedId; } catch (_) {}
+        Promise.resolve()
+            .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
+            .catch((e) => {
+                try { console.warn('⚠️ Falha ao enviar email SMTP (pedido cartão Pagar.me):', e && e.message ? e.message : e); } catch (_) {}
+            });
 
         try {
             if (sysStatus === 'pago' && !pagarmeKeys.useTest) {
@@ -3618,6 +4766,31 @@ app.post('/api/woovi/charge', async (req, res) => {
             // Preço validado com sucesso (bate com standard ou desconto)
             validatedPriceCents = verification.matchedPrice;
         } else {
+            let acceptedByCoupon = false;
+            try {
+                const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+                const couponCode = normalizeCouponCode(couponCodeRaw);
+                if (couponCode) {
+                    const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    if (eligibility && eligibility.ok && eligibility.coupon) {
+                        const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+                        const rate = pct > 0 ? (pct / 100) : 0;
+                        if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+                            const expected = Number(verification.expectedPrice);
+                            const discountVal = Math.round(expected * rate);
+                            const discountedExpected = Math.max(0, expected - discountVal);
+                            if (vNum === discountedExpected) {
+                                validatedPriceCents = vNum;
+                                acceptedByCoupon = true;
+                            }
+                        }
+                    }
+                }
+            } catch (_) {}
+            if (acceptedByCoupon) {
+                console.log('DEBUG Woovi Coupon Accepted:', { value: vNum, expectedFull: verification.expectedPrice });
+            } else {
             // Se a validação falhar, rejeitamos o pedido para segurança
             console.warn(`⚠️ Bloqueio de Pagamento (Woovi): Valor incorreto. Tipo=${tipoVal}, Qtd=${qtdVal}, Valor=${value}, Esperado=${verification.expectedPrice}`);
             // Log detalhado para debug
@@ -3631,6 +4804,7 @@ app.post('/api/woovi/charge', async (req, res) => {
                 error: 'value_mismatch', 
                 message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.expectedPrice}).` 
             });
+            }
         }
     }
 
@@ -3815,7 +4989,7 @@ app.post('/api/woovi/charge', async (req, res) => {
                 geolocation,
 
                 // Demais campos já utilizados pelo app
-                valueCents: value,
+                valueCents: finalChargeValue,
                 expectedValueCents: validatedPriceCents,
                 customer: customerPayload,
                 additionalInfo: addInfoArr,
@@ -3842,6 +5016,16 @@ app.post('/api/woovi/charge', async (req, res) => {
             const col = await getCollection('checkout_orders');
             const insertResult = await col.insertOne(record);
             console.log('🗃️ MongoDB: pedido do checkout persistido (insertedId=', insertResult.insertedId, ')', 'CorrID:', chargeCorrelationID, 'WooviChargeID:', charge?.id);
+            Promise.resolve()
+                .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
+                .catch((e) => {
+                    try { console.warn('⚠️ Falha ao enviar email SMTP (pedido criado):', e && e.message ? e.message : e); } catch (_) {}
+                });
+            Promise.resolve()
+                .then(() => sendPixOrderEmailToCustomer({ record }))
+                .catch((e) => {
+                    try { console.warn('⚠️ Falha ao enviar email SMTP (pix para cliente):', e && e.message ? e.message : e); } catch (_) {}
+                });
         } catch (saveErr) {
             console.error('⚠️ Falha ao persistir pedido no MongoDB:', saveErr?.message || saveErr);
         }
@@ -3858,6 +5042,54 @@ app.post('/api/woovi/charge', async (req, res) => {
         res.status(status).json({ error: 'woovi_error', message: msg, details });
     }
 });
+
+const maybeSendPaymentApprovedEmail = async (record, col) => {
+    try {
+        if (!record || !col || !record._id) return;
+        const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
+        const to = String(customer.email || '').trim();
+        if (!to) return;
+
+        const isPaid = (function () {
+            const st = String(record.status || '').toLowerCase();
+            const wst = String(record?.woovi?.status || '').toLowerCase();
+            if (st === 'pago' || wst === 'pago') return true;
+            if (record?.paidAt || record?.woovi?.paidAt || record?.payment?.paidAt) return true;
+            const efiSt = String(record?.efi?.status || '').toLowerCase();
+            if (efiSt === 'paid' || efiSt === 'settled') return true;
+            const pgSt = String(record?.pagarme?.status || '').toLowerCase();
+            if (/(paid|settled|captured|authorized|succeeded|aprovado|confirmado)/i.test(pgSt)) return true;
+            return false;
+        })();
+        if (!isPaid) return;
+
+        if (record?.emails?.paymentApprovedSentAt) return;
+
+        const nowIso = new Date().toISOString();
+        const lockFilter = {
+            _id: record._id,
+            $and: [
+                { $or: [{ 'emails.paymentApprovedSentAt': { $exists: false } }, { 'emails.paymentApprovedSentAt': null }, { 'emails.paymentApprovedSentAt': '' }] },
+                { $or: [{ 'emails.paymentApprovedLockAt': { $exists: false } }, { 'emails.paymentApprovedLockAt': null }, { 'emails.paymentApprovedLockAt': '' }] }
+            ]
+        };
+        const lockRes = await col.updateOne(lockFilter, { $set: { 'emails.paymentApprovedLockAt': nowIso } });
+        if (!lockRes || !lockRes.matchedCount) return;
+
+        try {
+            await sendPaymentApprovedEmailToCustomer({ record });
+            await col.updateOne(
+                { _id: record._id, 'emails.paymentApprovedLockAt': nowIso },
+                { $set: { 'emails.paymentApprovedSentAt': new Date().toISOString() }, $unset: { 'emails.paymentApprovedLockAt': '' } }
+            );
+        } catch (e) {
+            try {
+                await col.updateOne({ _id: record._id, 'emails.paymentApprovedLockAt': nowIso }, { $unset: { 'emails.paymentApprovedLockAt': '' } });
+            } catch (_) {}
+            throw e;
+        }
+    } catch (_) {}
+};
 
 // Função auxiliar para processar o envio de pedidos (Fama24h/FornecedorSocial)
 async function processOrderFulfillment(record, col, req) {
@@ -3884,6 +5116,7 @@ async function processOrderFulfillment(record, col, req) {
     
     const instaUser = record?.instagramUsername || record?.instauser || '';
     const identifier = record?.identifier;
+    try { await maybeSendPaymentApprovedEmail(record, col); } catch (_) {}
     try {
       await consumeCouponUsageFromOrder(record, { orderIdentifier: identifier, correlationID: record?.correlationID });
     } catch (_) {}
@@ -9252,6 +10485,17 @@ app.post('/api/refil/history', async (req, res) => {
     if (usernameInput && /^@?thiagomanoel$/i.test(usernameInput)) {
       return res.json({ ok: true, history: [] });
     }
+    if (usernameInput && /^@?thiagomanoel_porsche$/i.test(usernameInput)) {
+      try {
+        const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`^@?${esc(usernameInput)}$`, 'i');
+        await col.updateMany(
+          { $or: [{ instauser: re }, { instagramUsername: re }, { 'additionalInfoMap.instagram_username': re }, { 'additionalInfoMapPaid.instagram_username': re }] },
+          { $set: { refillHistory: [] } }
+        );
+      } catch (_) {}
+      return res.json({ ok: true, history: [] });
+    }
     return res.json({ ok: true, history });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -9590,6 +10834,392 @@ app.post('/api/refil/preview', async (req, res) => {
     if (!username) {
       return res.status(400).json({ ok: false, error: 'missing_username', message: 'Informe o @ do Instagram' });
     }
+    const srcRaw = String((req.body && (req.body.source || req.body.from || req.body.origin || req.body.page)) || '').trim();
+    const src = srcRaw.toLowerCase().replace(/^\/+/, '');
+    const refererRaw = String(req.get('Referer') || req.headers['referer'] || '').trim();
+    let refererPath = '';
+    try { refererPath = refererRaw ? String(new URL(refererRaw).pathname || '') : ''; } catch (_) { refererPath = refererRaw; }
+    const shouldWebhook = src === 'refil2' || /(^|\/)refil2(\/|$)/i.test(refererPath);
+    let webhook = null;
+    if (shouldWebhook && false) {
+      const startedAt = Date.now();
+      const host = 'webhook.atendimento.info';
+      const path = '/webhook/recuperacao-fama24h';
+      const url = `https://${host}${path}`;
+      const params = { username, perfil: username };
+      const attempts = [];
+      const envIp = String(process.env.WEBHOOK_ATENDIMENTO_IP || '').trim();
+      const debugMode = !!(req && ((req.query && String(req.query.debug || '') === '1') || (req.body && (req.body.debug === true || req.body.debug === 1 || req.body.debugWebhook === true || req.body.debugWebhook === 1))));
+      const tryParseJson = (val) => {
+        if (val == null) return { ok: false, value: val };
+        if (typeof val === 'object') return { ok: true, value: val };
+        if (typeof val !== 'string') return { ok: false, value: val };
+        const s = String(val || '').trim();
+        if (!s) return { ok: false, value: val };
+        if (!(s.startsWith('{') || s.startsWith('['))) return { ok: false, value: val };
+        try { return { ok: true, value: JSON.parse(s) }; } catch (_) { return { ok: false, value: val }; }
+      };
+      const parseIntLoose = (v) => {
+        if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+        if (typeof v === 'string') {
+          const digits = v.replace(/[^\d]/g, '');
+          if (!digits) return null;
+          const n = Number(digits);
+          return Number.isFinite(n) ? n : null;
+        }
+        return null;
+      };
+      const pickDeepValue = (root, keySet) => {
+        try {
+          const seen = new WeakSet();
+          const q = [{ v: root, depth: 0 }];
+          while (q.length) {
+            const cur = q.shift();
+            const v = cur.v;
+            const depth = cur.depth;
+            if (!v || typeof v !== 'object') continue;
+            if (seen.has(v)) continue;
+            seen.add(v);
+            for (const k of Object.keys(v)) {
+              const kLower = String(k || '').toLowerCase();
+              if (keySet.has(kLower)) return v[k];
+            }
+            if (depth >= 4) continue;
+            for (const k of Object.keys(v)) {
+              const next = v[k];
+              if (next && typeof next === 'object') q.push({ v: next, depth: depth + 1 });
+            }
+          }
+        } catch (_) {}
+        return null;
+      };
+      const formatWebhookSuccess = (payloadRaw) => {
+        const parsed = tryParseJson(payloadRaw);
+        const obj = parsed.ok ? parsed.value : payloadRaw;
+        if (!obj || typeof obj !== 'object') return null;
+        const lowerHasError = () => {
+          const err = String(obj.error || obj.err || obj.message || '').toLowerCase();
+          if (obj.ok === false || obj.success === false) return true;
+          if (String(obj.status || '').toLowerCase() === 'error') return true;
+          if (err.includes('erro') || err.includes('error') || err.includes('falha') || err.includes('failed')) return true;
+          return false;
+        };
+        if (lowerHasError()) return null;
+        const initialKeys = new Set(['quantidade_inicial', 'quantidadeinicial', 'qtd_inicial', 'qtdinicial', 'inicial', 'initial', 'initialqty', 'initial_qty', 'base', 'baseqty', 'base_qty', 'initialfollowers', 'initial_followers', 'base_followers', 'basefollowers']);
+        const currentKeys = new Set(['quantidade_atual', 'quantidadeatual', 'qtd_atual', 'qtdatual', 'atual', 'current', 'currentqty', 'current_qty', 'currentfollowers', 'current_followers']);
+        const dropKeys = new Set(['quantidade_de_queda', 'quantidadedequeda', 'qtd_queda', 'qtdqueda', 'queda', 'drop', 'dropqty', 'drop_qty', 'deficit', 'faltando', 'falta']);
+        const initial = parseIntLoose(pickDeepValue(obj, initialKeys));
+        const current = parseIntLoose(pickDeepValue(obj, currentKeys));
+        let drop = parseIntLoose(pickDeepValue(obj, dropKeys));
+        if (drop == null && initial != null && current != null) drop = Math.max(0, initial - current);
+        if (initial == null && current == null && drop == null) return null;
+        return {
+          ok: true,
+          status: 'initiated',
+          message: 'Reposição iniciada',
+          data: {
+            quantidade_inicial: initial,
+            quantidade_atual: current,
+            quantidade_de_queda: drop
+          },
+          raw: obj
+        };
+      };
+      const sendUpstream = (status, data, headers) => {
+        const s = (typeof status === 'number' && Number.isFinite(status)) ? status : 200;
+        const ct = String((headers && (headers['content-type'] || headers['Content-Type'])) || '').toLowerCase();
+        res.status(s);
+        if (data == null) return res.send('');
+        if (Buffer.isBuffer(data)) return res.send(data);
+        if (typeof data === 'string') {
+          if (ct.includes('application/json')) return res.type('application/json').send(data);
+          return res.send(data);
+        }
+        return res.json(data);
+      };
+      const resolveHostViaCloudflareDoh = async () => {
+        try {
+          const https = require('https');
+          const httpsAgent = new https.Agent({ servername: 'cloudflare-dns.com' });
+          const dohResp = await axios.get('https://1.1.1.1/dns-query', {
+            params: { name: host, type: 'A' },
+            timeout: 7000,
+            validateStatus: () => true,
+            family: 4,
+            httpsAgent,
+            headers: { 'Accept': 'application/dns-json', 'Host': 'cloudflare-dns.com' }
+          });
+          const data = dohResp && dohResp.data ? dohResp.data : null;
+          const answers = data && Array.isArray(data.Answer) ? data.Answer : [];
+          const a = answers.find((x) => x && x.type === 1 && x.data) || null;
+          const ip = a && a.data ? String(a.data || '').trim() : '';
+          if (!ip) return null;
+          return ip;
+        } catch (_) { return null; }
+      };
+      const resolveHostViaGoogleDoh = async () => {
+        try {
+          const https = require('https');
+          const httpsAgent = new https.Agent({ servername: 'dns.google' });
+          const dohResp = await axios.get('https://8.8.8.8/resolve', {
+            params: { name: host, type: 'A' },
+            timeout: 7000,
+            validateStatus: () => true,
+            family: 4,
+            httpsAgent,
+            headers: { 'Accept': 'application/dns-json', 'Host': 'dns.google' }
+          });
+          const data = dohResp && dohResp.data ? dohResp.data : null;
+          const answers = data && Array.isArray(data.Answer) ? data.Answer : [];
+          const a = answers.find((x) => x && x.type === 1 && x.data) || null;
+          const ip = a && a.data ? String(a.data || '').trim() : '';
+          if (!ip) return null;
+          return ip;
+        } catch (_) { return null; }
+      };
+      const callWebhookByIp = async (ip, kind) => {
+        const https = require('https');
+        const httpsAgent = new https.Agent({ servername: host });
+        const ipUrl = `https://${ip}${path}`;
+        const resp = await axios.get(ipUrl, {
+          params,
+          timeout: 20000,
+          validateStatus: () => true,
+          family: 4,
+          httpsAgent,
+          headers: { 'Accept': 'application/json, text/plain, */*', 'Host': host }
+        });
+        const dur = Date.now() - startedAt;
+        attempts.push({ kind, ok: true, status: resp.status, duration_ms: dur, ip });
+        if (debugMode) {
+          webhook = {
+            ok: resp.status >= 200 && resp.status < 300,
+            status: resp.status,
+            data: resp.data,
+            debug: {
+              method: 'GET',
+              url,
+              params,
+              duration_ms: dur,
+              attempts,
+              resolved_ip: ip,
+              used_ip_url: ipUrl,
+              response_headers: {
+                'content-type': resp?.headers?.['content-type'],
+                'content-length': resp?.headers?.['content-length'],
+                'server': resp?.headers?.['server'],
+                'date': resp?.headers?.['date']
+              }
+            }
+          };
+          return res.json({ ok: true, username, webhook });
+        }
+        const formatted = (resp.status >= 200 && resp.status < 300) ? formatWebhookSuccess(resp.data) : null;
+        return sendUpstream(resp.status, formatted || resp.data, resp.headers);
+      };
+      if (envIp) {
+        try {
+          return await callWebhookByIp(envIp, 'env_ip_sni');
+        } catch (e) {
+          attempts.push({
+            kind: 'env_ip_sni',
+            ok: false,
+            ip: envIp,
+            code: e?.code || null,
+            errno: e?.errno || null,
+            syscall: e?.syscall || null,
+            hostname: e?.hostname || null,
+            message: e?.message || String(e)
+          });
+        }
+      }
+      try {
+        const resp = await axios.get(url, {
+          params,
+          timeout: 20000,
+          validateStatus: () => true,
+          family: 4,
+          headers: { 'Accept': 'application/json, text/plain, */*' }
+        });
+        const dur = Date.now() - startedAt;
+        attempts.push({ kind: 'direct', ok: true, status: resp.status, duration_ms: dur });
+        if (debugMode) {
+          webhook = {
+            ok: resp.status >= 200 && resp.status < 300,
+            status: resp.status,
+            data: resp.data,
+            debug: {
+              method: 'GET',
+              url,
+              params,
+              duration_ms: dur,
+              attempts,
+              response_headers: {
+                'content-type': resp?.headers?.['content-type'],
+                'content-length': resp?.headers?.['content-length'],
+                'server': resp?.headers?.['server'],
+                'date': resp?.headers?.['date']
+              }
+            }
+          };
+        } else {
+          const formatted = (resp.status >= 200 && resp.status < 300) ? formatWebhookSuccess(resp.data) : null;
+          return sendUpstream(resp.status, formatted || resp.data, resp.headers);
+        }
+      } catch (e) {
+        const dur1 = Date.now() - startedAt;
+        const msg1 = e?.message || String(e);
+        const code1 = e?.code || null;
+        const errno1 = e?.errno || null;
+        const syscall1 = e?.syscall || null;
+        const hostname1 = e?.hostname || null;
+        const stack1 = typeof e?.stack === 'string' ? e.stack : null;
+        attempts.push({ kind: 'direct', ok: false, duration_ms: dur1, code: code1, errno: errno1, syscall: syscall1, hostname: hostname1, message: msg1 });
+
+        let ip = null;
+        if (code1 === 'ENOTFOUND' || code1 === 'EAI_AGAIN') {
+          ip = await resolveHostViaCloudflareDoh();
+          attempts.push({ kind: 'cloudflare_doh', ok: !!ip, ip });
+          if (!ip) {
+            ip = await resolveHostViaGoogleDoh();
+            attempts.push({ kind: 'google_doh', ok: !!ip, ip });
+          }
+          if (ip) {
+            try {
+              return await callWebhookByIp(ip, 'ip_sni');
+            } catch (e2) {
+              attempts.push({
+                kind: 'ip_sni',
+                ok: false,
+                ip,
+                code: e2?.code || null,
+                errno: e2?.errno || null,
+                syscall: e2?.syscall || null,
+                hostname: e2?.hostname || null,
+                message: e2?.message || String(e2)
+              });
+            }
+          }
+        }
+
+        const dur = Date.now() - startedAt;
+        const msg = msg1;
+        const code = code1;
+        const errno = errno1;
+        const syscall = syscall1;
+        const hostname = hostname1;
+        const stack = stack1;
+        let dnsLookup = null;
+        try {
+          const dns = require('dns').promises;
+          try {
+            const r = await dns.lookup(host);
+            dnsLookup = { ok: true, host, result: r };
+          } catch (de) {
+            dnsLookup = { ok: false, host, code: de?.code || null, message: de?.message || String(de) };
+          }
+        } catch (_) {}
+        webhook = {
+          ok: false,
+          error: 'webhook_failed',
+          message: msg,
+          debug: {
+            method: 'GET',
+            url,
+            params,
+            duration_ms: dur,
+            code,
+            errno,
+            syscall,
+            hostname,
+            stack,
+            dnsLookup,
+            attempts
+          }
+        };
+      }
+      return res.status(502).json({ ok: false, error: 'webhook_failed', message: webhook && webhook.message ? webhook.message : 'Falha no webhook', debug: webhook ? webhook.debug : undefined });
+    }
+    const extractWebhookErrorMessage = (payload) => {
+      try {
+        const pickFromObj = (obj) => {
+          if (!obj || typeof obj !== 'object') return '';
+          const e1 = String(obj.error || obj.err || '').trim();
+          if (e1) return e1;
+          const okFlag = (typeof obj.ok === 'boolean') ? obj.ok : null;
+          const successFlag = (typeof obj.success === 'boolean') ? obj.success : null;
+          const statusTxt = String(obj.status || '').toLowerCase().trim();
+          const hasExplicitFailure = okFlag === false || successFlag === false || statusTxt === 'error';
+          if (hasExplicitFailure) {
+            const m1 = String(obj.message || obj.detail || obj.details || obj.reason || '').trim();
+            if (m1) return m1;
+          }
+          return '';
+        };
+        const tryNested = (obj) => {
+          const nested = [
+            obj?.api_response,
+            obj?.raw_api,
+            obj?.entry?.api_response,
+            obj?.entry?.raw_api,
+            obj?.entry
+          ].filter(Boolean);
+          for (const n of nested) {
+            const m = pickFromObj(n);
+            if (m) return m;
+          }
+          return '';
+        };
+        if (Array.isArray(payload)) {
+          for (const it of payload) {
+            const m = pickFromObj(it) || (it && typeof it === 'object' ? tryNested(it) : '');
+            if (m) return m;
+          }
+          return '';
+        }
+        if (payload && typeof payload === 'object') {
+          const m0 = pickFromObj(payload);
+          if (m0) return m0;
+          const m1 = tryNested(payload);
+          if (m1) return m1;
+          return '';
+        }
+        return '';
+      } catch (_) {
+        return '';
+      }
+    };
+    const callRefil2Webhook = async (params) => {
+      try {
+        if (!shouldWebhook) return { ok: true };
+        const host = 'webhook.atendimento.info';
+        const path = '/webhook/recuperacao-fama24h';
+        const url = `https://${host}${path}`;
+        const resp = await axios.get(url, {
+          params: params || { username, perfil: username },
+          timeout: 20000,
+          validateStatus: () => true,
+          family: 4,
+          headers: { 'Accept': 'application/json, text/plain, */*' }
+        });
+        const status = Number(resp && resp.status) || 0;
+        const is2xx = status >= 200 && status < 300;
+        const msg = extractWebhookErrorMessage(resp && resp.data);
+        if (is2xx && !msg) return { ok: true, status };
+        const lowerMsg = String(msg || '').toLowerCase();
+        const isCooldown = lowerMsg.includes('já foi reposto') || lowerMsg.includes('aguarde') || lowerMsg.includes('recentemente');
+        const httpStatus = isCooldown ? 409 : (status && !is2xx ? status : 502);
+        return { ok: false, status, httpStatus, message: msg || 'Falha ao iniciar reposição.' };
+      } catch (e) {
+        const msg = String(e?.message || e || '').trim() || 'Falha ao iniciar reposição.';
+        return { ok: false, status: 0, httpStatus: 502, message: msg };
+      }
+    };
+    const wrap = (obj) => {
+      const out = Object.assign({ username }, obj || {});
+      if (shouldWebhook) out.webhook = webhook;
+      return out;
+    };
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
     const paidOr = [
@@ -9607,7 +11237,7 @@ app.post('/api/refil/preview', async (req, res) => {
     ];
     const orders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray();
     if (!orders.length) {
-      return res.status(404).json({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para este usuário.' });
+      return res.status(404).json(wrap({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para este usuário.' }));
     }
     const followersOr = [
       { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
@@ -9620,7 +11250,7 @@ app.post('/api/refil/preview', async (req, res) => {
     ];
     const followersOrders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }, { $or: followersOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
     if (!followersOrders.length) {
-      return res.json({ ok: true, status: 'no_followers_purchase', message: 'Nenhuma compra de seguidores encontrada para este usuário.', data: { username } });
+      return res.json(wrap({ ok: true, status: 'no_followers_purchase', message: 'Nenhuma compra de seguidores encontrada para este usuário.', data: { username } }));
     }
     const order = followersOrders[0];
     const resolveQty = (o) => {
@@ -9707,12 +11337,12 @@ app.post('/api/refil/preview', async (req, res) => {
     const ip = req.realIP || req.ip || '';
     const check = await verifyInstagramProfile(username, userAgent, ip, req, res, true);
     if (!check || !check.success || !check.profile) {
-      return res.status(502).json({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
+      return res.status(502).json(wrap({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' }));
     }
     const currentFollowers = Number(check.profile.followersCount || 0);
     if (baseFollowers == null) {
       const target = qty > 0 ? (currentFollowers + qty) : currentFollowers;
-      return res.json({
+      return res.json(wrap({
         ok: true,
         status: 'no_base',
         message: 'Base de seguidores da compra não encontrada. Usando valores atuais.',
@@ -9725,33 +11355,89 @@ app.post('/api/refil/preview', async (req, res) => {
           current_followers: currentFollowers,
           deficit: 0
         }
-      });
+      }));
     }
     const targetFollowers = baseFollowers + qty;
     const deficit = Math.max(0, targetFollowers - currentFollowers);
     const MIN_DROP = 50;
     if (deficit > 0 && deficit < MIN_DROP) {
-      return res.json({
-        ok: true,
-        status: 'below_threshold',
-        message: `Queda de seguidores abaixo do mínimo para reposição (${MIN_DROP}).`,
-        data: {
-          username,
-          last_order_id: String(order._id || ''),
-          base_followers: baseFollowers,
-          qty,
-          target_followers: targetFollowers,
-          current_followers: currentFollowers,
-          deficit,
-          min_drop: MIN_DROP
-        }
-      });
+      if (shouldWebhook) {
+        return res.json(wrap({
+          ok: true,
+          status: 'initiated',
+          message: 'Reposição iniciada',
+          data: {
+            quantidade_inicial: targetFollowers,
+            quantidade_atual: currentFollowers,
+            quantidade_de_queda: deficit
+          }
+        }));
+      }
+      return res.json(wrap({
+          ok: true,
+          status: 'below_threshold',
+          message: `Queda de seguidores abaixo do mínimo para reposição (${MIN_DROP}).`,
+          data: {
+            username,
+            last_order_id: String(order._id || ''),
+            base_followers: baseFollowers,
+            qty,
+            target_followers: targetFollowers,
+            current_followers: currentFollowers,
+            deficit,
+            min_drop: MIN_DROP
+          }
+        }));
     }
     if (deficit <= 0) {
-      return res.json({
+      if (shouldWebhook) {
+        return res.json(wrap({
+          ok: true,
+          status: 'initiated',
+          message: 'Reposição iniciada',
+          data: {
+            quantidade_inicial: targetFollowers,
+            quantidade_atual: currentFollowers,
+            quantidade_de_queda: 0
+          }
+        }));
+      }
+      return res.json(wrap({
+          ok: true,
+          status: 'above_target',
+          message: 'Perfil está acima da meta da última compra. Reposição indisponível.',
+          data: {
+            username,
+            last_order_id: String(order._id || ''),
+            base_followers: baseFollowers,
+            qty,
+            target_followers: targetFollowers,
+            current_followers: currentFollowers,
+            deficit: 0,
+            above_by: Math.abs(targetFollowers - currentFollowers)
+          }
+        }));
+    }
+    if (shouldWebhook) {
+      const wr = await callRefil2Webhook({ username, perfil: username });
+      if (!wr || wr.ok === false) {
+        return res.status(Number(wr && wr.httpStatus) || 409).json(wrap({ ok: false, error: 'refil_not_allowed', message: String(wr && wr.message ? wr.message : 'Falha ao iniciar reposição.') }));
+      }
+      return res.json(wrap({
         ok: true,
-        status: 'above_target',
-        message: 'Perfil está acima da meta da última compra. Reposição indisponível.',
+        status: 'initiated',
+        message: 'Reposição iniciada',
+        data: {
+          quantidade_inicial: targetFollowers,
+          quantidade_atual: currentFollowers,
+          quantidade_de_queda: deficit
+        }
+      }));
+    }
+    return res.json(wrap({
+        ok: true,
+        status: 'deficit',
+        message: `Faltam ${deficit} seguidores para atingir a meta.`,
         data: {
           username,
           last_order_id: String(order._id || ''),
@@ -9759,25 +11445,9 @@ app.post('/api/refil/preview', async (req, res) => {
           qty,
           target_followers: targetFollowers,
           current_followers: currentFollowers,
-          deficit: 0,
-          above_by: Math.abs(targetFollowers - currentFollowers)
+          deficit
         }
-      });
-    }
-    return res.json({
-      ok: true,
-      status: 'deficit',
-      message: `Faltam ${deficit} seguidores para atingir a meta.`,
-      data: {
-        username,
-        last_order_id: String(order._id || ''),
-        base_followers: baseFollowers,
-        qty,
-        target_followers: targetFollowers,
-        current_followers: currentFollowers,
-        deficit
-      }
-    });
+      }));
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -11156,6 +12826,10 @@ app.post('/api/admin/update-private-order', requireAdmin, async (req, res) => {
                 updateSet['fornecedor_social.orderId'] = orderId;
                 updateSet['fornecedor_social.status'] = 'Pending';
                 updateUnset['fornecedor_social.error'] = '';
+            } else if (provider === 'fornecedor_social_likes') {
+                updateSet['fornecedor_social_likes.orderId'] = orderId;
+                updateSet['fornecedor_social_likes.status'] = 'created';
+                updateUnset['fornecedor_social_likes.error'] = '';
             } else if (provider === 'worldsmm_comments') {
                 updateSet['worldsmm_comments.orderId'] = orderId;
                 updateSet['worldsmm_comments.status'] = 'created';
@@ -12268,10 +13942,22 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const view = String(req.query.view || 'dashboard');
     const sessionSelectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
 
+    const paidStatusRegex = '\\b(pago|paid|settled|captured|authorized|succeeded|aprovado|confirmado)\\b';
     const paidQuery = {
       $or: [
-        { status: 'pago' },
-        { 'woovi.status': 'pago' }
+        { status: { $regex: paidStatusRegex, $options: 'i' } },
+        { 'woovi.status': { $regex: paidStatusRegex, $options: 'i' } },
+        { paidAt: { $exists: true, $ne: null } },
+        { 'woovi.paidAt': { $exists: true, $ne: null } },
+        { 'pagarme.charge_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.order_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.transaction_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.charge.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.order.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'pagarme.transaction.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { 'efi.status': { $regex: '(paid|settled)', $options: 'i' } },
+        { 'efi.charge.status': { $regex: '(paid|settled)', $options: 'i' } }
       ]
     };
 
@@ -12281,10 +13967,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
     const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
+    const parseOrderDateUTC = (v) => {
+      try {
+        if (!v) return null;
+        if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
+        const s0 = String(v).trim();
+        if (!s0) return null;
+        const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s0);
+        const d0 = new Date(hasTZ ? s0 : (s0 + 'Z'));
+        return Number.isFinite(d0.getTime()) ? d0 : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
     const matchesPeriod = (o, period) => {
-      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
       if (!dateStr) return false;
-      const orderDateUTC = new Date(dateStr);
+      const orderDateUTC = parseOrderDateUTC(dateStr);
+      if (!orderDateUTC) return false;
       const orderDateSP = toSP(orderDateUTC);
       if (period === 'all') return true;
       if (period === 'today') return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
@@ -12314,7 +14015,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       return true;
     };
 
-    if (view === 'ltv') {
+    const computeLtvData = async () => {
       const period = 'all';
       const normalizePersonKey = (v) => String(v == null ? '' : v).trim().replace(/^@+/, '').toLowerCase();
       const isTestUser = (ig, customerName) => {
@@ -12498,6 +14199,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
           createdAt: 1,
           paidAt: 1,
           woovi: 1,
+          pagarme: 1,
+          pagarme_order_id: 1,
+          pagarme_charge_id: 1,
+          pagarme_transaction_id: 1,
+          efi: 1,
+          paymentMethod: 1,
+          payment_method: 1,
+          method: 1,
           valueCents: 1,
           customer: 1,
           instagramUsername: 1,
@@ -12517,10 +14226,41 @@ app.get('/painel', requireAdmin, async (req, res) => {
       let consideredOrders = 0;
       let bumpOnlyOrders = 0;
 
+      const getPaidTotalCents = (order) => {
+        try {
+          const v0 = order && typeof order.valueCents !== 'undefined' ? Number(order.valueCents) : NaN;
+          if (Number.isFinite(v0) && v0 > 0) return v0;
+        } catch (_) {}
+        try {
+          const wv = order?.woovi?.paymentMethods?.pix?.value;
+          const v1 = typeof wv !== 'undefined' ? Number(wv) : NaN;
+          if (Number.isFinite(v1) && v1 > 0) return v1;
+        } catch (_) {}
+        try {
+          const v2 = order?.woovi?.value;
+          const n2 = typeof v2 !== 'undefined' ? Number(v2) : NaN;
+          if (Number.isFinite(n2) && n2 > 0) return n2;
+        } catch (_) {}
+        try {
+          const v3 = order?.efi?.total;
+          const n3 = typeof v3 !== 'undefined' ? Number(v3) : NaN;
+          if (Number.isFinite(n3) && n3 > 0) return n3;
+        } catch (_) {}
+        try {
+          const v4 = order?.pagarme?.amount;
+          const n4 = typeof v4 !== 'undefined' ? Number(v4) : NaN;
+          if (Number.isFinite(n4) && n4 > 0) return n4;
+        } catch (_) {}
+        return 0;
+      };
+
       for await (const o of cursor) {
         const ig = normalizeInstaUser(resolveInsta(o));
         const customerName = String(resolveCustomerName(o) || '').trim();
         if (isTestUser(ig, customerName)) continue;
+
+        const totalPaid = getPaidTotalCents(o) / 100;
+        if (!(Number.isFinite(totalPaid) && totalPaid > 0)) continue;
 
         consideredOrders += 1;
 
@@ -12538,14 +14278,6 @@ app.get('/painel', requireAdmin, async (req, res) => {
           if (!cur.phone && phoneDigits) cur.phone = `+${phoneDigits}`;
           if (!cur.email && email) cur.email = email;
 
-          let revenue = 0;
-          if (o.valueCents) revenue = Number(o.valueCents) / 100;
-          else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && o.woovi.paymentMethods.pix.value) revenue = Number(o.woovi.paymentMethods.pix.value) / 100;
-          const bumpTotalRaw = (o.additionalInfoMapPaid && o.additionalInfoMapPaid.order_bumps_total) ? o.additionalInfoMapPaid.order_bumps_total
-            : ((o.additionalInfoMap && o.additionalInfoMap.order_bumps_total) ? o.additionalInfoMap.order_bumps_total
-              : (pickInfoFromArray(o.additionalInfoPaid, 'order_bumps_total') || pickInfoFromArray(o.additionalInfo, 'order_bumps_total')));
-          const bumpRevenue = toMoney(bumpTotalRaw);
-          const totalPaid = (!o.valueCents && bumpRevenue) ? (Number(revenue || 0) + Number(bumpRevenue || 0)) : Number(revenue || 0);
           cur.spend += totalPaid;
           customerAgg.set(customerKey, cur);
         }
@@ -12597,10 +14329,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
       serviceEntries.sort((a, b) => b.count - a.count);
       const topService = serviceEntries.length ? { type: prettyServiceLabel(serviceEntries[0].type), count: serviceEntries[0].count } : null;
       const colors = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b', '#dc2626', '#64748b', '#06b6d4', '#a855f7', '#9ca3af'];
-      let pieEntries = serviceEntries.slice(0, 5);
+      const pieTopN = 8;
+      let pieEntries = serviceEntries.slice(0, pieTopN);
       const idxOrg = serviceEntries.findIndex(it => String(it.type || '').toLowerCase() === 'seguidores_organicos');
       if (idxOrg > -1 && pieEntries.findIndex(x => x.type === 'seguidores_organicos') === -1) {
-        const replaceIdx = pieEntries.length >= 5 ? (pieEntries.length - 1) : pieEntries.length;
+        const replaceIdx = pieEntries.length >= pieTopN ? (pieEntries.length - 1) : pieEntries.length;
         pieEntries[replaceIdx] = serviceEntries[idxOrg];
       }
       const selectedTypes = new Set(pieEntries.map(it => it.type));
@@ -12629,8 +14362,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }))
         .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend) || String(a.label).localeCompare(String(b.label)));
 
-      return res.render('painel', {
-        view: 'ltv',
+      return {
         period,
         totalTransactions: consideredOrders,
         totalCustomers,
@@ -12643,7 +14375,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
         unknownCustomerOrders,
         bumpOnlyOrders,
         customerRows
-      });
+      };
+    };
+
+    if (view === 'ltv') {
+      const ltvData = await computeLtvData();
+      return res.render('painel', Object.assign({ view: 'ltv' }, ltvData));
     }
 
     const unknownProviderQuery = {
@@ -12808,7 +14545,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       ? { $and: [paidQuery, unknownProviderQuery] }
       : paidQuery;
 
-    const periodDefault = view === 'unknown_orderid' ? 'all' : 'today';
+    const periodDefault = (view === 'unknown_orderid') ? 'all' : (view === 'dashboard' ? 'all' : 'today');
     const period = String(req.query.period || periodDefault);
     const ignoreBumps = String(req.query.ignoreBumps || '') === '1';
     const toggleIgnoreBumpsUrl = (() => {
@@ -12853,18 +14590,18 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const orders = [];
     if (!scanLowerBound) {
       const maxAll = view === 'unknown_orderid' ? 5000 : 2000;
-      const arr = await col.find(query).sort({ createdAt: -1 }).limit(maxAll).toArray();
+      const arr = await col.find(query).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(maxAll).toArray();
       orders.push(...arr);
     } else {
       const hardCap = view === 'unknown_orderid' ? 80000 : 150000;
-      const cursor = col.find(query).sort({ createdAt: -1 });
+      const cursor = col.find(query).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 });
       for await (const o of cursor) {
         orders.push(o);
         if (orders.length >= hardCap) break;
-        const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+        const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
         if (!dateStr) continue;
-        const orderDateUTC = new Date(dateStr);
-        if (!Number.isFinite(orderDateUTC.getTime())) continue;
+        const orderDateUTC = parseOrderDateUTC(dateStr);
+        if (!orderDateUTC) continue;
         const orderDateSP = toSP(orderDateUTC);
         if (orderDateSP < scanLowerBound) break;
       }
@@ -12878,28 +14615,29 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
     let filteredOrders = orders.filter(o => {
-      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
       if (!dateStr) return false;
       
-      const orderDateUTC = new Date(dateStr);
+      const orderDateUTC = parseOrderDateUTC(dateStr);
+      if (!orderDateUTC) return false;
       const orderDateSP = toSP(orderDateUTC);
 
       if (period === 'all') {
         return true;
       } else if (period === 'today') {
-        return orderDateSP >= startOfTodaySP;
+        return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
       } else if (period === 'last3days') {
         const start = new Date(startOfTodaySP);
         start.setUTCDate(start.getUTCDate() - 2); 
-        return orderDateSP >= start;
+        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
       } else if (period === 'last7days') {
         const start = new Date(startOfTodaySP);
         start.setUTCDate(start.getUTCDate() - 6);
-        return orderDateSP >= start;
+        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
       } else if (period === 'thismonth') {
         const start = new Date(startOfTodaySP);
         start.setUTCDate(1);
-        return orderDateSP >= start;
+        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
       } else if (period === 'lastmonth') {
         const start = new Date(startOfTodaySP);
         start.setUTCMonth(start.getUTCMonth() - 1);
@@ -13288,6 +15026,18 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return '';
       };
 
+      const resolveLikesBumpProvider = (o) => {
+        try {
+          if (o && o.fornecedor_social_likes) return 'fornecedor_social_likes';
+          if (o && o.fama24h_likes) return 'fama24h_likes';
+          const expectedMain = expectedProviderFromServiceKey(resolveServiceKey(o));
+          if (expectedMain === 'fornecedor_social') return 'fornecedor_social_likes';
+          return 'fama24h_likes';
+        } catch (_) {
+          return 'fama24h_likes';
+        }
+      };
+
       const isUnknownForProvider = (o, provider) => {
         if (provider === 'fama24h') {
           const doc = o && o.fama24h ? o.fama24h : null;
@@ -13321,8 +15071,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const isErrorForProvider = (o, provider) => {
         const doc = (o && o[provider]) ? o[provider] : null;
         if (!doc) return false;
-        const stLower = String(doc.status || '').toLowerCase().trim();
+        const stLower = String(doc.status || '').toLowerCase().replace(/[()]/g, '').trim();
         const err = (typeof doc.error !== 'undefined') ? String(doc.error || '') : '';
+        const oid = (typeof doc.orderId !== 'undefined') ? String(doc.orderId || '') : '';
+        const hasId = hasValidOrderId(oid);
+        if (hasId && (stLower === 'created' || stLower === 'processing' || stLower === 'pending' || stLower === 'completed')) return false;
         if (stLower === 'error') return true;
         if (err && err.trim() !== '') return true;
         return false;
@@ -13364,13 +15117,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const expectedMain = expectedProviderFromServiceKey(serviceKey);
         const bumps = parseBumps(resolveOrderBumps(o));
         const wantsViewsBump = bumps.views > 0 || !!(o && o.fama24h_views);
-        const wantsLikesBump = bumps.likes > 0 || !!(o && o.fama24h_likes);
+        const wantsLikesBump = bumps.likes > 0 || !!(o && (o.fama24h_likes || o.fornecedor_social_likes));
         const wantsCommentsBump = bumps.comments > 0 || !!(o && o.worldsmm_comments);
         const mainUnknown = expectedMain ? isUnknownForProvider(o, expectedMain) : (isUnknownForProvider(o, 'fama24h') || isUnknownForProvider(o, 'fornecedor_social'));
         const mainError = expectedMain ? isErrorForProvider(o, expectedMain) : (isErrorForProvider(o, 'fama24h') || isErrorForProvider(o, 'fornecedor_social'));
 
         const bumpViewsIssue = wantsViewsBump ? classifyFamaBumpIssue(o && o.fama24h_views) : 'ok';
-        const bumpLikesIssue = wantsLikesBump ? classifyFamaBumpIssue(o && o.fama24h_likes) : 'ok';
+        const likesProvider = resolveLikesBumpProvider(o);
+        const bumpLikesIssue = wantsLikesBump ? classifyFamaBumpIssue(o && o[likesProvider]) : 'ok';
         const bumpCommentsIssue = wantsCommentsBump ? classifyWorldsmmCommentsIssue(o) : 'ok';
 
         const anyUnknown = mainUnknown || bumpViewsIssue === 'unknown' || bumpLikesIssue === 'unknown' || bumpCommentsIssue === 'unknown';
@@ -13415,7 +15169,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
         expectedMainProvider: expectedProviderFromServiceKey(resolveServiceKey(o)) || '',
         needsWorldsmmComments: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.comments > 0 || !!(o && o.worldsmm_comments); if (!wants) return false; return classifyWorldsmmCommentsIssue(o) !== 'ok'; })(),
         needsFamaViewsBump: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.views > 0 || !!(o && o.fama24h_views); return wants ? classifyFamaBumpIssue(o && o.fama24h_views) !== 'ok' : false; })(),
-        needsFamaLikesBump: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.likes > 0 || !!(o && o.fama24h_likes); return wants ? classifyFamaBumpIssue(o && o.fama24h_likes) !== 'ok' : false; })(),
+        needsLikesBump: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.likes > 0 || !!(o && (o.fama24h_likes || o.fornecedor_social_likes)); const p = resolveLikesBumpProvider(o); return wants ? classifyFamaBumpIssue(o && o[p]) !== 'ok' : false; })(),
+        likesBumpProvider: resolveLikesBumpProvider(o),
         qty: resolveQtyWithUpgrade(o),
         isPrivate: (() => {
           const byDoc = resolveIsPrivate(o);
@@ -13434,10 +15189,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
         famaViewsStatus: (o.fama24h_views && typeof o.fama24h_views.status !== 'undefined') ? String(o.fama24h_views.status) : '',
         famaViewsQty: (o.fama24h_views && o.fama24h_views.requestPayload && typeof o.fama24h_views.requestPayload.quantity !== 'undefined') ? String(o.fama24h_views.requestPayload.quantity) : String(parseBumps(resolveOrderBumps(o)).views || ''),
         famaViewsError: (o.fama24h_views && typeof o.fama24h_views.error !== 'undefined') ? String(o.fama24h_views.error) : '',
-        famaLikesOrderId: (o.fama24h_likes && typeof o.fama24h_likes.orderId !== 'undefined') ? String(o.fama24h_likes.orderId) : '',
-        famaLikesStatus: (o.fama24h_likes && typeof o.fama24h_likes.status !== 'undefined') ? String(o.fama24h_likes.status) : '',
-        famaLikesQty: (o.fama24h_likes && o.fama24h_likes.requestPayload && typeof o.fama24h_likes.requestPayload.quantity !== 'undefined') ? String(o.fama24h_likes.requestPayload.quantity) : String(parseBumps(resolveOrderBumps(o)).likes || ''),
-        famaLikesError: (o.fama24h_likes && typeof o.fama24h_likes.error !== 'undefined') ? String(o.fama24h_likes.error) : '',
+        likesOrderId: (() => { const p = resolveLikesBumpProvider(o); const d = o && o[p] ? o[p] : null; return (d && typeof d.orderId !== 'undefined') ? String(d.orderId) : ''; })(),
+        likesStatus: (() => { const p = resolveLikesBumpProvider(o); const d = o && o[p] ? o[p] : null; return (d && typeof d.status !== 'undefined') ? String(d.status) : ''; })(),
+        likesQty: (() => { const p = resolveLikesBumpProvider(o); const d = o && o[p] ? o[p] : null; if (d && d.requestPayload && typeof d.requestPayload.quantity !== 'undefined') return String(d.requestPayload.quantity); return String(parseBumps(resolveOrderBumps(o)).likes || ''); })(),
+        likesError: (() => { const p = resolveLikesBumpProvider(o); const d = o && o[p] ? o[p] : null; return (d && typeof d.error !== 'undefined') ? String(d.error) : ''; })(),
         worldsmmCommentsOrderId: (o.worldsmm_comments && typeof o.worldsmm_comments.orderId !== 'undefined') ? String(o.worldsmm_comments.orderId) : '',
         worldsmmCommentsStatus: (() => { const b = parseBumps(resolveOrderBumps(o)); const wants = b.comments > 0 || !!(o && o.worldsmm_comments); if (!wants) return ''; const st = (o.worldsmm_comments && typeof o.worldsmm_comments.status !== 'undefined') ? String(o.worldsmm_comments.status) : ''; return st || 'unknown'; })(),
         worldsmmCommentsError: (o.worldsmm_comments && typeof o.worldsmm_comments.error !== 'undefined') ? String(o.worldsmm_comments.error) : '',
@@ -13455,7 +15210,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const openUnknownModal = String(req.query.openUnknownModal || '').trim();
       const openUnknownDefaultProviderRaw = String(req.query.defaultProvider || '').trim();
       const openUnknownLockProvider = String(req.query.lockProvider || '').trim() === '1' ? '1' : '';
-      const allowedProviders = new Set(['fama24h', 'fama24h_views', 'fama24h_likes', 'fornecedor_social', 'worldsmm_comments']);
+      const allowedProviders = new Set(['fama24h', 'fama24h_views', 'fama24h_likes', 'fornecedor_social', 'fornecedor_social_likes', 'worldsmm_comments']);
       const openUnknownDefaultProvider = allowedProviders.has(openUnknownDefaultProviderRaw) ? openUnknownDefaultProviderRaw : '';
 
       return res.render('painel', {
@@ -13473,7 +15228,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const paidOrdersToday = orders.filter(o => {
       const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
       if (!dateStr) return false;
-      const orderDateUTC = new Date(dateStr);
+      const orderDateUTC = parseOrderDateUTC(dateStr);
+      if (!orderDateUTC) return false;
       const orderDateSP = toSP(orderDateUTC);
       return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
     }).length;
@@ -13565,6 +15321,83 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const paidOverValidatedTodayPct = validatedProfilesToday > 0 ? (paidOrdersToday / validatedProfilesToday) * 100 : 0;
     const paidOrdersPeriod = filteredOrders.length;
     const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (paidOrdersPeriod / validatedProfilesPeriod) * 100 : 0;
+
+    let paidValidatedSeries = { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] };
+    try {
+      const { start: startRange, endExclusive: endRange } = getPeriodRange();
+      let start = startRange;
+      let endExclusive = endRange;
+      if (!start || !endExclusive) {
+        start = new Date(startOfTodayUtc);
+        start.setUTCDate(start.getUTCDate() - 29);
+        endExclusive = startOfTomorrowUtc;
+      }
+
+      const mkKey = (dUtc) => {
+        const sp = toSP(dUtc);
+        const y = sp.getUTCFullYear();
+        const m = String(sp.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(sp.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
+      const labels = [];
+      {
+        const d = new Date(start);
+        while (d < endExclusive) {
+          labels.push(mkKey(d));
+          d.setUTCDate(d.getUTCDate() + 1);
+        }
+      }
+
+      const paidMap = new Map();
+      for (const o of filteredOrders) {
+        const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+        if (!dateStr) continue;
+        const orderDateUTC = parseOrderDateUTC(dateStr);
+        if (!orderDateUTC) continue;
+        if (orderDateUTC < start || orderDateUTC >= endExclusive) continue;
+        const k = mkKey(orderDateUTC);
+        paidMap.set(k, (paidMap.get(k) || 0) + 1);
+      }
+
+      const validatedMap = new Map();
+      try {
+        const vu = await getCollection('validated_insta_users');
+        const startIso = start.toISOString();
+        const endIso = endExclusive.toISOString();
+        const stringRange = { $gte: startIso, $lt: endIso };
+        const dateRange = { $gte: start, $lt: endExclusive };
+        const or = [
+          { checkedAt: Object.assign({ $type: 'string' }, stringRange) },
+          { checkedAt: Object.assign({ $type: 'date' }, dateRange) },
+          { lastTrackAt: Object.assign({ $type: 'string' }, stringRange) },
+          { lastTrackAt: Object.assign({ $type: 'date' }, dateRange) }
+        ];
+        const docs = await vu
+          .find({ $or: or }, { projection: { checkedAt: 1, lastTrackAt: 1 } })
+          .toArray();
+        for (const d0 of docs) {
+          const raw = (typeof d0.checkedAt !== 'undefined' && d0.checkedAt !== null) ? d0.checkedAt : d0.lastTrackAt;
+          const dt = parseOrderDateUTC(raw);
+          if (!dt) continue;
+          if (dt < start || dt >= endExclusive) continue;
+          const k = mkKey(dt);
+          validatedMap.set(k, (validatedMap.get(k) || 0) + 1);
+        }
+      } catch (_) {}
+
+      const dailyPaid = labels.map(k => Number(paidMap.get(k) || 0));
+      const dailyValidated = labels.map(k => Number(validatedMap.get(k) || 0));
+      const dailyPct = labels.map((k, idx) => {
+        const v = Number(dailyValidated[idx] || 0);
+        const p = Number(dailyPaid[idx] || 0);
+        return v > 0 ? (p / v) * 100 : 0;
+      });
+      paidValidatedSeries = { labels, dailyPct, dailyPaid, dailyValidated };
+    } catch (_) {
+      paidValidatedSeries = { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] };
+    }
 
     // Cost calculation
     let totalCost = 0;
@@ -13663,8 +15496,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const serviceCost = (qty / 1000) * costPer1000;
       const bumpStrRaw = extractInfo('order_bumps');
       const bumpTotalRaw = extractInfo('order_bumps_total');
-      const bumpRevenue = toMoney(bumpTotalRaw);
-      totalBumpRevenue += bumpRevenue;
+      const bumpRevenueRaw = toMoney(bumpTotalRaw);
 
       const parseBumps = (raw) => {
         const text = String(raw || '').toLowerCase();
@@ -13768,14 +15600,34 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const totalItemCost = 0.85 + serviceCost + bumpCost;
       totalCost += totalItemCost;
 
-      // Revenue calculation
-      let revenue = 0;
-      if (o.valueCents) {
-          revenue = Number(o.valueCents) / 100;
-      } else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && o.woovi.paymentMethods.pix.value) {
-          revenue = Number(o.woovi.paymentMethods.pix.value) / 100;
-      }
-      totalRevenue += revenue;
+      const getPaidTotalCents = (order) => {
+        try {
+          const v0 = order && typeof order.valueCents !== 'undefined' ? Number(order.valueCents) : NaN;
+          if (Number.isFinite(v0) && v0 > 0) return v0;
+        } catch (_) {}
+        try {
+          const wv = order?.woovi?.paymentMethods?.pix?.value;
+          const v1 = typeof wv !== 'undefined' ? Number(wv) : NaN;
+          if (Number.isFinite(v1) && v1 > 0) return v1;
+        } catch (_) {}
+        try {
+          const v2 = order?.woovi?.value;
+          const n2 = typeof v2 !== 'undefined' ? Number(v2) : NaN;
+          if (Number.isFinite(n2) && n2 > 0) return n2;
+        } catch (_) {}
+        try {
+          const v3 = order?.efi?.total;
+          const n3 = typeof v3 !== 'undefined' ? Number(v3) : NaN;
+          if (Number.isFinite(n3) && n3 > 0) return n3;
+        } catch (_) {}
+        try {
+          const v4 = order?.pagarme?.amount;
+          const n4 = typeof v4 !== 'undefined' ? Number(v4) : NaN;
+          if (Number.isFinite(n4) && n4 > 0) return n4;
+        } catch (_) {}
+        return 0;
+      };
+      const basePaid = getPaidTotalCents(o) / 100;
 
       let igUser = '';
       try {
@@ -13801,11 +15653,15 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const customerKey = igUser ? (`ig:${igUser.toLowerCase()}`) : (phone ? (`ph:${String(phone).replace(/\D/g, '')}`) : '');
       const customerLabel = igUser ? (`@${igUser}`) : (phone || '-');
-      const totalPaid = (!o.valueCents && bumpRevenue) ? (Number(revenue || 0) + Number(bumpRevenue || 0)) : Number(revenue || 0);
+      const totalPaid = Number.isFinite(Number(basePaid)) ? Number(basePaid) : 0;
+      const bumpRevenue = Math.max(0, Math.min(Number.isFinite(Number(bumpRevenueRaw)) ? Number(bumpRevenueRaw) : 0, totalPaid));
+      totalBumpRevenue += bumpRevenue;
+      const revenue = Math.max(0, totalPaid - bumpRevenue);
+      totalRevenue += totalPaid;
 
       return {
         _id: o._id,
-        createdAt: o.createdAt,
+        createdAt: ((o.woovi && o.woovi.paidAt) || o.paidAt || o.createdAt || o.criado || null),
         type: typeForCost,
         qty,
         costPer1000,
@@ -13825,7 +15681,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     const customerAgg = new Map();
     const serviceAgg = new Map();
-    for (const r of report) {
+    const paidReport = report.filter(r => Number(r && r.totalPaid ? r.totalPaid : 0) > 0);
+    for (const r of paidReport) {
       const k = String(r && r.customerKey ? r.customerKey : '').trim();
       if (k) {
         const cur = customerAgg.get(k) || { orders: 0, spend: 0, label: String(r.customerLabel || k) };
@@ -13852,28 +15709,82 @@ app.get('/painel', requireAdmin, async (req, res) => {
       .sort((a, b) => (b.spend - a.spend) || (b.orders - a.orders))
       .slice(0, 5);
 
+    const prettyServiceLabel = (typeKey) => {
+      const raw = String(typeKey == null ? '' : typeKey).trim();
+      if (!raw || raw === '-' || raw === 'null' || raw === 'undefined') return '-';
+      const key = raw.toLowerCase().trim();
+      if (key === 'seguidores_organicos') return 'Seguidores orgânicos';
+      if (key === 'seguidores_mistos') return 'Seguidores mistos';
+      if (key === 'seguidores_brasileiros') return 'Seguidores brasileiros';
+      if (key === 'curtidas_organicas') return 'Curtidas orgânicas';
+      if (key === 'curtidas_mistos') return 'Curtidas mistos';
+      if (key === 'mistos_sem_categoria') return 'Mistos (sem categoria)';
+      if (key === 'organicos_sem_categoria') return 'Orgânicos (sem categoria)';
+      if (key === 'brasileiros_sem_categoria') return 'Brasileiros (sem categoria)';
+      const s = raw.replace(/_/g, ' ');
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    };
+
     const serviceEntries = Array.from(serviceAgg.entries()).map(([type, count]) => ({ type, count }));
     serviceEntries.sort((a, b) => b.count - a.count);
     const topService = serviceEntries.length ? serviceEntries[0] : null;
     const totalOrdersForPie = serviceEntries.reduce((acc, it) => acc + (it.count || 0), 0);
     const colors = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b', '#dc2626', '#64748b', '#06b6d4', '#a855f7'];
-    const pieBase = serviceEntries.slice(0, 5).map((it, idx) => ({
-      label: it.type,
+    const pieTopN = 8;
+    const pieBase = serviceEntries.slice(0, pieTopN).map((it, idx) => ({
+      label: prettyServiceLabel(it.type),
       count: it.count,
       color: colors[idx % colors.length],
       pct: totalOrdersForPie > 0 ? (it.count / totalOrdersForPie) * 100 : 0
     }));
-    const otherCount = serviceEntries.slice(5).reduce((acc, it) => acc + (it.count || 0), 0);
+    const servicePieOthers = serviceEntries.slice(pieTopN).map(it => ({ label: prettyServiceLabel(it.type), count: it.count }));
+    const otherCount = servicePieOthers.reduce((acc, it) => acc + (it.count || 0), 0);
     const servicePie = otherCount > 0 ? pieBase.concat([{
-      label: 'outros',
+      label: 'Outros',
       count: otherCount,
-      color: colors[5 % colors.length],
+      color: '#9ca3af',
       pct: totalOrdersForPie > 0 ? (otherCount / totalOrdersForPie) * 100 : 0
     }]) : pieBase;
 
     const ignoreBumpRevenue = String(req.query.ignoreBumpRevenue || '') === '1';
     const revenueWithoutBumps = Math.max(0, Number(totalRevenue || 0) - Number(totalBumpRevenue || 0));
     const revenueShown = ignoreBumpRevenue ? revenueWithoutBumps : totalRevenue;
+    const avgTicket = paidReport.length > 0 ? (Number(revenueShown || 0) / Number(paidReport.length || 0)) : 0;
+    const timelineSeries = (() => {
+      const map = new Map();
+      for (const r of paidReport) {
+        const dateStr = r && r.createdAt ? r.createdAt : '';
+        if (!dateStr) continue;
+        const d = parseOrderDateUTC(dateStr);
+        if (!d) continue;
+        const sp = toSP(d);
+        const y = sp.getUTCFullYear();
+        const m = String(sp.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(sp.getUTCDate()).padStart(2, '0');
+        const key = `${y}-${m}-${day}`;
+        const cur = map.get(key) || { orders: 0, revenue: 0 };
+        const totalPaid = Number(r.totalPaid || 0);
+        const bumpRevenue = Number(r.bumpRevenue || 0);
+        const baseNoBump = Math.max(0, totalPaid - bumpRevenue);
+        const shownRevenue = ignoreBumpRevenue ? baseNoBump : totalPaid;
+        cur.orders += 1;
+        cur.revenue += shownRevenue;
+        map.set(key, cur);
+      }
+      const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+      const labels = [];
+      const dailyOrders = [];
+      const dailyRevenue = [];
+      const dailyAvgTicket = [];
+      for (const k of keys) {
+        const v = map.get(k) || { orders: 0, revenue: 0 };
+        labels.push(k);
+        dailyOrders.push(Number(v.orders || 0));
+        dailyRevenue.push(Number(v.revenue || 0));
+        dailyAvgTicket.push((Number(v.orders || 0) > 0) ? (Number(v.revenue || 0) / Number(v.orders || 0)) : 0);
+      }
+      return { labels, dailyOrders, dailyRevenue, dailyAvgTicket };
+    })();
     const costOverRevenuePct = revenueShown > 0 ? (Number(totalCost || 0) / Number(revenueShown || 0)) * 100 : 0;
     const bumpRevenuePctOfTotal = totalRevenue > 0 ? (Number(totalBumpRevenue || 0) / Number(totalRevenue || 0)) * 100 : 0;
     const toggleIgnoreBumpRevenueUrl = (() => {
@@ -13889,7 +15800,209 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     })();
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: filteredOrders.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie });
+    let ltvAllTime = null;
+    if (view === 'dashboard') {
+      try {
+        ltvAllTime = await computeLtvData();
+      } catch (_) {
+        ltvAllTime = null;
+      }
+    }
+
+    let paymentPie = undefined;
+    {
+      let pixCount = 0;
+      let cardCount = 0;
+      for (const o of filteredOrders) {
+        const pm = String((o && (o.paymentMethod || o.payment_method || o.method)) ? (o.paymentMethod || o.payment_method || o.method) : '').toLowerCase();
+        const hasWoovi = !!(o && o.woovi);
+        const wooviPaid = hasWoovi && (String(o.woovi.status || '').toLowerCase() === 'pago');
+        const wooviHasPix = !!(o && o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix);
+        const hasPagarme = !!(o && o.pagarme) || !!(o && (o.pagarme_order_id || o.pagarme_charge_id || o.pagarme_transaction_id));
+        const pagarmePaid = (function(){
+          try {
+            const p = o && o.pagarme ? o.pagarme : null;
+            if (!p) return false;
+            const st = `${p.order_status || ''} ${p.charge_status || ''} ${p.transaction_status || ''} ${p.status || ''} ${(p.charge && p.charge.status) || ''} ${(p.order && p.order.status) || ''} ${(p.transaction && p.transaction.status) || ''}`.toLowerCase();
+            return /(paid|captured|authorized|succeeded)/i.test(st);
+          } catch (_) { return false; }
+        })();
+        const hasEfi = !!(o && o.efi);
+        const efiPaid = (function () {
+          try {
+            const st = `${o?.efi?.status || ''} ${o?.efi?.charge?.status || ''}`.toLowerCase();
+            return /(paid|settled)/i.test(st);
+          } catch (_) { return false; }
+        })();
+        const pmIsPix = pm === 'pix' || pm.includes('pix');
+        const pmIsCard = pm === 'credit_card' || pm.includes('credit') || pm.includes('card') || pm.includes('cart');
+        const isPix = wooviPaid || wooviHasPix || (pmIsPix && !pmIsCard);
+        const isCard = pmIsCard || hasPagarme || pagarmePaid || hasEfi || efiPaid;
+
+        if (isPix && !isCard) pixCount += 1;
+        else if (isCard && !isPix) cardCount += 1;
+        else if (isPix && isCard) {
+          if (pmIsCard || hasPagarme || hasEfi) cardCount += 1;
+          else pixCount += 1;
+        } else {
+          if (pmIsPix) pixCount += 1;
+          else cardCount += 1;
+        }
+      }
+      const totalCount = pixCount + cardCount;
+      paymentPie = [
+        { label: 'PIX (Woovi)', count: pixCount, color: '#16a34a', pct: totalCount > 0 ? (pixCount / totalCount) * 100 : 0 },
+        { label: 'Cartão', count: cardCount, color: '#2563eb', pct: totalCount > 0 ? (cardCount / totalCount) * 100 : 0 },
+      ];
+    }
+    let servicePageViews = undefined;
+    try {
+      const { getCollection } = require('./mongodbClient');
+      const viewsCol = await getCollection('page_views');
+      const bounds = (() => {
+        try {
+          const add3h = (d) => new Date(d.getTime() + 3 * 60 * 60 * 1000);
+          if (period === 'all') return null;
+          if (period === 'today') return { start: add3h(startOfTodaySP), end: add3h(startOfTomorrowSP) };
+          if (period === 'last3days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 2); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
+          if (period === 'last7days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 6); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
+          if (period === 'thismonth') { const start = new Date(startOfTodaySP); start.setUTCDate(1); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
+          if (period === 'lastmonth') {
+            const start = new Date(startOfTodaySP);
+            start.setUTCMonth(start.getUTCMonth() - 1);
+            start.setUTCDate(1);
+            const end = new Date(startOfTodaySP);
+            end.setUTCDate(1);
+            return { start: add3h(start), end: add3h(end) };
+          }
+          if (period === 'custom') {
+            const startStr = req.query.startDate;
+            const endStr = req.query.endDate;
+            if (startStr && endStr) {
+              const [sY, sM, sD] = String(startStr).split('-').map(Number);
+              const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+              const [eY, eM, eD] = String(endStr).split('-').map(Number);
+              const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
+              return { start: add3h(start), end: new Date(add3h(end).getTime() + 1) };
+            }
+            return null;
+          }
+        } catch (_) {}
+        return null;
+      })();
+      const mkQuery = (path) => {
+        const q = { path: String(path || '') };
+        if (bounds && bounds.start && bounds.end) q.createdAt = { $gte: bounds.start, $lt: bounds.end };
+        return q;
+      };
+      const instagram = await viewsCol.countDocuments(mkQuery('/servicos-instagram'));
+      const curtidas = await viewsCol.countDocuments(mkQuery('/servicos-curtidas'));
+      const visualizacoes = await viewsCol.countDocuments(mkQuery('/servicos-visualizacoes'));
+      servicePageViews = { instagram, curtidas, visualizacoes };
+    } catch (_) {
+      servicePageViews = { instagram: 0, curtidas: 0, visualizacoes: 0 };
+    }
+
+    let onlineNow = 0;
+    try {
+      pruneOnlinePresence();
+      onlineNow = onlinePresence.size;
+    } catch (_) {}
+
+    let vitalicioPurchases = undefined;
+    if (view === 'dashboard') {
+      const safe = (v) => String(v == null ? '' : v).trim();
+      const normalizeUsernameKey = (u) => {
+        const s0 = String(u || '').trim();
+        if (!s0) return '';
+        const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+        return s1.toLowerCase().trim();
+      };
+      const pickInfoFromArray = (arr, key) => {
+        try {
+          const list = Array.isArray(arr) ? arr : [];
+          const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+          return (it && typeof it.value !== 'undefined') ? it.value : '';
+        } catch (_) {
+          return '';
+        }
+      };
+      const extractInfoAny = (o, key) => {
+        try {
+          if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+          if (o && o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+          const v1 = pickInfoFromArray(o && o.additionalInfoPaid, key);
+          if (typeof v1 !== 'undefined' && String(v1 || '').trim() !== '') return v1;
+          const v0 = pickInfoFromArray(o && o.additionalInfo, key);
+          return v0;
+        } catch (_) {}
+        return '';
+      };
+      const resolveOrderBumps = (o) => String(extractInfoAny(o, 'order_bumps') || '');
+      const isVitalicio = (o) => {
+        const bumps = resolveOrderBumps(o);
+        if (!bumps) return false;
+        const parts = String(bumps || '').split(';').map(p => p.trim()).filter(Boolean);
+        for (const p of parts) {
+          const [kRaw, vRaw] = p.split(':');
+          const k = String(kRaw || '').toLowerCase().trim();
+          const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+          if ((k === 'warranty_lifetime' || k === 'warranty_life') && v > 0) return true;
+        }
+        return false;
+      };
+      const resolveUsername = (o) => {
+        const candidates = [
+          extractInfoAny(o, 'instagram_username'),
+          o && (o.instagramUsername || o.instauser || o.username)
+        ];
+        for (const c of candidates) {
+          const k = normalizeUsernameKey(c);
+          if (k) return k;
+        }
+        return '';
+      };
+      const resolveBuyerName = (o) => safe(
+        o?.woovi?.payer?.name ||
+        o?.woovi?.payer?.nome ||
+        o?.payer?.name ||
+        o?.payer?.nome ||
+        o?.nomeUsuario ||
+        o?.customer?.name ||
+        extractInfoAny(o, 'nome') ||
+        extractInfoAny(o, 'name') ||
+        ''
+      ) || '-';
+      const resolveDateMs = (o) => {
+        const dateStr = o?.woovi?.paidAt || o?.paidAt || o?.createdAt || o?.criado || null;
+        const t = dateStr ? new Date(dateStr).getTime() : 0;
+        return Number.isFinite(t) ? t : 0;
+      };
+      const formatDateBR = (ms) => {
+        const d = new Date(Number(ms || 0));
+        if (!Number.isFinite(d.getTime())) return '';
+        try { return d.toLocaleString('pt-BR'); } catch (_) {}
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${day}/${m}/${y} ${hh}:${mm}`;
+      };
+      const rows = [];
+      for (const o of filteredOrders) {
+        if (!isVitalicio(o)) continue;
+        const username = resolveUsername(o);
+        if (!username) continue;
+        const buyerName = resolveBuyerName(o);
+        const dateMs = resolveDateMs(o);
+        rows.push({ username, buyerName, dateMs, dateLabel: formatDateBR(dateMs) });
+      }
+      rows.sort((a, b) => (Number(b.dateMs || 0) - Number(a.dateMs || 0)));
+      vitalicioPurchases = rows.slice(0, 500);
+    }
+
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, vitalicioPurchases });
   } catch (e) {
     res.status(500).send(e.toString());
   }
@@ -14034,16 +16147,31 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
     const period = String(req.query.period || periodDefault);
     const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
+    const parseOrderDateUTC = (v) => {
+      try {
+        if (!v) return null;
+        if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
+        const s0 = String(v).trim();
+        if (!s0) return null;
+        const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s0);
+        const d0 = new Date(hasTZ ? s0 : (s0 + 'Z'));
+        return Number.isFinite(d0.getTime()) ? d0 : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
     const inPeriod = (o) => {
-      const dateStr = o.createdAt || o.woovi?.paidAt || o.paidAt;
+      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
       if (!dateStr) return false;
-      const orderDateUTC = new Date(dateStr);
+      const orderDateUTC = parseOrderDateUTC(dateStr);
+      if (!orderDateUTC) return false;
       const orderDateSP = toSP(orderDateUTC);
       if (period === 'all') return true;
-      if (period === 'today') return orderDateSP >= startOfTodaySP;
-      if (period === 'last3days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 2); return orderDateSP >= s; }
-      if (period === 'last7days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 6); return orderDateSP >= s; }
-      if (period === 'thismonth') { const s = new Date(startOfTodaySP); s.setUTCDate(1); return orderDateSP >= s; }
+      if (period === 'today') return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+      if (period === 'last3days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 2); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
+      if (period === 'last7days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 6); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
+      if (period === 'thismonth') { const s = new Date(startOfTodaySP); s.setUTCDate(1); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
       if (period === 'lastmonth') {
         const s = new Date(startOfTodaySP); s.setUTCMonth(s.getUTCMonth() - 1); s.setUTCDate(1);
         const e = new Date(startOfTodaySP); e.setUTCDate(1);
@@ -14721,10 +16849,78 @@ app.post('/api/validate-coupon', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
+const maybeSendPaymentApprovedPreviewEmail = async (server) => {
+  try {
+    const previewTo = String(process.env.PAYMENT_APPROVED_PREVIEW_TO || '').trim();
+    if (!previewTo) return;
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const idStr = String(process.env.PAYMENT_APPROVED_PREVIEW_ORDER_ID || '').trim();
+    let record = null;
+
+    if (idStr) {
+      try {
+        const { ObjectId } = require('mongodb');
+        record = await col.findOne({ _id: new ObjectId(idStr) });
+      } catch (_) {
+        record = null;
+      }
+    }
+
+    if (!record) {
+      const paidStatusRegex = /(pago|paid|captured|authorized|succeeded)/i;
+      record = await col.findOne(
+        {
+          $or: [
+            { status: { $regex: paidStatusRegex } },
+            { 'woovi.status': { $regex: paidStatusRegex } },
+            { 'pagarme.status': { $regex: paidStatusRegex } },
+            { 'pagarme.order_status': { $regex: paidStatusRegex } },
+            { 'pagarme.charge_status': { $regex: paidStatusRegex } },
+            { 'efi.status': { $regex: paidStatusRegex } },
+            { 'efi.charge.status': { $regex: paidStatusRegex } }
+          ]
+        },
+        { sort: { 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 } }
+      );
+    }
+
+    if (!record) {
+      throw new Error('Nenhum pedido pago encontrado para prévia do email.');
+    }
+
+    const serviceOverrideRaw = String(process.env.PAYMENT_APPROVED_PREVIEW_SERVICE_LINES || '').trim();
+    const serviceLinesOverride = serviceOverrideRaw
+      ? serviceOverrideRaw.split('|').map(s => String(s || '').trim()).filter(Boolean)
+      : null;
+
+    const sent = await sendPaymentApprovedEmailToCustomer({ record, toOverride: previewTo, serviceLinesOverride });
+    if (!sent) throw new Error('Não foi possível enviar o email de prévia (SMTP/from/to ausentes).');
+
+    const shouldExit = String(process.env.PAYMENT_APPROVED_PREVIEW_EXIT || '').trim() === '1';
+    if (shouldExit) {
+      await new Promise((resolve) => {
+        try {
+          if (server && typeof server.close === 'function') server.close(() => resolve());
+          else resolve();
+        } catch (_) { resolve(); }
+      });
+      process.exit(0);
+    }
+  } catch (e) {
+    console.error(String(e && e.stack ? e.stack : e));
+    const shouldExit = String(process.env.PAYMENT_APPROVED_PREVIEW_EXIT || '').trim() === '1';
+    if (shouldExit) process.exit(1);
+  }
+};
+
+const server = app.listen(port, () => {
   console.log("🗄️ Baserow configurado com sucesso");
   console.log(`Servidor rodando na porta ${port}`);
   console.log(`Preview disponível: http://localhost:${port}/checkout`);
+  maybeSendPaymentApprovedPreviewEmail(server);
 });
 
 (async () => {

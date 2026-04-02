@@ -24,7 +24,9 @@
     .summary-value { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.2px; color: #111; }
     .summary-sub { font-size: 0.8rem; color: #666; margin-top: 6px; }
     .dashboard-layout { display: flex; gap: 24px; align-items: flex-start; margin-top: 16px; flex-wrap: wrap; }
-    .dashboard-main { flex: 1 1 760px; min-width: 0; }
+    @media (min-width: 1100px) { .dashboard-layout { flex-wrap: nowrap; } }
+    .dashboard-layout { width: 100%; }
+    .dashboard-main { flex: 1 1 760px; min-width: 0; width: 100%; }
     .dashboard-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #eee; border-radius: 8px; background: #fff; }
     .dashboard-table { width: 100%; min-width: 980px; border-collapse: collapse; }
     .dashboard-table th, .dashboard-table td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
@@ -95,17 +97,18 @@
   <% const isFollowersMgmtView = (typeof view !== 'undefined' && view === 'gerenciamento_seguidores'); %>
   <% const isWhatsappSalesView = (typeof view !== 'undefined' && view === 'vendas_whatsapp'); %>
   <% const isLtvView = (typeof view !== 'undefined' && view === 'ltv'); %>
-  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : 'dashboard'))))}) %>
+  <% const isVendasView = (typeof view !== 'undefined' && view === 'vendas'); %>
+  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : (isVendasView ? 'vendas' : 'dashboard')))))}) %>
   <div class="main-content">
   <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
     <div class="panel-header">
-        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : 'Painel de Gerenciamento de Custos'))) %></h1>
+        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos')))) %></h1>
         <% if (!isLtvView) { %>
           <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
         <% } %>
     </div>
     
-    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : '/painel')); %>
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel'))); %>
     <% const sep = (isUnknownOrderIdView || isLtvView || isCouponsView) ? '&' : '?'; %>
 
     <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView) { %>
@@ -1023,6 +1026,7 @@
     <% } else if (isCouponsView) { %>
       <div id="cupons" style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <h2 style="margin:0 0 8px; font-size:1rem;">Cupons</h2>
+        <div style="color:#666; font-size:0.9rem; margin-bottom: 10px;">Para editar um cupom já criado, use o botão “Editar” na lista (ou clique na linha), ajuste os campos e clique em “Salvar”.</div>
         <div style="display:grid; grid-template-columns: 1fr; gap: 12px;">
           <div style="display:grid; grid-template-columns: 1fr 90px; gap: 8px;">
             <input type="hidden" id="couponIdInput" value="">
@@ -1122,6 +1126,7 @@
             document.getElementById('couponValidFromInput').value = toLocalDateTimeInputValue(c && c.validFrom ? c.validFrom : '');
             document.getElementById('couponValidToInput').value = toLocalDateTimeInputValue(c && c.validTo ? c.validTo : '');
             document.getElementById('couponIsActiveInput').checked = !(c && c.isActive === false);
+            try { document.getElementById('couponCodeInput').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
           }
 
           function formatValidity(c) {
@@ -1177,9 +1182,14 @@
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxPer}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2;">${formatValidity(c)}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">
+                  <button type="button" data-role="edit" style="padding:4px 8px; background:#0d6efd; color:#fff; border:none; border-radius:4px; cursor:pointer; margin-right:6px;">Editar</button>
                   <button type="button" data-role="del" style="padding:4px 8px; background:#dc3545; color:#fff; border:none; border-radius:4px; cursor:pointer;">Remover</button>
                 </td>
               `;
+              const editBtn = tr.querySelector('button[data-role="edit"]');
+              if (editBtn) {
+                editBtn.onclick = (ev) => { ev.stopPropagation(); fillCouponForm(c); };
+              }
               const delBtn = tr.querySelector('button[data-role="del"]');
               if (delBtn) {
                 delBtn.onclick = (ev) => { ev.stopPropagation(); deleteCoupon(String(c._id || '')); };
@@ -1273,6 +1283,10 @@
           <div class="summary-value">R$ <%= (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)).toFixed(2).replace('.', ',') %></div>
         </div>
         <div class="summary-card">
+          <div class="summary-label">Ticket Médio</div>
+          <div class="summary-value">R$ <%= (typeof avgTicket !== 'undefined' ? Number(avgTicket || 0) : 0).toFixed(2).replace('.', ',') %></div>
+        </div>
+        <div class="summary-card">
           <div class="summary-label">Custo Total no Período</div>
           <div class="summary-value">R$ <%= totalCost.toFixed(2).replace('.', ',') %></div>
         </div>
@@ -1314,6 +1328,218 @@
           </div>
         </div>
       </div>
+      <% if (view === 'dashboard') { %>
+      <div id="dashboardRealtimeWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size: 1rem; color:#111827;">Tempo real</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Atualiza automaticamente</div>
+        </div>
+        <div class="summary-grid" style="margin-top: 12px;">
+          <div class="summary-card">
+            <div class="summary-label">Online agora</div>
+            <div class="summary-value" id="dashboardOnlineNowCount"><%= (typeof onlineNow !== 'undefined' ? Number(onlineNow || 0) : 0) %></div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Acessos /servicos-instagram (período)</div>
+            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.instagram || 0) : 0) %></div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Acessos /servicos-curtidas (período)</div>
+            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.curtidas || 0) : 0) %></div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Acessos /servicos-visualizacoes (período)</div>
+            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.visualizacoes || 0) : 0) %></div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            try {
+              var key = 'oppus_client_id';
+              var cid = '';
+              try { cid = String(localStorage.getItem(key) || ''); } catch (_) {}
+              if (!cid) {
+                cid = (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function')
+                  ? crypto.randomUUID()
+                  : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+                try { localStorage.setItem(key, cid); } catch (_) {}
+              }
+              var ping = function() {
+                try {
+                  var payload = JSON.stringify({ clientId: cid, path: (location && location.pathname) ? location.pathname : '' });
+                  if (navigator && typeof navigator.sendBeacon === 'function') {
+                    navigator.sendBeacon('/api/online/ping', new Blob([payload], { type: 'application/json' }));
+                    return;
+                  }
+                  fetch('/api/online/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function(){});
+                } catch (_) {}
+              };
+              ping();
+              setInterval(ping, 15000);
+              document.addEventListener('visibilitychange', function(){ if (!document.hidden) ping(); });
+
+              var el = document.getElementById('dashboardOnlineNowCount');
+              if (!el) return;
+              var tick = function() {
+                fetch('/api/online/stats', { headers: { 'Accept': 'application/json' } })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){
+                    var v = (d && typeof d.online !== 'undefined') ? Number(d.online || 0) : 0;
+                    el.textContent = String(v);
+                  })
+                  .catch(function(){});
+              };
+              tick();
+              setInterval(tick, 10000);
+            } catch (_) {}
+          })();
+        </script>
+      </div>
+
+      <div id="timelineChartsWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size: 1rem; color:#111827;">Evolução diária</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (período)</div>
+        </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
+          <div style="flex:1 1 420px; min-width: 320px;">
+            <div style="font-weight:700; margin-bottom:8px; color:#111827;">Ticket médio (R$)</div>
+            <canvas id="avgTicketTimelineChart" height="140"></canvas>
+          </div>
+          <div style="flex:1 1 420px; min-width: 320px;">
+            <div style="font-weight:700; margin-bottom:8px; color:#111827;">Faturamento (R$)</div>
+            <canvas id="salesRevenueTimelineChart" height="140"></canvas>
+          </div>
+          <div style="flex:1 1 420px; min-width: 320px;">
+            <div style="font-weight:700; margin-bottom:8px; color:#111827;">% pagos / validados</div>
+            <canvas id="paidValidatedPctTimelineChart" height="140"></canvas>
+          </div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+        <script type="application/json" id="timelineSeriesData"><%- JSON.stringify((typeof timelineSeries !== 'undefined' && timelineSeries) ? timelineSeries : { labels: [], dailyOrders: [], dailyRevenue: [], dailyAvgTicket: [] }) %></script>
+        <script type="application/json" id="paidValidatedSeriesData"><%- JSON.stringify((typeof paidValidatedSeries !== 'undefined' && paidValidatedSeries) ? paidValidatedSeries : { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] }) %></script>
+        <script>
+          (function(){
+            try {
+              if (typeof Chart === 'undefined') return;
+              var rawEl = document.getElementById('timelineSeriesData');
+              var raw = rawEl ? String(rawEl.textContent || '').trim() : '';
+              var data = raw ? JSON.parse(raw) : { labels: [], dailyOrders: [], dailyRevenue: [], dailyAvgTicket: [] };
+              var labels = Array.isArray(data.labels) ? data.labels : [];
+              var fmt = function(k){
+                try {
+                  var parts = String(k || '').split('-');
+                  if (parts.length !== 3) return String(k || '');
+                  return parts[2] + '/' + parts[1];
+                } catch (_) { return String(k || ''); }
+              };
+              var labelShort = labels.map(fmt);
+              var avgCtx = document.getElementById('avgTicketTimelineChart');
+              if (avgCtx) {
+                new Chart(avgCtx, {
+                  type: 'line',
+                  data: {
+                    labels: labelShort,
+                    datasets: [{
+                      label: 'Ticket médio (R$)',
+                      data: Array.isArray(data.dailyAvgTicket) ? data.dailyAvgTicket : [],
+                      borderColor: '#2563eb',
+                      backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                      tension: 0.3,
+                      fill: true,
+                      pointRadius: 2
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                      y: { ticks: { callback: function(v){ return 'R$ ' + Number(v || 0).toFixed(2); } } }
+                    }
+                  }
+                });
+              }
+              var salesCtx = document.getElementById('salesRevenueTimelineChart');
+              if (salesCtx) {
+                new Chart(salesCtx, {
+                  type: 'line',
+                  data: {
+                    labels: labelShort,
+                    datasets: [{
+                      label: 'Faturamento (R$)',
+                      data: Array.isArray(data.dailyRevenue) ? data.dailyRevenue : [],
+                      borderColor: '#f59e0b',
+                      backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                      tension: 0.3,
+                      fill: true,
+                      pointRadius: 2
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                      y: { ticks: { callback: function(v){ return 'R$ ' + Number(v || 0).toFixed(0); } } }
+                    }
+                  }
+                });
+              }
+
+              var pvRawEl = document.getElementById('paidValidatedSeriesData');
+              var pvRaw = pvRawEl ? String(pvRawEl.textContent || '').trim() : '';
+              var pv = pvRaw ? JSON.parse(pvRaw) : { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] };
+              var pvLabels = Array.isArray(pv.labels) ? pv.labels : [];
+              var pvLabelShort = pvLabels.map(fmt);
+              var pvCtx = document.getElementById('paidValidatedPctTimelineChart');
+              if (pvCtx) {
+                new Chart(pvCtx, {
+                  type: 'line',
+                  data: {
+                    labels: pvLabelShort,
+                    datasets: [{
+                      label: '% pagos/validados',
+                      data: Array.isArray(pv.dailyPct) ? pv.dailyPct : [],
+                      borderColor: '#16a34a',
+                      backgroundColor: 'rgba(22, 163, 74, 0.15)',
+                      tension: 0.3,
+                      fill: true,
+                      pointRadius: 2
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                        callbacks: {
+                          label: function(ctx){
+                            try {
+                              var idx = Number(ctx.dataIndex || 0);
+                              var paid = Array.isArray(pv.dailyPaid) ? Number(pv.dailyPaid[idx] || 0) : 0;
+                              var val = Array.isArray(pv.dailyValidated) ? Number(pv.dailyValidated[idx] || 0) : 0;
+                              return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '% (' + paid + '/' + val + ')');
+                            } catch (_) {
+                              return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '%');
+                            }
+                          }
+                        }
+                      }
+                    },
+                    scales: {
+                      y: {
+                        min: 0,
+                        max: 100,
+                        ticks: { callback: function(v){ return Number(v || 0).toFixed(0) + '%'; } }
+                      }
+                    }
+                  }
+                });
+              }
+            } catch (_) {}
+          })();
+        </script>
+      </div>
+      <% } %>
     <% } %>
 
     <% if (isLtvView) { %>
@@ -1340,70 +1566,6 @@
         </div>
 
         <div style="display:flex; gap: 18px; align-items:flex-start; flex-wrap: wrap; margin-top: 14px;">
-          <div style="flex: 0 0 280px;">
-            <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Pedidos por tipo (pizza)</div>
-            <div id="ltvPieChart" style="width:220px; height:220px; border-radius:999px; background:conic-gradient(#e5e7eb 0 100%); border:1px solid #e5e7eb;"></div>
-            <div style="margin-top: 10px; font-size: 0.9rem; color:#111827;">
-              Mais escolhido: <strong><%= topService && topService.type ? String(topService.type) : '-' %></strong>
-            </div>
-            <div id="ltvPieLegend" style="margin-top: 8px; font-size: 0.85rem; color:#374151;">Sem dados</div>
-            <script type="application/json" id="ltvPieData"><%- JSON.stringify(Array.isArray(servicePie) ? servicePie : []) %></script>
-            <script>
-              (function(){
-                try {
-                  var pieRawEl = document.getElementById('ltvPieData');
-                  var pieRaw = pieRawEl ? String(pieRawEl.textContent || '').trim() : '[]';
-                  var pie = JSON.parse(pieRaw || '[]');
-                  var elPie = document.getElementById('ltvPieChart');
-                  var elLegend = document.getElementById('ltvPieLegend');
-                  var cur = 0;
-                  var stops = [];
-                  for (var i = 0; i < pie.length; i++) {
-                    var s = pie[i] || {};
-                    var pct = Number(s.pct || 0) || 0;
-                    var start = cur;
-                    cur += pct;
-                    var end = cur;
-                    var color = String(s.color || '#e5e7eb');
-                    stops.push(color + ' ' + start.toFixed(4) + '% ' + end.toFixed(4) + '%');
-                  }
-                  if (elPie) {
-                    elPie.style.background = stops.length ? ('conic-gradient(' + stops.join(', ') + ')') : 'conic-gradient(#e5e7eb 0 100%)';
-                  }
-                  if (elLegend) {
-                    if (!pie.length) {
-                      elLegend.textContent = 'Sem dados';
-                      return;
-                    }
-                    elLegend.innerHTML = '';
-                    for (var j = 0; j < pie.length; j++) {
-                      var it = pie[j] || {};
-                      var row = document.createElement('div');
-                      row.style.display = 'flex';
-                      row.style.alignItems = 'center';
-                      row.style.gap = '8px';
-                      row.style.marginTop = '4px';
-
-                      var box = document.createElement('span');
-                      box.style.display = 'inline-block';
-                      box.style.width = '10px';
-                      box.style.height = '10px';
-                      box.style.borderRadius = '2px';
-                      box.style.background = String(it.color || '#e5e7eb');
-
-                      var label = document.createElement('span');
-                      label.textContent = String(it.label || '-') + ' (' + String(Number(it.count || 0)) + ')';
-
-                      row.appendChild(box);
-                      row.appendChild(label);
-                      elLegend.appendChild(row);
-                    }
-                  }
-                } catch (_) {}
-              })();
-            </script>
-          </div>
-
           <div style="flex: 1 1 520px; min-width: 320px;">
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
               <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
@@ -1628,7 +1790,7 @@
             <div style="font-size:0.85rem; color:#666;">Ocultos: <span id="unknownHiddenCount">0</span></div>
             <div id="unknownRefreshStatus" style="font-size:0.85rem; color:#666;"></div>
           </div>
-          <div class="unknown-table-wrap">
+          <div class="dashboard-table-wrap panel-table-scroll unknown-table-wrap">
           <table class="unknown-table">
             <colgroup>
               <col style="width: 44px;">
@@ -1656,7 +1818,7 @@
                 <th>Fornecedor Social</th>
                 <th>WorldSMM (Bump Comentários)</th>
                 <th>Fama24h (Bump Views)</th>
-                <th>Fama24h (Bump Curtidas)</th>
+                <th>Bump Curtidas</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -1688,10 +1850,10 @@
                    const vOrderIdStr = String(order.famaViewsOrderId || '');
                    const vOrderIdDisplay = (vOrderIdStr && vOrderIdStr !== 'null') ? vOrderIdStr : '-';
                    const vQtyStr = String(order.famaViewsQty || '').trim();
-                   const lStatusStr = String(order.famaLikesStatus || '');
-                   const lOrderIdStr = String(order.famaLikesOrderId || '');
+                   const lStatusStr = String(order.likesStatus || '');
+                   const lOrderIdStr = String(order.likesOrderId || '');
                    const lOrderIdDisplay = (lOrderIdStr && lOrderIdStr !== 'null') ? lOrderIdStr : '-';
-                   const lQtyStr = String(order.famaLikesQty || '').trim();
+                   const lQtyStr = String(order.likesQty || '').trim();
                    const expectedProvider = String(order.expectedMainProvider || '').trim();
                    const defaultProvider = expectedProvider || ((
                      famaStatusStr === 'unknown' ||
@@ -1797,7 +1959,7 @@
                     <% } %>
                   </td>
                   <td>
-                    <% if (lOrderIdStr || lStatusStr || lQtyStr || order.famaLikesError) { %>
+                    <% if (lOrderIdStr || lStatusStr || lQtyStr || order.likesError) { %>
                       <div><%= lOrderIdDisplay %></div>
                       <small>(<%= lStatusStr || 'unknown' %>)</small>
                       <% if (lQtyStr) { %>
@@ -1806,8 +1968,8 @@
                       <% if (order.postLinkLikes) { %>
                         <div><small><a class="unknown-link" href="<%= order.postLinkLikes %>" target="_blank" rel="noopener noreferrer">Link post</a></small></div>
                       <% } %>
-                      <% if (order.famaLikesError) { %>
-                        <div><small style="color:#b00020;"><%= order.famaLikesError %></small></div>
+                      <% if (order.likesError) { %>
+                        <div><small style="color:#b00020;"><%= order.likesError %></small></div>
                       <% } %>
                     <% } else { %>
                       -
@@ -1826,8 +1988,8 @@
                     <% if (order.needsFamaViewsBump) { %>
                       <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-order-user="<%= String(iuClean || order.instaUser || '') %>" data-order-service="<%= String(order.serviceLabel || order.type || '-') %>" data-default-provider="fama24h_views" data-lock-provider="1" style="margin-top:6px;">Cadastrar Views Bump<%= vQtyStr ? (" (" + vQtyStr + ")") : "" %></button>
                     <% } %>
-                    <% if (order.needsFamaLikesBump) { %>
-                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-order-user="<%= String(iuClean || order.instaUser || '') %>" data-order-service="<%= String(order.serviceLabel || order.type || '-') %>" data-default-provider="fama24h_likes" data-lock-provider="1" style="margin-top:6px;">Cadastrar Curtidas Bump<%= lQtyStr ? (" (" + lQtyStr + ")") : "" %></button>
+                    <% if (order.needsLikesBump) { %>
+                      <button type="button" class="unknown-btn unknown-open-modal" data-order-id="<%= String(order._id || '') %>" data-order-user="<%= String(iuClean || order.instaUser || '') %>" data-order-service="<%= String(order.serviceLabel || order.type || '-') %>" data-default-provider="<%= String(order.likesBumpProvider || 'fama24h_likes') %>" data-lock-provider="1" style="margin-top:6px;">Cadastrar Curtidas Bump<%= lQtyStr ? (" (" + lQtyStr + ")") : "" %></button>
                     <% } %>
                   </td>
                 </tr>
@@ -1835,9 +1997,9 @@
             </tbody>
           </table>
           </div>
-        <% } else { %>
+        <% } else if (isVendasView) { %>
           <div class="dashboard-table-wrap panel-table-scroll">
-          <table class="dashboard-table">
+          <table class="dashboard-table" style="min-width: 980px; font-size: 0.92rem;">
             <thead>
               <tr>
                 <th>Data (SP)</th>
@@ -1886,10 +2048,548 @@
             </tbody>
           </table>
           </div>
+        <% } else { %>
+          <div style="margin-bottom:14px;">
+            <% if (view === 'dashboard') { %>
+              <div id="dashboardPaymentWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; margin-bottom:16px; width:100%; box-sizing:border-box;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+                  <strong style="font-size: 1rem; color:#111827;">Distribuição</strong>
+                  <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (período)</div>
+                </div>
+                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
+                  <div style="flex:1 1 420px; min-width: 320px; display:flex; flex-direction:column;">
+                    <div style="font-weight:700; margin-bottom:8px; color:#111827;">Vendas por método</div>
+                    <div style="height:140px; position:relative; flex:1;">
+                      <canvas id="dashboardPaymentMethodChart" style="display:block; width:100%; height:100%;"></canvas>
+                    </div>
+                  </div>
+                  <div style="flex:1 1 420px; min-width: 320px; display:flex; flex-direction:column;">
+                    <div style="font-weight:700; margin-bottom:8px; color:#111827;">Pedidos por tipo (pizza)</div>
+                    <div style="height:170px; position:relative; flex:1;">
+                      <canvas id="dashboardServiceTypePieChart" style="display:block; width:100%; height:100%;"></canvas>
+                    </div>
+                    <%
+                      const othersArr3 = Array.isArray(servicePieOthers) ? servicePieOthers : [];
+                      const othersPreview3 = othersArr3.slice(0, 6);
+                      const othersRest3 = Math.max(0, othersArr3.length - othersPreview3.length);
+                      const othersText3 = othersPreview3
+                        .map(function(x){ return String(x && x.label ? x.label : '-') + ' (' + String((x && typeof x.count !== 'undefined') ? x.count : 0) + ')'; })
+                        .join(' · ');
+                    %>
+                    <% if (othersArr3.length) { %>
+                      <div style="margin-top:8px; font-size:0.82rem; color:#6b7280; line-height:1.3;">Outros inclui: <%= othersText3 %><%= othersRest3 > 0 ? (' · +' + othersRest3 + ' tipos') : '' %></div>
+                    <% } %>
+                  </div>
+                </div>
+                <script type="application/json" id="dashboardPaymentMethodData"><%- JSON.stringify(Array.isArray(paymentPie) ? paymentPie : []) %></script>
+                <script type="application/json" id="dashboardServiceTypePieData"><%- JSON.stringify(Array.isArray(servicePie) ? servicePie : []) %></script>
+                <script>
+                  (function(){
+                    try {
+                      if (typeof Chart === 'undefined') return;
+                      var payEl = document.getElementById('dashboardPaymentMethodData');
+                      var payRaw = payEl ? String(payEl.textContent || '').trim() : '[]';
+                      var pay = JSON.parse(payRaw || '[]');
+                      var payCanvas = document.getElementById('dashboardPaymentMethodChart');
+                      if (payCanvas) {
+                        new Chart(payCanvas, {
+                          type: 'doughnut',
+                          data: {
+                            labels: pay.map(function(x){ return String(x && x.label ? x.label : '-'); }),
+                            datasets: [{
+                              data: pay.map(function(x){ return Number(x && x.count ? x.count : 0); }),
+                              backgroundColor: pay.map(function(x){ return String(x && x.color ? x.color : '#e5e7eb'); }),
+                              borderWidth: 0
+                            }]
+                          },
+                          options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                              legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }
+                            },
+                            cutout: '60%'
+                          }
+                        });
+                      }
+                      var svcEl = document.getElementById('dashboardServiceTypePieData');
+                      var svcRaw = svcEl ? String(svcEl.textContent || '').trim() : '[]';
+                      var svc = JSON.parse(svcRaw || '[]');
+                      var svcCanvas = document.getElementById('dashboardServiceTypePieChart');
+                      var sliceValueLabels = {
+                        id: 'sliceValueLabels',
+                        afterDatasetDraw: function(chart, args) {
+                          try {
+                            if (!chart || !chart.ctx) return;
+                            var ctx = chart.ctx;
+                            var meta = chart.getDatasetMeta(args.index);
+                            if (!meta || !meta.data) return;
+                            var data = chart.data && chart.data.datasets && chart.data.datasets[args.index] ? chart.data.datasets[args.index].data : [];
+                            ctx.save();
+                            ctx.fillStyle = '#111827';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.font = '600 12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
+                            for (var i = 0; i < meta.data.length; i++) {
+                              var v = Number(data && data[i] ? data[i] : 0) || 0;
+                              if (v <= 0) continue;
+                              var el = meta.data[i];
+                              if (!el) continue;
+                              var p = (typeof el.getCenterPoint === 'function') ? el.getCenterPoint() : (typeof el.tooltipPosition === 'function' ? el.tooltipPosition() : null);
+                              if (!p) continue;
+                              ctx.fillText(String(Math.round(v)), p.x, p.y);
+                            }
+                            ctx.restore();
+                          } catch (_) {}
+                        }
+                      };
+                      if (svcCanvas) {
+                        new Chart(svcCanvas, {
+                          plugins: [sliceValueLabels],
+                          type: 'doughnut',
+                          data: {
+                            labels: svc.map(function(x){ return String(x && x.label ? x.label : '-'); }),
+                            datasets: [{
+                              data: svc.map(function(x){ return Number(x && x.count ? x.count : 0); }),
+                              backgroundColor: svc.map(function(x){ return String(x && x.color ? x.color : '#e5e7eb'); }),
+                              borderWidth: 0
+                            }]
+                          },
+                          options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                              legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }
+                            },
+                            cutout: '60%'
+                          }
+                        });
+                      }
+                    } catch (_) {}
+                  })();
+                </script>
+              </div>
+            <% } else { %>
+              <div id="dashboardPaymentWrap" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; background:#fff; padding:12px; margin-bottom:16px;">
+                <div style="font-size:0.95rem; font-weight:700; color:#111827; margin-bottom:8px;">Vendas por Método</div>
+                <div style="display:flex; align-items:center; gap:14px;">
+                  <% 
+                    const pie2 = Array.isArray(paymentPie) ? paymentPie : [];
+                    const pix2 = pie2.find(p => p && p.label && p.label.toLowerCase().includes('pix'));
+                    const card2 = pie2.find(p => p && p.label && p.label.toLowerCase().includes('cart'));
+                    const pixPct2 = pix2 ? Math.round(pix2.pct) : 0;
+                    const cardPct2 = card2 ? Math.round(card2.pct) : 0;
+                    const pixColor2 = pix2 && pix2.color ? pix2.color : '#16a34a';
+                    const cardColor2 = card2 && card2.color ? card2.color : '#2563eb';
+                  %>
+                  <div id="dashboardPaymentPie" data-pix-pct="<%= pixPct2 %>" data-card-pct="<%= cardPct2 %>" data-pix-color="<%= pixColor2 %>" data-card-color="<%= cardColor2 %>" style="width:140px; height:140px; border-radius:50%; position:relative; background:#e5e7eb;">
+                    <div style="position:absolute; top:50%; left:50%; transform: translate(-50%,-50%); width:78px; height:78px; border-radius:50%; background:#fff;"></div>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:6px; font-size:0.9rem;">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span class="legend-box" data-color="<%= pixColor2 %>" style="display:inline-block; width:10px; height:10px; border-radius:2px;"></span>
+                      <span>PIX (Woovi): <strong><%= pix2 ? pix2.count : 0 %></strong> (<%= pixPct2 %>%)</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span class="legend-box" data-color="<%= cardColor2 %>" style="display:inline-block; width:10px; height:10px; border-radius:2px;"></span>
+                      <span>Cartão: <strong><%= card2 ? card2.count : 0 %></strong> (<%= cardPct2 %>%)</span>
+                    </div>
+                  </div>
+                </div>
+                <script>
+                  (function(){
+                    try {
+                      var el = document.getElementById('dashboardPaymentPie');
+                      if (!el) return;
+                      var pixPct = Number(el.getAttribute('data-pix-pct') || '0') || 0;
+                      var cardPct = Number(el.getAttribute('data-card-pct') || '0') || 0;
+                      var pixColor = String(el.getAttribute('data-pix-color') || '#16a34a');
+                      var cardColor = String(el.getAttribute('data-card-color') || '#2563eb');
+                      el.style.background = 'conic-gradient(' + pixColor + ' 0 ' + pixPct + '%, ' + cardColor + ' ' + pixPct + '% 100%)';
+                      var wrap = document.getElementById('dashboardPaymentWrap');
+                      if (wrap) {
+                        var boxes = wrap.querySelectorAll('.legend-box');
+                        for (var i = 0; i < boxes.length; i++) {
+                          var b = boxes[i];
+                          b.style.background = String(b.getAttribute('data-color') || '#e5e7eb');
+                        }
+                      }
+                    } catch (_) {}
+                  })();
+                </script>
+              </div>
+            <% } %>
+            <% if (view === 'dashboard') { %>
+              <div id="dashboardVitalicioWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; margin-bottom:16px; width:100%; box-sizing:border-box;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+                  <strong style="font-size: 1rem; color:#111827;">Vitalício</strong>
+                  <div style="font-size:0.85rem; color:#6b7280;">Compras com warranty vitalício (período)</div>
+                </div>
+                <%
+                  const vitalicioRows = Array.isArray(vitalicioPurchases) ? vitalicioPurchases : [];
+                %>
+                <div class="dashboard-table-wrap panel-table-scroll" style="margin-top:12px;">
+                  <table class="dashboard-table" style="min-width: 720px; font-size: 0.92rem;">
+                    <thead>
+                      <tr>
+                        <th>Perfil</th>
+                        <th>Comprador</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <% if (!vitalicioRows.length) { %>
+                        <tr>
+                          <td colspan="2" style="color:#6b7280;">Nenhuma compra vitalícia no período.</td>
+                        </tr>
+                      <% } else { %>
+                        <% vitalicioRows.forEach(function(v) { %>
+                          <tr>
+                            <td><%= (v && v.username) ? ('@' + String(v.username)) : '-' %></td>
+                            <td><%= String(v && v.buyerName ? v.buyerName : '-') %></td>
+                          </tr>
+                        <% }) %>
+                      <% } %>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            <% } %>
+            <div id="dashboardLtvWrap" style="margin-top: 14px; width:100%; border:1px solid #e5e7eb; border-radius:10px; background:#fff; padding:14px; box-sizing:border-box;">
+              <%
+                const ltvDash = (typeof ltvAllTime !== 'undefined' && ltvAllTime) ? ltvAllTime : null;
+                const ltvDashTotalCustomers = ltvDash && typeof ltvDash.totalCustomers !== 'undefined' ? ltvDash.totalCustomers : 0;
+                const ltvDashRepeatCustomers = ltvDash && typeof ltvDash.repeatCustomers !== 'undefined' ? ltvDash.repeatCustomers : 0;
+                const ltvDashRepeatPct = ltvDash && typeof ltvDash.repeatCustomerPct !== 'undefined' ? ltvDash.repeatCustomerPct : 0;
+                const ltvDashTotalTx = ltvDash && typeof ltvDash.totalTransactions !== 'undefined' ? ltvDash.totalTransactions : 0;
+                const ltvDashTopService = ltvDash && ltvDash.topService ? ltvDash.topService : null;
+                const ltvDashServicePie = ltvDash && Array.isArray(ltvDash.servicePie) ? ltvDash.servicePie : [];
+                const ltvDashTopByOrders = ltvDash && Array.isArray(ltvDash.topUsersByOrders) ? ltvDash.topUsersByOrders : [];
+                const ltvDashTopBySpend = ltvDash && Array.isArray(ltvDash.topUsersBySpend) ? ltvDash.topUsersBySpend : [];
+                const ltvDashRows = ltvDash && Array.isArray(ltvDash.customerRows) ? ltvDash.customerRows : [];
+              %>
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+                <strong style="font-size: 1rem; color:#111827;">LTV</strong>
+                <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (geral)</div>
+              </div>
+
+              <div class="summary-grid" style="margin-top: 10px;">
+                <div class="summary-card" id="ltvCardAllCustomers" style="cursor:pointer;">
+                  <div class="summary-label">Clientes únicos</div>
+                  <div class="summary-value"><%= ltvDashTotalCustomers %></div>
+                </div>
+                <div class="summary-card" id="ltvCardRepeatCustomers" style="cursor:pointer;">
+                  <div class="summary-label">Clientes recorrentes (2+)</div>
+                  <div class="summary-value"><%= ltvDashRepeatCustomers %></div>
+                  <div class="summary-sub"><%= Number(ltvDashRepeatPct || 0).toFixed(1).replace('.', ',') %>% dos clientes</div>
+                </div>
+                <div class="summary-card">
+                  <div class="summary-label">Pedidos (geral)</div>
+                  <div class="summary-value"><%= ltvDashTotalTx %></div>
+                </div>
+              </div>
+
+              <div style="display:flex; gap: 18px; align-items:flex-start; flex-wrap: wrap; margin-top: 14px;">
+                <div style="flex: 1 1 520px; min-width: 320px;">
+                  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+                    <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+                      <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (mais pedidos)</div>
+                      <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                        <thead>
+                          <tr>
+                            <th style="text-align:left; padding:6px 0; border-bottom:1px solid #f1f1f1;">Usuário</th>
+                            <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Pedidos</th>
+                            <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Gasto</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <% ltvDashTopByOrders.slice(0,5).forEach(u => { %>
+                            <tr>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa;"><%= String(u && u.label ? u.label : '-') %></td>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;"><%= Number(u && u.orders ? u.orders : 0) %></td>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;">R$ <%= Number(u && u.spend ? u.spend : 0).toFixed(2).replace('.', ',') %></td>
+                            </tr>
+                          <% }) %>
+                          <% if (!ltvDashTopByOrders.length) { %>
+                            <tr><td colspan="3" style="padding:8px 0; color:#6b7280;">Sem dados</td></tr>
+                          <% } %>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+                      <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (maior gasto)</div>
+                      <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                        <thead>
+                          <tr>
+                            <th style="text-align:left; padding:6px 0; border-bottom:1px solid #f1f1f1;">Usuário</th>
+                            <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Gasto</th>
+                            <th style="text-align:right; padding:6px 0; border-bottom:1px solid #f1f1f1;">Pedidos</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <% ltvDashTopBySpend.slice(0,5).forEach(u => { %>
+                            <tr>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa;"><%= String(u && u.label ? u.label : '-') %></td>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;">R$ <%= Number(u && u.spend ? u.spend : 0).toFixed(2).replace('.', ',') %></td>
+                              <td style="padding:6px 0; border-bottom:1px solid #fafafa; text-align:right;"><%= Number(u && u.orders ? u.orders : 0) %></td>
+                            </tr>
+                          <% }) %>
+                          <% if (!ltvDashTopBySpend.length) { %>
+                            <tr><td colspan="3" style="padding:8px 0; color:#6b7280;">Sem dados</td></tr>
+                          <% } %>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="ltvCustomersModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; padding: 14px;">
+                <div style="background:#fff; width:min(980px, 96vw); max-height: 90vh; border-radius: 10px; overflow:hidden; box-shadow:0 8px 24px rgba(0,0,0,0.15);">
+                  <div style="display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; border-bottom:1px solid #e5e7eb; gap: 10px;">
+                    <strong id="ltvCustomersModalTitle" style="color:#111827;">Clientes</strong>
+                    <button type="button" id="ltvCustomersModalClose" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer;">Fechar</button>
+                  </div>
+                  <div style="padding: 12px 14px; overflow:auto; max-height: calc(90vh - 52px);">
+                    <div style="display:flex; gap: 10px; flex-wrap: wrap; align-items:center; margin-bottom: 10px;">
+                      <input id="ltvCustomersSearch" type="text" placeholder="Buscar por usuário/telefone/email" style="flex:1 1 280px; padding: 8px 10px; border:1px solid #e5e7eb; border-radius: 8px;" />
+                      <div id="ltvCustomersCount" style="font-size:0.9rem; color:#6b7280;"></div>
+                    </div>
+                    <div class="panel-table-scroll">
+                      <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
+                        <thead>
+                          <tr>
+                            <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Usuário</th>
+                            <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Telefone</th>
+                            <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Email</th>
+                            <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Pedidos</th>
+                            <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Gasto</th>
+                          </tr>
+                        </thead>
+                        <tbody id="ltvCustomersTbody">
+                          <tr><td colspan="5" style="padding:10px 6px; color:#6b7280;">Carregando...</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <script type="application/json" id="ltvCustomersData"><%- JSON.stringify(ltvDashRows) %></script>
+              <script>
+                (function(){
+                  function readJson(id, fallback) {
+                    try {
+                      var el = document.getElementById(id);
+                      if (!el) return fallback;
+                      var raw = String(el.textContent || '').trim();
+                      if (!raw) return fallback;
+                      return JSON.parse(raw);
+                    } catch (_) {
+                      return fallback;
+                    }
+                  }
+                  function fmtMoney(n) {
+                    var x = Number(n || 0);
+                    if (!isFinite(x)) x = 0;
+                    return 'R$ ' + x.toFixed(2).replace('.', ',');
+                  }
+                  function safeStr(v) { return String(v == null ? '' : v); }
+                  var all = readJson('ltvCustomersData', []);
+                  var modal = document.getElementById('ltvCustomersModal');
+                  var titleEl = document.getElementById('ltvCustomersModalTitle');
+                  var closeBtn = document.getElementById('ltvCustomersModalClose');
+                  var tbody = document.getElementById('ltvCustomersTbody');
+                  var searchEl = document.getElementById('ltvCustomersSearch');
+                  var countEl = document.getElementById('ltvCustomersCount');
+                  var cardAll = document.getElementById('ltvCardAllCustomers');
+                  var cardRepeat = document.getElementById('ltvCardRepeatCustomers');
+                  if (!modal || !tbody) return;
+                  var mode = 'all';
+                  function open(newMode) {
+                    mode = newMode || 'all';
+                    if (titleEl) titleEl.textContent = mode === 'repeat' ? 'Clientes recorrentes (2+)' : 'Clientes únicos';
+                    if (searchEl) searchEl.value = '';
+                    modal.style.display = 'flex';
+                    render();
+                    if (searchEl) searchEl.focus();
+                  }
+                  function close() { modal.style.display = 'none'; }
+                  function matchesFilter(row, q) {
+                    if (!q) return true;
+                    var s = (safeStr(row.username) + ' ' + safeStr(row.phone) + ' ' + safeStr(row.email) + ' ' + safeStr(row.label)).toLowerCase();
+                    return s.indexOf(q) >= 0;
+                  }
+                  function render() {
+                    var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+                    var rows = Array.isArray(all) ? all.slice() : [];
+                    if (mode === 'repeat') rows = rows.filter(function(r){ return Number(r && r.orders ? r.orders : 0) > 1; });
+                    rows = rows.filter(function(r){ return matchesFilter(r, q); });
+                    if (countEl) countEl.textContent = rows.length + ' clientes';
+                    tbody.innerHTML = '';
+                    if (!rows.length) {
+                      var tr0 = document.createElement('tr');
+                      var td0 = document.createElement('td');
+                      td0.colSpan = 5;
+                      td0.style.padding = '10px 6px';
+                      td0.style.color = '#6b7280';
+                      td0.textContent = 'Sem dados';
+                      tr0.appendChild(td0);
+                      tbody.appendChild(tr0);
+                      return;
+                    }
+                    for (var i = 0; i < rows.length; i++) {
+                      var r = rows[i] || {};
+                      var tr = document.createElement('tr');
+                      var tdUser = document.createElement('td');
+                      tdUser.style.padding = '8px 6px';
+                      tdUser.style.borderBottom = '1px solid #fafafa';
+                      tdUser.textContent = safeStr(r.label || r.username || '-');
+                      var tdPhone = document.createElement('td');
+                      tdPhone.style.padding = '8px 6px';
+                      tdPhone.style.borderBottom = '1px solid #fafafa';
+                      tdPhone.textContent = safeStr(r.phone || '-');
+                      var tdEmail = document.createElement('td');
+                      tdEmail.style.padding = '8px 6px';
+                      tdEmail.style.borderBottom = '1px solid #fafafa';
+                      tdEmail.textContent = safeStr(r.email || '-');
+                      var tdOrders = document.createElement('td');
+                      tdOrders.style.padding = '8px 6px';
+                      tdOrders.style.borderBottom = '1px solid #fafafa';
+                      tdOrders.style.textAlign = 'right';
+                      tdOrders.textContent = String(Number(r.orders || 0));
+                      var tdSpend = document.createElement('td');
+                      tdSpend.style.padding = '8px 6px';
+                      tdSpend.style.borderBottom = '1px solid #fafafa';
+                      tdSpend.style.textAlign = 'right';
+                      tdSpend.textContent = fmtMoney(r.spend || 0);
+                      tr.appendChild(tdUser);
+                      tr.appendChild(tdPhone);
+                      tr.appendChild(tdEmail);
+                      tr.appendChild(tdOrders);
+                      tr.appendChild(tdSpend);
+                      tbody.appendChild(tr);
+                    }
+                  }
+                  if (cardAll) cardAll.addEventListener('click', function(){ open('all'); });
+                  if (cardRepeat) cardRepeat.addEventListener('click', function(){ open('repeat'); });
+                  if (closeBtn) closeBtn.addEventListener('click', close);
+                  modal.addEventListener('click', function(e){
+                    if (e && e.target === modal) close();
+                  });
+                  if (searchEl) searchEl.addEventListener('input', render);
+                })();
+              </script>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && view === 'dashboard') { %>
+        <div style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 18px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap;">
+            <strong style="font-size:1.05rem; color:#111827;">Geolocalização de Acessos e Perfis Validados</strong>
+            <span style="font-size:0.9rem; color:#6b7280;">Dados de acessos (page_views) e pedidos (checkout_orders)</span>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:12px;">
+            <div style="min-width:0;">
+              <div style="border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
+                <div style="padding:10px; font-weight:700; background:#fafafa; border-bottom:1px solid #e5e7eb;">Top Cidades</div>
+                <div style="max-height:420px; overflow:auto;">
+                  <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                      <tr>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; background:#f9fafb;">Cidade</th>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; background:#f9fafb;">Região</th>
+                        <th style="text-align:left; padding:8px; border-bottom:1px solid #e5e7eb; background:#f9fafb;">País</th>
+                        <th style="text-align:right; padding:8px; border-bottom:1px solid #e5e7eb; background:#f9fafb;">Visitas</th>
+                      </tr>
+                    </thead>
+                    <tbody id="geoCitiesTbody">
+                      <tr><td colspan="4" style="padding:10px; color:#777;">Carregando…</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div style="min-width:0;">
+              <div style="border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
+                <div style="padding:10px; font-weight:700; background:#fafafa; border-bottom:1px solid #e5e7eb;">Mapa</div>
+                <div id="geoMap" style="height:420px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/q19p1Z0wZyy3R0Xv0=" crossorigin="anonymous">
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+        <script>
+          (function(){
+            function q(id){ return document.getElementById(id); }
+            function renderGeoTable(rows){
+              var tb = q('geoCitiesTbody');
+              if (!tb) return;
+              if (!rows || !rows.length) {
+                tb.innerHTML = '<tr><td colspan="4" style="padding:10px; color:#777;">Sem dados</td></tr>';
+                return;
+              }
+              var html = '';
+              rows.forEach(function(r){
+                html += '<tr>'
+                  + '<td style="padding:8px; border-bottom:1px solid #f1f5f9;">'+ (r.city || '-') +'</td>'
+                  + '<td style="padding:8px; border-bottom:1px solid #f1f5f9;">'+ (r.region || '-') +'</td>'
+                  + '<td style="padding:8px; border-bottom:1px solid #f1f5f9;">'+ (r.country || '-') +'</td>'
+                  + '<td style="padding:8px; border-bottom:1px solid #f1f5f9; text-align:right;">'+ (r.count || 0) +'</td>'
+                  + '</tr>';
+              });
+              tb.innerHTML = html;
+            }
+            function initMap(pointsVisits, pointsProfiles){
+              var el = q('geoMap');
+              if (!el || typeof L === 'undefined') return;
+              var map = L.map(el).setView([-15.78, -47.93], 4);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 18
+              }).addTo(map);
+              var bounds = [];
+              (pointsVisits || []).forEach(function(p){
+                if (typeof p.lat === 'number' && typeof p.lon === 'number') {
+                  var m = L.circleMarker([p.lat, p.lon], { radius: 5, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.7, weight: 1 });
+                  m.bindPopup('<strong>Visitas</strong><br>'+ (p.city||'-') +', '+ (p.region||'-') +' - '+ (p.country||'-') +'<br>Qtd: '+ (p.count||0));
+                  m.addTo(map);
+                  bounds.push([p.lat, p.lon]);
+                }
+              });
+              (pointsProfiles || []).forEach(function(p){
+                if (typeof p.lat === 'number' && typeof p.lon === 'number') {
+                  var m = L.circleMarker([p.lat, p.lon], { radius: 6, color: '#7c3aed', fillColor: '#a78bfa', fillOpacity: 0.8, weight: 1.2 });
+                  m.bindPopup('<strong>Perfis Validados</strong><br>'+ (p.city||'-') +', '+ (p.region||'-') +' - '+ (p.country||'-') +'<br>Qtd: '+ (p.count||0));
+                  m.addTo(map);
+                  bounds.push([p.lat, p.lon]);
+                }
+              });
+              if (bounds.length) {
+                try { map.fitBounds(bounds, { padding: [20,20] }); } catch(_) {}
+              }
+            }
+            fetch('/api/geo/aggregate')
+              .then(function(r){ return r.json(); })
+              .then(function(data){
+                if (!data || data.ok !== true) throw new Error('sem dados');
+                var visits = Array.isArray(data.visits) ? data.visits : [];
+                var profiles = Array.isArray(data.profiles) ? data.profiles : [];
+                var topCities = visits.slice().sort(function(a,b){ return (b.count||0)-(a.count||0); }).slice(0, 100);
+                renderGeoTable(topCities);
+                initMap(visits, profiles);
+              })
+              .catch(function(){
+                renderGeoTable([]);
+              });
+          })();
+        </script>
         <% } %>
       </div>
 
-      <% if (!isUnknownOrderIdView) { %>
+      <% if (!isUnknownOrderIdView && isVendasView) { %>
       <div class="cost-panel-wrap">
         <div class="cost-panel">
           <h2 style="margin:0 0 8px; font-size:1rem;">Custos por 1.000</h2>
@@ -1993,7 +2693,7 @@
           </script>
         </div>
 
-        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px; position: sticky; top: 400px;">
+        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
           <h2 style="margin:0 0 8px; font-size:1rem;">Usuários Bloqueados</h2>
           <div style="display:flex; gap:8px; margin-bottom:12px;">
             <input type="text" id="blacklistInput" placeholder="Usuário (sem @)" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px;">
@@ -2120,6 +2820,7 @@
           <option value="fama24h_views">Fama24h (Bump Views)</option>
           <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
           <option value="fornecedor_social">Fornecedor Social</option>
+          <option value="fornecedor_social_likes">Fornecedor Social (Bump Curtidas)</option>
           <option value="worldsmm_comments">WorldSMM (Comentários)</option>
         </select>
       </div>
@@ -2314,7 +3015,7 @@
             per.total += 1;
             if (p === 'worldsmm_comments') per.world += 1;
             else if (p === 'fama24h_views') per.views += 1;
-            else if (p === 'fama24h_likes') per.likes += 1;
+            else if (p === 'fama24h_likes' || p === 'fornecedor_social_likes') per.likes += 1;
             else per.main += 1;
           });
 

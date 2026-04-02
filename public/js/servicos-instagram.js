@@ -1430,14 +1430,14 @@ document.addEventListener('DOMContentLoaded', function() {
         break;
       case 'organicos':
         html = isCurtidasContext ? `
-          <p>Curtidas de perfis brasileiros, reais e ativos para máxima qualidade e credibilidade nas suas publicações.</p>
+          <p>Curtidas de perfis brasileiros e reais para máxima qualidade e credibilidade nas suas publicações.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🇧🇷 Perfis brasileiros, reais e ativos para reforçar autoridade.</li>
+            <li>🇧🇷 Perfis brasileiros e reais para reforçar autoridade.</li>
             <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
           </ul>
         ` : `
-          <p>Brasileiros e reais: perfis ativos e selecionados, com maior credibilidade.</p>
+          <p>Brasileiros e reais: perfis selecionados, com maior credibilidade.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>✨ Perfis mais qualificados para reforçar autoridade do perfil.</li>
@@ -3059,7 +3059,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetTop = (rect.top + scrollTop) - 120;
             smoothScrollToY(targetTop, 1100);
           }
-        }, 500);
+        }, 2000);
       }
     } catch (_) {}
   }
