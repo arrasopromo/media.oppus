@@ -31,6 +31,22 @@ function getPagarmeKeys() {
   return { public: publicKey, secret: secretKey, useTest };
 }
 
+function getStripeKeys() {
+  const useTest =
+    String(process.env.STRIPE_USE_TEST || '').toLowerCase() === 'true' ||
+    String(process.env.NODE_ENV || '').toLowerCase() === 'test';
+  const publishableKey = useTest
+    ? (process.env.STRIPE_PUBLISHABLE_KEY_TEST || '')
+    : (process.env.STRIPE_PUBLISHABLE_KEY || '');
+  const secretKey = useTest
+    ? (process.env.STRIPE_SECRET_KEY_TEST || '')
+    : (process.env.STRIPE_SECRET_KEY || '');
+  const webhookSecret = useTest
+    ? (process.env.STRIPE_WEBHOOK_SECRET_TEST || '')
+    : (process.env.STRIPE_WEBHOOK_SECRET || '');
+  return { publishable: publishableKey, secret: secretKey, webhookSecret, useTest };
+}
+
 // Configuração de sessão
 app.use(session({
     secret: "agencia-oppus-secret-key",
@@ -40,7 +56,11 @@ app.use(session({
 }));
 
 // Middleware para parsing de JSON e URL encoded
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    try { req.rawBody = buf; } catch (_) {}
+  }
+}));
 app.use(express.urlencoded({ extended: true }));
 
 app.use((req, res, next) => {
@@ -54,6 +74,10 @@ app.use((req, res, next) => {
   res.locals.EFI_SCRIPT_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/efipay/js-payment-token-efi/dist/payment-token-efi.min.js';
   const pagarmeKeys = getPagarmeKeys();
   res.locals.PAGARME_PUBLIC_KEY = pagarmeKeys.public || '';
+  const stripeKeys = getStripeKeys();
+  res.locals.STRIPE_PUBLISHABLE_KEY = stripeKeys.publishable || '';
+  res.locals.CARD_PROVIDER = (stripeKeys.publishable && stripeKeys.secret) ? 'stripe' : 'pagarme';
+  res.locals.STRIPE_USE_CHECKOUT = String(process.env.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
   res.locals.PAGARME_INSTALLMENTS_MAX = (function () {
     const n = parseInt(String(process.env.PAGARME_INSTALLMENTS_MAX || '12'), 10);
     if (!Number.isFinite(n) || n <= 0) return 12;
@@ -101,6 +125,56 @@ app.use((req, res, next) => {
     req.ip = ipNormalized; // Também sobrescrever req.ip
     
     next();
+});
+
+const OPPUS_CLIENT_ID_COOKIE = 'oppus_cid';
+const getCookieValue = (req, name) => {
+  try {
+    const cookieHeader = String((req && req.headers && req.headers['cookie']) || '');
+    if (!cookieHeader) return '';
+    const parts = cookieHeader.split(';');
+    for (const part of parts) {
+      const p = String(part || '').trim();
+      if (!p) continue;
+      const eq = p.indexOf('=');
+      if (eq <= 0) continue;
+      const k = p.slice(0, eq).trim();
+      if (k !== name) continue;
+      const raw = p.slice(eq + 1);
+      try { return decodeURIComponent(raw); } catch (_) { return raw; }
+    }
+  } catch (_) {}
+  return '';
+};
+
+const ensureClientIdCookie = (req, res) => {
+  try {
+    const existing = getCookieValue(req, OPPUS_CLIENT_ID_COOKIE);
+    if (existing) return existing;
+    let id = '';
+    try {
+      const c = require('crypto');
+      if (c && typeof c.randomUUID === 'function') id = c.randomUUID();
+    } catch (_) {}
+    if (!id) id = `cid_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      if (res && typeof res.cookie === 'function') {
+        res.cookie(OPPUS_CLIENT_ID_COOKIE, id, { maxAge: 365 * 24 * 60 * 60 * 1000, httpOnly: false, sameSite: 'Lax', path: '/' });
+      } else if (res && typeof res.setHeader === 'function') {
+        const cookie = `${OPPUS_CLIENT_ID_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${365 * 24 * 60 * 60}; SameSite=Lax`;
+        res.setHeader('Set-Cookie', cookie);
+      }
+    } catch (_) {}
+    return id;
+  } catch (_) {}
+  return '';
+};
+
+app.use((req, res, next) => {
+  try {
+    req.oppusClientId = ensureClientIdCookie(req, res);
+  } catch (_) {}
+  next();
 });
 
 // Middleware de autenticação Admin
@@ -836,6 +910,7 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
         pageViewDedupe.set(key, now);
         const ip = String((req && (req.realIP || req.ip)) || '').trim();
         const ua = String((req && req.headers && req.headers['user-agent']) || '').trim();
+        const ref = String((req && ((req.get && req.get('Referer')) || (req.headers && req.headers['referer']))) || '').trim();
         (async () => {
             try {
                 const { getCollection } = require('./mongodbClient');
@@ -848,6 +923,7 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
                     geo = await Promise.race([geoPromise, timeout]);
                 } catch (_) { geo = null; }
                 const doc = { path: p, clientId: cid, ip, ua, createdAt: new Date() };
+                if (ref) doc.referer = ref;
                 if (geo && (geo.city || geo.region || geo.country)) {
                     doc.city = geo.city || '';
                     doc.region = geo.region || '';
@@ -874,8 +950,8 @@ app.post('/api/online/ping', async (req, res) => {
             }
         }
         body = (body && typeof body === 'object') ? body : {};
-        updateOnlinePresence(body.clientId, body.path);
-        insertPageViewIfNeeded(body.clientId, body.path, req);
+        const cid = String((req && req.oppusClientId) || getCookieValue(req, OPPUS_CLIENT_ID_COOKIE) || body.clientId || '').trim();
+        updateOnlinePresence(cid, body.path);
     } catch (_) {}
     return res.json({ ok: true });
 });
@@ -1142,7 +1218,7 @@ app.get('/api/instagram/info', async (req, res) => {
         const userAgent = req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
         const ip = req.ip || '127.0.0.1';
 
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res, false, { purpose: 'instagram_info' });
         
         if (result && result.success && result.profile) {
             return res.json({ 
@@ -1188,8 +1264,11 @@ function setCache(username, value, ttlMs) {
     PROFILE_CACHE.set(key, { value, expiresAt: Date.now() + (ttlMs || CACHE_TTL_MS) });
 }
 
-async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassCache = false) {
+async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassCache = false, options) {
     const key = String(username || '').toLowerCase();
+    const opts = (options && typeof options === 'object') ? options : {};
+    const purpose = String(opts.purpose || '').toLowerCase();
+    const skipPosts = opts.skipPosts === true || purpose === 'refil' || purpose === 'refil2';
 
     if (!bypassCache) {
         const cached = getCachedProfile(username);
@@ -1227,41 +1306,43 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                         global.rocketApiDisabledUntil = 0;
 
                         let rExtractedPosts = [];
-                        const rEdges = (rUser.edge_owner_to_timeline_media && rUser.edge_owner_to_timeline_media.edges) ? rUser.edge_owner_to_timeline_media.edges : [];
-                        
-                        if (rEdges.length > 0) {
-                            rExtractedPosts = rEdges.map(e => e.node ? ({
-                                shortcode: e.node.shortcode,
-                                takenAt: e.node.taken_at_timestamp,
-                                isVideo: !!e.node.is_video,
-                                displayUrl: e.node.display_url || e.node.thumbnail_src,
-                                videoUrl: e.node.video_url,
-                                typename: e.node.__typename
-                            }) : null).filter(Boolean).slice(0, 12);
-                        }
+                        if (!skipPosts) {
+                            const rEdges = (rUser.edge_owner_to_timeline_media && rUser.edge_owner_to_timeline_media.edges) ? rUser.edge_owner_to_timeline_media.edges : [];
+                            
+                            if (rEdges.length > 0) {
+                                rExtractedPosts = rEdges.map(e => e.node ? ({
+                                    shortcode: e.node.shortcode,
+                                    takenAt: e.node.taken_at_timestamp,
+                                    isVideo: !!e.node.is_video,
+                                    displayUrl: e.node.display_url || e.node.thumbnail_src,
+                                    videoUrl: e.node.video_url,
+                                    typename: e.node.__typename
+                                }) : null).filter(Boolean).slice(0, 12);
+                            }
 
-                        if (rExtractedPosts.length === 0 && !rUser.is_private && rUser.id) {
-                             try {
-                                console.log(`🚀 Buscando posts extras (RocketAPI) para ID: ${rUser.id}`);
-                                const mediaUrl = 'https://v1.rocketapi.io/instagram/user/get_media';
-                                const mediaResp = await axios.post(mediaUrl, { id: rUser.id, count: 12 }, { 
-                                    headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
-                                    timeout: 10000 
-                                });
-                                const mItems = mediaResp.data?.response?.body?.items || [];
-                                if (mItems.length > 0) {
-                                    rExtractedPosts = mItems.map(item => ({
-                                        shortcode: item.code,
-                                        takenAt: item.taken_at,
-                                        isVideo: item.media_type === 2 || !!item.video_versions,
-                                        displayUrl: item.image_versions2?.candidates?.[0]?.url,
-                                        videoUrl: item.video_versions?.[0]?.url,
-                                        typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
-                                    }));
-                                    console.log(`✅ RocketAPI trouxe ${rExtractedPosts.length} posts via get_media.`);
+                            if (rExtractedPosts.length === 0 && !rUser.is_private && rUser.id) {
+                                 try {
+                                    console.log(`🚀 Buscando posts extras (RocketAPI) para ID: ${rUser.id}`);
+                                    const mediaUrl = 'https://v1.rocketapi.io/instagram/user/get_media';
+                                    const mediaResp = await axios.post(mediaUrl, { id: rUser.id, count: 12 }, { 
+                                        headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                                        timeout: 10000 
+                                    });
+                                    const mItems = mediaResp.data?.response?.body?.items || [];
+                                    if (mItems.length > 0) {
+                                        rExtractedPosts = mItems.map(item => ({
+                                            shortcode: item.code,
+                                            takenAt: item.taken_at,
+                                            isVideo: item.media_type === 2 || !!item.video_versions,
+                                            displayUrl: item.image_versions2?.candidates?.[0]?.url,
+                                            videoUrl: item.video_versions?.[0]?.url,
+                                            typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
+                                        }));
+                                        console.log(`✅ RocketAPI trouxe ${rExtractedPosts.length} posts via get_media.`);
+                                    }
+                                } catch (eMedia) {
+                                    console.warn('⚠️ Falha ao buscar media RocketAPI:', eMedia.message);
                                 }
-                            } catch (eMedia) {
-                                console.warn('⚠️ Falha ao buscar media RocketAPI:', eMedia.message);
                             }
                         }
 
@@ -1370,29 +1451,31 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
             const isVerified = typeof item.verified !== 'undefined' ? item.verified : (typeof item.isVerified !== 'undefined' ? item.isVerified : false);
             
             let extractedPosts = [];
-            if (item.latestPosts && Array.isArray(item.latestPosts)) {
-                console.log(`✅ Apify trouxe ${item.latestPosts.length} posts para @${username}`);
-                extractedPosts = item.latestPosts.map(p => {
-                    let ts = null;
-                    if (p.timestamp) {
-                        ts = new Date(p.timestamp).getTime() / 1000;
-                    } else if (p.date) {
-                        ts = new Date(p.date).getTime() / 1000;
-                    } else if (p.takenAtTimestamp) {
-                        ts = Number(p.takenAtTimestamp);
-                    }
-                    
-                    return {
-                        shortcode: p.shortCode || p.shortcode,
-                        takenAt: ts,
-                        isVideo: p.type === 'Video' || p.isVideo,
-                        displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
-                        videoUrl: p.videoUrl || p.videoURL,
-                        typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
-                    };
-                }).slice(0, 12);
-            } else {
-                console.log(`⚠️ Apify NÃO trouxe posts para @${username}. Campos disponíveis: ${Object.keys(item).join(', ')}`);
+            if (!skipPosts) {
+                if (item.latestPosts && Array.isArray(item.latestPosts)) {
+                    console.log(`✅ Apify trouxe ${item.latestPosts.length} posts para @${username}`);
+                    extractedPosts = item.latestPosts.map(p => {
+                        let ts = null;
+                        if (p.timestamp) {
+                            ts = new Date(p.timestamp).getTime() / 1000;
+                        } else if (p.date) {
+                            ts = new Date(p.date).getTime() / 1000;
+                        } else if (p.takenAtTimestamp) {
+                            ts = Number(p.takenAtTimestamp);
+                        }
+                        
+                        return {
+                            shortcode: p.shortCode || p.shortcode,
+                            takenAt: ts,
+                            isVideo: p.type === 'Video' || p.isVideo,
+                            displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
+                            videoUrl: p.videoUrl || p.videoURL,
+                            typename: p.type === 'Video' ? 'GraphVideo' : 'GraphImage'
+                        };
+                    }).slice(0, 12);
+                } else {
+                    console.log(`⚠️ Apify NÃO trouxe posts para @${username}. Campos disponíveis: ${Object.keys(item).join(', ')}`);
+                }
             }
 
             const profileData = {
@@ -1495,7 +1578,7 @@ app.get('/api/test-embed-data', async (req, res) => {
     const ip = req.ip || '127.0.0.1';
 
     // Reuse the robust verification logic
-    const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+    const result = await verifyInstagramProfile(username, userAgent, ip, req, res, false, { purpose: 'test_embed_data', skipPosts: true });
 
     if (result.success && result.profile) {
       // Adapt the output to match what might be expected by consumers of this endpoint
@@ -2716,9 +2799,9 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Home: renderizar Checkout como página inicial
+// Home: redirecionar para /engajamento (nova página principal)
 app.get('/', (req, res) => {
-    console.log('🏠 Acessando rota / (home -> checkout)');
+    console.log('🏠 Acessando rota / (home -> engajamento)');
     try {
         if (req.session) {
             req.session.selectedOrderID = undefined;
@@ -2726,16 +2809,16 @@ app.get('/', (req, res) => {
             req.session.lastPaidCorrelationID = '';
         }
     } catch (_) {}
-    res.render('checkout', { 
-        PIXEL_ID: process.env.PIXEL_ID || ''
-    }, (err, html) => {
-        if (err) {
-            console.error('❌ Erro ao renderizar home/checkout:', err.message);
-            return res.status(500).send('Erro ao renderizar checkout');
+    const q = (function () {
+        try {
+            const u = String(req.originalUrl || req.url || '').trim();
+            const i = u.indexOf('?');
+            return i >= 0 ? u.slice(i + 1) : '';
+        } catch (_) {
+            return '';
         }
-        res.type('text/html');
-        res.send(html);
-    });
+    })();
+    return res.redirect(q ? (`/engajamento?${q}`) : '/engajamento');
 });
 
 // Página de Termos de Uso
@@ -2804,25 +2887,25 @@ app.get('/teste123', (req, res) => {
     res.render('index');
 });
 
-// Página de Checkout (nova slug dedicada)
+// /checkout: manter compatibilidade, mas redirecionar para /engajamento
 app.get('/checkout', (req, res) => {
-    console.log('🛒 Acessando rota /checkout');
-    // Limpar dados de posts selecionados na sessão para evitar mistura com navegações antigas
-    if (req.session) {
-        req.session.selectedFor = {};
-        req.session.selectedPosts = [];
-    }
-    res.render('checkout', { 
-        PIXEL_ID: process.env.PIXEL_ID || ''
-    }, (err, html) => {
-        if (err) {
-            console.error('❌ Erro ao renderizar checkout:', err.message);
-            return res.status(500).send('Erro ao renderizar checkout');
+    console.log('🛒 Acessando rota /checkout (redirect -> /engajamento)');
+    try {
+        if (req.session) {
+            req.session.selectedFor = {};
+            req.session.selectedPosts = [];
         }
-        // Garantir envio explícito do conteúdo para evitar Content-Length: 0
-        res.type('text/html');
-        res.send(html);
-    });
+    } catch (_) {}
+    const q = (function () {
+        try {
+            const u = String(req.originalUrl || req.url || '').trim();
+            const i = u.indexOf('?');
+            return i >= 0 ? u.slice(i + 1) : '';
+        } catch (_) {
+            return '';
+        }
+    })();
+    return res.redirect(q ? (`/engajamento?${q}`) : '/engajamento');
 });
 
 app.get('/pix', async (req, res) => {
@@ -2984,31 +3067,8 @@ const trackPageView = (req, path) => {
   try {
     const p = String(path || '').trim();
     if (!p) return;
-    const ip = String((req && (req.realIP || req.ip)) || '').trim();
-    const ua = String((req && req.headers && req.headers['user-agent']) || '').trim();
-    (async () => {
-      try {
-        const { getCollection } = require('./mongodbClient');
-        const col = await getCollection('page_views');
-        if (!col || typeof col.insertOne !== 'function') return;
-        let geo = null;
-        try {
-          const geoPromise = geoLookupIp(ip);
-          const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
-          geo = await Promise.race([geoPromise, timeout]);
-        } catch (_) { geo = null; }
-        const doc = { path: p, ip, ua, createdAt: new Date() };
-        if (geo && (geo.city || geo.region || geo.country)) {
-          doc.city = geo.city || '';
-          doc.region = geo.region || '';
-          doc.country = geo.country || '';
-          if (typeof geo.lat === 'number') doc.lat = geo.lat;
-          if (typeof geo.lon === 'number') doc.lon = geo.lon;
-          doc.geoSource = geo.source || '';
-        }
-        await col.insertOne(doc);
-      } catch (_) {}
-    })();
+    const clientId = String((req && req.oppusClientId) || getCookieValue(req, OPPUS_CLIENT_ID_COOKIE) || '').trim();
+    insertPageViewIfNeeded(clientId, p, req);
   } catch (_) {}
 };
 
@@ -3028,7 +3088,13 @@ app.get('/servicos', (req, res) => {
 // Página Serviços Instagram (cópia do checkout)
 app.get('/servicos-instagram', (req, res) => {
   console.log('📸 Acessando rota /servicos-instagram');
-  trackPageView(req, '/servicos-instagram');
+  const rawServico = String((req && req.query && (req.query.servico || req.query.service || req.query.tipo)) || '').trim().toLowerCase();
+  const pvPath = '/servicos-instagram';
+  if (rawServico === 'curtidas' || rawServico === 'visualizacoes') {
+    trackPageView(req, `${pvPath}:${rawServico}`);
+  } else {
+    trackPageView(req, pvPath);
+  }
   res.render('servicos-instagram', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
     queryParams: req.query 
@@ -3973,8 +4039,10 @@ app.post('/api/efi/card-charge', async (req, res) => {
             // Geolocalization
             let geolocation = null;
             try {
-                geolocation = await geoLookupIp(ip);
-            } catch(_) {}
+                const geoPromise = geoLookupIp(ip);
+                const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+                geolocation = await Promise.race([geoPromise, timeout]);
+            } catch(_) { geolocation = null; }
 
             const createdIso = new Date().toISOString();
             
@@ -4301,7 +4369,11 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         const createdIso = new Date().toISOString();
 
         let geolocation = null;
-        try { geolocation = await geoLookupIp(ip); } catch (_) {}
+        try {
+            const geoPromise = geoLookupIp(ip);
+            const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+            geolocation = await Promise.race([geoPromise, timeout]);
+        } catch (_) { geolocation = null; }
 
         const itemCode = (function () {
             const raw = `${tipo || 'item'}_${qtd || 1}`;
@@ -4632,6 +4704,902 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
     }
 });
 
+app.post('/api/stripe/create-intent', async (req, res) => {
+  let correlationIDSafe = '';
+  let validatedValueCents = null;
+  try {
+    const { installments, customer, total_cents, additionalInfo, profile_is_private, utms: reqUtms } = req.body;
+    correlationIDSafe = (function () {
+      try {
+        const c = String(req.body?.correlationID || '').trim();
+        if (c) return c;
+      } catch (_) {}
+      try {
+        const crypto = require('crypto');
+        if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+      } catch (_) {}
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    })();
+
+    const stripeKeys = getStripeKeys();
+    const stripeSecret = String(stripeKeys.secret || '').trim();
+    if (!stripeSecret) {
+      return res.status(500).json({ error: 'missing_stripe_secret', message: 'Configuração da Stripe ausente (STRIPE_SECRET_KEY).' });
+    }
+
+    if (!total_cents || Number(total_cents) < 100) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor mínimo para cartão de crédito é R$ 1,00.' });
+    }
+
+    const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+    const addInfoMap = addInfoArr.reduce((acc, item) => {
+      const k = String(item?.key || '').trim();
+      const v = String(item?.value || '').trim();
+      acc[k] = v;
+      return acc;
+    }, {});
+
+    const tipoVal = addInfoMap['tipo_servico'] || '';
+    const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
+
+    let verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+    if (!verification.isValid) {
+      try {
+        const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+        const couponCode = normalizeCouponCode(couponCodeRaw);
+        if (couponCode) {
+          const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+          const eligibility = await getCouponEligibility(couponCode, profileKey);
+          if (eligibility && eligibility.ok && eligibility.coupon) {
+            const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+            const rate = pct > 0 ? (pct / 100) : 0;
+            if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+              const expected = Number(verification.expectedPrice);
+              const discountVal = Math.round(expected * rate);
+              const discountedExpected = Math.max(0, expected - discountVal);
+              if (Number(total_cents) === discountedExpected) {
+                verification = { isValid: true, matchedPrice: Number(total_cents), expectedPrice: Number(total_cents), mismatchDetails: null };
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if (!verification.isValid) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor divergente do esperado.', details: verification.mismatchDetails });
+    }
+    const validatedPriceCents = Number(verification.matchedPrice || verification.expectedPrice || 0);
+    if (!Number.isFinite(validatedPriceCents) || validatedPriceCents < 100) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor inválido para cartão.' });
+    }
+    validatedValueCents = validatedPriceCents;
+
+    const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+    const isValidCPF = (cpfRaw) => {
+      const cpf = normalizeDigits(cpfRaw);
+      if (cpf.length !== 11) return false;
+      if (/^(\d)\1+$/.test(cpf)) return false;
+      const calc = (base, factor) => {
+        let sum = 0;
+        for (let i = 0; i < base.length; i++) sum += Number(base[i]) * (factor - i);
+        const mod = (sum * 10) % 11;
+        return mod === 10 ? 0 : mod;
+      };
+      const d1 = calc(cpf.slice(0, 9), 10);
+      const d2 = calc(cpf.slice(0, 10), 11);
+      return d1 === Number(cpf[9]) && d2 === Number(cpf[10]);
+    };
+    const normalizeBrMobile = (raw) => {
+      let d = normalizeDigits(raw);
+      if (!d) return '';
+      d = d.replace(/^0+/, '');
+      if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+      if (d.length > 11) d = d.slice(-11);
+      if (!(d.length === 10 || d.length === 11)) return '';
+      if (d.startsWith('0')) return '';
+      if (d.length === 11 && d[2] !== '9') {
+        const d2 = d.slice(0, 2) + d.slice(3);
+        if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
+      }
+      if (!/^[1-9]{2}\d{8,9}$/.test(d)) return '';
+      return d;
+    };
+
+    const cpfDigits = normalizeDigits(customer?.cpf);
+    if (cpfDigits && !isValidCPF(cpfDigits)) return res.status(400).json({ error: 'invalid_cpf', message: 'CPF inválido.' });
+
+    const phoneRaw = customer?.phone_number || customer?.phone || customer?.telefone || customer?.whatsapp || '';
+    const phoneDigits = normalizeBrMobile(phoneRaw);
+    if (!phoneDigits) return res.status(400).json({ error: 'missing_phone', message: 'Telefone (DDD + número) é obrigatório para pagamento no cartão.' });
+
+    const emailSafe = (function () {
+      const raw = String(customer?.email || '').trim();
+      if (!raw) return '';
+      if (raw.length > 180) return '';
+      const at = raw.indexOf('@');
+      if (at <= 0 || at >= raw.length - 3) return '';
+      if (raw.indexOf('.', at) === -1) return '';
+      return raw;
+    })();
+
+    let utms = {};
+    try {
+      if (reqUtms && Object.keys(reqUtms).length > 0) {
+        utms = reqUtms;
+        if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+      } else {
+        const refUrl = req.get('Referer') || req.headers['referer'] || '';
+        utms = { ref: refUrl };
+      }
+    } catch (_) {
+      const refUrl = req.get('Referer') || req.headers['referer'] || '';
+      utms = { ref: refUrl };
+    }
+
+    const tipo = addInfoMap['tipo_servico'] || '';
+    const qtd = Number(addInfoMap['quantidade'] || 0) || 0;
+    const instauserFromClient = addInfoMap['instagram_username'] || '';
+    const userAgent = req.get('User-Agent') || '';
+    const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+    const slug = req.session?.linkSlug || '';
+    const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfoMap['profile_is_private'] === 'true';
+    const createdIso = new Date().toISOString();
+
+    let geolocation = null;
+    try {
+      const geoPromise = geoLookupIp(ip);
+      const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+      geolocation = await Promise.race([geoPromise, timeout]);
+    } catch (_) { geolocation = null; }
+
+    const installmentsSafe = (function () {
+      const n = parseInt(String(installments || '1'), 10);
+      return (Number.isFinite(n) && n > 0) ? n : 1;
+    })();
+    try {
+      for (let i = addInfoArr.length - 1; i >= 0; i--) {
+        if (String(addInfoArr[i]?.key || '').trim() === 'installments') addInfoArr.splice(i, 1);
+      }
+      addInfoArr.push({ key: 'installments', value: String(installmentsSafe) });
+    } catch (_) {}
+
+    const stripeMetadata = (function () {
+      const out = {};
+      const normKey = (k) => String(k || '').trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+      const normVal = (v) => {
+        const s = String(v === undefined || v === null ? '' : v).trim();
+        if (!s) return '';
+        return s.length > 450 ? s.slice(0, 450) : s;
+      };
+      const set = (k, v) => {
+        const kk = normKey(k);
+        const vv = normVal(v);
+        if (!kk || !vv) return;
+        out[kk] = vv;
+      };
+      set('correlationID', correlationIDSafe);
+      set('tipo_servico', tipo);
+      set('categoria_servico', addInfoMap['categoria_servico'] || '');
+      set('quantidade', qtd);
+      set('instagram_username', instauserFromClient);
+      set('phone', phoneDigits);
+      set('slug', slug);
+      set('tc_code', addInfoMap['tc_code'] || '');
+      try {
+        if (utms && typeof utms === 'object') {
+          set('utm_source', utms.source || '');
+          set('utm_medium', utms.medium || '');
+          set('utm_campaign', utms.campaign || '');
+          set('utm_term', utms.term || '');
+          set('utm_content', utms.content || '');
+          set('gclid', utms.gclid || '');
+          set('fbclid', utms.fbclid || '');
+        }
+      } catch (_) {}
+      try {
+        const maxKeys = 45;
+        const items = Array.isArray(addInfoArr) ? addInfoArr : [];
+        for (let i = 0; i < items.length; i++) {
+          if (Object.keys(out).length >= maxKeys) break;
+          const it = items[i];
+          const kRaw = String(it?.key || '').trim();
+          const vRaw = String(it?.value || '').trim();
+          if (!kRaw || !vRaw) continue;
+          set(`ai_${kRaw}`, vRaw);
+        }
+      } catch (_) {}
+      return out;
+    })();
+
+    const stripeCreatePaymentIntent = async (opts) => {
+      const sp = new URLSearchParams();
+      sp.append('amount', String(opts.amount));
+      sp.append('currency', String(opts.currency));
+      sp.append('payment_method_types[]', 'card');
+      if (opts.description) sp.append('description', String(opts.description));
+      if (opts.metadata && typeof opts.metadata === 'object') {
+        const keys = Object.keys(opts.metadata);
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const v = opts.metadata[k];
+          if (v === undefined || v === null) continue;
+          const s = String(v).trim();
+          if (!s) continue;
+          sp.append(`metadata[${k}]`, s);
+        }
+      }
+      const resp = await axios.post('https://api.stripe.com/v1/payment_intents', sp.toString(), {
+        headers: {
+          'Authorization': `Bearer ${stripeSecret}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Idempotency-Key': correlationIDSafe
+        },
+        timeout: 45000
+      });
+      return resp && resp.data ? resp.data : null;
+    };
+
+    const description = String(addInfoMap['pacote'] || `${qtd || 1} ${tipo || 'serviço'}`).trim().slice(0, 500);
+    const pi = await stripeCreatePaymentIntent({
+      amount: Number(validatedValueCents),
+      currency: 'brl',
+      description,
+      metadata: stripeMetadata
+    });
+    if (!pi || !pi.id || !pi.client_secret) {
+      return res.status(502).json({ error: 'stripe_empty_response', message: 'Resposta vazia da Stripe.' });
+    }
+
+    let initialFollowersCount = null;
+    let initialFollowersCheckedAt = null;
+    try {
+      const cat = String((addInfoArr.find(it => it && it.key === 'categoria_servico')?.value) || '').toLowerCase().trim();
+      const uname = String(instauserFromClient || '').trim().toLowerCase().replace(/^@+/, '');
+      if (cat === 'seguidores' && uname) {
+        const { getCollection } = require('./mongodbClient');
+        const vu = await getCollection('validated_insta_users');
+        const vUser = await vu.findOne({ username: uname }, { projection: { _id: 0, followersCount: 1, checkedAt: 1, checks: 1 } });
+        const nowMs = Date.now();
+        if (vUser) {
+          let picked = null;
+          if (Array.isArray(vUser.checks) && vUser.checks.length) {
+            const c = vUser.checks[vUser.checks.length - 1];
+            const ts = new Date(c && c.checkedAt ? c.checkedAt : 0).getTime();
+            if (Number.isFinite(ts) && (nowMs - ts) >= 0 && (nowMs - ts) <= (20 * 60 * 1000) && typeof c.followersCount === 'number') {
+              picked = c;
+            }
+          }
+          if (picked) {
+            initialFollowersCount = picked.followersCount;
+            initialFollowersCheckedAt = picked.checkedAt || null;
+          } else if (typeof vUser.followersCount === 'number') {
+            initialFollowersCount = vUser.followersCount;
+            initialFollowersCheckedAt = vUser.checkedAt || null;
+          }
+        }
+      }
+    } catch (_) {}
+
+    const record = {
+      nomeUsuario: null,
+      telefone: phoneDigits || '',
+      instauser: instauserFromClient,
+      profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
+      isPrivate: isPrivate,
+      criado: createdIso,
+      identifier: String(pi.id),
+      correlationID: correlationIDSafe,
+      status: 'pendente',
+      qtd,
+      tipo,
+      utms,
+      geolocation,
+      valueCents: Number(total_cents),
+      expectedValueCents: Number(validatedValueCents),
+      customer: Object.assign({}, customer || {}, (cpfDigits ? { cpf: cpfDigits } : {}), (emailSafe ? { email: emailSafe } : {}), { phone_number: phoneDigits }),
+      additionalInfo: addInfoArr,
+      tipoServico: tipo,
+      quantidade: qtd,
+      instagramUsername: instauserFromClient,
+      slug,
+      userAgent,
+      ip,
+      createdAt: createdIso,
+      paymentMethod: 'credit_card',
+      stripe: {
+        environment: stripeKeys.useTest ? 'test' : 'live',
+        payment_intent_id: pi.id,
+        status: String(pi.status || ''),
+        amount: Number(pi.amount || validatedValueCents),
+        currency: String(pi.currency || 'brl')
+      }
+    };
+    if (initialFollowersCount != null) {
+      record.initialFollowersCount = Number(initialFollowersCount);
+      record.initialFollowersCheckedAt = initialFollowersCheckedAt || createdIso;
+    }
+
+    const col = await getCollection('checkout_orders');
+    const insertResult = await col.insertOne(record);
+    try { record._id = insertResult?.insertedId; } catch (_) {}
+    Promise.resolve()
+      .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
+      .catch(() => {});
+
+    return res.json({
+      ok: true,
+      correlationID: correlationIDSafe,
+      identifier: String(pi.id),
+      paymentIntentId: String(pi.id),
+      clientSecret: String(pi.client_secret)
+    });
+  } catch (error) {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const msg = String(
+      data?.error?.message ||
+      (Array.isArray(data?.error?.errors) && data.error.errors[0] && data.error.errors[0].reason ? data.error.errors[0].reason : '') ||
+      data?.message ||
+      data?.error ||
+      error?.message ||
+      ''
+    ).trim();
+    if (status && status >= 400 && status < 500) {
+      return res.status(status).json({ error: 'stripe_request_error', message: msg || 'Erro na requisição à Stripe.', details: data, correlationID: correlationIDSafe });
+    }
+    return res.status(500).json({ error: 'stripe_error', message: msg || 'Erro ao criar pagamento na Stripe.', details: data, correlationID: correlationIDSafe });
+  }
+});
+
+app.post('/api/stripe/confirm-intent', async (req, res) => {
+  try {
+    const stripeKeys = getStripeKeys();
+    const stripeSecret = String(stripeKeys.secret || '').trim();
+    if (!stripeSecret) return res.status(500).json({ error: 'missing_stripe_secret', message: 'Configuração da Stripe ausente (STRIPE_SECRET_KEY).' });
+
+    const paymentIntentId = String(req.body?.payment_intent_id || req.body?.paymentIntentId || req.body?.id || '').trim();
+    const identifier = String(req.body?.identifier || '').trim();
+    const correlationID = String(req.body?.correlationID || '').trim();
+    const pickId = paymentIntentId || identifier;
+    if (!pickId) return res.status(400).json({ error: 'missing_payment_intent', message: 'payment_intent_id é obrigatório.' });
+
+    const piResp = await axios.get(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(pickId)}`, {
+      headers: { 'Authorization': `Bearer ${stripeSecret}` },
+      timeout: 45000
+    });
+    const pi = piResp && piResp.data ? piResp.data : null;
+    if (!pi || !pi.id) return res.status(502).json({ error: 'stripe_empty_response', message: 'Resposta vazia da Stripe.' });
+
+    const col = await getCollection('checkout_orders');
+    const conds = [];
+    if (identifier) conds.push({ identifier });
+    if (paymentIntentId) conds.push({ 'stripe.payment_intent_id': paymentIntentId });
+    conds.push({ identifier: pi.id });
+    conds.push({ 'stripe.payment_intent_id': pi.id });
+    if (correlationID) conds.push({ correlationID });
+    const record = await col.findOne({ $or: conds });
+    if (!record) return res.status(404).json({ error: 'order_not_found', message: 'Pedido não encontrado para este pagamento.' });
+
+    const expected = Number(record.expectedValueCents || record.valueCents || 0);
+    const piAmount = Number(pi.amount || 0);
+    if (Number.isFinite(expected) && expected > 0 && Number.isFinite(piAmount) && piAmount > 0 && expected !== piAmount) {
+      await col.updateOne({ _id: record._id }, { $set: { status: 'falha', stripe: Object.assign({}, record.stripe || {}, { status: String(pi.status || ''), amount: piAmount, mismatch: true }) } });
+      return res.status(409).json({ error: 'amount_mismatch', message: 'Valor do pagamento divergente do pedido.' });
+    }
+
+    const piStatus = String(pi.status || '').toLowerCase();
+    const isPaid = piStatus === 'succeeded';
+    const sysStatus = isPaid ? 'pago' : ((piStatus === 'processing' || piStatus === 'requires_action' || piStatus === 'requires_payment_method' || piStatus === 'requires_confirmation') ? 'pendente' : 'falha');
+
+    const update = {
+      status: sysStatus,
+      paidAt: isPaid ? new Date().toISOString() : (record.paidAt || null),
+      stripe: Object.assign({}, record.stripe || {}, {
+        environment: stripeKeys.useTest ? 'test' : 'live',
+        payment_intent_id: pi.id,
+        status: String(pi.status || ''),
+        amount: Number(pi.amount || record?.stripe?.amount || expected || 0),
+        currency: String(pi.currency || record?.stripe?.currency || 'brl')
+      })
+    };
+    await col.updateOne({ _id: record._id }, { $set: update });
+
+    if (isPaid) {
+      try {
+        const fresh = Object.assign({}, record, update);
+        await processOrderFulfillment(fresh, col, req);
+      } catch (_) {}
+    }
+
+    return res.json({
+      ok: true,
+      paid: isPaid,
+      status: sysStatus,
+      identifier: String(record.identifier || pi.id),
+      correlationID: String(record.correlationID || correlationID || '')
+    });
+  } catch (error) {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const msg = String(
+      data?.error?.message ||
+      data?.message ||
+      data?.error ||
+      error?.message ||
+      ''
+    ).trim();
+    if (status && status >= 400 && status < 500) return res.status(status).json({ error: 'stripe_request_error', message: msg || 'Erro na requisição à Stripe.', details: data });
+    return res.status(500).json({ error: 'stripe_error', message: msg || 'Erro ao confirmar pagamento na Stripe.', details: data });
+  }
+});
+
+app.post('/api/stripe/create-checkout-session', async (req, res) => {
+  let correlationIDSafe = '';
+  let validatedValueCents = null;
+  try {
+    const { installments, customer, total_cents, additionalInfo, profile_is_private, utms: reqUtms } = req.body;
+    correlationIDSafe = (function () {
+      try {
+        const c = String(req.body?.correlationID || '').trim();
+        if (c) return c;
+      } catch (_) {}
+      try {
+        const crypto = require('crypto');
+        if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+      } catch (_) {}
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    })();
+
+    const stripeKeys = getStripeKeys();
+    const stripeSecret = String(stripeKeys.secret || '').trim();
+    if (!stripeSecret) {
+      return res.status(500).json({ error: 'missing_stripe_secret', message: 'Configuração da Stripe ausente (STRIPE_SECRET_KEY).' });
+    }
+
+    if (!total_cents || Number(total_cents) < 100) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor mínimo para cartão de crédito é R$ 1,00.' });
+    }
+
+    const addInfoArr = Array.isArray(additionalInfo) ? additionalInfo : [];
+    const addInfoMap = addInfoArr.reduce((acc, item) => {
+      const k = String(item?.key || '').trim();
+      const v = String(item?.value || '').trim();
+      acc[k] = v;
+      return acc;
+    }, {});
+
+    const tipoVal = addInfoMap['tipo_servico'] || '';
+    const qtdVal = Number(addInfoMap['quantidade'] || 0) || 0;
+
+    let verification = await verifyPrice(tipoVal, qtdVal, addInfoArr, Number(total_cents));
+    if (!verification.isValid) {
+      try {
+        const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+        const couponCode = normalizeCouponCode(couponCodeRaw);
+        if (couponCode) {
+          const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+          const eligibility = await getCouponEligibility(couponCode, profileKey);
+          if (eligibility && eligibility.ok && eligibility.coupon) {
+            const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+            const rate = pct > 0 ? (pct / 100) : 0;
+            if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+              const expected = Number(verification.expectedPrice);
+              const discountVal = Math.round(expected * rate);
+              const discountedExpected = Math.max(0, expected - discountVal);
+              if (Number(total_cents) === discountedExpected) {
+                verification = { isValid: true, matchedPrice: Number(total_cents), expectedPrice: Number(total_cents), mismatchDetails: null };
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if (!verification.isValid) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor divergente do esperado.', details: verification.mismatchDetails });
+    }
+    const validatedPriceCents = Number(verification.matchedPrice || verification.expectedPrice || 0);
+    if (!Number.isFinite(validatedPriceCents) || validatedPriceCents < 100) {
+      return res.status(400).json({ error: 'invalid_amount', message: 'Valor inválido para cartão.' });
+    }
+    validatedValueCents = validatedPriceCents;
+
+    const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+    const isValidCPF = (cpfRaw) => {
+      const cpf = normalizeDigits(cpfRaw);
+      if (cpf.length !== 11) return false;
+      if (/^(\d)\1+$/.test(cpf)) return false;
+      const calc = (base, factor) => {
+        let sum = 0;
+        for (let i = 0; i < base.length; i++) sum += Number(base[i]) * (factor - i);
+        const mod = (sum * 10) % 11;
+        return mod === 10 ? 0 : mod;
+      };
+      const d1 = calc(cpf.slice(0, 9), 10);
+      const d2 = calc(cpf.slice(0, 10), 11);
+      return d1 === Number(cpf[9]) && d2 === Number(cpf[10]);
+    };
+    const normalizeBrMobile = (raw) => {
+      let d = normalizeDigits(raw);
+      if (!d) return '';
+      d = d.replace(/^0+/, '');
+      if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+      if (d.length > 11) d = d.slice(-11);
+      if (!(d.length === 10 || d.length === 11)) return '';
+      if (d.startsWith('0')) return '';
+      if (d.length === 11 && d[2] !== '9') {
+        const d2 = d.slice(0, 2) + d.slice(3);
+        if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
+      }
+      if (!/^[1-9]{2}\d{8,9}$/.test(d)) return '';
+      return d;
+    };
+
+    const cpfDigits = normalizeDigits(customer?.cpf);
+    if (cpfDigits && !isValidCPF(cpfDigits)) return res.status(400).json({ error: 'invalid_cpf', message: 'CPF inválido.' });
+
+    const phoneRaw = customer?.phone_number || customer?.phone || customer?.telefone || customer?.whatsapp || '';
+    const phoneDigits = normalizeBrMobile(phoneRaw);
+    if (!phoneDigits) return res.status(400).json({ error: 'missing_phone', message: 'Telefone (DDD + número) é obrigatório para pagamento no cartão.' });
+
+    const emailSafe = (function () {
+      const raw = String(customer?.email || '').trim();
+      if (!raw) return '';
+      if (raw.length > 180) return '';
+      const at = raw.indexOf('@');
+      if (at <= 0 || at >= raw.length - 3) return '';
+      if (raw.indexOf('.', at) === -1) return '';
+      return raw;
+    })();
+
+    let utms = {};
+    try {
+      if (reqUtms && Object.keys(reqUtms).length > 0) {
+        utms = reqUtms;
+        if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+      } else {
+        const refUrl = req.get('Referer') || req.headers['referer'] || '';
+        utms = { ref: refUrl };
+      }
+    } catch (_) {
+      const refUrl = req.get('Referer') || req.headers['referer'] || '';
+      utms = { ref: refUrl };
+    }
+
+    const tipo = addInfoMap['tipo_servico'] || '';
+    const qtd = Number(addInfoMap['quantidade'] || 0) || 0;
+    const instauserFromClient = addInfoMap['instagram_username'] || '';
+    const userAgent = req.get('User-Agent') || '';
+    const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+    const slug = req.session?.linkSlug || '';
+    const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfoMap['profile_is_private'] === 'true';
+    const createdIso = new Date().toISOString();
+
+    let geolocation = null;
+    try {
+      const geoPromise = geoLookupIp(ip);
+      const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1200));
+      geolocation = await Promise.race([geoPromise, timeout]);
+    } catch (_) { geolocation = null; }
+
+    const installmentsSafe = (function () {
+      const n = parseInt(String(installments || '1'), 10);
+      return (Number.isFinite(n) && n > 0) ? n : 1;
+    })();
+    try {
+      for (let i = addInfoArr.length - 1; i >= 0; i--) {
+        if (String(addInfoArr[i]?.key || '').trim() === 'installments') addInfoArr.splice(i, 1);
+      }
+      addInfoArr.push({ key: 'installments', value: String(installmentsSafe) });
+    } catch (_) {}
+
+    const stripeMetadata = (function () {
+      const out = {};
+      const normKey = (k) => String(k || '').trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+      const normVal = (v) => {
+        const s = String(v === undefined || v === null ? '' : v).trim();
+        if (!s) return '';
+        return s.length > 450 ? s.slice(0, 450) : s;
+      };
+      const set = (k, v) => {
+        const kk = normKey(k);
+        const vv = normVal(v);
+        if (!kk || !vv) return;
+        out[kk] = vv;
+      };
+      set('correlationID', correlationIDSafe);
+      set('tipo_servico', tipo);
+      set('categoria_servico', addInfoMap['categoria_servico'] || '');
+      set('quantidade', qtd);
+      set('instagram_username', instauserFromClient);
+      set('phone', phoneDigits);
+      set('slug', slug);
+      set('tc_code', addInfoMap['tc_code'] || '');
+      try {
+        if (utms && typeof utms === 'object') {
+          set('utm_source', utms.source || '');
+          set('utm_medium', utms.medium || '');
+          set('utm_campaign', utms.campaign || '');
+          set('utm_term', utms.term || '');
+          set('utm_content', utms.content || '');
+          set('gclid', utms.gclid || '');
+          set('fbclid', utms.fbclid || '');
+        }
+      } catch (_) {}
+      try {
+        const maxKeys = 45;
+        const items = Array.isArray(addInfoArr) ? addInfoArr : [];
+        for (let i = 0; i < items.length; i++) {
+          if (Object.keys(out).length >= maxKeys) break;
+          const it = items[i];
+          const kRaw = String(it?.key || '').trim();
+          const vRaw = String(it?.value || '').trim();
+          if (!kRaw || !vRaw) continue;
+          set(`ai_${kRaw}`, vRaw);
+        }
+      } catch (_) {}
+      return out;
+    })();
+
+    const baseUrl = (function () {
+      try {
+        const proto = req.protocol || 'https';
+        const host = req.get('host') || '';
+        if (host) return `${proto}://${host}`;
+      } catch (_) {}
+      return '';
+    })();
+    if (!baseUrl) {
+      return res.status(500).json({ error: 'missing_base_url', message: 'Não foi possível determinar a URL base do site para redirecionamento.' });
+    }
+    const successUrl = (baseUrl ? `${baseUrl}` : '') + `/pedido?correlationID=${encodeURIComponent(correlationIDSafe)}&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = (function () {
+      const ref = String(req.get('Referer') || req.headers['referer'] || '').trim();
+      if (ref) return ref;
+      return (baseUrl ? `${baseUrl}` : '') + '/cliente';
+    })();
+
+    const description = String(addInfoMap['pacote'] || `${qtd || 1} ${tipo || 'serviço'}`).trim().slice(0, 500);
+    const productName = String(description || 'Pedido').trim().slice(0, 250);
+
+    const uiModeRaw = String(req.body?.checkoutUiMode || process.env.STRIPE_CHECKOUT_UI_MODE || '').trim().toLowerCase();
+    const useEmbeddedByDefault = String(process.env.STRIPE_USE_CHECKOUT || '').trim().toLowerCase() === 'true';
+    const isEmbedded = uiModeRaw === 'embedded' || (useEmbeddedByDefault && uiModeRaw !== 'redirect');
+
+    const sp = new URLSearchParams();
+    sp.append('mode', 'payment');
+    sp.append('locale', 'pt-BR');
+    if (isEmbedded) {
+      sp.append('ui_mode', 'embedded');
+      sp.append('redirect_on_completion', 'always');
+      sp.append('return_url', successUrl);
+    } else {
+      sp.append('success_url', successUrl);
+      sp.append('cancel_url', cancelUrl);
+    }
+    sp.append('payment_method_types[]', 'card');
+    if (emailSafe) sp.append('customer_email', emailSafe);
+    sp.append('client_reference_id', correlationIDSafe);
+    sp.append('line_items[0][quantity]', '1');
+    sp.append('line_items[0][price_data][currency]', 'brl');
+    sp.append('line_items[0][price_data][unit_amount]', String(validatedValueCents));
+    sp.append('line_items[0][price_data][product_data][name]', productName);
+    const metaKeys = Object.keys(stripeMetadata || {});
+    for (let i = 0; i < metaKeys.length; i++) {
+      const k = metaKeys[i];
+      const v = stripeMetadata[k];
+      if (v === undefined || v === null) continue;
+      const s = String(v).trim();
+      if (!s) continue;
+      sp.append(`payment_intent_data[metadata][${k}]`, s);
+    }
+
+    const sessionResp = await axios.post('https://api.stripe.com/v1/checkout/sessions', sp.toString(), {
+      headers: {
+        'Authorization': `Bearer ${stripeSecret}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Idempotency-Key': correlationIDSafe
+      },
+      timeout: 45000
+    });
+    const sessionData = sessionResp && sessionResp.data ? sessionResp.data : null;
+    const sessionId = String(sessionData?.id || '').trim();
+    const checkoutUrl = String(sessionData?.url || '').trim();
+    const clientSecret = String(sessionData?.client_secret || '').trim();
+    const paymentIntentId = String(sessionData?.payment_intent || '').trim();
+    if (!sessionId || (!checkoutUrl && !clientSecret)) {
+      return res.status(502).json({ error: 'stripe_empty_response', message: 'Resposta vazia da Stripe.' });
+    }
+
+    const recordIdentifier = paymentIntentId || sessionId;
+    const record = {
+      nomeUsuario: null,
+      telefone: phoneDigits || '',
+      instauser: instauserFromClient,
+      profilePrivacy: { isPrivate: isPrivate, checkedAt: createdIso },
+      isPrivate: isPrivate,
+      criado: createdIso,
+      identifier: String(recordIdentifier),
+      correlationID: correlationIDSafe,
+      status: 'pendente',
+      qtd,
+      tipo,
+      utms,
+      geolocation,
+      valueCents: Number(total_cents),
+      expectedValueCents: Number(validatedValueCents),
+      customer: Object.assign({}, customer || {}, (cpfDigits ? { cpf: cpfDigits } : {}), (emailSafe ? { email: emailSafe } : {}), { phone_number: phoneDigits }),
+      additionalInfo: addInfoArr,
+      tipoServico: tipo,
+      quantidade: qtd,
+      instagramUsername: instauserFromClient,
+      slug,
+      userAgent,
+      ip,
+      createdAt: createdIso,
+      paymentMethod: 'stripe_checkout',
+      stripe: {
+        environment: stripeKeys.useTest ? 'test' : 'live',
+        checkout_session_id: sessionId,
+        payment_intent_id: paymentIntentId,
+        status: String(sessionData?.payment_status || sessionData?.status || '')
+      }
+    };
+
+    const col = await getCollection('checkout_orders');
+    const insertResult = await col.insertOne(record);
+    try { record._id = insertResult?.insertedId; } catch (_) {}
+    Promise.resolve()
+      .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
+      .catch(() => {});
+
+    return res.json({
+      ok: true,
+      correlationID: correlationIDSafe,
+      identifier: String(recordIdentifier),
+      sessionId,
+      paymentIntentId,
+      url: checkoutUrl,
+      clientSecret
+    });
+  } catch (error) {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const msg = String(
+      data?.error?.message ||
+      (Array.isArray(data?.error?.errors) && data.error.errors[0] && data.error.errors[0].reason ? data.error.errors[0].reason : '') ||
+      data?.message ||
+      data?.error ||
+      error?.message ||
+      ''
+    ).trim();
+    if (status && status >= 400 && status < 500) {
+      return res.status(status).json({ error: 'stripe_request_error', message: msg || 'Erro na requisição à Stripe.', details: data, correlationID: correlationIDSafe });
+    }
+    return res.status(500).json({ error: 'stripe_error', message: msg || 'Erro ao criar checkout na Stripe.', details: data, correlationID: correlationIDSafe });
+  }
+});
+
+app.post('/api/stripe/webhook', async (req, res) => {
+  try {
+    const stripeKeys = getStripeKeys();
+    const webhookSecret = String(stripeKeys.webhookSecret || '').trim();
+    if (!webhookSecret) return res.status(500).send('missing_stripe_webhook_secret');
+
+    const sig = String(req.headers['stripe-signature'] || '').trim();
+    if (!sig) return res.status(400).send('missing_signature');
+
+    const raw = req.rawBody ? Buffer.from(req.rawBody) : null;
+    if (!raw) return res.status(400).send('missing_raw_body');
+
+    const parts = sig.split(',').map(s => String(s || '').trim()).filter(Boolean);
+    const tPart = parts.find(p => p.startsWith('t='));
+    const v1Parts = parts.filter(p => p.startsWith('v1=')).map(p => p.slice(3)).filter(Boolean);
+    const ts = tPart ? parseInt(tPart.slice(2), 10) : 0;
+    if (!Number.isFinite(ts) || ts <= 0 || !v1Parts.length) return res.status(400).send('bad_signature_header');
+
+    const toleranceSec = 5 * 60;
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (Math.abs(nowSec - ts) > toleranceSec) return res.status(400).send('signature_timestamp_out_of_tolerance');
+
+    const signedPayload = Buffer.concat([Buffer.from(String(ts)), Buffer.from('.'), raw]);
+    const digest = crypto.createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
+    const ok = v1Parts.some((v) => {
+      try {
+        const a = Buffer.from(String(v), 'utf8');
+        const b = Buffer.from(String(digest), 'utf8');
+        if (a.length !== b.length) return false;
+        return crypto.timingSafeEqual(a, b);
+      } catch (_) { return false; }
+    });
+    if (!ok) return res.status(400).send('signature_mismatch');
+
+    let event = null;
+    try { event = JSON.parse(raw.toString('utf8')); } catch (_) {}
+    if (!event || !event.type || !event.data) return res.status(400).send('invalid_event');
+
+    const type = String(event.type || '').trim();
+    const obj = event.data && event.data.object ? event.data.object : null;
+    const col = await getCollection('checkout_orders');
+
+    if (type.startsWith('checkout.session.')) {
+      const sessionId = String(obj && obj.id ? obj.id : '').trim();
+      if (!sessionId) return res.json({ received: true });
+      const paymentIntentId = String(obj && obj.payment_intent ? obj.payment_intent : '').trim();
+      const paymentStatus = String(obj && obj.payment_status ? obj.payment_status : '').trim().toLowerCase();
+      const clientReferenceId = String(obj && obj.client_reference_id ? obj.client_reference_id : '').trim();
+      const record = await col.findOne({
+        $or: [
+          { 'stripe.checkout_session_id': sessionId },
+          { identifier: sessionId },
+          ...(paymentIntentId ? [ { identifier: paymentIntentId }, { 'stripe.payment_intent_id': paymentIntentId } ] : []),
+          ...(clientReferenceId ? [ { correlationID: clientReferenceId } ] : [])
+        ]
+      });
+      if (!record) return res.json({ received: true });
+
+      const isPaid = paymentStatus === 'paid' || type === 'checkout.session.async_payment_succeeded';
+      const isFailed = type === 'checkout.session.async_payment_failed';
+      const sysStatus = isPaid ? 'pago' : (isFailed ? 'falha' : 'pendente');
+
+      const set = {
+        status: sysStatus,
+        paidAt: isPaid ? new Date().toISOString() : (record.paidAt || null),
+        stripe: Object.assign({}, record.stripe || {}, {
+          environment: stripeKeys.useTest ? 'test' : 'live',
+          checkout_session_id: sessionId,
+          payment_intent_id: paymentIntentId || (record.stripe && record.stripe.payment_intent_id) || '',
+          status: paymentStatus || String(obj && obj.status ? obj.status : type)
+        })
+      };
+
+      await col.updateOne({ _id: record._id }, { $set: set });
+
+      if (isPaid) {
+        try {
+          const fresh = Object.assign({}, record, set);
+          await processOrderFulfillment(fresh, col, req);
+        } catch (_) {}
+      }
+
+      return res.json({ received: true });
+    }
+
+    const piId = String(obj && obj.id ? obj.id : '').trim();
+    if (!piId) return res.json({ received: true });
+
+    const record = await col.findOne({ $or: [ { identifier: piId }, { 'stripe.payment_intent_id': piId } ] });
+    if (!record) return res.json({ received: true });
+
+    const set = {};
+    if (type === 'payment_intent.succeeded') {
+      set.status = 'pago';
+      set.paidAt = new Date().toISOString();
+      set.stripe = Object.assign({}, record.stripe || {}, { status: 'succeeded', payment_intent_id: piId });
+    } else if (type === 'payment_intent.payment_failed') {
+      set.status = 'falha';
+      set.stripe = Object.assign({}, record.stripe || {}, { status: 'payment_failed', payment_intent_id: piId });
+    } else if (type === 'payment_intent.processing') {
+      set.status = 'pendente';
+      set.stripe = Object.assign({}, record.stripe || {}, { status: 'processing', payment_intent_id: piId });
+    } else {
+      set.stripe = Object.assign({}, record.stripe || {}, { status: String(obj && obj.status ? obj.status : type), payment_intent_id: piId });
+    }
+
+    await col.updateOne({ _id: record._id }, { $set: set });
+
+    if (type === 'payment_intent.succeeded') {
+      try {
+        const fresh = Object.assign({}, record, set);
+        await processOrderFulfillment(fresh, col, req);
+      } catch (_) {}
+    }
+
+    return res.json({ received: true });
+  } catch (_) {
+    return res.status(500).send('webhook_error');
+  }
+});
+
 app.post('/api/pagarme/capture-charge', async (req, res) => {
     try {
         const pagarmeSecret = String(process.env.PAGARME_SECRET_KEY || '').trim();
@@ -4852,10 +5820,42 @@ app.post('/api/woovi/charge', async (req, res) => {
         }
     } catch(_) {}
 
-    // Criar correlationID no formato xxx-xxx-{phoneDigits}
+    const incomingCorrelationID = (typeof correlationID === 'string' ? correlationID : '').trim();
     const phoneDigitsRaw = (customer && customer.phone) ? String(customer.phone).replace(/\D/g, '') : '';
     const randChunk = () => Math.random().toString(36).slice(2, 5);
-    const chargeCorrelationID = `${randChunk()}-${randChunk()}-${phoneDigitsRaw || 'no-phone'}`;
+    const chargeCorrelationID = incomingCorrelationID || `${randChunk()}-${randChunk()}-${phoneDigitsRaw || 'no-phone'}`;
+    try {
+        if (incomingCorrelationID) {
+            const col = await getCollection('checkout_orders');
+            const existing = await col.findOne(
+                { correlationID: incomingCorrelationID },
+                { projection: { _id: 1, correlationID: 1, identifier: 1, status: 1, woovi: 1 } }
+            );
+            const w = existing && existing.woovi ? existing.woovi : null;
+            if (existing && w && (w.brCode || w.qrCodeImage || w.chargeId)) {
+                return res.status(200).json({
+                    charge: {
+                        id: w.chargeId || null,
+                        chargeId: w.chargeId || null,
+                        identifier: w.identifier || existing.identifier || null,
+                        correlationID: existing.correlationID || incomingCorrelationID,
+                        status: w.status || existing.status || 'pendente',
+                        paymentMethods: {
+                            pix: {
+                                brCode: w.brCode || null,
+                                qrCodeImage: w.qrCodeImage || null
+                            }
+                        },
+                        brCode: w.brCode || null,
+                        qrCodeImage: w.qrCodeImage || null
+                    },
+                    reused: true
+                });
+            }
+        }
+    } catch (e) {
+        try { console.warn('⚠️ Woovi idempotency check failed:', e && e.message ? e.message : e); } catch (_) {}
+    }
 
     // USE VALIDATED PRICE FOR WOOVI CHARGE
     // Se validatedPriceCents estiver disponível (o que deve estar se passou na verificação acima), use-o.
@@ -5258,6 +6258,10 @@ async function processOrderFulfillment(record, col, req) {
         } else if (isCurtidasBrasileirasUpgradeEligible) {
             const map = { 150: 150, 500: 200, 1000: 1000 };
             upgradeAdd = map[qtdBase] || 0;
+        } else if (isViewsBase) {
+            const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
         }
     }
     let qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
@@ -6048,7 +7052,44 @@ app.get('/api/order/provider-status', async (req, res) => {
     let orderParam = '';
     if (famaId) { provider = 'fama24h'; orderParam = String(famaId); }
     else if (fsId) { provider = 'fornecedor_social'; orderParam = String(fsId); }
-    else return res.status(400).json({ ok: false, error: 'missing_provider_order_id' });
+    else {
+      const safeErrCode = (e) => {
+        try {
+          if (!e) return '';
+          if (typeof e === 'string') return e.slice(0, 120);
+          if (typeof e.code === 'string') return e.code.slice(0, 120);
+          if (typeof e.error === 'string') return e.error.slice(0, 120);
+        } catch (_) {}
+        return '';
+      };
+      const orderStatus = String(doc?.status || '').trim();
+      const isPrivate = doc?.isPrivate === true || doc?.profilePrivacy?.isPrivate === true;
+      const famaStatus = String(doc?.fama24h?.status || '').trim();
+      const fsStatus = String(doc?.fornecedor_social?.status || '').trim();
+      const famaErrCode = safeErrCode(doc?.fama24h?.error);
+      const fsErrCode = safeErrCode(doc?.fornecedor_social?.error);
+      const hasAnyAttempt = !!(famaStatus || fsStatus || famaErrCode || fsErrCode);
+      const reason = isPrivate
+        ? 'private_profile'
+        : (!hasAnyAttempt ? 'not_dispatched_yet' : (famaErrCode || fsErrCode ? 'dispatch_error' : 'dispatch_pending'));
+      return res.json({
+        ok: true,
+        provider: null,
+        state: 'not_dispatched',
+        reason,
+        order: {
+          identifier: String(doc?.identifier || ''),
+          correlationID: String(doc?.correlationID || ''),
+          status: orderStatus,
+          paidAt: doc?.paidAt || null,
+          isPrivate
+        },
+        attempts: {
+          fama24h: { status: famaStatus || null, error: famaErrCode || null },
+          fornecedor_social: { status: fsStatus || null, error: fsErrCode || null }
+        }
+      });
+    }
     try { console.log('🛰️ [provider-status] resolved', { provider, orderParam, _id: String(doc._id) }); } catch(_) {}
     const getText = (obj) => String(obj?.status || obj?.Status || obj?.status_text || obj?.statusText || obj?.StatusText || '').toLowerCase();
     const persisted = provider === 'fama24h' ? (doc?.fama24h?.statusPayload || null) : (doc?.fornecedor_social?.statusPayload || null);
@@ -6150,7 +7191,7 @@ app.get('/:slug', async (req, res, next) => {
               if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                 req.session.refilAccessAllowed = true;
                 req.session.perfilAccessAllowed = false;
-                return res.redirect('/refil');
+                return res.redirect('/refil2?token=' + encodeURIComponent(slug));
               }
             } catch(_) {}
             req.session.perfilAccessAllowed = true;
@@ -6291,7 +7332,7 @@ app.post("/api/check-privacy", async (req, res) => {
         
         // Usa verifyInstagramProfile mas ignora a verificação de "já usado" do endpoint principal
         // A função verifyInstagramProfile em si não bloqueia, apenas retorna os dados
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res, shouldBypass);
+        const result = await verifyInstagramProfile(username, userAgent, ip, req, res, shouldBypass, { purpose: 'check_privacy', skipPosts: true });
         
         // Retornar apenas o status de privacidade e sucesso
         return res.json({
@@ -6353,7 +7394,17 @@ app.post("/api/check-instagram-profile", async (req, res) => {
 
     // Verificação via Apify (Delegando para função centralizada verifyInstagramProfile)
     try {
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res);
+        const shouldBypass = (typeof bypassCache !== 'undefined') ? !!bypassCache : false;
+        const wantsSkipPosts = !!(req.body && (req.body.skipPosts === true || req.body.skip_posts === true));
+        const result = await verifyInstagramProfile(
+            username,
+            userAgent,
+            ip,
+            req,
+            res,
+            shouldBypass,
+            wantsSkipPosts ? { purpose: 'profile_check', skipPosts: true } : { purpose: 'profile_check' }
+        );
 
         // Adaptar o retorno para o formato esperado por este endpoint se necessário
         // verifyInstagramProfile já retorna { success, status, profile, error }
@@ -7384,40 +8435,63 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 await col.updateOne(filter, { $unset: { fama24h: '' } });
               }
             } else {
-              const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0 && !alreadySentFama;
+              const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0;
               if (canSend) {
-                const axios = require('axios');
-                const sanitizeLink = (s) => {
-                  let v = String(s || '').replace(/[`\s]/g, '').trim();
-                  if (!v) return '';
-                  if (!/^https?:\/\//i.test(v)) {
-                    if (/^www\./i.test(v)) v = `https://${v}`;
-                    else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
-                    else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+                const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
+                const lockUpdate = await col.updateOne(
+                  {
+                    _id: record._id,
+                    'fama24h.orderId': { $exists: false },
+                    $or: [
+                      { 'fama24h.status': { $ne: 'processing' } },
+                      { 'fama24h.attemptedAt': { $lt: retryAfterIso } },
+                      { 'fama24h.attemptedAt': { $exists: false } }
+                    ]
+                  },
+                  { $set: { 'fama24h.status': 'processing', 'fama24h.attemptedAt': new Date().toISOString() } }
+                );
+                if (lockUpdate.modifiedCount > 0) {
+                  const axios = require('axios');
+                  const sanitizeLink = (s) => {
+                    let v = String(s || '').replace(/[`\s]/g, '').trim();
+                    if (!v) return '';
+                    if (!/^https?:\/\//i.test(v)) {
+                      if (/^www\./i.test(v)) v = `https://${v}`;
+                      else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+                      else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+                    }
+                    v = v.split('#')[0].split('?')[0];
+                    const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+                    if (!m) return '';
+                    const kind = String(m[2] || '').toLowerCase();
+                    let code = String(m[3] || '');
+                    if (!kind || !code) return '';
+                    if (code.length > 15) code = code.slice(0, 11);
+                    return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
+                  };
+                  const linkForFama = (isViewsBase || isCurtidasBase)
+                    ? sanitizeLink(linkToSend)
+                    : (function () {
+                        let v = String(linkToSend || '').replace(/[`\s]/g, '').trim();
+                        if (!v) return '';
+                        if (/^https?:\/\//i.test(v)) return v;
+                        v = v.replace(/^@/, '');
+                        return `https://instagram.com/${v}`;
+                      })();
+                  if (!linkForFama) {
+                    await col.updateOne(filter, { $set: { 'fama24h.status': 'invalid_link', 'fama24h.error': { code: 'invalid_link' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkToSend || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
+                    return;
                   }
-                  v = v.split('#')[0].split('?')[0];
-                  const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
-                  if (!m) return '';
-                  const kind = String(m[2] || '').toLowerCase();
-                  let code = String(m[3] || '');
-                  if (!kind || !code) return '';
-                  if (code.length > 15) code = code.slice(0, 11);
-                  return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
-                };
-                const linkForFama = (isViewsBase || isCurtidasBase) ? sanitizeLink(linkToSend) : String(linkToSend || '').replace(/[`\s]/g, '').trim();
-                if (!linkForFama) {
-                  await col.updateOne(filter, { $set: { 'fama24h.status': 'invalid_link', 'fama24h.error': { code: 'invalid_link' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkToSend || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
-                  return;
-                }
-                const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtd) });
-                try {
-                  const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
-                  const famaData = famaResp.data || {};
-                  const orderId = famaData.order || famaData.id || null;
-                  await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
-                  try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
-                } catch (fErr) {
-                  await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+                  const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtd) });
+                  try {
+                    const famaResp = await axios.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const famaData = famaResp.data || {};
+                    const orderId = famaData.order || famaData.id || null;
+                    await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                    try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
+                  } catch (fErr) {
+                    await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, requestedAt: new Date().toISOString() } } });
+                  }
                 }
               }
             }
@@ -8690,9 +9764,10 @@ app.get('/pedido', async (req, res) => {
   try {
     const identifier = String(req.query.identifier || req.query.t || '').trim();
      const correlationID = String(req.query.correlationID || req.query.ref || '').trim();
+     const sessionId = String(req.query.session_id || req.query.sessionId || '').trim();
      const orderIDRaw = String(req.query.orderID || req.query.orderid || req.query.oid || '').trim();
      const phoneRaw = String(req.query.phone || '').trim();
-    const hasQuery = !!(identifier || correlationID || orderIDRaw || phoneRaw);
+    const hasQuery = !!(identifier || correlationID || sessionId || orderIDRaw || phoneRaw);
     const hasSessionCtx = !!(req.session && (req.session.selectedOrderID || req.session.lastPaidIdentifier || req.session.lastPaidCorrelationID));
     if (!hasQuery && !hasSessionCtx) {
       return res.redirect('/cliente');
@@ -8704,6 +9779,7 @@ app.get('/pedido', async (req, res) => {
       const conds = [];
       if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
+      if (sessionId) { conds.push({ 'stripe.checkout_session_id': sessionId }); conds.push({ identifier: sessionId }); }
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
         if (!Number.isNaN(maybeNum)) {
@@ -8785,6 +9861,43 @@ app.get('/pedido', async (req, res) => {
           processOrderFulfillment(doc, col, req).catch(() => {});
         }
       } catch (_) {}
+    }
+
+    if (doc && sessionId) {
+      const status0 = String(doc.status || '').trim().toLowerCase();
+      const isPaid0 = status0 === 'pago';
+      const hasStripe0 = !!(doc.stripe && (doc.stripe.checkout_session_id || doc.stripe.payment_intent_id));
+      if (!isPaid0 && hasStripe0) {
+        try {
+          const stripeKeys = getStripeKeys();
+          const stripeSecret = String(stripeKeys.secret || '').trim();
+          if (stripeSecret) {
+            const sessResp = await axios.get(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+              headers: { 'Authorization': `Bearer ${stripeSecret}` },
+              timeout: 15000
+            });
+            const sess = sessResp && sessResp.data ? sessResp.data : null;
+            const paymentStatus = String(sess?.payment_status || '').trim().toLowerCase();
+            const piId = String(sess?.payment_intent || '').trim();
+            const isPaid = paymentStatus === 'paid';
+            if (isPaid) {
+              const set = {
+                status: 'pago',
+                paidAt: doc.paidAt || new Date().toISOString(),
+                stripe: Object.assign({}, doc.stripe || {}, {
+                  environment: stripeKeys.useTest ? 'test' : 'live',
+                  checkout_session_id: String(sess?.id || sessionId),
+                  payment_intent_id: piId || (doc.stripe && doc.stripe.payment_intent_id) || '',
+                  status: paymentStatus || 'paid'
+                })
+              };
+              await col.updateOne({ _id: doc._id }, { $set: set });
+              doc = Object.assign({}, doc, set);
+              try { await processOrderFulfillment(doc, col, req); } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
     }
     
     // Garantir que o link de refil exista para este pedido (para o botão "Acessar ferramenta")
@@ -10347,7 +11460,7 @@ app.post('/api/refil/history', async (req, res) => {
       }
       const userAgent = req.get('User-Agent') || '';
       const ip = req.realIP || req.ip || '';
-      const check = await verifyInstagramProfile(usernameInput, userAgent, ip, req, res, true);
+      const check = await verifyInstagramProfile(usernameInput, userAgent, ip, req, res, true, { purpose: 'refil', skipPosts: true });
       if (!check || !check.success || !check.profile) {
         return res.status(502).json({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
       }
@@ -10836,10 +11949,38 @@ app.post('/api/refil/preview', async (req, res) => {
     }
     const srcRaw = String((req.body && (req.body.source || req.body.from || req.body.origin || req.body.page)) || '').trim();
     const src = srcRaw.toLowerCase().replace(/^\/+/, '');
+    const isRefil2Source = src === 'refil2';
     const refererRaw = String(req.get('Referer') || req.headers['referer'] || '').trim();
     let refererPath = '';
     try { refererPath = refererRaw ? String(new URL(refererRaw).pathname || '') : ''; } catch (_) { refererPath = refererRaw; }
     const shouldWebhook = src === 'refil2' || /(^|\/)refil2(\/|$)/i.test(refererPath);
+    const logRefil2Request = (payload) => {
+      if (!isRefil2Source) return;
+      try {
+        const ip = String(req.realIP || req.ip || '').trim();
+        const ua = String(req.get('User-Agent') || req.headers['user-agent'] || '').trim();
+        const referer = String(refererRaw || '').trim();
+        const doc = Object.assign(
+          {
+            requestedAt: new Date(),
+            source: 'refil2',
+            username,
+            ip,
+            ua,
+            referer
+          },
+          (payload && typeof payload === 'object') ? payload : {}
+        );
+        (async () => {
+          try {
+            const { getCollection } = require('./mongodbClient');
+            const col = await getCollection('refil2_requests');
+            if (!col || typeof col.insertOne !== 'function') return;
+            await col.insertOne(doc);
+          } catch (_) {}
+        })();
+      } catch (_) {}
+    };
     let webhook = null;
     if (shouldWebhook && false) {
       const startedAt = Date.now();
@@ -11237,6 +12378,7 @@ app.post('/api/refil/preview', async (req, res) => {
     ];
     const orders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray();
     if (!orders.length) {
+      logRefil2Request({ status: 'no_orders', decision: 'nao_repor', decisionReason: 'no_orders' });
       return res.status(404).json(wrap({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para este usuário.' }));
     }
     const followersOr = [
@@ -11250,6 +12392,7 @@ app.post('/api/refil/preview', async (req, res) => {
     ];
     const followersOrders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }, { $or: followersOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
     if (!followersOrders.length) {
+      logRefil2Request({ status: 'no_followers_purchase', decision: 'nao_repor', decisionReason: 'no_followers_purchase' });
       return res.json(wrap({ ok: true, status: 'no_followers_purchase', message: 'Nenhuma compra de seguidores encontrada para este usuário.', data: { username } }));
     }
     const order = followersOrders[0];
@@ -11335,13 +12478,26 @@ app.post('/api/refil/preview', async (req, res) => {
     }
     const userAgent = req.get('User-Agent') || '';
     const ip = req.realIP || req.ip || '';
-    const check = await verifyInstagramProfile(username, userAgent, ip, req, res, true);
+    const check = await verifyInstagramProfile(username, userAgent, ip, req, res, true, { purpose: 'refil2', skipPosts: true });
     if (!check || !check.success || !check.profile) {
+      logRefil2Request({ status: 'profile_lookup_failed', decision: 'nao_repor', decisionReason: 'profile_lookup_failed' });
       return res.status(502).json(wrap({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' }));
     }
     const currentFollowers = Number(check.profile.followersCount || 0);
     if (baseFollowers == null) {
       const target = qty > 0 ? (currentFollowers + qty) : currentFollowers;
+      logRefil2Request({
+        status: 'no_base',
+        decision: 'nao_repor',
+        decisionReason: 'no_base',
+        lastOrderId: String(order._id || ''),
+        baseFollowers: null,
+        qty,
+        targetFollowers: target,
+        currentFollowers,
+        deficit: 0,
+        reporQty: 0
+      });
       return res.json(wrap({
         ok: true,
         status: 'no_base',
@@ -11362,6 +12518,19 @@ app.post('/api/refil/preview', async (req, res) => {
     const MIN_DROP = 50;
     if (deficit > 0 && deficit < MIN_DROP) {
       if (shouldWebhook) {
+        logRefil2Request({
+          status: 'below_threshold',
+          decision: 'nao_repor',
+          decisionReason: 'below_threshold',
+          lastOrderId: String(order._id || ''),
+          baseFollowers,
+          qty,
+          targetFollowers,
+          currentFollowers,
+          deficit,
+          reporQty: deficit,
+          minDrop: MIN_DROP
+        });
         return res.json(wrap({
           ok: true,
           status: 'initiated',
@@ -11373,6 +12542,19 @@ app.post('/api/refil/preview', async (req, res) => {
           }
         }));
       }
+      logRefil2Request({
+        status: 'below_threshold',
+        decision: 'nao_repor',
+        decisionReason: 'below_threshold',
+        lastOrderId: String(order._id || ''),
+        baseFollowers,
+        qty,
+        targetFollowers,
+        currentFollowers,
+        deficit,
+        reporQty: deficit,
+        minDrop: MIN_DROP
+      });
       return res.json(wrap({
           ok: true,
           status: 'below_threshold',
@@ -11391,6 +12573,19 @@ app.post('/api/refil/preview', async (req, res) => {
     }
     if (deficit <= 0) {
       if (shouldWebhook) {
+        logRefil2Request({
+          status: 'above_target',
+          decision: 'nao_repor',
+          decisionReason: 'above_target',
+          lastOrderId: String(order._id || ''),
+          baseFollowers,
+          qty,
+          targetFollowers,
+          currentFollowers,
+          deficit: 0,
+          reporQty: 0,
+          aboveBy: Math.abs(targetFollowers - currentFollowers)
+        });
         return res.json(wrap({
           ok: true,
           status: 'initiated',
@@ -11402,6 +12597,19 @@ app.post('/api/refil/preview', async (req, res) => {
           }
         }));
       }
+      logRefil2Request({
+        status: 'above_target',
+        decision: 'nao_repor',
+        decisionReason: 'above_target',
+        lastOrderId: String(order._id || ''),
+        baseFollowers,
+        qty,
+        targetFollowers,
+        currentFollowers,
+        deficit: 0,
+        reporQty: 0,
+        aboveBy: Math.abs(targetFollowers - currentFollowers)
+      });
       return res.json(wrap({
           ok: true,
           status: 'above_target',
@@ -11421,8 +12629,35 @@ app.post('/api/refil/preview', async (req, res) => {
     if (shouldWebhook) {
       const wr = await callRefil2Webhook({ username, perfil: username });
       if (!wr || wr.ok === false) {
+        logRefil2Request({
+          status: 'webhook_failed',
+          decision: 'nao_repor',
+          decisionReason: 'webhook_failed',
+          lastOrderId: String(order._id || ''),
+          baseFollowers,
+          qty,
+          targetFollowers,
+          currentFollowers,
+          deficit,
+          reporQty: deficit,
+          httpStatus: Number(wr && wr.httpStatus) || 0,
+          webhookMessage: String(wr && wr.message ? wr.message : '')
+        });
         return res.status(Number(wr && wr.httpStatus) || 409).json(wrap({ ok: false, error: 'refil_not_allowed', message: String(wr && wr.message ? wr.message : 'Falha ao iniciar reposição.') }));
       }
+      logRefil2Request({
+        status: 'initiated',
+        decision: 'repor',
+        decisionReason: 'deficit_ok',
+        lastOrderId: String(order._id || ''),
+        baseFollowers,
+        qty,
+        targetFollowers,
+        currentFollowers,
+        deficit,
+        reporQty: deficit,
+        minDrop: MIN_DROP
+      });
       return res.json(wrap({
         ok: true,
         status: 'initiated',
@@ -11434,6 +12669,19 @@ app.post('/api/refil/preview', async (req, res) => {
         }
       }));
     }
+    logRefil2Request({
+      status: 'deficit',
+      decision: 'repor',
+      decisionReason: 'deficit_ok',
+      lastOrderId: String(order._id || ''),
+      baseFollowers,
+      qty,
+      targetFollowers,
+      currentFollowers,
+      deficit,
+      reporQty: deficit,
+      minDrop: MIN_DROP
+    });
     return res.json(wrap({
         ok: true,
         status: 'deficit',
@@ -13947,15 +15195,15 @@ app.get('/painel', requireAdmin, async (req, res) => {
       $or: [
         { status: { $regex: paidStatusRegex, $options: 'i' } },
         { 'woovi.status': { $regex: paidStatusRegex, $options: 'i' } },
-        { paidAt: { $exists: true, $ne: null } },
-        { 'woovi.paidAt': { $exists: true, $ne: null } },
-        { 'pagarme.charge_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.order_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.transaction_status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.charge.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.order.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
-        { 'pagarme.transaction.status': { $regex: '(paid|captured|authorized|succeeded)', $options: 'i' } },
+        { paidAt: { $exists: true, $nin: [null, ''] } },
+        { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
+        { 'pagarme.charge_status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.order_status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.transaction_status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.charge.status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.order.status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
+        { 'pagarme.transaction.status': { $regex: '^(paid|captured|succeeded|settled)$', $options: 'i' } },
         { 'efi.status': { $regex: '(paid|settled)', $options: 'i' } },
         { 'efi.charge.status': { $regex: '(paid|settled)', $options: 'i' } }
       ]
@@ -13964,8 +15212,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
     const nowUTC = new Date();
     const nowSP = toSP(nowUTC);
-    const startOfTodaySP = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 0, 0, 0, 0));
-    const startOfTomorrowSP = (() => { const d = new Date(startOfTodaySP); d.setUTCDate(d.getUTCDate() + 1); return d; })();
+    const startOfTodayUtc = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 3, 0, 0, 0));
+    const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
 
     const parseOrderDateUTC = (v) => {
       try {
@@ -13981,34 +15229,112 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     };
 
+    const syncRecentPagarmeOrdersForPanel = async () => {
+      try {
+        if (view !== 'vendas' && view !== 'dashboard') return;
+        const keys = await getPagarmeKeys();
+        const secretKey = keys && keys.secretKey ? String(keys.secretKey).trim() : '';
+        if (!secretKey) return;
+
+        const recent = await col.find(
+          { 'pagarme.order_id': { $exists: true, $nin: [null, ''] } },
+          {
+            projection: {
+              _id: 1,
+              status: 1,
+              paidAt: 1,
+              createdAt: 1,
+              'pagarme.order_id': 1,
+              'pagarme.order_status': 1,
+              'pagarme.charge_status': 1,
+              'pagarme.transaction_status': 1
+            }
+          }
+        ).sort({ createdAt: -1, _id: -1 }).limit(60).toArray();
+
+        const cutoffMs = nowUTC.getTime() - 3 * 24 * 60 * 60 * 1000;
+        const candidates = [];
+        for (const r of recent) {
+          const orderId = r && r.pagarme && r.pagarme.order_id ? String(r.pagarme.order_id).trim() : '';
+          if (!orderId) continue;
+          const dt = parseOrderDateUTC(r.createdAt || null);
+          if (dt && dt.getTime() < cutoffMs) continue;
+
+          const statusStr = String(r && r.status ? r.status : '').toLowerCase();
+          const paidAtOk = !!(r && r.paidAt);
+          const pm = r && r.pagarme ? r.pagarme : {};
+          const combined = [statusStr, pm.order_status, pm.charge_status, pm.transaction_status].map(x => String(x || '')).join(' ');
+          const statusLooksPaid = /\b(pago|paid|captured|settled|succeeded|confirmed|confirmado|aprovado)\b/i.test(combined);
+          if (paidAtOk && statusLooksPaid) continue;
+
+          candidates.push({ _id: r._id, orderId });
+          if (candidates.length >= 10) break;
+        }
+
+        for (const c of candidates) {
+          try {
+            const url = `https://api.pagar.me/core/v5/orders/${encodeURIComponent(c.orderId)}`;
+            const resp = await axios.get(url, { auth: { username: secretKey, password: '' }, timeout: 6500 });
+            const o = resp && resp.data ? resp.data : null;
+            if (!o) continue;
+
+            const orderStatus = o && o.status ? String(o.status) : '';
+            const charge0 = Array.isArray(o && o.charges ? o.charges : null) ? o.charges[0] : null;
+            const chargeStatus = charge0 && charge0.status ? String(charge0.status) : '';
+            const tx0 = (charge0 && charge0.last_transaction) ? charge0.last_transaction : (Array.isArray(charge0 && charge0.transactions ? charge0.transactions : null) ? charge0.transactions[0] : null);
+            const txStatus = tx0 && tx0.status ? String(tx0.status) : '';
+            const norm = String(txStatus || chargeStatus || orderStatus || '').toLowerCase().trim();
+
+            let sysStatus = 'pendente';
+            if (norm === 'paid' || norm === 'captured' || norm === 'succeeded' || norm === 'settled') sysStatus = 'pago';
+            else if (norm === 'failed' || norm === 'refused' || norm === 'canceled' || norm === 'cancelled') sysStatus = 'falha';
+
+            const paidAtIso = sysStatus === 'pago'
+              ? String((tx0 && (tx0.paid_at || tx0.captured_at || tx0.created_at)) || '').trim() || new Date().toISOString()
+              : null;
+
+            const setDoc = {
+              status: sysStatus,
+              'pagarme.order_status': orderStatus || null,
+              'pagarme.charge_status': chargeStatus || null,
+              'pagarme.transaction_status': txStatus || null,
+              'pagarme.syncedAt': new Date().toISOString()
+            };
+            if (paidAtIso) setDoc.paidAt = paidAtIso;
+
+            await col.updateOne({ _id: c._id }, { $set: setDoc });
+          } catch (_) {}
+        }
+      } catch (_) {}
+    };
+
     const matchesPeriod = (o, period) => {
-      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+      const dateStr = o.woovi?.paidAt || o.paidAt;
       if (!dateStr) return false;
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
-      const orderDateSP = toSP(orderDateUTC);
       if (period === 'all') return true;
-      if (period === 'today') return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
-      if (period === 'last3days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 2); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
-      if (period === 'last7days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 6); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
-      if (period === 'thismonth') { const start = new Date(startOfTodaySP); start.setUTCDate(1); return orderDateSP >= start && orderDateSP < startOfTomorrowSP; }
+      if (period === 'today') return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
+      if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
+      if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
+      if (period === 'thismonth') { const start = new Date(startOfTodayUtc); start.setUTCDate(1); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
       if (period === 'lastmonth') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCMonth(start.getUTCMonth() - 1);
         start.setUTCDate(1);
-        const end = new Date(startOfTodaySP);
+        const end = new Date(startOfTodayUtc);
         end.setUTCDate(1);
-        return orderDateSP >= start && orderDateSP < end;
+        return orderDateUTC >= start && orderDateUTC < end;
       }
       if (period === 'custom') {
         const startStr = req.query.startDate;
         const endStr = req.query.endDate;
         if (startStr && endStr) {
           const [sY, sM, sD] = startStr.split('-').map(Number);
-          const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
           const [eY, eM, eD] = endStr.split('-').map(Number);
-          const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
-          return orderDateSP >= start && orderDateSP <= end;
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
+          return orderDateUTC >= start && orderDateUTC < endExclusive;
         }
         return true;
       }
@@ -14561,14 +15887,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     })();
 
+    await syncRecentPagarmeOrdersForPanel();
+
     const computeScanLowerBound = (period) => {
       if (period === 'all') return null;
-      if (period === 'today') return startOfTodaySP;
-      if (period === 'last3days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 2); return start; }
-      if (period === 'last7days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 6); return start; }
-      if (period === 'thismonth') { const start = new Date(startOfTodaySP); start.setUTCDate(1); return start; }
+      if (period === 'today') return startOfTodayUtc;
+      if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return start; }
+      if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return start; }
+      if (period === 'thismonth') { const start = new Date(startOfTodayUtc); start.setUTCDate(1); return start; }
       if (period === 'lastmonth') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCMonth(start.getUTCMonth() - 1);
         start.setUTCDate(1);
         return start;
@@ -14578,7 +15906,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         if (startStr) {
           const [sY, sM, sD] = String(startStr).split('-').map(Number);
           if (Number.isFinite(sY) && Number.isFinite(sM) && Number.isFinite(sD)) {
-            return new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+            return new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
           }
         }
         return null;
@@ -14594,68 +15922,79 @@ app.get('/painel', requireAdmin, async (req, res) => {
       orders.push(...arr);
     } else {
       const hardCap = view === 'unknown_orderid' ? 80000 : 150000;
-      const cursor = col.find(query).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 });
-      for await (const o of cursor) {
-        orders.push(o);
-        if (orders.length >= hardCap) break;
-        const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
-        if (!dateStr) continue;
-        const orderDateUTC = parseOrderDateUTC(dateStr);
-        if (!orderDateUTC) continue;
-        const orderDateSP = toSP(orderDateUTC);
-        if (orderDateSP < scanLowerBound) break;
-      }
+      const startUtc = scanLowerBound;
+      const startIso = startUtc.toISOString();
+      const rangeOr = [];
+      const addRangeField = (path) => {
+        rangeOr.push({ $and: [{ [path]: { $type: 'date' } }, { [path]: { $gte: startUtc } }] });
+        rangeOr.push({ $and: [{ [path]: { $type: 'string' } }, { [path]: { $gte: startIso } }] });
+      };
+      addRangeField('woovi.paidAt');
+      addRangeField('paidAt');
+      const fallbackRangeOr = [];
+      const addFallbackRangeField = (path) => {
+        fallbackRangeOr.push({ $and: [{ [path]: { $type: 'date' } }, { [path]: { $gte: startUtc } }] });
+        fallbackRangeOr.push({ $and: [{ [path]: { $type: 'string' } }, { [path]: { $gte: startIso } }] });
+      };
+      addFallbackRangeField('createdAt');
+      addFallbackRangeField('criado');
+      const missingOrNull = (path) => ({ $or: [{ [path]: { $exists: false } }, { [path]: null }, { [path]: '' }] });
+      rangeOr.push({
+        $and: [
+          missingOrNull('woovi.paidAt'),
+          missingOrNull('paidAt'),
+          { $or: fallbackRangeOr }
+        ]
+      });
+      const queryWithRange = { $and: [query, { $or: rangeOr }] };
+      const arr = await col.find(queryWithRange).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(hardCap).toArray();
+      orders.push(...arr);
     }
 
     let costSettingsDoc = await settingsCol.findOne({ _id: 'cost_settings' });
     const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, (costSettingsDoc && costSettingsDoc.values) || {});
 
-    // Filter logic
-    const startOfTodayUtc = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), nowSP.getUTCDate(), 3, 0, 0, 0));
-    const startOfTomorrowUtc = (() => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() + 1); return d; })();
-
     let filteredOrders = orders.filter(o => {
-      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+      const dateStr = o.woovi?.paidAt || o.paidAt;
       if (!dateStr) return false;
       
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
-      const orderDateSP = toSP(orderDateUTC);
 
       if (period === 'all') {
         return true;
       } else if (period === 'today') {
-        return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+        return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'last3days') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCDate(start.getUTCDate() - 2); 
-        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
+        return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'last7days') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCDate(start.getUTCDate() - 6);
-        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
+        return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'thismonth') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCDate(1);
-        return orderDateSP >= start && orderDateSP < startOfTomorrowSP;
+        return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'lastmonth') {
-        const start = new Date(startOfTodaySP);
+        const start = new Date(startOfTodayUtc);
         start.setUTCMonth(start.getUTCMonth() - 1);
         start.setUTCDate(1);
-        const end = new Date(startOfTodaySP);
+        const end = new Date(startOfTodayUtc);
         end.setUTCDate(1);
-        return orderDateSP >= start && orderDateSP < end;
+        return orderDateUTC >= start && orderDateUTC < end;
       } else if (period === 'custom') {
         const startStr = req.query.startDate;
         const endStr = req.query.endDate;
         if (startStr && endStr) {
           const [sY, sM, sD] = startStr.split('-').map(Number);
-          const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
           
           const [eY, eM, eD] = endStr.split('-').map(Number);
-          const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
           
-          return orderDateSP >= start && orderDateSP <= end;
+          return orderDateUTC >= start && orderDateUTC < endExclusive;
         }
         return true;
       }
@@ -15226,12 +16565,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
 
     const paidOrdersToday = orders.filter(o => {
-      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+      const dateStr = o.woovi?.paidAt || o.paidAt;
       if (!dateStr) return false;
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
-      const orderDateSP = toSP(orderDateUTC);
-      return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+      return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
     }).length;
 
     const countValidatedUsersInRange = async (vu, start, endExclusive) => {
@@ -15661,7 +16999,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       return {
         _id: o._id,
-        createdAt: ((o.woovi && o.woovi.paidAt) || o.paidAt || o.createdAt || o.criado || null),
+        identifier: o.identifier || (o && o.pagarme && o.pagarme.order_id) || (o && o.woovi && o.woovi.identifier) || null,
+        correlationID: o.correlationID || null,
+        paymentMethod: o.paymentMethod || o.payment_method || o.method || null,
+        status: o.status || (o && o.woovi && o.woovi.status) || (o && o.pagarme && (o.pagarme.order_status || o.pagarme.charge_status || o.pagarme.transaction_status)) || null,
+        createdAt: ((o.woovi && o.woovi.paidAt) || o.paidAt || null),
         type: typeForCost,
         qty,
         costPer1000,
@@ -15861,43 +17203,60 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const viewsCol = await getCollection('page_views');
       const bounds = (() => {
         try {
-          const add3h = (d) => new Date(d.getTime() + 3 * 60 * 60 * 1000);
           if (period === 'all') return null;
-          if (period === 'today') return { start: add3h(startOfTodaySP), end: add3h(startOfTomorrowSP) };
-          if (period === 'last3days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 2); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
-          if (period === 'last7days') { const start = new Date(startOfTodaySP); start.setUTCDate(start.getUTCDate() - 6); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
-          if (period === 'thismonth') { const start = new Date(startOfTodaySP); start.setUTCDate(1); return { start: add3h(start), end: add3h(startOfTomorrowSP) }; }
+          if (period === 'today') return { start: startOfTodayUtc, end: startOfTomorrowUtc };
+          if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return { start, end: startOfTomorrowUtc }; }
+          if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return { start, end: startOfTomorrowUtc }; }
+          if (period === 'thismonth') { const start = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), 1, 3, 0, 0, 0)); return { start, end: startOfTomorrowUtc }; }
           if (period === 'lastmonth') {
-            const start = new Date(startOfTodaySP);
+            const start = new Date(startOfTodayUtc);
             start.setUTCMonth(start.getUTCMonth() - 1);
             start.setUTCDate(1);
-            const end = new Date(startOfTodaySP);
+            const end = new Date(startOfTodayUtc);
             end.setUTCDate(1);
-            return { start: add3h(start), end: add3h(end) };
+            return { start, end };
           }
           if (period === 'custom') {
             const startStr = req.query.startDate;
             const endStr = req.query.endDate;
             if (startStr && endStr) {
               const [sY, sM, sD] = String(startStr).split('-').map(Number);
-              const start = new Date(Date.UTC(sY, sM - 1, sD, 0, 0, 0, 0));
+              const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
               const [eY, eM, eD] = String(endStr).split('-').map(Number);
-              const end = new Date(Date.UTC(eY, eM - 1, eD, 23, 59, 59, 999));
-              return { start: add3h(start), end: new Date(add3h(end).getTime() + 1) };
+              const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
+              return { start, end: endExclusive };
             }
             return null;
           }
         } catch (_) {}
         return null;
       })();
-      const mkQuery = (path) => {
-        const q = { path: String(path || '') };
-        if (bounds && bounds.start && bounds.end) q.createdAt = { $gte: bounds.start, $lt: bounds.end };
+      const mkQueryPaths = (paths) => {
+        const list = (Array.isArray(paths) ? paths : []).map((p) => ({ path: String(p || '') })).filter((x) => x.path);
+        const q = list.length === 1 ? list[0] : { $or: list };
+        if (bounds && bounds.start && bounds.end) {
+          if (q.$or) return { $and: [q, { createdAt: { $gte: bounds.start, $lt: bounds.end } }] };
+          q.createdAt = { $gte: bounds.start, $lt: bounds.end };
+        }
         return q;
       };
-      const instagram = await viewsCol.countDocuments(mkQuery('/servicos-instagram'));
-      const curtidas = await viewsCol.countDocuments(mkQuery('/servicos-curtidas'));
-      const visualizacoes = await viewsCol.countDocuments(mkQuery('/servicos-visualizacoes'));
+      const uniqueClientsCount = async (paths) => {
+        try {
+          const baseMatch = mkQueryPaths(paths);
+          const match = { $and: [baseMatch, { clientId: { $exists: true, $ne: '' } }] };
+          const out = await viewsCol.aggregate([
+            { $match: match },
+            { $group: { _id: '$clientId' } },
+            { $count: 'n' }
+          ]).toArray();
+          return (out && out[0] && typeof out[0].n === 'number') ? out[0].n : 0;
+        } catch (_) {
+          return 0;
+        }
+      };
+      const instagram = await uniqueClientsCount(['/servicos-instagram']);
+      const curtidas = await uniqueClientsCount(['/servicos-curtidas', '/servicos-instagram:curtidas']);
+      const visualizacoes = await uniqueClientsCount(['/servicos-visualizacoes', '/servicos-instagram:visualizacoes']);
       servicePageViews = { instagram, curtidas, visualizacoes };
     } catch (_) {
       servicePageViews = { instagram: 0, curtidas: 0, visualizacoes: 0 };
@@ -15908,6 +17267,18 @@ app.get('/painel', requireAdmin, async (req, res) => {
       pruneOnlinePresence();
       onlineNow = onlinePresence.size;
     } catch (_) {}
+
+    let refil2Requests = undefined;
+    if (view === 'dashboard') {
+      try {
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('refil2_requests');
+        const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(200).toArray();
+        refil2Requests = Array.isArray(rows) ? rows : [];
+      } catch (_) {
+        refil2Requests = [];
+      }
+    }
 
     let vitalicioPurchases = undefined;
     if (view === 'dashboard') {
@@ -16002,7 +17373,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       vitalicioPurchases = rows.slice(0, 500);
     }
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, vitalicioPurchases });
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, vitalicioPurchases });
   } catch (e) {
     res.status(500).send(e.toString());
   }

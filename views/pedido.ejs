@@ -196,7 +196,7 @@
                       return '';
                   })();
                   
-                  var refilHref = '/refil';
+                  var refilHref = '/refil2';
                   if (order && order.refilLinkId) {
                       refilHref += '?token=' + order.refilLinkId;
                       if (phoneForLink) refilHref += '&phone=' + phoneForLink;
@@ -360,7 +360,7 @@
                            var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId):''; 
                            var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId):''; 
                            var providerOid = oidF||oidFS;
-                           return providerOid || 'unknown'; 
+                           return providerOid || '-'; 
                        })() %></span>
                        <div style="position: relative; display: flex; align-items: center;">
                            <button id="copyOrderBtn" class="copy-icon-btn" aria-label="Copiar número do pedido" style="background: transparent; border: none; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; cursor: pointer;">
@@ -1315,7 +1315,7 @@
           quickTries++;
           var elNum = document.getElementById('orderNumberId');
           var txtNum = (elNum && elNum.textContent) ? elNum.textContent.trim() : '';
-          if (txtNum && txtNum !== '-') return;
+          if (txtNum && txtNum !== '-' && txtNum.toLowerCase() !== 'unknown') return;
           try { check(); } catch(_) {}
           if (quickTries < quickMaxTries) {
             setTimeout(quickCheck, 3000);

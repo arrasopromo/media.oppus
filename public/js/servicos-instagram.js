@@ -510,6 +510,194 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   window.populateInstallments = populateInstallments;
 
+  let stripeInstance = null;
+  let stripeElements = null;
+  let stripeCardNumberEl = null;
+  let stripeCardExpiryEl = null;
+  let stripeCardCvcEl = null;
+  let stripeMounted = false;
+  let stripeEmbeddedMounted = false;
+  let stripeEmbeddedCheckout = null;
+  let stripeEmbeddedMountedKey = '';
+  let stripeEmbeddedRefreshTimer = null;
+
+  function getStripeEmbeddedCheckoutKey() {
+    try {
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+      const phoneValue = onlyDigits(contactPhoneInput ? contactPhoneInput.value : '');
+      let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
+      const tipo = tipoSelect ? String(tipoSelect.value || '') : '';
+      const qtdSelectVal = qtdSelect ? String(qtdSelect.value || '0') : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      const totalCents = calculateTotalCents();
+      return [
+        String(instagramUsernameFinal || ''),
+        String(phoneValue || ''),
+        String(emailValue || ''),
+        String(tipo || ''),
+        String(qtd || 0),
+        String(totalCents || 0)
+      ].join('|');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function scheduleStripeEmbeddedCheckoutRefresh() {
+    try { if (stripeEmbeddedRefreshTimer) clearTimeout(stripeEmbeddedRefreshTimer); } catch (_) {}
+    stripeEmbeddedRefreshTimer = setTimeout(() => {
+      try {
+        const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+        const isStripe = provider === 'stripe';
+        const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+        const isStripeCheckout = isStripe && useCheckout;
+        if (!isStripeCheckout) return;
+        if (String(window.currentPaymentMethod || '').trim() !== 'credit_card') return;
+        const key = getStripeEmbeddedCheckoutKey();
+        if (!key) return;
+        if (stripeEmbeddedMounted && stripeEmbeddedCheckout && stripeEmbeddedMountedKey && stripeEmbeddedMountedKey === key) return;
+        try { window.__oppus_stripe_checkout_key = key; } catch (_) {}
+        try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+        if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+          try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+          stripeEmbeddedCheckout = null;
+          stripeEmbeddedMounted = false;
+          stripeEmbeddedMountedKey = '';
+          try {
+            const stripeEmbeddedMount = document.getElementById('stripeEmbeddedCheckout');
+            if (stripeEmbeddedMount) stripeEmbeddedMount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Atualizando valor do checkout da Stripe...</div>';
+          } catch (_) {}
+        }
+        if (!window.__oppus_stripe_auto_inflight && !window.__oppus_stripe_auto_done && !stripeEmbeddedMounted) {
+          window.__oppus_stripe_auto_inflight = true;
+          Promise.resolve()
+            .then(() => handleCardPayment(null, { auto: true }))
+            .catch(() => {})
+            .finally(() => { window.__oppus_stripe_auto_inflight = false; });
+        }
+      } catch (_) {}
+    }, 350);
+  }
+
+  async function ensureStripeMounted() {
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    if (provider !== 'stripe') return false;
+    if (stripeMounted && stripeInstance && stripeElements && stripeCardNumberEl) return true;
+
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    if (!publishableKey) throw new Error('Configuração de pagamento inválida (STRIPE_PUBLISHABLE_KEY ausente).');
+
+    const loadStripe = async () => {
+      try { if (window.Stripe) return true; } catch (_) {}
+      const existing = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+      if (!existing) {
+        await new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = 'https://js.stripe.com/v3/';
+          s.onload = resolve;
+          s.onerror = resolve;
+          document.head.appendChild(s);
+        });
+      } else {
+        await new Promise((resolve) => {
+          if (window.Stripe) return resolve();
+          const done = () => resolve();
+          existing.addEventListener('load', done, { once: true });
+          existing.addEventListener('error', done, { once: true });
+          setTimeout(done, 8000);
+        });
+      }
+      return !!window.Stripe;
+    };
+
+    const ok = await loadStripe();
+    if (!ok) throw new Error('Não foi possível carregar a Stripe. Recarregue a página e tente novamente.');
+
+    stripeInstance = window.Stripe(publishableKey);
+    stripeElements = stripeInstance.elements({ locale: 'pt-BR' });
+    const style = {
+      base: {
+        color: '#111827',
+        fontSize: '16px',
+        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+      },
+      invalid: { color: '#ef4444' }
+    };
+
+    const numberMount = document.getElementById('stripeCardNumber');
+    const expMount = document.getElementById('stripeCardExpiry');
+    const cvcMount = document.getElementById('stripeCardCvc');
+    if (!numberMount || !expMount || !cvcMount) throw new Error('Formulário de cartão da Stripe não encontrado na página.');
+
+    stripeCardNumberEl = stripeElements.create('cardNumber', { style });
+    stripeCardExpiryEl = stripeElements.create('cardExpiry', { style });
+    stripeCardCvcEl = stripeElements.create('cardCvc', { style });
+    stripeCardNumberEl.mount(numberMount);
+    stripeCardExpiryEl.mount(expMount);
+    stripeCardCvcEl.mount(cvcMount);
+
+    stripeMounted = true;
+    return true;
+  }
+
+  async function ensureStripeJsReady() {
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    if (provider !== 'stripe') return false;
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    if (!publishableKey) throw new Error('Configuração de pagamento inválida (STRIPE_PUBLISHABLE_KEY ausente).');
+    try { if (window.Stripe) return true; } catch (_) {}
+    const existing = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+    if (!existing) {
+      await new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = 'https://js.stripe.com/v3/';
+        s.onload = resolve;
+        s.onerror = resolve;
+        document.head.appendChild(s);
+      });
+    } else {
+      await new Promise((resolve) => {
+        if (window.Stripe) return resolve();
+        const done = () => resolve();
+        existing.addEventListener('load', done, { once: true });
+        existing.addEventListener('error', done, { once: true });
+        setTimeout(done, 8000);
+      });
+    }
+    return !!window.Stripe;
+  }
+
+  async function mountStripeEmbeddedCheckout(clientSecret) {
+    const wrapper = document.getElementById('stripeEmbeddedWrapper');
+    const mount = document.getElementById('stripeEmbeddedCheckout');
+    if (!wrapper || !mount) throw new Error('Área do checkout incorporado não encontrada.');
+    wrapper.style.display = 'block';
+    mount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Carregando checkout da Stripe...</div>';
+    const ok = await ensureStripeJsReady();
+    if (!ok) throw new Error('Não foi possível carregar a Stripe. Recarregue a página e tente novamente.');
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    const stripe = window.Stripe(publishableKey);
+    if (!stripe || typeof stripe.initEmbeddedCheckout !== 'function') {
+      throw new Error('Sua integração da Stripe não suporta checkout incorporado.');
+    }
+    if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+      try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+      stripeEmbeddedCheckout = null;
+      stripeEmbeddedMounted = false;
+    }
+    mount.innerHTML = '';
+    const fields = document.getElementById('cardPaymentForm');
+    if (fields) fields.style.display = 'none';
+    stripeEmbeddedCheckout = await stripe.initEmbeddedCheckout({ clientSecret: String(clientSecret || '').trim() });
+    stripeEmbeddedCheckout.mount('#stripeEmbeddedCheckout');
+    stripeEmbeddedMounted = true;
+    try { stripeEmbeddedMountedKey = getStripeEmbeddedCheckoutKey() || ''; } catch(_) { stripeEmbeddedMountedKey = ''; }
+  }
+
   function selectPaymentMethod(method, opts) {
     const o = opts || {};
     if (method === currentPaymentMethod && !o.force) return;
@@ -559,6 +747,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const pixBtnContainer = document.getElementById('pixPaymentBtnContainer');
     const contentPix = document.getElementById('pixContainer');
     const pagarmeBadgeCard = document.getElementById('pagarmeBadgeCard');
+    const stripeBadgeCard = document.getElementById('stripeBadgeCard');
+    const pagarmeCardFields = document.getElementById('pagarmeCardFields');
+    const stripeCardFields = document.getElementById('stripeCardFields');
     const pixResultado = document.getElementById('pixResultado');
 
     if (method === 'credit_card') {
@@ -578,8 +769,82 @@ document.addEventListener('DOMContentLoaded', function() {
       if (pixBtnContainer) pixBtnContainer.style.display = 'none';
       if (contentPix) contentPix.style.display = 'none';
       if (pixResultado) pixResultado.style.display = 'none';
-      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'flex';
+      const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+      const isStripe = provider === 'stripe';
+      const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+      const isStripeCheckout = isStripe && useCheckout;
+      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = isStripe ? 'none' : 'flex';
+      if (stripeBadgeCard) stripeBadgeCard.style.display = isStripe ? 'flex' : 'none';
+      if (pagarmeCardFields) pagarmeCardFields.style.display = isStripe ? 'none' : 'block';
+      if (stripeCardFields) stripeCardFields.style.display = (isStripe && !isStripeCheckout) ? 'block' : 'none';
+      const stripeEmbeddedWrapper = document.getElementById('stripeEmbeddedWrapper');
+      const stripeEmbeddedMount = document.getElementById('stripeEmbeddedCheckout');
+      if (stripeEmbeddedWrapper) stripeEmbeddedWrapper.style.display = isStripeCheckout ? 'block' : 'none';
+      if (isStripeCheckout && stripeEmbeddedMount && !stripeEmbeddedMounted) {
+        stripeEmbeddedMount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Carregando checkout da Stripe...</div>';
+        try {
+          const key = getStripeEmbeddedCheckoutKey();
+          if (window.__oppus_stripe_checkout_key !== key) {
+            window.__oppus_stripe_checkout_key = key;
+            try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+            if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+              try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+              stripeEmbeddedCheckout = null;
+              stripeEmbeddedMounted = false;
+              stripeEmbeddedMountedKey = '';
+            }
+          }
+          if (!window.__oppus_stripe_auto_inflight && !window.__oppus_stripe_auto_done && !stripeEmbeddedMounted) {
+            window.__oppus_stripe_auto_inflight = true;
+            Promise.resolve()
+              .then(() => handleCardPayment(null, { auto: true }))
+              .catch(() => {})
+              .finally(() => { window.__oppus_stripe_auto_inflight = false; });
+          }
+        } catch (_) {}
+      }
+      try {
+        const ids = ['cardNumber', 'cardExpiry', 'cardCvv'];
+        ids.forEach((id) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.required = !isStripe;
+        });
+      } catch (_) {}
+      try {
+        const holderNameEl = document.getElementById('cardHolderName');
+        const holderCpfEl = document.getElementById('cardHolderCpf');
+        if (holderNameEl) holderNameEl.required = !isStripeCheckout;
+        if (holderCpfEl) holderCpfEl.required = !isStripeCheckout;
+        const instEl = document.getElementById('cardInstallments');
+        if (instEl) {
+          if (isStripeCheckout) {
+            try { instEl.value = '1'; } catch (_) {}
+            const g = instEl.closest('.form-group');
+            if (g) g.style.display = 'none';
+          } else {
+            const g = instEl.closest('.form-group');
+            if (g) g.style.display = '';
+          }
+        }
+        if (holderNameEl) {
+          const g = holderNameEl.closest('.form-group');
+          if (g) g.style.display = isStripeCheckout ? 'none' : '';
+        }
+        if (holderCpfEl) {
+          const g = holderCpfEl.closest('.form-group');
+          if (g) g.style.display = isStripeCheckout ? 'none' : '';
+        }
+      } catch (_) {}
+      if (isStripe && !isStripeCheckout) {
+        try { ensureStripeMounted(); } catch (_) {}
+      }
     } else {
+      if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+        try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+        stripeEmbeddedCheckout = null;
+        stripeEmbeddedMounted = false;
+      }
       if (cardForm) cardForm.style.display = 'none';
       if (pixBtnContainer) pixBtnContainer.style.display = 'flex';
       try {
@@ -593,6 +858,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       } catch(_) {}
       if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'none';
+      if (stripeBadgeCard) stripeBadgeCard.style.display = 'none';
     }
 
     if (!o.skipSummary) {
@@ -616,7 +882,10 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch(_) { total = 0; }
     const selector = document.getElementById('paymentMethodSelector');
 
-    const publicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    const publicKey = provider === 'stripe'
+      ? String(window.STRIPE_PUBLISHABLE_KEY || '').trim()
+      : String(window.PAGARME_PUBLIC_KEY || '').trim();
     const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8 && /^pk_/i.test(publicKey);
 
     if (selector) {
@@ -652,11 +921,13 @@ document.addEventListener('DOMContentLoaded', function() {
     return v.replace(/(\d{3})(\d{3})(\d{3})(\d+)/, "$1.$2.$3-$4");
   }
 
-  async function handleCardPayment(e) {
+  async function handleCardPayment(e, opts) {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const o = opts || {};
+    const isAuto = o.auto === true;
 
     const payWithCardBtn = document.getElementById('payWithCardBtn');
-    if (payWithCardBtn) {
+    if (!isAuto && payWithCardBtn) {
       payWithCardBtn.disabled = true;
       payWithCardBtn.classList.add('loading');
       const span = payWithCardBtn.querySelector('.button-text');
@@ -667,13 +938,40 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     try {
-      const fields = [
-        { id: 'cardNumber', type: 'text' },
-        { id: 'cardExpiry', type: 'text' },
-        { id: 'cardCvv', type: 'text' },
-        { id: 'cardHolderName', type: 'text' },
-        { id: 'cardHolderCpf', type: 'text' }
-      ];
+      const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+      const isStripe = provider === 'stripe';
+      const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+      const isStripeCheckout = isStripe && useCheckout;
+      if (isStripeCheckout && stripeEmbeddedMounted) {
+        const currentKey = getStripeEmbeddedCheckoutKey();
+        if (currentKey && stripeEmbeddedMountedKey && stripeEmbeddedMountedKey === currentKey) {
+          try {
+            const w = document.getElementById('stripeEmbeddedWrapper');
+            if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (_) {}
+          return;
+        }
+        try { if (stripeEmbeddedCheckout) stripeEmbeddedCheckout.destroy(); } catch (_) {}
+        stripeEmbeddedCheckout = null;
+        stripeEmbeddedMounted = false;
+        stripeEmbeddedMountedKey = '';
+        try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+      }
+
+      const fields = isStripeCheckout
+        ? []
+        : isStripe
+        ? [
+          { id: 'cardHolderName', type: 'text' },
+          { id: 'cardHolderCpf', type: 'text' }
+        ]
+        : [
+          { id: 'cardNumber', type: 'text' },
+          { id: 'cardExpiry', type: 'text' },
+          { id: 'cardCvv', type: 'text' },
+          { id: 'cardHolderName', type: 'text' },
+          { id: 'cardHolderCpf', type: 'text' }
+        ];
 
       let firstError = null;
       let values = {};
@@ -701,31 +999,40 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Por favor, preencha todos os campos obrigatórios destacados.');
       }
 
-      const cardNum = values.cardNumber.replace(/\D/g, '');
-      const cardExpiry = values.cardExpiry;
-      const cardCvv = values.cardCvv;
       const cardHolder = values.cardHolderName;
       const cardHolderCpf = values.cardHolderCpf;
 
-      const pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
-      if (!pagarmePublicKey) {
-        throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
-      }
+      let cardNum = '';
+      let cardExpiry = '';
+      let cardCvv = '';
+      let expMonth = '';
+      let expYear = '';
+      let pagarmePublicKey = '';
+      if (!isStripe) {
+        cardNum = String(values.cardNumber || '').replace(/\D/g, '');
+        cardExpiry = String(values.cardExpiry || '').trim();
+        cardCvv = String(values.cardCvv || '').trim();
+        pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+        if (!pagarmePublicKey) {
+          throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
+        }
 
-      let expMonth, expYear;
-      if (cardExpiry.includes('/')) {
-        [expMonth, expYear] = cardExpiry.split('/');
+        if (cardExpiry.includes('/')) {
+          [expMonth, expYear] = cardExpiry.split('/');
+        } else {
+          expMonth = cardExpiry.substring(0, 2);
+          expYear = cardExpiry.substring(2);
+        }
+
+        if (expYear && expYear.length === 2) expYear = '20' + expYear;
+        if (!expMonth || !expYear || Number(expMonth) > 12 || Number(expMonth) < 1) throw new Error('Data de validade inválida');
       } else {
-        expMonth = cardExpiry.substring(0, 2);
-        expYear = cardExpiry.substring(2);
+        if (!isStripeCheckout) await ensureStripeMounted();
       }
-
-      if (expYear && expYear.length === 2) expYear = '20' + expYear;
-      if (!expMonth || !expYear || Number(expMonth) > 12 || Number(expMonth) < 1) throw new Error('Data de validade inválida');
 
       const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
       const cpfDigits = normalizeDigits(cardHolderCpf);
-      if (cpfDigits.length !== 11) throw new Error('CPF inválido');
+    if (!isStripeCheckout && cpfDigits.length !== 11) throw new Error('CPF inválido');
 
       const installmentsEl = document.getElementById('cardInstallments');
       let installments = String(installmentsEl?.value || '').trim();
@@ -749,6 +1056,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
       const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+      let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
 
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
       const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
@@ -770,46 +1079,52 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!totalCents || totalCents < 100) throw new Error('O valor mínimo para cartão é R$ 1,00.');
       const totalLabel = formatCentsToBRL(totalCents);
 
-      const cardToken = await (async () => {
-        const tokenUrl = `https://api.pagar.me/core/v5/tokens?appId=${encodeURIComponent(pagarmePublicKey)}`;
-        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
-        let tokenResp = null;
-        try {
-          tokenResp = await fetch(tokenUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'card',
-              card: {
-                number: cardNum,
-                holder_name: cardHolder,
-                holder_document: cpfDigits,
-                exp_month: Number(expMonth),
-                exp_year: Number(expYear),
-                cvv: cardCvv
-              }
-            }),
-            signal: ctrl ? ctrl.signal : undefined
-          });
-        } catch (_) {
-          throw new Error('Falha ao conectar no Pagar.me. Verifique sua internet e tente novamente.');
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
-        }
-        let tokenData = null;
-        try { tokenData = await tokenResp.json(); } catch(_) {}
-        if (!tokenResp.ok) {
-          const msg = (tokenData && (tokenData.message || tokenData.error)) ? String(tokenData.message || tokenData.error) : 'Falha ao tokenizar cartão';
-          throw new Error(msg);
-        }
-        const t = tokenData && tokenData.id ? String(tokenData.id).trim() : '';
-        if (!t) throw new Error('Token do cartão não retornou no Pagar.me.');
-        return t;
-      })();
+      let cardToken = '';
+      if (!isStripe) {
+        cardToken = await (async () => {
+          const tokenUrl = `https://api.pagar.me/core/v5/tokens?appId=${encodeURIComponent(pagarmePublicKey)}`;
+          const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+          let tokenResp = null;
+          try {
+            tokenResp = await fetch(tokenUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'card',
+                card: {
+                  number: cardNum,
+                  holder_name: cardHolder,
+                  holder_document: cpfDigits,
+                  exp_month: Number(expMonth),
+                  exp_year: Number(expYear),
+                  cvv: cardCvv
+                }
+              }),
+              signal: ctrl ? ctrl.signal : undefined
+            });
+          } catch (_) {
+            throw new Error('Falha ao conectar no Pagar.me. Verifique sua internet e tente novamente.');
+          } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+          }
+          let tokenData = null;
+          try { tokenData = await tokenResp.json(); } catch(_) {}
+          if (!tokenResp.ok) {
+            const msg = (tokenData && (tokenData.message || tokenData.error)) ? String(tokenData.message || tokenData.error) : 'Falha ao tokenizar cartão';
+            throw new Error(msg);
+          }
+          const t = tokenData && tokenData.id ? String(tokenData.id).trim() : '';
+          if (!t) throw new Error('Token do cartão não retornou no Pagar.me.');
+          return t;
+        })();
+      }
 
-      const customerPayload = { name: cardHolder, cpf: cpfDigits };
+      const customerPayload = {};
+      if (cardHolder) customerPayload.name = cardHolder;
+      if (cpfDigits && cpfDigits.length === 11) customerPayload.cpf = cpfDigits;
       if (phoneValue) customerPayload.phone_number = phoneValue;
+      if (emailValue) customerPayload.email = emailValue;
 
       const buildUtmsFromLocation = function () {
         try {
@@ -841,7 +1156,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const payload = {
         correlationID,
-        card_token: cardToken,
         installments: Number(installments) || 1,
         total_cents: totalCents,
         items: [
@@ -864,6 +1178,7 @@ document.addEventListener('DOMContentLoaded', function() {
         comment: 'Checkout OPPUS Card',
         utms: buildUtmsFromLocation()
       };
+      if (!isStripe) payload.card_token = cardToken;
 
       try {
         const cc = String(window.couponCode || '').trim();
@@ -897,6 +1212,164 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
 
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      if (isStripe) {
+        const stripePayload = Object.assign({}, payload);
+        try { delete stripePayload.card_token; } catch (_) {}
+        const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+
+        if (useCheckout) {
+          stripePayload.checkoutUiMode = 'embedded';
+          const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+          let checkoutResp = null;
+          try {
+            checkoutResp = await fetch('/api/stripe/create-checkout-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(stripePayload),
+              signal: ctrl ? ctrl.signal : undefined
+            });
+          } catch (_) {
+            throw new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.');
+          } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+          }
+
+          let checkoutData = null;
+          try { checkoutData = await checkoutResp.json(); } catch (_) { checkoutData = {}; }
+          if (!checkoutResp.ok) {
+            const errCode = String(checkoutData?.error || '').trim().toLowerCase();
+            if (errCode === 'invalid_cpf') {
+              try {
+                const cpfEl = document.getElementById('cardHolderCpf');
+                if (cpfEl) {
+                  cpfEl.classList.add('input-error');
+                  cpfEl.classList.add('tutorial-highlight');
+                  try { cpfEl.focus(); } catch (_) {}
+                  try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+                }
+              } catch (_) {}
+            }
+            if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+              try {
+                if (contactPhoneInput) {
+                  contactPhoneInput.classList.add('input-error');
+                  contactPhoneInput.classList.add('tutorial-highlight');
+                  try { contactPhoneInput.focus(); } catch (_) {}
+                  try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+                }
+              } catch (_) {}
+            }
+            const baseMsg = checkoutData?.message || checkoutData?.error || 'Falha ao iniciar checkout';
+            throw new Error(String(baseMsg).trim() || 'Falha ao iniciar checkout.');
+          }
+
+          const clientSecret = String(checkoutData?.clientSecret || checkoutData?.client_secret || '').trim();
+          if (!clientSecret) throw new Error('Checkout incorporado não retornou os dados necessários.');
+          await mountStripeEmbeddedCheckout(clientSecret);
+          try { window.__oppus_stripe_auto_done = true; } catch (_) {}
+          try {
+            const w = document.getElementById('stripeEmbeddedWrapper');
+            if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (_) {}
+          return;
+        }
+
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        let createResp = null;
+        try {
+          createResp = await fetch('/api/stripe/create-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(stripePayload),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+        } catch (_) {
+          throw new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.');
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+
+        let createData = null;
+        try { createData = await createResp.json(); } catch (_) { createData = {}; }
+        if (!createResp.ok) {
+          const errCode = String(createData?.error || '').trim().toLowerCase();
+          if (errCode === 'invalid_cpf') {
+            try {
+              const cpfEl = document.getElementById('cardHolderCpf');
+              if (cpfEl) {
+                cpfEl.classList.add('input-error');
+                cpfEl.classList.add('tutorial-highlight');
+                try { cpfEl.focus(); } catch (_) {}
+                try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+              }
+            } catch (_) {}
+          }
+          if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+            try {
+              if (contactPhoneInput) {
+                contactPhoneInput.classList.add('input-error');
+                contactPhoneInput.classList.add('tutorial-highlight');
+                try { contactPhoneInput.focus(); } catch (_) {}
+                try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+              }
+            } catch (_) {}
+          }
+          const baseMsg = createData?.message || createData?.error || 'Falha ao iniciar pagamento';
+          throw new Error(String(baseMsg).trim() || 'Falha ao iniciar pagamento.');
+        }
+
+        const clientSecret = String(createData?.clientSecret || '').trim();
+        const identifierServer = String(createData?.identifier || createData?.paymentIntentId || '').trim();
+        const correlationIDServer = String(createData?.correlationID || correlationID || '').trim();
+        if (!clientSecret) throw new Error('Pagamento não iniciou corretamente (clientSecret ausente).');
+
+        await ensureStripeMounted();
+        const confirmResult = await stripeInstance.confirmCardPayment(clientSecret, {
+          payment_method: {
+            card: stripeCardNumberEl,
+            billing_details: { name: String(cardHolder || '').trim(), phone: String(phoneValue || '').trim() }
+          }
+        });
+
+        if (confirmResult && confirmResult.error) {
+          const m = String(confirmResult.error.message || '').trim();
+          throw new Error(m || 'Pagamento não aprovado.');
+        }
+        const pi = confirmResult && confirmResult.paymentIntent ? confirmResult.paymentIntent : null;
+        const piId = String(pi?.id || identifierServer || '').trim();
+        const piStatus = String(pi?.status || '').trim().toLowerCase();
+        if (!piId) throw new Error('Pagamento não retornou identificador.');
+
+        let finalizeResp = null;
+        try {
+          finalizeResp = await fetch('/api/stripe/confirm-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_intent_id: piId, identifier: identifierServer, correlationID: correlationIDServer })
+          });
+        } catch (_) {
+          finalizeResp = null;
+        }
+        let finalizeData = null;
+        try { if (finalizeResp) finalizeData = await finalizeResp.json(); } catch (_) { finalizeData = {}; }
+
+        const paid = finalizeData?.paid === true || piStatus === 'succeeded';
+        if (!paid && piStatus && piStatus !== 'succeeded') {
+          alert('Pagamento em processamento. Vamos te levar para o seu pedido.');
+        } else {
+          alert('Pagamento realizado com sucesso!');
+        }
+
+        if (typeof navigateToPedidoOrFallback === 'function') {
+          await navigateToPedidoOrFallback(String(finalizeData?.identifier || piId || identifierServer || ''), String(finalizeData?.correlationID || correlationIDServer || correlationID || ''));
+        } else {
+          window.location.href = '/pedido';
+        }
+        return;
+      }
 
       let resp = null;
       let lastNetErr = null;
@@ -973,9 +1446,27 @@ document.addEventListener('DOMContentLoaded', function() {
         window.location.href = '/pedido';
       }
     } catch (err) {
+      if (isAuto) {
+        try {
+          const wrapper = document.getElementById('stripeEmbeddedWrapper');
+          const mount = document.getElementById('stripeEmbeddedCheckout');
+          if (wrapper) wrapper.style.display = 'block';
+          if (mount) {
+            mount.innerHTML = '';
+            const div = document.createElement('div');
+            div.style.padding = '14px';
+            div.style.textAlign = 'center';
+            div.style.color = '#b91c1c';
+            div.style.fontSize = '0.95rem';
+            div.textContent = 'Não foi possível iniciar o checkout. Revise os dados da etapa 2 e tente novamente.';
+            mount.appendChild(div);
+          }
+        } catch (_) {}
+        return;
+      }
       alert('Erro ao processar pagamento: ' + (err?.message || err));
     } finally {
-      if (payWithCardBtn) {
+      if (!isAuto && payWithCardBtn) {
         payWithCardBtn.disabled = false;
         payWithCardBtn.classList.remove('loading');
         const span = payWithCardBtn.querySelector('.button-text');
@@ -1998,6 +2489,7 @@ document.addEventListener('DOMContentLoaded', function() {
         populateInstallments(calculateSubtotalCents());
       }
     } catch(_) {}
+    try { scheduleStripeEmbeddedCheckoutRefresh(); } catch(_) {}
   }
 
   // --- Funções de Post Select Modal ---
@@ -2338,7 +2830,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, utms })
+        body: JSON.stringify({ username, utms, includePosts: (isCurtidasContext || isViewsContext) })
       });
       const data = await resp.json();
       hideLoadingCheckout();
@@ -3059,7 +3551,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetTop = (rect.top + scrollTop) - 120;
             smoothScrollToY(targetTop, 1100);
           }
-        }, 2000);
+        }, 1500);
       }
     } catch (_) {}
   }

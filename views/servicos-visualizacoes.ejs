@@ -48,7 +48,13 @@
   </script>
   <script>
     window.PAGARME_PUBLIC_KEY = "<%= PAGARME_PUBLIC_KEY %>";
+    window.STRIPE_PUBLISHABLE_KEY = "<%= typeof STRIPE_PUBLISHABLE_KEY !== 'undefined' ? STRIPE_PUBLISHABLE_KEY : '' %>";
+    window.CARD_PROVIDER = "<%= typeof CARD_PROVIDER !== 'undefined' ? CARD_PROVIDER : 'pagarme' %>";
+    window.STRIPE_USE_CHECKOUT = "<%= typeof STRIPE_USE_CHECKOUT !== 'undefined' ? STRIPE_USE_CHECKOUT : '' %>" === "true";
   </script>
+  <% if (typeof CARD_PROVIDER !== 'undefined' && CARD_PROVIDER === 'stripe' && typeof STRIPE_PUBLISHABLE_KEY !== 'undefined' && STRIPE_PUBLISHABLE_KEY) { %>
+    <script src="https://js.stripe.com/v3/"></script>
+  <% } %>
   <link href="/css/style.css?v=6" rel="stylesheet" />
   <link href="/css/badges.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
@@ -430,25 +436,47 @@
                 </style>
 
                 <div id="cardPaymentContent" style="display:none; margin-bottom:1.5rem;">
+                    <div id="stripeEmbeddedWrapper" style="display:none; width:100%; max-width:520px; margin:0 auto 1rem auto; border:1px solid #e5e7eb; border-radius:12px; background:#ffffff; padding:12px;">
+                      <div id="stripeEmbeddedCheckout"></div>
+                    </div>
                     <form id="cardPaymentForm" onsubmit="event.preventDefault();">
-                        <div class="form-group" style="margin-bottom:1rem;">
-                            <label for="cardNumber" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Número do Cartão</label>
-                            <div style="position:relative;">
-                                <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" maxlength="19" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 44px 0 14px; font-size:1rem; outline:none;">
-                                <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none;">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                        <div id="stripeCardFields" style="display:none;">
+                            <div class="form-group" style="margin-bottom:1rem;">
+                                <label for="stripeCardNumber" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Número do Cartão</label>
+                                <div id="stripeCardNumber" class="select-input" style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; font-size:1rem; outline:none;"></div>
+                            </div>
+                            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+                                <div style="flex:1;">
+                                    <label for="stripeCardExpiry" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Validade</label>
+                                    <div id="stripeCardExpiry" class="select-input" style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; font-size:1rem; outline:none;"></div>
+                                </div>
+                                <div style="flex:1;">
+                                    <label for="stripeCardCvc" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">CVV</label>
+                                    <div id="stripeCardCvc" class="select-input" style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:12px 14px; font-size:1rem; outline:none;"></div>
                                 </div>
                             </div>
                         </div>
 
-                        <div style="display:flex; gap:1rem; margin-bottom:1rem;">
-                            <div style="flex:1;">
-                                <label for="cardExpiry" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Validade</label>
-                                <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AA" maxlength="5" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                        <div id="pagarmeCardFields">
+                            <div class="form-group" style="margin-bottom:1rem;">
+                                <label for="cardNumber" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Número do Cartão</label>
+                                <div style="position:relative;">
+                                    <input type="text" id="cardNumber" class="select-input" placeholder="0000 0000 0000 0000" maxlength="19" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 44px 0 14px; font-size:1rem; outline:none;">
+                                    <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none;">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                                    </div>
+                                </div>
                             </div>
-                            <div style="flex:1;">
-                                <label for="cardCvv" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">CVV</label>
-                                <input type="text" id="cardCvv" class="select-input" placeholder="123" maxlength="4" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+
+                            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+                                <div style="flex:1;">
+                                    <label for="cardExpiry" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">Validade</label>
+                                    <input type="text" id="cardExpiry" class="select-input" placeholder="MM/AA" maxlength="5" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                                </div>
+                                <div style="flex:1;">
+                                    <label for="cardCvv" style="display:block; font-weight:600; margin-bottom:0.25rem; color:#374151;">CVV</label>
+                                    <input type="text" id="cardCvv" class="select-input" placeholder="123" maxlength="4" required style="height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none;">
+                                </div>
                             </div>
                         </div>
 
@@ -473,6 +501,9 @@
                         <div id="pagarmeBadgeCard" style="display:none; align-items:center; justify-content:center; gap:10px; margin-top:8px; margin-bottom:10px; color:#6b7280; font-size:0.85rem; text-align:center;">
                           <img src="/images/logo-pagarme.png" alt="Pagar.me" style="height:18px; width:auto; display:inline-block;"/>
                           <span>Pagamento processado pela Pagar.me</span>
+                        </div>
+                        <div id="stripeBadgeCard" style="display:none; align-items:center; justify-content:center; gap:10px; margin-top:8px; margin-bottom:10px; color:#6b7280; font-size:0.85rem; text-align:center;">
+                          <span>Pagamento processado pela Stripe</span>
                         </div>
                         <button id="payWithCardBtn" type="submit" class="continue-button" style="margin-top:0.5rem; display:flex; align-items:center; justify-content:center; position:relative; padding-right:52px;">
                              <span class="button-text">Realizar pedido</span>

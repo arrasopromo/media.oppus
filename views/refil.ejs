@@ -354,7 +354,7 @@
               var isNoDrop = (qq != null && qq < 50);
               var userTitle = isNoDrop ? 'Sem queda detectada' : title;
               setStatus(statusEl, userTitle, 'success');
-              try { if (statusEl) statusEl.style.fontWeight = '800'; } catch (_) {}
+              try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
               if (isNoDrop) {
                 try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch (_) {}
               } else {
@@ -366,9 +366,9 @@
                       '<button type="button" id="refilCloseResultBtn" style="border:none; background:transparent; color:#047857; font-size:18px; line-height:18px; cursor:pointer;">×</button>' +
                     '</div>' +
                     '<div style="margin-top:10px; color:#065F46; font-family: inherit; font-size: 0.95rem; line-height:1.65;">' +
-                      (qi != null ? ('<div><strong>Quantidade inicial:</strong> ' + String(qi) + '</div>') : '') +
-                      (qa != null ? ('<div><strong>Quantidade atual:</strong> ' + String(qa) + '</div>') : '') +
-                      (qq != null ? ('<div><strong>Quantidade de queda:</strong> ' + String(qq) + '</div>') : '') +
+                      (qi != null ? ('<div>Quantidade inicial: ' + String(qi) + '</div>') : '') +
+                      (qa != null ? ('<div>Quantidade atual: ' + String(qa) + '</div>') : '') +
+                      (qq != null ? ('<div>Quantidade de queda: ' + String(qq) + '</div>') : '') +
                     '</div>' +
                   '</div>' +
                 '</div>';
@@ -386,7 +386,7 @@
               outTxt = String(outTxt || '').trim();
               if (/quantity\s+must\s+be\s+>=\s*1/i.test(outTxt)) outTxt = 'Sem queda detectada';
               setStatus(statusEl, outTxt || ('Webhook: HTTP ' + String(statusCode || '')), ok ? 'success' : 'error');
-              try { if (statusEl && ok) statusEl.style.fontWeight = '800'; } catch (_) {}
+              try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
               try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch (_) {}
             }
             try { if (historyCardEl) historyCardEl.style.display = 'none'; } catch(_) {}

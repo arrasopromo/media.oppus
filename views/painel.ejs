@@ -61,6 +61,12 @@
     .unknown-badge { display:inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
     .unknown-badge--private { background: #111827; color: #ffffff; }
     .unknown-badge--lifetime { background: #7c3aed; color: #ffffff; }
+    .refil2-badge { display:inline-block; padding:4px 8px; border-radius:999px; font-weight:700; font-size: 0.85rem; }
+    .refil2-badge--green { background:#dcfce7; color:#166534; }
+    .refil2-badge--blue { background:#e0f2fe; color:#075985; }
+    .refil2-badge--yellow { background:#fef3c7; color:#92400e; }
+    .refil2-badge--red { background:#fee2e2; color:#991b1b; }
+    .refil2-badge--gray { background:#f3f4f6; color:#374151; }
     .followers-pager-link { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; text-decoration: none; color: #111827; }
     .followers-pager-link--disabled { pointer-events: none; opacity: 0.5; }
 
@@ -1539,6 +1545,80 @@
           })();
         </script>
       </div>
+
+      <div id="refil2RequestsWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
+          <strong style="font-size: 1rem; color:#111827;">Refil2 Solicitações</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Últimas solicitações</div>
+        </div>
+        <div class="panel-table-scroll" style="margin-top: 10px;">
+          <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 860px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data/Hora</th>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Perfil</th>
+                <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Qtd repor</th>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Decisão</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% 
+                const r2 = Array.isArray(refil2Requests) ? refil2Requests : [];
+                const fmtDate = (v) => {
+                  try {
+                    const d = (v instanceof Date) ? v : new Date(v || 0);
+                    if (!Number.isFinite(d.getTime())) return '-';
+                    try { return d.toLocaleString('pt-BR'); } catch (_) {}
+                    const y = d.getFullYear();
+                    const m = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    const ss = String(d.getSeconds()).padStart(2, '0');
+                    return `${day}/${m}/${y} ${hh}:${mm}:${ss}`;
+                  } catch (_) { return '-'; }
+                };
+                const safeInt = (n) => {
+                  const v = Number(n);
+                  if (!Number.isFinite(v)) return 0;
+                  return Math.trunc(v);
+                };
+                const decide = (it) => {
+                  const decision = String(it && it.decision ? it.decision : '').toLowerCase();
+                  const reason = String(it && (it.decisionReason || it.status) ? (it.decisionReason || it.status) : '').toLowerCase();
+                  if (decision === 'repor') return { label: 'Vai repor', cls: 'refil2-badge--green' };
+                  if (reason === 'above_target') return { label: 'Não repor (acima da meta)', cls: 'refil2-badge--blue' };
+                  if (reason === 'below_threshold') return { label: 'Não repor (abaixo do mínimo)', cls: 'refil2-badge--yellow' };
+                  if (reason === 'no_followers_purchase') return { label: 'Não repor (sem compra)', cls: 'refil2-badge--red' };
+                  if (reason === 'no_orders') return { label: 'Não repor (sem pedido)', cls: 'refil2-badge--red' };
+                  if (reason === 'profile_lookup_failed') return { label: 'Não repor (falha no perfil)', cls: 'refil2-badge--red' };
+                  if (reason === 'webhook_failed') return { label: 'Não repor (webhook falhou)', cls: 'refil2-badge--red' };
+                  return { label: 'Não repor', cls: 'refil2-badge--gray' };
+                };
+              %>
+              <% if (r2.length) { %>
+                <% r2.slice(0, 200).forEach(it => { 
+                  const when = fmtDate(it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : '');
+                  const user = String(it && it.username ? it.username : '-').trim();
+                  const qty = safeInt((it && (it.reporQty != null ? it.reporQty : it.deficit)) != null ? (it.reporQty != null ? it.reporQty : it.deficit) : 0);
+                  const d = decide(it);
+                %>
+                  <tr>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= when %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= user ? ('@' + user.replace(/^@+/, '')) : '-' %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= qty %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6;">
+                      <span class="refil2-badge <%= d.cls %>"><%= d.label %></span>
+                    </td>
+                  </tr>
+                <% }) %>
+              <% } else { %>
+                <tr><td colspan="4" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
+              <% } %>
+            </tbody>
+          </table>
+        </div>
+      </div>
       <% } %>
     <% } %>
 
@@ -1999,10 +2079,11 @@
           </div>
         <% } else if (isVendasView) { %>
           <div class="dashboard-table-wrap panel-table-scroll">
-          <table class="dashboard-table" style="min-width: 980px; font-size: 0.92rem;">
+          <table class="dashboard-table" style="min-width: 1180px; font-size: 0.92rem;">
             <thead>
               <tr>
                 <th>Data (SP)</th>
+                <th>Usuário</th>
                 <th>Serviço</th>
                 <th>Qtd</th>
                 <th>Custo/1k</th>
@@ -2010,6 +2091,7 @@
                 <th>Orderbump</th>
                 <th>Custo Bump</th>
                 <th>Total Item</th>
+                <th>Total Pago</th>
               </tr>
             </thead>
             <tbody>
@@ -2028,9 +2110,11 @@
                                    d.getUTCFullYear() + ' ' + 
                                    d.getUTCHours().toString().padStart(2, '0') + ':' + 
                                    d.getUTCMinutes().toString().padStart(2, '0');
+                   const userLabel = String(order.instagramUsername ? ('@' + String(order.instagramUsername).replace(/^@+/, '')) : (order.customerLabel || '-'));
                 %>
                 <tr>
                   <td><%= dateStr %></td>
+                  <td><%= userLabel %></td>
                   <td><%= order.type %></td>
                   <td><%= order.qty %></td>
                   <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
@@ -2043,6 +2127,7 @@
                     <% } %>
                   </td>
                   <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
+                  <td>R$ <%= (typeof order.totalPaid !== 'undefined' ? Number(order.totalPaid || 0) : 0).toFixed(2).replace('.', ',') %></td>
                 </tr>
               <% }) %>
             </tbody>
