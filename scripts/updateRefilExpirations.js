@@ -125,13 +125,12 @@ function isEligibleRefil(order) {
 
 function warrantyFromBumpKeys(keys) {
   const arr = Array.isArray(keys) ? keys : [];
-  const hasLifetime = (() => {
-    if (arr.includes('warranty_lifetime') || arr.includes('warranty_life')) return true;
-    if (arr.includes('warranty60') || arr.includes('warranty_60') || arr.includes('warrenty60') || arr.includes('warrenty_60')) return true;
-    if (arr.includes('warrenty')) return true;
-    return false;
-  })();
+  const hasLifetime = arr.includes('warranty_lifetime') || arr.includes('warranty_life') || arr.includes('warrenty');
+  const has6m = arr.includes('warranty_6m') || arr.includes('warranty6m');
+  const has12m = arr.includes('warranty60') || arr.includes('warranty_60') || arr.includes('warrenty60') || arr.includes('warrenty_60');
   if (hasLifetime) return { isLifetime: true, months: null, mode: 'life', days: null };
+  if (has6m) return { isLifetime: false, months: 6, mode: '6m', days: null };
+  if (has12m) return { isLifetime: false, months: 12, mode: '12m', days: null };
   return { isLifetime: false, months: 1, mode: '30', days: 30 };
 }
 
@@ -268,7 +267,7 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
     }
   }
 
-  const bumpRe = /(warrenty|warranty60|warranty_life|warranty_lifetime)/i;
+  const bumpRe = /(warrenty|warranty_life|warranty_lifetime)/i;
   const paidFilter = { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } } ] };
   const bumpFilter = {
     $or: [

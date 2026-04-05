@@ -225,7 +225,32 @@ const getOppusFromHeader = () => {
     return `Agência Oppus <${email}>`;
 };
 
+const getAdminEmailBcc = (primaryTo) => {
+    const enabledRaw = String(process.env.EMAIL_BCC_ENABLED || '').trim().toLowerCase();
+    const enabled = (enabledRaw === '1' || enabledRaw === 'true' || enabledRaw === 'yes');
+    if (!enabled) return '';
+    const raw = String(process.env.EMAIL_BCC_TO || process.env.ADMIN_EMAIL || '').trim();
+    if (!raw) return '';
+    const primary = String(primaryTo || '').trim().toLowerCase();
+    const parts = raw.split(/[;,]+/).map(s => String(s || '').trim()).filter(Boolean);
+    const emails = [];
+    const seen = new Set();
+    for (const p of parts) {
+        const e = p.toLowerCase();
+        if (!e || !e.includes('@')) continue;
+        if (primary && e === primary) continue;
+        if (seen.has(e)) continue;
+        seen.add(e);
+        emails.push(p);
+    }
+    return emails.join(', ');
+};
+
 const sendOrderCreatedEmail = async ({ record, insertedId }) => {
+    const notifyRaw = String(process.env.ORDER_NOTIFY_ENABLED || '').trim().toLowerCase();
+    const notifyEnabled = (notifyRaw === '1' || notifyRaw === 'true' || notifyRaw === 'yes');
+    if (!notifyEnabled) return;
+
     const transporter = getSmtpTransporter();
     if (!transporter) return;
 
@@ -316,6 +341,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
     const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
     const to = safe(customer.email);
     if (!to) return;
+    const bcc = getAdminEmailBcc(to);
 
     const additionalArr = Array.isArray(record && record.additionalInfo) ? record.additionalInfo : [];
     const getAdd = (key) => {
@@ -525,6 +551,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
     await transporter.sendMail({
         from,
         to,
+        ...(bcc ? { bcc } : {}),
         subject,
         text,
         html,
@@ -565,6 +592,7 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
     const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
     const to = safe(toOverride || customer.email);
     if (!to) return false;
+    const bcc = getAdminEmailBcc(to);
 
     const payerName = safe(
         record?.woovi?.payer?.name ||
@@ -837,6 +865,7 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
     await transporter.sendMail({
         from,
         to,
+        ...(bcc ? { bcc } : {}),
         subject,
         text,
         html,
@@ -2061,15 +2090,18 @@ async function ensureRefilLink(identifier, correlationID, req) {
       }
       return out;
     })();
-    const hasLifetime = (() => {
+    const warranty = (() => {
       const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
-      if (get('warranty_lifetime') > 0 || get('warranty_life') > 0) return true;
-      if (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0) return true;
-      if (get('warrenty') > 0) return true;
-      return false;
+      const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
+      const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
+      const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
+      if (hasLife) return { mode: 'life', months: null, days: null };
+      if (has6m) return { mode: '6m', months: 6, days: null };
+      if (has12m) return { mode: '12m', months: 12, days: null };
+      return { mode: '30', months: 1, days: 30 };
     })();
-    const warrantyMode = hasLifetime ? 'life' : '30';
-    const warrantyDays = hasLifetime ? null : 30;
+    const warrantyMode = warranty.mode;
+    const warrantyDays = warranty.days;
     const orderBaseMs = (() => {
       const toMs = (v) => {
         try {
@@ -2106,10 +2138,10 @@ async function ensureRefilLink(identifier, correlationID, req) {
       const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59, 999) + brtOffsetMs;
       return new Date(utcMs).toISOString();
     };
-    const monthsToAdd = warrantyMode === 'life' ? null : 1;
+    const monthsToAdd = warranty.months;
     const desiredExpiresAtIso = warrantyMode === 'life'
       ? new Date('2099-12-31T23:59:59.999Z').toISOString()
-      : addMonthsEndOfDayBrtIso(orderBaseMs, monthsToAdd);
+      : addMonthsEndOfDayBrtIso(orderBaseMs, Number(monthsToAdd || 1));
     const desiredCreatedAtIso = new Date(orderBaseMs).toISOString();
     const tl = await getCollection('temporary_links');
 
@@ -3294,13 +3326,42 @@ const refilPageHandler = (fromPath) => async (req, res) => {
     } catch (_) {}
     return false;
   };
-  const verifyLifetimeForRefilLink = async (linkRec) => {
+  const warrantyInfoFromBumpsStr = (bumpsStr) => {
+    const out = { isLifetime: false, mode: '30', months: 1 };
+    try {
+      const s = String(bumpsStr || '').trim();
+      if (!s) return out;
+      const parts = s.split(';');
+      let hasLife = false;
+      let has6m = false;
+      let has12m = false;
+      for (const raw of parts) {
+        const part = String(raw || '').trim();
+        if (!part) continue;
+        const segs = part.split(':');
+        const key = String(segs[0] || '').trim().toLowerCase();
+        const qtyRaw = segs.length > 1 ? String(segs[1] || '').trim() : '';
+        const qtyParsed = qtyRaw ? Number(qtyRaw) : 1;
+        const qty = Number.isFinite(qtyParsed) ? qtyParsed : 1;
+        if (!(qty > 0)) continue;
+        if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
+        else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
+        else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
+      }
+      if (hasLife) return { isLifetime: true, mode: 'life', months: null };
+      if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
+      if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
+    } catch (_) {}
+    return out;
+  };
+  const resolveWarrantyForRefilLink = async (linkRec) => {
+    const best = { isLifetime: false, mode: '30', months: 1 };
     try {
       const linkedIds = new Set();
       if (linkRec?.orderId) linkedIds.add(String(linkRec.orderId));
       const arr = Array.isArray(linkRec?.orders) ? linkRec.orders : [];
       for (const x of arr) { if (x) linkedIds.add(String(x)); }
-      if (!linkedIds.size) return false;
+      if (!linkedIds.size) return best;
       const { ObjectId } = require('mongodb');
       const ids = [];
       for (const x of linkedIds) {
@@ -3309,15 +3370,20 @@ const refilPageHandler = (fromPath) => async (req, res) => {
           try { ids.push(new ObjectId(s)); } catch (_) {}
         }
       }
-      if (!ids.length) return false;
+      if (!ids.length) return best;
       const col = await getCollection('checkout_orders');
       const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } }] };
       const orders = await col.find({ $and: [paidQuery, { _id: { $in: ids } }] }, { projection: { additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } }).toArray();
       for (const o of (orders || [])) {
-        if (hasLifetimeWarrantyFromBumpsStr(extractOrderBumpsStr(o))) return true;
+        const info = warrantyInfoFromBumpsStr(extractOrderBumpsStr(o));
+        if (info.isLifetime) return info;
+        if (Number(info.months || 0) > Number(best.months || 0)) {
+          best.mode = info.mode;
+          best.months = info.months;
+        }
       }
     } catch (_) {}
-    return false;
+    return best;
   };
   try {
     let isValid = false;
@@ -3344,7 +3410,8 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                 if (linkRec && String(linkRec.purpose || '').toLowerCase() === 'refil') {
                     const nowMs = Date.now();
                     const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
-                    const isLifetime = await verifyLifetimeForRefilLink(linkRec);
+                    const warranty = await resolveWarrantyForRefilLink(linkRec);
+                    const isLifetime = !!(warranty && warranty.isLifetime);
                     let ok = false;
                     let shouldRenew = false;
                     if (isLifetime) {
@@ -3371,7 +3438,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                           const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
                           return new Date(utcMs).toISOString();
                         };
-                        const monthsToAdd = 1;
+                        const monthsToAdd = Number((warranty && warranty.months) || 1);
                         const warrantyEndIso = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
                         const warrantyEndMs = warrantyEndIso ? new Date(warrantyEndIso).getTime() : 0;
                         if (warrantyEndMs && nowMs <= warrantyEndMs) {
@@ -3401,7 +3468,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                             const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
                             return new Date(utcMs).toISOString();
                           };
-                          const monthsToAdd = 1;
+                          const monthsToAdd = Number((warranty && warranty.months) || 1);
                           const newExp = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
                           if (newExp) await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
                         }
@@ -3429,7 +3496,8 @@ const refilPageHandler = (fromPath) => async (req, res) => {
            if (linkRec && linkRec.id) {
              const nowMs = Date.now();
              const expMs = linkRec.expiresAt ? new Date(linkRec.expiresAt).getTime() : 0;
-             const isLifetime = await verifyLifetimeForRefilLink(linkRec);
+             const warranty = await resolveWarrantyForRefilLink(linkRec);
+             const isLifetime = !!(warranty && warranty.isLifetime);
              let ok = false;
              let shouldRenew = false;
              if (isLifetime) {
@@ -3456,7 +3524,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                    const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
                    return new Date(utcMs).toISOString();
                  };
-                 const monthsToAdd = 1;
+                 const monthsToAdd = Number((warranty && warranty.months) || 1);
                  const warrantyEndIso = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
                  const warrantyEndMs = warrantyEndIso ? new Date(warrantyEndIso).getTime() : 0;
                  if (warrantyEndMs && nowMs <= warrantyEndMs) {
@@ -3487,7 +3555,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                      const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
                      return new Date(utcMs).toISOString();
                    };
-                   const monthsToAdd = 1;
+                   const monthsToAdd = Number((warranty && warranty.months) || 1);
                    const newExp = addMonthsEndOfDayBrtIso(createdMs, monthsToAdd);
                    if (newExp) await tl.updateOne({ id: token }, { $set: { expiresAt: newExp } });
                  }
@@ -3514,7 +3582,8 @@ const refilPageHandler = (fromPath) => async (req, res) => {
         const tl = await getCollection('temporary_links');
         const linkRec = await tl.findOne({ id: slug }, { projection: { createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1, phone: 1, instauser: 1, instausers: 1, orderId: 1, orders: 1, order: 1 } });
         refilLinkRec = linkRec || null;
-        if (linkRec && await verifyLifetimeForRefilLink(linkRec)) {
+        const warranty = linkRec ? await resolveWarrantyForRefilLink(linkRec) : null;
+        if (warranty && warranty.isLifetime) {
           refilIsLifetime = true;
         } else if (linkRec && linkRec.expiresAt) {
           const exp = new Date(linkRec.expiresAt).getTime();
@@ -3554,7 +3623,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
               const utcMs = Date.UTC(y, m - 1, dd, 23, 59, 59, 999) + brtOffsetMs;
               return { iso: new Date(utcMs).toISOString(), y, m, d: dd };
             };
-            const monthsToAdd = 1;
+            const monthsToAdd = Number((warranty && warranty.months) || 1);
             const exp = addMonthsEndOfDayBrtIso(created, monthsToAdd);
             const nowYmd = brtYmdFromMs(Date.now());
             const nowDay = dayNumFromYmd(nowYmd.y, nowYmd.m, nowYmd.d);
@@ -9705,8 +9774,31 @@ app.get('/api/orders', async (req, res) => {
   try {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const digitsRaw = phone.replace(/\D/g, '');
+    const digitsNo55 = digitsRaw ? digitsRaw.replace(/^55/, '') : '';
+    const phonePlus55 = digitsNo55 ? `+55${digitsNo55}` : '';
+    const phoneOr = [];
+    if (phone) phoneOr.push(phone);
+    if (digitsNo55) phoneOr.push(digitsNo55);
+    if (digitsRaw) phoneOr.push(digitsRaw);
+    if (phonePlus55) phoneOr.push(phonePlus55);
     const col = await getCollection('orders');
-    const orders = await col.find({ $or: [ { 'customer.phone': phone }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phone } } } ] }).sort({ _id: -1 }).limit(20).toArray();
+    const primaryFilter = {
+      $or: [
+        { 'customer.phone': { $in: phoneOr } },
+        { telefone: { $in: phoneOr } },
+        { phone: { $in: phoneOr } }
+      ]
+    };
+    let orders = await col.find(primaryFilter).sort({ _id: -1 }).limit(20).toArray();
+    if (!orders || !orders.length) {
+      const secondaryFilter = {
+        $or: [
+          { 'additionalInfo': { $elemMatch: { key: 'phone', value: { $in: phoneOr } } } }
+        ]
+      };
+      orders = await col.find(secondaryFilter).sort({ _id: -1 }).limit(20).toArray();
+    }
     res.json({ ok: true, orders });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -9716,8 +9808,32 @@ app.get('/api/checkout-orders', async (req, res) => {
   try {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const digitsRaw = phone.replace(/\D/g, '');
+    const digitsNo55 = digitsRaw ? digitsRaw.replace(/^55/, '') : '';
+    const phonePlus55 = digitsNo55 ? `+55${digitsNo55}` : '';
+    const phoneOr = [];
+    if (phone) phoneOr.push(phone);
+    if (digitsNo55) phoneOr.push(digitsNo55);
+    if (digitsRaw) phoneOr.push(digitsRaw);
+    if (phonePlus55) phoneOr.push(phonePlus55);
     const col = await getCollection('checkout_orders');
-    const orders = await col.find({ $or: [ { 'customer.phone': phone }, { 'additionalInfo': { $elemMatch: { key: 'phone', value: phone } } } ] }).sort({ _id: -1 }).limit(20).toArray();
+    const primaryFilter = {
+      $or: [
+        { 'customer.phone': { $in: phoneOr } },
+        { telefone: { $in: phoneOr } },
+        { phone: { $in: phoneOr } }
+      ]
+    };
+    let orders = await col.find(primaryFilter).sort({ _id: -1 }).limit(20).toArray();
+    if (!orders || !orders.length) {
+      const secondaryFilter = {
+        $or: [
+          { 'additionalInfoPaid': { $elemMatch: { key: 'phone', value: { $in: phoneOr } } } },
+          { 'additionalInfo': { $elemMatch: { key: 'phone', value: { $in: phoneOr } } } }
+        ]
+      };
+      orders = await col.find(secondaryFilter).sort({ _id: -1 }).limit(20).toArray();
+    }
     res.json({ ok: true, orders });
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -11981,6 +12097,236 @@ app.post('/api/refil/preview', async (req, res) => {
         })();
       } catch (_) {}
     };
+
+    if (shouldWebhook) {
+      const MIN_DROP = 50;
+      const debugMode = (() => {
+        try {
+          if (req && req.query && String(req.query.debug || '') === '1') return true;
+          if (req && req.body && (req.body.debug === true || req.body.debug === 1 || String(req.body.debug || '') === '1')) return true;
+          const ref = String(req.get('Referer') || req.headers['referer'] || '').trim();
+          if (ref && ref.includes('debug=1')) return true;
+        } catch (_) {}
+        return false;
+      })();
+      const debugId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const dbg = (label, obj) => {
+        if (!debugMode) return;
+        try {
+          const base = `[refil2][${debugId}] ${label}`;
+          if (obj === undefined) return console.log(base);
+          if (typeof obj === 'string') return console.log(base + ' ' + obj);
+          try { return console.log(base, JSON.stringify(obj, null, 2)); } catch (_) { return console.log(base, obj); }
+        } catch (_) {}
+      };
+      const safeNumber = (v) => {
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v === 'string') {
+          const n = Number(String(v || '').trim());
+          if (Number.isFinite(n)) return n;
+          const digits = String(v || '').replace(/[^\d.-]/g, '');
+          if (!digits) return null;
+          const n2 = Number(digits);
+          return Number.isFinite(n2) ? n2 : null;
+        }
+        return null;
+      };
+      const safeInt = (v) => {
+        const n = safeNumber(v);
+        if (n == null) return null;
+        return Math.trunc(n);
+      };
+      const safeJsonResponse = (data) => {
+        try {
+          if (data == null) return null;
+          if (typeof data === 'object') return data;
+          if (typeof data === 'string') {
+            const s = String(data || '').trim();
+            if (!s) return null;
+            if (s.startsWith('{') || s.startsWith('[')) {
+              try { return JSON.parse(s); } catch (_) { return { raw: s }; }
+            }
+            return { raw: s };
+          }
+          return { raw: String(data) };
+        } catch (_) { return null; }
+      };
+      const redactSecrets = (data) => {
+        try {
+          if (!data || typeof data !== 'object') return data;
+          const stack = [{ v: data, depth: 0 }];
+          const seen = new WeakSet();
+          while (stack.length) {
+            const cur = stack.pop();
+            const v = cur.v;
+            const depth = cur.depth;
+            if (!v || typeof v !== 'object') continue;
+            if (seen.has(v)) continue;
+            seen.add(v);
+            for (const k of Object.keys(v)) {
+              const kl = String(k || '').toLowerCase();
+              if (kl === 'apikey' || kl === 'api_key' || kl === 'key' || kl.endsWith('_key')) {
+                v[k] = '[redacted]';
+                continue;
+              }
+              const next = v[k];
+              if (depth < 4 && next && typeof next === 'object') stack.push({ v: next, depth: depth + 1 });
+            }
+          }
+          return data;
+        } catch (_) { return data; }
+      };
+      const startedAt = Date.now();
+      try {
+        dbg('start', { username });
+        const userLink = `https://instagram.com/${username}`;
+        const orderLookupUrl = `https://refilfama24h.com/api_proxy.php?link=${encodeURIComponent(userLink)}`;
+        dbg('GET api_proxy url', orderLookupUrl);
+        const orderResp = await axios.get(orderLookupUrl, { timeout: 20000, validateStatus: () => true });
+        dbg('GET api_proxy status', { status: orderResp && orderResp.status ? orderResp.status : null });
+        dbg('GET api_proxy body', redactSecrets(safeJsonResponse(orderResp && orderResp.data)));
+        const orderJson = safeJsonResponse(orderResp && orderResp.data);
+        const first = Array.isArray(orderJson) ? orderJson[0] : orderJson;
+        const pedido = first && first.data && Array.isArray(first.data.list) ? first.data.list[0] : null;
+        if (!pedido || typeof pedido !== 'object') {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Pedido não encontrado no api_proxy',
+            meta: { step: 'api_proxy', httpStatus: orderResp && orderResp.status ? orderResp.status : null, tookMs: Date.now() - startedAt }
+          });
+          return res.status(502).json({ ok: false, error: 'order_not_found', message: 'Pedido não encontrado para este usuário.' });
+        }
+
+        const startCount = safeInt(pedido.start_count);
+        const qty = safeInt(pedido.quantity);
+        const orderId = String(pedido.id || '').trim();
+        const serviceId = String(pedido.service_id || '').trim();
+        const orderCreatedAt = String(pedido.created_at || pedido.created || '').trim();
+        const orderLink = String(pedido.link || username || '').trim().replace(/^@+/, '');
+        dbg('pedido parsed', { orderId, serviceId, startCount, qty, orderCreatedAt, orderLink });
+
+        if (!orderId || !serviceId || startCount == null || qty == null) {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Pedido inválido retornado pelo api_proxy',
+            meta: { step: 'api_proxy_validate', tookMs: Date.now() - startedAt },
+            pedido: { id: orderId || null, service_id: serviceId || null, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
+          });
+          return res.status(502).json({ ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
+        }
+
+        const profileUrl = `https://www.instagram.com/${username}`;
+        const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?name_url=${encodeURIComponent(profileUrl)}`;
+        dbg('GET instagram_proxy url', profileLookupUrl);
+        const profileResp = await axios.get(profileLookupUrl, { timeout: 20000, validateStatus: () => true });
+        dbg('GET instagram_proxy status', { status: profileResp && profileResp.status ? profileResp.status : null });
+        dbg('GET instagram_proxy body', redactSecrets(safeJsonResponse(profileResp && profileResp.data)));
+        const profileJson = safeJsonResponse(profileResp && profileResp.data);
+        const profileFirst = Array.isArray(profileJson) ? profileJson[0] : profileJson;
+        const followerCount = safeInt(profileFirst && profileFirst.followerCount);
+        if (followerCount == null) {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Falha ao consultar seguidores no instagram_proxy',
+            meta: { step: 'instagram_proxy', httpStatus: profileResp && profileResp.status ? profileResp.status : null, tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
+          });
+          return res.status(502).json({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
+        }
+
+        const initial = startCount + qty;
+        const deficitRaw = initial - followerCount;
+        const deficit = Math.max(0, safeInt(deficitRaw) || 0);
+        dbg('computed', { initial, followerCount, deficit, min_drop: MIN_DROP });
+
+        if (deficit < MIN_DROP) {
+          logRefil2Request({
+            execStatus: 'success',
+            decisionStatus: 'no_drop',
+            decisionReason: 'below_min_drop',
+            meta: { step: 'computed', tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+            computed: { initial, current: followerCount, deficit, min_drop: MIN_DROP }
+          });
+          return res.json({
+            ok: true,
+            status: 'initiated',
+            message: 'Sem queda detectada',
+            data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit }
+          });
+        }
+
+        const apiKey = String(process.env.REFILFAMA24H_API_KEY || '').trim();
+        if (!apiKey) {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Chave REFILFAMA24H_API_KEY não configurada',
+            meta: { step: 'add_reorder_prepare', tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+            computed: { initial, current: followerCount, deficit }
+          });
+          return res.status(500).json({ ok: false, error: 'missing_api_key', message: 'Configuração pendente no servidor.' });
+        }
+
+        const payload = {
+          apiKey,
+          order_id: orderId,
+          service: serviceId,
+          service_name: '',
+          link: orderLink || username,
+          quantity: String(deficit),
+          order_created: orderCreatedAt
+        };
+        dbg('POST add_reorder payload', redactSecrets(Object.assign({}, payload)));
+
+        const addResp = await axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: 20000, validateStatus: () => true, headers: { 'Accept': 'application/json' } });
+        const addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
+        dbg('POST add_reorder status', { status: addResp && addResp.status ? addResp.status : null });
+        dbg('POST add_reorder body', addJson);
+        const addOk = !!(addResp && addResp.status >= 200 && addResp.status < 300);
+        if (!addOk) {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Falha ao criar reorder no add_reorder',
+            meta: { step: 'add_reorder', httpStatus: addResp && addResp.status ? addResp.status : null, tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+            computed: { initial, current: followerCount, deficit },
+            upstream: { add_reorder: addJson }
+          });
+          return res.status(502).json({ ok: false, error: 'provider_error', message: 'Falha ao iniciar reposição.' });
+        }
+
+        logRefil2Request({
+          execStatus: 'success',
+          decisionStatus: 'initiated',
+          decisionReason: 'add_reorder_ok',
+          meta: { step: 'done', httpStatus: addResp.status, tookMs: Date.now() - startedAt },
+          pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+          computed: { initial, current: followerCount, deficit },
+          upstream: { add_reorder: addJson }
+        });
+
+        return res.json({
+          ok: true,
+          status: 'initiated',
+          message: 'Reposição iniciada',
+          data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit },
+          raw: addJson
+        });
+      } catch (e) {
+        dbg('exception', { message: e?.message || String(e), stack: String(e?.stack || '').split('\n').slice(0, 8).join('\n') });
+        logRefil2Request({
+          execStatus: 'error',
+          errorMessage: e?.message || String(e),
+          meta: { step: 'exception', tookMs: Date.now() - startedAt }
+        });
+        if (debugMode) {
+          return res.status(500).json({ ok: false, error: 'internal_error', message: 'Falha ao processar reposição.', debugId, details: { message: e?.message || String(e) } });
+        }
+        return res.status(500).json({ ok: false, error: 'internal_error', message: 'Falha ao processar reposição.' });
+      }
+    }
+
     let webhook = null;
     if (shouldWebhook && false) {
       const startedAt = Date.now();
@@ -12891,6 +13237,32 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return '';
     };
 
+    const privateKeySetUsers = new Set();
+    try {
+      const privateQuery = {
+        $and: [
+          paidQuery,
+          {
+            $or: [
+              { isPrivate: true },
+              { 'profilePrivacy.isPrivate': true },
+              { 'additionalInfoMap.isPrivate': true },
+              { 'additionalInfoMap.isPrivate': 'true' },
+              { 'additionalInfoMapPaid.isPrivate': true },
+              { 'additionalInfoMapPaid.isPrivate': 'true' }
+            ]
+          }
+        ]
+      };
+      const privateOrders = await col.find(privateQuery, {
+        projection: { instagramUsername: 1, instauser: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1 }
+      }).sort({ createdAt: -1 }).limit(5000).toArray();
+      for (const po of privateOrders) {
+        const uKey = resolveUsername(po);
+        if (uKey) privateKeySetUsers.add(uKey);
+      }
+    } catch (_) {}
+
     const resolveDateMs = (o) => {
       const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || null;
       const t = dateStr ? new Date(dateStr).getTime() : 0;
@@ -13081,6 +13453,82 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const qType = String(req.query.qType || 'username').trim();
     const filledOnly = String(req.query.filled || '').trim() === '1';
     const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
+    const warrantyRaw = String(req.query.warranty || '').trim().toLowerCase();
+    const warrantyFilter = (() => {
+      const w = String(warrantyRaw || '').trim().toLowerCase();
+      if (w === 'life' || w === 'vitalicio') return 'life';
+      if (w === '12m' || w === '1ano' || w === '1_ano') return '12m';
+      if (w === '6m' || w === '6meses' || w === '6_meses') return '6m';
+      if (!w && lifetimeOnly) return 'life';
+      return '';
+    })();
+    const startDateRaw = String(req.query.startDate || '').trim();
+    const endDateRaw = String(req.query.endDate || '').trim();
+    const refilStartRaw = String(req.query.refilStart || '').trim();
+    const refilEndRaw = String(req.query.refilEnd || '').trim();
+    const tipoRaw = String(req.query.tipo || '').trim();
+
+    const parseYmd = (s) => {
+      try {
+        const v = String(s || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+        const parts = v.split('-').map(Number);
+        const y = parts[0];
+        const m = parts[1];
+        const d = parts[2];
+        if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+        if (y < 2000 || y > 2100) return null;
+        if (m < 1 || m > 12) return null;
+        if (d < 1 || d > 31) return null;
+        return { y, m, d, raw: v };
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const toStartUtcMsBrt = (ymd) => {
+      const ms = Date.UTC(Number(ymd.y), Number(ymd.m) - 1, Number(ymd.d), 3, 0, 0, 0);
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    const toEndExclusiveUtcMsBrt = (ymd) => {
+      const ms = Date.UTC(Number(ymd.y), Number(ymd.m) - 1, Number(ymd.d) + 1, 3, 0, 0, 0);
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    const startYmd = parseYmd(startDateRaw);
+    const endYmd = parseYmd(endDateRaw);
+    let startDate = startYmd ? startYmd.raw : '';
+    let endDate = endYmd ? endYmd.raw : '';
+    let rangeStartMs = startYmd ? toStartUtcMsBrt(startYmd) : null;
+    let rangeEndExclusiveMs = endYmd ? toEndExclusiveUtcMsBrt(endYmd) : null;
+
+    if (rangeStartMs != null && rangeEndExclusiveMs != null && rangeStartMs > rangeEndExclusiveMs) {
+      const tmpStartYmd = startYmd;
+      const tmpEndYmd = endYmd;
+      startDate = tmpEndYmd ? tmpEndYmd.raw : '';
+      endDate = tmpStartYmd ? tmpStartYmd.raw : '';
+      rangeStartMs = tmpEndYmd ? toStartUtcMsBrt(tmpEndYmd) : null;
+      rangeEndExclusiveMs = tmpStartYmd ? toEndExclusiveUtcMsBrt(tmpStartYmd) : null;
+    }
+
+    const refilStartYmd = parseYmd(refilStartRaw);
+    const refilEndYmd = parseYmd(refilEndRaw);
+    let refilStart = refilStartYmd ? refilStartYmd.raw : '';
+    let refilEnd = refilEndYmd ? refilEndYmd.raw : '';
+    let refilRangeStartMs = refilStartYmd ? toStartUtcMsBrt(refilStartYmd) : null;
+    let refilRangeEndExclusiveMs = refilEndYmd ? toEndExclusiveUtcMsBrt(refilEndYmd) : null;
+    if (refilRangeStartMs != null && refilRangeEndExclusiveMs != null && refilRangeStartMs > refilRangeEndExclusiveMs) {
+      const tmpStartYmd = refilStartYmd;
+      const tmpEndYmd = refilEndYmd;
+      refilStart = tmpEndYmd ? tmpEndYmd.raw : '';
+      refilEnd = tmpStartYmd ? tmpStartYmd.raw : '';
+      refilRangeStartMs = tmpEndYmd ? toStartUtcMsBrt(tmpEndYmd) : null;
+      refilRangeEndExclusiveMs = tmpStartYmd ? toEndExclusiveUtcMsBrt(tmpStartYmd) : null;
+    }
+
+    const tipoNorm0 = String(tipoRaw || '').toLowerCase().trim();
+    const tipoFilter = (!tipoNorm0 || tipoNorm0 === 'all') ? '' : tipoNorm0;
 
     const usernames = Array.from(new Set(orders.map(resolveUsername).filter(Boolean)));
     const monitorDocs = usernames.length ? await monitorCol.find({ username: { $in: usernames } }, { projection: { _id: 0 } }).toArray() : [];
@@ -13127,14 +13575,13 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           bumpQtyMap[key] = Number(bumpQtyMap[key] || 0) + qty;
         }
       }
-      const hasLifetime = (() => {
-        const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
-        if (get('warranty_lifetime') > 0 || get('warranty_life') > 0) return true;
-        if (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0) return true;
-        if (get('warrenty') > 0) return true;
-        return false;
-      })();
-      if (hasLifetime) return { isLifetime: true, months: null, mode: 'life', days: null };
+      const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
+      const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
+      const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
+      const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
+      if (hasLife) return { isLifetime: true, months: null, mode: 'life', days: null };
+      if (has6m) return { isLifetime: false, months: 6, mode: '6m', days: null };
+      if (has12m) return { isLifetime: false, months: 12, mode: '12m', days: null };
       return { isLifetime: false, months: 1, mode: '30', days: 30 };
     };
     const isEligibleRefilTipo = (tipoRaw) => {
@@ -13173,14 +13620,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         })();
 
         const w = warrantyFromBumpsStr(resolveOrderBumps(o) || '');
-        if (w.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
+        if (w.isLifetime) return { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
         const base = orderBaseMs || nowMs;
         const exp = addMonthsEndOfDayBrt(base, Number(w.months || 1));
         const expDayNum = dayNumFromYmd(exp.y, exp.m, exp.d);
         const left = expDayNum - nowDayNumBrt;
-        return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: exp.iso };
+        return { isLifetime: false, mode: String(w.mode || '30'), daysLeft: Math.max(0, left), expiresAt: exp.iso };
       } catch (_) {
-        return { isLifetime: false, daysLeft: null, expiresAt: null };
+        return { isLifetime: false, mode: '30', daysLeft: null, expiresAt: null };
       }
     };
 
@@ -13228,7 +13675,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
 
       const resultado = (initialFollowersCount != null && contracted) ? (Number(initialFollowersCount) + Number(contracted)) : null;
       const diffAbs = (resultado != null && currentFollowersCount != null) ? (Number(resultado) - Number(currentFollowersCount)) : null;
-      const diffPct = (diffAbs != null && resultado) ? ((Number(diffAbs) / Number(resultado)) * 100) : null;
+      const diffPct = (diffAbs != null && contracted) ? ((Number(diffAbs) / Number(contracted)) * 100) : null;
       const tipo = resolveTipo(o);
       const warrantyBase = (isEligibleRefilTipo(tipo) ? computeWarrantyFromOrder(o) : { isLifetime: false, daysLeft: null, expiresAt: null });
 
@@ -13250,11 +13697,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         diffAbs,
         diffPct,
         refilIsLifetime: !!warrantyBase.isLifetime,
+        refilWarrantyMode: warrantyBase.mode || null,
         refilDaysLeft: (typeof warrantyBase.daysLeft === 'number') ? warrantyBase.daysLeft : null,
         refilExpiresAt: warrantyBase.expiresAt || null
       };
     }).filter(r => {
       if (!r.username) return false;
+      if (privateKeySetUsers.has(r.username)) return false;
+      if (r.isPrivate === true) return false;
       if (!(r.contracted > 0)) return false;
       if (!isFollowersServico(r.tipo)) return false;
       if (!String(r.fornecedorOrderId || '').trim()) return false;
@@ -13264,7 +13714,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const mergeWarranty = (a, b, allowLifetime) => {
       if (!a) return b;
       if (!b) return a;
-      if (allowLifetime && (a.isLifetime || b.isLifetime)) return { isLifetime: true, daysLeft: null, expiresAt: a.expiresAt || b.expiresAt || null };
+      if (allowLifetime && (a.isLifetime || b.isLifetime)) return { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: a.expiresAt || b.expiresAt || null };
       const aDays = (typeof a.daysLeft === 'number') ? a.daysLeft : null;
       const bDays = (typeof b.daysLeft === 'number') ? b.daysLeft : null;
       if (aDays == null) return b;
@@ -13314,21 +13764,21 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             return false;
           })();
           const computed = anyLifetime
-            ? { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' }
+            ? { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' }
             : (linkExpMs && linkMode !== 'life' && linkExpMs < safeDateMs('2099-01-01T00:00:00.000Z')
               ? (() => {
                 const ymd = brtYmdFromMs(linkExpMs);
                 const expDayNum = dayNumFromYmd(ymd.y, ymd.m, ymd.d);
                 const left = expDayNum - nowDayNumBrt;
-                return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: new Date(linkExpMs).toISOString() };
+                return { isLifetime: false, mode: linkMode || '30', daysLeft: Math.max(0, left), expiresAt: new Date(linkExpMs).toISOString() };
               })()
               : (() => {
                 const w = best.warranty || { isLifetime: false, months: 1 };
-                if (w.isLifetime) return { isLifetime: true, daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
+                if (w.isLifetime) return { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
                 const exp = addMonthsEndOfDayBrt(best.baseMs, Number(w.months || 1));
                 const expDayNum = dayNumFromYmd(exp.y, exp.m, exp.d);
                 const left = expDayNum - nowDayNumBrt;
-                return { isLifetime: false, daysLeft: Math.max(0, left), expiresAt: exp.iso };
+                return { isLifetime: false, mode: w.mode || '30', daysLeft: Math.max(0, left), expiresAt: exp.iso };
               })());
           for (const oid of linked) {
             if (!oid) continue;
@@ -13347,11 +13797,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           const orderInfo = orderInfoById.get(oid);
           const allowLifetime = !!(r.refilIsLifetime || (orderInfo && orderInfo.warranty && orderInfo.warranty.isLifetime));
           const merged = mergeWarranty(
-            { isLifetime: !!r.refilIsLifetime, daysLeft: (typeof r.refilDaysLeft === 'number' ? r.refilDaysLeft : null), expiresAt: r.refilExpiresAt || null },
+            { isLifetime: !!r.refilIsLifetime, mode: r.refilWarrantyMode || null, daysLeft: (typeof r.refilDaysLeft === 'number' ? r.refilDaysLeft : null), expiresAt: r.refilExpiresAt || null },
             info,
             allowLifetime
           );
           r.refilIsLifetime = !!merged.isLifetime;
+          r.refilWarrantyMode = merged.mode || r.refilWarrantyMode || null;
           r.refilDaysLeft = (typeof merged.daysLeft === 'number') ? merged.daysLeft : null;
           r.refilExpiresAt = merged.expiresAt || null;
         }
@@ -13372,8 +13823,42 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         if (r.currentFollowersCount == null) return false;
         if (r.resultado == null) return false;
       }
-      if (lifetimeOnly) {
+      if (warrantyFilter) {
+        const mode = String(r.refilWarrantyMode || '').trim().toLowerCase();
+        if (warrantyFilter === 'life') {
+          if (!(r.refilIsLifetime === true || mode === 'life')) return false;
+        } else if (warrantyFilter === '12m') {
+          if (mode !== '12m') return false;
+        } else if (warrantyFilter === '6m') {
+          if (mode !== '6m') return false;
+        }
+      } else if (lifetimeOnly) {
         if (r.refilIsLifetime !== true) return false;
+      }
+
+      if (rangeStartMs != null) {
+        if (!(Number(r.lastPurchaseAtMs || 0) >= rangeStartMs)) return false;
+      }
+      if (rangeEndExclusiveMs != null) {
+        if (!(Number(r.lastPurchaseAtMs || 0) < rangeEndExclusiveMs)) return false;
+      }
+
+      if (refilRangeStartMs != null || refilRangeEndExclusiveMs != null) {
+        const expMs = r.refilExpiresAt ? new Date(r.refilExpiresAt).getTime() : 0;
+        if (!Number.isFinite(expMs) || !expMs) return false;
+        if (refilRangeStartMs != null && !(expMs >= refilRangeStartMs)) return false;
+        if (refilRangeEndExclusiveMs != null && !(expMs < refilRangeEndExclusiveMs)) return false;
+      }
+
+      if (tipoFilter) {
+        const t = String(r.tipo || '').toLowerCase();
+        let ok = false;
+        if (tipoFilter === 'mistos') ok = t.includes('misto');
+        else if (tipoFilter === 'brasileiros') ok = t.includes('brasileir');
+        else if (tipoFilter === 'organicos') ok = t.includes('organico');
+        else if (tipoFilter === 'brasileiros_reais') ok = (t.includes('real') || t.includes('reais'));
+        else ok = t.includes(tipoFilter);
+        if (!ok) return false;
       }
 
       if (qNorm) {
@@ -13430,7 +13915,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, q, qType, filled: filledOnly, lifetime: lifetimeOnly, sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, q, qType, filled: filledOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, refilStart, refilEnd, tipo: (tipoFilter || ''), sortBy: sortKey, sortDir },
       followersMgmtSettings,
       period: 'all'
     });
@@ -13692,6 +14177,49 @@ const followersMgmtEnqueue = (key, fn) => {
   return next;
 };
 
+const fetchInstagramFollowersInfoRocketApi = async (username) => {
+  try {
+    if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'rocketapi_token_missing' };
+    if (global.rocketApiDisabledUntil && Date.now() <= global.rocketApiDisabledUntil) return { success: false, error: 'rocketapi_temporarily_disabled' };
+
+    const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
+    const rocketResp = await axios.post(
+      rocketUrl,
+      { username },
+      { headers: { Authorization: `Token ${process.env.ROCKETAPI_TOKEN}` }, timeout: 15000, validateStatus: () => true }
+    );
+
+    if (rocketResp.status !== 200) return { success: false, error: `rocket_http_${rocketResp.status}` };
+
+    const rData = rocketResp.data;
+    const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
+    const rUser = isRocketOk ? (rData?.response?.body?.data?.user || null) : null;
+    if (!rUser || !rUser.username) {
+      const msg = String(JSON.stringify(rData || {}).slice(0, 400)).toLowerCase();
+      if (msg.includes('expired') || msg.includes('renew') || msg.includes('plan is')) global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+      return { success: false, error: 'rocket_invalid_data' };
+    }
+
+    global.rocketApiDisabledUntil = 0;
+
+    const followersCount = (rUser.edge_followed_by && typeof rUser.edge_followed_by.count === 'number') ? rUser.edge_followed_by.count : null;
+    return {
+      success: true,
+      profile: {
+        username: String(rUser.username || username),
+        followersCount,
+        isPrivate: !!rUser.is_private,
+        checkedAt: new Date().toISOString(),
+        source: 'rocket_api'
+      }
+    };
+  } catch (e) {
+    const msg = String(e?.response?.data || e?.message || e || '').toLowerCase();
+    if (msg.includes('expired')) global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+    return { success: false, error: e?.message || String(e) };
+  }
+};
+
 const followersMgmtGetCurrent = async (req, username, force) => {
   const { getCollection } = require('./mongodbClient');
   const monitorCol = await getCollection('followers_monitor');
@@ -13723,11 +14251,11 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     let followersCount = null;
     let error = null;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        result = await fetchInstagramFollowersInfo(username);
+        result = await fetchInstagramFollowersInfoRocketApi(username);
         profile = result && result.success ? result.profile : null;
-        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+        source = profile ? String(profile.source || 'rocket_api') : 'rocket_api';
         isPrivate = profile ? !!profile.isPrivate : null;
         followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
         error = result && !result.success ? (result.error || 'unknown_error') : null;
@@ -13735,23 +14263,24 @@ const followersMgmtGetCurrent = async (req, username, force) => {
       } catch (e) {
         error = e?.message || String(e);
       }
-      if (attempt < 3) await sleep(900 * attempt);
+      if (attempt < 2) await sleep(900 * attempt);
     }
 
     if (!profile) {
-      try {
-        const userAgent = req.get("User-Agent") || "";
-        const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
-        const mockReq = { session: {}, query: {}, body: {} };
-        const fallback = await verifyInstagramProfile(username, userAgent, ip, mockReq, null, true);
-        if (fallback && fallback.success && fallback.profile) {
-          profile = fallback.profile;
-          source = 'verifyInstagramProfile';
-          isPrivate = !!profile.isPrivate;
-          followersCount = typeof profile.followersCount === 'number' ? profile.followersCount : null;
-          error = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          result = await fetchInstagramFollowersInfo(username);
+          profile = result && result.success ? result.profile : null;
+          source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+          isPrivate = profile ? !!profile.isPrivate : null;
+          followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
+          error = result && !result.success ? (result.error || 'unknown_error') : null;
+          if (profile) break;
+        } catch (e) {
+          error = e?.message || String(e);
         }
-      } catch (_) {}
+        if (attempt < 3) await sleep(900 * attempt);
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -17269,12 +17798,162 @@ app.get('/painel', requireAdmin, async (req, res) => {
     } catch (_) {}
 
     let refil2Requests = undefined;
-    if (view === 'dashboard') {
+    if (view === 'dashboard' || view === 'refil2') {
       try {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('refil2_requests');
         const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(200).toArray();
         refil2Requests = Array.isArray(rows) ? rows : [];
+        try {
+          const idStrs = Array.from(new Set(refil2Requests.map(r => String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s))));
+          if (idStrs.length) {
+            const { ObjectId } = require('mongodb');
+            const ids = idStrs.map(s => {
+              try { return new ObjectId(String(s)); } catch (_) { return null; }
+            }).filter(Boolean);
+            if (ids.length) {
+              const ordersCol = await getCollection('checkout_orders');
+              const orderDocs = await ordersCol.find({ _id: { $in: ids } }, { projection: { _id: 1, woovi: 1, paidAt: 1, createdAt: 1 } }).toArray();
+              const orderMap = new Map(orderDocs.map(o => [String(o && o._id ? o._id : ''), o]));
+              const formatDateBR = (ms) => {
+                const d = new Date(Number(ms || 0));
+                if (!Number.isFinite(d.getTime())) return '';
+                try { return d.toLocaleString('pt-BR'); } catch (_) {}
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const hh = String(d.getHours()).padStart(2, '0');
+                const mm = String(d.getMinutes()).padStart(2, '0');
+                return `${day}/${m}/${y} ${hh}:${mm}`;
+              };
+              for (const r of refil2Requests) {
+                const key = String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim();
+                if (!key) continue;
+                const o = orderMap.get(key);
+                if (!o) continue;
+                const dateStr = o?.woovi?.paidAt || o?.paidAt || o?.createdAt || null;
+                const t = dateStr ? new Date(dateStr).getTime() : 0;
+                if (!Number.isFinite(t) || !t) continue;
+                r.purchaseAt = new Date(t).toISOString();
+                r.purchaseAtLabel = formatDateBR(t);
+              }
+            }
+          }
+        } catch (_) {}
+        try {
+          const neededUsers = new Set(
+            refil2Requests
+              .filter(r => r && r.username && !(r.purchaseAtLabel || r.purchaseAt))
+              .map(r => String(r.username || '').trim().replace(/^@+/, '').toLowerCase())
+              .filter(Boolean)
+          );
+          if (neededUsers.size) {
+            const ordersCol = await getCollection('checkout_orders');
+            const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }];
+            const followersOr = [
+              { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
+              { 'additionalInfoMapPaid.categoria_servico': new RegExp('^seguidores$', 'i') },
+              { 'additionalInfoMap.categoria_servico': new RegExp('^seguidores$', 'i') },
+              { 'fama24h.requestPayload.service': { $in: [663, 23, 312] } },
+              { 'fornecedor_social.requestPayload.service': { $in: [663, 23, 312] } },
+              { tipo: { $regex: 'seguidores', $options: 'i' } },
+              { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+            ];
+            const orderDocs = await ordersCol.find(
+              { $and: [{ $or: paidOr }, { $or: followersOr }] },
+              {
+                projection: {
+                  _id: 0,
+                  createdAt: 1,
+                  paidAt: 1,
+                  woovi: 1,
+                  instagramUsername: 1,
+                  instauser: 1,
+                  instagramUser: 1,
+                  additionalInfo: 1,
+                  additionalInfoPaid: 1,
+                  additionalInfoMap: 1,
+                  additionalInfoMapPaid: 1
+                }
+              }
+            ).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(6000).toArray();
+
+            const pickInfoFromArray = (arr, key) => {
+              try {
+                const list = Array.isArray(arr) ? arr : [];
+                const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+                return (it && typeof it.value !== 'undefined') ? it.value : '';
+              } catch (_) {
+                return '';
+              }
+            };
+            const extractInfoAny = (o, key) => {
+              try {
+                if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+                if (o && o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+                const v1 = pickInfoFromArray(o && o.additionalInfoPaid, key);
+                if (typeof v1 !== 'undefined' && String(v1 || '').trim() !== '') return v1;
+                const v0 = pickInfoFromArray(o && o.additionalInfo, key);
+                return v0;
+              } catch (_) {}
+              return '';
+            };
+            const normalizeUsernameKey = (u) => {
+              const s0 = String(u || '').trim();
+              if (!s0) return '';
+              const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+              return s1.toLowerCase().trim();
+            };
+            const resolveUsername = (o) => {
+              const candidates = [
+                extractInfoAny(o, 'instagram_username'),
+                o && (o.instagramUsername || o.instauser || o.instagramUser)
+              ];
+              for (const c of candidates) {
+                const k = normalizeUsernameKey(c);
+                if (k) return k;
+              }
+              return '';
+            };
+            const resolveDateMs = (o) => {
+              const dateStr = o?.woovi?.paidAt || o?.paidAt || o?.createdAt || null;
+              const t = dateStr ? new Date(dateStr).getTime() : 0;
+              return Number.isFinite(t) ? t : 0;
+            };
+            const formatDateBR = (ms) => {
+              const d = new Date(Number(ms || 0));
+              if (!Number.isFinite(d.getTime())) return '';
+              try { return d.toLocaleString('pt-BR'); } catch (_) {}
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              const hh = String(d.getHours()).padStart(2, '0');
+              const mm = String(d.getMinutes()).padStart(2, '0');
+              return `${day}/${m}/${y} ${hh}:${mm}`;
+            };
+
+            const purchaseByUser = new Map();
+            for (const o of orderDocs) {
+              const u = resolveUsername(o);
+              if (!u || !neededUsers.has(u)) continue;
+              if (purchaseByUser.has(u)) continue;
+              const t = resolveDateMs(o);
+              if (!t) continue;
+              purchaseByUser.set(u, { iso: new Date(t).toISOString(), label: formatDateBR(t) });
+              if (purchaseByUser.size >= neededUsers.size) break;
+            }
+
+            for (const r of refil2Requests) {
+              const u = String(r && r.username ? r.username : '').trim().replace(/^@+/, '').toLowerCase();
+              if (!u) continue;
+              if (r.purchaseAtLabel || r.purchaseAt) continue;
+              const p = purchaseByUser.get(u);
+              if (!p) continue;
+              r.purchaseAt = p.iso;
+              r.purchaseAtLabel = p.label;
+            }
+          }
+        } catch (_) {}
       } catch (_) {
         refil2Requests = [];
       }

@@ -1981,8 +1981,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = '1 ano';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
+    if (wLabel) wLabel.textContent = '6 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
     if (wOld) wOld.textContent = 'R$ 39,90';
     if (wNew) wNew.textContent = 'R$ 9,90';
     if (wDisc) wDisc.textContent = '75% OFF';
@@ -2340,8 +2340,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
         let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
         if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 9,90';
-        const label = 'Reposição por 1 ano';
-        promos.push({ key: 'warranty60', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        const label = 'Reposição por 6 meses';
+        promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -2402,9 +2402,10 @@ document.addEventListener('DOMContentLoaded', function() {
                    oldPriceCents = p.priceCents * 1.7;
                 } else {
                    // Likes, Views, Warranty
-                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : p.key)];
+                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : (p.key === 'warranty_6m' ? 'warranty' : p.key))];
                    if (conf) oldPriceCents = parsePrecoToCents(conf.old);
                    else if (p.key === 'warranty_lifetime') oldPriceCents = 12990; // R$ 129,90
+                   else if (p.key === 'warranty_6m') oldPriceCents = 12990; // R$ 129,90
                    else if (p.key === 'warranty30') oldPriceCents = 3990; // R$ 39,90
                 }
                 // Adiciona ao total original

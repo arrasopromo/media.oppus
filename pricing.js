@@ -211,7 +211,7 @@ const calculateOrderBumps = (bumpsStr, baseType) => {
             // 1 comment = R$ 1,50 (150 cents)
             total += q * 150;
             
-        } else if (key === 'warranty' || key === 'warranty30' || key === 'warranty_life' || key === 'warranty_lifetime' || key === 'warranty60') {
+        } else if (key === 'warranty' || key === 'warranty30' || key === 'warranty_life' || key === 'warranty_lifetime' || key === 'warranty60' || key === 'warranty_6m' || key === 'warranty6m') {
              total += 990; 
         }
     });

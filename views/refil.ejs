@@ -35,6 +35,7 @@
             <ul>
               <li>Após solicitar reposição, aguarde 12h para solicitar uma nova.</li>
               <li>Não é possível realizar reposição de usuários que trocam o nome do perfil.</li>
+              <li>O perfil precisa estar público para reposição.</li>
             </ul>
           </div>
         </div>
@@ -285,7 +286,9 @@
           historyCardEl.style.display = 'none';
           return;
         }
-        httpJson('/api/refil/history', 'POST', { username: v }, function (ok, data) {
+        var debugFlag = false;
+        try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+        httpJson('/api/refil/history', 'POST', { username: v, debug: (debugFlag ? 1 : 0) }, function (ok, data) {
           if (!ok || !data || data.ok !== true) {
             historyCardEl.style.display = 'none';
             return;
@@ -320,7 +323,9 @@
         var pathname = '';
         try { pathname = String(window && window.location && window.location.pathname ? window.location.pathname : ''); } catch(_) { pathname = ''; }
         var isRefil2 = pathname.toLowerCase().indexOf('refil2') >= 0;
-        httpJson('/api/refil/preview', 'POST', { username: username, source: (isRefil2 ? 'refil2' : 'refil') }, function (ok, data) {
+        var debugFlag = false;
+        try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+        httpJson('/api/refil/preview', 'POST', { username: username, source: (isRefil2 ? 'refil2' : 'refil'), debug: (debugFlag ? 1 : 0) }, function (ok, data) {
           if (isRefil2) {
             var statusCode = (arguments && arguments.length >= 3) ? arguments[2] : '';
             var safeNum = function (v) {

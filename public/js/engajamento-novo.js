@@ -407,8 +407,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = '1 ano';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
+    if (wLabel) wLabel.textContent = '6 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
     
     // Custom Price for Followers (Mistos/Brasileiros)
     const isFollowers = window.currentService === 'followers';
@@ -1667,12 +1667,10 @@ document.addEventListener('DOMContentLoaded', function() {
        promos.push({ key: 'comments', qty: qty, label: `Comentários (${qty})`, priceCents: priceCents });
     }
     if (promoWarranty && promoWarranty.checked) {
-       // Warranty 60 Promo (Fixed R$ 9,90)
-       // This matches the pricing.js 'warranty60' logic
        promos.push({ 
-           key: 'warranty60', 
+           key: 'warranty_6m', 
            qty: 1, 
-           label: 'Reposição por 1 ano', 
+           label: 'Reposição por 6 meses', 
            priceCents: 990 // R$ 9,90
        });
     }
@@ -1730,6 +1728,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     oldPriceCents = 12990; // R$ 129,90
                 } else if (p.key === 'warranty60') {
                     oldPriceCents = 3990; // R$ 39,90 (Old Price)
+                } else if (p.key === 'warranty_6m') {
+                    oldPriceCents = 12990; // R$ 129,90
                 } else if (p.key === 'upgrade') {
                     oldPriceCents = p.priceCents * 1.5;
                 }

@@ -104,20 +104,21 @@
   <% const isWhatsappSalesView = (typeof view !== 'undefined' && view === 'vendas_whatsapp'); %>
   <% const isLtvView = (typeof view !== 'undefined' && view === 'ltv'); %>
   <% const isVendasView = (typeof view !== 'undefined' && view === 'vendas'); %>
-  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : (isVendasView ? 'vendas' : 'dashboard')))))}) %>
+  <% const isRefil2View = (typeof view !== 'undefined' && view === 'refil2'); %>
+  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isRefil2View ? 'refil2' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : (isVendasView ? 'vendas' : 'dashboard'))))))}) %>
   <div class="main-content">
   <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
     <div class="panel-header">
-        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos')))) %></h1>
+        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isRefil2View ? 'Refil2' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos'))))) %></h1>
         <% if (!isLtvView) { %>
           <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
         <% } %>
     </div>
     
-    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel'))); %>
-    <% const sep = (isUnknownOrderIdView || isLtvView || isCouponsView) ? '&' : '?'; %>
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel')))); %>
+    <% const sep = (isUnknownOrderIdView || isRefil2View || isLtvView || isCouponsView) ? '&' : '?'; %>
 
-    <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView) { %>
+    <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && !isRefil2View) { %>
     <div class="filters">
       <a href="<%= baseUrl + sep %>period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
       <a href="<%= baseUrl + sep %>period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
@@ -446,8 +447,8 @@
     <% if (isFollowersMgmtView) { %>
       <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
-          <button type="button" id="followersRefreshAllBtn" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Atualizar todos</button>
-          <button type="button" id="followersTestOldBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Testar 10 antigas</button>
+          <button type="button" id="followersVerifyFilteredBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar filtro</button>
+          <button type="button" id="followersVerifySelectedBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar marcados</button>
           <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <strong style="font-size:0.9rem; color:#111827;">Verificação</strong>
@@ -462,7 +463,6 @@
                 <option value="oldest" <%= (typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings && String(followersMgmtSettings.order || '') === 'oldest') ? 'selected' : '' %>>Mais velhos</option>
               </select>
             </label>
-            <button type="button" id="followersSaveCfgBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Salvar config</button>
             <button type="button" id="followersRunTodayBtn" style="padding: 6px 12px; background: #7c3aed; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar hoje</button>
           </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
@@ -471,6 +471,24 @@
               <option value="orderid" <%= (filters && String(filters.qType) === 'orderid') ? 'selected' : '' %>>OrderID</option>
             </select>
             <input id="followersSearch" type="text" placeholder="buscar..." value="<%= (filters && filters.q) ? String(filters.q) : '' %>" style="width:170px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>De:</span>
+              <input id="followersStartDate" type="date" value="<%= (filters && filters.startDate) ? String(filters.startDate) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Até:</span>
+              <input id="followersEndDate" type="date" value="<%= (filters && filters.endDate) ? String(filters.endDate) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Tipo:</span>
+              <select id="followersTipo" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="all" <%= (!filters || !filters.tipo || String(filters.tipo) === '' || String(filters.tipo) === 'all') ? 'selected' : '' %>>Todos</option>
+                <option value="mistos" <%= (filters && String(filters.tipo) === 'mistos') ? 'selected' : '' %>>Mistos</option>
+                <option value="brasileiros" <%= (filters && String(filters.tipo) === 'brasileiros') ? 'selected' : '' %>>Brasileiros</option>
+                <option value="organicos" <%= (filters && String(filters.tipo) === 'organicos') ? 'selected' : '' %>>Orgânicos</option>
+                <option value="brasileiros_reais" <%= (filters && String(filters.tipo) === 'brasileiros_reais') ? 'selected' : '' %>>Brasileiros reais</option>
+              </select>
+            </label>
             <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
               <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
               <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
@@ -482,8 +500,25 @@
               <span>Somente preenchidos</span>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <input id="followersLifetimeOnly" type="checkbox" <%= (filters && filters.lifetime) ? 'checked' : '' %> />
-              <span>Somente vitalício</span>
+              <span>Reposição:</span>
+              <select id="followersWarranty" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <%
+                  const wf0 = (filters && filters.warranty) ? String(filters.warranty) : '';
+                  const wf = wf0 ? wf0 : ((filters && filters.lifetime) ? 'life' : 'all');
+                %>
+                <option value="all" <%= (!wf || wf === 'all') ? 'selected' : '' %>>Todos</option>
+                <option value="6m" <%= (wf === '6m') ? 'selected' : '' %>>6 meses</option>
+                <option value="12m" <%= (wf === '12m') ? 'selected' : '' %>>1 ano</option>
+                <option value="life" <%= (wf === 'life') ? 'selected' : '' %>>Vitalício</option>
+              </select>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Vence de:</span>
+              <input id="followersRefilStart" type="date" value="<%= (filters && filters.refilStart) ? String(filters.refilStart) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>até:</span>
+              <input id="followersRefilEnd" type="date" value="<%= (filters && filters.refilEnd) ? String(filters.refilEnd) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
             </label>
             <div style="font-size:0.9rem; color:#444; font-weight:600;">Queda mín:</div>
             <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
@@ -503,10 +538,16 @@
         </div>
       </div>
 
-      <div class="dashboard-table-wrap panel-table-scroll" style="margin-top: 14px;">
+      <div id="followersTableScrollTop" class="dashboard-table-wrap panel-table-scroll" style="margin-top: 14px; margin-bottom: -6px; height: 16px; overflow-x:auto; overflow-y:hidden;">
+        <div id="followersTableScrollTopInner" style="height:1px; width:0;"></div>
+      </div>
+      <div id="followersTableScrollBottom" class="dashboard-table-wrap panel-table-scroll" style="margin-top: 0;">
         <table class="dashboard-table" style="min-width: 1820px; font-size: 0.92rem;">
           <thead>
             <tr>
+              <th style="width: 42px; text-align:center;">
+                <input id="followersSelectAll" type="checkbox" />
+              </th>
               <th>OrderID</th>
               <th>Usuário</th>
               <th>Reposição</th>
@@ -536,7 +577,7 @@
                 const resultado = (typeof row.resultado === 'number') ? row.resultado : ((init !== null && contracted) ? (init + contracted) : null);
                 const current = (typeof row.currentFollowersCount === 'number') ? row.currentFollowersCount : null;
                 const diff = (resultado !== null && current !== null) ? (resultado - current) : null;
-                const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && resultado) ? ((diff / resultado) * 100) : null);
+                const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && contracted) ? ((diff / contracted) * 100) : null);
                 const oid = row.orderId ? String(row.orderId) : '';
                 const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
                 let lastPurchase = '-';
@@ -568,9 +609,13 @@
                   }
                 } catch(_) {}
                 const refilIsLifetime = row.refilIsLifetime === true;
+                const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-resultado="<%= (resultado !== null ? resultado : '') %>">
+              <tr data-username="<%= username %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+                <td style="text-align:center; width:42px;">
+                  <input type="checkbox" class="followersSelectRow" />
+                </td>
                 <td style="white-space: nowrap;">
                   <div style="font-size:0.85rem; color:#111;"><%= fid ? fid : '-' %></div>
                 </td>
@@ -578,8 +623,12 @@
                   <% if (row.isPrivate === true) { %>
                     <span class="unknown-badge unknown-badge--private">Privado</span>
                   <% } %>
-                  <% if (refilIsLifetime) { %>
+                  <% if (refilMode === 'life') { %>
                     <span class="unknown-badge unknown-badge--lifetime">Vitalício</span>
+                  <% } else if (refilMode === '12m') { %>
+                    <span class="unknown-badge unknown-badge--lifetime">1 ano</span>
+                  <% } else if (refilMode === '6m') { %>
+                    <span class="unknown-badge unknown-badge--lifetime">6 meses</span>
                   <% } %>
                   <%
                     const uRaw = String(username || '').trim();
@@ -593,7 +642,7 @@
                   <% } %>
                 </td>
                 <td style="white-space: nowrap;">
-                  <% if (refilIsLifetime) { %>
+                  <% if (refilMode === 'life') { %>
                     <span style="color:#16a34a; font-weight:700;">VITALÍCIO</span>
                   <% } else if (refilDaysLeft !== null) { %>
                     <% if (refilDaysLeft <= 0) { %>
@@ -682,8 +731,10 @@
               var current = (typeof data.followersCount === 'number') ? data.followersCount : null;
               var resultadoRaw = tr.getAttribute('data-resultado');
               var resultado = resultadoRaw === '' ? null : toNum(resultadoRaw);
+              var contractedRaw = tr.getAttribute('data-contracted');
+              var contracted = contractedRaw === '' ? null : toNum(contractedRaw);
               var diff = (resultado !== null && current !== null) ? (resultado - current) : null;
-              var pct = (diff !== null && resultado) ? ((diff / resultado) * 100) : null;
+              var pct = (diff !== null && contracted) ? ((diff / contracted) * 100) : null;
 
               var cellCurrent = tr.querySelector('.cell-current');
               var cellDiff = tr.querySelector('.cell-diff');
@@ -725,60 +776,73 @@
             }
           });
 
-          var allBtn = el('followersRefreshAllBtn');
-          if (allBtn) {
-            allBtn.addEventListener('click', async function(){
-              var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
-              if (!rows.length) return;
-              allBtn.disabled = true;
+          var verifyFilteredBtn = el('followersVerifyFilteredBtn');
+          var verifySelectedBtn = el('followersVerifySelectedBtn');
+          var selectAllEl = el('followersSelectAll');
+          function getAllRows(){
+            return Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
+          }
+          function getCheckedRows(){
+            var rows = getAllRows();
+            return rows.filter(function(tr){
               try {
-                for (var i=0;i<rows.length;i++){
-                  setStatus('Atualizando ' + (i+1) + ' de ' + rows.length + '…');
-                  await refreshRow(rows[i], false);
-                  await sleep(1500 + Math.floor(Math.random() * 450));
-                }
-                setStatus('Atualização concluída.');
-              } catch (e) {
-                setStatus('Erro ao atualizar.');
-                alert('Erro ao atualizar todos: ' + (e && e.message ? e.message : e));
-              } finally {
-                allBtn.disabled = false;
+                var cb = tr.querySelector('input.followersSelectRow');
+                return !!(cb && cb.checked);
+              } catch (_) {
+                return false;
               }
             });
           }
-
-          var testOldBtn = el('followersTestOldBtn');
-          if (testOldBtn) {
-            testOldBtn.addEventListener('click', async function(){
-              testOldBtn.disabled = true;
-              try {
-                setStatus('Testando 10 compras antigas…');
-                var resp = await fetch('/api/painel/gerenciamento-seguidores/test-old', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                  body: JSON.stringify({ limit: 10 })
-                });
-                var data = await resp.json();
-                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
-                setStatus('Teste concluído. Recarregando…');
-                try {
-                  var base = window.location.pathname || '/painel/gerenciamento-seguidores';
-                  var urlParams = new URLSearchParams(window.location.search);
-                  urlParams.set('filled', '1');
-                  urlParams.delete('minPct');
-                  urlParams.delete('maxPct');
-                  urlParams.set('page', '1');
-                  var qs = urlParams.toString();
-                  window.location.href = qs ? (base + '?' + qs) : base;
-                } catch (_) {
-                  window.location.reload();
-                }
-              } catch (e) {
-                setStatus('Erro no teste.');
-                alert('Erro ao testar 10 antigas: ' + (e && e.message ? e.message : e));
-              } finally {
-                testOldBtn.disabled = false;
+          async function verifyRows(rows){
+            if (!rows || !rows.length) return;
+            try {
+              if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
+              if (verifySelectedBtn) verifySelectedBtn.disabled = true;
+              if (runTodayBtn) runTodayBtn.disabled = true;
+            } catch (_) {}
+            try {
+              for (var i=0;i<rows.length;i++){
+                setStatus('Verificando ' + (i+1) + ' de ' + rows.length + '…');
+                await refreshRow(rows[i], false);
+                await sleep(1500 + Math.floor(Math.random() * 450));
               }
+              setStatus('Verificação concluída.');
+            } catch (e) {
+              setStatus('Erro na verificação.');
+              alert('Erro ao verificar: ' + (e && e.message ? e.message : e));
+            } finally {
+              try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
+              try { if (runTodayBtn) runTodayBtn.disabled = false; } catch (_) {}
+            }
+          }
+          if (verifyFilteredBtn) {
+            verifyFilteredBtn.addEventListener('click', function(){
+              var rows = getAllRows();
+              if (!rows.length) return;
+              verifyRows(rows).catch(function(){});
+            });
+          }
+          if (verifySelectedBtn) {
+            verifySelectedBtn.addEventListener('click', function(){
+              var rows = getCheckedRows();
+              if (!rows.length) {
+                alert('Selecione pelo menos 1 pedido.');
+                return;
+              }
+              verifyRows(rows).catch(function(){});
+            });
+          }
+          if (selectAllEl) {
+            selectAllEl.addEventListener('change', function(){
+              try {
+                var checked = !!selectAllEl.checked;
+                var rows = getAllRows();
+                for (var i=0;i<rows.length;i++){
+                  var cb = rows[i].querySelector('input.followersSelectRow');
+                  if (cb) cb.checked = checked;
+                }
+              } catch (_) {}
             });
           }
 
@@ -805,42 +869,12 @@
             }
           }
 
-          var saveCfgBtn = el('followersSaveCfgBtn');
-          if (saveCfgBtn) {
-            saveCfgBtn.addEventListener('click', async function(){
-              saveCfgBtn.disabled = true;
-              try {
-                setStatus('Salvando configuração…');
-                var resp = await fetch('/api/painel/gerenciamento-seguidores/settings', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                  body: JSON.stringify({ dailyLimit: parseDailyLimit(), order: getDailyOrder() })
-                });
-                var data = await resp.json().catch(function(){ return null; });
-                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
-                setStatus('Configuração salva.');
-              } catch (e) {
-                setStatus('Falha ao salvar configuração.');
-                alert('Erro ao salvar: ' + (e && e.message ? e.message : e));
-              } finally {
-                saveCfgBtn.disabled = false;
-              }
-            });
-          }
-
           var runTodayBtn = el('followersRunTodayBtn');
           if (runTodayBtn) {
             runTodayBtn.addEventListener('click', async function(){
               runTodayBtn.disabled = true;
               try {
                 setStatus('Iniciando verificação…');
-                try {
-                  await fetch('/api/painel/gerenciamento-seguidores/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                    body: JSON.stringify({ dailyLimit: parseDailyLimit(), order: getDailyOrder() })
-                  });
-                } catch (_) {}
                 var limit = parseDailyLimit();
                 var order = getDailyOrder();
                 var base = window.location.pathname || '/painel/gerenciamento-seguidores';
@@ -870,19 +904,35 @@
                 var urlParams = new URLSearchParams(window.location.search);
                 var qEl = el('followersSearch');
                 var qtEl = el('followersSearchType');
+                var sdEl = el('followersStartDate');
+                var edEl = el('followersEndDate');
+                var rsEl = el('followersRefilStart');
+                var reEl = el('followersRefilEnd');
+                var tipoEl = el('followersTipo');
                 var sizeEl = el('followersPageSize');
                 var filledEl = el('followersFilledOnly');
-                var lifetimeEl = el('followersLifetimeOnly');
+                var warrantyEl = el('followersWarranty');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
+                var sdV = sdEl ? String(sdEl.value || '').trim() : '';
+                var edV = edEl ? String(edEl.value || '').trim() : '';
+                var rsV = rsEl ? String(rsEl.value || '').trim() : '';
+                var reV = reEl ? String(reEl.value || '').trim() : '';
+                var tipoV = tipoEl ? String(tipoEl.value || '').trim() : '';
                 var sizeV = sizeEl ? String(sizeEl.value || '').trim() : '';
                 var filledV = filledEl && filledEl.checked ? '1' : '';
-                var lifetimeV = lifetimeEl && lifetimeEl.checked ? '1' : '';
+                var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
+                if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
+                if (edV) urlParams.set('endDate', edV); else urlParams.delete('endDate');
+                if (rsV) urlParams.set('refilStart', rsV); else urlParams.delete('refilStart');
+                if (reV) urlParams.set('refilEnd', reV); else urlParams.delete('refilEnd');
+                if (tipoV && tipoV !== 'all') urlParams.set('tipo', tipoV); else urlParams.delete('tipo');
                 if (sizeV) urlParams.set('pageSize', sizeV); else urlParams.delete('pageSize');
                 if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
-                if (lifetimeV) urlParams.set('lifetime', lifetimeV); else urlParams.delete('lifetime');
+                if (warrantyV && warrantyV !== 'all') urlParams.set('warranty', warrantyV); else urlParams.delete('warranty');
+                if (warrantyV === 'life') urlParams.set('lifetime', '1'); else urlParams.delete('lifetime');
                 urlParams.set('page', '1');
                 var qs = urlParams.toString();
                 window.location.href = qs ? (base + '?' + qs) : base;
@@ -908,9 +958,9 @@
               try { applyBtn.click(); } catch (_) {}
             });
           }
-          var lifetimeEl2 = el('followersLifetimeOnly');
-          if (lifetimeEl2 && applyBtn) {
-            lifetimeEl2.addEventListener('change', function(){
+          var warrantyEl2 = el('followersWarranty');
+          if (warrantyEl2 && applyBtn) {
+            warrantyEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -969,6 +1019,36 @@
           } catch (_) {}
 
           try {
+            var topScroll = el('followersTableScrollTop');
+            var topInner = el('followersTableScrollTopInner');
+            var bottomScroll = el('followersTableScrollBottom');
+            var tableEl = document.querySelector('#followersTableScrollBottom table');
+            var lock = false;
+            var syncWidth = function(){
+              try {
+                if (!topInner || !tableEl) return;
+                topInner.style.width = String(tableEl.scrollWidth || 0) + 'px';
+              } catch (_) {}
+            };
+            if (topScroll && bottomScroll) {
+              topScroll.addEventListener('scroll', function(){
+                if (lock) return;
+                lock = true;
+                try { bottomScroll.scrollLeft = topScroll.scrollLeft; } catch (_) {}
+                lock = false;
+              });
+              bottomScroll.addEventListener('scroll', function(){
+                if (lock) return;
+                lock = true;
+                try { topScroll.scrollLeft = bottomScroll.scrollLeft; } catch (_) {}
+                lock = false;
+              });
+            }
+            window.addEventListener('resize', function(){ syncWidth(); });
+            setTimeout(syncWidth, 0);
+          } catch (_) {}
+
+          try {
             var up = new URLSearchParams(window.location.search);
             var autoVerify = String(up.get('autoVerify') || '') === '1';
             var autoLimitRaw = parseInt(String(up.get('autoLimit') || ''), 10);
@@ -979,8 +1059,8 @@
               if (rows2.length) {
                 (async function(){
                   try {
-                    if (allBtn) allBtn.disabled = true;
-                    if (testOldBtn) testOldBtn.disabled = true;
+                    if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
+                    if (verifySelectedBtn) verifySelectedBtn.disabled = true;
                     if (runTodayBtn) runTodayBtn.disabled = true;
                     for (var k=0;k<rows2.length;k++){
                       setStatus('Verificando ' + (k+1) + ' de ' + rows2.length + '…');
@@ -991,8 +1071,8 @@
                   } catch (e) {
                     setStatus('Erro na verificação.');
                   } finally {
-                    try { if (allBtn) allBtn.disabled = false; } catch (_) {}
-                    try { if (testOldBtn) testOldBtn.disabled = false; } catch (_) {}
+                    try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+                    try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
                     try { if (runTodayBtn) runTodayBtn.disabled = false; } catch (_) {}
                   }
                 })();
@@ -1011,6 +1091,13 @@
           if (filters && filters.q) parts.push(`q=${encodeURIComponent(String(filters.q))}`);
           if (filters && filters.qType) parts.push(`qType=${encodeURIComponent(String(filters.qType))}`);
           if (filters && filters.filled) parts.push(`filled=1`);
+          if (filters && filters.warranty) parts.push(`warranty=${encodeURIComponent(String(filters.warranty))}`);
+          else if (filters && filters.lifetime) parts.push(`lifetime=1`);
+          if (filters && filters.startDate) parts.push(`startDate=${encodeURIComponent(String(filters.startDate))}`);
+          if (filters && filters.endDate) parts.push(`endDate=${encodeURIComponent(String(filters.endDate))}`);
+          if (filters && filters.refilStart) parts.push(`refilStart=${encodeURIComponent(String(filters.refilStart))}`);
+          if (filters && filters.refilEnd) parts.push(`refilEnd=${encodeURIComponent(String(filters.refilEnd))}`);
+          if (filters && filters.tipo) parts.push(`tipo=${encodeURIComponent(String(filters.tipo))}`);
           if (filters && typeof filters.minPct === 'number') parts.push(`minPct=${encodeURIComponent(String(filters.minPct))}`);
           if (filters && typeof filters.maxPct === 'number') parts.push(`maxPct=${encodeURIComponent(String(filters.maxPct))}`);
           if (filters && filters.sortBy) parts.push(`sortBy=${encodeURIComponent(String(filters.sortBy))}`);
@@ -1282,7 +1369,7 @@
           </div>
         </div>
       </div>
-    <% } else if (!isLtvView && !isWhatsappSalesView && !isFollowersMgmtView) { %>
+    <% } else if (!isLtvView && !isWhatsappSalesView && !isFollowersMgmtView && !isRefil2View) { %>
       <div class="summary-grid summary-grid-dashboard">
         <div class="summary-card">
           <div class="summary-label">Total de Vendas</div>
@@ -1545,10 +1632,13 @@
           })();
         </script>
       </div>
+      <% } %>
+    <% } %>
 
+    <% if (isRefil2View) { %>
       <div id="refil2RequestsWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
-          <strong style="font-size: 1rem; color:#111827;">Refil2 Solicitações</strong>
+          <strong style="font-size: 1rem; color:#111827;">Solicitações Refil2</strong>
           <div style="font-size:0.85rem; color:#6b7280;">Últimas solicitações</div>
         </div>
         <div class="panel-table-scroll" style="margin-top: 10px;">
@@ -1556,9 +1646,13 @@
             <thead>
               <tr>
                 <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data/Hora</th>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data da compra</th>
+                <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">
+                  <a href="#" class="refil2-sort" data-sort="days" style="color:inherit; text-decoration:none;">Dias<span id="refil2SortIconDays" style="margin-left:6px; color:#6b7280;"></span></a>
+                </th>
                 <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Perfil</th>
-                <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Qtd repor</th>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Decisão</th>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Status</th>
+                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Mensagem</th>
               </tr>
             </thead>
             <tbody>
@@ -1578,48 +1672,96 @@
                     return `${day}/${m}/${y} ${hh}:${mm}:${ss}`;
                   } catch (_) { return '-'; }
                 };
-                const safeInt = (n) => {
-                  const v = Number(n);
-                  if (!Number.isFinite(v)) return 0;
-                  return Math.trunc(v);
-                };
-                const decide = (it) => {
-                  const decision = String(it && it.decision ? it.decision : '').toLowerCase();
-                  const reason = String(it && (it.decisionReason || it.status) ? (it.decisionReason || it.status) : '').toLowerCase();
-                  if (decision === 'repor') return { label: 'Vai repor', cls: 'refil2-badge--green' };
-                  if (reason === 'above_target') return { label: 'Não repor (acima da meta)', cls: 'refil2-badge--blue' };
-                  if (reason === 'below_threshold') return { label: 'Não repor (abaixo do mínimo)', cls: 'refil2-badge--yellow' };
-                  if (reason === 'no_followers_purchase') return { label: 'Não repor (sem compra)', cls: 'refil2-badge--red' };
-                  if (reason === 'no_orders') return { label: 'Não repor (sem pedido)', cls: 'refil2-badge--red' };
-                  if (reason === 'profile_lookup_failed') return { label: 'Não repor (falha no perfil)', cls: 'refil2-badge--red' };
-                  if (reason === 'webhook_failed') return { label: 'Não repor (webhook falhou)', cls: 'refil2-badge--red' };
-                  return { label: 'Não repor', cls: 'refil2-badge--gray' };
+                const resolveStatus = (it) => {
+                  const s = String(it && (it.execStatus || it.status || it.decisionStatus || it.decision) || '').toLowerCase().trim();
+                  const err = String(it && (it.errorMessage || it.error || it.webhookMessage || it.decisionReason || it.statusMessage) || '').trim();
+                  const ok = ['success','ok','done','reposto','repored'].includes(s) || (s === 'repor' && !err);
+                  return { label: ok ? 'Sucesso' : 'Erro', cls: ok ? 'refil2-badge--green' : 'refil2-badge--red', msg: err || (ok ? 'OK' : '-') };
                 };
               %>
               <% if (r2.length) { %>
                 <% r2.slice(0, 200).forEach(it => { 
                   const when = fmtDate(it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : '');
+                  const purchase = String(it && (it.purchaseAtLabel || it.purchaseAt) ? (it.purchaseAtLabel || fmtDate(it.purchaseAt)) : '-');
+                  const reqRaw = it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : null;
+                  const reqMs = reqRaw ? new Date(reqRaw).getTime() : 0;
+                  const purRaw = it && it.purchaseAt ? it.purchaseAt : null;
+                  const purMs = purRaw ? new Date(purRaw).getTime() : 0;
+                  const dayDiff = (() => {
+                    try {
+                      if (!Number.isFinite(reqMs) || !reqMs) return null;
+                      if (!Number.isFinite(purMs) || !purMs) return null;
+                      const days = Math.floor((reqMs - purMs) / (24 * 60 * 60 * 1000));
+                      if (!Number.isFinite(days)) return null;
+                      return days;
+                    } catch (_) { return null; }
+                  })();
                   const user = String(it && it.username ? it.username : '-').trim();
-                  const qty = safeInt((it && (it.reporQty != null ? it.reporQty : it.deficit)) != null ? (it.reporQty != null ? it.reporQty : it.deficit) : 0);
-                  const d = decide(it);
+                  const st = resolveStatus(it);
                 %>
-                  <tr>
+                  <tr data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>">
                     <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= when %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= purchase %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (dayDiff !== null ? String(dayDiff) : '-') %></td>
                     <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= user ? ('@' + user.replace(/^@+/, '')) : '-' %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= qty %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6;">
-                      <span class="refil2-badge <%= d.cls %>"><%= d.label %></span>
-                    </td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
                   </tr>
                 <% }) %>
               <% } else { %>
-                <tr><td colspan="4" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
+                <tr><td colspan="6" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
               <% } %>
             </tbody>
           </table>
         </div>
       </div>
-      <% } %>
+      <script>
+        (function(){
+          function el(id){ return document.getElementById(id); }
+          function sortRows(dir){
+            try {
+              var wrap = el('refil2RequestsWrap');
+              if (!wrap) return;
+              var tbody = wrap.querySelector('tbody');
+              if (!tbody) return;
+              var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+              if (!rows.length) return;
+              rows.sort(function(a, b){
+                var da = String(a.getAttribute('data-refil2-days') || '').trim();
+                var db = String(b.getAttribute('data-refil2-days') || '').trim();
+                var na = da === '' ? null : Number(da);
+                var nb = db === '' ? null : Number(db);
+                var aOk = (na !== null && isFinite(na));
+                var bOk = (nb !== null && isFinite(nb));
+                if (!aOk && !bOk) return 0;
+                if (!aOk) return 1;
+                if (!bOk) return -1;
+                return (na - nb) * dir;
+              });
+              rows.forEach(function(r){ tbody.appendChild(r); });
+            } catch (_) {}
+          }
+          var state = { dir: 'desc' };
+          document.addEventListener('click', function(ev){
+            try {
+              var t = ev && ev.target ? ev.target : null;
+              if (!t) return;
+              var a = (t.closest && t.closest('.refil2-sort')) ? t.closest('.refil2-sort') : null;
+              if (!a) return;
+              ev.preventDefault();
+              var next = (state.dir === 'asc') ? 'desc' : 'asc';
+              state.dir = next;
+              sortRows(next === 'asc' ? 1 : -1);
+              var icon = el('refil2SortIconDays');
+              if (icon) icon.textContent = (next === 'asc') ? '▲' : '▼';
+            } catch (_) {}
+          });
+          try {
+            var icon = el('refil2SortIconDays');
+            if (icon) icon.textContent = '';
+          } catch (_) {}
+        })();
+      </script>
     <% } %>
 
     <% if (isLtvView) { %>
@@ -2134,8 +2276,8 @@
           </table>
           </div>
         <% } else { %>
+          <% if (view === 'dashboard') { %>
           <div style="margin-bottom:14px;">
-            <% if (view === 'dashboard') { %>
               <div id="dashboardPaymentWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; margin-bottom:16px; width:100%; box-sizing:border-box;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
                   <strong style="font-size: 1rem; color:#111827;">Distribuição</strong>
@@ -2254,56 +2396,6 @@
                   })();
                 </script>
               </div>
-            <% } else { %>
-              <div id="dashboardPaymentWrap" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; background:#fff; padding:12px; margin-bottom:16px;">
-                <div style="font-size:0.95rem; font-weight:700; color:#111827; margin-bottom:8px;">Vendas por Método</div>
-                <div style="display:flex; align-items:center; gap:14px;">
-                  <% 
-                    const pie2 = Array.isArray(paymentPie) ? paymentPie : [];
-                    const pix2 = pie2.find(p => p && p.label && p.label.toLowerCase().includes('pix'));
-                    const card2 = pie2.find(p => p && p.label && p.label.toLowerCase().includes('cart'));
-                    const pixPct2 = pix2 ? Math.round(pix2.pct) : 0;
-                    const cardPct2 = card2 ? Math.round(card2.pct) : 0;
-                    const pixColor2 = pix2 && pix2.color ? pix2.color : '#16a34a';
-                    const cardColor2 = card2 && card2.color ? card2.color : '#2563eb';
-                  %>
-                  <div id="dashboardPaymentPie" data-pix-pct="<%= pixPct2 %>" data-card-pct="<%= cardPct2 %>" data-pix-color="<%= pixColor2 %>" data-card-color="<%= cardColor2 %>" style="width:140px; height:140px; border-radius:50%; position:relative; background:#e5e7eb;">
-                    <div style="position:absolute; top:50%; left:50%; transform: translate(-50%,-50%); width:78px; height:78px; border-radius:50%; background:#fff;"></div>
-                  </div>
-                  <div style="display:flex; flex-direction:column; gap:6px; font-size:0.9rem;">
-                    <div style="display:flex; align-items:center; gap:6px;">
-                      <span class="legend-box" data-color="<%= pixColor2 %>" style="display:inline-block; width:10px; height:10px; border-radius:2px;"></span>
-                      <span>PIX (Woovi): <strong><%= pix2 ? pix2.count : 0 %></strong> (<%= pixPct2 %>%)</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:6px;">
-                      <span class="legend-box" data-color="<%= cardColor2 %>" style="display:inline-block; width:10px; height:10px; border-radius:2px;"></span>
-                      <span>Cartão: <strong><%= card2 ? card2.count : 0 %></strong> (<%= cardPct2 %>%)</span>
-                    </div>
-                  </div>
-                </div>
-                <script>
-                  (function(){
-                    try {
-                      var el = document.getElementById('dashboardPaymentPie');
-                      if (!el) return;
-                      var pixPct = Number(el.getAttribute('data-pix-pct') || '0') || 0;
-                      var cardPct = Number(el.getAttribute('data-card-pct') || '0') || 0;
-                      var pixColor = String(el.getAttribute('data-pix-color') || '#16a34a');
-                      var cardColor = String(el.getAttribute('data-card-color') || '#2563eb');
-                      el.style.background = 'conic-gradient(' + pixColor + ' 0 ' + pixPct + '%, ' + cardColor + ' ' + pixPct + '% 100%)';
-                      var wrap = document.getElementById('dashboardPaymentWrap');
-                      if (wrap) {
-                        var boxes = wrap.querySelectorAll('.legend-box');
-                        for (var i = 0; i < boxes.length; i++) {
-                          var b = boxes[i];
-                          b.style.background = String(b.getAttribute('data-color') || '#e5e7eb');
-                        }
-                      }
-                    } catch (_) {}
-                  })();
-                </script>
-              </div>
-            <% } %>
             <% if (view === 'dashboard') { %>
               <div id="dashboardVitalicioWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; margin-bottom:16px; width:100%; box-sizing:border-box;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
@@ -2567,6 +2659,7 @@
               </script>
             </div>
           </div>
+          <% } %>
         <% } %>
 
         <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && view === 'dashboard') { %>

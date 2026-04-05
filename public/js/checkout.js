@@ -691,8 +691,8 @@
   const wDisc = document.getElementById('warrantyDiscount');
   function applyWarrantyMode(){
     const isLife = true;
-    if (wLabel) wLabel.textContent = '1 ano';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 1 ANO';
+    if (wLabel) wLabel.textContent = '6 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
     if (wOld) wOld.textContent = 'R$ 129,90';
     if (wNew) wNew.textContent = 'R$ 19,90';
     if (wDisc) wDisc.textContent = '85% OFF';
@@ -2297,8 +2297,8 @@
       }
       if (warrantyChecked) {
         const priceStr = 'R$ 19,90';
-        const label = 'Reposição por 1 ano';
-        promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        const label = 'Reposição por 6 meses';
+        promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -4954,6 +4954,7 @@
         const raw = (phoneInputPage && phoneInputPage.value && phoneInputPage.value.trim()) || '';
         const v = onlyDigits(raw);
         if (!v) { alert('Digite seu telefone ou número do pedido.'); return; }
+        try { localStorage.setItem('oppus_client_phone', v); } catch (_) {}
         const digits = v;
         if (digits.length >= 5 && digits.length <= 10) {
           try {
@@ -5271,8 +5272,8 @@
         }
         if (warrantyChecked) {
           const priceStr = 'R$ 19,90';
-          const label = 'Reposição por 1 ano';
-          promos.push({ key: 'warranty_lifetime', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
+          const label = 'Reposição por 6 meses';
+          promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
