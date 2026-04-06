@@ -12177,12 +12177,44 @@ app.post('/api/refil/preview', async (req, res) => {
         } catch (_) { return data; }
       };
       const startedAt = Date.now();
+      const upstreamTimeoutMs = (() => {
+        const raw = process.env.REFIL2_UPSTREAM_TIMEOUT_MS || process.env.REFIL2_TIMEOUT_MS || '';
+        const n = Number(String(raw || '').trim() || '60000');
+        if (!Number.isFinite(n) || n <= 0) return 60000;
+        return Math.max(10000, Math.min(180000, Math.trunc(n)));
+      })();
+      const upstreamMaxAttempts = (() => {
+        const raw = process.env.REFIL2_UPSTREAM_MAX_ATTEMPTS || process.env.REFIL2_UPSTREAM_RETRIES || '';
+        const n = Number(String(raw || '').trim() || '2');
+        if (!Number.isFinite(n) || n <= 0) return 2;
+        return Math.max(1, Math.min(4, Math.trunc(n)));
+      })();
+      const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
+      const requestWithRetry = async (label, fn) => {
+        let lastErr = null;
+        for (let attempt = 1; attempt <= upstreamMaxAttempts; attempt++) {
+          try {
+            const resp = await fn();
+            if (attempt > 1) dbg(`${label} retry_ok`, { attempt });
+            return resp;
+          } catch (err) {
+            lastErr = err;
+            const code = String(err?.code || '').trim();
+            const msg = String(err?.message || String(err) || '').trim();
+            const retryable = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || /timeout/i.test(msg);
+            dbg(`${label} retry_error`, { attempt, retryable, code: code || null, message: msg || null });
+            if (!retryable || attempt === upstreamMaxAttempts) throw err;
+            await waitMs(350 * attempt);
+          }
+        }
+        throw lastErr || new Error('upstream_failed');
+      };
       try {
         dbg('start', { username });
         const userLink = `https://instagram.com/${username}`;
         const orderLookupUrl = `https://refilfama24h.com/api_proxy.php?link=${encodeURIComponent(userLink)}`;
         dbg('GET api_proxy url', orderLookupUrl);
-        const orderResp = await axios.get(orderLookupUrl, { timeout: 20000, validateStatus: () => true });
+        const orderResp = await requestWithRetry('GET api_proxy', () => axios.get(orderLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
         dbg('GET api_proxy status', { status: orderResp && orderResp.status ? orderResp.status : null });
         dbg('GET api_proxy body', redactSecrets(safeJsonResponse(orderResp && orderResp.data)));
         const orderJson = safeJsonResponse(orderResp && orderResp.data);
@@ -12215,20 +12247,40 @@ app.post('/api/refil/preview', async (req, res) => {
           return res.status(502).json({ ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
         }
 
-        const profileUrl = `https://www.instagram.com/${username}`;
-        const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?name_url=${encodeURIComponent(profileUrl)}`;
-        dbg('GET instagram_proxy url', profileLookupUrl);
-        const profileResp = await axios.get(profileLookupUrl, { timeout: 20000, validateStatus: () => true });
-        dbg('GET instagram_proxy status', { status: profileResp && profileResp.status ? profileResp.status : null });
-        dbg('GET instagram_proxy body', redactSecrets(safeJsonResponse(profileResp && profileResp.data)));
-        const profileJson = safeJsonResponse(profileResp && profileResp.data);
-        const profileFirst = Array.isArray(profileJson) ? profileJson[0] : profileJson;
-        const followerCount = safeInt(profileFirst && profileFirst.followerCount);
+        const profileUrlCandidates = [
+          `https://www.instagram.com/${username}/`,
+          `https://instagram.com/${username}`,
+          `https://www.instagram.com/${username}`
+        ];
+        const profileParamCandidates = [ 'name_url', 'url', 'link' ];
+        let followerCount = null;
+        let profileResp = null;
+        let profileJson = null;
+        let profileFirst = null;
+        let profileTried = [];
+        for (const paramName of profileParamCandidates) {
+          for (const profileUrl of profileUrlCandidates) {
+            const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+            profileTried.push({ paramName, profileUrl });
+            dbg('GET instagram_proxy url', profileLookupUrl);
+            profileResp = await requestWithRetry(`GET instagram_proxy (${paramName})`, () => axios.get(profileLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
+            dbg('GET instagram_proxy status', { status: profileResp && profileResp.status ? profileResp.status : null });
+            dbg('GET instagram_proxy body', redactSecrets(safeJsonResponse(profileResp && profileResp.data)));
+            profileJson = safeJsonResponse(profileResp && profileResp.data);
+            profileFirst = Array.isArray(profileJson) ? profileJson[0] : profileJson;
+            followerCount = safeInt(
+              (profileFirst && (profileFirst.followerCount ?? profileFirst.follower_count ?? profileFirst.followers)) ??
+              (profileFirst && profileFirst.data && (profileFirst.data.followerCount ?? profileFirst.data.followers))
+            );
+            if (followerCount != null) break;
+          }
+          if (followerCount != null) break;
+        }
         if (followerCount == null) {
           logRefil2Request({
             execStatus: 'error',
             errorMessage: 'Falha ao consultar seguidores no instagram_proxy',
-            meta: { step: 'instagram_proxy', httpStatus: profileResp && profileResp.status ? profileResp.status : null, tookMs: Date.now() - startedAt },
+            meta: { step: 'instagram_proxy', httpStatus: profileResp && profileResp.status ? profileResp.status : null, tookMs: Date.now() - startedAt, tried: profileTried },
             pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
           });
           return res.status(502).json({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
@@ -12268,7 +12320,7 @@ app.post('/api/refil/preview', async (req, res) => {
           return res.status(500).json({ ok: false, error: 'missing_api_key', message: 'Configuração pendente no servidor.' });
         }
 
-        const payload = {
+        let payload = {
           apiKey,
           order_id: orderId,
           service: serviceId,
@@ -12279,21 +12331,54 @@ app.post('/api/refil/preview', async (req, res) => {
         };
         dbg('POST add_reorder payload', redactSecrets(Object.assign({}, payload)));
 
-        const addResp = await axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: 20000, validateStatus: () => true, headers: { 'Accept': 'application/json' } });
-        const addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
+        let addResp = await requestWithRetry('POST add_reorder', () => axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+        let addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
         dbg('POST add_reorder status', { status: addResp && addResp.status ? addResp.status : null });
         dbg('POST add_reorder body', addJson);
-        const addOk = !!(addResp && addResp.status >= 200 && addResp.status < 300);
+        let providerMsg = String(
+          (addJson && typeof addJson === 'object' && (addJson.error || addJson.message || addJson.msg)) ? (addJson.error || addJson.message || addJson.msg) : ''
+        ).trim();
+        let isBusinessError = !!providerMsg;
+        let addOk = !!(addResp && addResp.status >= 200 && addResp.status < 300) && !isBusinessError;
+        
+        // Se deu erro de prazo expirado, tenta novamente com data atual
         if (!addOk) {
-          logRefil2Request({
-            execStatus: 'error',
-            errorMessage: 'Falha ao criar reorder no add_reorder',
-            meta: { step: 'add_reorder', httpStatus: addResp && addResp.status ? addResp.status : null, tookMs: Date.now() - startedAt },
-            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-            computed: { initial, current: followerCount, deficit },
-            upstream: { add_reorder: addJson }
-          });
-          return res.status(502).json({ ok: false, error: 'provider_error', message: 'Falha ao iniciar reposição.' });
+          const isExpired = /prazo\s+de\s+reposi(c|ç)ão\s+expirado/i.test(providerMsg);
+          
+          if (isExpired) {
+            dbg('Tentando novamente com data atual devido a erro de prazo expirado');
+            const dataAtual = new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
+            payload = {
+              ...payload,
+              order_created: dataAtual
+            };
+            dbg('POST add_reorder retry payload', redactSecrets(Object.assign({}, payload)));
+            
+            addResp = await requestWithRetry('POST add_reorder retry', () => axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+            addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
+            dbg('POST add_reorder retry status', { status: addResp && addResp.status ? addResp.status : null });
+            dbg('POST add_reorder retry body', addJson);
+            providerMsg = String(
+              (addJson && typeof addJson === 'object' && (addJson.error || addJson.message || addJson.msg)) ? (addJson.error || addJson.message || addJson.msg) : ''
+            ).trim();
+            isBusinessError = !!providerMsg;
+            addOk = !!(addResp && addResp.status >= 200 && addResp.status < 300) && !isBusinessError;
+          }
+          
+          if (!addOk) {
+            logRefil2Request({
+              execStatus: 'error',
+              errorMessage: 'Falha ao criar reorder no add_reorder',
+              meta: { step: 'add_reorder', httpStatus: addResp && addResp.status ? addResp.status : null, tookMs: Date.now() - startedAt },
+              pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+              computed: { initial, current: followerCount, deficit },
+              upstream: { add_reorder: addJson }
+            });
+            if (isExpired && !addOk) {
+              return res.status(409).json({ ok: false, error: 'reorder_expired', message: 'Prazo de reposição expirado para este serviço.', raw: addJson });
+            }
+            return res.status(502).json({ ok: false, error: 'provider_error', message: providerMsg || 'Falha ao iniciar reposição.', raw: addJson });
+          }
         }
 
         logRefil2Request({
