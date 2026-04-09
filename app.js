@@ -1040,6 +1040,41 @@ function extractProviderOrderId(data) {
     return null;
 }
 
+async function findExistingFamaOrderIdByLink(col, link) {
+    try {
+        const l = String(link || '').trim();
+        if (!l || !col) return null;
+        const doc = await col.findOne(
+            {
+                $or: [
+                    { 'fama24h.requestPayload.link': l, 'fama24h.orderId': { $exists: true, $ne: null } },
+                    { 'fama24h_multi.orders': { $elemMatch: { link: l, orderId: { $exists: true, $ne: null } } } },
+                    { 'fama24h_multi.orders': { $elemMatch: { link: l, id: { $exists: true, $ne: null } } } }
+                ]
+            },
+            { projection: { 'fama24h.orderId': 1, 'fama24h.requestPayload.link': 1, 'fama24h_multi.orders': 1, paidAt: 1, createdAt: 1 }, sort: { paidAt: -1, createdAt: -1 } }
+        );
+        if (!doc) return null;
+        const directLink = doc?.fama24h?.requestPayload?.link;
+        if (directLink === l && doc?.fama24h?.orderId !== null && doc?.fama24h?.orderId !== undefined) {
+            const v = String(doc.fama24h.orderId).trim();
+            return v ? v : null;
+        }
+        const arr = (doc && doc.fama24h_multi && Array.isArray(doc.fama24h_multi.orders)) ? doc.fama24h_multi.orders : [];
+        for (const it of arr) {
+            if (!it || String(it.link || '').trim() !== l) continue;
+            const oid = it.orderId ?? it.id ?? null;
+            if (oid !== null && oid !== undefined) {
+                const v = String(oid).trim();
+                if (v) return v;
+            }
+        }
+        return null;
+    } catch (_) {
+        return null;
+    }
+}
+
 async function postFormWithRetry(url, formBodyString, timeoutMs, maxAttempts, axiosOptions) {
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     let lastErr = null;
@@ -7231,7 +7266,7 @@ async function processOrderFulfillment(record, col, req) {
                         }
                     );
                     if (lockUpdateMulti.modifiedCount > 0) {
-                        const orders = [];
+                      const orders = [];
                         for (const it of planFiltered) {
                             const rawLink = it && it.link;
                             const qtyForPost = Number(it && it.quantity) || 0;
@@ -7246,13 +7281,25 @@ async function processOrderFulfillment(record, col, req) {
                                 const famaData = normalizeProviderResponseData(famaResp.data);
                                 const orderId = extractProviderOrderId(famaData);
                                 const hasErr = !!(famaData && (famaData.error || famaData.errors));
-                                const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
-                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                                const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
+                                const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                                let oid = orderId ? String(orderId) : null;
+                                if (!oid && isDup) {
+                                    const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                                    if (prev) oid = prev;
+                                }
+                                const st = oid ? (isDup && !orderId ? 'duplicate' : 'created') : (isDup ? 'duplicate' : (hasErr ? 'error' : 'unknown'));
+                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, response: famaData });
                             } catch (err) {
                                 const errVal = err?.response?.data || err?.message || String(err);
                                 const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
                                 const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                                let oid = null;
+                                if (st === 'duplicate') {
+                                    const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                                    if (prev) oid = prev;
+                                }
+                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, error: errVal });
                             }
                         }
                         const createdCount = orders.filter(o => o && o.orderId).length;
@@ -8206,6 +8253,57 @@ app.get('/api/order/provider-status', async (req, res) => {
   } catch (err) {
     try { console.error('🛰️ [provider-status] error', err?.message || String(err)); } catch(_) {}
     return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/order/admin/set-multi-order-ids', async (req, res) => {
+  try {
+    const adminToken = (req.headers['x-admin-token'] || req.headers['x_admin_token'] || '').toString().trim();
+    const required = String(process.env.ORDER_ADMIN_TOKEN || '').trim();
+    const allowDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+    if (!(allowDev || (required && adminToken && adminToken === required))) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+    const body = req.body || {};
+    const identifier = String(body.identifier || body.id || '').trim();
+    const provider = String(body.provider || 'fama24h').trim().toLowerCase();
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!identifier || !items.length) {
+      return res.status(400).json({ ok: false, error: 'missing_params' });
+    }
+    const normalize = (s) => String(s || '').replace(/[`"'“”‘’]/g, '').trim();
+    const pairs = items
+      .map(x => ({ link: normalize(x && x.link), orderId: normalize(x && (x.orderId ?? x.id)) }))
+      .filter(x => x.link && x.orderId);
+    if (!pairs.length) return res.status(400).json({ ok: false, error: 'empty_items' });
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const doc = await col.findOne({ $or: [{ identifier }, { 'woovi.identifier': identifier }, { correlationID: identifier }] });
+    if (!doc) return res.status(404).json({ ok: false, error: 'order_not_found' });
+    const path = provider === 'fornecedor_social' ? 'fornecedor_social_multi' : 'fama24h_multi';
+    const current = (doc && doc[path] && Array.isArray(doc[path].orders)) ? doc[path].orders : [];
+    const updated = current.map(o => {
+      if (!o) return o;
+      const link = normalize(o.link);
+      const found = pairs.find(p => p.link === link);
+      if (found) {
+        o.orderId = found.orderId;
+        o.id = found.orderId;
+        if (!o.status || /error|unknown/i.test(String(o.status))) o.status = 'processing';
+      }
+      return o;
+    });
+    const status = updated.length && updated.every(x => x && x.orderId) ? 'created' : (updated.some(x => x && x.orderId) ? 'partial' : (doc && doc[path] && doc[path].status) || 'unknown');
+    const setObj = {};
+    setObj[`${path}.orders`] = updated;
+    setObj[`${path}.status`] = status;
+    setObj[`${path}.lastReconciledAt`] = new Date().toISOString();
+    await col.updateOne({ _id: doc._id }, { $set: setObj });
+    const after = await col.findOne({ _id: doc._id }, { projection: { [path]: 1 } });
+    return res.json({ ok: true, provider: path, data: after && after[path] });
+  } catch (e) {
+    try { console.error('admin/set-multi-order-ids error', e?.message || String(e)); } catch(_) {}
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
@@ -9702,13 +9800,25 @@ app.post('/api/openpix/webhook', async (req, res) => {
                           const famaData = normalizeProviderResponseData(famaResp.data);
                           const orderId = extractProviderOrderId(famaData);
                           const hasErr = !!(famaData && (famaData.error || famaData.errors));
-                          const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
-                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                          const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
+                          const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                          let oid = orderId ? String(orderId) : null;
+                          if (!oid && isDup) {
+                            const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                            if (prev) oid = prev;
+                          }
+                          const st = oid ? (isDup && !orderId ? 'duplicate' : 'created') : (isDup ? 'duplicate' : (hasErr ? 'error' : 'unknown'));
+                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, response: famaData });
                         } catch (err) {
                           const errVal = err?.response?.data || err?.message || String(err);
                           const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
                           const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                          let oid = null;
+                          if (st === 'duplicate') {
+                            const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                            if (prev) oid = prev;
+                          }
+                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, error: errVal });
                         }
                       }
                       const createdCount = orders.filter(o => o && o.orderId).length;
@@ -11822,13 +11932,25 @@ app.post('/session/mark-paid', async (req, res) => {
                     const famaData = normalizeProviderResponseData(famaResp.data);
                     const orderId = extractProviderOrderId(famaData);
                     const hasErr = !!(famaData && (famaData.error || famaData.errors));
-                    const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
-                    orders.push({ link, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                    const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
+                    const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                    let oid = orderId ? String(orderId) : null;
+                    if (!oid && isDup) {
+                      const prev = await findExistingFamaOrderIdByLink(col, link);
+                      if (prev) oid = prev;
+                    }
+                    const st = oid ? (isDup && !orderId ? 'duplicate' : 'created') : (isDup ? 'duplicate' : (hasErr ? 'error' : 'unknown'));
+                    orders.push({ link, quantity: qtyForPost, orderId: oid, id: oid, status: st, response: famaData });
                   } catch (err) {
                     const errVal = err?.response?.data || err?.message || String(err);
                     const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
                     const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                    orders.push({ link, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                    let oid = null;
+                    if (st === 'duplicate') {
+                      const prev = await findExistingFamaOrderIdByLink(col, link);
+                      if (prev) oid = prev;
+                    }
+                    orders.push({ link, quantity: qtyForPost, orderId: oid, id: oid, status: st, error: errVal });
                   }
                 }
                 const createdCount = orders.filter(o => o && o.orderId).length;

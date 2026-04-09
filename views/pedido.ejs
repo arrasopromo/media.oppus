@@ -459,6 +459,7 @@
                     if (!t) return '-';
                     if (/cancel/.test(t)) return 'Cancelado';
                     if (/partial/.test(t)) return 'Parcial';
+                    if (/duplicate/.test(t)) return 'Duplicado';
                     if (/error|fail|invalid/.test(t)) return 'Parcial';
                     if (/pend/.test(t)) return 'Pendente';
                     if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
@@ -1133,14 +1134,7 @@
         var upsellPaidReady = false;
         var upsellProviderDone = true; // Habilitado direto para exibir assim que pagar
         var upsellOpenScheduled = false;
-        var ensureUpsell = function(){
-          if (!upsellPaidReady || !upsellProviderDone) return;
-          if (upsellOpenScheduled) return;
-          upsellOpenScheduled = true;
-          setTimeout(function(){
-            try { openUpsellModal(); } catch(_){}
-          }, 3000);
-        };
+        var ensureUpsell = function(){};
         var btnClose1 = document.getElementById('upsellFollowersClose');
         var btnClose2 = document.getElementById('upsellFollowersClose2');
         if (btnClose1) btnClose1.addEventListener('click', closeUpsellModal);
@@ -1421,6 +1415,7 @@
                     if (!t) return '-';
                     if (/cancel/.test(t)) return 'Cancelado';
                     if (/partial/.test(t)) return 'Parcial';
+                    if (/duplicate/.test(t)) return 'Duplicado';
                     if (/pend/.test(t)) return 'Pendente';
                     if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
                     if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
