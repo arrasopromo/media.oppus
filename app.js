@@ -7140,7 +7140,23 @@ async function processOrderFulfillment(record, col, req) {
                     await col.updateOne(filter, { $unset: { fama24h: '' } });
                 }
             } else {
-                const multiLinks = (isViewsBase || isCurtidasBase) ? basePostLinks : [];
+                let multiLinks = (isViewsBase || isCurtidasBase) ? basePostLinks : [];
+                if (isViewsBase) {
+                    const getViewsSplitMaxForQtd = (q0) => {
+                        const n0 = Number(q0) || 0;
+                        if (n0 >= 250000) return 5;
+                        if (n0 >= 200000) return 4;
+                        if (n0 >= 150000) return 3;
+                        if (n0 >= 50000) return 2;
+                        return 1;
+                    };
+                    const maxPosts = getViewsSplitMaxForQtd(qtd);
+                    if (maxPosts <= 1) {
+                        multiLinks = [];
+                    } else if (multiLinks.length > maxPosts) {
+                        multiLinks = multiLinks.slice(0, maxPosts);
+                    }
+                }
                 if (multiLinks.length > 1) {
                     const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
                     const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();

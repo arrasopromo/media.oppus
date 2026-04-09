@@ -2524,10 +2524,24 @@ document.addEventListener('DOMContentLoaded', function() {
   let postModalAppendMode = false;
 
   function getSplitMaxForQtd(qtd) {
-    const n = Number(qtd) || 0;
-    if (n >= 5000) return 10;
-    if (n === 1000) return 4;
-    if (n === 500) return 2;
+    const n0 = Number(qtd) || 0;
+    if (isViewsContext) {
+      let n = n0;
+      try {
+        const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+        if (tipoNow === 'visualizacoes_reels') {
+          n = getEffectiveQtdForSplit(tipoNow, n0);
+        }
+      } catch(_) {}
+      if (n >= 250000) return 5;
+      if (n >= 200000) return 4;
+      if (n >= 150000) return 3;
+      if (n >= 50000) return 2;
+      return 1;
+    }
+    if (n0 >= 5000) return 10;
+    if (n0 === 1000) return 4;
+    if (n0 === 500) return 2;
     return 1;
   }
   
