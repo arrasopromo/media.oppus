@@ -3012,7 +3012,7 @@
       if (!resp.ok) {
         const status = Number(resp && resp.status) || 0;
         const msg = data?.message || data?.details?.message || data?.error || (data?.raw ? String(data.raw).slice(0, 200) : '') || 'Falha ao criar cobrança';
-        const allowFallback = (typeof window !== 'undefined' && window && window.__ALLOW_PIX_GATEWAY_FALLBACK === true);
+        const allowFallback = (typeof window !== 'undefined' && window && window.__ALLOW_PIX_GATEWAY_FALLBACK !== false);
         const shouldFallbackToWoovi = allowFallback && currentPixGateway === 'expay' && (status >= 500 || status === 502);
         if (shouldFallbackToWoovi) {
           try {
@@ -3041,7 +3041,8 @@
             throw new Error(msg);
           }
         } else {
-          throw new Error((currentPixGateway === 'expay' && status) ? `ExPay HTTP ${status}: ${msg}` : msg);
+          const alreadyPrefixed = /^ExPay\s+HTTP\s+\d+/i.test(String(msg || '').trim());
+          throw new Error((currentPixGateway === 'expay' && status && !alreadyPrefixed) ? `ExPay HTTP ${status}: ${msg}` : msg);
         }
       }
       if (!data || typeof data !== 'object') {

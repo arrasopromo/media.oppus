@@ -6237,14 +6237,13 @@ app.post('/api/expay/charge', async (req, res) => {
             return res.status(500).json({ error: 'missing_expay_merchant_key', message: 'Configuração da ExPay ausente (EXPAY_MERCHANT_KEY).' });
         }
         const normalizeUrl = (u) => {
-            const raw = String(u || '').trim();
-            const cleaned = raw.replace(/^[`'"]+|[`'"]+$/g, '').trim();
-            return cleaned || raw;
+            let raw = String(u || '');
+            raw = raw.replace(/\u00A0/g, ' ').trim();
+            let cleaned = raw.replace(/^[`'"]+|[`'"]+$/g, '').trim();
+            cleaned = cleaned.replace(/[`'"]/g, '').trim();
+            return cleaned || raw.trim();
         };
         const requestUrl = normalizeUrl(process.env.EXPAY_REQUEST_URL || 'https://expaybrasil.com/en/purchase/link');
-        const merchantId = String(process.env.EXPAY_MERCHANT_ID || '1009').trim();
-        const merchantName = String(process.env.EXPAY_MERCHANT_NAME || 'engajagram').trim();
-        const merchantUrl = String(process.env.EXPAY_MERCHANT_URL || 'https://engajagram.net').trim();
         const currencyCode = String(process.env.EXPAY_CURRENCY_CODE || 'BRL').trim() || 'BRL';
 
         const {
@@ -6514,17 +6513,40 @@ app.post('/api/expay/charge', async (req, res) => {
             ]
         };
 
-        const params = new URLSearchParams();
-        params.append('merchant_key', merchantKey);
-        params.append('currency_code', currencyCode);
-        params.append('invoice', JSON.stringify(invoice));
+        const invoiceStr = JSON.stringify(invoice);
+        const formBody = `merchant_key=${merchantKey}&currency_code=${encodeURIComponent(currencyCode)}&invoice=${encodeURIComponent(invoiceStr)}`;
 
         const axios = require('axios');
-        const resp = await axios.post(requestUrl, params.toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
-            timeout: 20000,
-            validateStatus: () => true
-        });
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const doRequest = async () => {
+            return axios.post(requestUrl, formBody, {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+                timeout: 20000,
+                validateStatus: () => true
+            });
+        };
+        let resp = null;
+        let lastErr = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const r = await doRequest();
+                resp = r;
+                const st = Number(r && r.status) || 0;
+                if (st >= 500) {
+                    await sleep(350 * (attempt + 1));
+                    continue;
+                }
+                lastErr = null;
+                break;
+            } catch (e) {
+                lastErr = e;
+                if (attempt < 2) {
+                    await sleep(350 * (attempt + 1));
+                    continue;
+                }
+            }
+        }
+        if (!resp && lastErr) throw lastErr;
         const debugExpay = String(process.env.DEBUG_EXPAY || '').toLowerCase() === 'true';
         const shouldLogExpay = debugExpay || ((resp && typeof resp.status === 'number' && resp.status >= 400));
         if (shouldLogExpay) {
@@ -8387,19 +8409,91 @@ app.post("/api/check-privacy", async (req, res) => {
     }
 
     try {
-        // Se bypassCache for undefined, assumimos true pois é uma verificação explícita de privacidade
         const shouldBypass = (bypassCache !== undefined) ? bypassCache : true;
-        
-        // Usa verifyInstagramProfile mas ignora a verificação de "já usado" do endpoint principal
-        // A função verifyInstagramProfile em si não bloqueia, apenas retorna os dados
-        const result = await verifyInstagramProfile(username, userAgent, ip, req, res, shouldBypass, { purpose: 'check_privacy', skipPosts: true });
-        
-        // Retornar apenas o status de privacidade e sucesso
-        return res.json({
-            success: true,
-            isPrivate: !!(result.profile && result.profile.isPrivate),
-            profile: result.profile
-        });
+        const uname = String(username || '').trim().replace(/^@/, '');
+
+        const saveSnapshot = async (profile, source) => {
+            try {
+                if (!profile || !profile.username) return;
+                const vu = await getCollection('validated_insta_users');
+                const checkedAtIso = new Date().toISOString();
+                const doc = {
+                    username: String(profile.username).toLowerCase(),
+                    fullName: profile.fullName || '',
+                    profilePicUrl: profile.profilePicUrl || '',
+                    isVerified: !!profile.isVerified,
+                    isPrivate: !!profile.isPrivate,
+                    followersCount: typeof profile.followersCount === 'number' ? profile.followersCount : 0,
+                    checkedAt: checkedAtIso,
+                    linkId: (req && req.session) ? req.session.linkSlug : null,
+                    ip: String(ip || ''),
+                    userAgent: String(userAgent || ''),
+                    source: String(source || '').trim() || 'check_privacy',
+                };
+                const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
+                await vu.updateOne(
+                    { username: doc.username },
+                    { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() }, $push: { checks: { $each: [snapshot], $slice: -60 } } },
+                    { upsert: true }
+                );
+            } catch (_) {}
+        };
+
+        try {
+            console.log(`🌐 Tentando Web Profile (web_profile_info) para @${uname}`);
+            const w = await fetchInstagramFollowersInfo(uname);
+            if (w && w.success && w.profile && typeof w.profile.isPrivate === 'boolean') {
+                const p = Object.assign({}, w.profile, { checkedAt: w.profile.checkedAt || new Date().toISOString() });
+                await saveSnapshot(p, `check_privacy_${p.source || 'web_profile_info'}`);
+                return res.json({ success: true, isPrivate: !!p.isPrivate, profile: p });
+            }
+        } catch (e) {
+            try { console.warn(`⚠️ Web Profile falhou para @${uname}:`, e?.message || String(e)); } catch (_) {}
+        }
+
+        if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
+            try {
+                console.log(`🚀 Fallback RocketAPI (privacy) para @${uname}`);
+                const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
+                const rocketResp = await axios.post(rocketUrl, { username: uname }, {
+                    headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` },
+                    timeout: 15000
+                });
+                const rData = rocketResp.data;
+                const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
+                const rUser = (isRocketOk && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user)
+                    ? rData.response.body.data.user
+                    : null;
+                if (rUser && rUser.username) {
+                    global.rocketApiDisabledUntil = 0;
+                    const profile = {
+                        username: rUser.username,
+                        fullName: rUser.full_name || '',
+                        profilePicUrl: rUser.profile_pic_url_hd || rUser.profile_pic_url || '',
+                        followersCount: (rUser.edge_followed_by ? rUser.edge_followed_by.count : 0),
+                        isPrivate: !!rUser.is_private,
+                        isVerified: !!rUser.is_verified,
+                        checkedAt: new Date().toISOString(),
+                        source: 'rocketapi'
+                    };
+                    if (typeof isAllowedImageHost === 'function' && profile.profilePicUrl && isAllowedImageHost(profile.profilePicUrl)) {
+                        profile.profilePicUrl = `/image-proxy?url=${encodeURIComponent(profile.profilePicUrl)}`;
+                    }
+                    await saveSnapshot(profile, 'check_privacy_rocketapi');
+                    return res.json({ success: true, isPrivate: !!profile.isPrivate, profile });
+                }
+            } catch (eRocket) {
+                const msg = String(eRocket?.message || '');
+                try { console.warn(`❌ RocketAPI privacy falhou para @${uname}:`, msg); } catch (_) {}
+                try {
+                    const raw = String(eRocket?.response?.data || '');
+                    if (raw.toLowerCase().includes('expired')) global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
+                } catch (_) {}
+            }
+        }
+
+        const result = await verifyInstagramProfile(uname, userAgent, ip, req, res, shouldBypass, { purpose: 'check_privacy', skipPosts: true });
+        return res.json({ success: true, isPrivate: !!(result.profile && result.profile.isPrivate), profile: result.profile });
 
     } catch (error) {
         console.error("Erro na verificação de privacidade:", error.message);
@@ -9497,6 +9591,136 @@ app.post('/api/openpix/webhook', async (req, res) => {
             } else {
               const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0;
               if (canSend) {
+                const sanitizeIgLink = (s) => {
+                  let v = String(s || '').replace(/[`\s]/g, '').trim();
+                  if (!v) return '';
+                  if (!/^https?:\/\//i.test(v)) {
+                    if (/^www\./i.test(v)) v = `https://${v}`;
+                    else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+                    else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+                  }
+                  v = v.split('#')[0].split('?')[0];
+                  const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+                  if (!m) return '';
+                  const kind = String(m[2] || '').toLowerCase();
+                  let code = String(m[3] || '');
+                  if (!kind || !code) return '';
+                  if (code.length > 15) code = code.slice(0, 11);
+                  return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
+                };
+                const parseIgLinksList = (raw) => {
+                  const str = String(raw || '').replace(/`/g, '').trim();
+                  if (!str) return [];
+                  const parts = str.split(',').map(s => sanitizeIgLink(s)).filter(Boolean);
+                  const uniq = [];
+                  parts.forEach((u) => { if (!uniq.includes(u)) uniq.push(u); });
+                  return uniq;
+                };
+
+                let multiLinks = (isViewsBase || isCurtidasBase) ? parseIgLinksList(additionalInfoMap['post_links'] || '') : [];
+                if (isViewsBase) {
+                  const getViewsSplitMaxForQtd = (q0) => {
+                    const n0 = Number(q0) || 0;
+                    if (n0 >= 250000) return 5;
+                    if (n0 >= 200000) return 4;
+                    if (n0 >= 150000) return 3;
+                    if (n0 >= 50000) return 2;
+                    return 1;
+                  };
+                  const maxPosts = getViewsSplitMaxForQtd(qtd);
+                  if (maxPosts <= 1) {
+                    multiLinks = [];
+                  } else if (multiLinks.length > maxPosts) {
+                    multiLinks = multiLinks.slice(0, maxPosts);
+                  }
+                }
+
+                if (multiLinks.length > 1) {
+                  const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
+                  const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();
+                  const eachNum = parseInt(splitEachRaw.replace(/[^\d]/g, ''), 10);
+                  const extraNum = parseInt(splitExtraRaw.replace(/[^\d]/g, ''), 10);
+                  const n = multiLinks.length;
+                  const plan = [];
+                  if (n > 1 && Number.isFinite(qtd) && qtd > 0) {
+                    const each = Number.isFinite(eachNum) && eachNum > 0 ? eachNum : null;
+                    const extra = Number.isFinite(extraNum) && extraNum >= 0 ? extraNum : null;
+                    if (each && extra != null && (each * n - qtd) === extra && extra < n) {
+                      for (let i = 0; i < n; i++) {
+                        const q = Math.max(0, each - (extra > 0 && i >= (n - extra) ? 1 : 0));
+                        plan.push({ link: multiLinks[i], quantity: q });
+                      }
+                    } else {
+                      const base = Math.floor(qtd / n);
+                      const rem = qtd % n;
+                      for (let i = 0; i < n; i++) {
+                        const q = Math.max(0, base + (i < rem ? 1 : 0));
+                        plan.push({ link: multiLinks[i], quantity: q });
+                      }
+                    }
+                  }
+                  const planFiltered = plan.filter(p => p && p.quantity > 0 && p.link);
+                  const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+                  const existingOrders = Array.isArray(record?.fama24h_multi?.orders) ? record.fama24h_multi.orders : [];
+                  const allDone = existingOrders.length >= planFiltered.length && existingOrders.every(o => o && (o.orderId || o.status === 'duplicate'));
+                  if (!allDone) {
+                    const retryAfterIsoMulti = new Date(Date.now() - (25 * 1000)).toISOString();
+                    const lockUpdateMulti = await col.updateOne(
+                      {
+                        _id: record._id,
+                        'fama24h.orderId': { $exists: false },
+                        $or: [
+                          { 'fama24h_multi.status': { $exists: false } },
+                          { 'fama24h_multi.status': { $ne: 'processing' } },
+                          { 'fama24h_multi.attemptedAt': { $lt: retryAfterIsoMulti } },
+                          { 'fama24h_multi.attemptedAt': { $exists: false } }
+                        ]
+                      },
+                      {
+                        $set: {
+                          'fama24h_multi.status': 'processing',
+                          'fama24h_multi.attemptedAt': new Date().toISOString(),
+                          'fama24h_multi.requestPayload': { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
+                          'fama24h_multi.requestedAt': new Date().toISOString()
+                        },
+                        $unset: { 'fama24h_multi.error': '' }
+                      }
+                    );
+                    if (lockUpdateMulti.modifiedCount > 0) {
+                      const orders = [];
+                      for (const it of planFiltered) {
+                        const rawLink = it && it.link;
+                        const qtyForPost = Number(it && it.quantity) || 0;
+                        const linkForFama = sanitizeIgLink(rawLink);
+                        if (!linkForFama) {
+                          orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                          continue;
+                        }
+                        const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyForPost) });
+                        try {
+                          const famaResp = await postFormWithRetry('https://fama24h.net/api/v2', payload.toString(), 25000, 3);
+                          const famaData = normalizeProviderResponseData(famaResp.data);
+                          const orderId = extractProviderOrderId(famaData);
+                          const hasErr = !!(famaData && (famaData.error || famaData.errors));
+                          const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
+                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                        } catch (err) {
+                          const errVal = err?.response?.data || err?.message || String(err);
+                          const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          orders.push({ link: linkForFama, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                        }
+                      }
+                      const createdCount = orders.filter(o => o && o.orderId).length;
+                      const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                      const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                      await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                      try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
+                    }
+                  }
+                  return;
+                }
+
                 const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
                 const lockUpdate = await col.updateOne(
                   {
