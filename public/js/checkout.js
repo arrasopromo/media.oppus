@@ -23,6 +23,7 @@
   const resPreco = document.getElementById('resPreco');
   const btnPedido = document.getElementById('realizarPedidoBtn');
   const pixResultado = document.getElementById('pixResultado');
+  const pixGatewaySelect = document.getElementById('pixGatewaySelect');
   const btnInstagram = document.querySelector('.platform-btn.instagram');
   const btnTikTok = document.querySelector('.platform-btn.tiktok');
   let selectedPlatform = (btnInstagram && btnInstagram.getAttribute('aria-pressed') === 'true') ? 'instagram' : 'tiktok';
@@ -42,6 +43,7 @@
 
   // Lógica de Pagamento (Cartão vs Pix)
   let currentPaymentMethod = 'pix'; // 'pix' or 'credit_card'
+  let currentPixGateway = 'woovi';
   
   // Upsell Logic State
   let upsellShown = false;
@@ -693,9 +695,9 @@
     const isLife = true;
     if (wLabel) wLabel.textContent = '6 meses';
     if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
-    if (wOld) wOld.textContent = 'R$ 129,90';
-    if (wNew) wNew.textContent = 'R$ 19,90';
-    if (wDisc) wDisc.textContent = '85% OFF';
+    if (wOld) wOld.textContent = 'R$ 39,90';
+    if (wNew) wNew.textContent = 'R$ 9,90';
+    if (wDisc) wDisc.textContent = '75% OFF';
     try { updatePromosSummary(); } catch(_) {}
   }
   applyWarrantyMode();
@@ -1896,6 +1898,8 @@
     }
     renderPlanCards(tipo);
     updateWarrantyVisibility();
+    try { if (typeof updateLikesPrice === 'function') updateLikesPrice(Number(document.getElementById('likesQty')?.textContent || 150)); } catch(_) {}
+    try { if (typeof updateViewsPrice === 'function') updateViewsPrice(Number(document.getElementById('viewsQty')?.textContent || 1000)); } catch(_) {}
   });
 
   if (qtdSelect) qtdSelect.addEventListener('change', () => {
@@ -1943,42 +1947,105 @@
     } catch(_) {}
   });
 
-  const likesTable = [
-    { q: 150, price: 'R$ 4,90' },
-    { q: 300, price: 'R$ 9,90' },
-    { q: 500, price: 'R$ 14,90' },
-    { q: 700, price: 'R$ 19,90' },
-    { q: 1000, price: 'R$ 24,90' },
-    { q: 2000, price: 'R$ 34,90' },
-    { q: 3000, price: 'R$ 49,90' },
-    { q: 4000, price: 'R$ 59,90' },
-    { q: 5000, price: 'R$ 69,90' },
-    { q: 7500, price: 'R$ 89,90' },
-    { q: 10000, price: 'R$ 109,90' },
-    { q: 15000, price: 'R$ 159,90' }
-  ];
+  const likesPromoTables = {
+    mistos: [
+      { q: 150, price: 'R$ 4,90' },
+      { q: 300, price: 'R$ 9,90' },
+      { q: 500, price: 'R$ 14,90' },
+      { q: 700, price: 'R$ 19,90' },
+      { q: 1000, price: 'R$ 24,90' },
+      { q: 2000, price: 'R$ 34,90' },
+      { q: 3000, price: 'R$ 49,90' },
+      { q: 4000, price: 'R$ 59,90' },
+      { q: 5000, price: 'R$ 69,90' },
+      { q: 7500, price: 'R$ 89,90' },
+      { q: 10000, price: 'R$ 109,90' },
+      { q: 15000, price: 'R$ 159,90' }
+    ],
+    brasileiros: [
+      { q: 150, price: 'R$ 5,90' },
+      { q: 300, price: 'R$ 9,90' },
+      { q: 500, price: 'R$ 14,90' },
+      { q: 700, price: 'R$ 29,90' },
+      { q: 1000, price: 'R$ 39,90' },
+      { q: 2000, price: 'R$ 49,90' },
+      { q: 3000, price: 'R$ 59,90' },
+      { q: 4000, price: 'R$ 69,90' },
+      { q: 5000, price: 'R$ 79,90' },
+      { q: 7500, price: 'R$ 109,90' },
+      { q: 10000, price: 'R$ 139,90' },
+      { q: 15000, price: 'R$ 199,90' }
+    ],
+    organicos: [
+      { q: 150, price: 'R$ 16,90' },
+      { q: 300, price: 'R$ 28,90' },
+      { q: 500, price: 'R$ 49,90' },
+      { q: 1000, price: 'R$ 69,90' },
+      { q: 2000, price: 'R$ 104,90' },
+      { q: 3000, price: 'R$ 139,90' },
+      { q: 4000, price: 'R$ 174,90' },
+      { q: 5000, price: 'R$ 224,90' },
+      { q: 7500, price: 'R$ 279,90' },
+      { q: 10000, price: 'R$ 349,90' },
+      { q: 15000, price: 'R$ 449,90' }
+    ]
+  };
   const likesQtyEl = document.getElementById('likesQty');
   const likesDec = document.getElementById('likesDec');
   const likesInc = document.getElementById('likesInc');
   const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
   function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
+  function getLikesPromoVariant() {
+    const base = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    if (base.includes('organicos')) return 'organicos';
+    if (base.includes('brasileiros') || base.includes('curtidas_brasileiras')) return 'brasileiros';
+    return 'mistos';
+  }
+  function getLikesPromoTable() {
+    const v = getLikesPromoVariant();
+    return likesPromoTables[v] || likesPromoTables.mistos;
+  }
+  function findNearestQtyEntry(table, qty) {
+    try {
+      const arr = Array.isArray(table) ? table : [];
+      const q = Number(qty) || 0;
+      if (!arr.length) return null;
+      let best = arr[0];
+      let bestDist = Math.abs(Number(best.q) - q);
+      for (let i = 1; i < arr.length; i++) {
+        const it = arr[i];
+        const d = Math.abs(Number(it.q) - q);
+        if (d < bestDist) { best = it; bestDist = d; }
+      }
+      return best;
+    } catch (_) { return null; }
+  }
   function updateLikesPrice(q) {
-    const entry = likesTable.find(e => e.q === q);
+    const table = getLikesPromoTable();
+    let entry = table.find(e => e.q === q);
+    if (!entry) entry = findNearestQtyEntry(table, q);
+    if (!entry) return;
+    if (likesQtyEl) likesQtyEl.textContent = String(entry.q);
     const newEl = likesPrices ? likesPrices.querySelector('.new-price') : null;
     const oldEl = likesPrices ? likesPrices.querySelector('.old-price') : null;
-    if (newEl && entry) newEl.textContent = entry.price;
-    if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
+    if (newEl) newEl.textContent = entry.price;
+    if (oldEl) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
     const hl = document.querySelector('.promo-item.likes .promo-highlight');
-    if (hl) hl.textContent = `+ ${q} CURTIDAS`;
+    if (hl) hl.textContent = `+ ${entry.q} CURTIDAS`;
   }
   function stepLikes(dir) {
     const current = Number(likesQtyEl?.textContent || 150);
-    const idx = likesTable.findIndex(e => e.q === current);
+    const table = getLikesPromoTable();
+    let idx = table.findIndex(e => e.q === current);
+    if (idx < 0) {
+      const nearest = findNearestQtyEntry(table, current);
+      idx = nearest ? table.findIndex(e => e.q === nearest.q) : 0;
+    }
     let nextIdx = idx >= 0 ? idx + dir : 0;
     if (nextIdx < 0) nextIdx = 0;
-    if (nextIdx >= likesTable.length) nextIdx = likesTable.length - 1;
-    const next = likesTable[nextIdx].q;
+    if (nextIdx >= table.length) nextIdx = table.length - 1;
+    const next = table[nextIdx].q;
     if (likesQtyEl) likesQtyEl.textContent = String(next);
     updateLikesPrice(next);
     try { updatePromosSummary(); } catch(_) {}
@@ -2295,8 +2362,9 @@
         const priceCents = qty * 150;
         promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
-      if (warrantyChecked) {
-        const priceStr = 'R$ 19,90';
+    if (warrantyChecked) {
+        let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.warranty60 ? window.promoPricing.warranty60.price : '') || 'R$ 9,90';
         const label = 'Reposição por 6 meses';
         promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
@@ -2794,6 +2862,9 @@
         return 'seguidores';
       })();
 
+      const selectedPixGateway = String((pixGatewaySelect && pixGatewaySelect.value) ? pixGatewaySelect.value : 'woovi').trim().toLowerCase() || 'woovi';
+      currentPixGateway = (selectedPixGateway === 'expay') ? 'expay' : 'woovi';
+
       const payload = {
         correlationID,
         value: totalCents,
@@ -2809,6 +2880,7 @@
           { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
           { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'pix_gateway', value: currentPixGateway },
           { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
           { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') }
         ],
@@ -2821,6 +2893,28 @@
         if (payload.additionalInfo.some(it => it && it.key === kk)) return;
         payload.additionalInfo.push({ key: kk, value: vv });
       };
+      try {
+        const cpfDigits = onlyDigits(document.getElementById('pixCpfInput')?.value || document.getElementById('cardHolderCpf')?.value || '');
+        if (cpfDigits) {
+          payload.customer.cpf = cpfDigits;
+          pushAdditionalInfoIfMissing('cpf', cpfDigits);
+        }
+      } catch (_) {}
+      if (currentPixGateway === 'expay' && !(window && window.__EXPAY_DEFAULT_CPF_ENABLED)) {
+        const cpfDigits = onlyDigits(payload.customer && payload.customer.cpf ? payload.customer.cpf : '');
+        if (!cpfDigits || cpfDigits.length !== 11) {
+          try {
+            const cpfEl = document.getElementById('pixCpfInput') || document.getElementById('cardHolderCpf');
+            if (cpfEl) {
+              cpfEl.classList.add('input-error');
+              cpfEl.classList.add('tutorial-highlight');
+              try { cpfEl.focus(); } catch (_) {}
+              try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+            }
+          } catch (_) {}
+          throw new Error('Informe seu CPF para pagar via Pix (ExPay).');
+        }
+      }
       try {
         const cc = String(window.couponCode || '').trim();
         if (cc) payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
@@ -2891,22 +2985,76 @@
 
       // sem envio de links de posts
 
-      const resp = await fetch('/api/woovi/charge', {
+      const pixCreateEndpoint = (currentPixGateway === 'expay') ? '/api/expay/charge' : '/api/woovi/charge';
+      const resp = await fetch(pixCreateEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      const data = await resp.json();
+      const parseFetchResponse = async (r) => {
+        let data = null;
+        let rawText = '';
+        try {
+          rawText = await r.text();
+        } catch (_) {
+          rawText = '';
+        }
+        try {
+          data = rawText ? JSON.parse(rawText) : null;
+        } catch (_) {
+          data = rawText ? { raw: rawText } : null;
+        }
+        return { data, rawText };
+      };
+
+      let { data } = await parseFetchResponse(resp);
       if (!resp.ok) {
-        throw new Error(data?.details?.message || 'Falha ao criar cobrança');
+        const status = Number(resp && resp.status) || 0;
+        const msg = data?.message || data?.details?.message || data?.error || (data?.raw ? String(data.raw).slice(0, 200) : '') || 'Falha ao criar cobrança';
+        const allowFallback = (typeof window !== 'undefined' && window && window.__ALLOW_PIX_GATEWAY_FALLBACK === true);
+        const shouldFallbackToWoovi = allowFallback && currentPixGateway === 'expay' && (status >= 500 || status === 502);
+        if (shouldFallbackToWoovi) {
+          try {
+            currentPixGateway = 'woovi';
+            const gw = payload && Array.isArray(payload.additionalInfo) ? payload.additionalInfo.find(it => it && it.key === 'pix_gateway') : null;
+            if (gw) gw.value = 'woovi';
+            const wooviResp = await fetch('/api/woovi/charge', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const parsed = await parseFetchResponse(wooviResp);
+            if (!wooviResp.ok) {
+              const msg2 = parsed?.data?.message || parsed?.data?.details?.message || parsed?.data?.error || (parsed?.data?.raw ? String(parsed.data.raw).slice(0, 200) : '') || 'Falha ao criar cobrança';
+              throw new Error(msg2);
+            }
+            try {
+              if (typeof showToast === 'function') {
+                showToast({ title: 'Pix', desc: 'ExPay indisponível. Geramos seu Pix via Woovi.', platform: 'instagram' });
+              } else {
+                alert('ExPay indisponível. Geramos seu Pix via Woovi.');
+              }
+            } catch (_) {}
+            data = parsed.data;
+          } catch (e) {
+            throw new Error(msg);
+          }
+        } else {
+          throw new Error((currentPixGateway === 'expay' && status) ? `ExPay HTTP ${status}: ${msg}` : msg);
+        }
+      }
+      if (!data || typeof data !== 'object') {
+        throw new Error('Resposta inválida ao criar cobrança');
       }
 
       // Renderização amigável: QR Code e botão de copiar código Pix
-      const charge = data?.charge || {};
-      const pix = charge?.paymentMethods?.pix || {};
-      const brCode = pix?.brCode || charge?.brCode || data?.brCode || '';
-      const qrImage = pix?.qrCodeImage || charge?.qrCodeImage || data?.qrCodeImage || '';
+      const resolvedGateway = String(data?.gateway || data?.provider || currentPixGateway || 'woovi').trim().toLowerCase();
+      currentPixGateway = (resolvedGateway === 'expay') ? 'expay' : 'woovi';
+      const charge = data?.charge || data?.data?.charge || data?.data || {};
+      const pix = charge?.paymentMethods?.pix || data?.pix || data?.paymentMethods?.pix || {};
+      const brCode = pix?.brCode || pix?.br_code || charge?.brCode || data?.brCode || data?.br_code || data?.pix_code || data?.pixCode || '';
+      const qrImage = pix?.qrCodeImage || pix?.qr_code_image || charge?.qrCodeImage || data?.qrCodeImage || data?.qr_code_image || data?.qr_code || data?.qrCode || '';
 
       // Ocultar seções anteriores e Header
       document.querySelectorAll('.section-block').forEach(el => el.style.display = 'none');
@@ -3048,9 +3196,9 @@
           window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
-      const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
-      const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
+      const chargeId = charge?.id || charge?.chargeId || data?.chargeId || data?.id || data?.transaction_id || data?.transactionId || data?.invoice_id || data?.invoiceId || '';
+      const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || data?.identifier || data?.transaction_id || data?.transactionId || '';
+      const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || data?.correlationID || data?.correlationId || '';
       if (paymentPollInterval) {
         clearInterval(paymentPollInterval);
         paymentPollInterval = null;
@@ -3058,7 +3206,10 @@
       if (chargeId) {
         const checkPaid = async () => {
           try {
-            const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
+            const statusEndpoint = (currentPixGateway === 'expay')
+              ? `/api/expay/charge-status?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`
+              : `/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`;
+            const stResp = await fetch(statusEndpoint);
             const stData = await stResp.json();
             const status = stData?.charge?.status || stData?.status || '';
             const paidFlag = stData?.charge?.paid || stData?.paid || false;

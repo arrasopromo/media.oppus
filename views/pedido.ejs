@@ -34,6 +34,10 @@
        background: rgba(107, 70, 193, 0.2) !important;
        border: 1px solid rgba(107, 70, 193, 0.4) !important;
     }
+    .multi-orders-table .multi-status {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
     body:not(.theme-light) .card-title {
         color: #F8FAFC !important;
     }
@@ -107,6 +111,48 @@
         .status-box-custom span {
             font-size: 1rem !important;
         }
+
+        .multi-orders-table thead {
+            display: none !important;
+        }
+        .multi-orders-table, 
+        .multi-orders-table tbody, 
+        .multi-orders-table tr, 
+        .multi-orders-table td {
+            display: block !important;
+            width: 100% !important;
+        }
+        .multi-orders-table tr {
+            border: 1px solid var(--border-color) !important;
+            border-radius: 12px !important;
+            padding: 0.6rem 0.75rem !important;
+            margin-bottom: 0.75rem !important;
+        }
+        .multi-orders-table td {
+            border-bottom: none !important;
+            padding: 0.35rem 0 !important;
+            text-align: left !important;
+        }
+        .multi-orders-table td::before {
+            content: attr(data-label);
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            margin-bottom: 0.1rem;
+        }
+        .multi-orders-table .multi-order-oid {
+            font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important;
+        }
+        .multi-orders-table td[data-label="Post"] {
+            max-width: none !important;
+        }
+        .multi-orders-table .multi-order-link {
+            display: block !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
+        }
     }
     /* Upsell Modal fine-tuning */
     #upsellFollowersModal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); }
@@ -137,7 +183,7 @@
     <main class="main-content">
       <section class="section-block">
 
-      <% if (String(order.status || (order.woovi && order.woovi.status) || '').toLowerCase() === 'pago') { %>
+      <% if ((function(){ var s=String(order.status || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })()) { %>
         <div class="approved-payment-section" style="text-align: center; margin: 0 0 2rem 0; animation: fadeInUp 0.6s ease-out;">
             <div style="display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; background-color: #22c55e; margin-bottom: 1rem; box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -259,12 +305,14 @@
           var isOrganicFollowersCheck = catServCheck !== 'curtidas' && catServCheck !== 'visualizacoes' && tServCheck.includes('organico');
           
           // Check payment status (must be paid)
-          var paymentStatus = String(order.status || (order.woovi && order.woovi.status) || '').toLowerCase();
-          var isPaid = paymentStatus === 'pago';
+          var paymentStatus = String(order.status || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var isPaid = (paymentStatus === 'pago' || paymentStatus === 'paid' || paymentStatus === 'completed');
 
           var statusRawCheck = '';
           if (order && order.fama24h && order.fama24h.status) {
              statusRawCheck = order.fama24h.status;
+          } else if (order && order.fama24h_multi && order.fama24h_multi.status) {
+             statusRawCheck = order.fama24h_multi.status;
           } else if (order && order.fornecedor_social && order.fornecedor_social.status) {
              statusRawCheck = order.fornecedor_social.status;
           }
@@ -340,7 +388,7 @@
 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Data Pagamento</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.woovi&&order.woovi.paidAt)||order.paidAt||null; if(!raw && String(order.status||'').toLowerCase()==='pago') raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.expay&&order.expay.paidAt)||(order.woovi&&order.woovi.paidAt)||order.paidAt||null; var st=String(order.status||(order.expay&&order.expay.status)||(order.woovi&&order.woovi.status)||'').toLowerCase(); if(!raw && (st==='pago'||st==='paid'||st==='completed')) raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
                 </div>
 
                 <div class="info-item" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 1rem;">
@@ -354,14 +402,44 @@
                 </div>
                 
                 <div class="info-item" style="grid-column: 1 / -1; margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
-                   <span style="font-size: 0.75rem; color: var(--text-secondary);">ID do Pedido</span>
+                   <%
+                     var providerOidsInfo = (function(){
+                       var list = [];
+                       try {
+                         var multi = order && order.fama24h_multi && Array.isArray(order.fama24h_multi.orders) ? order.fama24h_multi.orders : [];
+                         multi.forEach(function(it){
+                           if (!it) return;
+                           var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : (it.id !== undefined && it.id !== null ? it.id : null);
+                           var s = (v === null || v === undefined) ? '' : String(v).trim();
+                           if (!s) return;
+                           if (list.indexOf(s) === -1) list.push(s);
+                         });
+                       } catch(_) {}
+                       try {
+                         var multiFS = order && order.fornecedor_social_multi && Array.isArray(order.fornecedor_social_multi.orders) ? order.fornecedor_social_multi.orders : [];
+                         multiFS.forEach(function(it){
+                           if (!it) return;
+                           var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : (it.id !== undefined && it.id !== null ? it.id : null);
+                           var s = (v === null || v === undefined) ? '' : String(v).trim();
+                           if (!s) return;
+                           if (list.indexOf(s) === -1) list.push(s);
+                         });
+                       } catch(_) {}
+                       try {
+                         var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId).trim():'';
+                         if (oidF && list.indexOf(oidF) === -1) list.push(oidF);
+                       } catch(_) {}
+                       try {
+                         var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId).trim():'';
+                         if (oidFS && list.indexOf(oidFS) === -1) list.push(oidFS);
+                       } catch(_) {}
+                       var text = list.length ? list.join(', ') : '-';
+                       return { list: list, text: text, count: list.length };
+                     })();
+                   %>
+                   <span style="font-size: 0.75rem; color: var(--text-secondary);"><%= providerOidsInfo.count > 1 ? 'IDs do Pedido' : 'ID do Pedido' %></span>
                    <div style="display: flex; align-items: center; gap: 0.25rem;">
-                       <span style="font-family: monospace; font-size: 1.1rem; font-weight: 700; color: var(--text-primary);" id="orderNumberId"><%= (function(){ 
-                           var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId):''; 
-                           var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId):''; 
-                           var providerOid = oidF||oidFS;
-                           return providerOid || '-'; 
-                       })() %></span>
+                       <span style="font-family: monospace; font-size: 1.1rem; font-weight: 700; color: var(--text-primary);" id="orderNumberId"><%= providerOidsInfo.text %></span>
                        <div style="position: relative; display: flex; align-items: center;">
                            <button id="copyOrderBtn" class="copy-icon-btn" aria-label="Copiar número do pedido" style="background: transparent; border: none; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; cursor: pointer;">
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" opacity="0.4"/></svg>
@@ -372,18 +450,91 @@
                 </div>
                 
                 <% 
-                  var famaPayload=(order&&order.fama24h&&order.fama24h.statusPayload)||null; 
-                  var sRawBase='';
-                  if(order && order.fama24h && order.fama24h.status) sRawBase = order.fama24h.status;
-                  if(!sRawBase && famaPayload) sRawBase = (famaPayload.status||famaPayload.Status||famaPayload.status_text||famaPayload.statusText||famaPayload.StatusText||famaPayload.status_normalized)||'';
-                  var sRaw=String(sRawBase||'').trim(); 
-                  var t=sRaw.toLowerCase(); 
-                  var stMap=t?(/cancel/.test(t)?'Cancelado':(/partial/.test(t)?'Parcial':(/pend/.test(t)?'Pendente':(/process|progress|start|running|created/.test(t)?'Em andamento':(/complete|success|finished|done|conclu/.test(t)?'Concluído':sRaw))))):'-'; 
+                  var multiOrdersViewFama = (order && order.fama24h_multi && Array.isArray(order.fama24h_multi.orders)) ? order.fama24h_multi.orders : [];
+                  var multiOrdersViewFS = (order && order.fornecedor_social_multi && Array.isArray(order.fornecedor_social_multi.orders)) ? order.fornecedor_social_multi.orders : [];
+                  var multiOrdersView = (multiOrdersViewFama || []).concat(multiOrdersViewFS || []);
+                  var isMultiSplit = !!(multiOrdersView && multiOrdersView.length > 0);
+                  var mapStatusBadge = function(s){
+                    var t = String(s || '').toLowerCase();
+                    if (!t) return '-';
+                    if (/cancel/.test(t)) return 'Cancelado';
+                    if (/partial/.test(t)) return 'Parcial';
+                    if (/error|fail|invalid/.test(t)) return 'Parcial';
+                    if (/pend/.test(t)) return 'Pendente';
+                    if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+                    if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+                    return s;
+                  };
+                  var stMap = (function(){
+                    if (isMultiSplit) {
+                      var normalized = multiOrdersView.map(function(it){ return mapStatusBadge(it && it.status ? it.status : ''); }).filter(Boolean);
+                      if (!normalized.length) return '-';
+                      var allDone = normalized.every(function(x){ return x === 'Concluído'; });
+                      if (allDone) return 'Concluído';
+                      var anyProgress = normalized.some(function(x){ return x === 'Em andamento'; });
+                      if (anyProgress) return 'Em andamento';
+                      var anyPending = normalized.some(function(x){ return x === 'Pendente'; });
+                      if (anyPending) return 'Pendente';
+                      var allCanceled = normalized.every(function(x){ return x === 'Cancelado'; });
+                      if (allCanceled) return 'Cancelado';
+                      return 'Parcial';
+                    }
+                    var famaPayload = (order && order.fama24h && order.fama24h.statusPayload) || null;
+                    var sRawBase = '';
+                    if (order && order.fama24h && order.fama24h.status) sRawBase = order.fama24h.status;
+                    if (!sRawBase && order && order.fama24h_multi && order.fama24h_multi.status) sRawBase = order.fama24h_multi.status;
+                    if (!sRawBase && famaPayload) sRawBase = (famaPayload.status || famaPayload.Status || famaPayload.status_text || famaPayload.statusText || famaPayload.StatusText || famaPayload.status_normalized) || '';
+                    return mapStatusBadge(sRawBase);
+                  })();
                 %>
-                <div class="info-item status-box-custom" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; background: rgba(107, 70, 193, 0.1); padding: 1.25rem; border-radius: 12px; border: 1px solid rgba(107, 70, 193, 0.2);">
-                    <span style="font-size: 1rem; font-weight: 500; color: var(--primary-purple); font-family: inherit;">Status do Serviço</span>
-                    <span id="famaServicoStatus" class="status-badge <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>" style="font-size: 1rem; font-weight: 500; letter-spacing: 0.05em; font-family: inherit;"><%= stMap %></span>
+                <% if (!isMultiSplit) { %>
+                  <div class="info-item status-box-custom" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; background: rgba(107, 70, 193, 0.1); padding: 1.25rem; border-radius: 12px; border: 1px solid rgba(107, 70, 193, 0.2);">
+                      <span style="font-size: 1rem; font-weight: 500; color: var(--primary-purple); font-family: inherit;">Status do Serviço</span>
+                      <span id="famaServicoStatus" class="status-badge <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>" style="font-size: 1rem; font-weight: 500; letter-spacing: 0.05em; font-family: inherit;"><%= stMap %></span>
+                  </div>
+                <% } %>
+                <% if (multiOrdersView && multiOrdersView.length > 0) { %>
+                <div class="info-item" style="grid-column: 1 / -1; margin-top: 0.75rem;">
+                  <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.5rem;">Divisão por Post</div>
+                  <div style="overflow:auto;">
+                    <table class="multi-orders-table" style="width:100%; border-collapse: collapse; font-size: 0.95rem;">
+                      <thead>
+                        <tr>
+                          <th style="text-align:left; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Post</th>
+                          <th style="text-align:center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Quantidade</th>
+                          <th style="text-align:center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">ID do Pedido</th>
+                          <th style="text-align:right; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody id="multiOrdersBody">
+                        <% 
+                          var mapStatus = mapStatusBadge;
+                          multiOrdersView.forEach(function(it, idx){
+                            var link = it && it.link ? String(it.link) : '';
+                            link = link.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '').trim();
+                            if (link && /^www\./i.test(link)) link = 'https://' + link;
+                            var qty = it && it.quantity ? Number(it.quantity) : 0;
+                            var oid = (it && it.orderId != null) ? String(it.orderId) : ((it && it.id != null) ? String(it.id) : '');
+                            var st = mapStatus(it && it.status ? it.status : '');
+                            var stLow = String(st || '').toLowerCase();
+                            var stCls = (/conclu/.test(stLow) ? 'status-green' : (/cancel/.test(stLow) ? 'status-red' : (/andament|process|progress|start|running/.test(stLow) ? 'status-yellow' : (/pend/.test(stLow) ? 'status-blue' : ''))));
+                        %>
+                        <tr data-multi-index="<%= String(idx) %>" data-provider-orderid="<%= oid || '' %>">
+                          <td data-label="Post" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); max-width: 0;">
+                            <% if (link) { %>
+                              <a class="multi-order-link" href="<%= link %>" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; word-break: break-all;"><%= link %></a>
+                            <% } else { %>-<% } %>
+                          </td>
+                          <td data-label="Quantidade" class="multi-order-qty" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center;"><%= qty || '-' %></td>
+                          <td data-label="ID do Pedido" class="multi-order-oid" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center; font-family: monospace;"><%= oid || '-' %></td>
+                          <td data-label="Status" class="multi-order-status" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:right;"><span class="multi-status <%= stCls %>"><%= st %></span></td>
+                        </tr>
+                        <% }); %>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
+                <% } %>
                 <%
                   var provName = '';
                   var provObj = null;
@@ -443,6 +594,69 @@
       var orderData = {};
       try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
       var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
+      function getAllProviderOidsText(o) {
+        var list = [];
+        try {
+          var multi = o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders) ? o.fama24h_multi.orders : [];
+          for (var i = 0; i < multi.length; i++) {
+            var it = multi[i];
+            if (!it) continue;
+            var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : ((it.id !== undefined && it.id !== null) ? it.id : null);
+            var s = (v === null || v === undefined) ? '' : String(v).trim();
+            if (!s) continue;
+            if (list.indexOf(s) === -1) list.push(s);
+          }
+        } catch(_) {}
+        try {
+          var multiFS = o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders) ? o.fornecedor_social_multi.orders : [];
+          for (var j = 0; j < multiFS.length; j++) {
+            var itFS = multiFS[j];
+            if (!itFS) continue;
+            var vFS = (itFS.orderId !== undefined && itFS.orderId !== null) ? itFS.orderId : ((itFS.id !== undefined && itFS.id !== null) ? itFS.id : null);
+            var sFS = (vFS === null || vFS === undefined) ? '' : String(vFS).trim();
+            if (!sFS) continue;
+            if (list.indexOf(sFS) === -1) list.push(sFS);
+          }
+        } catch(_) {}
+        try {
+          if (o && o.fama24h && o.fama24h.orderId !== undefined && o.fama24h.orderId !== null) {
+            var s1 = String(o.fama24h.orderId).trim();
+            if (s1 && list.indexOf(s1) === -1) list.push(s1);
+          }
+        } catch(_) {}
+        try {
+          if (o && o.fornecedor_social && o.fornecedor_social.orderId !== undefined && o.fornecedor_social.orderId !== null) {
+            var s2 = String(o.fornecedor_social.orderId).trim();
+            if (s2 && list.indexOf(s2) === -1) list.push(s2);
+          }
+        } catch(_) {}
+        return list.length ? list.join(', ') : '';
+      }
+      function getFirstProviderOid(o) {
+        try {
+          var multi = o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders) ? o.fama24h_multi.orders : [];
+          for (var i = 0; i < multi.length; i++) {
+            var it = multi[i];
+            if (!it) continue;
+            var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : ((it.id !== undefined && it.id !== null) ? it.id : null);
+            var s = (v === null || v === undefined) ? '' : String(v).trim();
+            if (s) return s;
+          }
+        } catch(_) {}
+        try {
+          var multiFS = o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders) ? o.fornecedor_social_multi.orders : [];
+          for (var j = 0; j < multiFS.length; j++) {
+            var itFS = multiFS[j];
+            if (!itFS) continue;
+            var vFS = (itFS.orderId !== undefined && itFS.orderId !== null) ? itFS.orderId : ((itFS.id !== undefined && itFS.id !== null) ? itFS.id : null);
+            var sFS = (vFS === null || vFS === undefined) ? '' : String(vFS).trim();
+            if (sFS) return sFS;
+          }
+        } catch(_) {}
+        try { if (o && o.fama24h && o.fama24h.orderId) return String(o.fama24h.orderId); } catch(_) {}
+        try { if (o && o.fornecedor_social && o.fornecedor_social.orderId) return String(o.fornecedor_social.orderId); } catch(_) {}
+        return null;
+      }
       function formatDateTimeSP(raw) {
         if (!raw) return null;
         var d = null;
@@ -465,11 +679,11 @@
         } catch(_) {}
         return null;
       }
-      var hasFama = !!(orderData && orderData.fama24h && orderData.fama24h.orderId);
+      var hasFama = !!getFirstProviderOid(orderData);
       var lastFamaStatus = '';
       try {
         var oidToSave = null;
-        if (hasFama) oidToSave = String(orderData.fama24h.orderId);
+        if (hasFama) oidToSave = String(getFirstProviderOid(orderData) || '');
         else if (orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) oidToSave = String(orderData.fornecedor_social.orderId);
         else if (orderId) oidToSave = String(orderId);
         else if (orderData && orderData.identifier) oidToSave = String(orderData.identifier);
@@ -477,7 +691,7 @@
         if (oidToSave) localStorage.setItem('oppus_selected_oid', oidToSave);
       } catch(_) {}
       try {
-        var initialNorm = (orderData && orderData.fama24h && orderData.fama24h.status) ? orderData.fama24h.status : '';
+        var initialNorm = (orderData && orderData.fama24h && orderData.fama24h.status) ? orderData.fama24h.status : ((orderData && orderData.fama24h_multi && orderData.fama24h_multi.status) ? orderData.fama24h_multi.status : '');
         var initialFama = initialNorm ? null : ((orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null);
         var elFamaInit = document.getElementById('famaServicoStatus');
         var mapFamaInit = function(s){
@@ -522,7 +736,7 @@
         }
       } catch(_) {}
       try {
-        var paidRaw = (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
+        var paidRaw = (orderData && orderData.expay && orderData.expay.paidAt) || (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
         var txt = formatDateTimeSP(paidRaw);
         var el = document.getElementById('paidAtLocal');
         if (el && txt) el.textContent = txt;
@@ -944,7 +1158,7 @@
           }
         } catch(_) {}
         
-        var statusStr = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+        var statusStr = String((orderData && (orderData.status || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
         var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
         var catServ = '';
         try {
@@ -1009,8 +1223,8 @@
       try {
         var tipoServ = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
         var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
-        var isPaid = String((orderData && (orderData.status || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase() === 'pago';
-        var ident = String((orderData && (orderData.identifier || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
+        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })();
+        var ident = String((orderData && (orderData.identifier || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
         try {
           var qs = new URLSearchParams((location && location.search) || '');
           var identQ = String(qs.get('identifier') || qs.get('t') || '').trim();
@@ -1080,10 +1294,11 @@
           if (isPaid && tipoServ === 'organicos') setTimeout(refreshOrderFS, 1200);
         })();
       } catch(_) {}
+      var famaPollTimer = null;
       function check() {
         var cachedOid = null;
         try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
-        var orderIDParam = cachedOid || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : ((orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) ? String(orderData.fornecedor_social.orderId) : ((orderData && orderData._id) ? String(orderData._id) : '')));
+        var orderIDParam = cachedOid || String(getFirstProviderOid(orderData) || '') || ((orderData && orderData._id) ? String(orderData._id) : '');
         if (!orderIDParam) return;
         var url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
         fetch(url)
@@ -1092,10 +1307,10 @@
             try {
               var o = d && d.order ? d.order : null;
               if (!o) return;
-              var providerOid = (o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : null);
-              var oid = providerOid || '';
-              var paidRaw = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
-              var status = String(o.status || o.woovi && o.woovi.status || 'pendente');
+              var oidText = getAllProviderOidsText(o) || '';
+              var oidFirst = getFirstProviderOid(o) || '';
+              var paidRaw = (o.expay && o.expay.paidAt) || (o.woovi && o.woovi.paidAt) || o.paidAt || null;
+              var status = String(o.status || (o.expay && o.expay.status) || (o.woovi && o.woovi.status) || 'pendente');
                 var mapPaid = o && o.additionalInfoMapPaid || {};
                 var cat0 = String(mapPaid['categoria_servico'] || '').toLowerCase();
                 var t0 = String(mapPaid['tipo_servico'] || o.tipo || o.tipoServico || '-').toLowerCase();
@@ -1104,15 +1319,16 @@
               var insta = String(o.instagramUsername || o.instauser || '-');
               var paidStr = formatDateTimeSP(paidRaw);
               var elNum = document.getElementById('orderNumberId');
-              if (elNum && oid) elNum.textContent = String(oid);
+              if (elNum && oidText) elNum.textContent = String(oidText);
+              try { if (oidFirst) localStorage.setItem('oppus_selected_oid', oidFirst); } catch(_){}
               var elPaid = document.getElementById('paidAtLocal');
               if (elPaid && paidStr) elPaid.textContent = paidStr;
               var elSt = document.getElementById('orderStatus');
               if (elSt) {
                 var s = String(status||'').toLowerCase();
-                elSt.textContent = s==='pago' ? 'pedido pago' : status;
+                  elSt.textContent = (s==='pago'||s==='paid'||s==='completed') ? 'pedido pago' : status;
                 try {
-                  elSt.classList.toggle('status-green', s==='pago');
+                  elSt.classList.toggle('status-green', (s==='pago'||s==='paid'||s==='completed'));
                   elSt.classList.toggle('status-yellow', s==='pendente');
                 } catch(_) {}
               }
@@ -1184,13 +1400,14 @@
                 try {
                   var elFama = document.getElementById('famaServicoStatus');
                   var elLabel = document.getElementById('famaServicoLabel');
-                  var famaPollTimer = null;
                   var isFinalState = function(state){
                     var s = String(state || lastFamaStatus || '').toLowerCase();
                     return /cancel/.test(s) || /conclu/.test(s) || /complete|success|finished|done/.test(s);
                   };
                   var shouldPoll = function(state){
                     var s = String(state || lastFamaStatus || '').toLowerCase();
+                    if (!s || s === '-') return true;
+                    if (/parcial/.test(s)) return true;
                     return /pend/.test(s) || /andament|process|progress|start|running/.test(s) || /created|unknown/.test(s);
                   };
                   var schedulePoll = function(){
@@ -1209,35 +1426,49 @@
                     if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
                     return s;
                   };
+                  var getStatusCls = function(label){
+                    var t = String(label || '').toLowerCase();
+                    if (/conclu/.test(t)) return 'status-green';
+                    if (/cancel/.test(t)) return 'status-red';
+                    if (/andament|process|progress|start|running/.test(t)) return 'status-yellow';
+                    if (/pend/.test(t)) return 'status-blue';
+                    return '';
+                  };
+                  var escHtml = function(s){
+                    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+                  };
+                  var setFamaBadge = function(label){
+                    var show = String(label || '-').trim() || '-';
+                    lastFamaStatus = show;
+                    if (elFama) elFama.textContent = show;
+                    var s1 = show.toLowerCase();
+                    var isDone = /conclu/.test(s1) || /complete|success|finished|done/.test(s1);
+                    try {
+                      if (elFama) {
+                        elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
+                        if (isDone) {
+                          elFama.classList.add('status-green');
+                        } else if (/cancel/.test(s1)) {
+                          elFama.classList.add('status-red');
+                        } else if (/andament|process|progress|start|running/.test(s1)) {
+                          elFama.classList.add('status-yellow');
+                        } else if (/pend/.test(s1)) {
+                          elFama.classList.add('status-blue');
+                        }
+                      }
+                    } catch(_){ }
+                    if (isDone) {
+                      upsellProviderDone = true;
+                      ensureUpsell();
+                    }
+                    schedulePoll();
+                  };
                   var updateFama = function(resp){
                     if (!elFama || !resp) return;
                     var raw = String(resp.status || resp.Status || resp.status_text || resp.statusText || resp.StatusText || '').trim();
                     var st = mapFama(raw);
-                    if (st) { lastFamaStatus = st; }
-                    var show = lastFamaStatus || st || '-';
-                    elFama.textContent = show;
-                    try {
-                      elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
-                      var s1 = show.toLowerCase();
-                      var isDone = /conclu/.test(s1) || /complete|success|finished|done/.test(s1);
-                      if (isDone) {
-                        elFama.classList.add('status-green');
-                      } else if (/cancel/.test(s1)) {
-                        elFama.classList.add('status-red');
-                      } else if (/andament|process|progress|start|running/.test(s1)) {
-                        elFama.classList.add('status-yellow');
-                      } else if (/pend/.test(s1)) {
-                        elFama.classList.add('status-blue');
-                      }
-                      if (isDone) {
-                        upsellProviderDone = true;
-                        ensureUpsell();
-                      }
-                    } catch(_){ }
-                    if (elLabel) {
-                      elLabel.textContent = show;
-                    }
-                    schedulePoll();
+                    setFamaBadge(st || lastFamaStatus || '-');
+                    if (elLabel) elLabel.textContent = (st || lastFamaStatus || '-');
                   };
                   try {
                     var persisted = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
@@ -1270,17 +1501,129 @@
                       }
                     }
                   } catch(_){ }
-                  if (oid) {
+                  try {
+                    var multiOrdersFama = (o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders)) ? o.fama24h_multi.orders : [];
+                    var multiOrdersFS = (o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders)) ? o.fornecedor_social_multi.orders : [];
+                    var multiOrders = (multiOrdersFama || []).concat(multiOrdersFS || []);
+                    if (multiOrders && multiOrders.length) {
+                      try {
+                        var tbody = document.getElementById('multiOrdersBody');
+                        if (tbody) {
+                          var html = '';
+                          for (var mi0=0; mi0<multiOrders.length; mi0++){
+                            var it0 = multiOrders[mi0] || {};
+                            var link0 = it0.link ? String(it0.link) : '';
+                            link0 = link0.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '').trim();
+                            if (link0 && /^www\./i.test(link0)) link0 = 'https://' + link0;
+                            var qty0 = it0.quantity ? Number(it0.quantity) : 0;
+                            var v0 = (it0.orderId !== undefined && it0.orderId !== null) ? it0.orderId : ((it0.id !== undefined && it0.id !== null) ? it0.id : null);
+                            var oid0 = (v0 === null || v0 === undefined) ? '' : String(v0).trim();
+                            var st0 = mapFama(it0 && it0.status ? it0.status : '');
+                            var cls0 = getStatusCls(st0);
+                            html += '<tr data-multi-index="' + String(mi0) + '" data-provider-orderid="' + (oid0 ? oid0.replace(/"/g,'&quot;') : '') + '">';
+                            html += '<td data-label="Post" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); max-width: 0;">';
+                            if (link0) {
+                              html += '<a class="multi-order-link" href="' + String(link0).replace(/"/g,'&quot;') + '" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; word-break: break-all;">' + String(link0).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</a>';
+                            } else {
+                              html += '-';
+                            }
+                            html += '</td>';
+                            html += '<td data-label="Quantidade" class="multi-order-qty" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center;">' + (qty0 ? String(qty0) : '-') + '</td>';
+                            html += '<td data-label="ID do Pedido" class="multi-order-oid" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center; font-family: monospace;">' + (oid0 ? String(oid0).replace(/</g,'&lt;').replace(/>/g,'&gt;') : '-') + '</td>';
+                            html += '<td data-label="Status" class="multi-order-status" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:right;"><span class="multi-status ' + String(cls0 || '') + '">' + escHtml(st0 || '-') + '</span></td>';
+                            html += '</tr>';
+                          }
+                          if (html) tbody.innerHTML = html;
+                        }
+                      } catch(_){}
+                      var ids = [];
+                      for (var mi=0; mi<multiOrders.length; mi++){
+                        var itM = multiOrders[mi];
+                        if (!itM) continue;
+                        var vM = (itM.orderId !== undefined && itM.orderId !== null) ? itM.orderId : ((itM.id !== undefined && itM.id !== null) ? itM.id : null);
+                        var sM = (vM === null || vM === undefined) ? '' : String(vM).trim();
+                        if (!sM) continue;
+                        if (ids.indexOf(sM) === -1) ids.push(sM);
+                      }
+                      try {
+                        var trs = document.querySelectorAll('tr[data-provider-orderid]');
+                        for (var ti=0; ti<trs.length; ti++){
+                          var oidAttr = String(trs[ti].getAttribute('data-provider-orderid') || '').trim();
+                          if (!oidAttr) continue;
+                          if (ids.indexOf(oidAttr) === -1) ids.push(oidAttr);
+                        }
+                      } catch(_){}
+                      try {
+                        var elOids = document.getElementById('orderNumberId');
+                        var txtOids = (elOids && elOids.textContent) ? String(elOids.textContent).trim() : '';
+                        if (txtOids && txtOids !== '-' && txtOids.toLowerCase() !== 'unknown') {
+                          var partsOids = txtOids.split(',').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+                          for (var pi=0; pi<partsOids.length; pi++){
+                            var oidP = partsOids[pi];
+                            if (ids.indexOf(oidP) === -1) ids.push(oidP);
+                          }
+                        }
+                      } catch(_){}
+                      if (ids.length) {
+                        var rowSet = function(oid, label){
+                          try {
+                            var tr = document.querySelector('tr[data-provider-orderid="' + String(oid) + '"]');
+                            var td = tr ? tr.querySelector('.multi-order-status') : null;
+                            if (td) {
+                              var lb = String(label || '-');
+                              var cls = getStatusCls(lb);
+                              td.innerHTML = '<span class="multi-status ' + String(cls || '') + '">' + escHtml(lb) + '</span>';
+                            }
+                          } catch(_){}
+                        };
+                        var decideOverall = function(labels){
+                          var arr = (labels || []).filter(function(x){ return !!x && String(x).trim() && String(x).trim() !== '-'; }).map(function(x){ return String(x).trim(); });
+                          if (!arr.length) return '-';
+                          var allDone = arr.every(function(x){ return x === 'Concluído'; });
+                          if (allDone) return 'Concluído';
+                          var anyProgress = arr.some(function(x){ return x === 'Em andamento'; });
+                          if (anyProgress) return 'Em andamento';
+                          var anyPending = arr.some(function(x){ return x === 'Pendente'; });
+                          if (anyPending) return 'Pendente';
+                          var allCanceled = arr.every(function(x){ return x === 'Cancelado'; });
+                          if (allCanceled) return 'Cancelado';
+                          return 'Parcial';
+                        };
+                        var fetchOne = function(oid){
+                          var url = '/api/order/provider-status?order=' + encodeURIComponent(String(oid));
+                          return fetch(url, { method: 'GET', cache: 'no-store' })
+                            .then(function(r){ return r.json(); })
+                            .then(function(x){
+                              var data = x && x.data ? x.data : null;
+                              var raw = data ? String(data.status || data.Status || data.status_text || data.statusText || data.StatusText || '').trim() : '';
+                              var label = mapFama(raw);
+                              rowSet(oid, label);
+                              return label;
+                            })
+                            .catch(function(){
+                              rowSet(oid, '-');
+                              return '-';
+                            });
+                        };
+                        Promise.all(ids.map(fetchOne)).then(function(labels){
+                          var overall = decideOverall(labels);
+                          setFamaBadge(overall);
+                        }).catch(function(){});
+                        return;
+                      }
+                    }
+                  } catch(_){}
+                  if (oidFirst) {
                     var currentDisplay = (elFama && elFama.textContent) ? elFama.textContent : '';
                     var stateToCheck = currentDisplay || lastFamaStatus || '';
                     if (!isFinalState(stateToCheck)) {
                       var isFamaProvider = !!(o && o.fama24h && o.fama24h.orderId);
                       if (isFamaProvider) {
-                        try { console.debug('Fama status request from /pedido', { order: oid }); } catch(_) {}
+                        try { console.debug('Fama status request from /pedido', { order: oidFirst }); } catch(_) {}
                         fetch('/api/fama/status', { 
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ order: String(oid) })
+                          body: JSON.stringify({ order: String(oidFirst) })
                         })
                           .then(function(r){ return r.json(); })
                           .then(function(x){ try { console.debug('Fama status response /pedido', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
@@ -1292,7 +1635,7 @@
                         var urlParam = '';
                         if (identParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(identParam));
                         else if (corrParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(corrParam));
-                        else urlParam = ('/api/order/provider-status?order=' + encodeURIComponent(String(oid)));
+                        else urlParam = ('/api/order/provider-status?order=' + encodeURIComponent(String(oidFirst)));
                         try { console.debug('Provider status request', { url: urlParam }); } catch(_) {}
                         fetch(urlParam, { method: 'GET' })
                           .then(function(r){ return r.json(); })
@@ -1409,6 +1752,128 @@
     })();
     (function forceProviderStatusOnLoad(){
       try {
+        var mapLabel = function(raw){
+          var t = String(raw || '').trim().toLowerCase();
+          if (!t) return '';
+          if (/cancel/.test(t)) return 'Cancelado';
+          if (/partial/.test(t)) return 'Parcial';
+          if (/pend/.test(t)) return 'Pendente';
+          if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+          if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+          return '';
+        };
+        var getRawStatus = function(x){
+          try {
+            var data = x && x.data ? x.data : null;
+            var raw = data ? String(data.status || data.Status || data.status_text || data.statusText || data.StatusText || '').trim() : '';
+            if (!raw && x && x.normalized) raw = String(x.normalized).trim();
+            return raw;
+          } catch(_) {}
+          return '';
+        };
+        var setBadge = function(label){
+          var el = document.getElementById('famaServicoStatus');
+          if (!el) return;
+          if (!label) return;
+          el.textContent = label;
+          try {
+            el.classList.remove('status-green','status-yellow','status-red','status-blue');
+            var s = label.toLowerCase();
+            if (/conclu/.test(s)) el.classList.add('status-green');
+            else if (/cancel/.test(s)) el.classList.add('status-red');
+            else if (/andament|process|progress|start|running/.test(s)) el.classList.add('status-yellow');
+            else if (/pend/.test(s)) el.classList.add('status-blue');
+          } catch(_) {}
+        };
+        var extractOidsFromDom = function(){
+          var ids = [];
+          try {
+            var trs = document.querySelectorAll('tr[data-provider-orderid]');
+            for (var i=0; i<trs.length; i++){
+              var v = String(trs[i].getAttribute('data-provider-orderid') || '').trim();
+              if (!v) continue;
+              if (ids.indexOf(v) === -1) ids.push(v);
+            }
+          } catch(_) {}
+          try {
+            var elOids = document.getElementById('orderNumberId');
+            var txtOids = (elOids && elOids.textContent) ? String(elOids.textContent).trim() : '';
+            if (txtOids && txtOids !== '-' && txtOids.toLowerCase() !== 'unknown') {
+              var parts = txtOids.split(',').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+              for (var p=0; p<parts.length; p++){
+                var s = parts[p];
+                if (ids.indexOf(s) === -1) ids.push(s);
+              }
+            }
+          } catch(_) {}
+          return ids;
+        };
+        var getStatusCls = function(label){
+          var t = String(label || '').toLowerCase();
+          if (/conclu/.test(t)) return 'status-green';
+          if (/cancel/.test(t)) return 'status-red';
+          if (/andament|process|progress|start|running/.test(t)) return 'status-yellow';
+          if (/pend/.test(t)) return 'status-blue';
+          return '';
+        };
+        var escHtml = function(s){
+          return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        };
+        var rowSet = function(oid, label){
+          try {
+            var tr = document.querySelector('tr[data-provider-orderid="' + String(oid) + '"]');
+            var td = tr ? tr.querySelector('.multi-order-status') : null;
+            if (td) {
+              var lb = String(label || '-');
+              var cls = getStatusCls(lb);
+              td.innerHTML = '<span class="multi-status ' + String(cls || '') + '">' + escHtml(lb) + '</span>';
+            }
+          } catch(_){}
+        };
+        var decideOverall = function(labels){
+          var arr = (labels || []).filter(function(x){ return !!x && String(x).trim() && String(x).trim() !== '-'; }).map(function(x){ return String(x).trim(); });
+          if (!arr.length) return '';
+          var allDone = arr.every(function(x){ return x === 'Concluído'; });
+          if (allDone) return 'Concluído';
+          var anyProgress = arr.some(function(x){ return x === 'Em andamento'; });
+          if (anyProgress) return 'Em andamento';
+          var anyPending = arr.some(function(x){ return x === 'Pendente'; });
+          if (anyPending) return 'Pendente';
+          var allCanceled = arr.every(function(x){ return x === 'Cancelado'; });
+          if (allCanceled) return 'Cancelado';
+          return 'Parcial';
+        };
+        var fetchOne = function(oid){
+          var url = '/api/order/provider-status?order=' + encodeURIComponent(String(oid));
+          return fetch(url, { method: 'GET', cache: 'no-store' })
+            .then(function(r){ return r.json(); })
+            .then(function(x){
+              var raw = getRawStatus(x);
+              var label = mapLabel(raw) || '-';
+              rowSet(oid, label);
+              return label;
+            })
+            .catch(function(){
+              rowSet(oid, '-');
+              return '-';
+            });
+        };
+        var pollMulti = function(){
+          var ids = extractOidsFromDom();
+          if (!ids.length) return false;
+          Promise.all(ids.map(fetchOne)).then(function(labels){
+            var overall = decideOverall(labels);
+            if (overall) setBadge(overall);
+          }).catch(function(){});
+          return true;
+        };
+
+        if (pollMulti()) {
+          try { setTimeout(pollMulti, 5000); } catch(_) {}
+          try { setInterval(pollMulti, 120000); } catch(_) {}
+          return;
+        }
+
         var qs = new URLSearchParams((location && location.search) || '');
         var identParam = String(qs.get('identifier') || qs.get('t') || '').trim();
         var corrParam = String(qs.get('correlationID') || qs.get('ref') || '').trim();
@@ -1418,43 +1883,13 @@
         else if (corrParam) url = '/api/order/provider-status?id=' + encodeURIComponent(corrParam);
         else if (orderParam) url = '/api/order/provider-status?order=' + encodeURIComponent(orderParam);
         if (!url) return;
-        try { console.debug('FORCE provider-status on load', { url: url }); } catch(_) {}
-        fetch(url, { method: 'GET' })
+        fetch(url, { method: 'GET', cache: 'no-store' })
           .then(function(r){ return r.json(); })
           .then(function(x){
-            try { console.debug('FORCE provider-status result', x); } catch(_) {}
             try {
-              var data = x && x.data ? x.data : null;
-              var raw = data ? String(
-                data.status ||
-                data.Status ||
-                data.status_text ||
-                data.statusText ||
-                data.StatusText ||
-                ''
-              ).trim() : '';
-              if (!raw && x && x.normalized) raw = String(x.normalized).trim();
-              var t = raw.toLowerCase();
-              var label = '';
-              if (/cancel/.test(t)) label = 'Cancelado';
-              else if (/partial/.test(t)) label = 'Parcial';
-              else if (/pend/.test(t)) label = 'Pendente';
-              else if (/process|progress|start|running|created/.test(t)) label = 'Em andamento';
-              else if (/complete|success|finished|done|conclu/.test(t)) label = 'Concluído';
-              if (label) {
-                var el = document.getElementById('famaServicoStatus');
-                if (el) {
-                  el.textContent = label;
-                  try {
-                    el.classList.remove('status-green','status-yellow','status-red','status-blue');
-                    var s = label.toLowerCase();
-                    if (/conclu/.test(s)) el.classList.add('status-green');
-                    else if (/cancel/.test(s)) el.classList.add('status-red');
-                    else if (/andament|process|progress|start|running/.test(s)) el.classList.add('status-yellow');
-                    else if (/pend/.test(s)) el.classList.add('status-blue');
-                  } catch(_) {}
-                }
-              }
+              var raw = getRawStatus(x);
+              var label = mapLabel(raw);
+              setBadge(label);
             } catch(_) {}
           })
           .catch(function(){});
@@ -1705,7 +2140,7 @@ function checkPrivacyStatus() {
           successDiv.style.display = 'block';
           
           // Dispatch fulfillment retry (Trigger services)
-          var id = orderData.identifier || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
+          var id = orderData.identifier || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
           if (id) {
              console.log('🔄 Initiating fulfillment retry for ID:', id);
              fetch('/api/order/retry-fulfillment', {

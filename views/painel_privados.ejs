@@ -166,6 +166,24 @@
                  } else if (t === 'seguidores mistos') {
                      tipo = 'seguidores_mistos';
                  }
+
+                 let tipoDisplay = tipo;
+                 try {
+                     const td = String(tipoDisplay || '').toLowerCase().trim();
+                     const cat = c.includes('curtida') ? 'curtidas' : (c.includes('seguidor') ? 'seguidores' : '');
+                     if (td === 'organicos' || td === 'orgânicos') {
+                         if (cat) tipoDisplay = cat + ' organicos';
+                     } else if (td === 'curtidas_organicos') {
+                         tipoDisplay = 'curtidas organicos';
+                     } else if (td === 'seguidores_organicos') {
+                         tipoDisplay = 'seguidores organicos';
+                     } else if (/^(curtidas|seguidores)_/.test(td)) {
+                         tipoDisplay = td.replace(/_/g, ' ');
+                     }
+                     tipoDisplay = String(tipoDisplay || '').trim() || tipo;
+                 } catch (_) {
+                     tipoDisplay = tipo;
+                 }
                               
                  const qtd = order.quantidade || order.qtd || 
                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
@@ -259,7 +277,7 @@
                       <%= instaUser %>
                     <% } %>
                 </td>
-                <td><%= tipo %> (<%= qtdFinal %>)</td>
+                <td><%= tipoDisplay %> (<%= qtdFinal %>)</td>
                 <td style="text-align: center;">
                     <% 
                        let supId = '';

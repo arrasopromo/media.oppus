@@ -1582,18 +1582,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
       }
 
-      if (!isInstagramPrivate) {
-        if (isCurtidasContext) {
-          if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode || curtidasSelectedPost.kind !== 'likes') {
-            openPostModal('likes');
-            return;
-          }
-        }
-        if (isViewsContext) {
-          if (!curtidasSelectedPost || !curtidasSelectedPost.shortcode || curtidasSelectedPost.kind !== 'views') {
-            openPostModal('views');
-            return;
-          }
+      if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+        const kind = isCurtidasContext ? 'likes' : 'views';
+        const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+          ? window.__oppusSelectedPostsByKind[kind]
+          : [];
+        if (!list.length) {
+          openPostModal(kind, { append: false });
+          return;
         }
       }
     }
@@ -1859,6 +1855,13 @@ document.addEventListener('DOMContentLoaded', function() {
         updateOrderBump(tipo, Number(item.q));
         updatePromosSummary();
         try { updatePaymentMethodVisibility(); } catch(_) {}
+        try {
+          if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+            const kind = isCurtidasContext ? 'likes' : 'views';
+            renderSelectedPostsPreview(kind);
+          }
+        } catch(_) {}
+        try { updatePedidoButtonState(); } catch(_) {}
         
         // Marcar ativo
         const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
@@ -2518,19 +2521,81 @@ document.addEventListener('DOMContentLoaded', function() {
   let cachedPostsUser = '';
   let postModalOpenLock = false;
   let suppressOpenPostModalOnce = false;
+  let postModalAppendMode = false;
 
-  function openPostModal(kind) {
+  function getSplitMaxForQtd(qtd) {
+    const n = Number(qtd) || 0;
+    if (n >= 5000) return 10;
+    if (n === 1000) return 4;
+    if (n === 500) return 2;
+    return 1;
+  }
+  
+  function isMultiPostSplitEnabled(kind) {
+    if (isInstagramPrivate) return false;
+    if (isCurtidasContext && kind === 'likes') return true;
+    if (isViewsContext && kind === 'views') return true;
+    return false;
+  }
+  
+  function getUpgradeAddForSplit(tipo, baseQtd) {
+    const cb = document.getElementById('orderBumpCheckboxInline');
+    if (!cb || !cb.checked) return 0;
+    const q = Number(baseQtd) || 0;
+    if (!q) return 0;
+    
+    if (isViewsContext && String(tipo || '') === 'visualizacoes_reels') {
+      const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
+      const targetQtd = targets[q] || 0;
+      return targetQtd > q ? (targetQtd - q) : 0;
+    }
+    
+    if (isCurtidasContext && (/brasileir/i.test(String(tipo || '')) || String(tipo || '') === 'curtidas_brasileiras')) {
+      const map = { 150: 150, 500: 200, 1000: 1000 };
+      return map[q] || 0;
+    }
+    
+    return 0;
+  }
+  
+  function getEffectiveQtdForSplit(tipo, baseQtd) {
+    return Math.max(0, Number(baseQtd) + Number(getUpgradeAddForSplit(tipo, baseQtd)));
+  }
+
+  function getAllowedSplitCounts(qtd, maxCount) {
+    const n = Number(qtd) || 0;
+    const maxN = Math.max(1, Number(maxCount) || 1);
+    const out = [];
+    const upper = n > 0 ? Math.min(maxN, n) : maxN;
+    for (let i = 1; i <= upper; i++) out.push(i);
+    return out.length ? out : [1];
+  }
+
+  function openPostModal(kind, opts) {
     if (postModalOpenLock) return;
     if (isInstagramPrivate && ((isCurtidasContext && kind === 'likes') || (isViewsContext && kind === 'views'))) return;
     postModalOpenLock = true;
     setTimeout(function(){ postModalOpenLock = false; }, 600);
     const refs = getPostModalRefs();
     if (!refs.postModal || !refs.postModalGrid) return;
+    postModalAppendMode = !!(opts && opts.append) && isMultiPostSplitEnabled(kind);
     
     const user = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
     if (!user) {
         showStatusMessageCheckout('Valide seu perfil primeiro.', 'error');
         return;
+    }
+    
+    if (postModalAppendMode) {
+      const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+      const maxCount = getSplitMaxForQtd(qtd);
+      const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
+      if (curList.length >= maxCount) {
+        showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+        return;
+      }
     }
 
     if (refs.postModalTitle) refs.postModalTitle.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
@@ -2549,6 +2614,9 @@ document.addEventListener('DOMContentLoaded', function() {
     refs.postModalGrid.innerHTML = spinnerHTML();
 
     const renderFrom = function(arr) {
+      const selectedNow = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
       const items = (Array.isArray(arr) ? arr : []).filter(p => {
         // Relax filter for views to allow any video-like content
         if (kind === 'views') {
@@ -2558,7 +2626,7 @@ document.addEventListener('DOMContentLoaded', function() {
              return isVid || isMediaTypeVideo;
         }
         return true;
-      }).slice(0, 8); // Checkout uses 8
+      }).slice(0, 12);
 
       let headerHtml = '';
       if (isCurtidasContext && kind === 'likes') {
@@ -2568,6 +2636,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       const html = items.map(function(p){
+        const alreadySelected = selectedNow.includes(p.shortcode);
         const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
         const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
         const isVid = p.isVideo || (p.media_type === 2);
@@ -2577,7 +2646,11 @@ document.addEventListener('DOMContentLoaded', function() {
           : (isVid && vsrc
             ? ('<div class="media-frame"><video data-src="'+vsrc+'" muted playsinline preload="none"></video></div>')
             : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
-        return '<div class="service-card"><div class="card-content pick-post-card" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="width:100%; text-align:center;" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'">Selecionar</button></div></div></div>';
+        const pickedClass = alreadySelected ? ' selected-mark' : '';
+        const btnText = alreadySelected ? 'Selecionado' : 'Selecionar';
+        const btnStyle = alreadySelected ? 'width:100%; text-align:center; opacity:0.65; cursor:not-allowed;' : 'width:100%; text-align:center;';
+        const btnDisabled = alreadySelected ? ' disabled' : '';
+        return '<div class="service-card"><div class="card-content pick-post-card'+pickedClass+'" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="'+btnStyle+'" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'"'+btnDisabled+'>'+btnText+'</button></div></div></div>';
       }).join('');
       
       if (!html) {
@@ -2610,12 +2683,24 @@ document.addEventListener('DOMContentLoaded', function() {
                            if(msg) { msg.textContent = 'Link inválido (não foi possível extrair ID)'; msg.style.color = '#ff4444'; }
                            return;
                       }
+                      try {
+                        if (postModalAppendMode) {
+                          const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+                          const maxCount = getSplitMaxForQtd(qtd);
+                          const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+                          if (!curList.includes(sc) && curList.length >= maxCount) {
+                            if (msg) { msg.textContent = 'Limite de posts atingido para este pacote.'; msg.style.color = '#ff4444'; }
+                            showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                            return;
+                          }
+                        }
+                      } catch(_) {}
                       const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
-                      fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind }) })
+                      fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind, mode: (postModalAppendMode ? 'append' : 'replace') }) })
                         .then(r=>r.json())
                         .then(function(){ 
                             if (typeof updateSelectedPostPreview === 'function') {
-                                try { updateSelectedPostPreview(kind, sc); } catch(_) {}
+                                try { updateSelectedPostPreview(kind, sc, { append: postModalAppendMode }); } catch(_) {}
                             }
                             if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
                             setTimeout(() => {
@@ -2631,19 +2716,53 @@ document.addEventListener('DOMContentLoaded', function() {
           refs.postModalGrid.innerHTML = headerHtml + html;
       }
 
-      const highlightSelected = function(kind, sc){ try{ const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content')); cards.forEach(function(c){ c.classList.remove('selected-mark'); }); const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]'); if (target) target.classList.add('selected-mark'); }catch(_){} };
+      const highlightSelectedMany = function(kind, list) {
+        try {
+          const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content'));
+          cards.forEach(function(c){ c.classList.remove('selected-mark'); });
+          (Array.isArray(list) ? list : []).forEach(function(sc){
+            const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]');
+            if (target) target.classList.add('selected-mark');
+          });
+        } catch(_) {}
+      };
       
       Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
-        btn.addEventListener('click', function(){
+        btn.addEventListener('click', function(e){
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           const sc = this.getAttribute('data-shortcode');
           const k = this.getAttribute('data-kind');
+          try {
+            if (postModalAppendMode) {
+              const curList0 = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (curList0.includes(sc)) {
+                showStatusMessageCheckout('Este post já foi selecionado. Escolha outro.', 'error');
+                return;
+              }
+            }
+            if (postModalAppendMode) {
+              const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+              const maxCount = getSplitMaxForQtd(qtd);
+              const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (!curList.includes(sc) && curList.length >= maxCount) {
+                showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                return;
+              }
+            }
+          } catch(_) {}
           const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
-          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: (postModalAppendMode ? 'append' : 'replace') }) })
             .then(r=>r.json())
             .then(function(){ 
-              highlightSelected(k, sc); 
+              try {
+                if (typeof window.__oppusSelectedPostsByKind === 'object' && window.__oppusSelectedPostsByKind) {
+                  const prev = Array.isArray(window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+                  window.__oppusSelectedPostsByKind[k] = postModalAppendMode ? (prev.includes(sc) ? prev : prev.concat([sc])) : [sc];
+                }
+              } catch(_) {}
+              highlightSelectedMany(k, (window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) || [sc]);
               if (typeof updateSelectedPostPreview === 'function') {
-                  try { updateSelectedPostPreview(k, sc); } catch(_) {}
+                  try { updateSelectedPostPreview(k, sc, { append: postModalAppendMode }); } catch(_) {}
                   try { 
                       const refs2 = getPostModalRefs();
                       if (refs2.postModal) refs2.postModal.style.display = 'none';
@@ -2658,13 +2777,37 @@ document.addEventListener('DOMContentLoaded', function() {
         card.addEventListener('click', function(){
           const sc = this.getAttribute('data-shortcode');
           const k = this.getAttribute('data-kind');
+          try {
+            if (postModalAppendMode) {
+              const curList0 = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (curList0.includes(sc)) {
+                showStatusMessageCheckout('Este post já foi selecionado. Escolha outro.', 'error');
+                return;
+              }
+            }
+            if (postModalAppendMode) {
+              const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+              const maxCount = getSplitMaxForQtd(qtd);
+              const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (!curList.includes(sc) && curList.length >= maxCount) {
+                showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                return;
+              }
+            }
+          } catch(_) {}
           const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
-          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k }) })
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: (postModalAppendMode ? 'append' : 'replace') }) })
             .then(r=>r.json())
             .then(function(){ 
-              highlightSelected(k, sc); 
+              try {
+                if (typeof window.__oppusSelectedPostsByKind === 'object' && window.__oppusSelectedPostsByKind) {
+                  const prev = Array.isArray(window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+                  window.__oppusSelectedPostsByKind[k] = postModalAppendMode ? (prev.includes(sc) ? prev : prev.concat([sc])) : [sc];
+                }
+              } catch(_) {}
+              highlightSelectedMany(k, (window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) || [sc]);
               if (typeof updateSelectedPostPreview === 'function') {
-                  try { updateSelectedPostPreview(k, sc); } catch(_) {}
+                  try { updateSelectedPostPreview(k, sc, { append: postModalAppendMode }); } catch(_) {}
                   try { 
                       const refs2 = getPostModalRefs();
                       if (refs2.postModal) refs2.postModal.style.display = 'none';
@@ -2675,7 +2818,20 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       });
       
-      try { fetch('/api/instagram/selected-for').then(r=>r.json()).then(function(d){ const obj = d && d.selectedFor ? d.selectedFor : {}; const cur = obj[kind]; if (cur && cur.shortcode) { highlightSelected(kind, cur.shortcode); } }); } catch(_) {}
+      try {
+        fetch('/api/instagram/selected-for')
+          .then(r=>r.json())
+          .then(function(d){
+            const obj = d && d.selectedFor ? d.selectedFor : {};
+            const cur = obj[kind] || {};
+            const list = Array.isArray(cur.shortcodes) ? cur.shortcodes : (cur.shortcode ? [cur.shortcode] : []);
+            try {
+              window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
+              window.__oppusSelectedPostsByKind[kind] = list;
+            } catch(_) {}
+            highlightSelectedMany(kind, list);
+          });
+      } catch(_) {}
     };
 
     const useCache = !!cachedPosts && cachedPostsUser === user;
@@ -2726,48 +2882,145 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Post Modal & Preview Logic ---
 
-  let curtidasSelectedPost = null;
+  window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
 
-  function updateSelectedPostPreview(kind, sc) {
+  function renderSelectedPostsPreview(kind) {
       const container = document.getElementById('selectedPostPreview');
       const slot = document.getElementById('selectedPostPreviewContent');
       if (!container || !slot) return;
-      
-      const arr = Array.isArray(cachedPosts) ? cachedPosts : [];
-      let p = arr.find(x => x && x.shortcode === sc);
-      
-      if (!p) {
-        if (!sc) {
-          container.style.display = 'none';
-          return;
-        }
-        const media = '<iframe src="https://www.instagram.com/p/'+sc+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;border-radius:12px;"></iframe>';
-        slot.innerHTML = '<div style="background:var(--bg-secondary);border-radius:12px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;"><div style="width:100%;max-width:260px;margin:0 auto;">'+media+'</div></div>';
-        container.style.display = 'block';
-        curtidasSelectedPost = { kind, shortcode: sc };
+
+      const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+      const splitEnabled = isMultiPostSplitEnabled(kind);
+      const maxCount = splitEnabled ? getSplitMaxForQtd(qtd) : 1;
+      const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+      const qtdEffective = splitEnabled ? getEffectiveQtdForSplit(tipoNow, qtd) : qtd;
+      const list = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
+
+      if (!list.length) {
+        container.style.display = 'none';
+        slot.innerHTML = '';
         return;
       }
 
-      const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
-      const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
-      const isVid = p.isVideo || (p.media_type === 2);
-      
-      let media = '';
-      if (dsrc) {
-        media = '<img src="'+dsrc+'" style="width:100%;height:auto;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>';
-      } else if (isVid && vsrc) {
-        media = '<video src="'+vsrc+'" style="width:100%;border-radius:12px;" muted playsinline preload="none"></video>';
-      } else {
-        media = '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;border-radius:12px;"></iframe>';
-      }
-      
-      const dateText = p.takenAt ? new Date(Number(p.takenAt) * 1000).toLocaleString('pt-BR') : '';
-      let extra = '';
-      if (dateText) extra = '<div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;">'+dateText+'</div>';
+      const arr = Array.isArray(cachedPosts) ? cachedPosts : [];
+      const fixedH = 320;
+      const cardsHtml = list.map(function(code){
+        const p = arr.find(x => x && x.shortcode === code);
+        const removeBtn = splitEnabled
+          ? ('<button type="button" class="removeSelectedPostBtn" data-kind="'+kind+'" data-shortcode="'+code+'" style="position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:999px;border:1px solid rgba(0,0,0,0.08);background:rgba(255,255,255,0.92);display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(6px);font-size:18px;line-height:0;color:#111;">×</button>')
+          : '';
+        if (!p) {
+          const iframe = '<iframe src="https://www.instagram.com/p/'+code+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
+          const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+iframe+'</div>';
+          return '<div style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:var(--bg-secondary);border-radius:12px;padding:0.6rem;"><div style="position:relative;">'+frame+removeBtn+'</div></div>';
+        }
+        const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+        const media = dsrc
+          ? '<img src="'+dsrc+'" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>'
+          : '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
+        const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+media+'</div>';
+        const dateText = p.takenAt ? new Date(Number(p.takenAt) * 1000).toLocaleString('pt-BR') : '';
+        const extra = dateText ? '<div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;margin-top:6px;">'+dateText+'</div>' : '';
+        return '<div style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:var(--bg-secondary);border-radius:12px;padding:0.6rem;"><div style="position:relative;">'+frame+removeBtn+'</div>'+extra+'</div>';
+      }).join('');
 
-      slot.innerHTML = '<div style="background:var(--bg-secondary);border-radius:12px;padding:0.75rem;display:flex;flex-direction:column;gap:0.5rem;"><div style="width:100%;max-width:260px;margin:0 auto;">'+media+'</div>'+extra+'</div>';
+      const canAddMore = splitEnabled && (list.length < maxCount);
+      const addBtn = canAddMore
+        ? '<button type="button" id="addMorePostsBtn" style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:rgba(124,58,237,0.10);border:2px dashed rgba(124,58,237,0.5);border-radius:12px;padding:0.6rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-primary);cursor:pointer;">'
+          + '<div style="width:42px;height:42px;border-radius:999px;background:rgba(124,58,237,0.15);display:flex;align-items:center;justify-content:center;font-size:26px;line-height:0;">+</div>'
+          + '<div style="font-weight:600;">Adicionar mais um post</div>'
+          + '</button>'
+        : '';
+
+      let infoHtml = '';
+      if (splitEnabled) {
+        const countsAllowed = getAllowedSplitCounts(qtdEffective, maxCount);
+        const ok = qtdEffective > 0 && list.length > 0 && list.length <= maxCount && list.length <= qtdEffective;
+        const each = ok ? Math.ceil(qtdEffective / list.length) : 0;
+        const totalSent = ok ? (each * list.length) : 0;
+        const extra = ok ? (totalSent - qtdEffective) : 0;
+        const infoText = ok
+          ? ('Divisão: ' + each.toLocaleString('pt-BR') + ' por post (' + list.length + ' posts)' + (extra > 0 ? (' — enviaremos +' + extra.toLocaleString('pt-BR') + ' pra fechar a divisão') : ''))
+          : ('Divisão inválida. Para ' + qtdEffective.toLocaleString('pt-BR') + ', escolha: ' + countsAllowed.join(', ') + ' post(s).');
+        const infoColor = ok ? 'var(--text-secondary)' : '#ef4444';
+        infoHtml = '<div id="splitInfoLine" style="margin-top:8px;font-size:0.9rem;color:'+infoColor+';text-align:center;">'+infoText+'</div>';
+      }
+
+      slot.innerHTML =
+        '<div style="display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:6px;">'
+        + cardsHtml
+        + addBtn
+        + '</div>'
+        + infoHtml;
       container.style.display = 'block';
-      curtidasSelectedPost = { kind, shortcode: p.shortcode };
+      try { updatePedidoButtonState(); } catch(_) {}
+
+      setTimeout(function(){
+        const btn = document.getElementById('addMorePostsBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function(){
+          const q = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+          const maxN = getSplitMaxForQtd(q);
+          const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+          if (curList.length >= maxN) {
+            showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+            return;
+          }
+          openPostModal(kind, { append: true });
+        });
+      }, 0);
+      
+      setTimeout(function(){
+        Array.from(document.querySelectorAll('.removeSelectedPostBtn')).forEach(function(btn){
+          btn.addEventListener('click', function(e){
+            try { if (e && typeof e.preventDefault === 'function') e.preventDefault(); } catch(_) {}
+            try { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); } catch(_) {}
+            const sc = String(this.getAttribute('data-shortcode') || '').trim();
+            const k = String(this.getAttribute('data-kind') || '').trim();
+            if (!sc || !k) return;
+            try {
+              const prev = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              window.__oppusSelectedPostsByKind[k] = prev.filter(x => x !== sc);
+            } catch(_) {}
+            try {
+              const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+              fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: 'remove' }) }).catch(function(){});
+            } catch(_) {}
+            renderSelectedPostsPreview(k);
+            try { updatePedidoButtonState(); } catch(_) {}
+          });
+        });
+      }, 0);
+  }
+
+  function updateSelectedPostPreview(kind, sc, opts) {
+      const container = document.getElementById('selectedPostPreview');
+      const slot = document.getElementById('selectedPostPreviewContent');
+      if (!container || !slot) return;
+      const splitEnabled = isMultiPostSplitEnabled(kind);
+      const append = splitEnabled && !!(opts && opts.append);
+      try {
+        window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
+        const prev = Array.isArray(window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+        if (!sc) {
+          window.__oppusSelectedPostsByKind[kind] = [];
+        } else {
+          if (append) {
+            const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+            const maxCount = getSplitMaxForQtd(qtd);
+            if (!prev.includes(sc) && prev.length >= maxCount) {
+              showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+              return;
+            }
+            window.__oppusSelectedPostsByKind[kind] = prev.includes(sc) ? prev : prev.concat([sc]);
+          } else {
+            window.__oppusSelectedPostsByKind[kind] = [sc];
+          }
+        }
+      } catch(_) {}
+      renderSelectedPostsPreview(kind);
   }
 
   async function checkInstagramProfileCheckout() {
@@ -2964,7 +3217,24 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function updatePedidoButtonState() {
-    if (btnPedido) btnPedido.disabled = false;
+    if (!btnPedido) return;
+    let disabled = !!(btnPedido.classList && btnPedido.classList.contains('loading'));
+    try {
+      if ((isCurtidasContext || isViewsContext) && !isInstagramPrivate) {
+        const kind = isCurtidasContext ? 'likes' : 'views';
+        const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+        const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+        const qtdEffective = getEffectiveQtdForSplit(tipoNow, qtd);
+        const maxCount = getSplitMaxForQtd(qtd);
+        const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+          ? window.__oppusSelectedPostsByKind[kind]
+          : [];
+        if (!list.length) disabled = true;
+        else if (list.length > maxCount) disabled = true;
+        else if (qtdEffective <= 0) disabled = true;
+      }
+    } catch(_) {}
+    btnPedido.disabled = disabled;
   }
 
   function showResumoIfAllowed() {
@@ -3240,34 +3510,51 @@ document.addEventListener('DOMContentLoaded', function() {
       // Assumindo que o modal apenas seleciona visualmente por enquanto ou falta implementar a persistência.
       // Vou manter simplificado como no checkout.js que busca de /api/instagram/selected-for
       
+      let splitErrMsg = '';
       try {
-        const selResp = await fetch('/api/instagram/selected-for');
-        if (selResp.ok) {
-          const selData = await selResp.json();
-          const sfor = selData && selData.selectedFor ? selData.selectedFor : {};
-          const normalizeIgShortcode = function (sc) {
-            const v = String(sc || '').trim();
-            if (!v) return '';
-            const m = v.match(/^[A-Za-z0-9_-]+/);
-            const code = m ? String(m[0] || '') : '';
-            if (!code) return '';
-            return code.length > 15 ? code.slice(0, 11) : code;
-          };
-          const buildIgMediaLink = function (k, sc) {
-            const code = normalizeIgShortcode(sc);
-            if (!code) return '';
-            const kindPath = (k === 'views') ? 'reel' : 'p';
-            return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
-          };
-          const mapKind = function (k) {
-            const obj = sfor && sfor[k];
-            const sc = obj && obj.shortcode;
-            return sc ? buildIgMediaLink(k, sc) : '';
-          };
+        let sfor = {};
+        const normalizeIgShortcode = function (sc) {
+          const v = String(sc || '').trim();
+          if (!v) return '';
+          const m = v.match(/^[A-Za-z0-9_-]+/);
+          const code = m ? String(m[0] || '') : '';
+          if (!code) return '';
+          return code.length > 15 ? code.slice(0, 11) : code;
+        };
+        const buildIgMediaLink = function (k, sc) {
+          const code = normalizeIgShortcode(sc);
+          if (!code) return '';
+          const kindPath = (k === 'views') ? 'reel' : 'p';
+          return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+        };
+        try {
+          const selResp = await fetch('/api/instagram/selected-for');
+          if (selResp && selResp.ok) {
+            const selData = await selResp.json();
+            sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+          }
+        } catch (_) {}
+        const mapKindList = function (k) {
+          const obj = (sfor && sfor[k]) ? sfor[k] : {};
+          const list = Array.isArray(obj.shortcodes) ? obj.shortcodes : (obj.shortcode ? [obj.shortcode] : []);
+          return list.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+        };
+        const getLinksForKind = function (k) {
+          const localList = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[k]))
+            ? window.__oppusSelectedPostsByKind[k]
+            : [];
+          const linksFromLocal = localList.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+          const linksFromServer = mapKindList(k);
+          return linksFromLocal.length ? linksFromLocal : linksFromServer;
+        };
+        const getFirstLinkForKind = function (k) {
+          const list = getLinksForKind(k);
+          return list.length ? list[0] : '';
+        };
 
-          const likesLink = mapKind('likes');
-          const viewsLink = mapKind('views');
-          const commentsLink = mapKind('comments');
+        const likesLink = getFirstLinkForKind('likes');
+        const viewsLink = getFirstLinkForKind('views');
+        const commentsLink = getFirstLinkForKind('comments');
           const anyLink = viewsLink || likesLink || commentsLink;
 
           const hasLikes = promos.some(p => p.key === 'likes');
@@ -3280,7 +3567,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
           if (kinds.length === 1) {
             const onlyKind = kinds[0];
-            let link = mapKind(onlyKind);
+            let link = getFirstLinkForKind(onlyKind);
             if (!link && instagramUsernameFinal) {
               try {
                 const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
@@ -3314,15 +3601,29 @@ document.addEventListener('DOMContentLoaded', function() {
             if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
           }
 
-          // Para serviços principais de curtidas/visualizações, salvar também o post selecionado
-          if (serviceCategory === 'curtidas' && likesLink) {
-            payload.additionalInfo.push({ key: 'post_link', value: likesLink });
+          if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+            const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+            const links = getLinksForKind(baseKind);
+            if (links.length) {
+              payload.additionalInfo.push({ key: 'post_link', value: links[0] });
+              payload.additionalInfo.push({ key: 'post_links', value: links.join(',') });
+              payload.additionalInfo.push({ key: 'post_split_count', value: String(links.length) });
+              const maxCount = getSplitMaxForQtd(qtd);
+              if (links.length > maxCount) {
+                splitErrMsg = 'Quantidade de posts acima do limite do pacote.';
+              }
+              const qtdForSplit = getEffectiveQtdForSplit(tipo, qtd);
+              const perPost = links.length ? Math.ceil(qtdForSplit / links.length) : qtdForSplit;
+              const totalSent = links.length ? (perPost * links.length) : qtdForSplit;
+              const extra = Math.max(0, totalSent - qtdForSplit);
+              payload.additionalInfo.push({ key: 'post_split_each', value: String(perPost) });
+              if (extra > 0) payload.additionalInfo.push({ key: 'post_split_extra', value: String(extra) });
+            } else {
+              splitErrMsg = 'Selecione pelo menos 1 post.';
+            }
           }
-          if (serviceCategory === 'visualizacoes' && viewsLink) {
-            payload.additionalInfo.push({ key: 'post_link', value: viewsLink });
-          }
-        }
       } catch(_) {}
+      if (splitErrMsg) throw new Error(splitErrMsg);
 
       const resp = await fetch('/api/woovi/charge', {
         method: 'POST',
@@ -3509,9 +3810,9 @@ document.addEventListener('DOMContentLoaded', function() {
       alert('Erro ao criar PIX: ' + (err?.message || err));
     } finally {
       if (btnPedido) {
-        btnPedido.disabled = false;
         btnPedido.classList.remove('loading');
       }
+      try { updatePedidoButtonState(); } catch(_) {}
     }
   }
 
@@ -3552,7 +3853,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetTop = (rect.top + scrollTop) - 120;
             smoothScrollToY(targetTop, 1100);
           }
-        }, 1500);
+        }, 3000);
       }
     } catch (_) {}
   }
@@ -3710,6 +4011,37 @@ document.addEventListener('DOMContentLoaded', function() {
   applyWarrantyMode();
   renderTipoCards();
   initPromoListeners();
+  if (qtdSelect) {
+    qtdSelect.addEventListener('change', function(){
+      try {
+        const tipo = tipoSelect ? tipoSelect.value : '';
+        const unit = getUnitForTipo(tipo);
+        const q = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+        if (planCards) {
+          const card = planCards.querySelector(`.service-card[data-role="plano"][data-qtd="${q}"]`);
+          const priceText = card ? card.getAttribute('data-preco') : findPrice(tipo, q);
+          if (resTipo) resTipo.textContent = getLabelForTipo(tipo);
+          if (resQtd) resQtd.textContent = `${q} ${unit}`;
+          if (resPreco && priceText) resPreco.textContent = priceText;
+          try { basePriceCents = parsePrecoToCents(priceText || ''); } catch(_) { basePriceCents = 0; }
+          if (planCards) {
+            const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
+            cards.forEach(c => c.classList.toggle('active', c === card));
+          }
+          updateOrderBump(tipo, q);
+          updatePromosSummary();
+          try { updatePaymentMethodVisibility(); } catch(_) {}
+        }
+      } catch(_) {}
+      try {
+        if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          renderSelectedPostsPreview(kind);
+        }
+      } catch(_) {}
+      try { updatePedidoButtonState(); } catch(_) {}
+    });
+  }
   try { updatePaymentMethodVisibility(); } catch(_) {}
   try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
   

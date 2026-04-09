@@ -413,7 +413,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         return t.charAt(0).toLowerCase() + t.slice(1);
     })();
     const productTitle = `${qtd || 0} ${serviceLabelLower} - ${valueLabel}`;
-    const identifier = safe(record && (record.identifier || (record.woovi && record.woovi.identifier) || ''));
+    const identifier = safe(record && (record.identifier || (record.expay && (record.expay.transactionId || record.expay.identifier)) || (record.woovi && record.woovi.identifier) || ''));
     const correlationID = safe(record && record.correlationID);
     const baseUrl = (function () {
         const candidates = [
@@ -434,15 +434,18 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         return q ? `${baseUrl}/pix?${q}` : `${baseUrl}/checkout`;
     })();
     const brCodeMasked = (function () {
-        const c = safe((record && record.woovi && record.woovi.brCode) || '');
+        const expay = (record && record.expay && typeof record.expay === 'object') ? record.expay : {};
+        const woovi = (record && record.woovi && typeof record.woovi === 'object') ? record.woovi : {};
+        const c = safe(expay.brCode || woovi.brCode || '');
         if (!c) return '';
         if (c.length <= 36) return c;
         return `${c.slice(0, 16)}…${c.slice(-16)}`;
     })();
 
     const woovi = (record && record.woovi && typeof record.woovi === 'object') ? record.woovi : {};
-    const qrCodeImage = safe(woovi.qrCodeImage);
-    const brCode = safe(woovi.brCode);
+    const expay = (record && record.expay && typeof record.expay === 'object') ? record.expay : {};
+    const qrCodeImage = safe(expay.qrCodeImage || woovi.qrCodeImage);
+    const brCode = safe(expay.brCode || woovi.brCode);
 
     const subject = 'Agência Oppus - Pedido recebido';
 
@@ -1138,6 +1141,79 @@ cookieProfiles.forEach(profile => {
     profile.errorCount = profile.errorCount || 0;
     profile.lastUsed = profile.lastUsed || 0;
     profile.disabledUntil = profile.disabledUntil || 0;
+});
+
+function igParseProxyList(raw) {
+  try {
+    const s0 = String(raw || '').trim();
+    if (!s0) return [];
+    const parts = s0.split(/[\n,;]+/g).map(x => String(x || '').trim()).filter(Boolean);
+    const out = [];
+    for (const entry of parts) {
+      let s = String(entry || '').trim();
+      if (!s) continue;
+      if (/^https?:\/\//i.test(s)) {
+        try {
+          const u = new URL(s);
+          const host = String(u.hostname || '').trim();
+          const port = parseInt(String(u.port || ''), 10);
+          const username = decodeURIComponent(String(u.username || '').trim());
+          const password = decodeURIComponent(String(u.password || '').trim());
+          if (host && Number.isFinite(port) && port > 0) {
+            out.push({
+              host,
+              port,
+              auth: (username || password) ? { username, password } : null
+            });
+          }
+        } catch (_) {}
+        continue;
+      }
+
+      if (s.includes('@')) {
+        const [left, right] = s.split('@');
+        const [u, p] = String(left || '').split(':');
+        const [host, portRaw] = String(right || '').split(':');
+        const port = parseInt(String(portRaw || ''), 10);
+        const username = String(u || '').trim();
+        const password = String(p || '').trim();
+        const h = String(host || '').trim();
+        if (h && Number.isFinite(port) && port > 0) {
+          out.push({
+            host: h,
+            port,
+            auth: (username || password) ? { username, password } : null
+          });
+        }
+        continue;
+      }
+
+      const cols = s.split(':').map(x => String(x || '').trim());
+      if (cols.length >= 4) {
+        const host = cols[0];
+        const port = parseInt(cols[1], 10);
+        const username = cols[2];
+        const password = cols.slice(3).join(':');
+        if (host && Number.isFinite(port) && port > 0) {
+          out.push({
+            host,
+            port,
+            auth: (username || password) ? { username, password } : null
+          });
+        }
+      }
+    }
+    return out;
+  } catch (_) {
+    return [];
+  }
+}
+
+const IG_WEBPROFILE_EXTRA_PROXIES = igParseProxyList(process.env.IG_WEBPROFILE_PROXIES || '');
+IG_WEBPROFILE_EXTRA_PROXIES.forEach((p) => {
+  p.errorCount = p.errorCount || 0;
+  p.lastUsed = p.lastUsed || 0;
+  p.disabledUntil = p.disabledUntil || 0;
 });
 
 console.log(`📊 Perfis de cookie carregados: ${cookieProfiles.length} perfis disponíveis`);
@@ -2782,26 +2858,56 @@ app.post('/api/instagram/track-validated', async (req, res) => {
 // Rota para selecionar um post para um tipo de serviço (likes, views, comments)
 app.post('/api/instagram/select-post-for', (req, res) => {
     try {
-        const { username, shortcode, kind } = req.body;
+        const { username, shortcode, kind, mode } = req.body;
         if (!req.session) return res.json({ success: false, error: 'no_session' });
         
         req.session.selectedFor = req.session.selectedFor || {};
         
-        if (shortcode) {
-            req.session.selectedFor[kind] = {
-                shortcode: shortcode,
-                username: username,
-                at: Date.now()
-            };
-            // Compatibilidade com lógica antiga de array único
-            req.session.selectedPosts = req.session.selectedPosts || [];
-            if (!req.session.selectedPosts.find(p => p.shortcode === shortcode)) {
-                req.session.selectedPosts.push({ shortcode, username });
-            }
-        } else {
-            // Se shortcode vazio, remove seleção
-            if (req.session.selectedFor[kind]) delete req.session.selectedFor[kind];
+        const kindKey = String(kind || '').trim();
+        if (!kindKey) return res.status(400).json({ success: false, error: 'missing_kind' });
+
+        const sc = String(shortcode || '').trim();
+        const u = String(username || '').trim();
+        const m = String(mode || '').trim().toLowerCase();
+        const replace = (m !== 'append');
+
+        if (!sc) {
+            if (req.session.selectedFor[kindKey]) delete req.session.selectedFor[kindKey];
+            return res.json({ success: true, selectedFor: req.session.selectedFor });
         }
+
+        const prevObj = req.session.selectedFor[kindKey] || {};
+        const prevList = Array.isArray(prevObj.shortcodes) ? prevObj.shortcodes : (prevObj.shortcode ? [prevObj.shortcode] : []);
+        if (m === 'remove') {
+            const nextList = prevList.filter(x => x !== sc);
+            if (!nextList.length) {
+                if (req.session.selectedFor[kindKey]) delete req.session.selectedFor[kindKey];
+            } else {
+                req.session.selectedFor[kindKey] = {
+                    username: u || prevObj.username || '',
+                    shortcodes: nextList,
+                    shortcode: nextList[0] || '',
+                    at: Date.now()
+                };
+            }
+            req.session.selectedPosts = Array.isArray(req.session.selectedPosts) ? req.session.selectedPosts : [];
+            req.session.selectedPosts = req.session.selectedPosts.filter(p => p && p.shortcode !== sc);
+            return res.json({ success: true, selectedFor: req.session.selectedFor });
+        }
+        const nextList = replace ? [sc] : (prevList.includes(sc) ? prevList : prevList.concat([sc]));
+
+        req.session.selectedFor[kindKey] = {
+            username: u || prevObj.username || '',
+            shortcodes: nextList,
+            shortcode: nextList[0] || sc,
+            at: Date.now()
+        };
+        req.session.selectedPosts = req.session.selectedPosts || [];
+        nextList.forEach((code) => {
+            if (!req.session.selectedPosts.find(p => p.shortcode === code)) {
+                req.session.selectedPosts.push({ shortcode: code, username: u });
+            }
+        });
         
         return res.json({ success: true, selectedFor: req.session.selectedFor });
     } catch (e) {
@@ -2919,25 +3025,19 @@ app.get('/teste123', (req, res) => {
     res.render('index');
 });
 
-// /checkout: manter compatibilidade, mas redirecionar para /engajamento
+// /checkout: abrir o checkout diretamente
 app.get('/checkout', (req, res) => {
-    console.log('🛒 Acessando rota /checkout (redirect -> /engajamento)');
+    console.log('🛒 Acessando rota /checkout');
     try {
         if (req.session) {
             req.session.selectedFor = {};
             req.session.selectedPosts = [];
         }
     } catch (_) {}
-    const q = (function () {
-        try {
-            const u = String(req.originalUrl || req.url || '').trim();
-            const i = u.indexOf('?');
-            return i >= 0 ? u.slice(i + 1) : '';
-        } catch (_) {
-            return '';
-        }
-    })();
-    return res.redirect(q ? (`/engajamento?${q}`) : '/engajamento');
+    return res.render('checkout', {
+        PIXEL_ID: process.env.PIXEL_ID || '',
+        EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
+    });
 });
 
 app.get('/pix', async (req, res) => {
@@ -2952,7 +3052,7 @@ app.get('/pix', async (req, res) => {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('checkout_orders');
     const conds = [];
-    if (identifier) { conds.push({ identifier }); conds.push({ 'woovi.identifier': identifier }); }
+    if (identifier) { conds.push({ identifier }); conds.push({ 'woovi.identifier': identifier }); conds.push({ 'expay.transactionId': identifier }); }
     if (correlationID) conds.push({ correlationID });
     const order = await col.findOne(conds.length ? { $or: conds } : {});
     if (!order) {
@@ -2976,9 +3076,10 @@ app.get('/pix', async (req, res) => {
     };
 
     const woovi = (order && order.woovi && typeof order.woovi === 'object') ? order.woovi : {};
+    const expay = (order && order.expay && typeof order.expay === 'object') ? order.expay : {};
     const pix = (woovi && woovi.paymentMethods && woovi.paymentMethods.pix && typeof woovi.paymentMethods.pix === 'object') ? woovi.paymentMethods.pix : {};
-    const brCode = safe(pix.brCode || woovi.brCode || '');
-    const qrCodeImage = safe(pix.qrCodeImage || woovi.qrCodeImage || '');
+    const brCode = safe(expay.brCode || pix.brCode || woovi.brCode || '');
+    const qrCodeImage = safe(expay.qrCodeImage || pix.qrCodeImage || woovi.qrCodeImage || '');
     const valueLabel = centsToBRL(order && order.valueCents);
     const masked = (function () {
       if (!brCode) return '';
@@ -5549,10 +5650,20 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
 });
 
 app.post('/api/stripe/webhook', async (req, res) => {
+  let responded = false;
+  const ack = () => {
+    if (responded) return;
+    responded = true;
+    try { return res.status(200).json({ received: true }); } catch (_) { return; }
+  };
+
   try {
     const stripeKeys = getStripeKeys();
     const webhookSecret = String(stripeKeys.webhookSecret || '').trim();
-    if (!webhookSecret) return res.status(500).send('missing_stripe_webhook_secret');
+    if (!webhookSecret) {
+      try { console.warn('⚠️ Stripe webhook: missing STRIPE_WEBHOOK_SECRET/STRIPE_WEBHOOK_SECRET_TEST'); } catch (_) {}
+      return ack();
+    }
 
     const sig = String(req.headers['stripe-signature'] || '').trim();
     if (!sig) return res.status(400).send('missing_signature');
@@ -5586,86 +5697,93 @@ app.post('/api/stripe/webhook', async (req, res) => {
     try { event = JSON.parse(raw.toString('utf8')); } catch (_) {}
     if (!event || !event.type || !event.data) return res.status(400).send('invalid_event');
 
-    const type = String(event.type || '').trim();
-    const obj = event.data && event.data.object ? event.data.object : null;
-    const col = await getCollection('checkout_orders');
+    ack();
 
-    if (type.startsWith('checkout.session.')) {
-      const sessionId = String(obj && obj.id ? obj.id : '').trim();
-      if (!sessionId) return res.json({ received: true });
-      const paymentIntentId = String(obj && obj.payment_intent ? obj.payment_intent : '').trim();
-      const paymentStatus = String(obj && obj.payment_status ? obj.payment_status : '').trim().toLowerCase();
-      const clientReferenceId = String(obj && obj.client_reference_id ? obj.client_reference_id : '').trim();
-      const record = await col.findOne({
-        $or: [
-          { 'stripe.checkout_session_id': sessionId },
-          { identifier: sessionId },
-          ...(paymentIntentId ? [ { identifier: paymentIntentId }, { 'stripe.payment_intent_id': paymentIntentId } ] : []),
-          ...(clientReferenceId ? [ { correlationID: clientReferenceId } ] : [])
-        ]
-      });
-      if (!record) return res.json({ received: true });
-
-      const isPaid = paymentStatus === 'paid' || type === 'checkout.session.async_payment_succeeded';
-      const isFailed = type === 'checkout.session.async_payment_failed';
-      const sysStatus = isPaid ? 'pago' : (isFailed ? 'falha' : 'pendente');
-
-      const set = {
-        status: sysStatus,
-        paidAt: isPaid ? new Date().toISOString() : (record.paidAt || null),
-        stripe: Object.assign({}, record.stripe || {}, {
-          environment: stripeKeys.useTest ? 'test' : 'live',
-          checkout_session_id: sessionId,
-          payment_intent_id: paymentIntentId || (record.stripe && record.stripe.payment_intent_id) || '',
-          status: paymentStatus || String(obj && obj.status ? obj.status : type)
-        })
-      };
-
-      await col.updateOne({ _id: record._id }, { $set: set });
-
-      if (isPaid) {
-        try {
-          const fresh = Object.assign({}, record, set);
-          await processOrderFulfillment(fresh, col, req);
-        } catch (_) {}
-      }
-
-      return res.json({ received: true });
-    }
-
-    const piId = String(obj && obj.id ? obj.id : '').trim();
-    if (!piId) return res.json({ received: true });
-
-    const record = await col.findOne({ $or: [ { identifier: piId }, { 'stripe.payment_intent_id': piId } ] });
-    if (!record) return res.json({ received: true });
-
-    const set = {};
-    if (type === 'payment_intent.succeeded') {
-      set.status = 'pago';
-      set.paidAt = new Date().toISOString();
-      set.stripe = Object.assign({}, record.stripe || {}, { status: 'succeeded', payment_intent_id: piId });
-    } else if (type === 'payment_intent.payment_failed') {
-      set.status = 'falha';
-      set.stripe = Object.assign({}, record.stripe || {}, { status: 'payment_failed', payment_intent_id: piId });
-    } else if (type === 'payment_intent.processing') {
-      set.status = 'pendente';
-      set.stripe = Object.assign({}, record.stripe || {}, { status: 'processing', payment_intent_id: piId });
-    } else {
-      set.stripe = Object.assign({}, record.stripe || {}, { status: String(obj && obj.status ? obj.status : type), payment_intent_id: piId });
-    }
-
-    await col.updateOne({ _id: record._id }, { $set: set });
-
-    if (type === 'payment_intent.succeeded') {
+    setImmediate(async () => {
       try {
-        const fresh = Object.assign({}, record, set);
-        await processOrderFulfillment(fresh, col, req);
-      } catch (_) {}
-    }
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('checkout_orders');
+        const type = String(event.type || '').trim();
+        const obj = event.data && event.data.object ? event.data.object : null;
 
-    return res.json({ received: true });
+        if (type.startsWith('checkout.session.')) {
+          const sessionId = String(obj && obj.id ? obj.id : '').trim();
+          if (!sessionId) return;
+          const paymentIntentId = String(obj && obj.payment_intent ? obj.payment_intent : '').trim();
+          const paymentStatus = String(obj && obj.payment_status ? obj.payment_status : '').trim().toLowerCase();
+          const clientReferenceId = String(obj && obj.client_reference_id ? obj.client_reference_id : '').trim();
+          const record = await col.findOne({
+            $or: [
+              { 'stripe.checkout_session_id': sessionId },
+              { identifier: sessionId },
+              ...(paymentIntentId ? [ { identifier: paymentIntentId }, { 'stripe.payment_intent_id': paymentIntentId } ] : []),
+              ...(clientReferenceId ? [ { correlationID: clientReferenceId } ] : [])
+            ]
+          });
+          if (!record) return;
+
+          const isPaid = paymentStatus === 'paid' || type === 'checkout.session.async_payment_succeeded';
+          const isFailed = type === 'checkout.session.async_payment_failed';
+          const sysStatus = isPaid ? 'pago' : (isFailed ? 'falha' : 'pendente');
+
+          const set = {
+            status: sysStatus,
+            paidAt: isPaid ? new Date().toISOString() : (record.paidAt || null),
+            stripe: Object.assign({}, record.stripe || {}, {
+              environment: stripeKeys.useTest ? 'test' : 'live',
+              checkout_session_id: sessionId,
+              payment_intent_id: paymentIntentId || (record.stripe && record.stripe.payment_intent_id) || '',
+              status: paymentStatus || String(obj && obj.status ? obj.status : type)
+            })
+          };
+
+          await col.updateOne({ _id: record._id }, { $set: set });
+
+          if (isPaid) {
+            try {
+              const fresh = Object.assign({}, record, set);
+              await processOrderFulfillment(fresh, col, null);
+            } catch (_) {}
+          }
+
+          return;
+        }
+
+        const piId = String(obj && obj.id ? obj.id : '').trim();
+        if (!piId) return;
+
+        const record = await col.findOne({ $or: [ { identifier: piId }, { 'stripe.payment_intent_id': piId } ] });
+        if (!record) return;
+
+        const set = {};
+        if (type === 'payment_intent.succeeded') {
+          set.status = 'pago';
+          set.paidAt = new Date().toISOString();
+          set.stripe = Object.assign({}, record.stripe || {}, { status: 'succeeded', payment_intent_id: piId });
+        } else if (type === 'payment_intent.payment_failed') {
+          set.status = 'falha';
+          set.stripe = Object.assign({}, record.stripe || {}, { status: 'payment_failed', payment_intent_id: piId });
+        } else if (type === 'payment_intent.processing') {
+          set.status = 'pendente';
+          set.stripe = Object.assign({}, record.stripe || {}, { status: 'processing', payment_intent_id: piId });
+        } else {
+          set.stripe = Object.assign({}, record.stripe || {}, { status: String(obj && obj.status ? obj.status : type), payment_intent_id: piId });
+        }
+
+        await col.updateOne({ _id: record._id }, { $set: set });
+
+        if (type === 'payment_intent.succeeded') {
+          try {
+            const fresh = Object.assign({}, record, set);
+            await processOrderFulfillment(fresh, col, null);
+          } catch (_) {}
+        }
+      } catch (e) {
+        try { console.error('Stripe webhook async error', e?.message || String(e)); } catch (_) {}
+      }
+    });
   } catch (_) {
-    return res.status(500).send('webhook_error');
+    if (!responded) return res.status(500).send('webhook_error');
   }
 });
 
@@ -6112,6 +6230,607 @@ app.post('/api/woovi/charge', async (req, res) => {
     }
 });
 
+app.post('/api/expay/charge', async (req, res) => {
+    try {
+        const merchantKey = String(process.env.EXPAY_MERCHANT_KEY || '').trim();
+        if (!merchantKey) {
+            return res.status(500).json({ error: 'missing_expay_merchant_key', message: 'Configuração da ExPay ausente (EXPAY_MERCHANT_KEY).' });
+        }
+        const normalizeUrl = (u) => {
+            const raw = String(u || '').trim();
+            const cleaned = raw.replace(/^[`'"]+|[`'"]+$/g, '').trim();
+            return cleaned || raw;
+        };
+        const requestUrl = normalizeUrl(process.env.EXPAY_REQUEST_URL || 'https://expaybrasil.com/en/purchase/link');
+        const merchantId = String(process.env.EXPAY_MERCHANT_ID || '1009').trim();
+        const merchantName = String(process.env.EXPAY_MERCHANT_NAME || 'engajagram').trim();
+        const merchantUrl = String(process.env.EXPAY_MERCHANT_URL || 'https://engajagram.net').trim();
+        const currencyCode = String(process.env.EXPAY_CURRENCY_CODE || 'BRL').trim() || 'BRL';
+
+        const {
+            correlationID,
+            value,
+            comment,
+            customer,
+            additionalInfo,
+            profile_is_private
+        } = req.body || {};
+
+        if (!value || typeof value !== 'number' || value < 10) {
+            return res.status(400).json({ error: 'invalid_value', message: 'Campo value (centavos) é obrigatório e deve ser no mínimo 10 (R$ 0,10).' });
+        }
+
+        const sanitizeText = (s) => {
+            if (typeof s !== 'string') return s;
+            return s.replace(/[\u2012-\u2015]/g, '-').replace(/[\uD800-\uDFFF]/g, '').trim();
+        };
+
+        const sanitizedAdditional = Array.isArray(additionalInfo)
+            ? additionalInfo.map((item) => ({
+                key: sanitizeText(String(item?.key ?? '')),
+                value: sanitizeText(String(item?.value ?? '')),
+            }))
+            : [];
+        const sanitizedAdditionalFiltered = sanitizedAdditional
+            .filter((it) => typeof it.key === 'string' && it.key.trim().length > 0 && typeof it.value === 'string' && it.value.trim().length > 0)
+            .map((it) => ({ key: it.key.trim(), value: it.value.trim() }));
+
+        try {
+            const cookieHeader = req.headers['cookie'] || '';
+            const m = cookieHeader && cookieHeader.match(/(?:^|;\s*)tc_code=([^;]+)/);
+            const tc = m && m[1] ? decodeURIComponent(m[1]) : '';
+            if (tc) {
+                for (let i = sanitizedAdditionalFiltered.length - 1; i >= 0; i--) {
+                    if (sanitizedAdditionalFiltered[i].key === 'tc_code') {
+                        sanitizedAdditionalFiltered.splice(i, 1);
+                    }
+                }
+                sanitizedAdditionalFiltered.push({ key: 'tc_code', value: tc });
+            }
+        } catch (_) {}
+
+        const addInfoMap = sanitizedAdditionalFiltered.reduce((acc, item) => {
+            acc[item.key] = item.value;
+            return acc;
+        }, {});
+        const tipoVal = addInfoMap['tipo_servico'] || '';
+        const qtdVal = (function () {
+            const raw = String(addInfoMap['quantidade'] ?? '').trim();
+            const n = parseInt(raw.replace(/[^\d]/g, ''), 10);
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        })();
+
+        let validatedPriceCents = null;
+        const vNum = Number(value);
+        const _host = String(req.headers?.host || '').toLowerCase();
+        const _origin = String(req.headers?.origin || '').toLowerCase();
+        const _referer = String(req.headers?.referer || '').toLowerCase();
+        const isLocalHeader = _host.includes('localhost') || _host.startsWith('127.0.0.1') || _origin.includes('localhost') || _origin.includes('127.0.0.1') || _referer.includes('localhost') || _referer.includes('127.0.0.1');
+        const allowLowValueBypass = (Number.isFinite(vNum) && vNum > 0 && vNum <= 100) && isLocalHeader;
+
+        if (allowLowValueBypass) {
+            validatedPriceCents = vNum;
+        } else {
+            const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum);
+            if (verification.isValid) {
+                validatedPriceCents = verification.matchedPrice;
+            } else {
+                let acceptedByCoupon = false;
+                try {
+                    const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
+                    const couponCode = normalizeCouponCode(couponCodeRaw);
+                    if (couponCode) {
+                        const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
+                        const eligibility = await getCouponEligibility(couponCode, profileKey);
+                        if (eligibility && eligibility.ok && eligibility.coupon) {
+                            const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
+                            const rate = pct > 0 ? (pct / 100) : 0;
+                            if (rate > 0 && Number.isFinite(Number(verification.expectedPrice)) && Number(verification.expectedPrice) > 0) {
+                                const expected = Number(verification.expectedPrice);
+                                const discountVal = Math.round(expected * rate);
+                                const discountedExpected = Math.max(0, expected - discountVal);
+                                if (vNum === discountedExpected) {
+                                    validatedPriceCents = vNum;
+                                    acceptedByCoupon = true;
+                                }
+                            }
+                        }
+                    }
+                } catch (_) {}
+                if (!acceptedByCoupon) {
+                    return res.status(400).json({
+                        error: 'value_mismatch',
+                        message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.expectedPrice}).`
+                    });
+                }
+            }
+        }
+
+        const normalizePhone = (s) => {
+            const raw = typeof s === 'string' ? s : '';
+            const digits = raw.replace(/\D/g, '');
+            if (!digits) return '';
+            if (raw.trim().startsWith('+')) return `+${digits}`;
+            if (digits.startsWith('55')) return `+${digits}`;
+            if (digits.length >= 11) return `+55${digits}`;
+            return `+${digits}`;
+        };
+        const normalizeEmail = (s) => {
+            const raw = typeof s === 'string' ? s.trim() : '';
+            if (!raw) return '';
+            const email = raw.toLowerCase();
+            const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+            return isValid ? email : '';
+        };
+
+        const customerPayload = {
+            name: sanitizeText((customer && customer.name) ? customer.name : 'Cliente Checkout'),
+            phone: normalizePhone((customer && customer.phone) ? customer.phone : ''),
+        };
+        try {
+            const cpfDigits = (customer && customer.cpf) ? String(customer.cpf).replace(/\D/g, '').trim() : '';
+            if (cpfDigits) customerPayload.cpf = cpfDigits;
+        } catch (_) {}
+        if (!customerPayload.cpf && (process.env.NODE_ENV !== 'production')) {
+            try {
+                const envCpfDigits = String(process.env.EXPAY_DEFAULT_CPF || '').replace(/\D/g, '').trim();
+                if (envCpfDigits && (envCpfDigits.length === 11 || envCpfDigits.length === 14)) customerPayload.cpf = envCpfDigits;
+            } catch (_) {}
+        }
+        const customerEmail = normalizeEmail((customer && customer.email) ? customer.email : '');
+        if (customerEmail) customerPayload.email = sanitizeText(customerEmail);
+
+        const incomingCorrelationID = (typeof correlationID === 'string' ? correlationID : '').trim();
+        const phoneDigitsRaw = (customer && customer.phone) ? String(customer.phone).replace(/\D/g, '') : '';
+        const randChunk = () => Math.random().toString(36).slice(2, 5);
+        const chargeCorrelationID = incomingCorrelationID || `${randChunk()}-${randChunk()}-${phoneDigitsRaw || 'no-phone'}`;
+
+        try {
+            if (incomingCorrelationID) {
+                const col = await getCollection('checkout_orders');
+                const existing = await col.findOne(
+                    { correlationID: incomingCorrelationID },
+                    { projection: { _id: 1, correlationID: 1, identifier: 1, status: 1, expay: 1 } }
+                );
+                const x = existing && existing.expay ? existing.expay : null;
+                if (existing && x && (x.brCode || x.qrCodeImage || x.transactionId)) {
+                    const tx = x.transactionId || existing.identifier || null;
+                    const identifierVal = tx || existing.identifier || existing.correlationID || incomingCorrelationID;
+                    return res.status(200).json({
+                        gateway: 'expay',
+                        charge: {
+                            id: tx,
+                            chargeId: tx,
+                            identifier: identifierVal,
+                            correlationID: existing.correlationID || incomingCorrelationID,
+                            status: x.status || existing.status || 'pendente',
+                            paymentMethods: { pix: { brCode: x.brCode || null, qrCodeImage: x.qrCodeImage || null } },
+                            brCode: x.brCode || null,
+                            qrCodeImage: x.qrCodeImage || null
+                        },
+                        reused: true
+                    });
+                }
+            }
+        } catch (_) {}
+
+        const finalChargeValue = validatedPriceCents !== null ? validatedPriceCents : value;
+        if (typeof finalChargeValue === 'number' && Number.isFinite(finalChargeValue) && finalChargeValue < 300) {
+            return res.status(400).json({ error: 'min_value', message: 'Valor mínimo para emitir Pix na ExPay é R$ 3,00.' });
+        }
+
+        const baseUrl = (function () {
+            const candidates = [process.env.SITE_URL, process.env.PUBLIC_URL, process.env.APP_URL, process.env.BASE_URL];
+            const picked = candidates.map(s => String(s || '').trim()).find(Boolean);
+            const u = picked || 'https://agenciaoppus.site';
+            return u.replace(/\/+$/, '');
+        })();
+        const webhookUrl = `${baseUrl}/api/expay/webhook`;
+
+        const addInfoArr = Array.isArray(sanitizedAdditionalFiltered) ? sanitizedAdditionalFiltered : [];
+        const addInfo = addInfoArr.reduce((acc, item) => {
+            const k = String(item?.key || '').trim();
+            const v = String(item?.value || '').trim();
+            acc[k] = v;
+            return acc;
+        }, {});
+
+        const tipo = addInfo['tipo_servico'] || '';
+        const qtd = Number(addInfo['quantidade'] || 0) || 0;
+        const instauserFromClient = addInfo['instagram_username'] || '';
+        const slug = req.session?.linkSlug || '';
+        const userAgent = req.get('User-Agent') || '';
+        const ip = req.realIP || req.ip || req.connection?.remoteAddress || 'unknown';
+        const isPrivate = profile_is_private === true || profile_is_private === 'true' || addInfo['profile_is_private'] === 'true';
+
+        let utms = {};
+        try {
+            if (req.body && req.body.utms && Object.keys(req.body.utms).length > 0) {
+                utms = req.body.utms;
+                if (!utms.ref) utms.ref = req.get('Referer') || req.headers['referer'] || '';
+            } else {
+                const refUrl = req.get('Referer') || req.headers['referer'] || '';
+                const u = new URL(refUrl);
+                const p = u.searchParams;
+                utms = {
+                    source: p.get('utm_source') || '',
+                    medium: p.get('utm_medium') || '',
+                    campaign: p.get('utm_campaign') || '',
+                    term: p.get('utm_term') || '',
+                    content: p.get('utm_content') || '',
+                    gclid: p.get('gclid') || '',
+                    fbclid: p.get('fbclid') || '',
+                    ref: refUrl
+                };
+            }
+        } catch (_) {
+            const refUrl = req.get('Referer') || req.headers['referer'] || '';
+            utms = { ref: refUrl };
+        }
+
+        let geolocation = null;
+        try {
+            geolocation = await Promise.race([
+                geoLookupIp(ip),
+                new Promise((resolve) => setTimeout(() => resolve(null), 250))
+            ]);
+        } catch(_) {}
+
+        const totalStr = Number.isFinite(finalChargeValue) ? (finalChargeValue / 100).toFixed(2) : '0.00';
+        const invoiceIdNumeric = (function () {
+            const raw = String(chargeCorrelationID || '').replace(/\D/g, '').trim();
+            if (/^\d{6,12}$/.test(raw)) return raw;
+            const base = String(Date.now()).slice(-10);
+            const rand2 = String(Math.floor(Math.random() * 90) + 10);
+            return `${base}${rand2}`;
+        })();
+        const cpfCnpjDigits = String(customerPayload.cpf || '').replace(/\D/g, '').trim();
+        let phoneDigits = String(customerPayload.phone || '').replace(/\D/g, '').trim();
+        if (phoneDigits.length === 13 && phoneDigits.startsWith('55')) phoneDigits = phoneDigits.slice(2);
+        if (phoneDigits.length > 11) phoneDigits = phoneDigits.slice(-11);
+        if (!cpfCnpjDigits || !(cpfCnpjDigits.length === 11 || cpfCnpjDigits.length === 14)) {
+            return res.status(400).json({ error: 'missing_cpf_cnpj', message: 'Informe CPF/CNPJ válido para pagar via Pix (ExPay).' });
+        }
+        if (!phoneDigits || phoneDigits.length < 10) {
+            return res.status(400).json({ error: 'missing_phone', message: 'Informe um telefone válido para pagar via Pix (ExPay).' });
+        }
+        const emailFallback = String(process.env.EXPAY_FALLBACK_EMAIL || 'no-reply@agenciaoppus.site').trim();
+        const invoice = {
+            invoice_id: invoiceIdNumeric,
+            invoice_description: sanitizeText(comment || 'Agência OPPUS - Checkout'),
+            total: totalStr,
+            devedor: sanitizeText(customerPayload.name || 'Cliente Checkout'),
+            email: sanitizeText(customerPayload.email || emailFallback),
+            cpf_cnpj: cpfCnpjDigits,
+            notification_url: webhookUrl,
+            telefone: phoneDigits,
+            items: [
+                {
+                    name: sanitizeText(`Serviço ${tipo || 'Instagram'}`),
+                    price: totalStr,
+                    description: sanitizeText(`${tipo || ''} ${String(qtd || 0)}`.trim() || 'Serviço'),
+                    qty: '1'
+                }
+            ]
+        };
+
+        const params = new URLSearchParams();
+        params.append('merchant_key', merchantKey);
+        params.append('currency_code', currencyCode);
+        params.append('invoice', JSON.stringify(invoice));
+
+        const axios = require('axios');
+        const resp = await axios.post(requestUrl, params.toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+            timeout: 20000,
+            validateStatus: () => true
+        });
+        const debugExpay = String(process.env.DEBUG_EXPAY || '').toLowerCase() === 'true';
+        const shouldLogExpay = debugExpay || ((resp && typeof resp.status === 'number' && resp.status >= 400));
+        if (shouldLogExpay) {
+            try {
+                const maskEmail = (email) => {
+                    const e = String(email || '').trim();
+                    const at = e.indexOf('@');
+                    if (at <= 1) return e ? '***' : '';
+                    return `${e[0]}***${e.slice(at)}`;
+                };
+                const maskDigits = (digits) => {
+                    const d = String(digits || '').replace(/\D/g, '');
+                    if (d.length <= 4) return d;
+                    return `${'*'.repeat(Math.max(0, d.length - 4))}${d.slice(-4)}`;
+                };
+                const preview = (function () {
+                    const d = resp && resp.data;
+                    if (d == null) return '';
+                    if (typeof d === 'string') return d.slice(0, 800);
+                    try { return JSON.stringify(d).slice(0, 800); } catch (_) { return String(d).slice(0, 800); }
+                })();
+                const invoiceDebug = {
+                    invoice_id: invoice && invoice.invoice_id,
+                    total: invoice && invoice.total,
+                    email: maskEmail(invoice && invoice.email),
+                    cpf_cnpj: maskDigits(invoice && invoice.cpf_cnpj),
+                    telefone: maskDigits(invoice && invoice.telefone),
+                    items_count: Array.isArray(invoice && invoice.items) ? invoice.items.length : 0
+                };
+                console.log('🧾 [expay] purchase/link response', {
+                    status: resp && resp.status,
+                    contentType: resp && resp.headers ? resp.headers['content-type'] : undefined,
+                    requestUrl,
+                    invoice_id: invoiceIdNumeric,
+                    total: totalStr,
+                    cpf_len: cpfCnpjDigits ? String(cpfCnpjDigits).length : 0,
+                    telefone_len: phoneDigits ? String(phoneDigits).length : 0,
+                    invoice: invoiceDebug,
+                    preview
+                });
+            } catch (_) {}
+        }
+
+        const parseMaybeJson = (x) => {
+            if (!x) return null;
+            if (typeof x === 'object') return x;
+            if (typeof x === 'string') {
+                const t = x.trim();
+                if (!t) return null;
+                try { return JSON.parse(t); } catch(_) { return { raw: t }; }
+            }
+            return { raw: String(x) };
+        };
+        const data = parseMaybeJson(resp && resp.data);
+
+        if (!resp || !(resp.status >= 200 && resp.status < 300)) {
+            const rawMsg = String((data && (data.message || data.error || data.status_message || data.statusMessage)) || '').trim();
+            const rawText = String((data && (data.raw || data.text)) || '').trim();
+            const detailText = rawMsg || rawText;
+            const statusCode = (resp && typeof resp.status === 'number') ? resp.status : null;
+            const msg = `ExPay HTTP ${statusCode || 'erro'}${detailText ? `: ${detailText.slice(0, 240)}` : ''}`;
+            if (!shouldLogExpay) {
+                try {
+                    const preview = (function () {
+                        if (!data) return '';
+                        if (typeof data === 'string') return data.slice(0, 800);
+                        try { return JSON.stringify(data).slice(0, 800); } catch (_) { return String(data).slice(0, 800); }
+                    })();
+                    console.log('🧾 [expay] purchase/link error', {
+                        status: statusCode,
+                        requestUrl,
+                        invoice_id: invoiceIdNumeric,
+                        total: totalStr,
+                        cpf_len: cpfCnpjDigits ? String(cpfCnpjDigits).length : 0,
+                        telefone_len: phoneDigits ? String(phoneDigits).length : 0,
+                        message: msg,
+                        preview
+                    });
+                } catch (_) {}
+            }
+            return res.status(502).json({
+                error: 'expay_error',
+                message: msg,
+                details: { status: statusCode, data: data || null }
+            });
+        }
+
+        const pick = (obj, keys) => {
+            for (const k of keys) {
+                const v = obj && typeof obj === 'object' ? obj[k] : undefined;
+                if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+            }
+            return null;
+        };
+        const root = data && data.data && typeof data.data === 'object' ? data.data : data;
+        const transactionIdRaw = pick(root, ['transaction_id', 'transactionId', 'invoice_id', 'invoiceId', 'id', 'txid', 'txId']);
+        const brCodeRaw = pick(root, ['br_code', 'brCode', 'pix_code', 'pixCode', 'brcode', 'code', 'copiaecola', 'copy_paste']);
+        const qrRaw = pick(root, ['qr_code_image', 'qrCodeImage', 'qr_code', 'qrCode', 'qrcode', 'qrcode_image', 'qr']);
+        const tx = transactionIdRaw ? String(transactionIdRaw).trim() : null;
+        const brCode = brCodeRaw ? String(brCodeRaw).trim() : null;
+        const qrCodeImage = qrRaw ? String(qrRaw).trim() : null;
+        const identifierVal = tx || chargeCorrelationID;
+        if (!brCode && !qrCodeImage) {
+            const rawMsg = String((data && (data.message || data.error || data.status_message || data.statusMessage || data.raw)) || '').trim();
+            return res.status(502).json({
+                error: 'expay_invalid_response',
+                message: rawMsg ? `ExPay: ${rawMsg}` : 'ExPay retornou uma resposta inválida ao emitir o Pix.',
+                details: { data: data || null }
+            });
+        }
+
+        const customerStored = (function () {
+            try {
+                const c = Object.assign({}, customerPayload);
+                delete c.cpf;
+                return c;
+            } catch (_) {
+                return { name: customerPayload.name, phone: customerPayload.phone, email: customerPayload.email };
+            }
+        })();
+        const record = {
+            nomeUsuario: null,
+            telefone: customerPayload.phone || '',
+            correlationID: chargeCorrelationID,
+            instauser: instauserFromClient,
+            profilePrivacy: { isPrivate: isPrivate, checkedAt: new Date().toISOString() },
+            isPrivate: isPrivate,
+            criado: new Date().toISOString(),
+            identifier: identifierVal,
+            status: 'pendente',
+            qtd,
+            tipo,
+            utms,
+            geolocation,
+            valueCents: finalChargeValue,
+            expectedValueCents: validatedPriceCents,
+            customer: customerStored,
+            additionalInfo: addInfoArr,
+            tipoServico: tipo,
+            quantidade: qtd,
+            instagramUsername: instauserFromClient,
+            slug,
+            userAgent,
+            ip,
+            createdAt: new Date().toISOString(),
+            expay: {
+                transactionId: tx,
+                invoiceId: invoiceIdNumeric,
+                brCode,
+                qrCodeImage,
+                status: 'pendente',
+                response: data || null
+            }
+        };
+
+        try {
+            const col = await getCollection('checkout_orders');
+            await col.insertOne(record);
+            Promise.resolve()
+                .then(() => sendOrderCreatedEmail({ record, insertedId: null }))
+                .catch(() => {});
+            Promise.resolve()
+                .then(() => sendPixOrderEmailToCustomer({ record }))
+                .catch(() => {});
+        } catch (_) {}
+
+        return res.status(200).json({
+            gateway: 'expay',
+            charge: {
+                id: tx,
+                chargeId: tx,
+                identifier: identifierVal,
+                correlationID: chargeCorrelationID,
+                status: 'pendente',
+                paymentMethods: { pix: { brCode, qrCodeImage } },
+                brCode,
+                qrCodeImage
+            },
+            raw: data || null
+        });
+    } catch (err) {
+        const details = err?.response?.data || { message: err?.message || String(err) };
+        const msg = String(
+            (Array.isArray(details?.errors) && details.errors[0] && details.errors[0].message ? details.errors[0].message : '') ||
+            details?.message || details?.error || err?.message || ''
+        ).trim() || 'Falha ao criar cobrança ExPay';
+        return res.status(500).json({ error: 'expay_exception', message: msg, details });
+    }
+});
+
+app.get('/api/expay/charge-status', async (req, res) => {
+    try {
+        const id = String(req.query.id || '').trim();
+        const identifier = String(req.query.identifier || '').trim();
+        const correlationID = String(req.query.correlationID || '').trim();
+        if (!id && !identifier && !correlationID) {
+            return res.status(400).json({ error: 'invalid_id', message: 'Informe ?id=<transactionId> ou ?identifier ou ?correlationID' });
+        }
+        const col = await getCollection('checkout_orders');
+        const conds = [];
+        const txId = id || identifier;
+        if (txId) {
+            conds.push({ 'expay.transactionId': txId });
+            conds.push({ identifier: txId });
+        }
+        if (correlationID) conds.push({ correlationID });
+        const filter = conds.length ? { $or: conds } : {};
+        const record = await col.findOne(filter);
+        if (!record) {
+            return res.status(404).json({ ok: false, error: 'not_found', message: 'Pedido não encontrado.' });
+        }
+
+        const status = String((record?.expay?.status || record?.status || 'pendente') || '').trim();
+        const statusLower = status.toLowerCase();
+        const paidFlag = /^(pago|paid|completed|success|approved)$/i.test(statusLower);
+        return res.json({
+            ok: true,
+            charge: { status, paid: !!paidFlag, valueCents: record?.valueCents ?? null },
+            identifier: record?.identifier || null,
+            correlationID: record?.correlationID || null,
+            raw: record?.expay?.statusPayload || null
+        });
+    } catch (err) {
+        const msg = err?.message || String(err);
+        return res.status(500).json({ error: 'expay_status_exception', message: msg });
+    }
+});
+
+app.post('/api/expay/webhook', async (req, res) => {
+    try {
+        let body = req.body || {};
+        if (typeof body === 'string') {
+            try { body = JSON.parse(body); } catch (_) { body = {}; }
+        }
+
+        const root = body && body.data && typeof body.data === 'object' ? body.data : body;
+        const txId = String(root.transaction_id || root.transactionId || root.invoice_id || root.invoiceId || root.id || root.txid || root.txId || '').trim();
+        const correlationID = String(root.correlation_id || root.correlationID || root.reference || root.ref || '').trim();
+        const statusRaw = String(root.status || root.transaction_status || root.payment_status || root.state || '').trim();
+        const statusLower = statusRaw.toLowerCase();
+        const paidFlag = (root.paid === true || root.is_paid === true) || /(paid|pago|completed|success|approved|confirm)/i.test(statusLower);
+
+        let paidValueCents = null;
+        try {
+            const cents = root.amount_cents || root.value_cents || root.valueCents;
+            if (typeof cents === 'number') paidValueCents = cents;
+            if (paidValueCents == null) {
+                const amount = root.amount || root.value;
+                const n = Number(amount);
+                if (Number.isFinite(n) && n > 0) paidValueCents = Math.round(n * 100);
+            }
+        } catch (_) {}
+
+        const col = await getCollection('checkout_orders');
+        const conds = [];
+        if (txId) {
+            conds.push({ 'expay.transactionId': txId });
+            conds.push({ identifier: txId });
+        }
+        if (correlationID) conds.push({ correlationID });
+        const filter = conds.length ? { $or: conds } : {};
+        const existingOrder = await col.findOne(filter);
+
+        const setFields = {
+            'expay.statusPayload': body || null,
+            'expay.status': paidFlag ? 'pago' : (statusLower || 'pendente'),
+        };
+        if (txId) setFields['expay.transactionId'] = txId;
+
+        if (paidFlag) {
+            setFields.status = 'pago';
+            setFields.paidAt = new Date().toISOString();
+            setFields['expay.paidAt'] = new Date().toISOString();
+        }
+
+        let isDivergent = false;
+        if (paidFlag && existingOrder) {
+            const expected = existingOrder.expectedValueCents;
+            if (expected && typeof paidValueCents === 'number' && paidValueCents !== expected) {
+                setFields.status = 'divergent_value';
+                setFields['expay.status'] = 'divergent_value';
+                setFields.mismatchDetails = { expected, paid: paidValueCents, detectedAt: new Date().toISOString() };
+                isDivergent = true;
+            }
+        }
+
+        if (existingOrder) {
+            await col.updateOne({ _id: existingOrder._id }, { $set: setFields });
+        } else if (conds.length) {
+            await col.updateOne(filter, { $set: setFields });
+        }
+
+        if (paidFlag && existingOrder && !isDivergent) {
+            try {
+                const record = await col.findOne({ _id: existingOrder._id });
+                await processOrderFulfillment(record, col, req);
+            } catch (_) {}
+            try { await broadcastPaymentPaid(existingOrder?.identifier, existingOrder?.correlationID); } catch (_) {}
+        }
+
+        return res.status(200).json({ ok: true });
+    } catch (_) {
+        return res.status(200).json({ ok: true });
+    }
+});
+
 const maybeSendPaymentApprovedEmail = async (record, col) => {
     try {
         if (!record || !col || !record._id) return;
@@ -6124,6 +6843,8 @@ const maybeSendPaymentApprovedEmail = async (record, col) => {
             const wst = String(record?.woovi?.status || '').toLowerCase();
             if (st === 'pago' || wst === 'pago') return true;
             if (record?.paidAt || record?.woovi?.paidAt || record?.payment?.paidAt) return true;
+            const xst = String(record?.expay?.status || '').toLowerCase();
+            if (xst === 'pago' || xst === 'paid' || xst === 'completed') return true;
             const efiSt = String(record?.efi?.status || '').toLowerCase();
             if (efiSt === 'paid' || efiSt === 'settled') return true;
             const pgSt = String(record?.pagarme?.status || '').toLowerCase();
@@ -6247,11 +6968,40 @@ async function processOrderFulfillment(record, col, req) {
     const key = process.env.FAMA24H_API_KEY || '';
     const arrPaid = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
     const arrOrig = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
-    const additionalInfoMap = (arrPaid.length ? arrPaid : arrOrig).reduce((acc, it) => {
+    const buildAddMap = (arr) => (Array.isArray(arr) ? arr : []).reduce((acc, it) => {
         const k = String(it?.key || '').trim();
-        if (k) acc[k] = String(it?.value || '').trim();
+        if (k) acc[k] = String(it?.value ?? '').trim();
         return acc;
     }, {});
+    const mapPaidObj = (record?.additionalInfoMapPaid && typeof record.additionalInfoMapPaid === 'object') ? record.additionalInfoMapPaid : {};
+    const mapOrigObj = (record?.additionalInfoMap && typeof record.additionalInfoMap === 'object') ? record.additionalInfoMap : {};
+    const additionalInfoMap = { ...buildAddMap(arrOrig), ...mapOrigObj, ...buildAddMap(arrPaid), ...mapPaidObj };
+    const sanitizeIgLink = (s) => {
+        let v = String(s || '').replace(/[`\s]/g, '').trim();
+        if (!v) return '';
+        if (!/^https?:\/\//i.test(v)) {
+            if (/^www\./i.test(v)) v = `https://${v}`;
+            else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+            else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+        }
+        v = v.split('#')[0].split('?')[0];
+        const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+        if (!m) return '';
+        const kind = String(m[2] || '').toLowerCase();
+        let code = String(m[3] || '');
+        if (!kind || !code) return '';
+        if (code.length > 15) code = code.slice(0, 11);
+        return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
+    };
+    const parseIgLinksList = (raw) => {
+        const str = String(raw || '').replace(/`/g, '').trim();
+        if (!str) return [];
+        const parts = str.split(',').map(s => sanitizeIgLink(s)).filter(Boolean);
+        const uniq = [];
+        parts.forEach((u) => { if (!uniq.includes(u)) uniq.push(u); });
+        return uniq;
+    };
+    const basePostLinks = parseIgLinksList(additionalInfoMap['post_links'] || '');
     const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
     const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
     const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
@@ -6390,6 +7140,91 @@ async function processOrderFulfillment(record, col, req) {
                     await col.updateOne(filter, { $unset: { fama24h: '' } });
                 }
             } else {
+                const multiLinks = (isViewsBase || isCurtidasBase) ? basePostLinks : [];
+                if (multiLinks.length > 1) {
+                    const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
+                    const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();
+                    const eachNum = parseInt(splitEachRaw.replace(/[^\d]/g, ''), 10);
+                    const extraNum = parseInt(splitExtraRaw.replace(/[^\d]/g, ''), 10);
+                    const n = multiLinks.length;
+                    const plan = [];
+                    if (n > 1 && Number.isFinite(qtd) && qtd > 0) {
+                        const each = Number.isFinite(eachNum) && eachNum > 0 ? eachNum : null;
+                        const extra = Number.isFinite(extraNum) && extraNum >= 0 ? extraNum : null;
+                        if (each && extra != null && (each * n - qtd) === extra && extra < n) {
+                            for (let i = 0; i < n; i++) {
+                                const q = Math.max(0, each - (extra > 0 && i >= (n - extra) ? 1 : 0));
+                                plan.push({ link: multiLinks[i], quantity: q });
+                            }
+                        } else {
+                            const base = Math.floor(qtd / n);
+                            const rem = qtd % n;
+                            for (let i = 0; i < n; i++) {
+                                const q = Math.max(0, base + (i < rem ? 1 : 0));
+                                plan.push({ link: multiLinks[i], quantity: q });
+                            }
+                        }
+                    }
+                    const planFiltered = plan.filter(p => p && p.quantity > 0 && p.link);
+                    const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+                    const existingOrders = Array.isArray(record?.fama24h_multi?.orders) ? record.fama24h_multi.orders : [];
+                    const allDone = existingOrders.length >= planFiltered.length && existingOrders.every(o => o && (o.orderId || o.status === 'duplicate'));
+                    if (allDone) return;
+
+                    const retryAfterIso = new Date(Date.now() - (25 * 1000)).toISOString();
+                    const lockUpdateMulti = await col.updateOne(
+                        {
+                            _id: record._id,
+                            'fama24h.orderId': { $exists: false },
+                            $or: [
+                                { 'fama24h_multi.status': { $exists: false } },
+                                { 'fama24h_multi.status': { $ne: 'processing' } },
+                                { 'fama24h_multi.attemptedAt': { $lt: retryAfterIso } },
+                                { 'fama24h_multi.attemptedAt': { $exists: false } }
+                            ]
+                        },
+                        {
+                            $set: {
+                                'fama24h_multi.status': 'processing',
+                                'fama24h_multi.attemptedAt': new Date().toISOString(),
+                                'fama24h_multi.requestPayload': { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
+                                'fama24h_multi.requestedAt': new Date().toISOString()
+                            }
+                        }
+                    );
+                    if (lockUpdateMulti.modifiedCount > 0) {
+                        const orders = [];
+                        for (const it of planFiltered) {
+                            const rawLink = it && it.link;
+                            const qtyForPost = Number(it && it.quantity) || 0;
+                            const linkForFama = sanitizeIgLink(rawLink);
+                            if (!linkForFama) {
+                                orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                                continue;
+                            }
+                            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyForPost) });
+                            try {
+                                const famaResp = await postFormWithRetry('https://fama24h.net/api/v2', payload.toString(), 25000, 3);
+                                const famaData = normalizeProviderResponseData(famaResp.data);
+                                const orderId = extractProviderOrderId(famaData);
+                                const hasErr = !!(famaData && (famaData.error || famaData.errors));
+                                const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
+                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                            } catch (err) {
+                                const errVal = err?.response?.data || err?.message || String(err);
+                                const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                            }
+                        }
+                        const createdCount = orders.filter(o => o && o.orderId).length;
+                        const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                        const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                        await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+                    }
+                    return;
+                }
                 const lockUpdate = await col.updateOne(
                     { 
                         _id: record._id, 
@@ -6533,6 +7368,60 @@ async function processOrderFulfillment(record, col, req) {
             if (code.length > 15) code = code.slice(0, 11);
             return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
         };
+        const multiLinks = basePostLinks;
+        if (multiLinks.length > 1) {
+            const perPostQty = multiLinks.length ? Math.ceil(qtd / multiLinks.length) : qtd;
+            const totalSent = perPostQty * multiLinks.length;
+            const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
+            const lockUpdateMulti = await col.updateOne(
+                {
+                    _id: record._id,
+                    $or: [
+                        { 'fornecedor_social_multi.status': { $exists: false } },
+                        { 'fornecedor_social_multi.status': { $ne: 'processing' } },
+                        { 'fornecedor_social_multi.attemptedAt': { $lt: retryAfterIso } },
+                        { 'fornecedor_social_multi.attemptedAt': { $exists: false } }
+                    ]
+                },
+                {
+                    $set: {
+                        'fornecedor_social_multi.status': 'processing',
+                        'fornecedor_social_multi.attemptedAt': new Date().toISOString(),
+                        'fornecedor_social_multi.requestPayload': { service: serviceFS, links: multiLinks, quantityPerPost: perPostQty, totalQuantity: qtd, totalQuantitySent: totalSent },
+                        'fornecedor_social_multi.requestedAt': new Date().toISOString()
+                    }
+                }
+            );
+            if (lockUpdateMulti.modifiedCount > 0) {
+                const axios = require('axios');
+                const orders = [];
+                for (const rawLink of multiLinks) {
+                    const linkFS = sanitizeLink(rawLink);
+                    if (!linkFS) {
+                        orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: perPostQty });
+                        continue;
+                    }
+                    const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(linkFS), quantity: String(perPostQty) });
+                    try {
+                        const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                        const dataFS = normalizeProviderResponseData(respFS.data);
+                        const orderIdFS = extractProviderOrderId(dataFS);
+                        const providerErrFS = (dataFS && (dataFS.error || (dataFS.data && dataFS.data.error) || (dataFS.response && dataFS.response.error))) || null;
+                        const st = orderIdFS ? 'created' : (providerErrFS ? 'error' : 'unknown');
+                        orders.push({ link: linkFS, quantity: perPostQty, orderId: orderIdFS || null, status: st, response: dataFS });
+                    } catch (err) {
+                        const errVal = err?.response?.data || err?.message || String(err);
+                        const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        orders.push({ link: linkFS, quantity: perPostQty, orderId: null, status: st, error: errVal });
+                    }
+                }
+                const createdCount = orders.filter(o => o && o.orderId).length;
+                const overall = createdCount === orders.length ? 'created' : (createdCount > 0 ? 'partial' : 'error');
+                await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, links: multiLinks, quantityPerPost: perPostQty, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+            }
+            return;
+        }
         const sanitizedLink = sanitizeLink(linkToSend);
         const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0;
         
@@ -7103,10 +7992,18 @@ app.get('/api/order/provider-status', async (req, res) => {
     const maybeNum = Number(idRaw);
     if (!Number.isNaN(maybeNum)) {
       filter.$or.push({ 'fama24h.orderId': maybeNum });
+      filter.$or.push({ 'fama24h_multi.orders.orderId': maybeNum });
+      filter.$or.push({ 'fama24h_multi.orders.id': maybeNum });
       filter.$or.push({ 'fornecedor_social.orderId': maybeNum });
+      filter.$or.push({ 'fornecedor_social_multi.orders.orderId': maybeNum });
+      filter.$or.push({ 'fornecedor_social_multi.orders.id': maybeNum });
     }
     filter.$or.push({ 'fama24h.orderId': idRaw });
+    filter.$or.push({ 'fama24h_multi.orders.orderId': idRaw });
+    filter.$or.push({ 'fama24h_multi.orders.id': idRaw });
     filter.$or.push({ 'fornecedor_social.orderId': idRaw });
+    filter.$or.push({ 'fornecedor_social_multi.orders.orderId': idRaw });
+    filter.$or.push({ 'fornecedor_social_multi.orders.id': idRaw });
     filter.$or.push({ identifier: idRaw });
     filter.$or.push({ 'woovi.identifier': idRaw });
     filter.$or.push({ correlationID: idRaw });
@@ -7115,11 +8012,46 @@ app.get('/api/order/provider-status', async (req, res) => {
     }
     const doc = await col.findOne(filter.$or.length ? filter : { identifier: idRaw });
     if (!doc) return res.status(404).json({ ok: false, error: 'order_not_found' });
-    const famaId = doc?.fama24h?.orderId || null;
-    const fsId = doc?.fornecedor_social?.orderId || null;
+    const famaMultiOrders = (doc && doc.fama24h_multi && Array.isArray(doc.fama24h_multi.orders)) ? doc.fama24h_multi.orders : [];
+    const fsMultiOrders = (doc && doc.fornecedor_social_multi && Array.isArray(doc.fornecedor_social_multi.orders)) ? doc.fornecedor_social_multi.orders : [];
+    const hasNum = !Number.isNaN(maybeNum);
+    const matchesId = (v) => {
+      if (v === null || v === undefined) return false;
+      const s = String(v).trim();
+      if (!s) return false;
+      if (s === idRaw) return true;
+      if (hasNum && typeof v === 'number' && v === maybeNum) return true;
+      if (hasNum && s === String(maybeNum)) return true;
+      return false;
+    };
+    const hasFamaDirect = matchesId(doc?.fama24h?.orderId);
+    const hasFamaInMulti = famaMultiOrders.some((it) => matchesId(it && (it.orderId ?? it.id)));
+    const hasFsDirect = matchesId(doc?.fornecedor_social?.orderId);
+    const hasFsInMulti = fsMultiOrders.some((it) => matchesId(it && (it.orderId ?? it.id)));
+    const targetProvider = hasFsDirect || hasFsInMulti ? 'fornecedor_social' : ((hasFamaDirect || hasFamaInMulti) ? 'fama24h' : '');
+    const targetOrderParam = targetProvider ? idRaw : '';
+
+    const famaMultiId = (function () {
+      for (let i = 0; i < famaMultiOrders.length; i++) {
+        const v = famaMultiOrders[i] && (famaMultiOrders[i].orderId ?? famaMultiOrders[i].id);
+        if (v !== null && v !== undefined && String(v).trim()) return v;
+      }
+      return null;
+    })();
+    const fsMultiId = (function () {
+      for (let i = 0; i < fsMultiOrders.length; i++) {
+        const v = fsMultiOrders[i] && (fsMultiOrders[i].orderId ?? fsMultiOrders[i].id);
+        if (v !== null && v !== undefined && String(v).trim()) return v;
+      }
+      return null;
+    })();
+    const famaId = doc?.fama24h?.orderId || famaMultiId || null;
+    const fsId = doc?.fornecedor_social?.orderId || fsMultiId || null;
+
     let provider = '';
     let orderParam = '';
-    if (famaId) { provider = 'fama24h'; orderParam = String(famaId); }
+    if (targetProvider && targetOrderParam) { provider = targetProvider; orderParam = String(targetOrderParam); }
+    else if (famaId) { provider = 'fama24h'; orderParam = String(famaId); }
     else if (fsId) { provider = 'fornecedor_social'; orderParam = String(fsId); }
     else {
       const safeErrCode = (e) => {
@@ -7161,7 +8093,23 @@ app.get('/api/order/provider-status', async (req, res) => {
     }
     try { console.log('🛰️ [provider-status] resolved', { provider, orderParam, _id: String(doc._id) }); } catch(_) {}
     const getText = (obj) => String(obj?.status || obj?.Status || obj?.status_text || obj?.statusText || obj?.StatusText || '').toLowerCase();
-    const persisted = provider === 'fama24h' ? (doc?.fama24h?.statusPayload || null) : (doc?.fornecedor_social?.statusPayload || null);
+    const persisted = (function(){
+      if (provider === 'fama24h') {
+        if (hasFamaInMulti && orderParam) {
+          const found = famaMultiOrders.find((it) => matchesId(it && (it.orderId ?? it.id)));
+          return (found && found.statusPayload) ? found.statusPayload : null;
+        }
+        return doc?.fama24h?.statusPayload || null;
+      }
+      if (provider === 'fornecedor_social') {
+        if (hasFsInMulti && orderParam) {
+          const found = fsMultiOrders.find((it) => matchesId(it && (it.orderId ?? it.id)));
+          return (found && found.statusPayload) ? found.statusPayload : null;
+        }
+        return doc?.fornecedor_social?.statusPayload || null;
+      }
+      return null;
+    })();
     const t = getText(persisted);
     const isFinal = /cancel/.test(t) || /complete|success|finished|done|conclu/.test(t);
     if (persisted && isFinal) {
@@ -7185,9 +8133,35 @@ app.get('/api/order/provider-status', async (req, res) => {
     else if (/process|progress|start|running/.test(txt)) normalized = 'processing';
     else if (/complete|success|finished|done|conclu/.test(txt)) normalized = 'completed';
     if (provider === 'fama24h') {
-      await col.updateOne({ _id: doc._id }, { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || doc?.fama24h?.status || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } });
+      if (hasFamaInMulti && orderParam) {
+        const oidVals = [String(orderParam)];
+        if (hasNum) {
+          oidVals.push(String(maybeNum));
+          oidVals.push(maybeNum);
+        }
+        await col.updateOne(
+          { _id: doc._id },
+          { $set: { 'fama24h_multi.orders.$[o].statusPayload': data, 'fama24h_multi.orders.$[o].status': normalized || 'unknown', 'fama24h_multi.orders.$[o].lastStatusAt': new Date().toISOString() } },
+          { arrayFilters: [{ $or: [{ 'o.orderId': { $in: oidVals } }, { 'o.id': { $in: oidVals } }] }] }
+        );
+      } else {
+        await col.updateOne({ _id: doc._id }, { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || doc?.fama24h?.status || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } });
+      }
     } else {
-      await col.updateOne({ _id: doc._id }, { $set: { 'fornecedor_social.statusPayload': data, 'fornecedor_social.status': normalized || doc?.fornecedor_social?.status || 'unknown', 'fornecedor_social.lastStatusAt': new Date().toISOString() } });
+      if (hasFsInMulti && orderParam) {
+        const oidVals = [String(orderParam)];
+        if (hasNum) {
+          oidVals.push(String(maybeNum));
+          oidVals.push(maybeNum);
+        }
+        await col.updateOne(
+          { _id: doc._id },
+          { $set: { 'fornecedor_social_multi.orders.$[o].statusPayload': data, 'fornecedor_social_multi.orders.$[o].status': normalized || 'unknown', 'fornecedor_social_multi.orders.$[o].lastStatusAt': new Date().toISOString() } },
+          { arrayFilters: [{ $or: [{ 'o.orderId': { $in: oidVals } }, { 'o.id': { $in: oidVals } }] }] }
+        );
+      } else {
+        await col.updateOne({ _id: doc._id }, { $set: { 'fornecedor_social.statusPayload': data, 'fornecedor_social.status': normalized || doc?.fornecedor_social?.status || 'unknown', 'fornecedor_social.lastStatusAt': new Date().toISOString() } });
+      }
     }
     try { console.log('🛰️ [provider-status] stored', { normalized }); } catch(_) {}
     return res.json({ ok: true, provider, data });
@@ -7204,7 +8178,8 @@ app.get('/:slug', async (req, res, next) => {
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
     if (slug === 'checkout') {
         return res.render('checkout', { 
-            PIXEL_ID: process.env.PIXEL_ID || ''
+            PIXEL_ID: process.env.PIXEL_ID || '',
+            EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
         });
     }
     if (slug === 'engajamento') {
@@ -9850,6 +10825,8 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     if (id) {
         conds.push({ 'woovi.chargeId': id });
         conds.push({ 'woovi.id': id });
+        conds.push({ 'expay.transactionId': id });
+        conds.push({ 'expay.id': id });
         // Try as ObjectId if valid
         if (/^[0-9a-fA-F]{24}$/.test(id)) {
             const { ObjectId } = require('mongodb');
@@ -9858,17 +10835,22 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     }
     if (identifier) { 
         conds.push({ 'woovi.identifier': identifier }); 
+        conds.push({ 'expay.transactionId': identifier });
+        conds.push({ 'expay.identifier': identifier });
         conds.push({ identifier: identifier }); 
     }
     if (correlationID) conds.push({ correlationID });
     
     const filter = conds.length ? { $or: conds } : {};
-    const doc = await col.findOne(filter, { projection: { status: 1, woovi: 1 } });
+    const doc = await col.findOne(filter, { projection: { status: 1, woovi: 1, expay: 1 } });
     
     const paid = !!doc && (
         String(doc.status).toLowerCase() === 'pago' || 
         String(doc.woovi?.status || '').toLowerCase() === 'pago' ||
-        String(doc.woovi?.status || '').toLowerCase() === 'completed'
+        String(doc.woovi?.status || '').toLowerCase() === 'completed' ||
+        String(doc.expay?.status || '').toLowerCase() === 'pago' ||
+        String(doc.expay?.status || '').toLowerCase() === 'paid' ||
+        String(doc.expay?.status || '').toLowerCase() === 'completed'
     );
     
     return res.json({ ok: true, paid, order: doc || null });
@@ -9893,20 +10875,23 @@ app.get('/pedido', async (req, res) => {
     // 1) Se houver parâmetros na URL, priorizar sempre a busca por eles
     if (hasQuery) {
       const conds = [];
-      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ 'expay.transactionId': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
       if (sessionId) { conds.push({ 'stripe.checkout_session_id': sessionId }); conds.push({ identifier: sessionId }); }
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
         if (!Number.isNaN(maybeNum)) {
           conds.push({ 'fama24h.orderId': maybeNum });
+          conds.push({ 'fama24h_multi.orders.orderId': maybeNum });
           conds.push({ 'fornecedor_social.orderId': maybeNum });
         }
         conds.push({ 'fama24h.orderId': orderIDRaw });
+        conds.push({ 'fama24h_multi.orders.orderId': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
         // Support woovi.chargeId
         conds.push({ 'woovi.chargeId': orderIDRaw });
         conds.push({ 'woovi.id': orderIDRaw });
+        conds.push({ 'expay.transactionId': orderIDRaw });
         
         const { ObjectId } = require('mongodb');
         if (/^[0-9a-fA-F]{24}$/.test(orderIDRaw)) {
@@ -9928,7 +10913,7 @@ app.get('/pedido', async (req, res) => {
     if (!doc && req.session && req.session.selectedOrderID) {
       const soid = req.session.selectedOrderID;
       const { ObjectId } = require('mongodb');
-      const orConds = [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ];
+      const orConds = [ { 'fama24h.orderId': soid }, { 'fama24h_multi.orders.orderId': soid }, { 'fornecedor_social.orderId': soid } ];
       if (typeof soid === 'string' && /^[0-9a-fA-F]{24}$/.test(soid)) {
         try { orConds.push({ _id: new ObjectId(soid) }); } catch(_) {}
       }
@@ -9942,12 +10927,12 @@ app.get('/pedido', async (req, res) => {
         const lpId = String(req.session.lastPaidIdentifier || '').trim();
         const lpCorr = String(req.session.lastPaidCorrelationID || '').trim();
         const firstConds = [];
-        if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ identifier: lpId }); }
+        if (lpId) { firstConds.push({ 'woovi.identifier': lpId }); firstConds.push({ 'expay.transactionId': lpId }); firstConds.push({ identifier: lpId }); }
         if (lpCorr) firstConds.push({ correlationID: lpCorr });
         if (firstConds.length) {
-          const paidFilter = { $and: [ { $or: firstConds }, { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' } ] } ] };
+          const paidFilter = { $and: [ { $or: firstConds }, { $or: [ { status: 'pago' }, { 'woovi.status': 'pago' }, { 'expay.status': 'pago' } ] } ] };
           try {
-            const arr = await col.find(paidFilter).sort({ 'woovi.paidAt': -1, paidAt: -1 }).limit(1).toArray();
+            const arr = await col.find(paidFilter).sort({ 'woovi.paidAt': -1, 'expay.paidAt': -1, paidAt: -1 }).limit(1).toArray();
             doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
           } catch (_) {
             doc = await col.findOne({ $or: firstConds });
@@ -10131,7 +11116,7 @@ app.get('/api/instagram/posts', async (req, res) => {
           const lastCheck = cachedDoc.checkedAt || cachedDoc.lastPostsAt;
           const isFresh = lastCheck && (Date.now() - new Date(lastCheck).getTime() < 3600000); // 1h
           
-          if (isFresh) {
+          if (isFresh && cachedDoc.latestPosts.length >= 12) {
                console.log('[API] Retornando posts do banco (validated_insta_users)');
                return res.json({ success: true, username, posts: cachedDoc.latestPosts });
           }
@@ -10151,6 +11136,13 @@ app.get('/api/instagram/posts', async (req, res) => {
       // Reduzir timeout implícito na chamada se possível ou assumir que fetchInstagramRecentPosts foi otimizado
       const result = await fetchInstagramRecentPosts(username);
       if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
+        try {
+          const vu2 = await getCollection('validated_insta_users');
+          await vu2.updateOne(
+            { username },
+            { $set: { latestPosts: result.posts, lastPostsAt: new Date().toISOString() } }
+          );
+        } catch (_) {}
         if (debugInsert) return res.json(Object.assign({}, result, { debugInsert: debugInfo }));
         return res.json(result);
       }
@@ -10205,7 +11197,14 @@ app.get('/api/instagram/posts', async (req, res) => {
       console.log('[API] tentando fallback HTML');
       const basic = await fetchInstagramPosts(username);
       if (basic && basic.success && Array.isArray(basic.posts) && basic.posts.length) {
-        const posts = basic.posts.slice(0, 8).map(sc => ({ shortcode: sc, takenAt: null, isVideo: false, displayUrl: null, videoUrl: null }));
+        const posts = basic.posts.slice(0, 12).map(sc => ({ shortcode: sc, takenAt: null, isVideo: false, displayUrl: null, videoUrl: null }));
+        try {
+          const vu2 = await getCollection('validated_insta_users');
+          await vu2.updateOne(
+            { username },
+            { $set: { latestPosts: posts, lastPostsAt: new Date().toISOString() } }
+          );
+        } catch (_) {}
         return res.json({ success: true, username, posts, debugInsert: debugInsert ? debugInfo : undefined });
       }
     } catch (e2) { /* sem fallback */ }
@@ -10247,11 +11246,45 @@ app.post('/api/instagram/select-post-for', async (req, res) => {
     const username = String((req.body && req.body.username) || '').trim();
     const shortcode = String((req.body && req.body.shortcode) || '').trim();
     const kind = String((req.body && req.body.kind) || '').trim();
-    if (!shortcode) { return res.status(400).json({ success: false, error: 'missing_shortcode' }); }
+    const mode = String((req.body && req.body.mode) || '').trim().toLowerCase();
     if (!kind) { return res.status(400).json({ success: false, error: 'missing_kind' }); }
+    if (!shortcode && mode !== 'remove') { return res.status(400).json({ success: false, error: 'missing_shortcode' }); }
     const link = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`;
     if (!req.session.selectedFor) req.session.selectedFor = {};
-    req.session.selectedFor[kind] = { username, shortcode, link, savedAt: new Date().toISOString() };
+    const prevObj = req.session.selectedFor[kind] || {};
+    const prevList = Array.isArray(prevObj.shortcodes) ? prevObj.shortcodes : (prevObj.shortcode ? [prevObj.shortcode] : []);
+    const replace = mode !== 'append';
+    if (mode === 'remove') {
+      const nextList = prevList.filter(x => x !== shortcode);
+      if (!nextList.length) {
+        if (req.session.selectedFor[kind]) delete req.session.selectedFor[kind];
+      } else {
+        req.session.selectedFor[kind] = {
+          username: username || prevObj.username || '',
+          shortcodes: nextList,
+          shortcode: nextList[0] || '',
+          link: nextList[0] ? `https://www.instagram.com/p/${encodeURIComponent(nextList[0])}/` : '',
+          savedAt: new Date().toISOString()
+        };
+      }
+      req.session.selectedPosts = Array.isArray(req.session.selectedPosts) ? req.session.selectedPosts : [];
+      req.session.selectedPosts = req.session.selectedPosts.filter(p => p && p.shortcode !== shortcode);
+      return res.json({ success: true, selectedFor: req.session.selectedFor });
+    }
+    const nextList = replace ? [shortcode] : (prevList.includes(shortcode) ? prevList : prevList.concat([shortcode]));
+    req.session.selectedFor[kind] = {
+      username: username || prevObj.username || '',
+      shortcodes: nextList,
+      shortcode: nextList[0] || shortcode,
+      link,
+      savedAt: new Date().toISOString()
+    };
+    req.session.selectedPosts = Array.isArray(req.session.selectedPosts) ? req.session.selectedPosts : [];
+    nextList.forEach((code) => {
+      if (!req.session.selectedPosts.find(p => p.shortcode === code)) {
+        req.session.selectedPosts.push({ shortcode: code, username });
+      }
+    });
     return res.json({ success: true, selected: req.session.selectedFor[kind], selectedFor: req.session.selectedFor });
   } catch (e) {
     return res.status(500).json({ success: false, error: e?.message || String(e) });
@@ -10335,7 +11368,22 @@ app.post('/session/mark-paid', async (req, res) => {
         const record = await col.findOne(filter);
         if (!record) return;
         try { console.log('🧩 [mark-paid] record_found', { identifier, correlationID, orderId: String(record?._id || '') }); } catch(_) {}
-        const additionalInfoMap = record.additionalInfoMapPaid || (Array.isArray(record.additionalInfoPaid) ? record.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {});
+        const buildAddMap = (arr) => (Array.isArray(arr) ? arr : []).reduce((acc, it) => { const k = String(it?.key || '').trim(); if (k) acc[k] = String(it?.value ?? '').trim(); return acc; }, {});
+        const additionalInfoMapPaid = (record?.additionalInfoMapPaid && typeof record.additionalInfoMapPaid === 'object') ? record.additionalInfoMapPaid : buildAddMap(record?.additionalInfoPaid);
+        const additionalInfoMapOrig = (record?.additionalInfoMap && typeof record.additionalInfoMap === 'object') ? record.additionalInfoMap : buildAddMap(record?.additionalInfo);
+        const additionalInfoMap = { ...additionalInfoMapOrig, ...additionalInfoMapPaid };
+
+        const nowIsoPaid = new Date().toISOString();
+        try {
+          await col.updateOne(
+            { _id: record._id },
+            { $set: { status: 'pago', paidAt: record?.paidAt || nowIsoPaid, 'woovi.status': 'pago', 'woovi.paidAt': (record?.woovi?.paidAt || nowIsoPaid) } }
+          );
+        } catch (_) {}
+        try {
+          const recordForEmail = { ...record, status: 'pago', paidAt: record?.paidAt || nowIsoPaid, woovi: { ...(record?.woovi || {}), status: 'pago', paidAt: (record?.woovi?.paidAt || nowIsoPaid) } };
+          await maybeSendPaymentApprovedEmail(recordForEmail, col);
+        } catch (_) {}
         const tipo = record.tipoServico || record.tipo || additionalInfoMap['tipo_servico'] || '';
         const qtdBase = Number(record.quantidade || record.qtd || additionalInfoMap['quantidade'] || 0) || 0;
         const instaUserRaw = additionalInfoMap['instagram_username'] || record.instagramUsername || record.instauser || '';
@@ -10365,6 +11413,14 @@ app.post('/session/mark-paid', async (req, res) => {
           if (!kind || !code) return '';
           if (code.length > 15) code = code.slice(0, 11);
           return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
+        };
+        const parseIgLinksList = (raw) => {
+          const str = String(raw || '').replace(/`/g, '').trim();
+          if (!str) return [];
+          const parts = str.split(',').map(s => sanitizeIgPostLink(s)).filter(Boolean);
+          const uniq = [];
+          parts.forEach((u) => { if (!uniq.includes(u)) uniq.push(u); });
+          return uniq;
         };
         let upgradeAdd = 0;
         if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
@@ -10453,6 +11509,7 @@ app.post('/session/mark-paid', async (req, res) => {
             else if (/^brasileiros$/i.test(tipo)) serviceId = 23;
           }
 
+          const basePostLinks = (isViewsBase || isCurtidasBase) ? parseIgLinksList(additionalInfoMap['post_links'] || '') : [];
           let linkForFama = '';
           if (isViewsBase) {
             const selectedForViews = (req.session && req.session.selectedFor && req.session.selectedFor.views && req.session.selectedFor.views.link) ? String(req.session.selectedFor.views.link) : '';
@@ -10471,6 +11528,76 @@ app.post('/session/mark-paid', async (req, res) => {
             await col.updateOne(filter, { $set: { 'fama24h.status': 'missing_key', 'fama24h.error': { code: 'missing_key' }, 'fama24h.requestedAt': new Date().toISOString() } });
           } else if (!serviceId) {
             await col.updateOne(filter, { $set: { 'fama24h.status': 'missing_service', 'fama24h.error': { code: 'missing_service' }, 'fama24h.requestedAt': new Date().toISOString() } });
+          } else if ((isViewsBase || isCurtidasBase) && basePostLinks.length > 1 && qtd > 0) {
+            const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
+            const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();
+            const eachNum = parseInt(splitEachRaw.replace(/[^\d]/g, ''), 10);
+            const extraNum = parseInt(splitExtraRaw.replace(/[^\d]/g, ''), 10);
+            const n = basePostLinks.length;
+            const plan = [];
+            if (n > 1) {
+              const each = Number.isFinite(eachNum) && eachNum > 0 ? eachNum : null;
+              const extra = Number.isFinite(extraNum) && extraNum >= 0 ? extraNum : null;
+              if (each && extra != null && (each * n - qtd) === extra && extra < n) {
+                for (let i = 0; i < n; i++) {
+                  const q = Math.max(0, each - (extra > 0 && i >= (n - extra) ? 1 : 0));
+                  plan.push({ link: basePostLinks[i], quantity: q });
+                }
+              } else {
+                const base = Math.floor(qtd / n);
+                const rem = qtd % n;
+                for (let i = 0; i < n; i++) {
+                  const q = Math.max(0, base + (i < rem ? 1 : 0));
+                  plan.push({ link: basePostLinks[i], quantity: q });
+                }
+              }
+            }
+            const planFiltered = plan.filter(p => p && p.quantity > 0 && p.link);
+            const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+            if (!planFiltered.length) {
+              await col.updateOne(filter, { $set: { 'fama24h.status': 'invalid_link', 'fama24h.error': { code: 'invalid_link' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkForFama || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
+            } else {
+              const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
+              const lockUpdateMulti = await col.updateOne(
+                {
+                  _id: record._id,
+                  'fama24h.orderId': { $exists: false },
+                  $or: [ { 'fama24h_multi.status': { $exists: false } }, { 'fama24h_multi.status': { $ne: 'processing' } }, { 'fama24h_multi.attemptedAt': { $lt: retryAfterIso } }, { 'fama24h_multi.attemptedAt': { $exists: false } } ]
+                },
+                { $set: { 'fama24h_multi.status': 'processing', 'fama24h_multi.attemptedAt': new Date().toISOString(), 'fama24h_multi.requestPayload': { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, 'fama24h_multi.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_multi.error': '' } }
+              );
+              if (lockUpdateMulti.modifiedCount > 0) {
+                const orders = [];
+                for (const it of planFiltered) {
+                  const rawLink = it && it.link;
+                  const qtyForPost = Number(it && it.quantity) || 0;
+                  const link = sanitizeIgPostLink(rawLink);
+                  if (!link) {
+                    orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                    continue;
+                  }
+                  const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(link), quantity: String(qtyForPost) });
+                  try {
+                    const famaResp = await postFormWithRetry('https://fama24h.net/api/v2', payload.toString(), 20000, 3);
+                    const famaData = normalizeProviderResponseData(famaResp.data);
+                    const orderId = extractProviderOrderId(famaData);
+                    const hasErr = !!(famaData && (famaData.error || famaData.errors));
+                    const st = orderId ? 'created' : (hasErr ? 'error' : 'unknown');
+                    orders.push({ link, quantity: qtyForPost, orderId: orderId || null, status: st, response: famaData });
+                  } catch (err) {
+                    const errVal = err?.response?.data || err?.message || String(err);
+                    const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                    orders.push({ link, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                  }
+                }
+                const createdCount = orders.filter(o => o && o.orderId).length;
+                const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+              }
+            }
           } else if (!linkForFama || qtd <= 0) {
             await col.updateOne(filter, { $set: { 'fama24h.status': 'invalid_link', 'fama24h.error': { code: 'invalid_link' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkForFama || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
           } else {
@@ -10806,19 +11933,32 @@ app.get('/api/order', async (req, res) => {
          // Also check woovi.chargeId if id provided
          try { doc = await col.findOne({ 'woovi.chargeId': id }); } catch(_) {}
          if (!doc) try { doc = await col.findOne({ 'woovi.id': id }); } catch(_) {}
+         if (!doc) try { doc = await col.findOne({ 'expay.transactionId': id }); } catch(_) {}
       }
     }
     if (!doc) {
       const hasQuery = !!(identifier || correlationID || orderIDRaw || phoneRaw || refilToken);
       const conds = [];
-      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
+      if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ 'expay.transactionId': identifier }); conds.push({ identifier }); }
       if (correlationID) conds.push({ correlationID });
       if (refilToken) conds.push({ refilLinkId: refilToken });
       if (orderIDRaw) {
         const maybeNum = Number(orderIDRaw);
-        if (!Number.isNaN(maybeNum)) { conds.push({ 'fama24h.orderId': maybeNum }); conds.push({ 'fornecedor_social.orderId': maybeNum }); }
+        if (!Number.isNaN(maybeNum)) {
+          conds.push({ 'fama24h.orderId': maybeNum });
+          conds.push({ 'fama24h_multi.orders.orderId': maybeNum });
+          conds.push({ 'fama24h_multi.orders.id': maybeNum });
+          conds.push({ 'fornecedor_social.orderId': maybeNum });
+          conds.push({ 'fornecedor_social_multi.orders.orderId': maybeNum });
+          conds.push({ 'fornecedor_social_multi.orders.id': maybeNum });
+        }
         conds.push({ 'fama24h.orderId': orderIDRaw });
+        conds.push({ 'fama24h_multi.orders.orderId': orderIDRaw });
+        conds.push({ 'fama24h_multi.orders.id': orderIDRaw });
         conds.push({ 'fornecedor_social.orderId': orderIDRaw });
+        conds.push({ 'fornecedor_social_multi.orders.orderId': orderIDRaw });
+        conds.push({ 'fornecedor_social_multi.orders.id': orderIDRaw });
+        conds.push({ 'expay.transactionId': orderIDRaw });
         const { ObjectId } = require('mongodb');
         if (/^[0-9a-fA-F]{24}$/.test(orderIDRaw)) {
              try { conds.push({ _id: new ObjectId(orderIDRaw) }); } catch(_) {}
@@ -10834,7 +11974,7 @@ app.get('/api/order', async (req, res) => {
       const filter = conds.length ? { $or: conds } : {};
       if (conds.length) {
         try {
-          const arr = await col.find(filter).sort({ 'woovi.paidAt': -1, paidAt: -1, _id: -1 }).limit(1).toArray();
+          const arr = await col.find(filter).sort({ 'woovi.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, _id: -1 }).limit(1).toArray();
           doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
         } catch (_) {
           doc = await col.findOne(filter);
@@ -10842,7 +11982,14 @@ app.get('/api/order', async (req, res) => {
       }
       if (!doc && !hasQuery && req.session && req.session.selectedOrderID) {
         const soid = req.session.selectedOrderID;
-        doc = await col.findOne({ $or: [ { 'fama24h.orderId': soid }, { 'fornecedor_social.orderId': soid } ] });
+        doc = await col.findOne({ $or: [
+          { 'fama24h.orderId': soid },
+          { 'fama24h_multi.orders.orderId': soid },
+          { 'fama24h_multi.orders.id': soid },
+          { 'fornecedor_social.orderId': soid },
+          { 'fornecedor_social_multi.orders.orderId': soid },
+          { 'fornecedor_social_multi.orders.id': soid }
+        ] });
       }
     }
     return res.json({ ok: true, order: doc || null });
@@ -12247,6 +13394,53 @@ app.post('/api/refil/preview', async (req, res) => {
           return res.status(502).json({ ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
         }
 
+        const todayYmdSP = (() => {
+          try {
+            const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+            const mp = {};
+            parts.forEach((p) => { mp[p.type] = p.value; });
+            if (mp.year && mp.month && mp.day) return `${mp.year}-${mp.month}-${mp.day}`;
+          } catch (_) {}
+          try {
+            const d = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const y = String(d.getUTCFullYear());
+            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+          } catch (_) {}
+          return '';
+        })();
+        const extractOrderYmd = (raw) => {
+          try {
+            const s = String(raw || '').trim();
+            if (!s) return '';
+            const m1 = s.match(/(\d{4}-\d{2}-\d{2})/);
+            if (m1 && m1[1]) return String(m1[1]);
+            const m2 = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            if (m2) return `${String(m2[3])}-${String(m2[2])}-${String(m2[1])}`;
+            const d = new Date(s);
+            if (!d || Number.isNaN(d.getTime())) return '';
+            try {
+              const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+              const mp = {};
+              parts.forEach((p) => { mp[p.type] = p.value; });
+              if (mp.year && mp.month && mp.day) return `${mp.year}-${mp.month}-${mp.day}`;
+            } catch (_) {}
+          } catch (_) {}
+          return '';
+        };
+        const orderYmd = extractOrderYmd(orderCreatedAt);
+        if (todayYmdSP && orderYmd && orderYmd === todayYmdSP) {
+          logRefil2Request({
+            execStatus: 'success',
+            decisionStatus: 'blocked',
+            decisionReason: 'paid_today',
+            meta: { step: 'paid_today_check', tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
+          });
+          return res.status(409).json({ ok: false, error: 'paid_today', message: 'Esse serviço é para repor quedas de seguidores. Como seu pedido foi pago hoje, ainda não é possível solicitar reposição. Tente novamente amanhã.' });
+        }
+
         const profileUrlCandidates = [
           `https://www.instagram.com/${username}/`,
           `https://instagram.com/${username}`,
@@ -13348,10 +14542,24 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       }
     } catch (_) {}
 
+    const parseOrderDateUTCms = (v) => {
+      try {
+        if (!v) return 0;
+        if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.getTime() : 0;
+        const s0 = String(v).trim();
+        if (!s0) return 0;
+        const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s0);
+        const d0 = new Date(hasTZ ? s0 : (s0 + 'Z'));
+        const t0 = d0.getTime();
+        return Number.isFinite(t0) ? t0 : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
     const resolveDateMs = (o) => {
-      const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || null;
-      const t = dateStr ? new Date(dateStr).getTime() : 0;
-      return Number.isFinite(t) ? t : 0;
+      const dateStr = o.woovi?.paidAt || o.paidAt || null;
+      return parseOrderDateUTCms(dateStr);
     };
 
     const resolveQty = (o) => {
@@ -13537,7 +14745,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const q = String(req.query.q || '').trim();
     const qType = String(req.query.qType || 'username').trim();
     const filledOnly = String(req.query.filled || '').trim() === '1';
+    const errorsOnly = (String(req.query.errors || req.query.err || '').trim() === '1');
+    const okOnly = (String(req.query.ok || '').trim() === '1');
+    const hiddenOnly = (String(req.query.hiddenOnly || req.query.hidden || '').trim() === '1');
     const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
+    const dateFieldRaw = String(req.query.dateField || req.query.date || '').trim().toLowerCase();
+    const dateField = (dateFieldRaw === 'checked' || dateFieldRaw === 'checado') ? 'checked' : 'purchase';
     const warrantyRaw = String(req.query.warranty || '').trim().toLowerCase();
     const warrantyFilter = (() => {
       const w = String(warrantyRaw || '').trim().toLowerCase();
@@ -13549,8 +14762,6 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     })();
     const startDateRaw = String(req.query.startDate || '').trim();
     const endDateRaw = String(req.query.endDate || '').trim();
-    const refilStartRaw = String(req.query.refilStart || '').trim();
-    const refilEndRaw = String(req.query.refilEnd || '').trim();
     const tipoRaw = String(req.query.tipo || '').trim();
 
     const parseYmd = (s) => {
@@ -13597,23 +14808,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       rangeEndExclusiveMs = tmpStartYmd ? toEndExclusiveUtcMsBrt(tmpStartYmd) : null;
     }
 
-    const refilStartYmd = parseYmd(refilStartRaw);
-    const refilEndYmd = parseYmd(refilEndRaw);
-    let refilStart = refilStartYmd ? refilStartYmd.raw : '';
-    let refilEnd = refilEndYmd ? refilEndYmd.raw : '';
-    let refilRangeStartMs = refilStartYmd ? toStartUtcMsBrt(refilStartYmd) : null;
-    let refilRangeEndExclusiveMs = refilEndYmd ? toEndExclusiveUtcMsBrt(refilEndYmd) : null;
-    if (refilRangeStartMs != null && refilRangeEndExclusiveMs != null && refilRangeStartMs > refilRangeEndExclusiveMs) {
-      const tmpStartYmd = refilStartYmd;
-      const tmpEndYmd = refilEndYmd;
-      refilStart = tmpEndYmd ? tmpEndYmd.raw : '';
-      refilEnd = tmpStartYmd ? tmpStartYmd.raw : '';
-      refilRangeStartMs = tmpEndYmd ? toStartUtcMsBrt(tmpEndYmd) : null;
-      refilRangeEndExclusiveMs = tmpStartYmd ? toEndExclusiveUtcMsBrt(tmpStartYmd) : null;
-    }
-
-    const tipoNorm0 = String(tipoRaw || '').toLowerCase().trim();
-    const tipoFilter = (!tipoNorm0 || tipoNorm0 === 'all') ? '' : tipoNorm0;
+    const tipoParts = String(tipoRaw || '')
+      .split(',')
+      .map(s => String(s || '').trim().toLowerCase())
+      .filter(Boolean)
+      .filter(s => s !== 'all');
+    const tipoFilters = Array.from(new Set(tipoParts));
 
     const usernames = Array.from(new Set(orders.map(resolveUsername).filter(Boolean)));
     const monitorDocs = usernames.length ? await monitorCol.find({ username: { $in: usernames } }, { projection: { _id: 0 } }).toArray() : [];
@@ -13716,6 +14916,52 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       }
     };
 
+    const normalizeTipoKey = (raw) => {
+      try {
+        const t0 = String(raw || '').trim().toLowerCase();
+        const t1 = t0.startsWith('seguidores_') ? t0.replace(/^seguidores_/, '') : t0;
+        const t2 = t1.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return t2.replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '');
+      } catch (_) {
+        return String(raw || '').trim().toLowerCase();
+      }
+    };
+
+    const isOrganicTipoKey = (tipoKey) => {
+      const t = String(tipoKey || '');
+      return t.includes('organ');
+    };
+
+    const isNonOrganicTipoKey = (tipoKey) => {
+      const t = String(tipoKey || '');
+      return (t.includes('misto') || t.includes('brasil'));
+    };
+
+    const vipUserSet = (() => {
+      const lastOrganic = new Map();
+      const lastNonOrganic = new Map();
+      for (const o of orders) {
+        const u = resolveUsername(o);
+        if (!u) continue;
+        const ms = resolveDateMs(o);
+        if (!Number.isFinite(ms) || !ms) continue;
+        const tipoKey = normalizeTipoKey(resolveTipo(o));
+        if (isOrganicTipoKey(tipoKey)) {
+          const prev = Number(lastOrganic.get(u) || 0);
+          if (ms > prev) lastOrganic.set(u, ms);
+        } else if (isNonOrganicTipoKey(tipoKey)) {
+          const prev = Number(lastNonOrganic.get(u) || 0);
+          if (ms > prev) lastNonOrganic.set(u, ms);
+        }
+      }
+      const set = new Set();
+      for (const [u, orgMs] of lastOrganic.entries()) {
+        const nonOrgMs = Number(lastNonOrganic.get(u) || 0);
+        if (nonOrgMs && orgMs > nonOrgMs) set.add(u);
+      }
+      return set;
+    })();
+
     const orderInfoById = new Map();
     for (const o of orders) {
       const idStr = o && o._id ? String(o._id) : '';
@@ -13737,6 +14983,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const currentFollowersCount = mon && typeof mon.followersCount === 'number' ? mon.followersCount : null;
       const currentCheckedAt = mon ? (mon.checkedAt || null) : null;
       const isPrivate = mon ? (typeof mon.isPrivate === 'boolean' ? mon.isPrivate : null) : null;
+      const hidden = mon ? (mon.hidden === true) : false;
+      const lastError = mon && mon.error ? String(mon.error) : null;
+      const lastAttemptAt = mon && mon.lastAttemptAt ? String(mon.lastAttemptAt) : null;
 
       let initialFollowersCount = (typeof o.initialFollowersCount === 'number') ? o.initialFollowersCount : null;
       let initialFollowersCheckedAt = o.initialFollowersCheckedAt ? String(o.initialFollowersCheckedAt) : null;
@@ -13762,6 +15011,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const diffAbs = (resultado != null && currentFollowersCount != null) ? (Number(resultado) - Number(currentFollowersCount)) : null;
       const diffPct = (diffAbs != null && contracted) ? ((Number(diffAbs) / Number(contracted)) * 100) : null;
       const tipo = resolveTipo(o);
+      const tipoKey = normalizeTipoKey(tipo);
       const warrantyBase = (isEligibleRefilTipo(tipo) ? computeWarrantyFromOrder(o) : { isLifetime: false, daysLeft: null, expiresAt: null });
 
       return {
@@ -13769,6 +15019,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         orderIdentifier: resolveIdentifier(o),
         fornecedorOrderId: resolveFornecedorOrderId(o),
         username,
+        vip: (username ? vipUserSet.has(username) : false) && isNonOrganicTipoKey(tipoKey),
         tipo,
         fornecedor: resolveFornecedor(o),
         contracted: Number(contracted || 0),
@@ -13778,6 +15029,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         currentFollowersCount,
         currentCheckedAt,
         isPrivate,
+        hidden,
+        lastError,
+        lastAttemptAt,
         lastPurchaseAtMs: dateMs,
         diffAbs,
         diffPct,
@@ -13904,6 +15158,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const qTypeNorm = String(qType || 'username').trim().toLowerCase();
 
     const filtered = allRows.filter((r) => {
+      if (errorsOnly) {
+        const e = String(r.lastError || '').trim();
+        if (!e) return false;
+      }
       if (filledOnly) {
         if (r.currentFollowersCount == null) return false;
         if (r.resultado == null) return false;
@@ -13922,27 +15180,31 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       }
 
       if (rangeStartMs != null) {
-        if (!(Number(r.lastPurchaseAtMs || 0) >= rangeStartMs)) return false;
+        const ms = (dateField === 'checked')
+          ? (r.currentCheckedAt ? new Date(r.currentCheckedAt).getTime() : 0)
+          : Number(r.lastPurchaseAtMs || 0);
+        if (!Number.isFinite(ms) || !ms) return false;
+        if (!(ms >= rangeStartMs)) return false;
       }
       if (rangeEndExclusiveMs != null) {
-        if (!(Number(r.lastPurchaseAtMs || 0) < rangeEndExclusiveMs)) return false;
+        const ms = (dateField === 'checked')
+          ? (r.currentCheckedAt ? new Date(r.currentCheckedAt).getTime() : 0)
+          : Number(r.lastPurchaseAtMs || 0);
+        if (!Number.isFinite(ms) || !ms) return false;
+        if (!(ms < rangeEndExclusiveMs)) return false;
       }
 
-      if (refilRangeStartMs != null || refilRangeEndExclusiveMs != null) {
-        const expMs = r.refilExpiresAt ? new Date(r.refilExpiresAt).getTime() : 0;
-        if (!Number.isFinite(expMs) || !expMs) return false;
-        if (refilRangeStartMs != null && !(expMs >= refilRangeStartMs)) return false;
-        if (refilRangeEndExclusiveMs != null && !(expMs < refilRangeEndExclusiveMs)) return false;
-      }
-
-      if (tipoFilter) {
+      if (tipoFilters.length) {
         const t = String(r.tipo || '').toLowerCase();
         let ok = false;
-        if (tipoFilter === 'mistos') ok = t.includes('misto');
-        else if (tipoFilter === 'brasileiros') ok = t.includes('brasileir');
-        else if (tipoFilter === 'organicos') ok = t.includes('organico');
-        else if (tipoFilter === 'brasileiros_reais') ok = (t.includes('real') || t.includes('reais'));
-        else ok = t.includes(tipoFilter);
+        for (const f of tipoFilters) {
+          if (f === 'mistos') ok = t.includes('misto');
+          else if (f === 'brasileiros') ok = t.includes('brasileir');
+          else if (f === 'organicos') ok = t.includes('organico');
+          else if (f === 'brasileiros_reais') ok = (t.includes('real') || t.includes('reais'));
+          else ok = t.includes(f);
+          if (ok) break;
+        }
         if (!ok) return false;
       }
 
@@ -13954,6 +15216,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           const u = String(r.username || '').toLowerCase();
           if (!u.includes(qNorm)) return false;
         }
+      }
+
+      if (hiddenOnly) return r.hidden === true;
+      if (r.hidden === true) return false;
+
+      if (okOnly) {
+        if (r.diffAbs == null) return false;
+        return Number(r.diffAbs) <= 0;
       }
 
       if (minPct == null && maxPct == null) return true;
@@ -13976,6 +15246,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
 
     const sortKey = (function () {
       const s = String(sortBy || '').trim();
+      if (s === 'diffAbs') return 'diffAbs';
       if (s === 'diffPct') return 'diffPct';
       if (s === 'lastPurchaseAtMs') return 'lastPurchaseAtMs';
       return 'lastPurchaseAtMs';
@@ -14000,7 +15271,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, q, qType, filled: filledOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, refilStart, refilEnd, tipo: (tipoFilter || ''), sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, q, qType, filled: filledOnly, errors: errorsOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
       followersMgmtSettings,
       period: 'all'
     });
@@ -14336,11 +15607,11 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     let followersCount = null;
     let error = null;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        result = await fetchInstagramFollowersInfoRocketApi(username);
+        result = await fetchInstagramFollowersInfo(username);
         profile = result && result.success ? result.profile : null;
-        source = profile ? String(profile.source || 'rocket_api') : 'rocket_api';
+        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
         isPrivate = profile ? !!profile.isPrivate : null;
         followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
         error = result && !result.success ? (result.error || 'unknown_error') : null;
@@ -14348,24 +15619,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
       } catch (e) {
         error = e?.message || String(e);
       }
-      if (attempt < 2) await sleep(900 * attempt);
-    }
-
-    if (!profile) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          result = await fetchInstagramFollowersInfo(username);
-          profile = result && result.success ? result.profile : null;
-          source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
-          isPrivate = profile ? !!profile.isPrivate : null;
-          followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
-          error = result && !result.success ? (result.error || 'unknown_error') : null;
-          if (profile) break;
-        } catch (e) {
-          error = e?.message || String(e);
-        }
-        if (attempt < 3) await sleep(900 * attempt);
-      }
+      if (attempt < 3) await sleep(900 * attempt);
     }
 
     const nowIso = new Date().toISOString();
@@ -14426,6 +15680,414 @@ app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req
 
     const out = await followersMgmtGetCurrent(req, username, force);
     return res.status(out.code).json(out.body);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/hide', requireAdmin, async (req, res) => {
+  try {
+    const raw = (req.body && (req.body.usernames || req.body.users || req.body.targets)) || [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const norm = arr
+      .map(u => String(u || '').trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean);
+    const usernames = Array.from(new Set(norm)).slice(0, 2000);
+    if (!usernames.length) return res.status(400).json({ ok: false, error: 'missing_usernames' });
+
+    const { getCollection } = require('./mongodbClient');
+    const monitorCol = await getCollection('followers_monitor');
+    const nowIso = new Date().toISOString();
+
+    const ops = usernames.map(username => ({
+      updateOne: {
+        filter: { username },
+        update: { $set: { username, hidden: true, hiddenAt: nowIso } },
+        upsert: true
+      }
+    }));
+    await monitorCol.bulkWrite(ops, { ordered: false });
+    return res.json({ ok: true, hidden: true, count: usernames.length });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/unhide', requireAdmin, async (req, res) => {
+  try {
+    const raw = (req.body && (req.body.usernames || req.body.users || req.body.targets)) || [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const norm = arr
+      .map(u => String(u || '').trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean);
+    const usernames = Array.from(new Set(norm)).slice(0, 2000);
+    if (!usernames.length) return res.status(400).json({ ok: false, error: 'missing_usernames' });
+
+    const { getCollection } = require('./mongodbClient');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const ops = usernames.map(username => ({
+      updateOne: {
+        filter: { username },
+        update: { $set: { hidden: false }, $unset: { hiddenAt: '' } },
+        upsert: true
+      }
+    }));
+    await monitorCol.bulkWrite(ops, { ordered: false });
+    return res.json({ ok: true, hidden: false, count: usernames.length });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/ig-profiles', requireAdmin, async (req, res) => {
+  try {
+    const profiles = Array.isArray(cookieProfiles) ? cookieProfiles : [];
+    const mask = (v, left, right) => {
+      const s = String(v || '');
+      const l = Math.max(0, Number(left || 0));
+      const r = Math.max(0, Number(right || 0));
+      if (!s) return '';
+      if (s.length <= (l + r + 2)) return s.slice(0, Math.min(s.length, l)) + '…';
+      return s.slice(0, l) + '…' + s.slice(Math.max(0, s.length - r));
+    };
+    const out = profiles.map(p => ({
+      ds_user_id: mask(p && p.ds_user_id, 4, 3),
+      sessionid: mask(p && p.sessionid, 6, 4),
+      hasProxy: !!(p && p.proxy && p.proxy.host && p.proxy.port),
+      errorCount: Number(p && p.errorCount || 0) || 0,
+      disabledUntil: Number(p && p.disabledUntil || 0) || 0,
+      lastUsed: Number(p && p.lastUsed || 0) || 0
+    }));
+    return res.json({ ok: true, count: out.length, profiles: out });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+function followersMgmtSerializeGeneralJob(jobRaw) {
+  const job = jobRaw || null;
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    pausedAt: job.pausedAt || null,
+    resumedAt: job.resumedAt || null,
+    dueDays: job.dueDays,
+    limit: job.limit,
+    force: !!job.force,
+    total: job.total,
+    done: job.done,
+    ok: job.ok,
+    failed: job.failed,
+    lastUsername: job.lastUsername || null,
+    lastError: job.lastError || null,
+    lastFailedUsernames: Array.isArray(job.lastFailedUsernames) ? job.lastFailedUsernames.slice(0, 50) : []
+  };
+}
+
+function followersMgmtKickGeneralValidation() {
+  const job = global.followersMgmtGeneralValidationJob || null;
+  if (!job) return;
+  if (job._runnerActive) return;
+  if (job.status !== 'running') return;
+  job._runnerActive = true;
+
+  const reqLike = { session: { adminUser: { username: 'system' } }, realIP: 'followers_validate_general', ip: 'followers_validate_general' };
+  (async () => {
+    try {
+      const targets = Array.isArray(job.targets) ? job.targets : [];
+      while (job.status === 'running' && job.done < targets.length) {
+        const u = targets[job.done];
+        job.lastUsername = u;
+        job.lastError = null;
+        try {
+          const out = await followersMgmtGetCurrent(reqLike, u, true);
+          if (out && out.body && out.body.ok) job.ok += 1;
+          else job.failed += 1;
+          if (out && out.body && out.body.error) {
+            job.lastError = String(out.body.error || '');
+            if (!job.lastFailedUsernames) job.lastFailedUsernames = [];
+            if (Array.isArray(job.lastFailedUsernames)) {
+              job.lastFailedUsernames.push(u);
+              if (job.lastFailedUsernames.length > 200) job.lastFailedUsernames.splice(0, job.lastFailedUsernames.length - 200);
+            }
+          }
+        } catch (e) {
+          job.failed += 1;
+          job.lastError = e?.message || String(e);
+          if (!job.lastFailedUsernames) job.lastFailedUsernames = [];
+          if (Array.isArray(job.lastFailedUsernames)) {
+            job.lastFailedUsernames.push(u);
+            if (job.lastFailedUsernames.length > 200) job.lastFailedUsernames.splice(0, job.lastFailedUsernames.length - 200);
+          }
+        } finally {
+          job.done += 1;
+        }
+      }
+
+      if (job.status === 'running' && job.done >= (Array.isArray(job.targets) ? job.targets.length : 0)) {
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      }
+    } catch (e) {
+      job.status = 'error';
+      job.lastError = e?.message || String(e);
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      job._runnerActive = false;
+    }
+  })();
+}
+
+app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireAdmin, async (req, res) => {
+  try {
+    const limitRaw = parseInt(String((req.body && req.body.limit) || req.query.limit || '2000'), 10);
+    const limit = Math.min(5000, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 2000));
+    const dueDaysRaw = parseInt(String((req.body && req.body.dueDays) || req.query.dueDays || '3'), 10);
+    const dueDays = Math.min(30, Math.max(1, Number.isFinite(dueDaysRaw) ? dueDaysRaw : 3));
+    const force = String((req.body && req.body.force) || req.query.force || '').trim() === '1';
+
+    if (global.followersMgmtGeneralValidationJob && (global.followersMgmtGeneralValidationJob.status === 'running' || global.followersMgmtGeneralValidationJob.status === 'paused')) {
+      return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(global.followersMgmtGeneralValidationJob) });
+    }
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && i.key === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && i.key === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const resolveUsername = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'instagram_username'),
+        o.instagramUsername,
+        o.instauser
+      ];
+      for (const c of candidates) {
+        const k = normalizeUsernameKey(c);
+        if (k) return k;
+      }
+      return '';
+    };
+
+    const resolveFornecedorOrderId = (o) => {
+      const v1 = String(o?.fama24h?.orderId || '').trim();
+      if (v1) return v1;
+      const v2 = String(o?.fornecedor_social?.orderId || '').trim();
+      if (v2) return v2;
+      return '';
+    };
+
+    const isPrivateOrder = (o) => {
+      try {
+        if (o && o.isPrivate === true) return true;
+        if (o && o.profilePrivacy && o.profilePrivacy.isPrivate === true) return true;
+        const a1 = o?.additionalInfoMap?.isPrivate;
+        const a2 = o?.additionalInfoMapPaid?.isPrivate;
+        if (a1 === true || a2 === true) return true;
+        if (String(a1 || '').toLowerCase() === 'true') return true;
+        if (String(a2 || '').toLowerCase() === 'true') return true;
+      } catch (_) {}
+      return false;
+    };
+
+    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
+    const followersQuery = {
+      $and: [
+        paidQuery,
+        {
+          $or: [
+            { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: { $regex: '^seguidores$', $options: 'i' } } } },
+            { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { tipo: { $regex: 'seguidores', $options: 'i' } },
+            { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+          ]
+        }
+      ]
+    };
+
+    const privateKeySetUsers = new Set();
+    try {
+      const privateQuery = {
+        $and: [
+          paidQuery,
+          {
+            $or: [
+              { isPrivate: true },
+              { 'profilePrivacy.isPrivate': true },
+              { 'additionalInfoMap.isPrivate': true },
+              { 'additionalInfoMap.isPrivate': 'true' },
+              { 'additionalInfoMapPaid.isPrivate': true },
+              { 'additionalInfoMapPaid.isPrivate': 'true' }
+            ]
+          }
+        ]
+      };
+      const privateOrders = await col.find(privateQuery, {
+        projection: { instagramUsername: 1, instauser: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1 }
+      }).sort({ createdAt: -1 }).limit(5000).toArray();
+      for (const po of privateOrders) {
+        const uKey = resolveUsername(po);
+        if (uKey) privateKeySetUsers.add(uKey);
+      }
+    } catch (_) {}
+
+    const orders = await col.find(followersQuery, {
+      projection: {
+        instagramUsername: 1,
+        instauser: 1,
+        fama24h: 1,
+        fornecedor_social: 1,
+        additionalInfo: 1,
+        additionalInfoPaid: 1,
+        additionalInfoMap: 1,
+        additionalInfoMapPaid: 1,
+        isPrivate: 1,
+        profilePrivacy: 1,
+        tipo: 1,
+        tipoServico: 1,
+        createdAt: 1
+      }
+    }).sort({ createdAt: -1 }).limit(6000).toArray();
+
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const dayNumFromMsBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
+    };
+    const nowDayNumBrt = dayNumFromMsBrt(Date.now());
+    const recentPurchaseMinDayNumBrt = nowDayNumBrt - 1;
+
+    const seen = new Set();
+    const candidates = [];
+    for (const o of orders) {
+      const username = resolveUsername(o);
+      if (!username) continue;
+      if (seen.has(username)) continue;
+      if (privateKeySetUsers.has(username)) continue;
+      if (isPrivateOrder(o)) continue;
+      const fornecedorOrderId = resolveFornecedorOrderId(o);
+      if (!fornecedorOrderId) continue;
+      const createdAtMs = new Date(o && o.createdAt ? o.createdAt : 0).getTime();
+      const createdAtDayNumBrt = (Number.isFinite(createdAtMs) && createdAtMs) ? dayNumFromMsBrt(createdAtMs) : null;
+      seen.add(username);
+      if (createdAtDayNumBrt != null && createdAtDayNumBrt >= recentPurchaseMinDayNumBrt) continue;
+      candidates.push(username);
+      if (candidates.length >= 6000) break;
+    }
+
+    let targets = candidates;
+    try {
+      const hiddenDocs = candidates.length
+        ? await monitorCol.find({ username: { $in: candidates }, hidden: true }, { projection: { _id: 0, username: 1 } }).toArray()
+        : [];
+      const hiddenSet = new Set((hiddenDocs || []).map(d => String(d && d.username ? d.username : '').trim().toLowerCase()).filter(Boolean));
+      if (hiddenSet.size) targets = targets.filter(u => !hiddenSet.has(String(u || '').trim().toLowerCase()));
+    } catch (_) {}
+    if (!force) {
+      const docs = await monitorCol.find({ username: { $in: candidates } }, { projection: { _id: 0, username: 1, checkedAt: 1 } }).toArray();
+      const map = new Map(docs.map(d => [String(d.username || '').trim().toLowerCase(), d]));
+      const dueMs = dueDays * 24 * 60 * 60 * 1000;
+      targets = targets.filter(u => {
+        const d = map.get(String(u || '').trim().toLowerCase());
+        const checkedAt = d && d.checkedAt ? String(d.checkedAt) : '';
+        if (!checkedAt) return true;
+        const t = new Date(checkedAt).getTime();
+        if (!Number.isFinite(t) || !t) return true;
+        const age = Date.now() - t;
+        if (!Number.isFinite(age) || age < 0) return true;
+        return age >= dueMs;
+      });
+    }
+
+    targets = targets.slice(0, limit);
+
+    const job = {
+      id: String(Date.now()) + '_' + String(Math.random()).slice(2),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      pausedAt: null,
+      resumedAt: null,
+      dueDays,
+      limit,
+      force,
+      total: targets.length,
+      done: 0,
+      ok: 0,
+      failed: 0,
+      lastUsername: null,
+      lastError: null,
+      lastFailedUsernames: [],
+      targets
+    };
+    global.followersMgmtGeneralValidationJob = job;
+    followersMgmtKickGeneralValidation();
+
+    return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/validate-general/pause', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtGeneralValidationJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    if (job.status === 'running') {
+      job.status = 'paused';
+      job.pausedAt = new Date().toISOString();
+    }
+    return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/validate-general/resume', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtGeneralValidationJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    if (job.status === 'paused') {
+      job.status = 'running';
+      job.resumedAt = new Date().toISOString();
+      followersMgmtKickGeneralValidation();
+    }
+    return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/validate-general/status', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtGeneralValidationJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -15128,14 +16790,62 @@ function extractCookieFromSetCookieHeader(setCookieHeader, cookieName) {
 
 function igBuildProxyAgent(profile) {
     try {
-        if (!profile || !profile.proxy) return null;
-        return new HttpsProxyAgent(
-            `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
+        const now = Date.now();
+        const candidates = [];
+        if (profile && profile.proxy && profile.proxy.host && profile.proxy.port) candidates.push(profile.proxy);
+        if (Array.isArray(IG_WEBPROFILE_EXTRA_PROXIES) && IG_WEBPROFILE_EXTRA_PROXIES.length) {
+          for (const p of IG_WEBPROFILE_EXTRA_PROXIES) {
+            if (p && p.host && p.port) candidates.push(p);
+          }
+        }
+        const available = candidates
+          .filter((p) => p && Number(p.disabledUntil || 0) <= now)
+          .sort((a, b) => {
+            const ea = Number(a.errorCount || 0) || 0;
+            const eb = Number(b.errorCount || 0) || 0;
+            if (ea !== eb) return ea - eb;
+            const la = Number(a.lastUsed || 0) || 0;
+            const lb = Number(b.lastUsed || 0) || 0;
+            if (la !== lb) return la - lb;
+            return (Math.random() - 0.5);
+          });
+
+        const top = available.slice(0, Math.min(3, available.length));
+        const picked = top.length ? top[Math.floor(Math.random() * top.length)] : null;
+        if (profile) profile._igLastProxyUsed = picked || null;
+        if (!picked) return null;
+
+        picked.lastUsed = Date.now();
+
+        const auth = picked && picked.auth ? picked.auth : null;
+        if (auth && auth.username && auth.password) {
+          return new HttpsProxyAgent(
+            `http://${encodeURIComponent(auth.username)}:${encodeURIComponent(auth.password)}@${picked.host}:${picked.port}`,
             { rejectUnauthorized: false }
-        );
+          );
+        }
+        return new HttpsProxyAgent(`http://${picked.host}:${picked.port}`, { rejectUnauthorized: false });
     } catch (_) {
         return null;
     }
+}
+
+function igMarkLastProxyOk(profile) {
+  try {
+    const p = profile && profile._igLastProxyUsed ? profile._igLastProxyUsed : null;
+    if (!p) return;
+    p.errorCount = 0;
+  } catch (_) {}
+}
+
+function igMarkLastProxyFail(profile, penaltyMs) {
+  try {
+    const p = profile && profile._igLastProxyUsed ? profile._igLastProxyUsed : null;
+    if (!p) return;
+    p.errorCount = Number(p.errorCount || 0) + 1;
+    const pen = Math.max(0, Number(penaltyMs || 0));
+    if (pen) p.disabledUntil = Date.now() + pen;
+  } catch (_) {}
 }
 
 function igCookieHeader(profile) {
@@ -15267,6 +16977,7 @@ async function igFetchWebProfileInfo(username) {
 
             profile.lastUsed = Date.now();
             profile.errorCount = 0;
+            igMarkLastProxyOk(profile);
 
             return {
                 success: true,
@@ -15281,6 +16992,8 @@ async function igFetchWebProfileInfo(username) {
         } catch (err) {
             profile.errorCount++;
             if (profile.errorCount >= 5) profile.disabledUntil = Date.now() + (60 * 1000);
+            if (String(err?.message || '').includes('HTTP 429') || String(err?.message || '').includes('HTTP 403')) igMarkLastProxyFail(profile, 10 * 60 * 1000);
+            else igMarkLastProxyFail(profile, 60 * 1000);
             throw err;
         } finally {
             unlockCookie(profile.ds_user_id);
@@ -19681,10 +21394,7 @@ async function fetchInstagramRecentPosts(username) {
     
     try {
       console.log(`[IG] Tentando (Paralelo) API autenticada com cookie ${profile.ds_user_id}`);
-      const proxyAgent = profile.proxy ? new HttpsProxyAgent(
-        `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
-        { rejectUnauthorized: false }
-      ) : null;
+      const proxyAgent = igBuildProxyAgent(profile);
       
       const headers = {
         "User-Agent": profile.userAgent,
@@ -19699,10 +21409,17 @@ async function fetchInstagramRecentPosts(username) {
 
       const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { 
         headers, 
-        httpsAgent: proxyAgent, 
-        timeout: REQUEST_TIMEOUT 
+        httpsAgent: proxyAgent || undefined,
+        timeout: REQUEST_TIMEOUT,
+        validateStatus: () => true
       });
 
+      if (resp.status === 429 || resp.status === 403) {
+        igMarkLastProxyFail(profile, 10 * 60 * 1000);
+        profile.errorCount = Number(profile.errorCount || 0) + 2;
+        profile.disabledUntil = Date.now() + (10 * 60 * 1000);
+        throw new Error(`HTTP ${resp.status}`);
+      }
       if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
       
       const user = resp.data && resp.data.data && resp.data.data.user;
@@ -19710,6 +21427,7 @@ async function fetchInstagramRecentPosts(username) {
         // Sucesso técnico, mas falha de negócio (privado) - não conta como erro de conexão
         profile.lastUsed = Date.now();
         profile.errorCount = 0;
+        igMarkLastProxyOk(profile);
         return { success: false, error: 'Perfil privado ou inexistente' };
       }
 
@@ -19721,16 +21439,19 @@ async function fetchInstagramRecentPosts(username) {
         displayUrl: e.node.display_url || e.node.thumbnail_src || null,
         videoUrl: e.node.video_url || null,
         typename: e.node.__typename || ''
-      }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 8);
+      }) : null).filter(Boolean).sort((a,b)=> Number(b.takenAt||0) - Number(a.takenAt||0)).slice(0, 12);
 
       profile.lastUsed = Date.now();
       profile.errorCount = 0;
+      igMarkLastProxyOk(profile);
       return { success: true, username: user.username, posts };
 
     } catch (err) {
       console.error(`[IG] Falha cookie ${profile.ds_user_id}:`, err?.message || String(err));
       profile.errorCount++;
       if (profile.errorCount >= MAX_ERRORS_PER_PROFILE) profile.disabledUntil = Date.now() + DISABLE_TIME_MS;
+      if (String(err?.message || '').includes('HTTP 429') || String(err?.message || '').includes('HTTP 403')) igMarkLastProxyFail(profile, 10 * 60 * 1000);
+      else igMarkLastProxyFail(profile, 60 * 1000);
       throw err;
     } finally {
       unlockCookie(profile.ds_user_id);
@@ -19807,10 +21528,7 @@ async function fetchInstagramFollowersInfo(username) {
     lockCookie(profile.ds_user_id);
 
     try {
-      const proxyAgent = profile.proxy ? new HttpsProxyAgent(
-        `http://${encodeURIComponent(profile.proxy.auth.username)}:${encodeURIComponent(profile.proxy.auth.password)}@${profile.proxy.host}:${profile.proxy.port}`,
-        { rejectUnauthorized: false }
-      ) : null;
+      const proxyAgent = igBuildProxyAgent(profile);
       const headers = {
         "User-Agent": profile.userAgent,
         "X-IG-App-ID": "936619743392459",
@@ -19825,15 +21543,23 @@ async function fetchInstagramFollowersInfo(username) {
 
       const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
         headers,
-        httpsAgent: proxyAgent,
-        timeout: REQUEST_TIMEOUT
+        httpsAgent: proxyAgent || undefined,
+        timeout: REQUEST_TIMEOUT,
+        validateStatus: () => true
       });
 
+      if (resp.status === 429 || resp.status === 403) {
+        igMarkLastProxyFail(profile, 10 * 60 * 1000);
+        profile.errorCount = Number(profile.errorCount || 0) + 2;
+        profile.disabledUntil = Date.now() + (10 * 60 * 1000);
+        throw new Error(`HTTP ${resp.status}`);
+      }
       if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
       const user = resp.data && resp.data.data && resp.data.data.user;
       if (!user || !user.username) {
         profile.lastUsed = Date.now();
         profile.errorCount = 0;
+        igMarkLastProxyOk(profile);
         return { success: false, error: 'Perfil inexistente' };
       }
 
@@ -19851,10 +21577,13 @@ async function fetchInstagramFollowersInfo(username) {
 
       profile.lastUsed = Date.now();
       profile.errorCount = 0;
+      igMarkLastProxyOk(profile);
       return result;
     } catch (err) {
       profile.errorCount++;
       if (profile.errorCount >= MAX_ERRORS_PER_PROFILE) profile.disabledUntil = Date.now() + DISABLE_TIME_MS;
+      if (String(err?.message || '').includes('HTTP 429') || String(err?.message || '').includes('HTTP 403')) igMarkLastProxyFail(profile, 10 * 60 * 1000);
+      else igMarkLastProxyFail(profile, 60 * 1000);
       throw err;
     } finally {
       unlockCookie(profile.ds_user_id);

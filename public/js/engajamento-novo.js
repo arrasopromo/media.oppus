@@ -1828,6 +1828,17 @@ document.addEventListener('DOMContentLoaded', function() {
       const extractProviderOid = function(orderObj){
         if (!orderObj || typeof orderObj !== 'object') return '';
         var o = orderObj;
+        try {
+          if (o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders) && o.fama24h_multi.orders.length) {
+            for (var i=0;i<o.fama24h_multi.orders.length;i++){
+              var it = o.fama24h_multi.orders[i];
+              if (!it) continue;
+              var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : ((it.id !== undefined && it.id !== null) ? it.id : null);
+              var s = (v === null || v === undefined) ? '' : String(v).trim();
+              if (s) return s;
+            }
+          }
+        } catch(_) {}
         var oidF = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
         var oidFS = (o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '';
         return oidF || oidFS || '';
@@ -1838,25 +1849,17 @@ document.addEventListener('DOMContentLoaded', function() {
         data = await resp.json();
       } catch(_) {}
       let providerOid = data && data.order ? extractProviderOid(data.order) : '';
-      if (!data || !data.order || !providerOid) {
+      if (!providerOid) {
         showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
-        let attempts = 0;
-        const maxAttempts = 10;
-        while (attempts < maxAttempts && !providerOid) {
-          attempts++;
-          try {
-            const respLoop = await fetch(apiUrl);
-            const dataLoop = await respLoop.json();
-            if (dataLoop && dataLoop.order) {
-              providerOid = extractProviderOid(dataLoop.order);
-              if (providerOid) {
-                try { localStorage.setItem('oppus_selected_oid', String(providerOid)); } catch(_) {}
-                break;
-              }
-            }
-          } catch(_) {}
-          await new Promise(function(resolve){ setTimeout(resolve, 1500); });
-        }
+        try {
+          await new Promise(function(resolve){ setTimeout(resolve, 350); });
+          const respLoop = await fetch(apiUrl);
+          const dataLoop = await respLoop.json();
+          if (dataLoop && dataLoop.order) providerOid = extractProviderOid(dataLoop.order);
+        } catch(_) {}
+      }
+      if (providerOid) {
+        try { localStorage.setItem('oppus_selected_oid', String(providerOid)); } catch(_) {}
       }
       const finalOid = providerOid || (chargeId ? String(chargeId) : '');
       window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(finalOid||'')}`;

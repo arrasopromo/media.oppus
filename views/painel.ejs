@@ -61,6 +61,8 @@
     .unknown-badge { display:inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
     .unknown-badge--private { background: #111827; color: #ffffff; }
     .unknown-badge--lifetime { background: #7c3aed; color: #ffffff; }
+    .unknown-badge--vip { background: #0ea5e9; color: #ffffff; }
+    .unknown-badge--hidden { background: #64748b; color: #ffffff; }
     .refil2-badge { display:inline-block; padding:4px 8px; border-radius:999px; font-weight:700; font-size: 0.85rem; }
     .refil2-badge--green { background:#dcfce7; color:#166534; }
     .refil2-badge--blue { background:#e0f2fe; color:#075985; }
@@ -449,22 +451,18 @@
         <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
           <button type="button" id="followersVerifyFilteredBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar filtro</button>
           <button type="button" id="followersVerifySelectedBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar marcados</button>
-          <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
-            <strong style="font-size:0.9rem; color:#111827;">Verificação</strong>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <span>Hoje:</span>
-              <input id="followersDailyLimit" type="number" min="1" max="1000" value="<%= (typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings && followersMgmtSettings.dailyLimit) ? String(followersMgmtSettings.dailyLimit) : '50' %>" style="width:90px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <span>Ordem:</span>
-              <select id="followersDailyOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-                <option value="newest" <%= (!(typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings) || String(followersMgmtSettings.order || 'newest') === 'newest') ? 'selected' : '' %>>Mais novos</option>
-                <option value="oldest" <%= (typeof followersMgmtSettings !== 'undefined' && followersMgmtSettings && String(followersMgmtSettings.order || '') === 'oldest') ? 'selected' : '' %>>Mais velhos</option>
-              </select>
-            </label>
-            <button type="button" id="followersRunTodayBtn" style="padding: 6px 12px; background: #7c3aed; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar hoje</button>
+          <button type="button" id="followersHideSelectedBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;">Ocultar marcados</button>
+          <button type="button" id="followersUnhideSelectedBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Desocultar marcados</button>
+          <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer;">Iniciar validação geral</button>
+          <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
+          <div id="followersValidateGeneralWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
+            <div style="font-size:0.9rem; color:#111827; font-weight:600;">Progresso:</div>
+            <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
+              <div id="followersValidateGeneralProgressBar" style="height:10px; width:0%; background:#f97316;"></div>
+            </div>
+            <div id="followersValidateGeneralProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
           </div>
+          <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <select id="followersSearchType" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
               <option value="username" <%= (!filters || !filters.qType || String(filters.qType) === 'username') ? 'selected' : '' %>>Usuário</option>
@@ -480,15 +478,37 @@
               <input id="followersEndDate" type="date" value="<%= (filters && filters.endDate) ? String(filters.endDate) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <span>Tipo:</span>
-              <select id="followersTipo" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-                <option value="all" <%= (!filters || !filters.tipo || String(filters.tipo) === '' || String(filters.tipo) === 'all') ? 'selected' : '' %>>Todos</option>
-                <option value="mistos" <%= (filters && String(filters.tipo) === 'mistos') ? 'selected' : '' %>>Mistos</option>
-                <option value="brasileiros" <%= (filters && String(filters.tipo) === 'brasileiros') ? 'selected' : '' %>>Brasileiros</option>
-                <option value="organicos" <%= (filters && String(filters.tipo) === 'organicos') ? 'selected' : '' %>>Orgânicos</option>
-                <option value="brasileiros_reais" <%= (filters && String(filters.tipo) === 'brasileiros_reais') ? 'selected' : '' %>>Brasileiros reais</option>
+              <span>Data:</span>
+              <select id="followersDateField" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="purchase" <%= (!filters || !filters.dateField || String(filters.dateField) === 'purchase') ? 'selected' : '' %>>Compra</option>
+                <option value="checked" <%= (filters && String(filters.dateField) === 'checked') ? 'selected' : '' %>>Checado</option>
               </select>
             </label>
+            <%
+              const tipoRaw0 = (filters && filters.tipo) ? String(filters.tipo) : '';
+              const tipoSet = new Set(tipoRaw0.split(',').map(s => String(s || '').trim().toLowerCase()).filter(Boolean));
+            %>
+            <div style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Tipo:</span>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                  <input type="checkbox" class="followersTipoChk" value="mistos" <%= tipoSet.has('mistos') ? 'checked' : '' %> />
+                  <span>Mistos</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                  <input type="checkbox" class="followersTipoChk" value="brasileiros" <%= tipoSet.has('brasileiros') ? 'checked' : '' %> />
+                  <span>Brasileiros</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                  <input type="checkbox" class="followersTipoChk" value="organicos" <%= tipoSet.has('organicos') ? 'checked' : '' %> />
+                  <span>Orgânicos</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; margin:0;">
+                  <input type="checkbox" class="followersTipoChk" value="brasileiros_reais" <%= tipoSet.has('brasileiros_reais') ? 'checked' : '' %> />
+                  <span>Brasileiros reais</span>
+                </label>
+              </div>
+            </div>
             <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
               <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
               <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
@@ -498,6 +518,18 @@
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <input id="followersFilledOnly" type="checkbox" <%= (filters && filters.filled) ? 'checked' : '' %> />
               <span>Somente preenchidos</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersErrorsOnly" type="checkbox" <%= (filters && filters.errors) ? 'checked' : '' %> />
+              <span>Apenas erros</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersOkOnly" type="checkbox" <%= (filters && filters.ok) ? 'checked' : '' %> />
+              <span>Apenas OK</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersHiddenOnly" type="checkbox" <%= (filters && filters.hiddenOnly) ? 'checked' : '' %> />
+              <span>Somente ocultados</span>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <span>Reposição:</span>
@@ -512,19 +544,12 @@
                 <option value="life" <%= (wf === 'life') ? 'selected' : '' %>>Vitalício</option>
               </select>
             </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <span>Vence de:</span>
-              <input id="followersRefilStart" type="date" value="<%= (filters && filters.refilStart) ? String(filters.refilStart) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
-              <span>até:</span>
-              <input id="followersRefilEnd" type="date" value="<%= (filters && filters.refilEnd) ? String(filters.refilEnd) : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            </label>
             <div style="font-size:0.9rem; color:#444; font-weight:600;">Queda mín:</div>
             <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
             <button type="button" class="followersPctQuickBtn" data-min="20" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">20%</button>
             <button type="button" class="followersPctQuickBtn" data-min="30" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">30%</button>
             <button type="button" class="followersPctQuickBtn" data-min="40" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">40%</button>
+            <button type="button" class="followersPctQuickBtn" data-min="41" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">&gt;40%</button>
             <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
             <button type="button" id="followersClearFiltersBtn" style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Limpar</button>
           </div>
@@ -557,7 +582,9 @@
               <th style="text-align:right;">Contratado</th>
               <th style="text-align:right;">Resultado</th>
               <th style="text-align:right;">Atual</th>
-              <th style="text-align:right;">Diferença</th>
+              <th style="text-align:right;">
+                <a href="#" class="followers-sort" data-sort="diffAbs" style="color:inherit; text-decoration:none;">Diferença<span id="followersSortIconAbs" style="margin-left:6px; color:#6b7280;"></span></a>
+              </th>
               <th style="text-align:right;">
                 <a href="#" class="followers-sort" data-sort="diffPct" style="color:inherit; text-decoration:none;">% Dif.<span id="followersSortIconDiff" style="margin-left:6px; color:#6b7280;"></span></a>
               </th>
@@ -565,6 +592,7 @@
                 <a href="#" class="followers-sort" data-sort="lastPurchaseAtMs" style="color:inherit; text-decoration:none;">Compra<span id="followersSortIconCompra" style="margin-left:6px; color:#6b7280;"></span></a>
               </th>
               <th>Checado em</th>
+              <th>Erro</th>
               <th>Ação</th>
             </tr>
           </thead>
@@ -608,20 +636,27 @@
                     }
                   }
                 } catch(_) {}
+                const lastErr = row.lastError ? String(row.lastError) : '';
                 const refilIsLifetime = row.refilIsLifetime === true;
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
                 <td style="white-space: nowrap;">
                   <div style="font-size:0.85rem; color:#111;"><%= fid ? fid : '-' %></div>
                 </td>
-                <td style="white-space: nowrap;">
+                <td style="white-space: nowrap;" class="cell-username">
+                  <% if (row.hidden === true) { %>
+                    <span class="unknown-badge unknown-badge--hidden">Oculto</span>
+                  <% } %>
                   <% if (row.isPrivate === true) { %>
                     <span class="unknown-badge unknown-badge--private">Privado</span>
+                  <% } %>
+                  <% if (row.vip === true) { %>
+                    <span class="unknown-badge unknown-badge--vip">VIP</span>
                   <% } %>
                   <% if (refilMode === 'life') { %>
                     <span class="unknown-badge unknown-badge--lifetime">Vitalício</span>
@@ -676,6 +711,7 @@
                 </td>
                 <td style="white-space: nowrap;"><%= lastPurchase %></td>
                 <td style="white-space: nowrap;" class="cell-checkedat"><%= checkedAtFmt %></td>
+                <td style="white-space: nowrap; max-width: 320px; overflow:hidden; text-overflow: ellipsis; color:#dc2626;" class="cell-error" title="<%= lastErr %>"><%= lastErr ? lastErr : '-' %></td>
                 <td style="white-space: nowrap;">
                   <button type="button" class="unknown-btn btn-refresh" data-force="0">Atualizar</button>
                   <button type="button" class="unknown-btn btn-refresh" data-force="1" style="background:#6c757d;">Forçar</button>
@@ -736,10 +772,28 @@
               var diff = (resultado !== null && current !== null) ? (resultado - current) : null;
               var pct = (diff !== null && contracted) ? ((diff / contracted) * 100) : null;
 
+              try {
+                var cellUsername = tr.querySelector('.cell-username');
+                var isPrivate = !!(data && data.isPrivate === true);
+                if (cellUsername) {
+                  var curPrivateBadge = cellUsername.querySelector('.unknown-badge--private');
+                  if (isPrivate && !curPrivateBadge) {
+                    var b = document.createElement('span');
+                    b.className = 'unknown-badge unknown-badge--private';
+                    b.textContent = 'Privado';
+                    cellUsername.insertBefore(b, cellUsername.firstChild);
+                    cellUsername.insertBefore(document.createTextNode(' '), b.nextSibling);
+                  } else if (!isPrivate && curPrivateBadge) {
+                    curPrivateBadge.remove();
+                  }
+                }
+              } catch (_) {}
+
               var cellCurrent = tr.querySelector('.cell-current');
               var cellDiff = tr.querySelector('.cell-diff');
               var cellPct = tr.querySelector('.cell-pct');
               var cellCheckedAt = tr.querySelector('.cell-checkedat');
+              var cellError = tr.querySelector('.cell-error');
               if (cellCurrent) cellCurrent.textContent = (current !== null ? String(current) : '-');
               if (cellDiff) cellDiff.textContent = (diff !== null ? String(diff) : '-');
               if (cellPct) {
@@ -759,6 +813,14 @@
                 }
               }
               if (cellCheckedAt) cellCheckedAt.textContent = fmtBr(data.checkedAt);
+              try {
+                var err = (data && data.error) ? String(data.error || '').trim() : '';
+                if (cellError) {
+                  cellError.textContent = err ? err : '-';
+                  cellError.title = err ? err : '';
+                  cellError.style.color = err ? '#dc2626' : '';
+                }
+              } catch (_) {}
             } finally {
               for (var j=0;j<btns.length;j++){ try { btns[j].disabled = false; } catch(_) {} }
             }
@@ -778,6 +840,8 @@
 
           var verifyFilteredBtn = el('followersVerifyFilteredBtn');
           var verifySelectedBtn = el('followersVerifySelectedBtn');
+          var hideSelectedBtn = el('followersHideSelectedBtn');
+          var unhideSelectedBtn = el('followersUnhideSelectedBtn');
           var selectAllEl = el('followersSelectAll');
           function getAllRows(){
             return Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
@@ -793,17 +857,57 @@
               }
             });
           }
+          async function setHiddenForRows(rows, hidden){
+            if (!rows || !rows.length) return;
+            var usernames = [];
+            for (var i=0;i<rows.length;i++){
+              try {
+                var u = String(rows[i].getAttribute('data-username') || '').trim();
+                if (u) usernames.push(u);
+              } catch (_) {}
+            }
+            usernames = Array.from(new Set(usernames));
+            if (!usernames.length) return;
+            try {
+              if (hideSelectedBtn) hideSelectedBtn.disabled = true;
+              if (unhideSelectedBtn) unhideSelectedBtn.disabled = true;
+            } catch (_) {}
+            try {
+              setStatus((hidden ? 'Ocultando' : 'Desocultando') + ' ' + usernames.length + ' perfis…');
+              var url = hidden ? '/api/painel/gerenciamento-seguidores/hide' : '/api/painel/gerenciamento-seguidores/unhide';
+              var resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ usernames: usernames })
+              });
+              var data = await resp.json().catch(function(){ return null; });
+              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+              window.location.reload();
+            } catch (e) {
+              setStatus('Falha ao atualizar ocultação.');
+              alert('Erro: ' + (e && e.message ? e.message : e));
+            } finally {
+              try { if (hideSelectedBtn) hideSelectedBtn.disabled = false; } catch (_) {}
+              try { if (unhideSelectedBtn) unhideSelectedBtn.disabled = false; } catch (_) {}
+            }
+          }
           async function verifyRows(rows){
             if (!rows || !rows.length) return;
+            var filteredRows = rows.filter(function(tr){
+              try { return String(tr.getAttribute('data-hidden') || '0') !== '1'; } catch (_) { return true; }
+            });
+            if (!filteredRows.length) {
+              setStatus('Nenhum perfil para verificar (todos estão ocultados).');
+              return;
+            }
             try {
               if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
               if (verifySelectedBtn) verifySelectedBtn.disabled = true;
-              if (runTodayBtn) runTodayBtn.disabled = true;
             } catch (_) {}
             try {
-              for (var i=0;i<rows.length;i++){
-                setStatus('Verificando ' + (i+1) + ' de ' + rows.length + '…');
-                await refreshRow(rows[i], false);
+              for (var i=0;i<filteredRows.length;i++){
+                setStatus('Verificando ' + (i+1) + ' de ' + filteredRows.length + '…');
+                await refreshRow(filteredRows[i], false);
                 await sleep(1500 + Math.floor(Math.random() * 450));
               }
               setStatus('Verificação concluída.');
@@ -813,8 +917,27 @@
             } finally {
               try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
               try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
-              try { if (runTodayBtn) runTodayBtn.disabled = false; } catch (_) {}
             }
+          }
+          if (hideSelectedBtn) {
+            hideSelectedBtn.addEventListener('click', function(){
+              var rows = getCheckedRows();
+              if (!rows.length) {
+                alert('Selecione pelo menos 1 perfil.');
+                return;
+              }
+              setHiddenForRows(rows, true).catch(function(){});
+            });
+          }
+          if (unhideSelectedBtn) {
+            unhideSelectedBtn.addEventListener('click', function(){
+              var rows = getCheckedRows();
+              if (!rows.length) {
+                alert('Selecione pelo menos 1 perfil.');
+                return;
+              }
+              setHiddenForRows(rows, false).catch(function(){});
+            });
           }
           if (verifyFilteredBtn) {
             verifyFilteredBtn.addEventListener('click', function(){
@@ -827,7 +950,7 @@
             verifySelectedBtn.addEventListener('click', function(){
               var rows = getCheckedRows();
               if (!rows.length) {
-                alert('Selecione pelo menos 1 pedido.');
+                alert('Selecione pelo menos 1 perfil.');
                 return;
               }
               verifyRows(rows).catch(function(){});
@@ -846,54 +969,97 @@
             });
           }
 
-          function parseDailyLimit(){
+          var validateGeneralBtn = el('followersValidateGeneralBtn');
+          var validateGeneralPauseBtn = el('followersValidateGeneralPauseBtn');
+          var validateGeneralProgressText = el('followersValidateGeneralProgressText');
+          var validateGeneralProgressBar = el('followersValidateGeneralProgressBar');
+          var validatePollTimer = null;
+          var validateGeneralLastJob = null;
+          function setGeneralProgress(done, total) {
             try {
-              var x = el('followersDailyLimit');
-              var v = x ? String(x.value || '').trim() : '';
-              var n = parseInt(v, 10);
-              if (!isFinite(n) || n <= 0) return 50;
-              if (n > 1000) n = 1000;
-              return n;
-            } catch (_) {
-              return 50;
-            }
+              var d = Number(done || 0);
+              var t = Number(total || 0);
+              if (validateGeneralProgressText) validateGeneralProgressText.textContent = String(d) + '/' + String(t);
+              var pct = (t > 0) ? Math.max(0, Math.min(100, Math.round((d / t) * 100))) : 0;
+              if (validateGeneralProgressBar) validateGeneralProgressBar.style.width = String(pct) + '%';
+            } catch (_) {}
           }
-
-          function getDailyOrder(){
+          async function pollGeneralStatus() {
             try {
-              var x = el('followersDailyOrder');
-              var v = x ? String(x.value || '').trim().toLowerCase() : '';
-              return v === 'oldest' ? 'oldest' : 'newest';
-            } catch (_) {
-              return 'newest';
-            }
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/status', { headers: { 'Accept': 'application/json' } });
+              var data = await resp.json().catch(function(){ return null; });
+              if (!data || !data.ok) return;
+              var job = data.job || null;
+              validateGeneralLastJob = job;
+              if (!job) {
+                setGeneralProgress(0, 0);
+                try { if (validateGeneralBtn) { validateGeneralBtn.disabled = false; validateGeneralBtn.textContent = 'Iniciar validação geral'; } } catch (_) {}
+                try { if (validateGeneralPauseBtn) { validateGeneralPauseBtn.disabled = true; validateGeneralPauseBtn.textContent = 'Pausar'; } } catch (_) {}
+                if (validatePollTimer) { try { clearInterval(validatePollTimer); } catch (_) {} validatePollTimer = null; }
+                return;
+              }
+              setGeneralProgress(job.done || 0, job.total || 0);
+              if (job.status === 'done' || job.status === 'error') {
+                if (validatePollTimer) { try { clearInterval(validatePollTimer); } catch (_) {} validatePollTimer = null; }
+                try { if (validateGeneralBtn) { validateGeneralBtn.disabled = false; validateGeneralBtn.textContent = 'Iniciar validação geral'; } } catch (_) {}
+                try { if (validateGeneralPauseBtn) { validateGeneralPauseBtn.disabled = true; validateGeneralPauseBtn.textContent = 'Pausar'; } } catch (_) {}
+                setStatus(job.status === 'done' ? 'Validação geral concluída.' : 'Validação geral finalizou com erro.');
+              } else if (job.status === 'paused') {
+                try { if (validateGeneralBtn) { validateGeneralBtn.disabled = false; validateGeneralBtn.textContent = 'Continuar validação geral'; } } catch (_) {}
+                try { if (validateGeneralPauseBtn) { validateGeneralPauseBtn.disabled = true; validateGeneralPauseBtn.textContent = 'Pausado'; } } catch (_) {}
+                setStatus('Validação geral pausada… (' + String(job.done || 0) + '/' + String(job.total || 0) + ')');
+              } else {
+                try { if (validateGeneralBtn) validateGeneralBtn.disabled = true; } catch (_) {}
+                try { if (validateGeneralPauseBtn) { validateGeneralPauseBtn.disabled = false; validateGeneralPauseBtn.textContent = 'Pausar'; } } catch (_) {}
+                setStatus('Validação geral em andamento… (' + String(job.done || 0) + '/' + String(job.total || 0) + ')');
+              }
+            } catch (_) {}
           }
-
-          var runTodayBtn = el('followersRunTodayBtn');
-          if (runTodayBtn) {
-            runTodayBtn.addEventListener('click', async function(){
-              runTodayBtn.disabled = true;
+          if (validateGeneralBtn) {
+            validateGeneralBtn.addEventListener('click', async function(){
               try {
-                setStatus('Iniciando verificação…');
-                var limit = parseDailyLimit();
-                var order = getDailyOrder();
-                var base = window.location.pathname || '/painel/gerenciamento-seguidores';
-                var urlParams = new URLSearchParams(window.location.search);
-                urlParams.set('sortBy', 'lastPurchaseAtMs');
-                urlParams.set('sortDir', order === 'oldest' ? 'asc' : 'desc');
-                urlParams.set('page', '1');
-                urlParams.set('pageSize', String(Math.min(200, Math.max(10, limit))));
-                urlParams.set('autoVerify', '1');
-                urlParams.set('autoLimit', String(limit));
-                var qs = urlParams.toString();
-                window.location.href = qs ? (base + '?' + qs) : base;
+                validateGeneralBtn.disabled = true;
+                var isPaused = !!(validateGeneralLastJob && validateGeneralLastJob.status === 'paused');
+                setStatus(isPaused ? 'Continuando validação geral…' : 'Iniciando validação geral…');
+                var url = isPaused ? '/api/painel/gerenciamento-seguidores/validate-general/resume' : '/api/painel/gerenciamento-seguidores/validate-general/start';
+                var body = isPaused ? {} : { dueDays: 3, limit: 2000 };
+                var resp = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify(body)
+                });
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                await pollGeneralStatus();
+                if (!validatePollTimer) validatePollTimer = setInterval(pollGeneralStatus, 1500);
               } catch (e) {
-                setStatus('Falha ao iniciar verificação.');
-              } finally {
-                runTodayBtn.disabled = false;
+                setStatus('Falha ao iniciar validação geral.');
+                try { validateGeneralBtn.disabled = false; } catch (_) {}
+                alert('Erro ao iniciar validação geral: ' + (e && e.message ? e.message : e));
               }
             });
           }
+          if (validateGeneralPauseBtn) {
+            validateGeneralPauseBtn.addEventListener('click', async function(){
+              try {
+                validateGeneralPauseBtn.disabled = true;
+                setStatus('Pausando validação geral…');
+                var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/pause', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({})
+                });
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+                await pollGeneralStatus();
+              } catch (e) {
+                setStatus('Falha ao pausar validação geral.');
+                try { validateGeneralPauseBtn.disabled = false; } catch (_) {}
+                alert('Erro ao pausar validação geral: ' + (e && e.message ? e.message : e));
+              }
+            });
+          }
+          pollGeneralStatus().catch(function(){});
 
           var applyBtn = el('followersApplyFilterBtn');
           var clearBtn = el('followersClearFiltersBtn');
@@ -906,31 +1072,48 @@
                 var qtEl = el('followersSearchType');
                 var sdEl = el('followersStartDate');
                 var edEl = el('followersEndDate');
-                var rsEl = el('followersRefilStart');
-                var reEl = el('followersRefilEnd');
-                var tipoEl = el('followersTipo');
+                var dfEl = el('followersDateField');
                 var sizeEl = el('followersPageSize');
                 var filledEl = el('followersFilledOnly');
+                var errorsEl = el('followersErrorsOnly');
+                var okEl = el('followersOkOnly');
+                var hiddenEl = el('followersHiddenOnly');
                 var warrantyEl = el('followersWarranty');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
                 var sdV = sdEl ? String(sdEl.value || '').trim() : '';
                 var edV = edEl ? String(edEl.value || '').trim() : '';
-                var rsV = rsEl ? String(rsEl.value || '').trim() : '';
-                var reV = reEl ? String(reEl.value || '').trim() : '';
-                var tipoV = tipoEl ? String(tipoEl.value || '').trim() : '';
+                var dfV = dfEl ? String(dfEl.value || '').trim().toLowerCase() : '';
+                var tipoV = (function(){
+                  try {
+                    var nodes = document.querySelectorAll('input.followersTipoChk');
+                    var list = [];
+                    for (var i=0;i<nodes.length;i++){
+                      var n = nodes[i];
+                      if (!n || !n.checked) continue;
+                      var v = String(n.value || '').trim().toLowerCase();
+                      if (v) list.push(v);
+                    }
+                    return list.join(',');
+                  } catch (_) { return ''; }
+                })();
                 var sizeV = sizeEl ? String(sizeEl.value || '').trim() : '';
                 var filledV = filledEl && filledEl.checked ? '1' : '';
+                var errorsV = errorsEl && errorsEl.checked ? '1' : '';
+                var okV = okEl && okEl.checked ? '1' : '';
+                var hiddenV = hiddenEl && hiddenEl.checked ? '1' : '';
                 var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
                 if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
                 if (edV) urlParams.set('endDate', edV); else urlParams.delete('endDate');
-                if (rsV) urlParams.set('refilStart', rsV); else urlParams.delete('refilStart');
-                if (reV) urlParams.set('refilEnd', reV); else urlParams.delete('refilEnd');
-                if (tipoV && tipoV !== 'all') urlParams.set('tipo', tipoV); else urlParams.delete('tipo');
+                if (dfV && dfV !== 'purchase') urlParams.set('dateField', dfV); else { urlParams.delete('dateField'); urlParams.delete('date'); }
+                if (tipoV) urlParams.set('tipo', tipoV); else urlParams.delete('tipo');
                 if (sizeV) urlParams.set('pageSize', sizeV); else urlParams.delete('pageSize');
                 if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
+                if (errorsV) urlParams.set('errors', errorsV); else { urlParams.delete('errors'); urlParams.delete('err'); }
+                if (okV) urlParams.set('ok', okV); else urlParams.delete('ok');
+                if (hiddenV) urlParams.set('hiddenOnly', hiddenV); else { urlParams.delete('hiddenOnly'); urlParams.delete('hidden'); }
                 if (warrantyV && warrantyV !== 'all') urlParams.set('warranty', warrantyV); else urlParams.delete('warranty');
                 if (warrantyV === 'life') urlParams.set('lifetime', '1'); else urlParams.delete('lifetime');
                 urlParams.set('page', '1');
@@ -955,6 +1138,36 @@
           var filledEl2 = el('followersFilledOnly');
           if (filledEl2 && applyBtn) {
             filledEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var errorsEl2 = el('followersErrorsOnly');
+          if (errorsEl2 && applyBtn) {
+            errorsEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var okEl2 = el('followersOkOnly');
+          if (okEl2 && applyBtn) {
+            okEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var hiddenEl2 = el('followersHiddenOnly');
+          if (hiddenEl2 && applyBtn) {
+            hiddenEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          try {
+            var tipoNodes = document.querySelectorAll('input.followersTipoChk');
+            for (var i=0;i<tipoNodes.length;i++){
+              tipoNodes[i].addEventListener('change', function(){ try { applyBtn.click(); } catch (_) {} });
+            }
+          } catch (_) {}
+          var dateFieldEl2 = el('followersDateField');
+          if (dateFieldEl2 && applyBtn) {
+            dateFieldEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -1012,8 +1225,10 @@
             var sb = String(urlParams0.get('sortBy') || 'lastPurchaseAtMs');
             var sd = String(urlParams0.get('sortDir') || 'desc');
             var arrow = sd === 'asc' ? '▲' : '▼';
+            var absEl = el('followersSortIconAbs');
             var dEl = el('followersSortIconDiff');
             var cEl = el('followersSortIconCompra');
+            if (absEl) absEl.textContent = (sb === 'diffAbs') ? arrow : '';
             if (dEl) dEl.textContent = (sb === 'diffPct') ? arrow : '';
             if (cEl) cEl.textContent = (sb === 'lastPurchaseAtMs') ? arrow : '';
           } catch (_) {}
@@ -1091,12 +1306,13 @@
           if (filters && filters.q) parts.push(`q=${encodeURIComponent(String(filters.q))}`);
           if (filters && filters.qType) parts.push(`qType=${encodeURIComponent(String(filters.qType))}`);
           if (filters && filters.filled) parts.push(`filled=1`);
+          if (filters && filters.errors) parts.push(`errors=1`);
+          if (filters && filters.ok) parts.push(`ok=1`);
           if (filters && filters.warranty) parts.push(`warranty=${encodeURIComponent(String(filters.warranty))}`);
           else if (filters && filters.lifetime) parts.push(`lifetime=1`);
           if (filters && filters.startDate) parts.push(`startDate=${encodeURIComponent(String(filters.startDate))}`);
           if (filters && filters.endDate) parts.push(`endDate=${encodeURIComponent(String(filters.endDate))}`);
-          if (filters && filters.refilStart) parts.push(`refilStart=${encodeURIComponent(String(filters.refilStart))}`);
-          if (filters && filters.refilEnd) parts.push(`refilEnd=${encodeURIComponent(String(filters.refilEnd))}`);
+          if (filters && filters.dateField && String(filters.dateField) !== 'purchase') parts.push(`dateField=${encodeURIComponent(String(filters.dateField))}`);
           if (filters && filters.tipo) parts.push(`tipo=${encodeURIComponent(String(filters.tipo))}`);
           if (filters && typeof filters.minPct === 'number') parts.push(`minPct=${encodeURIComponent(String(filters.minPct))}`);
           if (filters && typeof filters.maxPct === 'number') parts.push(`maxPct=${encodeURIComponent(String(filters.maxPct))}`);
