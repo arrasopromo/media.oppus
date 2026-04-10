@@ -591,7 +591,9 @@
               <th>
                 <a href="#" class="followers-sort" data-sort="lastPurchaseAtMs" style="color:inherit; text-decoration:none;">Compra<span id="followersSortIconCompra" style="margin-left:6px; color:#6b7280;"></span></a>
               </th>
-              <th>Checado em</th>
+              <th>
+                <a href="#" class="followers-sort" data-sort="currentCheckedAtMs" style="color:inherit; text-decoration:none;">Checado em<span id="followersSortIconChecked" style="margin-left:6px; color:#6b7280;"></span></a>
+              </th>
               <th>Erro</th>
               <th>Ação</th>
             </tr>
@@ -1022,7 +1024,7 @@
                 var isPaused = !!(validateGeneralLastJob && validateGeneralLastJob.status === 'paused');
                 setStatus(isPaused ? 'Continuando validação geral…' : 'Iniciando validação geral…');
                 var url = isPaused ? '/api/painel/gerenciamento-seguidores/validate-general/resume' : '/api/painel/gerenciamento-seguidores/validate-general/start';
-                var body = isPaused ? {} : { dueDays: 3, limit: 2000 };
+                var body = isPaused ? {} : { dueDays: 3, limit: 0 };
                 var resp = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -1228,9 +1230,11 @@
             var absEl = el('followersSortIconAbs');
             var dEl = el('followersSortIconDiff');
             var cEl = el('followersSortIconCompra');
+            var chkEl = el('followersSortIconChecked');
             if (absEl) absEl.textContent = (sb === 'diffAbs') ? arrow : '';
             if (dEl) dEl.textContent = (sb === 'diffPct') ? arrow : '';
             if (cEl) cEl.textContent = (sb === 'lastPurchaseAtMs') ? arrow : '';
+            if (chkEl) chkEl.textContent = (sb === 'currentCheckedAtMs') ? arrow : '';
           } catch (_) {}
 
           try {
@@ -1763,7 +1767,7 @@
                     responsive: true,
                     plugins: { legend: { display: false } },
                     scales: {
-                      y: { ticks: { callback: function(v){ return 'R$ ' + Number(v || 0).toFixed(2); } } }
+                      y: { ticks: { stepSize: 5, callback: function(v){ return 'R$ ' + Number(v || 0).toFixed(2); } } }
                     }
                   }
                 });
@@ -2308,11 +2312,13 @@
                      const s = String(v || '').toLowerCase().trim();
                      return s === 'unknown' || s === 'unknow' || s === '';
                    };
-                   const mainNeeds = !expectedProvider || (
-                     expectedProvider === 'fama24h'
-                       ? (isUnknownToken(famaStatusStr) || isUnknownToken(famaOrderIdStr) || famaOrderIdStr === 'null')
-                       : (isUnknownToken(fsStatusStr) || isUnknownToken(fsOrderIdStr) || fsOrderIdStr === 'null')
-                   );
+                   const mainNeeds = (typeof order.needsMainOrderId !== 'undefined')
+                     ? !!order.needsMainOrderId
+                     : (!expectedProvider || (
+                         expectedProvider === 'fama24h'
+                           ? (isUnknownToken(famaStatusStr) || isUnknownToken(famaOrderIdStr) || famaOrderIdStr === 'null')
+                           : (isUnknownToken(fsStatusStr) || isUnknownToken(fsOrderIdStr) || fsOrderIdStr === 'null')
+                       ));
                    const worldNeeds = String(order.needsWorldsmmComments || '') === 'true' || order.needsWorldsmmComments === true;
                 %>
                 <tr data-id="<%= order._id %>">
@@ -2917,6 +2923,7 @@
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
         <script>
           (function(){
+            var geoMapInstance = null;
             function q(id){ return document.getElementById(id); }
             function renderGeoTable(rows){
               var tb = q('geoCitiesTbody');
@@ -2939,7 +2946,13 @@
             function initMap(pointsVisits, pointsProfiles){
               var el = q('geoMap');
               if (!el || typeof L === 'undefined') return;
+              try {
+                if (geoMapInstance && typeof geoMapInstance.remove === 'function') geoMapInstance.remove();
+              } catch (_) {}
+              geoMapInstance = null;
+              try { el.innerHTML = ''; } catch (_) {}
               var map = L.map(el).setView([-15.78, -47.93], 4);
+              geoMapInstance = map;
               L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap',
                 maxZoom: 18
@@ -2964,6 +2977,7 @@
               if (bounds.length) {
                 try { map.fitBounds(bounds, { padding: [20,20] }); } catch(_) {}
               }
+              try { setTimeout(function(){ try { map.invalidateSize(); } catch (_) {} }, 250); } catch (_) {}
             }
             fetch('/api/geo/aggregate')
               .then(function(r){ return r.json(); })
@@ -2977,6 +2991,7 @@
               })
               .catch(function(){
                 renderGeoTable([]);
+                initMap([], []);
               });
           })();
         </script>
@@ -3219,8 +3234,8 @@
         </select>
       </div>
       <div style="margin-bottom:20px;">
-        <label style="display:block; margin-bottom:5px; font-weight:bold;">Order ID:</label>
-        <input type="text" id="unknownModalOrderId" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;" placeholder="Ex: 123456">
+        <label style="display:block; margin-bottom:5px; font-weight:bold;">Order ID(s):</label>
+        <textarea id="unknownModalOrderId" rows="3" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px; resize:vertical;" placeholder="Ex: 123456 ou 123456, 789012"></textarea>
       </div>
       <div style="display:flex; justify-content:flex-end; gap:10px;">
         <button type="button" onclick="closeUnknownOrderModal()" style="padding:8px 16px; background:#6c757d; color:white; border:none; border-radius:4px; cursor:pointer;">Cancelar</button>
@@ -3323,8 +3338,13 @@
 
     async function saveUnknownOrderInfo() {
       const provider = document.getElementById('unknownModalProvider').value;
-      const orderIdVal = document.getElementById('unknownModalOrderId').value.trim();
-      if (!orderIdVal) {
+      const orderIdRaw = document.getElementById('unknownModalOrderId').value;
+      const tokens = String(orderIdRaw || '')
+        .split(/[\s,;]+/g)
+        .map(s => String(s || '').trim())
+        .filter(Boolean);
+      const payloadOrderId = tokens.length > 1 ? tokens : (tokens[0] || '');
+      if (!payloadOrderId) {
         alert('Por favor, informe o Order ID do fornecedor.');
         return;
       }
@@ -3338,7 +3358,7 @@
           body: JSON.stringify({
             id: currentUnknownOrderId,
             field: 'supplierInfo',
-            value: { provider, orderId: orderIdVal }
+            value: { provider, orderId: payloadOrderId }
           })
         });
         const contentType = String(res.headers.get('content-type') || '');

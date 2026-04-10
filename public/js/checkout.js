@@ -830,15 +830,22 @@
     if (!tipoCards) return;
     tipoCards.innerHTML = '';
     tipoCards.style.display = 'grid';
+    const category = getServiceCategory();
     const tipos = selectedPlatform === 'tiktok'
       ? [
           { key: 'seguidores_tiktok', label: 'Seguidores' }
         ]
-      : [
-          { key: 'mistos', label: 'Seguidores Mistos' },
-          { key: 'brasileiros', label: 'Seguidores Brasileiros' },
-          { key: 'organicos', label: 'Seguidores brasileiros e reais' }
-        ];
+      : (category === 'curtidas'
+          ? [
+              { key: 'mistos', label: 'Curtidas Mistas' },
+              { key: 'curtidas_brasileiras', label: 'Curtidas Brasileiras' },
+              { key: 'organicos', label: 'Curtidas Brasileiras Reais' }
+            ]
+          : [
+              { key: 'mistos', label: 'Seguidores Mistos' },
+              { key: 'brasileiros', label: 'Seguidores Brasileiros' },
+              { key: 'organicos', label: 'Seguidores brasileiros e reais' }
+            ]);
     if (selectedPlatform === 'tiktok') {
       try {
         tipoCards.style.placeContent = 'center';
@@ -896,6 +903,7 @@
 }
     if (tipoCards) tipoCards.style.display = 'grid';
     for (const t of tipos) {
+      if (selectedPlatform !== 'tiktok' && category === 'curtidas' && t.key === 'curtidas_brasileiras') continue;
       const el = document.createElement('div');
       el.className = 'service-card option-card' + (selectedPlatform === 'tiktok' ? ' disabled' : '');
       el.dataset.role = 'tipo';

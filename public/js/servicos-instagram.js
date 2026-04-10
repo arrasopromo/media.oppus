@@ -1690,6 +1690,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const tipos = Object.keys(tabela).filter(t => {
       if (t === 'seguidores_tiktok') return false;
+      if (isCurtidasContext && t === 'curtidas_brasileiras') return false;
       return true;
     });
 
