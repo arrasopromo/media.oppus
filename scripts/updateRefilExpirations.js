@@ -13,6 +13,28 @@ function safeDateMs(iso) {
   }
 }
 
+function parseCliArg(name) {
+  try {
+    const key = `--${String(name || '').trim()}`;
+    const item = process.argv.find((a) => String(a || '').startsWith(`${key}=`));
+    if (!item) return null;
+    return String(item.split('=').slice(1).join('=') || '').trim() || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function asIso(v) {
+  try {
+    if (!v) return null;
+    const t = new Date(v).getTime();
+    if (!Number.isFinite(t) || t <= 0) return null;
+    return new Date(t).toISOString();
+  } catch (_) {
+    return null;
+  }
+}
+
 function buildInfoMap(order) {
   const arrPaid = Array.isArray(order?.additionalInfoPaid) ? order.additionalInfoPaid : [];
   const arrOrig = Array.isArray(order?.additionalInfo) ? order.additionalInfo : [];
@@ -109,6 +131,122 @@ function isPaid(order) {
   return false;
 }
 
+async function extendMarchRefilLinksBy30Days() {
+  const ordersCol = await getCollection('checkout_orders');
+  const tl = await getCollection('temporary_links');
+  const targetYear = Number(parseCliArg('year') || process.env.REFIL_MARCH_YEAR || new Date().getFullYear());
+
+  const marchStart = new Date(Date.UTC(targetYear, 2, 1, 0, 0, 0, 0)).toISOString();
+  const aprilStart = new Date(Date.UTC(targetYear, 3, 1, 0, 0, 0, 0)).toISOString();
+  const plus30Ms = 30 * 24 * 60 * 60 * 1000;
+
+  const paidFilter = {
+    $or: [
+      { status: 'pago' },
+      { 'woovi.status': 'pago' },
+      { paidAt: { $exists: true, $ne: null } },
+      { 'woovi.paidAt': { $exists: true, $ne: null } }
+    ]
+  };
+  const marchFilter = {
+    $or: [
+      { 'woovi.paidAt': { $gte: marchStart, $lt: aprilStart } },
+      { paidAt: { $gte: marchStart, $lt: aprilStart } },
+      { createdAt: { $gte: marchStart, $lt: aprilStart } }
+    ]
+  };
+
+  const orders = await ordersCol.find(
+    { $and: [paidFilter, marchFilter] },
+    { projection: { _id: 1, refilLinkId: 1 } }
+  ).toArray();
+
+  const linkTokens = new Set();
+  const orderIds = [];
+  for (const o of (orders || [])) {
+    const oid = o && o._id ? String(o._id) : '';
+    if (oid) orderIds.push(oid);
+    const token = String(o?.refilLinkId || '').trim();
+    if (token) linkTokens.add(token);
+  }
+
+  if (orderIds.length) {
+    const linked = await tl.find(
+      {
+        purpose: 'refil',
+        $or: [
+          { orderId: { $in: orderIds } },
+          { orders: { $in: orderIds } }
+        ]
+      },
+      { projection: { id: 1 } }
+    ).toArray();
+    for (const rec of (linked || [])) {
+      const token = String(rec?.id || '').trim();
+      if (token) linkTokens.add(token);
+    }
+  }
+
+  const tokenArr = Array.from(linkTokens);
+  if (!tokenArr.length) {
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'extend-march-30d',
+      year: targetYear,
+      marchStart,
+      aprilStart,
+      scannedOrders: orders.length,
+      matchedLinks: 0,
+      updatedLinks: 0
+    }));
+    return;
+  }
+
+  const links = await tl.find(
+    { purpose: 'refil', id: { $in: tokenArr } },
+    { projection: { id: 1, expiresAt: 1 } }
+  ).toArray();
+
+  let updatedLinks = 0;
+  let skippedNoExpiry = 0;
+  let errors = 0;
+  for (const link of (links || [])) {
+    const curMs = safeDateMs(link?.expiresAt);
+    if (!curMs) {
+      skippedNoExpiry++;
+      continue;
+    }
+    const nextIso = asIso(curMs + plus30Ms);
+    if (!nextIso) {
+      skippedNoExpiry++;
+      continue;
+    }
+    try {
+      const r = await tl.updateOne(
+        { id: String(link.id), purpose: 'refil' },
+        { $set: { expiresAt: nextIso } }
+      );
+      if (r && r.modifiedCount > 0) updatedLinks++;
+    } catch (e) {
+      errors++;
+      try { console.error('extend_march_failed', String(link?.id || ''), e?.message || String(e)); } catch (_) {}
+    }
+  }
+
+  console.log(JSON.stringify({
+    ok: errors === 0,
+    mode: 'extend-march-30d',
+    year: targetYear,
+    marchStart,
+    aprilStart,
+    scannedOrders: orders.length,
+    matchedLinks: links.length,
+    updatedLinks,
+    skippedNoExpiry,
+    errors
+  }));
+}
+
 function resolveTipoCategoria(order) {
   const map = buildInfoMap(order || {});
   const tipo = String(map.tipo_servico || order?.tipoServico || order?.tipo || '').trim().toLowerCase();
@@ -151,6 +289,12 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
 }
 
 (async () => {
+  if (process.argv.includes('--extend-march-30d')) {
+    await extendMarchRefilLinksBy30Days();
+    process.exit(0);
+    return;
+  }
+
   const tl = await getCollection('temporary_links');
   const ordersCol = await getCollection('checkout_orders');
 

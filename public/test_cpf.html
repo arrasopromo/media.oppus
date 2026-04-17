@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Geração de CPF</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .cpf-result {
+            font-size: 18px;
+            font-weight: bold;
+            color: #28a745;
+            margin: 10px 0;
+        }
+        .fingerprint {
+            font-size: 12px;
+            color: #666;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px 0;
+            box-sizing: border-box;
+        }
+        .validation {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .valid {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .invalid {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Teste de Geração de CPF</h1>
+        
+        <div class="test-section">
+            <h3>Geração de CPF Válido</h3>
+            <button onclick="generateAndShowCPF()">Gerar CPF Válido</button>
+            <div id="cpfResult" class="cpf-result"></div>
+            <div id="fingerprint" class="fingerprint"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Teste com Dados do Usuário</h3>
+            <div class="input-group">
+                <input type="text" id="testName" placeholder="Nome" onblur="updateUserCPF()">
+                <input type="tel" id="testPhone" placeholder="Telefone" onblur="updateUserCPF()">
+                <input type="email" id="testEmail" placeholder="Email" onblur="updateUserCPF()">
+            </div>
+            <div id="userCPFResult" class="cpf-result"></div>
+            <div id="userFingerprint" class="fingerprint"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Validação de CPF</h3>
+            <input type="text" id="cpfToValidate" placeholder="Digite um CPF (000.000.000-00)" maxlength="14">
+            <button onclick="validateCPF()">Validar CPF</button>
+            <div id="validationResult" class="validation"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>Cache de CPF</h3>
+            <button onclick="testCache()">Testar Cache (mesmos dados = mesmo CPF)</button>
+            <div id="cacheResult"></div>
+        </div>
+    </div>
+
+    <script>
+        // Funções de geração de CPF (copiadas do checkout.js)
+        function generateValidCPF() {
+            const cpf = Array.from({length: 9}, () => Math.floor(Math.random() * 10));
+            
+            let sum = 0;
+            for (let i = 0; i < 9; i++) {
+                sum += cpf[i] * (10 - i);
+            }
+            let firstDigit = 11 - (sum % 11);
+            if (firstDigit >= 10) firstDigit = 0;
+            cpf.push(firstDigit);
+            
+            sum = 0;
+            for (let i = 0; i < 10; i++) {
+                sum += cpf[i] * (11 - i);
+            }
+            let secondDigit = 11 - (sum % 11);
+            if (secondDigit >= 10) secondDigit = 0;
+            cpf.push(secondDigit);
+            
+            return cpf.join('').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+        }
+
+        function getBrowserSessionId() {
+            let bid = '';
+            try { bid = localStorage.getItem('oppus_browser_id'); } catch(_) {}
+            if (!bid) {
+                bid = 'bid_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                try { localStorage.setItem('oppus_browser_id', bid); } catch(_) {}
+            }
+            return bid;
+        }
+
+        function getUserFingerprint() {
+            try {
+                const browserId = getBrowserSessionId();
+                const userAgent = navigator.userAgent || '';
+                const screen = `${window.screen.width}x${window.screen.height}`;
+                const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+                
+                const nome = document.getElementById('testName')?.value || '';
+                const telefone = document.getElementById('testPhone')?.value || '';
+                const email = document.getElementById('testEmail')?.value || '';
+                
+                const fingerprintData = `${browserId}|${nome}|${telefone}|${email}|${userAgent}|${screen}|${timezone}`;
+                return btoa(fingerprintData).slice(0, 32);
+            } catch (e) {
+                return getBrowserSessionId();
+            }
+        }
+
+        function getCachedCPF() {
+            try {
+                const fingerprint = getUserFingerprint();
+                const cached = localStorage.getItem(`cpf_cache_${fingerprint}`);
+                
+                if (cached) {
+                    const data = JSON.parse(cached);
+                    if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+                        return data.cpf;
+                    }
+                }
+                return null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cacheCPF(cpf) {
+            try {
+                const fingerprint = getUserFingerprint();
+                const data = {
+                    cpf: cpf,
+                    timestamp: Date.now()
+                };
+                localStorage.setItem(`cpf_cache_${fingerprint}`, JSON.stringify(data));
+            } catch (e) {
+                // Ignora erro de cache
+            }
+        }
+
+        function getOrGenerateCPF() {
+            const cachedCPF = getCachedCPF();
+            if (cachedCPF) {
+                return cachedCPF;
+            }
+            
+            const newCPF = generateValidCPF();
+            cacheCPF(newCPF);
+            return newCPF;
+        }
+
+        function validateCPF(cpf) {
+            cpf = cpf.replace(/[^\d]/g, '');
+            
+            if (cpf.length !== 11) return false;
+            
+            // Verifica sequências inválidas
+            if (/^(\d)\1{10}$/.test(cpf)) return false;
+            
+            // Valida primeiro dígito
+            let sum = 0;
+            for (let i = 0; i < 9; i++) {
+                sum += parseInt(cpf.charAt(i)) * (10 - i);
+            }
+            let firstDigit = 11 - (sum % 11);
+            if (firstDigit >= 10) firstDigit = 0;
+            
+            if (parseInt(cpf.charAt(9)) !== firstDigit) return false;
+            
+            // Valida segundo dígito
+            sum = 0;
+            for (let i = 0; i < 10; i++) {
+                sum += parseInt(cpf.charAt(i)) * (11 - i);
+            }
+            let secondDigit = 11 - (sum % 11);
+            if (secondDigit >= 10) secondDigit = 0;
+            
+            return parseInt(cpf.charAt(10)) === secondDigit;
+        }
+
+        // Funções de teste
+        function generateAndShowCPF() {
+            const cpf = generateValidCPF();
+            const fingerprint = getUserFingerprint();
+            
+            document.getElementById('cpfResult').textContent = `CPF Gerado: ${cpf}`;
+            document.getElementById('fingerprint').textContent = `Fingerprint: ${fingerprint}`;
+        }
+
+        function updateUserCPF() {
+            const cpf = getOrGenerateCPF();
+            const fingerprint = getUserFingerprint();
+            
+            document.getElementById('userCPFResult').textContent = `CPF: ${cpf}`;
+            document.getElementById('userFingerprint').textContent = `Fingerprint: ${fingerprint}`;
+        }
+
+        function validateCPF() {
+            const cpfInput = document.getElementById('cpfToValidate').value;
+            const resultDiv = document.getElementById('validationResult');
+            
+            if (!cpfInput) {
+                resultDiv.innerHTML = 'Por favor, digite um CPF';
+                resultDiv.className = 'validation invalid';
+                return;
+            }
+            
+            const isValid = validateCPF(cpfInput);
+            
+            resultDiv.innerHTML = isValid ? 
+                `✅ CPF VÁLIDO: ${cpfInput}` : 
+                `❌ CPF INVÁLIDO: ${cpfInput}`;
+            resultDiv.className = isValid ? 'validation valid' : 'validation invalid';
+        }
+
+        function testCache() {
+            // Limpa os campos para testar
+            document.getElementById('testName').value = 'João Silva';
+            document.getElementById('testPhone').value = '(11) 98765-4321';
+            document.getElementById('testEmail').value = 'joao@teste.com';
+            
+            // Gera CPF pela primeira vez
+            const cpf1 = getOrGenerateCPF();
+            
+            // Tenta novamente com os mesmos dados
+            const cpf2 = getOrGenerateCPF();
+            
+            const resultDiv = document.getElementById('cacheResult');
+            resultDiv.innerHTML = `
+                <p><strong>Primeira geração:</strong> ${cpf1}</p>
+                <p><strong>Segunda geração (mesmos dados):</strong> ${cpf2}</p>
+                <p><strong>Cache funcionando:</strong> ${cpf1 === cpf2 ? '✅ SIM' : '❌ NÃO'}</p>
+            `;
+            
+            // Atualiza os campos visuais
+            updateUserCPF();
+        }
+
+        // Inicializa com CPF ao carregar
+        window.addEventListener('load', () => {
+            generateAndShowCPF();
+        });
+    </script>
+</body>
+</html>

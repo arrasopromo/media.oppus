@@ -1211,6 +1211,121 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
       } catch(_) {}
 
+      let splitErrMsg = '';
+      try {
+        let sfor = {};
+        const normalizeIgShortcode = function (sc) {
+          const v = String(sc || '').trim();
+          if (!v) return '';
+          const m = v.match(/^[A-Za-z0-9_-]+/);
+          const code = m ? String(m[0] || '') : '';
+          if (!code) return '';
+          return code.length > 15 ? code.slice(0, 11) : code;
+        };
+        const buildIgMediaLink = function (k, sc) {
+          const code = normalizeIgShortcode(sc);
+          if (!code) return '';
+          const kindPath = (k === 'views') ? 'reel' : 'p';
+          return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+        };
+        try {
+          const selResp = await fetch('/api/instagram/selected-for');
+          if (selResp && selResp.ok) {
+            const selData = await selResp.json();
+            sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+          }
+        } catch (_) {}
+        const mapKindList = function (k) {
+          const obj = (sfor && sfor[k]) ? sfor[k] : {};
+          const list = Array.isArray(obj.shortcodes) ? obj.shortcodes : (obj.shortcode ? [obj.shortcode] : []);
+          return list.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+        };
+        const getLinksForKind = function (k) {
+          const localList = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[k]))
+            ? window.__oppusSelectedPostsByKind[k]
+            : [];
+          const linksFromLocal = localList.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+          const linksFromServer = mapKindList(k);
+          return linksFromLocal.length ? linksFromLocal : linksFromServer;
+        };
+        const getFirstLinkForKind = function (k) {
+          const list = getLinksForKind(k);
+          return list.length ? list[0] : '';
+        };
+
+        const likesLink = getFirstLinkForKind('likes');
+        const viewsLink = getFirstLinkForKind('views');
+        const commentsLink = getFirstLinkForKind('comments');
+        const anyLink = viewsLink || likesLink || commentsLink;
+
+        const hasLikes = promos.some(p => p.key === 'likes');
+        const hasViews = promos.some(p => p.key === 'views');
+        const hasComments = promos.some(p => p.key === 'comments');
+        const kinds = [];
+        if (hasLikes) kinds.push('likes');
+        if (hasViews) kinds.push('views');
+        if (hasComments) kinds.push('comments');
+
+        if (kinds.length === 1) {
+          const onlyKind = kinds[0];
+          let link = getFirstLinkForKind(onlyKind);
+          if (!link && instagramUsernameFinal) {
+            try {
+              const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+              let pr = null;
+              if (window.AbortController) {
+                const controller = new AbortController();
+                const to = setTimeout(() => {
+                  try { controller.abort(); } catch (_) {}
+                }, 650);
+                try {
+                  pr = await fetch(url, { signal: controller.signal });
+                } finally {
+                  clearTimeout(to);
+                }
+              } else {
+                pr = await fetch(url);
+              }
+              if (!pr || !pr.ok) throw new Error('posts_fetch_failed');
+              const pd = await pr.json();
+              const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+              const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+              const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+              const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+              if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
+            } catch (_) {}
+          }
+          if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+        } else {
+          if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+          if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+          if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+        }
+
+        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+          const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+          const links = getLinksForKind(baseKind);
+          if (links.length) {
+            payload.additionalInfo.push({ key: 'post_link', value: links[0] });
+            payload.additionalInfo.push({ key: 'post_links', value: links.join(',') });
+            payload.additionalInfo.push({ key: 'post_split_count', value: String(links.length) });
+            const maxCount = getSplitMaxForQtd(qtd);
+            if (links.length > maxCount) {
+              splitErrMsg = 'Quantidade de posts acima do limite do pacote.';
+            }
+            const qtdForSplit = getEffectiveQtdForSplit(tipo, qtd);
+            const perPost = links.length ? Math.ceil(qtdForSplit / links.length) : qtdForSplit;
+            const totalSent = links.length ? (perPost * links.length) : qtdForSplit;
+            const extra = Math.max(0, totalSent - qtdForSplit);
+            payload.additionalInfo.push({ key: 'post_split_each', value: String(perPost) });
+            if (extra > 0) payload.additionalInfo.push({ key: 'post_split_extra', value: String(extra) });
+          } else {
+            splitErrMsg = 'Selecione pelo menos 1 post.';
+          }
+        }
+      } catch(_) {}
+      if (splitErrMsg) throw new Error(splitErrMsg);
+
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
       if (isStripe) {
@@ -1712,6 +1827,7 @@ document.addEventListener('DOMContentLoaded', function() {
       card.addEventListener('click', () => {
         // Atualizar select oculto
         if (tipoSelect) {
+          window.__oppusTipoChangeUserInitiated = true;
           tipoSelect.value = tipo;
           tipoSelect.dispatchEvent(new Event('change'));
         }
@@ -3857,6 +3973,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function scrollToCardsMobile() {
     try {
+      const delayMs = arguments.length > 0 ? Number(arguments[0]) : 3000;
       const isMobile = window.innerWidth <= 640;
       if (isMobile) {
         setTimeout(() => {
@@ -3868,7 +3985,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetTop = (rect.top + scrollTop) - 120;
             smoothScrollToY(targetTop, 1100);
           }
-        }, 3000);
+        }, Number.isFinite(delayMs) ? delayMs : 3000);
       }
     } catch (_) {}
   }
@@ -3900,7 +4017,9 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Scroll Mobile para os cards (deixando beirada da descrição)
-      scrollToCardsMobile();
+      const delayMs = (!isCurtidasContext && !isViewsContext && window.__oppusTipoChangeUserInitiated) ? 2000 : 3000;
+      window.__oppusTipoChangeUserInitiated = false;
+      scrollToCardsMobile(delayMs);
     });
   }
 

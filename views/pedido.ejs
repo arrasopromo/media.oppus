@@ -183,7 +183,7 @@
     <main class="main-content">
       <section class="section-block">
 
-      <% if ((function(){ var s=String(order.status || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })()) { %>
+      <% if ((function(){ var s=String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })()) { %>
         <div class="approved-payment-section" style="text-align: center; margin: 0 0 2rem 0; animation: fadeInUp 0.6s ease-out;">
             <div style="display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; background-color: #22c55e; margin-bottom: 1rem; box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -305,7 +305,7 @@
           var isOrganicFollowersCheck = catServCheck !== 'curtidas' && catServCheck !== 'visualizacoes' && tServCheck.includes('organico');
           
           // Check payment status (must be paid)
-          var paymentStatus = String(order.status || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var paymentStatus = String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
           var isPaid = (paymentStatus === 'pago' || paymentStatus === 'paid' || paymentStatus === 'completed');
 
           var statusRawCheck = '';
@@ -388,7 +388,7 @@
 
                 <div class="info-item">
                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Data Pagamento</div>
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.expay&&order.expay.paidAt)||(order.woovi&&order.woovi.paidAt)||order.paidAt||null; var st=String(order.status||(order.expay&&order.expay.status)||(order.woovi&&order.woovi.status)||'').toLowerCase(); if(!raw && (st==='pago'||st==='paid'||st==='completed')) raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.paghiper&&order.paghiper.paidAt)||(order.expay&&order.expay.paidAt)||(order.woovi&&order.woovi.paidAt)||order.paidAt||null; var st=String(order.status||(order.paghiper&&order.paghiper.status)||(order.expay&&order.expay.status)||(order.woovi&&order.woovi.status)||'').toLowerCase(); if(!raw && (st==='pago'||st==='paid'||st==='completed')) raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
                 </div>
 
                 <div class="info-item" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 1rem;">
@@ -737,7 +737,7 @@
         }
       } catch(_) {}
       try {
-        var paidRaw = (orderData && orderData.expay && orderData.expay.paidAt) || (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
+        var paidRaw = (orderData && orderData.paghiper && orderData.paghiper.paidAt) || (orderData && orderData.expay && orderData.expay.paidAt) || (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
         var txt = formatDateTimeSP(paidRaw);
         var el = document.getElementById('paidAtLocal');
         if (el && txt) el.textContent = txt;
@@ -866,7 +866,7 @@
               oid = String(qs.get('orderID') || '').trim();
             } catch(_) {}
             if (!ident && orderDataLocal) {
-              ident = String(orderDataLocal.identifier || (orderDataLocal.woovi && orderDataLocal.woovi.identifier) || '').trim();
+              ident = String(orderDataLocal.identifier || (orderDataLocal.paghiper && orderDataLocal.paghiper.transactionId) || (orderDataLocal.expay && orderDataLocal.expay.transactionId) || (orderDataLocal.woovi && orderDataLocal.woovi.identifier) || '').trim();
             }
             if (!oid && orderDataLocal && orderDataLocal._id) {
               oid = String(orderDataLocal._id);
@@ -1152,7 +1152,7 @@
           }
         } catch(_) {}
         
-        var statusStr = String((orderData && (orderData.status || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+        var statusStr = String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
         var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
         var catServ = '';
         try {
@@ -1217,8 +1217,8 @@
       try {
         var tipoServ = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
         var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
-        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })();
-        var ident = String((orderData && (orderData.identifier || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
+        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })();
+        var ident = String((orderData && (orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
         try {
           var qs = new URLSearchParams((location && location.search) || '');
           var identQ = String(qs.get('identifier') || qs.get('t') || '').trim();
@@ -2135,7 +2135,7 @@ function checkPrivacyStatus() {
           successDiv.style.display = 'block';
           
           // Dispatch fulfillment retry (Trigger services)
-          var id = orderData.identifier || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
+          var id = orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
           if (id) {
              console.log('🔄 Initiating fulfillment retry for ID:', id);
              fetch('/api/order/retry-fulfillment', {

@@ -198,7 +198,10 @@ const calculateOrderBumps = (bumpsStr, baseType) => {
         const q = parseInt(qtyStr, 10) || 1;
         
         if (key === 'likes') {
-            const variant = base.includes('organicos') ? 'organicos' : ((base.includes('brasileiros') || base.includes('curtidas_brasileiras')) ? 'brasileiros' : 'mistos');
+            const isReelsViewsBase = base.includes('visualiz') || base === 'views' || base === 'reels' || base.includes('visualizacoes_reels');
+            const variant = isReelsViewsBase
+              ? 'organicos'
+              : (base.includes('organicos') ? 'organicos' : ((base.includes('brasileiros') || base.includes('curtidas_brasileiras')) ? 'brasileiros' : 'mistos'));
             const table = tabelaCurtidasPromo[variant] || tabelaCurtidasPromo.mistos;
             const item = table.find(x => x.q === q);
             if (item) total += parsePrecoToCents(item.p);
@@ -332,11 +335,14 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
             } else if ((type === 'brasileiros' || type === 'organicos') && q === 1000) {
                 targetQ = 2000;
             } else {
-                // Generic (works for followers and likes)
-                const map = { 
-                    150: 300, 300: 500, 500: 700, 700: 1000, 
-                    1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 
-                    5000: 7500, 7500: 10000, 10000: 15000 
+                // Keep upgrade mapping in sync with checkout.js (updateOrderBump -> upsellTargets)
+                const map = {
+                    150: 300,
+                    500: 700,
+                    1000: 2000,
+                    3000: 4000,
+                    5000: 7500,
+                    10000: 15000
                 };
                 targetQ = map[q];
             }

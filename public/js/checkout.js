@@ -13,6 +13,101 @@
   // Initialize browser ID immediately
   try { getBrowserSessionId(); } catch(_) {}
 
+  // Funções para gerar CPF válido e cache
+  function generateValidCPF() {
+    // Gera os 9 primeiros dígitos aleatórios
+    const cpf = Array.from({length: 9}, () => Math.floor(Math.random() * 10));
+    
+    // Calcula o primeiro dígito verificador
+    let sum = 0;
+    for (let i = 0; i < 9; i++) {
+      sum += cpf[i] * (10 - i);
+    }
+    let firstDigit = 11 - (sum % 11);
+    if (firstDigit >= 10) firstDigit = 0;
+    cpf.push(firstDigit);
+    
+    // Calcula o segundo dígito verificador
+    sum = 0;
+    for (let i = 0; i < 10; i++) {
+      sum += cpf[i] * (11 - i);
+    }
+    let secondDigit = 11 - (sum % 11);
+    if (secondDigit >= 10) secondDigit = 0;
+    cpf.push(secondDigit);
+    
+    // Formata o CPF (000.000.000-00)
+    return cpf.join('').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  }
+
+  function getUserFingerprint() {
+    try {
+      // Cria fingerprint baseado em dados do navegador e sessão
+      const browserId = getBrowserSessionId();
+      const userAgent = navigator.userAgent || '';
+      const screen = `${window.screen.width}x${window.screen.height}`;
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      
+      // Pega dados do formulário se disponíveis
+      const nome = document.getElementById('contactNameInput')?.value || '';
+      const telefone = document.getElementById('contactPhoneInput')?.value || '';
+      const email = document.getElementById('contactEmailInput')?.value || '';
+      
+      // Cria hash único baseado nos dados
+      const fingerprintData = `${browserId}|${nome}|${telefone}|${email}|${userAgent}|${screen}|${timezone}`;
+      return btoa(fingerprintData).slice(0, 32); // Limita o tamanho
+    } catch (e) {
+      return getBrowserSessionId(); // Fallback para browser ID
+    }
+  }
+
+  function getCachedCPF() {
+    try {
+      const fingerprint = getUserFingerprint();
+      const cached = localStorage.getItem(`cpf_cache_${fingerprint}`);
+      
+      if (cached) {
+        const data = JSON.parse(cached);
+        // Verifica se o cache é válido por 24 horas
+        if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) {
+          return data.cpf;
+        }
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function cacheCPF(cpf) {
+    try {
+      const fingerprint = getUserFingerprint();
+      const data = {
+        cpf: cpf,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(`cpf_cache_${fingerprint}`, JSON.stringify(data));
+    } catch (e) {
+      // Ignora erro de cache
+    }
+  }
+
+  function getOrGenerateCPF() {
+    // Tenta pegar do cache primeiro
+    const cachedCPF = getCachedCPF();
+    if (cachedCPF) {
+      return cachedCPF;
+    }
+    
+    // Gera novo CPF
+    const newCPF = generateValidCPF();
+    
+    // Cacheia o novo CPF
+    cacheCPF(newCPF);
+    
+    return newCPF;
+  }
+
   const tipoSelect = document.getElementById('tipoSelect');
   const qtdSelect = document.getElementById('quantidadeSelect');
   const tipoCards = document.getElementById('tipoCards');
@@ -44,6 +139,62 @@
   // Lógica de Pagamento (Cartão vs Pix)
   let currentPaymentMethod = 'pix'; // 'pix' or 'credit_card'
   let currentPixGateway = 'woovi';
+  const updatePixCpfVisibility = () => {
+    try {
+      const wrap = document.getElementById('pixCpfWrap');
+      if (!wrap) return;
+      const labelEl = wrap.querySelector('label[for="pixCpfInput"]');
+      const hintEl = wrap.querySelector('.phone-hint');
+      const cpfInput = document.getElementById('pixCpfInput');
+      const isPix = String(currentPaymentMethod || 'pix') === 'pix';
+      const selectedPixGateway = String((pixGatewaySelect && pixGatewaySelect.value) ? pixGatewaySelect.value : 'woovi').trim().toLowerCase() || 'woovi';
+      const gw = (selectedPixGateway === 'expay' || selectedPixGateway === 'paghiper') ? selectedPixGateway : 'woovi';
+      const shouldShow = isPix && (gw === 'expay' || gw === 'paghiper');
+      const shouldHideByDefaultCpf = isPix && gw === 'expay' && !!(window && window.__EXPAY_DEFAULT_CPF_ENABLED);
+      
+      // Para PagHiPer, sempre oculta o campo mas mantém preenchido
+      if (gw === 'paghiper') {
+        wrap.style.display = 'none'; // Sempre oculto para PagHiPer
+        if (cpfInput) {
+          const autoCPF = getOrGenerateCPF();
+          cpfInput.value = autoCPF;
+          cpfInput.readOnly = true;
+        }
+      } else {
+        // Para outros gateways, mantém a lógica original
+        wrap.style.display = (!shouldShow || shouldHideByDefaultCpf) ? 'none' : '';
+        if (cpfInput && gw !== 'paghiper') {
+          cpfInput.readOnly = false; // Remove readonly se não for PagHiPer
+        }
+      }
+      
+      if (labelEl) labelEl.textContent = (gw === 'paghiper') ? 'CPF (para Pix PagHiper)' : (gw === 'expay') ? 'CPF (para Pix ExPay)' : 'CPF (para Pix)';
+      if (hintEl) hintEl.textContent = (gw === 'paghiper') ? 'A PagHiper exige CPF do pagador.' : (gw === 'expay') ? 'A ExPay exige CPF do pagador.' : 'Alguns gateways de Pix exigem CPF do pagador.';
+    } catch (_) {}
+  };
+  try {
+    if (pixGatewaySelect) {
+      pixGatewaySelect.addEventListener('change', () => {
+        try {
+          const selectedPixGateway = String((pixGatewaySelect && pixGatewaySelect.value) ? pixGatewaySelect.value : 'woovi').trim().toLowerCase() || 'woovi';
+          currentPixGateway = (selectedPixGateway === 'expay' || selectedPixGateway === 'paghiper') ? selectedPixGateway : 'woovi';
+          window.currentPixGateway = currentPixGateway;
+        } catch (_) {}
+        try { updatePixCpfVisibility(); } catch (_) {}
+        
+        // Se mudou para PagHiPer, gera/atualiza CPF automaticamente
+        if (currentPixGateway === 'paghiper' && String(currentPaymentMethod || 'pix') === 'pix') {
+          const cpfInput = document.getElementById('pixCpfInput');
+          if (cpfInput && !cpfInput.value) {
+            const autoCPF = getOrGenerateCPF();
+            cpfInput.value = autoCPF;
+            cpfInput.readOnly = true;
+          }
+        }
+      });
+    }
+  } catch (_) {}
+  try { updatePixCpfVisibility(); } catch (_) {}
   
   // Upsell Logic State
   let upsellShown = false;
@@ -135,11 +286,50 @@
     }
   }
 
+  // Configura listeners para campos de contato para atualizar CPF quando dados mudarem
+  function setupContactFieldListeners() {
+    const nameInput = document.getElementById('contactNameInput');
+    const phoneInput = document.getElementById('contactPhoneInput');
+    const emailInput = document.getElementById('contactEmailInput');
+    
+    const updateCPFFromContactFields = () => {
+      // Apenas atualiza se for PagHiPer
+      const selectedPixGateway = String((pixGatewaySelect && pixGatewaySelect.value) ? pixGatewaySelect.value : 'woovi').trim().toLowerCase() || 'woovi';
+      const isPagHiPer = selectedPixGateway === 'paghiper';
+      const isPix = String(currentPaymentMethod || 'pix') === 'pix';
+      
+      if (isPix && isPagHiPer) {
+        // Limpa o cache antigo para gerar novo CPF com base nos novos dados
+        try {
+          const fingerprint = getUserFingerprint();
+          localStorage.removeItem(`cpf_cache_${fingerprint}`);
+        } catch (e) {
+          // Ignora erro
+        }
+        
+        // Atualiza o campo CPF
+        const cpfInput = document.getElementById('pixCpfInput');
+        if (cpfInput) {
+          const newCPF = getOrGenerateCPF();
+          cpfInput.value = newCPF;
+        }
+      }
+    };
+    
+    if (nameInput) nameInput.addEventListener('blur', updateCPFFromContactFields);
+    if (phoneInput) phoneInput.addEventListener('blur', updateCPFFromContactFields);
+    if (emailInput) emailInput.addEventListener('blur', updateCPFFromContactFields);
+  }
+
   // Try immediately in case script is at bottom
   setupUpsellListeners();
+  setupContactFieldListeners();
   // And also on DOMContentLoaded just in case
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setupUpsellListeners);
+    document.addEventListener('DOMContentLoaded', () => {
+      setupUpsellListeners();
+      setupContactFieldListeners();
+    });
   }
 
 
@@ -330,6 +520,7 @@
           selectPaymentMethod('pix');
         }
       }
+      try { updatePixCpfVisibility(); } catch (_) {}
     }
   }
 
@@ -459,6 +650,7 @@
     if (typeof window.showTutorialStep === 'function') {
          if (window.currentStep === 3) window.showTutorialStep(5);
     }
+    try { updatePixCpfVisibility(); } catch (_) {}
   }
 
 
@@ -754,10 +946,20 @@
     const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
     const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
     const upHighlight = document.getElementById('orderBumpHighlight');
-    if (!isFollowersTipo(tipo) || !baseQtd) { orderInline.style.display = 'none'; return; }
+    if (!isFollowersTipo(tipo) || !baseQtd) {
+      if (checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+      orderInline.style.display = 'none';
+      return;
+    }
     // Sempre mostrar o card de Promoções para serviços de seguidores
     orderInline.style.display = 'block';
-    if (checkbox) checkbox.checked = false;
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = false;
+    }
 
     // Promos específicas: 1000 -> 2000 com extras para brasileiros/organicos
     if ((tipo === 'brasileiros' || tipo === 'organicos') && Number(baseQtd) === 1000) {
@@ -783,12 +985,17 @@
     const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
+      if (checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
       if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
       if (upOld) upOld.textContent = '—';
       if (upNew) upNew.textContent = '—';
       if (upDisc) upDisc.textContent = 'OFERTA';
       return;
     }
+    if (checkbox) checkbox.disabled = false;
     const basePrice = findPrice(tipo, baseQtd);
     const targetPrice = findPrice(tipo, targetQtd);
     const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
@@ -2005,6 +2212,8 @@
   function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
   function getLikesPromoVariant() {
+    const cat = getServiceCategory();
+    if (cat === 'visualizacoes') return 'organicos';
     const base = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     if (base.includes('organicos')) return 'organicos';
     if (base.includes('brasileiros') || base.includes('curtidas_brasileiras')) return 'brasileiros';
@@ -2351,7 +2560,9 @@
         let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
         if (!priceStr) priceStr = promoPricing.likes?.price || '';
         const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+        const cat = getServiceCategory();
         const label = (function(t){
+          if (cat === 'visualizacoes') return `Curtidas brasileiras reais (${qty})`;
           if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
           if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
           if (t === 'mistos') return `Curtidas mistas (${qty})`;
@@ -2871,7 +3082,7 @@
       })();
 
       const selectedPixGateway = String((pixGatewaySelect && pixGatewaySelect.value) ? pixGatewaySelect.value : 'woovi').trim().toLowerCase() || 'woovi';
-      currentPixGateway = (selectedPixGateway === 'expay') ? 'expay' : 'woovi';
+      currentPixGateway = (selectedPixGateway === 'expay' || selectedPixGateway === 'paghiper') ? selectedPixGateway : 'woovi';
 
       const payload = {
         correlationID,
@@ -2908,6 +3119,13 @@
           pushAdditionalInfoIfMissing('cpf', cpfDigits);
         }
       } catch (_) {}
+      try {
+        const emailRaw = String(document.getElementById('contactEmailInput')?.value || '').trim();
+        if (emailRaw) {
+          payload.customer.email = emailRaw;
+          pushAdditionalInfoIfMissing('email', emailRaw);
+        }
+      } catch (_) {}
       if (currentPixGateway === 'expay' && !(window && window.__EXPAY_DEFAULT_CPF_ENABLED)) {
         const cpfDigits = onlyDigits(payload.customer && payload.customer.cpf ? payload.customer.cpf : '');
         if (!cpfDigits || cpfDigits.length !== 11) {
@@ -2921,6 +3139,35 @@
             }
           } catch (_) {}
           throw new Error('Informe seu CPF para pagar via Pix (ExPay).');
+        }
+      }
+      if (currentPixGateway === 'paghiper') {
+        const cpfDigits = onlyDigits(payload.customer && payload.customer.cpf ? payload.customer.cpf : '');
+        if (!cpfDigits || cpfDigits.length !== 11) {
+          try {
+            const cpfEl = document.getElementById('pixCpfInput') || document.getElementById('cardHolderCpf');
+            if (cpfEl) {
+              cpfEl.classList.add('input-error');
+              cpfEl.classList.add('tutorial-highlight');
+              try { cpfEl.focus(); } catch (_) {}
+              try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+            }
+          } catch (_) {}
+          throw new Error('Informe seu CPF para pagar via Pix (PagHiper).');
+        }
+        const email = String(payload.customer && payload.customer.email ? payload.customer.email : '').trim().toLowerCase();
+        const okEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        if (!okEmail) {
+          try {
+            const emailEl = document.getElementById('contactEmailInput');
+            if (emailEl) {
+              emailEl.classList.add('input-error');
+              emailEl.classList.add('tutorial-highlight');
+              try { emailEl.focus(); } catch (_) {}
+              try { emailEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+            }
+          } catch (_) {}
+          throw new Error('Informe seu e-mail para pagar via Pix (PagHiper).');
         }
       }
       try {
@@ -2993,7 +3240,11 @@
 
       // sem envio de links de posts
 
-      const pixCreateEndpoint = (currentPixGateway === 'expay') ? '/api/expay/charge' : '/api/woovi/charge';
+      const pixCreateEndpoint = (currentPixGateway === 'expay')
+        ? '/api/expay/charge'
+        : (currentPixGateway === 'paghiper')
+          ? '/api/paghiper/charge'
+          : '/api/woovi/charge';
       const resp = await fetch(pixCreateEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3021,7 +3272,7 @@
         const status = Number(resp && resp.status) || 0;
         const msg = data?.message || data?.details?.message || data?.error || (data?.raw ? String(data.raw).slice(0, 200) : '') || 'Falha ao criar cobrança';
         const allowFallback = (typeof window !== 'undefined' && window && window.__ALLOW_PIX_GATEWAY_FALLBACK !== false);
-        const shouldFallbackToWoovi = allowFallback && currentPixGateway === 'expay' && (status >= 500 || status === 502);
+        const shouldFallbackToWoovi = allowFallback && (currentPixGateway === 'expay' || currentPixGateway === 'paghiper') && (status >= 500 || status === 502);
         if (shouldFallbackToWoovi) {
           try {
             currentPixGateway = 'woovi';
@@ -3038,10 +3289,18 @@
               throw new Error(msg2);
             }
             try {
+              const gwLabel = (function () {
+                const g = String(payload?.additionalInfo?.find(it => it && it.key === 'pix_gateway')?.value || '').trim().toLowerCase();
+                if (g === 'paghiper') return 'PagHiper';
+                if (g === 'expay') return 'ExPay';
+                return 'Gateway Pix';
+              })();
+              const detailsMsg = String(msg || '').trim();
+              const detailsShort = detailsMsg ? ` (${detailsMsg.slice(0, 140)})` : '';
               if (typeof showToast === 'function') {
-                showToast({ title: 'Pix', desc: 'ExPay indisponível. Geramos seu Pix via Woovi.', platform: 'instagram' });
+                showToast({ title: 'Pix', desc: `${gwLabel} indisponível${detailsShort}. Geramos seu Pix via Woovi.`, platform: 'instagram' });
               } else {
-                alert('ExPay indisponível. Geramos seu Pix via Woovi.');
+                alert(`${gwLabel} indisponível${detailsShort}. Geramos seu Pix via Woovi.`);
               }
             } catch (_) {}
             data = parsed.data;
@@ -3059,7 +3318,7 @@
 
       // Renderização amigável: QR Code e botão de copiar código Pix
       const resolvedGateway = String(data?.gateway || data?.provider || currentPixGateway || 'woovi').trim().toLowerCase();
-      currentPixGateway = (resolvedGateway === 'expay') ? 'expay' : 'woovi';
+      currentPixGateway = (resolvedGateway === 'expay' || resolvedGateway === 'paghiper') ? resolvedGateway : 'woovi';
       const charge = data?.charge || data?.data?.charge || data?.data || {};
       const pix = charge?.paymentMethods?.pix || data?.pix || data?.paymentMethods?.pix || {};
       const brCode = pix?.brCode || pix?.br_code || charge?.brCode || data?.brCode || data?.br_code || data?.pix_code || data?.pixCode || '';
@@ -3217,12 +3476,14 @@
           try {
             const statusEndpoint = (currentPixGateway === 'expay')
               ? `/api/expay/charge-status?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`
-              : `/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`;
+              : (currentPixGateway === 'paghiper')
+                ? `/api/paghiper/charge-status?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`
+                : `/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`;
             const stResp = await fetch(statusEndpoint);
             const stData = await stResp.json();
             const status = stData?.charge?.status || stData?.status || '';
             const paidFlag = stData?.charge?.paid || stData?.paid || false;
-            const isPaid = paidFlag === true || /paid/i.test(String(status));
+            const isPaid = paidFlag === true || /(paid|approved|aprovado)/i.test(String(status));
             if (isPaid) {
               clearInterval(paymentPollInterval);
               paymentPollInterval = null;

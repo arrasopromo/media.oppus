@@ -483,9 +483,14 @@
                   <div class="tutorial-pop-text">Digite seu telefone</div>
                 </div>
               </div>
-              <div class="phone-field" id="pixCpfWrap" style="position:relative; margin-bottom:0.75rem;<%= (typeof EXPAY_DEFAULT_CPF_ENABLED !== 'undefined' && EXPAY_DEFAULT_CPF_ENABLED) ? 'display:none;' : '' %>">
-                <label for="pixCpfInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 8px);">CPF (para Pix ExPay)</label>
-                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 2px);">Se você escolher ExPay no Pix, a plataforma exige CPF do pagador.</p>
+              <div class="phone-field" id="contactEmailWrap" style="position:relative; margin-bottom:0.75rem;">
+                <label for="contactEmailInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 8px);">E-mail</label>
+                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 2px);">Alguns gateways de Pix exigem e-mail do pagador.</p>
+                <input id="contactEmailInput" type="email" class="select-input" placeholder="seuemail@gmail.com" inputmode="email" autocomplete="email" />
+              </div>
+              <div class="phone-field" id="pixCpfWrap" style="position:relative; margin-bottom:0.75rem;">
+                <label for="pixCpfInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 8px);">CPF (para Pix)</label>
+                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 2px);">Alguns gateways de Pix exigem CPF do pagador.</p>
                 <input id="pixCpfInput" type="text" class="select-input" placeholder="000.000.000-00" maxlength="14" />
               </div>
 
@@ -503,6 +508,7 @@
                         <select id="pixGatewaySelect" class="select-input" style="width:100%; height:34px; padding:0 10px; border-radius:10px; border:1px solid #bbf7d0; background:#ffffff; color:#065f46; font-weight:700; font-size:0.78rem; outline:none;">
                           <option value="woovi" selected>Woovi</option>
                           <option value="expay">ExPay</option>
+                          <option value="paghiper">PagHiper</option>
                         </select>
                       </div>
                     </div>
