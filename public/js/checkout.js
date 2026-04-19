@@ -5411,7 +5411,18 @@
     });
     try {
       const stored = localStorage.getItem('oppus_client_phone');
-      if (stored && phoneInputPage) phoneInputPage.value = stored;
+      let fromQuery = '';
+      try {
+        const qs = new URLSearchParams((window && window.location && window.location.search) ? window.location.search : '');
+        fromQuery = String(qs.get('phone') || qs.get('telefone') || qs.get('tel') || '').trim();
+      } catch (_) {}
+      const picked = fromQuery ? fromQuery : stored;
+      if (picked && phoneInputPage) {
+        const digits = String(picked || '').replace(/\D/g, '');
+        const v = digits ? digits : String(picked || '');
+        phoneInputPage.value = (typeof maskBrPhone === 'function') ? maskBrPhone(v) : v;
+        try { applyPhone(v); } catch (_) {}
+      }
     } catch (_) {}
   // Termos de uso
   const termsLink = document.getElementById('termsLink');

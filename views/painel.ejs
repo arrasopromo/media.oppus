@@ -470,6 +470,8 @@
           <button type="button" id="followersUnhideSelectedBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Desocultar marcados</button>
           <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer;">Iniciar validação geral</button>
           <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
+          <button type="button" id="followersAutoNotifyBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto enviar Email+SMS (checados)</button>
+          <button type="button" id="followersReportBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Relatório</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Validar:</span>
@@ -483,6 +485,19 @@
               </select>
             </label>
             <span style="font-size:0.85rem; color:#64748b;">Regra: somente compras com 2+ dias</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Auto:</span>
+              <input id="followersAutoNotifyLimit" type="number" min="0" step="1" placeholder="0 = todos" style="width:110px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Ordem:</span>
+              <select id="followersAutoNotifyOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="recent">Mais recentes</option>
+                <option value="oldest">Mais antigos</option>
+              </select>
+            </label>
           </div>
           <div id="followersValidateGeneralWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <div style="font-size:0.9rem; color:#111827; font-weight:600;">Progresso:</div>
@@ -691,7 +706,7 @@
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -775,6 +790,43 @@
           </tbody>
         </table>
       </div>
+
+      <div id="followersReportModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:99999; align-items:center; justify-content:center; padding:16px;">
+        <div style="width:720px; max-width:calc(100vw - 32px); background:#ffffff; border-radius:12px; border:1px solid #e5e7eb; overflow:hidden; font-family: Arial,Helvetica,sans-serif;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; background:#111827; color:#ffffff;">
+            <div style="font-weight:800; letter-spacing:0.02em;">Relatório - Gerenciamento de Seguidores</div>
+            <button type="button" id="followersReportCloseBtn" style="padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.25); background:transparent; color:#ffffff; cursor:pointer;">Fechar</button>
+          </div>
+          <div style="padding:14px 16px; color:#111827;">
+            <div style="display:flex; gap:14px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:240px; border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb;">
+                <div style="font-size:12px; color:#6b7280;">Total (com filtros)</div>
+                <div id="followersReportTotal" style="font-size:22px; font-weight:800; margin-top:2px;">-</div>
+                <div style="height:10px;"></div>
+                <div style="font-size:12px; color:#6b7280;">Checados</div>
+                <div id="followersReportChecked" style="font-size:18px; font-weight:800; margin-top:2px;">-</div>
+                <div style="font-size:12px; color:#6b7280; margin-top:4px;" id="followersReportCheckedPct"></div>
+                <div style="height:10px;"></div>
+                <div style="font-size:12px; color:#6b7280;">Com queda</div>
+                <div id="followersReportWithDrop" style="font-size:18px; font-weight:800; margin-top:2px;">-</div>
+              </div>
+
+              <div style="flex:1; min-width:240px; border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#ffffff;">
+                <div style="font-size:12px; color:#6b7280;">Distribuição de queda (%)</div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                  <canvas id="followersReportPie" width="260" height="260" style="width:260px; height:260px; border-radius:999px; background:#ffffff;"></canvas>
+                  <div id="followersReportLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:12px; font-size:12px; color:#6b7280;">
+              Percentuais do gráfico são calculados apenas em cima dos pedidos com queda.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script type="application/json" id="followersReportJson"><%- JSON.stringify(followersReport || {}).replace(/</g, '\\u003c') %></script>
 
       <script>
         (function(){
@@ -880,6 +932,45 @@
             }
           }
 
+          async function sendNotifyForRow(tr2) {
+            if (!tr2) throw new Error('row_missing');
+            var orderId = String(tr2.getAttribute('data-orderid') || '').trim();
+            var username2 = String(tr2.getAttribute('data-username') || '').trim();
+            if (!orderId) throw new Error('order_id_missing');
+
+            var btns2 = tr2.querySelectorAll('button');
+            for (var k=0;k<btns2.length;k++){ try { btns2[k].disabled = true; } catch(_) {} }
+            var statusEl = tr2.querySelector('.followersNotifyStatus');
+            if (statusEl) { statusEl.textContent = 'Enviando…'; statusEl.style.color = '#64748b'; }
+
+            try {
+              var out = await fetch('/api/painel/gerenciamento-seguidores/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ orderId: orderId, username: username2 })
+              }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+
+              var data = out && out.json ? out.json : null;
+              if (!data || data.ok !== true) {
+                var e0 = (data && data.error) ? String(data.error) : 'request_failed';
+                var emailErr = (data && data.email && data.email.ok === false && data.email.error) ? String(data.email.error) : '';
+                var smsErr = (data && data.sms && data.sms.ok === false && data.sms.error) ? String(data.sms.error) : '';
+                var msg = e0;
+                if (emailErr || smsErr) msg = (emailErr ? ('Email: ' + emailErr) : '') + (emailErr && smsErr ? ' | ' : '') + (smsErr ? ('SMS: ' + smsErr) : '');
+                if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#dc2626'; }
+                return { ok: false, data: data, message: msg };
+              }
+              var label = 'Enviado';
+              if (data.email && data.sms) {
+                label = (data.email.ok ? 'Email OK' : ('Email: ' + String(data.email.error || 'erro'))) + ' | ' + (data.sms.ok ? 'SMS OK' : ('SMS: ' + String(data.sms.error || 'erro')));
+              }
+              if (statusEl) { statusEl.textContent = label; statusEl.style.color = '#16a34a'; }
+              return { ok: true, data: data, message: label };
+            } finally {
+              for (var j2=0;j2<btns2.length;j2++){ try { btns2[j2].disabled = false; } catch(_) {} }
+            }
+          }
+
           document.addEventListener('click', function(ev){
             var t = ev && ev.target ? ev.target : null;
             if (!t) return;
@@ -893,47 +984,184 @@
             if (t.classList && t.classList.contains('btn-notify')) {
               var tr2 = t.closest('tr');
               if (!tr2) return;
-              var orderId = String(tr2.getAttribute('data-orderid') || '').trim();
-              var username2 = String(tr2.getAttribute('data-username') || '').trim();
-              if (!orderId) return alert('OrderID ausente.');
-
-              var btns2 = tr2.querySelectorAll('button');
-              for (var k=0;k<btns2.length;k++){ try { btns2[k].disabled = true; } catch(_) {} }
-              var statusEl = tr2.querySelector('.followersNotifyStatus');
-              if (statusEl) { statusEl.textContent = 'Enviando…'; statusEl.style.color = '#64748b'; }
-
-              fetch('/api/painel/gerenciamento-seguidores/notify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ orderId: orderId, username: username2 })
-              }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); })
-                .then(function(out){
-                  var data = out && out.json ? out.json : null;
-                  if (!data || data.ok !== true) {
-                    var e0 = (data && data.error) ? String(data.error) : 'request_failed';
-                    var emailErr = (data && data.email && data.email.ok === false && data.email.error) ? String(data.email.error) : '';
-                    var smsErr = (data && data.sms && data.sms.ok === false && data.sms.error) ? String(data.sms.error) : '';
-                    var msg = e0;
-                    if (emailErr || smsErr) msg = (emailErr ? ('Email: ' + emailErr) : '') + (emailErr && smsErr ? ' | ' : '') + (smsErr ? ('SMS: ' + smsErr) : '');
-                    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#dc2626'; }
-                    else alert('Falha ao enviar: ' + msg);
-                    return;
-                  }
-                  var label = 'Enviado';
-                  if (data.email && data.sms) {
-                    label = (data.email.ok ? 'Email OK' : ('Email: ' + String(data.email.error || 'erro'))) + ' | ' + (data.sms.ok ? 'SMS OK' : ('SMS: ' + String(data.sms.error || 'erro')));
-                  }
-                  if (statusEl) { statusEl.textContent = label; statusEl.style.color = '#16a34a'; }
-                })
-                .catch(function(e){
-                  if (statusEl) { statusEl.textContent = 'Erro: ' + (e && e.message ? e.message : e); statusEl.style.color = '#dc2626'; }
-                  else alert('Falha ao enviar: ' + (e && e.message ? e.message : e));
-                })
-                .finally(function(){
-                  for (var j2=0;j2<btns2.length;j2++){ try { btns2[j2].disabled = false; } catch(_) {} }
-                });
+              sendNotifyForRow(tr2).catch(function(e){
+                alert('Falha ao enviar: ' + (e && e.message ? e.message : e));
+              });
             }
           });
+
+          var autoNotifyBtn = el('followersAutoNotifyBtn');
+          if (autoNotifyBtn) {
+            autoNotifyBtn.addEventListener('click', async function(){
+              var limitEl = el('followersAutoNotifyLimit');
+              var orderEl = el('followersAutoNotifyOrder');
+              var limitStr = limitEl ? String(limitEl.value || '').trim() : '';
+              var n = parseInt(limitStr, 10);
+              var limit = (limitStr && isFinite(n) && n > 0) ? n : 0;
+              var order = orderEl ? String(orderEl.value || '').trim().toLowerCase() : 'recent';
+              var all = getAllRows();
+              var candidates = all.filter(function(tr){
+                try {
+                  var checkedMs = Number(tr.getAttribute('data-checkedatms') || 0) || 0;
+                  if (!checkedMs) return false;
+                  var hasNotify = !!tr.querySelector('button.btn-notify');
+                  if (!hasNotify) return false;
+                  return true;
+                } catch (_) {
+                  return false;
+                }
+              });
+              candidates.sort(function(a,b){
+                var am = Number(a.getAttribute('data-checkedatms') || 0) || 0;
+                var bm = Number(b.getAttribute('data-checkedatms') || 0) || 0;
+                return order === 'oldest' ? (am - bm) : (bm - am);
+              });
+              if (limit > 0) candidates = candidates.slice(0, limit);
+              if (!candidates.length) return alert('Nenhum pedido checado com queda para enviar nesta página.');
+              if (!confirm('Enviar Email+SMS automaticamente para ' + candidates.length + ' pedidos checados com queda?')) return;
+
+              autoNotifyBtn.disabled = true;
+              var ok = 0;
+              var fail = 0;
+              try {
+                for (var i=0;i<candidates.length;i++){
+                  var tr = candidates[i];
+                  var u = String(tr.getAttribute('data-username') || '').trim();
+                  setStatus('Auto envio: ' + (i+1) + '/' + candidates.length + (u ? (' @' + u) : '') + '…');
+                  try {
+                    var out = await sendNotifyForRow(tr);
+                    if (out && out.ok === true) ok++;
+                    else fail++;
+                  } catch (_) {
+                    fail++;
+                  }
+                  await sleep(900);
+                }
+                setStatus('Auto envio concluído. OK: ' + ok + ' | Falhas: ' + fail);
+                alert('Auto envio concluído.\nOK: ' + ok + '\nFalhas: ' + fail);
+              } finally {
+                autoNotifyBtn.disabled = false;
+              }
+            });
+          }
+
+          function loadFollowersReport(){
+            try {
+              var node = el('followersReportJson');
+              if (!node) return null;
+              var raw = node.textContent || node.innerText || '';
+              if (!raw) return null;
+              return JSON.parse(raw);
+            } catch (_) {
+              return null;
+            }
+          }
+
+          function drawPie(canvas, items){
+            if (!canvas || !canvas.getContext) return;
+            var ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            var w = canvas.width || 260;
+            var h = canvas.height || 260;
+            var cx = Math.floor(w/2);
+            var cy = Math.floor(h/2);
+            var r = Math.floor(Math.min(w,h)/2) - 6;
+            ctx.clearRect(0,0,w,h);
+            var total = 0;
+            for (var i=0;i<items.length;i++){ total += Number(items[i].count || 0) || 0; }
+            if (!total) {
+              ctx.beginPath();
+              ctx.arc(cx, cy, r, 0, Math.PI*2);
+              ctx.fillStyle = '#f3f4f6';
+              ctx.fill();
+              ctx.fillStyle = '#6b7280';
+              ctx.font = 'bold 14px Arial';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('Sem dados', cx, cy);
+              return;
+            }
+            var start = -Math.PI/2;
+            for (var j=0;j<items.length;j++){
+              var c = Number(items[j].count || 0) || 0;
+              if (c <= 0) continue;
+              var ang = (c / total) * Math.PI*2;
+              ctx.beginPath();
+              ctx.moveTo(cx, cy);
+              ctx.arc(cx, cy, r, start, start + ang);
+              ctx.closePath();
+              ctx.fillStyle = String(items[j].color || '#111827');
+              ctx.fill();
+              start += ang;
+            }
+            ctx.beginPath();
+            ctx.arc(cx, cy, Math.max(0, r - 70), 0, Math.PI*2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.fillStyle = '#111827';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(total), cx, cy - 10);
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '12px Arial';
+            ctx.fillText('com queda', cx, cy + 12);
+          }
+
+          function renderFollowersReport(){
+            var report = loadFollowersReport() || {};
+            var totalEl = el('followersReportTotal');
+            var checkedEl = el('followersReportChecked');
+            var checkedPctEl = el('followersReportCheckedPct');
+            var dropEl = el('followersReportWithDrop');
+            if (totalEl) totalEl.textContent = (report.total != null) ? String(report.total) : '-';
+            if (checkedEl) checkedEl.textContent = (report.checked != null) ? (String(report.checked) + (report.total ? (' / ' + String(report.total)) : '')) : '-';
+            if (checkedPctEl) checkedPctEl.textContent = (typeof report.checkedPct === 'number') ? (String(report.checkedPct).replace('.', ',') + '% checados') : '';
+            if (dropEl) dropEl.textContent = (report.withDrop != null) ? String(report.withDrop) : '-';
+
+            var buckets = Array.isArray(report.buckets) ? report.buckets : [];
+            var colors = ['#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#111827'];
+            var items = buckets.map(function(b, idx){
+              return { label: String(b.label || ''), count: Number(b.count || 0) || 0, pct: (typeof b.pct === 'number' ? b.pct : 0), color: colors[idx % colors.length] };
+            });
+            var pie = el('followersReportPie');
+            drawPie(pie, items);
+            var legend = el('followersReportLegend');
+            if (legend) {
+              var html = '';
+              for (var i=0;i<items.length;i++){
+                var it = items[i];
+                html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0;">' +
+                  '<div style="display:flex;align-items:center;gap:8px;">' +
+                  '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + it.color + ';"></span>' +
+                  '<span>' + it.label + '</span>' +
+                  '</div>' +
+                  '<div style="color:#111827;font-weight:700;white-space:nowrap;">' + String(it.count) + ' (' + String(it.pct).replace('.', ',') + '%)</div>' +
+                  '</div>';
+              }
+              legend.innerHTML = html || '<div style="color:#6b7280;">Sem dados</div>';
+            }
+          }
+
+          var reportBtn = el('followersReportBtn');
+          var reportModal = el('followersReportModal');
+          var reportCloseBtn = el('followersReportCloseBtn');
+          function openReport(){
+            if (!reportModal) return;
+            renderFollowersReport();
+            reportModal.style.display = 'flex';
+          }
+          function closeReport(){
+            if (!reportModal) return;
+            reportModal.style.display = 'none';
+          }
+          if (reportBtn) reportBtn.addEventListener('click', function(){ openReport(); });
+          if (reportCloseBtn) reportCloseBtn.addEventListener('click', function(){ closeReport(); });
+          if (reportModal) {
+            reportModal.addEventListener('click', function(e){
+              if (e && e.target === reportModal) closeReport();
+            });
+          }
 
           var verifyFilteredBtn = el('followersVerifyFilteredBtn');
           var verifySelectedBtn = el('followersVerifySelectedBtn');

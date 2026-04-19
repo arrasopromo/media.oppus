@@ -1052,6 +1052,7 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
         return u.replace(/\/+$/, '');
     })();
     const clientUrl = `${baseUrl}/cliente`;
+    const clientUrlWithPhone = phoneDigits ? `${clientUrl}?phone=${encodeURIComponent(phoneDigits)}` : clientUrl;
     const whatsappPrefillText = 'Olá, vim pelo e-mail de compra e preciso de ajuda';
     const whatsappHref = `https://wa.me/553173425727?text=${encodeURIComponent(whatsappPrefillText)}`;
 
@@ -15264,43 +15265,51 @@ app.post('/api/refil/preview', async (req, res) => {
           return res.status(502).json({ ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
         }
 
-        const todayYmdSP = (() => {
-          try {
-            const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-            const mp = {};
-            parts.forEach((p) => { mp[p.type] = p.value; });
-            if (mp.year && mp.month && mp.day) return `${mp.year}-${mp.month}-${mp.day}`;
-          } catch (_) {}
-          try {
-            const d = new Date(Date.now() - 3 * 60 * 60 * 1000);
-            const y = String(d.getUTCFullYear());
-            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-            const day = String(d.getUTCDate()).padStart(2, '0');
-            return `${y}-${m}-${day}`;
-          } catch (_) {}
-          return '';
-        })();
-        const extractOrderYmd = (raw) => {
-          try {
-            const s = String(raw || '').trim();
-            if (!s) return '';
-            const m1 = s.match(/(\d{4}-\d{2}-\d{2})/);
-            if (m1 && m1[1]) return String(m1[1]);
-            const m2 = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-            if (m2) return `${String(m2[3])}-${String(m2[2])}-${String(m2[1])}`;
-            const d = new Date(s);
-            if (!d || Number.isNaN(d.getTime())) return '';
-            try {
-              const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
-              const mp = {};
-              parts.forEach((p) => { mp[p.type] = p.value; });
-              if (mp.year && mp.month && mp.day) return `${mp.year}-${mp.month}-${mp.day}`;
-            } catch (_) {}
-          } catch (_) {}
-          return '';
+        const brtOffsetMs = 3 * 60 * 60 * 1000;
+        const dayMs = 24 * 60 * 60 * 1000;
+        const dayNumFromMsBrt = (ms) => {
+          const d = new Date(Number(ms || 0) - brtOffsetMs);
+          return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
         };
-        const orderYmd = extractOrderYmd(orderCreatedAt);
-        if (todayYmdSP && orderYmd && orderYmd === todayYmdSP) {
+        const todayDayNumBrt = dayNumFromMsBrt(Date.now());
+        const parseOrderCreatedAtMs = (raw) => {
+          try {
+            const s0 = String(raw || '').trim();
+            if (!s0) return 0;
+            const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+            const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+            if (mBr) {
+              const yyyy = String(mBr[3]);
+              const mm = String(mBr[2]).padStart(2, '0');
+              const dd = String(mBr[1]).padStart(2, '0');
+              const hh = String(mBr[4] || '00').padStart(2, '0');
+              const mi = String(mBr[5] || '00').padStart(2, '0');
+              const ss = String(mBr[6] || '00').padStart(2, '0');
+              const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+              const t = new Date(iso).getTime();
+              return Number.isFinite(t) ? t : 0;
+            }
+            const mIsoDate = s.match(/(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+            if (mIsoDate) {
+              const ymd = String(mIsoDate[1]);
+              const hh = String(mIsoDate[2] || '00').padStart(2, '0');
+              const mi = String(mIsoDate[3] || '00').padStart(2, '0');
+              const ss = String(mIsoDate[4] || '00').padStart(2, '0');
+              const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+              const iso = hasTZ ? s : `${ymd}T${hh}:${mi}:${ss}-03:00`;
+              const t = new Date(iso).getTime();
+              return Number.isFinite(t) ? t : 0;
+            }
+            const t = new Date(s).getTime();
+            return Number.isFinite(t) ? t : 0;
+          } catch (_) {
+            return 0;
+          }
+        };
+
+        const orderCreatedAtMs = parseOrderCreatedAtMs(orderCreatedAt);
+        const orderDayNumBrt = orderCreatedAtMs ? dayNumFromMsBrt(orderCreatedAtMs) : null;
+        if (orderDayNumBrt != null && orderDayNumBrt === todayDayNumBrt) {
           logRefil2Request({
             execStatus: 'success',
             decisionStatus: 'blocked',
@@ -17206,6 +17215,46 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return String(a.username || '').localeCompare(String(b.username || ''), 'pt-BR', { sensitivity: 'base' });
     });
 
+    const followersReport = (function () {
+      const total = filtered.length;
+      let checked = 0;
+      let withDrop = 0;
+      const buckets = [
+        { key: '0_10', label: '0–10%', min: 0, max: 10, count: 0 },
+        { key: '10_20', label: '10–20%', min: 10, max: 20, count: 0 },
+        { key: '20_30', label: '20–30%', min: 20, max: 30, count: 0 },
+        { key: '30_40', label: '30–40%', min: 30, max: 40, count: 0 },
+        { key: '40_50', label: '40–50%', min: 40, max: 50, count: 0 },
+        { key: '50_plus', label: '>50%', min: 50, max: null, count: 0 }
+      ];
+      for (const r of filtered) {
+        const checkedAtMs = Number(r && r.currentCheckedAtMs || 0) || 0;
+        if (checkedAtMs > 0) checked += 1;
+        const pct = (r && typeof r.diffPct === 'number') ? r.diffPct : null;
+        const abs = (r && typeof r.diffAbs === 'number') ? r.diffAbs : null;
+        if (abs != null && abs > 0 && pct != null && Number.isFinite(pct) && pct > 0) {
+          withDrop += 1;
+          const v = Math.max(0, pct);
+          for (const b of buckets) {
+            if (b.max == null) {
+              if (v > b.min) { b.count += 1; break; }
+            } else {
+              if (v >= b.min && v < b.max) { b.count += 1; break; }
+            }
+          }
+        }
+      }
+      const base = Math.max(1, withDrop);
+      const bucketsOut = buckets.map(b => ({ key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 }));
+      return {
+        total,
+        checked,
+        checkedPct: total ? (Math.round((checked / total) * 1000) / 10) : 0,
+        withDrop,
+        buckets: bucketsOut
+      };
+    })();
+
     const totalRows = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const safePage = Math.min(totalPages, page);
@@ -17217,6 +17266,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
       filters: { minPct, maxPct, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
+      followersReport,
       followersMgmtSettings,
       period: 'all'
     });
@@ -17766,7 +17816,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       'Identificamos que você teve queda dos seguidores, você pode repor com nossa ferramenta.',
       '',
       'Acesse o link abaixo:',
-      clientUrl,
+      clientUrlWithPhone,
       '',
       '1) Informe o número de telefone que registrou no momento da compra.',
       "2) Abra o detalhamento do seu pedido e clique em 'Acessar ferramenta'.",
@@ -17801,7 +17851,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
                   Acesse o link abaixo e siga o passo a passo.
                 </div>
                 <div style="margin:0 0 10px 0;">
-                  <a href="${escapeHtml(clientUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir Clientes</a>
+                  <a href="${escapeHtml(clientUrlWithPhone)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir Clientes</a>
                 </div>
                 <ol style="margin:0 0 0 18px;padding:0;font-size:12px;line-height:1.6;color:#111827;">
                   <li>Informe o número de telefone que registrou no momento da compra.</li>
@@ -17927,6 +17977,17 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
     } else if (prevSmsSentAt) {
       smsOut.error = 'sms_already_sent';
     } else {
+      const alreadyToPhone = await col.findOne(
+        {
+          _id: { $ne: new ObjectId(orderIdRaw) },
+          'recoveryNotify.sms.sentTo': phoneDigits,
+          'recoveryNotify.sms.sentAt': { $exists: true, $ne: '' }
+        },
+        { projection: { _id: 1 } }
+      );
+      if (alreadyToPhone) {
+        smsOut.error = 'sms_already_sent_to_phone';
+      } else {
       const msg = 'Oppus: Voce perdeu seguidores. Enviamos no seu e-mail cadastrado na compra as orientacoes para recuperar seus seguidores.';
       const resp = await axios.get('https://mex10.com/api/shortcodev2.aspx', {
         params: { token: mexToken, t: 'send', n: phoneDigits, m: msg },
@@ -17942,12 +18003,13 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
         await col.updateOne(
           { _id: new ObjectId(orderIdRaw) },
           {
-            $set: { 'recoveryNotify.sms.sentAt': nowIso },
+            $set: { 'recoveryNotify.sms.sentAt': nowIso, 'recoveryNotify.sms.sentTo': phoneDigits },
             $push: { 'recoveryNotify.sms.history': nowIso }
           }
         );
       } else {
         smsOut.error = (data && data.errors && data.errors.description) ? safe(data.errors.description) : ('HTTP ' + String(resp.status));
+      }
       }
     }
 
@@ -19127,6 +19189,200 @@ app.post('/api/admin/private-order-email', requireAdmin, async (req, res) => {
     } catch (e) {
         res.status(500).json({ ok: false, error: e.message });
     }
+});
+
+app.post('/api/admin/private-order-send-email', requireAdmin, async (req, res) => {
+  try {
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const { id } = req.body || {};
+    const idStr = safe(id);
+    if (!idStr || !/^[0-9a-fA-F]{24}$/.test(idStr)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+
+    const { getCollection } = require('./mongodbClient');
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+    const order = await col.findOne(
+      { _id: new ObjectId(idStr) },
+      {
+        projection: {
+          _id: 1,
+          customer: 1,
+          customerEmail: 1,
+          woovi: 1,
+          additionalInfoMap: 1,
+          additionalInfoMapPaid: 1,
+          additionalInfo: 1,
+          additionalInfoPaid: 1,
+          instauser: 1,
+          instagramUsername: 1,
+          instaUser: 1,
+          instagramUser: 1,
+          contactCount: 1,
+          noContact: 1,
+          privateNotify: 1
+        }
+      }
+    );
+    if (!order) return res.status(404).json({ ok: false, error: 'order_not_found' });
+
+    const arrEmail = (arr) => {
+      const a = Array.isArray(arr) ? arr : [];
+      const item = a.find(it => {
+        const k = String(it?.key || '').trim().toLowerCase();
+        return k === 'email' || k === 'e-mail' || k === 'mail' || k === 'contact_email';
+      });
+      return item ? String(item.value || '') : '';
+    };
+    const normalizeEmail = (s) => {
+      const raw = typeof s === 'string' ? s.trim() : '';
+      if (!raw) return '';
+      const email = raw.toLowerCase();
+      const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      return isValid ? email : '';
+    };
+    const mapEmail = (m) => {
+      const obj = (m && typeof m === 'object') ? m : null;
+      if (!obj) return '';
+      const keys = Object.keys(obj);
+      for (const k of keys) {
+        const kk = String(k || '').toLowerCase();
+        if (!kk.includes('email')) continue;
+        const v = obj[k];
+        if (typeof v === 'string' && v.trim()) return v;
+      }
+      return '';
+    };
+    const candidates = [
+      order?.customer?.email,
+      order?.customer?.mail,
+      order?.customerEmail,
+      order?.woovi?.customer?.email,
+      order?.woovi?.charge?.customer?.email,
+      order?.woovi?.charge?.charge?.customer?.email,
+      order?.additionalInfoMapPaid?.email,
+      order?.additionalInfoMap?.email,
+      mapEmail(order?.additionalInfoMapPaid),
+      mapEmail(order?.additionalInfoMap),
+      arrEmail(order?.additionalInfoPaid),
+      arrEmail(order?.additionalInfo)
+    ];
+    let emailTo = '';
+    for (const c of candidates) {
+      const normalized = normalizeEmail(typeof c === 'string' ? c : '');
+      if (normalized) {
+        emailTo = normalized;
+        break;
+      }
+    }
+    if (!emailTo) return res.json({ ok: false, error: 'email_not_found' });
+
+    const resolveInstagramUsername = () => {
+      const cands = [order?.instagramUsername, order?.instauser, order?.instagramUser, order?.instaUser];
+      for (const c of cands) {
+        const s0 = safe(c);
+        if (!s0) continue;
+        let s = s0;
+        if (/instagram\.com\//i.test(s)) {
+          try {
+            const u1 = new URL(s.startsWith('http') ? s : `https://${s.replace(/^\/+/, '')}`);
+            const parts = u1.pathname.split('/').map(p => p.trim()).filter(Boolean);
+            if (parts.length) s = parts[0];
+          } catch (_) {
+            const parts = s.split('?')[0].split('#')[0].split('/').map(p => p.trim()).filter(Boolean);
+            if (parts.length) s = parts[parts.length - 1];
+          }
+        }
+        if (s.startsWith('@')) s = s.slice(1);
+        s = s.replace(/[^a-zA-Z0-9._]/g, '').trim();
+        if (s) return s;
+      }
+      return '';
+    };
+    const insta = resolveInstagramUsername();
+    const hasUser = !!insta;
+    const prefix = hasUser
+      ? `Olá! Tudo bem?\n\nSou da equipe OPPUS e estou falando sobre o seu pedido para o Instagram @${insta}.`
+      : 'Olá! Tudo bem?\n\nSou da equipe OPPUS e estou falando sobre o seu pedido.';
+    const n = Number(order.contactCount) || 0;
+    const attempt = n <= 0 ? 1 : (n === 1 ? 2 : (n === 2 ? 3 : 4));
+    const messages = {
+      1: `${prefix}\n\nIdentificamos que o perfil está privado. Para conseguirmos entregar corretamente, deixe o perfil público por alguns minutos e avise por aqui assim que liberar.`,
+      2: `${prefix}\n\nEstou entrando em contato pela 2ª vez. O perfil ainda consta como privado. Para conseguirmos concluir a entrega, deixe o perfil público por alguns minutos e nos avise por aqui.`,
+      3: `${prefix}\n\n3ª tentativa de contato: o perfil ainda aparece como privado. Para a entrega acontecer, é só deixar público por alguns minutos e responder aqui quando estiver liberado.`,
+      4: `${prefix}\n\nÚltima tentativa de contato: para não perder seguidores e para conseguirmos finalizar a entrega, deixe o perfil público por alguns minutos e avise por aqui. Caso não haja retorno, vamos encerrar as tentativas de contato.`
+    };
+    const text = messages[attempt] || messages[1];
+    const subject = 'OPPUS: Perfil privado no Instagram - ação necessária';
+    const html = [
+      `<div style="margin:0;padding:0;background:#f5f7fb;">`,
+      `  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background:#f5f7fb;padding:16px 0;">`,
+      `    <tr><td align="center">`,
+      `      <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">`,
+      `        <tr><td bgcolor="#111827" style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;background:#111827;color:#ffffff;text-align:center;">`,
+      `          <div style="font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>`,
+      `        </td></tr>`,
+      `        <tr><td style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;color:#111827;">`,
+      `          <div style="font-size:14px;line-height:1.6;white-space:pre-line;">${safe(text).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`,
+      `          <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:13px;line-height:1.6;color:#111827;">`,
+      `            Suporte: <a href="mailto:suporte@agenciaoppus.site" style="color:#2563eb;text-decoration:none;">suporte@agenciaoppus.site</a>`,
+      `          </div>`,
+      `        </td></tr>`,
+      `      </table>`,
+      `    </td></tr>`,
+      `  </table>`,
+      `</div>`
+    ].join('');
+
+    const transporter = getSmtpTransporter();
+    if (!transporter) return res.json({ ok: false, error: 'smtp_not_configured' });
+
+    const nowIso = new Date().toISOString();
+    const persist = async (status, err, response) => {
+      await col.updateOne(
+        { _id: new ObjectId(idStr) },
+        {
+          $set: {
+            'privateNotify.email.lastStatus': safe(status),
+            'privateNotify.email.lastAttemptAt': nowIso,
+            ...(status === 'sent' ? { 'privateNotify.email.lastSentAt': nowIso } : {}),
+            'privateNotify.email.lastError': safe(err || ''),
+            'privateNotify.email.lastResponse': safe(response || '')
+          },
+          $push: { 'privateNotify.email.history': { at: nowIso, status: safe(status), error: safe(err || ''), response: safe(response || '') } }
+        }
+      );
+    };
+
+    try {
+      const info = await transporter.sendMail({
+        from: 'Agência Oppus <suporte@agenciaoppus.site>',
+        to: emailTo,
+        subject,
+        text: `${text}\n\nSuporte: suporte@agenciaoppus.site`,
+        html
+      });
+      const accepted = Array.isArray(info && info.accepted) ? info.accepted.map(x => String(x || '').toLowerCase()) : [];
+      const rejected = Array.isArray(info && info.rejected) ? info.rejected.map(x => String(x || '').toLowerCase()) : [];
+      const responseText = safe((info && info.response) || '');
+      const target = String(emailTo || '').trim().toLowerCase();
+      const targetAccepted = target ? accepted.some(v => v.includes(target)) : accepted.length > 0;
+      const hasRejected = rejected.length > 0;
+      if (targetAccepted || (accepted.length > 0 && !hasRejected)) {
+        await persist('sent', '', responseText);
+        return res.json({ ok: true, status: 'sent', email: emailTo });
+      }
+      const errCode = hasRejected ? 'email_denied_or_rejected' : 'email_send_not_accepted';
+      await persist('failed', errCode, responseText);
+      return res.json({ ok: false, error: errCode, status: 'failed', email: emailTo });
+    } catch (e) {
+      const msg = safe(e && (e.response || e.message || String(e)));
+      const errCode = msg ? `email_send_failed:${msg}` : 'email_send_failed';
+      await persist('failed', errCode, msg);
+      return res.json({ ok: false, error: errCode, status: 'failed', email: emailTo });
+    }
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
 function normalizeApifyActorId(raw) {

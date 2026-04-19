@@ -3978,27 +3978,34 @@ document.addEventListener('DOMContentLoaded', function() {
     window.requestAnimationFrame(step);
   }
 
+  let scrollToCardsTimer = null;
+  let hasInitialCardsAutoScrollDone = false;
   function scrollToCardsMobile() {
     try {
       const delayMs = arguments.length > 0 ? Number(arguments[0]) : 2000;
+      const shouldScroll = arguments.length > 1 ? (arguments[1] === true) : false;
       const isMobile = window.innerWidth <= 640;
-      if (isMobile) {
-        setTimeout(() => {
-          const pCards = document.getElementById('planCards');
-          if (pCards && pCards.style.display !== 'none') {
-            const rect = pCards.getBoundingClientRect();
-            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-            // Deixa uma beirada da descrição (aprox 120px acima do topo dos cards)
-            const targetTop = (rect.top + scrollTop) - 120;
-            smoothScrollToY(targetTop, 1100);
-          }
-        }, Number.isFinite(delayMs) ? delayMs : 2000);
+      if (scrollToCardsTimer) {
+        try { clearTimeout(scrollToCardsTimer); } catch (_) {}
+        scrollToCardsTimer = null;
       }
+      if (!isMobile || !shouldScroll) return;
+      scrollToCardsTimer = setTimeout(() => {
+        const pCards = document.getElementById('planCards');
+        if (pCards && pCards.style.display !== 'none') {
+          const rect = pCards.getBoundingClientRect();
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          // Deixa uma beirada da descrição (aprox 120px acima do topo dos cards)
+          const targetTop = (rect.top + scrollTop) - 120;
+          smoothScrollToY(targetTop, 1100);
+        }
+      }, Number.isFinite(delayMs) ? delayMs : 2000);
     } catch (_) {}
   }
 
   if (tipoSelect) {
     tipoSelect.addEventListener('change', () => {
+      const userInitiated = window.__oppusTipoChangeUserInitiated === true;
       const tipo = tipoSelect.value;
       popularQuantidades(tipo);
       renderPlanCards(tipo);
@@ -4023,10 +4030,16 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       }
 
-      // Scroll Mobile para os cards (deixando beirada da descrição)
-      const delayMs = 2000;
+      // Scroll Mobile para os cards:
+      // - primeira carga da página: 3000ms
+      // - troca manual de tipo: 3000ms
       window.__oppusTipoChangeUserInitiated = false;
-      scrollToCardsMobile(delayMs);
+      if (userInitiated) {
+        scrollToCardsMobile(3000, true);
+      } else if (!hasInitialCardsAutoScrollDone) {
+        hasInitialCardsAutoScrollDone = true;
+        scrollToCardsMobile(3000, true);
+      }
     });
   }
 

@@ -19,6 +19,7 @@
     .archive-btn--off { background: #dc3545; }
     .archive-btn--on { background: #6c757d; }
     .whatsapp-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; background: #198754; }
+    .email-btn { padding: 6px 10px; color: #fff; border: none; border-radius: 4px; cursor: pointer; background: #0d6efd; }
     .hide-toolbar { display:flex; gap:10px; align-items:center; flex-wrap: wrap; margin-top: 10px; }
     .hide-btn { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; height: 36px; }
     .panel-table-scroll table { min-width: 1400px; }
@@ -209,6 +210,23 @@
                     }
                  } catch (_) {}
 
+                let lastEmailStatus = '';
+                let lastEmailErr = '';
+                let lastEmailAt = '';
+                try {
+                  const ne = (order.privateNotify && order.privateNotify.email && typeof order.privateNotify.email === 'object') ? order.privateNotify.email : {};
+                  lastEmailStatus = String(ne.lastStatus || '').trim();
+                  lastEmailErr = String(ne.lastError || '').trim();
+                  const atRaw = String(ne.lastSentAt || ne.lastAttemptAt || '').trim();
+                  if (atRaw) {
+                    let d0 = new Date(atRaw);
+                    if (!Number.isNaN(d0.getTime())) {
+                      d0 = new Date(d0.getTime() - 3 * 60 * 60 * 1000);
+                      lastEmailAt = d0.toISOString().replace('T', ' ').substring(0, 16);
+                    }
+                  }
+                } catch (_) {}
+
                  const toNumber = (v) => {
                      const n = Number(String(v || '').replace(/[^\d]/g, ''));
                      return Number.isFinite(n) ? n : 0;
@@ -321,16 +339,25 @@
                 <td class="actions-cell">
                     <div class="actions-buttons">
                       <button type="button" class="whatsapp-btn" data-id="<%= order._id %>" data-phone="<%= customerPhone %>" data-insta="<%= instaUser %>" data-contactcount="<%= order.contactCount || 0 %>">Enviar msg</button>
+                      <% if (order.noContact) { %>
+                        <button type="button" class="email-btn" data-id="<%= order._id %>">Enviar e-mail</button>
+                      <% } %>
                       <button type="button" class="archive-btn <%= order.archived ? 'archive-btn--on' : 'archive-btn--off' %>" data-id="<%= order._id %>" data-archived="<%= order.archived ? '1' : '0' %>">
                         <%= order.archived ? 'Desarquivar' : 'Arquivar' %>
                       </button>
                     </div>
                     <span class="status-msg" id="msg-whatsapp-<%= order._id %>">Enviado!</span>
+                    <span class="status-msg" id="msg-email-<%= order._id %>">Enviado!</span>
                     <span class="status-msg" id="msg-archived-<%= order._id %>">Salvo!</span>
                     <% if (lastContactStr) { %>
                       <div class="actions-meta" <%= lastContactTitle ? ('title=\"' + lastContactTitle.replace(/\"/g, '&quot;') + '\"') : '' %>>Última msg: <%= lastContactStr %></div>
                     <% } else { %>
                       <div class="actions-meta">Última msg: -</div>
+                    <% } %>
+                    <% if (lastEmailAt || lastEmailStatus || lastEmailErr) { %>
+                      <div class="actions-meta" style="<%= lastEmailErr ? 'color:#dc2626;font-weight:700;' : '' %>" title="<%= lastEmailErr ? lastEmailErr.replace(/\"/g, '&quot;') : '' %>">
+                        Último e-mail: <%= lastEmailAt ? lastEmailAt : '-' %> <%= lastEmailStatus ? ('(' + lastEmailStatus + ')') : '' %> <%= lastEmailErr ? (' - ' + lastEmailErr) : '' %>
+                      </div>
                     <% } %>
                 </td>
               </tr>
@@ -752,6 +779,59 @@
                 const insta = wbtn.getAttribute('data-insta');
                 const contactCount = wbtn.getAttribute('data-contactcount');
                 sendEvolutionText(id, phone, insta, contactCount);
+                return;
+            }
+            const ebtn = e.target.closest('.email-btn');
+            if (ebtn) {
+                const id = ebtn.getAttribute('data-id');
+                const msg = document.getElementById('msg-email-' + id);
+                try { ebtn.disabled = true; } catch (_) {}
+                if (msg) {
+                    msg.style.display = 'inline';
+                    msg.style.color = '#6b7280';
+                    msg.textContent = 'Enviando...';
+                }
+                fetch('/api/admin/private-order-send-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ id })
+                })
+                .then(r => r.json().catch(() => null).then(j => ({ status: r.status, json: j })))
+                .then(out => {
+                    const data = out && out.json ? out.json : null;
+                    if (!data || data.ok !== true) {
+                        const err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                        if (msg) {
+                            msg.style.display = 'inline';
+                            msg.style.color = '#dc2626';
+                            msg.textContent = 'Erro: ' + err;
+                        } else {
+                            alert('Erro ao enviar e-mail: ' + err);
+                        }
+                        return;
+                    }
+                    if (msg) {
+                        msg.style.display = 'inline';
+                        msg.style.color = '#16a34a';
+                        msg.textContent = 'E-mail enviado!';
+                        setTimeout(() => { try { msg.style.display = 'none'; } catch (_) {} }, 2500);
+                    }
+                    queuePrivadosScrollRestore(id);
+                    window.location.reload();
+                })
+                .catch(err => {
+                    const em = err && err.message ? err.message : String(err);
+                    if (msg) {
+                        msg.style.display = 'inline';
+                        msg.style.color = '#dc2626';
+                        msg.textContent = 'Erro: ' + em;
+                    } else {
+                        alert('Erro ao enviar e-mail: ' + em);
+                    }
+                })
+                .finally(() => {
+                    try { ebtn.disabled = false; } catch (_) {}
+                });
                 return;
             }
             const btn = e.target.closest('.archive-btn');
