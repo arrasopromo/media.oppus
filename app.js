@@ -16910,9 +16910,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const mon = username ? (monitorMap.get(username) || null) : null;
       const vu = username ? (validatedMap.get(username) || null) : null;
 
-      const currentFollowersCount = mon && typeof mon.followersCount === 'number' ? mon.followersCount : null;
-      const currentCheckedAt = mon ? (mon.checkedAt || null) : null;
-      const currentCheckedAtMs = (() => {
+      let currentFollowersCount = mon && typeof mon.followersCount === 'number' ? mon.followersCount : null;
+      let currentCheckedAt = mon ? (mon.checkedAt || null) : null;
+      let currentCheckedAtMs = (() => {
         try {
           if (!currentCheckedAt) return null;
           const t = new Date(String(currentCheckedAt)).getTime();
@@ -16921,6 +16921,13 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           return null;
         }
       })();
+      const currentCheckedAtMsRaw = currentCheckedAtMs;
+      const checkedBeforePurchase = !!(currentCheckedAtMs != null && dateMs && Number.isFinite(Number(dateMs)) && currentCheckedAtMs < Number(dateMs));
+      if (checkedBeforePurchase) {
+        currentFollowersCount = null;
+        currentCheckedAt = null;
+        currentCheckedAtMs = null;
+      }
       const isPrivate = mon ? (typeof mon.isPrivate === 'boolean' ? mon.isPrivate : null) : null;
       const hidden = mon ? (mon.hidden === true) : false;
       const lastError = mon && mon.error ? String(mon.error) : null;
@@ -16974,6 +16981,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         currentFollowersCount,
         currentCheckedAt,
         currentCheckedAtMs,
+        currentCheckedAtMsRaw,
+        checkedBeforePurchase,
         isPrivate,
         hidden,
         lastError,
@@ -18069,6 +18078,71 @@ app.post('/api/painel/gerenciamento-seguidores/unhide', requireAdmin, async (req
     }));
     await monitorCol.bulkWrite(ops, { ordered: false });
     return res.json({ ok: true, hidden: false, count: usernames.length });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/fix-checked', requireAdmin, async (req, res) => {
+  try {
+    const raw = (req.body && (req.body.items || req.body.rows || req.body.targets)) || [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const items = arr
+      .map(x => ({
+        username: String(x && x.username ? x.username : x).trim().toLowerCase().replace(/^@/, ''),
+        purchaseAtMs: Number(x && x.purchaseAtMs ? x.purchaseAtMs : 0) || 0
+      }))
+      .filter(x => x.username);
+
+    const dedup = new Map();
+    for (const it of items) {
+      if (!dedup.has(it.username)) dedup.set(it.username, it);
+    }
+    const list = Array.from(dedup.values()).slice(0, 2000);
+    if (!list.length) return res.status(400).json({ ok: false, error: 'missing_usernames' });
+
+    const { getCollection } = require('./mongodbClient');
+    const monitorCol = await getCollection('followers_monitor');
+    const docs = await monitorCol
+      .find({ username: { $in: list.map(x => x.username) } }, { projection: { username: 1, checkedAt: 1 } })
+      .toArray();
+    const byUser = new Map(docs.map(d => [String(d.username || '').toLowerCase(), d]));
+
+    const ops = [];
+    const fixed = [];
+    const skipped = [];
+    for (const it of list) {
+      const doc = byUser.get(it.username) || null;
+      const checkedAt = doc && doc.checkedAt ? String(doc.checkedAt) : '';
+      let checkedAtMs = 0;
+      try {
+        if (checkedAt) {
+          const t = new Date(checkedAt).getTime();
+          checkedAtMs = Number.isFinite(t) ? t : 0;
+        }
+      } catch (_) {}
+      if (!checkedAtMs || !it.purchaseAtMs) {
+        skipped.push(it.username);
+        continue;
+      }
+      if (checkedAtMs >= it.purchaseAtMs) {
+        skipped.push(it.username);
+        continue;
+      }
+      ops.push({
+        updateOne: {
+          filter: { username: it.username },
+          update: { $unset: { checkedAt: '', followersCount: '', source: '', error: '', isPrivate: '' } },
+          upsert: false
+        }
+      });
+      fixed.push(it.username);
+    }
+
+    if (ops.length) {
+      await monitorCol.bulkWrite(ops, { ordered: false });
+    }
+    return res.json({ ok: true, fixedCount: fixed.length, fixed, skippedCount: skipped.length });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }

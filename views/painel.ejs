@@ -472,6 +472,7 @@
           <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
           <button type="button" id="followersAutoNotifyBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto enviar Email+SMS (checados)</button>
           <button type="button" id="followersReportBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Relatório</button>
+          <button type="button" id="followersFixCheckedBtn" style="padding: 6px 12px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Validar:</span>
@@ -706,7 +707,7 @@
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -1041,6 +1042,49 @@
                 alert('Auto envio concluído.\nOK: ' + ok + '\nFalhas: ' + fail);
               } finally {
                 autoNotifyBtn.disabled = false;
+              }
+            });
+          }
+
+          var fixCheckedBtn = el('followersFixCheckedBtn');
+          if (fixCheckedBtn) {
+            fixCheckedBtn.addEventListener('click', async function(){
+              var all = getAllRows();
+              var bad = [];
+              for (var i=0;i<all.length;i++){
+                var tr = all[i];
+                var u = String(tr.getAttribute('data-username') || '').trim();
+                if (!u) continue;
+                var checkedRaw = Number(tr.getAttribute('data-checkedatmsraw') || 0) || 0;
+                var purchaseMs = Number(tr.getAttribute('data-purchaseatms') || 0) || 0;
+                if (checkedRaw > 0 && purchaseMs > 0 && checkedRaw < purchaseMs) {
+                  bad.push({ username: u, purchaseAtMs: purchaseMs });
+                }
+              }
+              if (!bad.length) return alert('Nenhum checado inconsistente nesta página.');
+              if (!confirm('Corrigir ' + bad.length + ' registros checados com data anterior à compra? Isso vai limpar o checado atual para refazer a validação.')) return;
+              try { fixCheckedBtn.disabled = true; } catch (_) {}
+              setStatus('Corrigindo checados inconsistentes…');
+              try {
+                var out = await fetch('/api/painel/gerenciamento-seguidores/fix-checked', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ items: bad })
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  setStatus('Falha ao corrigir: ' + err);
+                  return alert('Falha ao corrigir: ' + err);
+                }
+                setStatus('Corrigidos: ' + String(data.fixedCount || 0));
+                window.location.reload();
+              } catch (e) {
+                var em = e && e.message ? e.message : String(e);
+                setStatus('Falha ao corrigir: ' + em);
+                alert('Falha ao corrigir: ' + em);
+              } finally {
+                try { fixCheckedBtn.disabled = false; } catch (_) {}
               }
             });
           }
