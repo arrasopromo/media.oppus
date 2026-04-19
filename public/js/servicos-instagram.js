@@ -457,8 +457,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let subtotal = Math.max(0, base + promosTotal);
     if (window.couponDiscount && window.couponDiscount > 0) {
-      const discountVal = Math.round(subtotal * window.couponDiscount);
-      subtotal -= discountVal;
+      const d = Number(window.couponDiscount || 0);
+      if (Number.isFinite(d) && d > 0 && d < 1) {
+        subtotal = Math.round(subtotal * (1 - d));
+      }
     }
     return Math.max(0, Number(subtotal) || 0);
   }
@@ -875,8 +877,10 @@ document.addEventListener('DOMContentLoaded', function() {
       const promosTotal = calcPromosTotalCents(promos);
       total = Math.max(0, base + promosTotal);
       if (window.couponDiscount && window.couponDiscount > 0) {
-        const discountVal = Math.round(total * window.couponDiscount);
-        total -= discountVal;
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          total = Math.round(total * (1 - d));
+        }
       }
       total = Math.max(0, Number(total) || 0);
     } catch(_) { total = 0; }
@@ -2551,9 +2555,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Apply Coupon (Display)
     if (window.couponDiscount && window.couponDiscount > 0) {
-        // Recalculate based on total
-        const discountVal = Math.round(totalCents * window.couponDiscount);
-        totalCents -= discountVal;
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          totalCents = Math.round(totalCents * (1 - d));
+        }
     }
 
     try {
@@ -3553,8 +3558,10 @@ document.addEventListener('DOMContentLoaded', function() {
       let totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
 
       if (window.couponDiscount && window.couponDiscount > 0) {
-        const discountVal = Math.round(totalCents * window.couponDiscount);
-        totalCents -= discountVal;
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          totalCents = Math.round(totalCents * (1 - d));
+        }
       }
 
       const valueBRL = totalCents / 100;
@@ -3973,7 +3980,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function scrollToCardsMobile() {
     try {
-      const delayMs = arguments.length > 0 ? Number(arguments[0]) : 3000;
+      const delayMs = arguments.length > 0 ? Number(arguments[0]) : 2000;
       const isMobile = window.innerWidth <= 640;
       if (isMobile) {
         setTimeout(() => {
@@ -3985,7 +3992,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetTop = (rect.top + scrollTop) - 120;
             smoothScrollToY(targetTop, 1100);
           }
-        }, Number.isFinite(delayMs) ? delayMs : 3000);
+        }, Number.isFinite(delayMs) ? delayMs : 2000);
       }
     } catch (_) {}
   }
@@ -4017,7 +4024,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Scroll Mobile para os cards (deixando beirada da descrição)
-      const delayMs = (!isCurtidasContext && !isViewsContext && window.__oppusTipoChangeUserInitiated) ? 2000 : 3000;
+      const delayMs = 2000;
       window.__oppusTipoChangeUserInitiated = false;
       scrollToCardsMobile(delayMs);
     });

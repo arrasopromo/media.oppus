@@ -3620,25 +3620,99 @@ app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
     const validatedCol = await getCollection('validated_insta_users');
 
     const safeStr = (v) => String(v == null ? '' : v).trim();
+    const normalizeGeoText = (v) => {
+      const s = safeStr(v);
+      if (!s) return '';
+      try {
+        return s
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
+          .trim();
+      } catch (_) {
+        return s.toLowerCase().replace(/\s+/g, ' ').trim();
+      }
+    };
+    const hasDiacritics = (s) => {
+      try {
+        const a = String(s || '');
+        return a.normalize('NFD').replace(/[\u0300-\u036f]/g, '') !== a;
+      } catch (_) {
+        return false;
+      }
+    };
+    const preferDisplay = (a, b) => {
+      const sa = safeStr(a);
+      const sb = safeStr(b);
+      if (!sa) return sb;
+      if (!sb) return sa;
+      const ad = hasDiacritics(sa);
+      const bd = hasDiacritics(sb);
+      if (bd && !ad) return sb;
+      if (ad && !bd) return sa;
+      if (sb.length > sa.length) return sb;
+      return sa;
+    };
+    const normalizeCountryKey = (v) => {
+      const c = normalizeGeoText(v);
+      if (!c) return '';
+      if (c === 'brasil' || c === 'brazil') return 'brazil';
+      if (c === 'eua' || c === 'usa' || c === 'united states' || c === 'united states of america') return 'usa';
+      return c;
+    };
     const geoKey = (g) => {
-      const city = safeStr(g && g.city);
-      const region = safeStr(g && g.region);
-      const country = safeStr(g && g.country);
-      const lat = (g && typeof g.lat === 'number') ? g.lat : null;
-      const lon = (g && typeof g.lon === 'number') ? g.lon : null;
-      return `${city}|${region}|${country}|${lat == null ? '' : lat}|${lon == null ? '' : lon}`;
+      const cityKey = normalizeGeoText(g && g.city);
+      const countryKey = normalizeCountryKey(g && g.country);
+      return `${cityKey}|${countryKey}`;
     };
     const addGeoCount = (map, g, c) => {
-      const city = safeStr(g && g.city);
-      const region = safeStr(g && g.region);
-      const country = safeStr(g && g.country);
-      if (!city && !region && !country) return;
+      const cityRaw = safeStr(g && g.city);
+      const regionRaw = safeStr(g && g.region);
+      const countryRaw = safeStr(g && g.country);
+      const cityKey = normalizeGeoText(cityRaw);
+      const countryKey = normalizeCountryKey(countryRaw);
+      if (!cityKey || countryKey !== 'brazil') return;
       const key = geoKey(g);
-      const cur = map.get(key) || { city, region, country, lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null), count: 0 };
-      cur.count += Number(c || 0) || 0;
+      const count = Number(c || 0) || 0;
+      if (!(count > 0)) return;
+      const lat = (g && typeof g.lat === 'number') ? g.lat : null;
+      const lon = (g && typeof g.lon === 'number') ? g.lon : null;
+      const cur = map.get(key) || {
+        city: cityRaw,
+        region: regionRaw,
+        country: countryRaw || 'Brazil',
+        lat: (typeof lat === 'number' ? lat : null),
+        lon: (typeof lon === 'number' ? lon : null),
+        latSum: 0,
+        lonSum: 0,
+        latWeight: 0,
+        count: 0
+      };
+      cur.city = preferDisplay(cur.city, cityRaw);
+      cur.region = preferDisplay(cur.region, regionRaw);
+      cur.country = 'Brazil';
+      cur.count += count;
+      if (typeof lat === 'number' && typeof lon === 'number') {
+        cur.latSum += lat * count;
+        cur.lonSum += lon * count;
+        cur.latWeight += count;
+        cur.lat = (cur.latWeight > 0) ? (cur.latSum / cur.latWeight) : cur.lat;
+        cur.lon = (cur.latWeight > 0) ? (cur.lonSum / cur.latWeight) : cur.lon;
+      }
       map.set(key, cur);
     };
-    const mapToSorted = (map) => Array.from(map.values()).sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 1000);
+    const mapToSorted = (map) => Array.from(map.values())
+      .map((x) => ({
+        city: x.city,
+        region: x.region,
+        country: x.country,
+        lat: (x && typeof x.lat === 'number') ? x.lat : null,
+        lon: (x && typeof x.lon === 'number') ? x.lon : null,
+        count: x.count
+      }))
+      .sort((a, b) => (b.count || 0) - (a.count || 0))
+      .slice(0, 1000);
 
     const computeFromRecent = async ({ col, sortField, limit, getGeoFromDoc, getIpFromDoc }) => {
       const geoMap = new Map();
@@ -8460,6 +8534,7 @@ async function processOrderFulfillment(record, col, req) {
     const hasUpgrade = typeof bumpsStr === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr);
     const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
     const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && ( /brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo) );
+    const isCurtidasMistasUpgradeEligible = isCurtidasBase && /^mistos$/i.test(String(tipo || '').trim());
     let upgradeAdd = 0;
     if (hasUpgrade) {
         if (isFollowersUpgradeEligible) {
@@ -8469,9 +8544,14 @@ async function processOrderFulfillment(record, col, req) {
                 const map = { 150: 150, 500: 200, 1000: 1000, 3000: 1000, 5000: 2500, 10000: 5000 };
                 upgradeAdd = map[qtdBase] || 0;
             }
+        } else if (isCurtidasMistasUpgradeEligible) {
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
         } else if (isCurtidasBrasileirasUpgradeEligible) {
-            const map = { 150: 150, 500: 200, 1000: 1000 };
-            upgradeAdd = map[qtdBase] || 0;
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
         } else if (isViewsBase) {
             const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
             const targetQtd = targets[qtdBase] || 0;
@@ -16274,6 +16354,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         createdAt: 1,
         paidAt: 1,
         woovi: 1,
+        customer: 1,
+        telefone: 1,
         tipo: 1,
         tipoServico: 1,
         qtd: 1,
@@ -16286,6 +16368,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         additionalInfoPaid: 1,
         additionalInfoMap: 1,
         additionalInfoMapPaid: 1,
+        recoveryNotify: 1,
         initialFollowersCount: 1,
         initialFollowersCheckedAt: 1
       }
@@ -16571,6 +16654,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const qType = String(req.query.qType || 'username').trim();
     const filledOnly = String(req.query.filled || '').trim() === '1';
     const errorsOnly = (String(req.query.errors || req.query.err || '').trim() === '1');
+    const emailFailedOnly = (String(req.query.emailFailed || req.query.email_fail || '').trim() === '1');
     const okOnly = (String(req.query.ok || '').trim() === '1');
     const hiddenOnly = (String(req.query.hiddenOnly || req.query.hidden || '').trim() === '1');
     const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
@@ -16832,6 +16916,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const hidden = mon ? (mon.hidden === true) : false;
       const lastError = mon && mon.error ? String(mon.error) : null;
       const lastAttemptAt = mon && mon.lastAttemptAt ? String(mon.lastAttemptAt) : null;
+      const recoveryNotify = (o && o.recoveryNotify && typeof o.recoveryNotify === 'object') ? o.recoveryNotify : {};
+      const recoveryEmail = (recoveryNotify && recoveryNotify.email && typeof recoveryNotify.email === 'object') ? recoveryNotify.email : {};
+      const recoveryEmailStatus = String(recoveryEmail.lastStatus || '').trim().toLowerCase();
+      const recoveryEmailError = String(recoveryEmail.lastError || '').trim();
+      const recoveryEmailResponse = String(recoveryEmail.lastResponse || '').trim();
+      const recoveryEmailAt = String(recoveryEmail.lastAttemptAt || recoveryEmail.lastSentAt || '').trim() || null;
 
       let initialFollowersCount = (typeof o.initialFollowersCount === 'number') ? o.initialFollowersCount : null;
       let initialFollowersCheckedAt = o.initialFollowersCheckedAt ? String(o.initialFollowersCheckedAt) : null;
@@ -16879,6 +16969,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         hidden,
         lastError,
         lastAttemptAt,
+        recoveryEmailStatus,
+        recoveryEmailError,
+        recoveryEmailResponse,
+        recoveryEmailAt,
         lastPurchaseAtMs: dateMs,
         diffAbs,
         diffPct,
@@ -17009,6 +17103,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         const e = String(r.lastError || '').trim();
         if (!e) return false;
       }
+      if (emailFailedOnly) {
+        if (String(r.recoveryEmailStatus || '') !== 'failed') return false;
+      }
       if (filledOnly) {
         if (r.currentFollowersCount == null) return false;
         if (r.resultado == null) return false;
@@ -17119,7 +17216,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, q, qType, filled: filledOnly, errors: errorsOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
       followersMgmtSettings,
       period: 'all'
     });
@@ -17442,13 +17539,34 @@ const followersMgmtGetCurrent = async (req, username, force) => {
       }
     }
 
+    if (force && cached && cached.lastAttemptAt) {
+      const ageMs = Date.now() - new Date(String(cached.lastAttemptAt)).getTime();
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < (60 * 1000)) {
+        return {
+          code: 200,
+          body: {
+            ok: true,
+            cached: !!(cached && cached.checkedAt),
+            stale: !!(cached && cached.checkedAt && (!cached.followersCount && cached.followersCount !== 0)),
+            throttled: true,
+            username,
+            followersCount: cached.followersCount,
+            isPrivate: cached.isPrivate,
+            checkedAt: cached.checkedAt || null,
+            source: cached.source || null,
+            error: cached.error || null
+          }
+        };
+      }
+    }
+
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-    const minIntervalMs = 1500;
+    const minIntervalMs = 4500;
     const now = Date.now();
     const nextAllowedAt = Number(followersMgmtThrottle.get(key) || 0) || 0;
     const waitMs = Math.max(0, nextAllowedAt - now);
     if (waitMs > 0) await sleep(waitMs);
-    await sleep(Math.floor(Math.random() * 350));
+    await sleep(450 + Math.floor(Math.random() * 900));
     followersMgmtThrottle.set(key, Date.now() + minIntervalMs);
 
     let result = null;
@@ -17458,7 +17576,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     let followersCount = null;
     let error = null;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 1; attempt++) {
       try {
         try { console.log(`👣 [followers-mgmt:${traceId}] @${username} attempt=${attempt} method=web_profile_info`); } catch (_) {}
         result = await fetchInstagramFollowersInfo(username);
@@ -17475,7 +17593,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         error = e?.message || String(e);
         try { console.warn(`⚠️ [followers-mgmt:${traceId}] @${username} fail method=web_profile_info attempt=${attempt}:`, error); } catch (_) {}
       }
-      if (attempt < 3) await sleep(900 * attempt);
+      if (attempt < 1) await sleep(900 * attempt);
     }
 
     const nowIso = new Date().toISOString();
@@ -17573,6 +17691,267 @@ app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req
 
     const out = await followersMgmtGetCurrent(req, username, force);
     return res.status(out.code).json(out.body);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req, res) => {
+  try {
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const body = req.body || {};
+    const orderIdRaw = safe(body.orderId || body.orderID || body.id);
+    const usernameInput = safe(body.username || '').toLowerCase().replace(/^@/, '');
+    if (!/^[0-9a-fA-F]{24}$/.test(orderIdRaw)) return res.status(400).json({ ok: false, error: 'invalid_order_id' });
+
+    const { getCollection } = require('./mongodbClient');
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+
+    const order = await col.findOne(
+      { _id: new ObjectId(orderIdRaw) },
+      { projection: { _id: 1, customer: 1, telefone: 1, instagramUsername: 1, instauser: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, recoveryNotify: 1 } }
+    );
+    if (!order) return res.status(404).json({ ok: false, error: 'order_not_found' });
+
+    const addMapPaid = (order && order.additionalInfoMapPaid && typeof order.additionalInfoMapPaid === 'object') ? order.additionalInfoMapPaid : {};
+    const addMap = (order && order.additionalInfoMap && typeof order.additionalInfoMap === 'object') ? order.additionalInfoMap : {};
+    const addPaid = Array.isArray(order && order.additionalInfoPaid) ? order.additionalInfoPaid : [];
+    const addOrig = Array.isArray(order && order.additionalInfo) ? order.additionalInfo : [];
+    const pickAdd = (key) => {
+      const k = safe(key);
+      if (!k) return '';
+      if (typeof addMapPaid[k] !== 'undefined') return safe(addMapPaid[k]);
+      if (typeof addMap[k] !== 'undefined') return safe(addMap[k]);
+      const itPaid = addPaid.find(x => x && safe(x.key) === k);
+      if (itPaid && typeof itPaid.value !== 'undefined') return safe(itPaid.value);
+      const it = addOrig.find(x => x && safe(x.key) === k);
+      if (it && typeof it.value !== 'undefined') return safe(it.value);
+      return '';
+    };
+
+    const orderUsername = safe(order.instagramUsername || order.instauser || pickAdd('instagram_username')).toLowerCase().replace(/^@/, '');
+    if (usernameInput && orderUsername && usernameInput !== orderUsername) return res.status(400).json({ ok: false, error: 'username_mismatch' });
+
+    const customer = (order && order.customer && typeof order.customer === 'object') ? order.customer : {};
+    const emailRaw = safe(customer.email || pickAdd('email') || pickAdd('customer_email') || pickAdd('email_cliente'));
+    const email = (emailRaw && emailRaw.includes('@')) ? emailRaw : '';
+
+    const phoneRaw = safe(customer.phone_number || customer.phone || customer.telefone || customer.whatsapp || order.telefone || pickAdd('phone') || pickAdd('telefone') || pickAdd('whatsapp'));
+    let phoneDigits = phoneRaw.replace(/\D/g, '');
+    if (phoneDigits.startsWith('55') && phoneDigits.length > 11) phoneDigits = phoneDigits.slice(2);
+    if (!(phoneDigits.length === 10 || phoneDigits.length === 11)) phoneDigits = '';
+
+    const baseUrl = (function () {
+      const candidates = [process.env.SITE_URL, process.env.PUBLIC_URL, process.env.APP_URL, process.env.BASE_URL];
+      const picked = candidates.map(s => safe(s)).find(Boolean);
+      const u = picked || 'https://agenciaoppus.site';
+      return u.replace(/\/+$/, '');
+    })();
+    const clientUrl = `${baseUrl}/cliente`;
+    const waPhone = '553173425727';
+    const whatsappHref = `https://wa.me/${waPhone}?text=${encodeURIComponent('Olá, preciso de ajuda com reposição de seguidores')}`;
+
+    const subject = 'Recupere os seguidores perdidos';
+    const greetingName = orderUsername ? `@${orderUsername}` : 'Cliente';
+    const escapeHtml = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const text = [
+      `Olá, ${greetingName}`,
+      '',
+      'Identificamos que você teve queda dos seguidores, você pode repor com nossa ferramenta.',
+      '',
+      'Acesse o link abaixo:',
+      clientUrl,
+      '',
+      '1) Informe o número de telefone que registrou no momento da compra.',
+      "2) Abra o detalhamento do seu pedido e clique em 'Acessar ferramenta'.",
+      "3) Após isso clique em 'Solicitar reposição'.",
+      '',
+      'Regras de reposição: no detalhamento do pedido, clique em "Regras de reposição" (o texto expande a descrição).',
+      '',
+      `Suporte: ${whatsappHref}`,
+      'Email: suporte@agenciaoppus.site'
+    ].join('\n');
+    const html = `
+<div style="margin:0;padding:0;background:#f5f7fb;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background:#f5f7fb;padding:16px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td bgcolor="#111827" style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;background:#111827;background-color:#111827;color:#ffffff;text-align:center;">
+              <div style="font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+              <div style="font-size:16px;font-weight:700;margin:0 0 8px 0;">Olá, ${escapeHtml(greetingName)}, tudo bem?</div>
+              <div style="font-size:14px;line-height:1.5;margin:0 0 12px 0;">
+                Identificamos que você teve queda dos seguidores. Você pode repor com nossa ferramenta.
+              </div>
+
+              <div style="margin:14px 0 0 0;padding:12px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;">
+                <div style="font-size:13px;font-weight:800;margin:0 0 8px 0;color:#111827;">Como solicitar reposição</div>
+                <div style="font-size:13px;line-height:1.6;color:#111827;margin:0 0 10px 0;">
+                  Acesse o link abaixo e siga o passo a passo.
+                </div>
+                <div style="margin:0 0 10px 0;">
+                  <a href="${escapeHtml(clientUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir Clientes</a>
+                </div>
+                <ol style="margin:0 0 0 18px;padding:0;font-size:12px;line-height:1.6;color:#111827;">
+                  <li>Informe o número de telefone que registrou no momento da compra.</li>
+                  <li>Abra o detalhamento do seu pedido e clique em <strong>Acessar ferramenta</strong>.</li>
+                  <li>Após isso clique em <strong>Solicitar reposição</strong>.</li>
+                </ol>
+
+                <details style="margin-top:12px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
+                  <summary style="cursor:pointer;font-size:13px;font-weight:800;color:#111827;">Regras de reposição (clique para expandir)</summary>
+                  <div style="margin-top:8px;font-size:12px;line-height:1.6;color:#111827;">
+                    As regras completas aparecem no detalhamento do pedido. Clique no texto para expandir a descrição.
+                  </div>
+                </details>
+              </div>
+
+              <div style="margin:14px 0 0 0;padding:12px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
+                <div style="font-size:13px;font-weight:800;margin:0 0 6px 0;color:#111827;">Precisa de suporte?</div>
+                <div style="font-size:13px;color:#111827;line-height:1.6;">
+                  <div>Email: <a href="mailto:suporte@agenciaoppus.site" style="color:#2563eb;text-decoration:none;">suporte@agenciaoppus.site</a></div>
+                  <div>Chat de suporte: <a href="${escapeHtml(whatsappHref)}" style="color:#2563eb;text-decoration:none;">Clique aqui para acessar</a></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>`;
+
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayKeyBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      const y = String(d.getUTCFullYear());
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${dd}`;
+    };
+    const nowIso = new Date().toISOString();
+    const todayBrtKey = dayKeyBrt(Date.now());
+    const notify = (order && order.recoveryNotify && typeof order.recoveryNotify === 'object') ? order.recoveryNotify : {};
+    const notifyEmail = (notify && notify.email && typeof notify.email === 'object') ? notify.email : {};
+    const notifySms = (notify && notify.sms && typeof notify.sms === 'object') ? notify.sms : {};
+    const prevEmailCount = Number(notifyEmail.count || 0) || 0;
+    const prevEmailDay = safe(notifyEmail.lastSentDay || '');
+    const prevSmsSentAt = safe(notifySms.sentAt || '');
+
+    const persistEmailNotify = async ({ status, error, response, increaseCount }) => {
+      const setObj = {
+        'recoveryNotify.email.lastStatus': safe(status || ''),
+        'recoveryNotify.email.lastAttemptAt': nowIso,
+        'recoveryNotify.email.lastError': safe(error || ''),
+        'recoveryNotify.email.lastResponse': safe(response || '')
+      };
+      if (increaseCount) {
+        setObj['recoveryNotify.email.count'] = prevEmailCount + 1;
+        setObj['recoveryNotify.email.lastSentAt'] = nowIso;
+        setObj['recoveryNotify.email.lastSentDay'] = todayBrtKey;
+      }
+      const historyItem = { at: nowIso, status: safe(status || ''), error: safe(error || ''), response: safe(response || '') };
+      await col.updateOne(
+        { _id: new ObjectId(orderIdRaw) },
+        {
+          $set: setObj,
+          $push: { 'recoveryNotify.email.history': historyItem }
+        }
+      );
+    };
+
+    const emailOut = { ok: false, error: null };
+    if (email) {
+      if (prevEmailCount >= 2) {
+        emailOut.error = 'email_limit_reached';
+        await persistEmailNotify({ status: 'skipped_limit', error: emailOut.error, response: '', increaseCount: false });
+      } else if (prevEmailDay && prevEmailDay === todayBrtKey) {
+        emailOut.error = 'email_already_sent_today';
+        await persistEmailNotify({ status: 'skipped_same_day', error: emailOut.error, response: '', increaseCount: false });
+      } else {
+        const transporter = getRecoverySmtpTransporter() || getSmtpTransporter();
+        if (!transporter) {
+          emailOut.error = 'smtp_not_configured';
+          await persistEmailNotify({ status: 'failed', error: emailOut.error, response: '', increaseCount: false });
+        } else {
+          try {
+            const info = await transporter.sendMail({
+              from: 'Agência Oppus <recuperacao@agenciaoppus.site>',
+              to: email,
+              subject,
+              text,
+              html
+            });
+            const accepted = Array.isArray(info && info.accepted) ? info.accepted.map(x => String(x || '').toLowerCase()) : [];
+            const rejected = Array.isArray(info && info.rejected) ? info.rejected.map(x => String(x || '').toLowerCase()) : [];
+            const responseText = safe((info && info.response) || '');
+            const target = String(email || '').trim().toLowerCase();
+            const targetAccepted = target ? accepted.some(v => v.includes(target)) : accepted.length > 0;
+            const hasRejected = rejected.length > 0;
+            if (targetAccepted || (accepted.length > 0 && !hasRejected)) {
+              emailOut.ok = true;
+              await persistEmailNotify({ status: 'sent', error: '', response: responseText, increaseCount: true });
+            } else {
+              emailOut.error = hasRejected ? 'email_denied_or_rejected' : 'email_send_not_accepted';
+              await persistEmailNotify({ status: 'failed', error: emailOut.error, response: responseText, increaseCount: false });
+            }
+          } catch (sendErr) {
+            const sendMsg = safe(sendErr && (sendErr.response || sendErr.message || String(sendErr)));
+            emailOut.error = sendMsg ? `email_send_failed:${sendMsg}` : 'email_send_failed';
+            await persistEmailNotify({ status: 'failed', error: emailOut.error, response: sendMsg, increaseCount: false });
+          }
+        }
+      }
+    } else {
+      emailOut.error = 'missing_email';
+      await persistEmailNotify({ status: 'failed', error: emailOut.error, response: '', increaseCount: false });
+    }
+
+    const smsOut = { ok: false, error: null };
+    const mexToken = safe(process.env.MEX10_TOKEN || process.env.MEX10_SHORTCODE_TOKEN);
+    if (!mexToken) {
+      smsOut.error = 'missing_mex10_token';
+    } else if (!phoneDigits) {
+      smsOut.error = 'missing_phone';
+    } else if (prevSmsSentAt) {
+      smsOut.error = 'sms_already_sent';
+    } else {
+      const msg = 'Oppus: Voce perdeu seguidores. Enviamos no seu e-mail cadastrado na compra as orientacoes para recuperar seus seguidores.';
+      const resp = await axios.get('https://mex10.com/api/shortcodev2.aspx', {
+        params: { token: mexToken, t: 'send', n: phoneDigits, m: msg },
+        timeout: 15000,
+        validateStatus: () => true,
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = resp && resp.data ? resp.data : null;
+      const success = !!(data && data.data && data.data.success === true);
+      const errFlag = !!(data && data.errors && data.errors.error === true);
+      if (resp.status >= 200 && resp.status < 300 && success && !errFlag) {
+        smsOut.ok = true;
+        await col.updateOne(
+          { _id: new ObjectId(orderIdRaw) },
+          {
+            $set: { 'recoveryNotify.sms.sentAt': nowIso },
+            $push: { 'recoveryNotify.sms.history': nowIso }
+          }
+        );
+      } else {
+        smsOut.error = (data && data.errors && data.errors.description) ? safe(data.errors.description) : ('HTTP ' + String(resp.status));
+      }
+    }
+
+    return res.json({ ok: emailOut.ok && smsOut.ok, orderId: orderIdRaw, username: orderUsername || null, email: emailOut, sms: smsOut });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -17698,6 +18077,7 @@ function followersMgmtSerializeGeneralJob(jobRaw) {
     resumedAt: job.resumedAt || null,
     dueDays: job.dueDays,
     limit: job.limit,
+    order: job.order || 'recent',
     force: !!job.force,
     total: job.total,
     done: job.done,
@@ -17782,6 +18162,9 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
     const dueDaysRaw = parseInt(String((req.body && req.body.dueDays) || req.query.dueDays || '3'), 10);
     const dueDays = Math.min(30, Math.max(1, Number.isFinite(dueDaysRaw) ? dueDaysRaw : 3));
     const force = String((req.body && req.body.force) || req.query.force || '').trim() === '1';
+    const orderRaw = String((req.body && req.body.order) || req.query.order || 'recent').trim().toLowerCase();
+    const order = (orderRaw === 'oldest' || orderRaw === 'old' || orderRaw === 'asc' || orderRaw === 'antigos' || orderRaw === 'antigo') ? 'oldest' : 'recent';
+    const sortDir = order === 'oldest' ? 1 : -1;
 
     if (global.followersMgmtGeneralValidationJob && (global.followersMgmtGeneralValidationJob.status === 'running' || global.followersMgmtGeneralValidationJob.status === 'paused')) {
       return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(global.followersMgmtGeneralValidationJob) });
@@ -17881,7 +18264,7 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
       };
       const privateCursor = col.find(privateQuery, {
         projection: { instagramUsername: 1, instauser: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1 }
-      }).sort({ createdAt: -1 });
+      }).sort({ createdAt: sortDir });
       for await (const po of privateCursor) {
         const uKey = resolveUsername(po);
         if (uKey) privateKeySetUsers.add(uKey);
@@ -17906,7 +18289,7 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
         tipoServico: 1,
         createdAt: 1
       }
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: sortDir });
 
     const brtOffsetMs = 3 * 60 * 60 * 1000;
     const dayMs = 24 * 60 * 60 * 1000;
@@ -17990,6 +18373,7 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
       resumedAt: null,
       dueDays,
       limit,
+      order,
       force,
       total: targets.length,
       done: 0,
@@ -23714,6 +24098,12 @@ async function fetchInstagramFollowersInfo(username) {
   const DISABLE_TIME_MS = 60 * 1000;
   const REQUEST_TIMEOUT = 3500;
   const FALLBACK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const globalCooldownUntil = Number(global.igWebProfileGlobalDisabledUntil || 0) || 0;
+  if (globalCooldownUntil && Date.now() < globalCooldownUntil) {
+    return { success: false, error: 'ig_webprofile_global_cooldown' };
+  }
 
   const fetchFollowersPublicFallback = async () => {
     try {
@@ -23786,6 +24176,7 @@ async function fetchInstagramFollowersInfo(username) {
       });
 
       if (resp.status === 429 || resp.status === 403) {
+        global.igWebProfileGlobalDisabledUntil = Math.max(Number(global.igWebProfileGlobalDisabledUntil || 0) || 0, Date.now() + (60 * 1000));
         igMarkLastProxyFail(profile, 10 * 60 * 1000);
         profile.errorCount = Number(profile.errorCount || 0) + 2;
         profile.disabledUntil = Date.now() + (10 * 60 * 1000);
@@ -23827,10 +24218,16 @@ async function fetchInstagramFollowersInfo(username) {
     }
   };
 
+  let lastErr = null;
   if (candidates.length > 0) {
-    try {
-      return await Promise.any(candidates.map(p => tryProfile(p)));
-    } catch (_) {}
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        if (i > 0) await sleep(250 + Math.floor(Math.random() * 350));
+        return await tryProfile(candidates[i]);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
   }
 
   const publicFallback = await fetchFollowersPublicFallback();
@@ -23847,6 +24244,6 @@ async function fetchInstagramFollowersInfo(username) {
     };
   }
 
-  return { success: false, error: 'Falha ao buscar seguidores' };
+  return { success: false, error: lastErr ? String(lastErr?.message || lastErr) : 'Falha ao buscar seguidores' };
 }
 

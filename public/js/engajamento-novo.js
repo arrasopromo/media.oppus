@@ -1757,8 +1757,10 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Apply Coupon (Display)
     if (window.couponDiscount && window.couponDiscount > 0) {
-        const discountVal = Math.round(totalCents * window.couponDiscount);
-        totalCents -= discountVal;
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          totalCents = Math.round(totalCents * (1 - d));
+        }
     }
     
     // Update Total Display
@@ -1922,8 +1924,10 @@ document.addEventListener('DOMContentLoaded', function() {
       let totalCents = (window.basePriceCents || 0) + promosTotalCents;
       
       if (window.couponDiscount && window.couponDiscount > 0) {
-           const discountVal = Math.round(totalCents * window.couponDiscount);
-           totalCents -= discountVal;
+           const d = Number(window.couponDiscount || 0);
+           if (Number.isFinite(d) && d > 0 && d < 1) {
+             totalCents = Math.round(totalCents * (1 - d));
+           }
       }
       
       // Quantidade efetiva

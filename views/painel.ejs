@@ -71,6 +71,8 @@
     .refil2-badge--gray { background:#f3f4f6; color:#374151; }
     .followers-pager-link { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; text-decoration: none; color: #111827; }
     .followers-pager-link--disabled { pointer-events: none; opacity: 0.5; }
+    .followers-email--sent { color:#16a34a; font-weight:700; }
+    .followers-email--failed { color:#dc2626; font-weight:700; }
 
     .panel-header { display:flex; justify-content:space-between; align-items:center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
     .panel-filterbar { background: #fff; padding: 15px; border-radius: 8px; border: 1px solid #ddd; display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -96,6 +98,19 @@
       .panel-filterbar button { width: 100% !important; }
       .panel-filterbar strong,
       .panel-filterbar span { width: 100%; }
+    }
+
+    #cupons .coupon-form { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    #cupons .coupon-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #cupons .coupon-row--code { grid-template-columns: 1fr 90px; }
+    #cupons .coupon-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    #cupons .coupon-list-wrap { max-height: 520px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; background: #fff; }
+    #cupons .coupons-table { width: 100%; border-collapse: collapse; min-width: 820px; }
+    @media (max-width: 520px) {
+      #cupons .coupon-row { grid-template-columns: 1fr; }
+      #cupons .coupon-row--code { grid-template-columns: 1fr; }
+      #cupons .coupon-actions { flex-direction: column; align-items: stretch; }
+      #cupons .coupon-actions button { width: 100%; }
     }
   </style>
 </head>
@@ -455,6 +470,20 @@
           <button type="button" id="followersUnhideSelectedBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Desocultar marcados</button>
           <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer;">Iniciar validação geral</button>
           <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Validar:</span>
+              <input id="followersValidateGeneralLimit" type="number" min="0" step="1" placeholder="0 = todos" style="width:110px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Ordem:</span>
+              <select id="followersValidateGeneralOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="recent">Mais recentes</option>
+                <option value="oldest">Mais antigos</option>
+              </select>
+            </label>
+            <span style="font-size:0.85rem; color:#64748b;">Regra: somente compras com 2+ dias</span>
+          </div>
           <div id="followersValidateGeneralWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <div style="font-size:0.9rem; color:#111827; font-weight:600;">Progresso:</div>
             <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
@@ -522,6 +551,10 @@
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <input id="followersErrorsOnly" type="checkbox" <%= (filters && filters.errors) ? 'checked' : '' %> />
               <span>Apenas erros</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersEmailFailedOnly" type="checkbox" <%= (filters && filters.emailFailed) ? 'checked' : '' %> />
+              <span>Email recuperação falhou</span>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <input id="followersOkOnly" type="checkbox" <%= (filters && filters.ok) ? 'checked' : '' %> />
@@ -595,6 +628,7 @@
                 <a href="#" class="followers-sort" data-sort="currentCheckedAtMs" style="color:inherit; text-decoration:none;">Checado em<span id="followersSortIconChecked" style="margin-left:6px; color:#6b7280;"></span></a>
               </th>
               <th>Erro</th>
+              <th>Email Recuperação</th>
               <th>Ação</th>
             </tr>
           </thead>
@@ -610,6 +644,7 @@
                 const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && contracted) ? ((diff / contracted) * 100) : null);
                 const oid = row.orderId ? String(row.orderId) : '';
                 const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
+                const hasDrop = (resultado !== null && current !== null && current < resultado);
                 let lastPurchase = '-';
                 try {
                   const t = Number(row.lastPurchaseAtMs || 0);
@@ -639,11 +674,24 @@
                   }
                 } catch(_) {}
                 const lastErr = row.lastError ? String(row.lastError) : '';
+                const emailNotifyStatus = String(row.recoveryEmailStatus || '').trim().toLowerCase();
+                const emailNotifyError = String(row.recoveryEmailError || '').trim();
+                const emailNotifyResponse = String(row.recoveryEmailResponse || '').trim();
+                const emailNotifyRaw = (emailNotifyError || emailNotifyResponse || emailNotifyStatus) ? (emailNotifyError || emailNotifyResponse || emailNotifyStatus) : '';
+                const emailNotifyView = emailNotifyStatus === 'sent'
+                  ? 'Enviado'
+                  : (emailNotifyStatus === 'failed'
+                    ? 'Falhou'
+                    : (emailNotifyStatus === 'skipped_limit'
+                      ? 'Limite atingido'
+                      : (emailNotifyStatus === 'skipped_same_day'
+                        ? 'Já enviado hoje'
+                        : '-')));
                 const refilIsLifetime = row.refilIsLifetime === true;
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -714,9 +762,13 @@
                 <td style="white-space: nowrap;"><%= lastPurchase %></td>
                 <td style="white-space: nowrap;" class="cell-checkedat"><%= checkedAtFmt %></td>
                 <td style="white-space: nowrap; max-width: 320px; overflow:hidden; text-overflow: ellipsis; color:#dc2626;" class="cell-error" title="<%= lastErr %>"><%= lastErr ? lastErr : '-' %></td>
+                <td class="<%= (emailNotifyStatus === 'failed') ? 'followers-email--failed' : ((emailNotifyStatus === 'sent') ? 'followers-email--sent' : '') %>" style="white-space: nowrap; max-width: 280px; overflow:hidden; text-overflow: ellipsis;" title="<%= emailNotifyRaw %>"><%= emailNotifyView %></td>
                 <td style="white-space: nowrap;">
-                  <button type="button" class="unknown-btn btn-refresh" data-force="0">Atualizar</button>
-                  <button type="button" class="unknown-btn btn-refresh" data-force="1" style="background:#6c757d;">Forçar</button>
+                  <button type="button" class="unknown-btn btn-refresh" data-force="1">Atualizar</button>
+                  <% if (hasDrop) { %>
+                    <button type="button" class="unknown-btn btn-notify" style="background:#0ea5e9;">Enviar Email+SMS</button>
+                    <span class="followersNotifyStatus" style="margin-left:8px; font-size:0.85rem; color:#64748b;"></span>
+                  <% } %>
                 </td>
               </tr>
             <% }) %>
@@ -837,6 +889,49 @@
               refreshRow(tr, force).catch(function(e){
                 alert('Falha ao atualizar: ' + (e && e.message ? e.message : e));
               });
+            }
+            if (t.classList && t.classList.contains('btn-notify')) {
+              var tr2 = t.closest('tr');
+              if (!tr2) return;
+              var orderId = String(tr2.getAttribute('data-orderid') || '').trim();
+              var username2 = String(tr2.getAttribute('data-username') || '').trim();
+              if (!orderId) return alert('OrderID ausente.');
+
+              var btns2 = tr2.querySelectorAll('button');
+              for (var k=0;k<btns2.length;k++){ try { btns2[k].disabled = true; } catch(_) {} }
+              var statusEl = tr2.querySelector('.followersNotifyStatus');
+              if (statusEl) { statusEl.textContent = 'Enviando…'; statusEl.style.color = '#64748b'; }
+
+              fetch('/api/painel/gerenciamento-seguidores/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ orderId: orderId, username: username2 })
+              }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); })
+                .then(function(out){
+                  var data = out && out.json ? out.json : null;
+                  if (!data || data.ok !== true) {
+                    var e0 = (data && data.error) ? String(data.error) : 'request_failed';
+                    var emailErr = (data && data.email && data.email.ok === false && data.email.error) ? String(data.email.error) : '';
+                    var smsErr = (data && data.sms && data.sms.ok === false && data.sms.error) ? String(data.sms.error) : '';
+                    var msg = e0;
+                    if (emailErr || smsErr) msg = (emailErr ? ('Email: ' + emailErr) : '') + (emailErr && smsErr ? ' | ' : '') + (smsErr ? ('SMS: ' + smsErr) : '');
+                    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#dc2626'; }
+                    else alert('Falha ao enviar: ' + msg);
+                    return;
+                  }
+                  var label = 'Enviado';
+                  if (data.email && data.sms) {
+                    label = (data.email.ok ? 'Email OK' : ('Email: ' + String(data.email.error || 'erro'))) + ' | ' + (data.sms.ok ? 'SMS OK' : ('SMS: ' + String(data.sms.error || 'erro')));
+                  }
+                  if (statusEl) { statusEl.textContent = label; statusEl.style.color = '#16a34a'; }
+                })
+                .catch(function(e){
+                  if (statusEl) { statusEl.textContent = 'Erro: ' + (e && e.message ? e.message : e); statusEl.style.color = '#dc2626'; }
+                  else alert('Falha ao enviar: ' + (e && e.message ? e.message : e));
+                })
+                .finally(function(){
+                  for (var j2=0;j2<btns2.length;j2++){ try { btns2[j2].disabled = false; } catch(_) {} }
+                });
             }
           });
 
@@ -1024,7 +1119,16 @@
                 var isPaused = !!(validateGeneralLastJob && validateGeneralLastJob.status === 'paused');
                 setStatus(isPaused ? 'Continuando validação geral…' : 'Iniciando validação geral…');
                 var url = isPaused ? '/api/painel/gerenciamento-seguidores/validate-general/resume' : '/api/painel/gerenciamento-seguidores/validate-general/start';
-                var body = isPaused ? {} : { dueDays: 3, limit: 0 };
+                var body = (function(){
+                  if (isPaused) return {};
+                  var limitEl = el('followersValidateGeneralLimit');
+                  var orderEl = el('followersValidateGeneralOrder');
+                  var limitStr = limitEl ? String(limitEl.value || '').trim() : '';
+                  var n = parseInt(limitStr, 10);
+                  var limit = (limitStr && isFinite(n) && n > 0) ? n : 0;
+                  var order = orderEl ? String(orderEl.value || '').trim().toLowerCase() : 'recent';
+                  return { dueDays: 2, limit: limit, order: order };
+                })();
                 var resp = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -1078,6 +1182,7 @@
                 var sizeEl = el('followersPageSize');
                 var filledEl = el('followersFilledOnly');
                 var errorsEl = el('followersErrorsOnly');
+                var emailFailedEl = el('followersEmailFailedOnly');
                 var okEl = el('followersOkOnly');
                 var hiddenEl = el('followersHiddenOnly');
                 var warrantyEl = el('followersWarranty');
@@ -1102,6 +1207,7 @@
                 var sizeV = sizeEl ? String(sizeEl.value || '').trim() : '';
                 var filledV = filledEl && filledEl.checked ? '1' : '';
                 var errorsV = errorsEl && errorsEl.checked ? '1' : '';
+                var emailFailedV = emailFailedEl && emailFailedEl.checked ? '1' : '';
                 var okV = okEl && okEl.checked ? '1' : '';
                 var hiddenV = hiddenEl && hiddenEl.checked ? '1' : '';
                 var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
@@ -1114,6 +1220,7 @@
                 if (sizeV) urlParams.set('pageSize', sizeV); else urlParams.delete('pageSize');
                 if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
                 if (errorsV) urlParams.set('errors', errorsV); else { urlParams.delete('errors'); urlParams.delete('err'); }
+                if (emailFailedV) urlParams.set('emailFailed', emailFailedV); else { urlParams.delete('emailFailed'); urlParams.delete('email_fail'); }
                 if (okV) urlParams.set('ok', okV); else urlParams.delete('ok');
                 if (hiddenV) urlParams.set('hiddenOnly', hiddenV); else { urlParams.delete('hiddenOnly'); urlParams.delete('hidden'); }
                 if (warrantyV && warrantyV !== 'all') urlParams.set('warranty', warrantyV); else urlParams.delete('warranty');
@@ -1146,6 +1253,12 @@
           var errorsEl2 = el('followersErrorsOnly');
           if (errorsEl2 && applyBtn) {
             errorsEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var emailFailedEl2 = el('followersEmailFailedOnly');
+          if (emailFailedEl2 && applyBtn) {
+            emailFailedEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -1311,6 +1424,7 @@
           if (filters && filters.qType) parts.push(`qType=${encodeURIComponent(String(filters.qType))}`);
           if (filters && filters.filled) parts.push(`filled=1`);
           if (filters && filters.errors) parts.push(`errors=1`);
+          if (filters && filters.emailFailed) parts.push(`emailFailed=1`);
           if (filters && filters.ok) parts.push(`ok=1`);
           if (filters && filters.warranty) parts.push(`warranty=${encodeURIComponent(String(filters.warranty))}`);
           else if (filters && filters.lifetime) parts.push(`lifetime=1`);
@@ -1340,17 +1454,17 @@
       <div id="cupons" style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <h2 style="margin:0 0 8px; font-size:1rem;">Cupons</h2>
         <div style="color:#666; font-size:0.9rem; margin-bottom: 10px;">Para editar um cupom já criado, use o botão “Editar” na lista (ou clique na linha), ajuste os campos e clique em “Salvar”.</div>
-        <div style="display:grid; grid-template-columns: 1fr; gap: 12px;">
-          <div style="display:grid; grid-template-columns: 1fr 90px; gap: 8px;">
+        <div class="coupon-form">
+          <div class="coupon-row coupon-row--code">
             <input type="hidden" id="couponIdInput" value="">
             <input type="text" id="couponCodeInput" placeholder="CÓDIGO" style="padding:6px; border:1px solid #ccc; border-radius:4px; text-transform:uppercase;">
             <input type="number" id="couponDiscountInput" placeholder="%" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1" max="100">
           </div>
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="coupon-row">
             <input type="number" id="couponMaxUsesTotalInput" placeholder="Limite total (opcional)" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1">
             <input type="number" id="couponMaxUsesPerProfileInput" placeholder="Limite por perfil (opcional)" style="padding:6px; border:1px solid #ccc; border-radius:4px;" min="1">
           </div>
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="coupon-row">
             <input type="datetime-local" id="couponValidFromInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
             <input type="datetime-local" id="couponValidToInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
           </div>
@@ -1358,7 +1472,7 @@
             <input type="checkbox" id="couponIsActiveInput" checked>
             <span>Ativo</span>
           </label>
-          <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <div class="coupon-actions">
             <button type="button" onclick="clearCouponForm()" style="padding:6px 12px; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer;">Limpar</button>
             <button type="button" onclick="saveCoupon()" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer;">Salvar</button>
           </div>
@@ -1366,9 +1480,9 @@
 
         <div style="margin-top: 14px; border-top: 1px solid #eaeaea; padding-top: 12px;">
           <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 8px;">Lista</div>
-          <div style="max-height: 520px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; background: #fff;">
+          <div class="coupon-list-wrap">
             <div class="panel-table-scroll">
-            <table style="width:100%; border-collapse: collapse; min-width: 820px;">
+            <table class="coupons-table">
               <thead>
                 <tr>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Código</th>
@@ -2618,41 +2732,6 @@
                   })();
                 </script>
               </div>
-            <% if (view === 'dashboard') { %>
-              <div id="dashboardVitalicioWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; margin-bottom:16px; width:100%; box-sizing:border-box;">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
-                  <strong style="font-size: 1rem; color:#111827;">Vitalício</strong>
-                  <div style="font-size:0.85rem; color:#6b7280;">Compras com warranty vitalício (período)</div>
-                </div>
-                <%
-                  const vitalicioRows = Array.isArray(vitalicioPurchases) ? vitalicioPurchases : [];
-                %>
-                <div class="dashboard-table-wrap panel-table-scroll" style="margin-top:12px;">
-                  <table class="dashboard-table" style="min-width: 720px; font-size: 0.92rem;">
-                    <thead>
-                      <tr>
-                        <th>Perfil</th>
-                        <th>Comprador</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <% if (!vitalicioRows.length) { %>
-                        <tr>
-                          <td colspan="2" style="color:#6b7280;">Nenhuma compra vitalícia no período.</td>
-                        </tr>
-                      <% } else { %>
-                        <% vitalicioRows.forEach(function(v) { %>
-                          <tr>
-                            <td><%= (v && v.username) ? ('@' + String(v.username)) : '-' %></td>
-                            <td><%= String(v && v.buyerName ? v.buyerName : '-') %></td>
-                          </tr>
-                        <% }) %>
-                      <% } %>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            <% } %>
             <div id="dashboardLtvWrap" style="margin-top: 14px; width:100%; border:1px solid #e5e7eb; border-radius:10px; background:#fff; padding:14px; box-sizing:border-box;">
               <%
                 const ltvDash = (typeof ltvAllTime !== 'undefined' && ltvAllTime) ? ltvAllTime : null;

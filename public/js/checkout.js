@@ -395,11 +395,12 @@
     })();
 
     let base = Number(price || 0);
+    let subtotal = Math.max(0, Number(base) + Number(promosTotal));
     if (discount > 0) {
-      base = Math.max(0, Math.round(base * (1 - discount)));
+      subtotal = Math.max(0, Math.round(subtotal * (1 - discount)));
     }
 
-    return Math.max(0, Number(base) + Number(promosTotal));
+    return Math.max(0, Number(subtotal) || 0);
   }
 
   // Tabela de acréscimo por parcelas (cartão)
