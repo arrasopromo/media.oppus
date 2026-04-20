@@ -19412,18 +19412,28 @@ app.post('/api/admin/private-order-send-email', requireAdmin, async (req, res) =
 
     const nowIso = new Date().toISOString();
     const persist = async (status, err, response) => {
+      const setObj = {
+        'privateNotify.email.lastStatus': safe(status),
+        'privateNotify.email.lastAttemptAt': nowIso,
+        ...(status === 'sent' ? { 'privateNotify.email.lastSentAt': nowIso } : {}),
+        'privateNotify.email.lastError': safe(err || ''),
+        'privateNotify.email.lastResponse': safe(response || '')
+      };
+      if (status === 'sent') {
+        setObj.lastContactAt = nowIso;
+        setObj.lastContactText = text;
+        setObj.lastContactChannel = 'email';
+        setObj.lastContactEmail = emailTo;
+        setObj.noContact = false;
+      }
+      const updateObj = {
+        $set: setObj,
+        $push: { 'privateNotify.email.history': { at: nowIso, status: safe(status), error: safe(err || ''), response: safe(response || '') } }
+      };
+      if (status === 'sent') updateObj.$inc = { contactCount: 1 };
       await col.updateOne(
         { _id: new ObjectId(idStr) },
-        {
-          $set: {
-            'privateNotify.email.lastStatus': safe(status),
-            'privateNotify.email.lastAttemptAt': nowIso,
-            ...(status === 'sent' ? { 'privateNotify.email.lastSentAt': nowIso } : {}),
-            'privateNotify.email.lastError': safe(err || ''),
-            'privateNotify.email.lastResponse': safe(response || '')
-          },
-          $push: { 'privateNotify.email.history': { at: nowIso, status: safe(status), error: safe(err || ''), response: safe(response || '') } }
-        }
+        updateObj
       );
     };
 

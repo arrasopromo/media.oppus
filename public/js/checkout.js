@@ -1312,7 +1312,7 @@
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>🌍 Alguns seguidores reais de vários países para crescer sua base.</li>
-            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
+            <li>🛠 Ferramenta de reposição de seguidores inclusa.</li>
           </ul>
         `;
       case 'brasileiros':
@@ -1321,7 +1321,7 @@
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>🇧🇷 Foco total no público brasileiro e mais credibilidade.</li>
-            <li>🛠 Ferramenta de reposição de seguidores: não perca nenhum seguidor.</li>
+            <li>🛠 Ferramenta de reposição de seguidores inclusa.</li>
           </ul>
         `;
       case 'organicos':
