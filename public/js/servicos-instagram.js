@@ -1623,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const map = {
           'mistos': 'Curtidas Mistas',
           'curtidas_brasileiras': 'Curtidas Brasileiras',
-          'organicos': 'Curtidas Brasileiras Reais'
+          'organicos': 'Curtidas Reais'
         };
         return map[tipo] || tipo;
     }
@@ -2045,10 +2045,10 @@ document.addEventListener('DOMContentLoaded', function() {
         break;
       case 'organicos':
         html = isCurtidasContext ? `
-          <p>Curtidas de perfis brasileiros e reais para máxima qualidade e credibilidade nas suas publicações.</p>
+          <p>Curtidas com alguns perfis brasileiros, mas exclusivamente perfis reais para máxima qualidade e credibilidade nas suas publicações.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>🇧🇷 Perfis brasileiros e reais para reforçar autoridade.</li>
+            <li>👤 Perfis reais para reforçar autoridade.</li>
             <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
           </ul>
         ` : `
@@ -2306,7 +2306,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!titleEl && !descEl) return;
     const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     const variant = (function(t){
-      if (t === 'organicos') return { title: 'Curtidas orgânicas promocionais', desc: 'Adicionar curtidas orgânicas (brasileiras reais) ao post.' };
+      if (t === 'organicos') return { title: 'Curtidas reais promocionais', desc: 'Adicionar curtidas de perfis reais ao post.' };
       if (t === 'brasileiros' || t === 'curtidas_brasileiras') return { title: 'Curtidas brasileiras promocionais', desc: 'Adicionar curtidas brasileiras ao post.' };
       if (t === 'mistos') return { title: 'Curtidas mistas promocionais', desc: 'Adicionar curtidas mistas ao post.' };
       return { title: 'Curtidas promocionais', desc: 'Adicionar curtidas ao post.' };
@@ -2323,7 +2323,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const hl = document.querySelector('.promo-item.likes .promo-highlight');
     if (hl) {
       const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
-      if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS ORGÂNICAS`;
+      if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS REAIS`;
       else if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') hl.textContent = `+ ${q} CURTIDAS BRASILEIRAS`;
       else if (tipo === 'mistos') hl.textContent = `+ ${q} CURTIDAS MISTAS`;
       else hl.textContent = `+ ${q} CURTIDAS`;
@@ -2442,7 +2442,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!priceStr) priceStr = promoPricing.likes?.price || '';
         const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
         const label = (function(t){
-          if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+          if (t === 'organicos') return `Curtidas Reais (${qty})`;
           if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
           if (t === 'mistos') return `Curtidas mistas (${qty})`;
           return `Curtidas (${qty})`;
@@ -4035,10 +4035,10 @@ document.addEventListener('DOMContentLoaded', function() {
       // - troca manual de tipo: 3000ms
       window.__oppusTipoChangeUserInitiated = false;
       if (userInitiated) {
-        scrollToCardsMobile(3000, true);
+        scrollToCardsMobile(4000, true);
       } else if (!hasInitialCardsAutoScrollDone) {
         hasInitialCardsAutoScrollDone = true;
-        scrollToCardsMobile(3000, true);
+        scrollToCardsMobile(4000, true);
       }
     });
   }

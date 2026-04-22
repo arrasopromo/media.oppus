@@ -48,11 +48,103 @@ function getStripeKeys() {
 }
 
 // Configuração de sessão
+const { connect: connectMongo } = require('./mongodbClient');
+class MongoSessionStore extends session.Store {
+  constructor() {
+    super();
+    this._ready = false;
+    this._mem = new Map();
+  }
+  async _getCol() {
+    if (this._col) return this._col;
+    const db = await connectMongo();
+    if (!db) return null;
+    const col = db.collection('sessions');
+    this._col = col;
+    if (!this._ready) {
+      this._ready = true;
+      try { await col.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }); } catch (_) {}
+    }
+    return col;
+  }
+  _ttlMs(sess) {
+    try {
+      const c = sess && sess.cookie ? sess.cookie : null;
+      if (c && c.expires) {
+        const t = new Date(c.expires).getTime();
+        if (Number.isFinite(t) && t > 0) return Math.max(0, t - Date.now());
+      }
+      const maxAge = c && typeof c.maxAge === 'number' ? c.maxAge : null;
+      if (maxAge != null && Number.isFinite(maxAge) && maxAge > 0) return maxAge;
+    } catch (_) {}
+    return 24 * 60 * 60 * 1000;
+  }
+  get(sid, cb) {
+    this._getCol().then(async (col) => {
+      if (!sid) return cb(null, null);
+      const key = String(sid);
+      const rec = this._mem.get(key);
+      if (rec) {
+        if (rec.expiresAt && rec.expiresAt <= Date.now()) {
+          this._mem.delete(key);
+        } else {
+          return cb(null, rec.session || null);
+        }
+      }
+      if (!col) return cb(null, null);
+      const doc = await col.findOne({ _id: String(sid) });
+      if (!doc) return cb(null, null);
+      if (doc.expiresAt && new Date(doc.expiresAt).getTime() <= Date.now()) {
+        try { await col.deleteOne({ _id: String(sid) }); } catch (_) {}
+        return cb(null, null);
+      }
+      try {
+        this._mem.set(key, { session: doc.session || null, expiresAt: doc.expiresAt ? new Date(doc.expiresAt).getTime() : (Date.now() + 24 * 60 * 60 * 1000) });
+      } catch (_) {}
+      return cb(null, doc.session || null);
+    }).catch((e) => cb(e));
+  }
+  set(sid, sess, cb) {
+    this._getCol().then(async (col) => {
+      const key = String(sid || '');
+      if (!key) return cb(null);
+      const ttlMs = this._ttlMs(sess);
+      const expiresAt = new Date(Date.now() + ttlMs);
+      try { this._mem.set(key, { session: sess, expiresAt: expiresAt.getTime() }); } catch (_) {}
+      if (col) {
+        try {
+          await col.updateOne(
+            { _id: key },
+            { $set: { session: sess, expiresAt } },
+            { upsert: true }
+          );
+        } catch (_) {}
+      }
+      return cb(null);
+    }).catch((e) => cb(e));
+  }
+  destroy(sid, cb) {
+    this._getCol().then(async (col) => {
+      const key = String(sid || '');
+      if (!key) return cb(null);
+      try { this._mem.delete(key); } catch (_) {}
+      if (col) {
+        try { await col.deleteOne({ _id: key }); } catch (_) {}
+      }
+      return cb(null);
+    }).catch((e) => cb(e));
+  }
+  touch(sid, sess, cb) {
+    this.set(sid, sess, cb);
+  }
+}
+const sessionStore = new MongoSessionStore();
 app.use(session({
-    secret: "agencia-oppus-secret-key",
-    resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 horas
+  secret: "agencia-oppus-secret-key",
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 // Middleware para parsing de JSON e URL encoded
@@ -177,11 +269,81 @@ app.use((req, res, next) => {
   next();
 });
 
+const ADMIN_AUTH_COOKIE = 'oppus_admin_auth';
+const adminAuthSecret = () => String(process.env.ADMIN_COOKIE_SECRET || "agencia-oppus-secret-key");
+const base64UrlEnc = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+const base64UrlDec = (str) => {
+  const s = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+  return Buffer.from(s + pad, 'base64');
+};
+const parseCookieHeader = (req) => {
+  const out = {};
+  const raw = String((req && req.headers && req.headers.cookie) || '');
+  if (!raw) return out;
+  const parts = raw.split(';');
+  for (const p of parts) {
+    const kv = String(p || '').trim();
+    if (!kv) continue;
+    const idx = kv.indexOf('=');
+    if (idx < 0) continue;
+    const k = kv.slice(0, idx).trim();
+    const v = kv.slice(idx + 1).trim();
+    if (!k) continue;
+    try { out[k] = decodeURIComponent(v || ''); } catch (_) { out[k] = v || ''; }
+  }
+  return out;
+};
+const signAdminAuth = (payloadObj) => {
+  const json = JSON.stringify(payloadObj || {});
+  const payload = base64UrlEnc(Buffer.from(json, 'utf8'));
+  const sig = base64UrlEnc(crypto.createHmac('sha256', adminAuthSecret()).update(payload).digest());
+  return `${payload}.${sig}`;
+};
+const verifyAdminAuth = (token) => {
+  try {
+    const t = String(token || '');
+    const idx = t.lastIndexOf('.');
+    if (idx < 1) return null;
+    const payload = t.slice(0, idx);
+    const sig = t.slice(idx + 1);
+    const expected = base64UrlEnc(crypto.createHmac('sha256', adminAuthSecret()).update(payload).digest());
+    const a = Buffer.from(String(sig), 'utf8');
+    const b = Buffer.from(String(expected), 'utf8');
+    if (a.length !== b.length) return null;
+    if (!crypto.timingSafeEqual(a, b)) return null;
+    const obj = JSON.parse(base64UrlDec(payload).toString('utf8'));
+    if (!obj || !obj.username) return null;
+    if (obj.exp && Number(obj.exp) > 0 && Date.now() > Number(obj.exp)) return null;
+    return obj;
+  } catch (_) {
+    return null;
+  }
+};
+const setAdminAuthCookie = (res, adminUser) => {
+  try {
+    const exp = Date.now() + (24 * 60 * 60 * 1000);
+    const token = signAdminAuth({ username: String(adminUser.username || ''), role: String(adminUser.role || ''), exp });
+    res.cookie(ADMIN_AUTH_COOKIE, token, { httpOnly: true, sameSite: 'Lax', secure: false, path: '/', maxAge: 24 * 60 * 60 * 1000 });
+  } catch (_) {}
+};
+const clearAdminAuthCookie = (res) => {
+  try { res.clearCookie(ADMIN_AUTH_COOKIE, { path: '/' }); } catch (_) {}
+};
+
 // Middleware de autenticação Admin
 const requireAdmin = (req, res, next) => {
-    if (req.session && req.session.adminUser) {
-        return next();
-    }
+    if (req.session && req.session.adminUser) return next();
+    try {
+      const cookies = parseCookieHeader(req);
+      const token = cookies[ADMIN_AUTH_COOKIE] || '';
+      const data = verifyAdminAuth(token);
+      if (data && data.username) {
+        req.session.adminUser = { username: data.username, role: data.role || '' };
+        try { req.session.save(() => next()); } catch (_) { return next(); }
+        return;
+      }
+    } catch (_) {}
     if (req.xhr || (req.headers.accept && req.headers.accept.indexOf('json') > -1)) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -414,7 +576,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         if (categoria === 'curtidas' || categoria === 'likes') {
             if (tipo === 'mistos') return 'Curtidas mistas';
             if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') return 'Curtidas brasileiras';
-            if (tipo === 'organicos' || tipo === 'curtidas_reais') return 'Curtidas brasileiras reais';
+            if (tipo === 'organicos' || tipo === 'curtidas_reais') return 'Curtidas Reais';
             return 'Curtidas';
         }
         if (categoria === 'visualizacoes' || categoria === 'views') {
@@ -673,7 +835,7 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
         if (categoria === 'curtidas' || categoria === 'likes') {
             if (tipo === 'mistos') return 'Curtidas mistas';
             if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') return 'Curtidas brasileiras';
-            if (tipo === 'organicos' || tipo === 'curtidas_reais') return 'Curtidas brasileiras reais';
+            if (tipo === 'organicos' || tipo === 'curtidas_reais') return 'Curtidas Reais';
             return 'Curtidas';
         }
         if (categoria === 'visualizacoes' || categoria === 'views') {
@@ -973,13 +1135,13 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
             const tipoLabel = (function () {
                 if (categoriaKey === 'curtidas') {
                     if (tipoKey === 'mistos') return 'curtidas mistas';
-                    if (tipoKey === 'organicos') return 'curtidas brasileiras reais';
+                    if (tipoKey === 'organicos') return 'curtidas reais';
                 }
                 if (tipoKey === 'mistos') return 'seguidores mistos';
                 if (tipoKey === 'brasileiros') return 'seguidores brasileiros';
                 if (tipoKey === 'organicos') return 'seguidores brasileiros e reais';
                 if (tipoKey === 'curtidas_brasileiras') return 'curtidas brasileiras';
-                if (tipoKey === 'curtidas_organicos') return 'curtidas brasileiras reais';
+                if (tipoKey === 'curtidas_organicos') return 'curtidas reais';
                 if (tipoKey === 'visualizacoes_reels') return 'visualizações reels';
                 return safe(rawTipo).replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
             })();
@@ -1430,8 +1592,19 @@ app.post('/login', async (req, res) => {
         const user = await admins.findOne({ username });
 
         if (user && user.password === hashPassword(password)) {
-            req.session.adminUser = { username: user.username, role: user.role };
-            return res.json({ success: true });
+            return req.session.regenerate((regenErr) => {
+                try {
+                    if (regenErr) return res.status(500).json({ success: false, error: 'Erro interno' });
+                    req.session.adminUser = { username: user.username, role: user.role };
+                    req.session.save((saveErr) => {
+                        if (saveErr) return res.status(500).json({ success: false, error: 'Erro interno' });
+                        try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {}
+                        return res.json({ success: true });
+                    });
+                } catch (e) {
+                    return res.status(500).json({ success: false, error: 'Erro interno' });
+                }
+            });
         }
         return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     } catch (e) {
@@ -1441,8 +1614,14 @@ app.post('/login', async (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/login');
+    try {
+        try { clearAdminAuthCookie(res); } catch (_) {}
+        req.session.destroy(() => {
+            res.redirect('/login');
+        });
+    } catch (_) {
+        res.redirect('/login');
+    }
 });
 
 // Configurar view engine ANTES de qualquer render
@@ -2056,7 +2235,7 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 const linkManager = new LinkManager();
 const driveManager = new GoogleDriveManager();
 const baserowManager = new BaserowManager("https://baserow.atendimento.info", process.env.BASEROW_TOKEN);
-const { connect: connectMongo, getCollection } = require('./mongodbClient');
+const { getCollection } = require('./mongodbClient');
 try { connectMongo(); } catch(_) {}
 
 // Configurar Baserow
@@ -3165,6 +3344,13 @@ function perfilAccessGuard(req, res, next) {
 // Log global de requisições para diagnosticar roteamento
 app.use((req, res, next) => {
     try {
+        const u = String(req.originalUrl || '');
+        if (
+          u.startsWith('/api/painel/gerenciamento-seguidores/auto-notify/status') ||
+          u.startsWith('/api/painel/gerenciamento-seguidores/validate-general/status')
+        ) {
+          return next();
+        }
         console.log('➡️', req.method, req.originalUrl);
     } catch (_) {}
     next();
@@ -16357,7 +16543,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       ]
     };
 
-    const orders = await col.find(followersQuery, {
+    const ordersCursor = col.find(followersQuery, {
       projection: {
         _id: 1,
         createdAt: 1,
@@ -16381,7 +16567,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         initialFollowersCount: 1,
         initialFollowersCheckedAt: 1
       }
-    }).sort({ createdAt: -1 }).limit(4000).toArray();
+    }).sort({ createdAt: -1 }).limit(4000);
 
     const extractInfoAny = (o, key) => {
       try {
@@ -16434,10 +16620,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           }
         ]
       };
-      const privateOrders = await col.find(privateQuery, {
+      const privateCursor = col.find(privateQuery, {
         projection: { instagramUsername: 1, instauser: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1 }
-      }).sort({ createdAt: -1 }).limit(5000).toArray();
-      for (const po of privateOrders) {
+      }).sort({ createdAt: -1 }).limit(5000);
+      for await (const po of privateCursor) {
         const uKey = resolveUsername(po);
         if (uKey) privateKeySetUsers.add(uKey);
       }
@@ -16656,6 +16842,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
     const minPct = (String(req.query.minPct || '').trim() !== '') ? parseOptionalNumber(req.query.minPct) : null;
     const maxPct = (String(req.query.maxPct || '').trim() !== '') ? parseOptionalNumber(req.query.maxPct) : null;
+    const minDiffAbs = (String(req.query.minDiffAbs || req.query.minDiff || req.query.minDropAbs || '').trim() !== '') ? parseOptionalNumber(req.query.minDiffAbs || req.query.minDiff || req.query.minDropAbs) : null;
     const sortBy = String(req.query.sortBy || 'lastPurchaseAtMs').trim();
     const sortDirRaw = String(req.query.sortDir || 'desc').trim().toLowerCase();
     const sortDir = (sortDirRaw === 'asc' || sortDirRaw === 'desc') ? sortDirRaw : 'desc';
@@ -16664,20 +16851,25 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const filledOnly = String(req.query.filled || '').trim() === '1';
     const errorsOnly = (String(req.query.errors || req.query.err || '').trim() === '1');
     const emailFailedOnly = (String(req.query.emailFailed || req.query.email_fail || '').trim() === '1');
+    const notifiedOnly = (String(req.query.notified || '').trim() === '1');
+    const refilExpiredFlag = (String(req.query.refilExpired || req.query.refil_expired || req.query.reposicaoExpirada || req.query.reposicao_expirada || '').trim() === '1');
     const okOnly = (String(req.query.ok || '').trim() === '1');
     const hiddenOnly = (String(req.query.hiddenOnly || req.query.hidden || '').trim() === '1');
     const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
     const dateFieldRaw = String(req.query.dateField || req.query.date || '').trim().toLowerCase();
     const dateField = (dateFieldRaw === 'checked' || dateFieldRaw === 'checado') ? 'checked' : 'purchase';
     const warrantyRaw = String(req.query.warranty || '').trim().toLowerCase();
-    const warrantyFilter = (() => {
+    const warrantyUi = (() => {
       const w = String(warrantyRaw || '').trim().toLowerCase();
+      if (w === 'expired' || w === 'expirada') return 'expired';
       if (w === 'life' || w === 'vitalicio') return 'life';
       if (w === '12m' || w === '1ano' || w === '1_ano') return '12m';
       if (w === '6m' || w === '6meses' || w === '6_meses') return '6m';
       if (!w && lifetimeOnly) return 'life';
       return '';
     })();
+    const warrantyFilter = (warrantyUi === 'life' || warrantyUi === '12m' || warrantyUi === '6m') ? warrantyUi : '';
+    const refilExpiredOnly = (refilExpiredFlag || warrantyUi === 'expired');
     const startDateRaw = String(req.query.startDate || '').trim();
     const endDateRaw = String(req.query.endDate || '').trim();
     const tipoRaw = String(req.query.tipo || '').trim();
@@ -16731,10 +16923,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       .map(s => String(s || '').trim().toLowerCase())
       .filter(Boolean)
       .filter(s => s !== 'all');
-    const tipoFilters = Array.from(new Set(tipoParts));
+    const tipoFilters = Array.from(new Set(tipoParts.map((t) => (t === 'brasileiros_reais' ? 'organicos' : t))));
 
     const latestOrderByUser = new Map();
-    for (const o of orders) {
+    for await (const o of ordersCursor) {
       const username = resolveUsername(o);
       if (!username) continue;
       const paidMs = resolveDateMs(o);
@@ -16867,14 +17059,41 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return (t.includes('misto') || t.includes('brasil'));
     };
 
-    const vipUserSet = (() => {
-      const lastOrganic = new Map();
-      const lastNonOrganic = new Map();
-      for (const o of orders) {
+    const orderInfoById = new Map();
+    const lastOrganic = new Map();
+    const lastNonOrganic = new Map();
+    try {
+      const ordersMetaCursor = col.find(followersQuery, {
+        projection: {
+          _id: 1,
+          createdAt: 1,
+          paidAt: 1,
+          woovi: 1,
+          tipo: 1,
+          tipoServico: 1,
+          instagramUsername: 1,
+          instauser: 1,
+          additionalInfo: 1,
+          additionalInfoPaid: 1,
+          additionalInfoMap: 1,
+          additionalInfoMapPaid: 1
+        }
+      }).sort({ createdAt: -1 }).limit(4000);
+      for await (const o of ordersMetaCursor) {
+        const idStr = o && o._id ? String(o._id) : '';
+        if (idStr && !orderInfoById.has(idStr)) {
+          const tipo = resolveTipo(o);
+          const eligible = isEligibleRefilTipo(tipo);
+          const baseMs = resolveDateMs(o);
+          const w = warrantyFromBumpsStr(resolveOrderBumps(o) || '');
+          orderInfoById.set(idStr, { baseMs: Number(baseMs || 0), eligible, warranty: w });
+        }
         const u = resolveUsername(o);
         if (!u) continue;
-        const ms = resolveDateMs(o);
-        if (!Number.isFinite(ms) || !ms) continue;
+        const paidMs = resolveDateMs(o);
+        const createdMs = parseOrderDateUTCms(o?.createdAt);
+        const ms = Number(paidMs || createdMs || 0) || 0;
+        if (!ms) continue;
         const tipoKey = normalizeTipoKey(resolveTipo(o));
         if (isOrganicTipoKey(tipoKey)) {
           const prev = Number(lastOrganic.get(u) || 0);
@@ -16884,6 +17103,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (ms > prev) lastNonOrganic.set(u, ms);
         }
       }
+    } catch (_) {}
+    const vipUserSet = (() => {
       const set = new Set();
       for (const [u, orgMs] of lastOrganic.entries()) {
         const nonOrgMs = Number(lastNonOrganic.get(u) || 0);
@@ -16891,17 +17112,6 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       }
       return set;
     })();
-
-    const orderInfoById = new Map();
-    for (const o of orders) {
-      const idStr = o && o._id ? String(o._id) : '';
-      if (!idStr) continue;
-      const tipo = resolveTipo(o);
-      const eligible = isEligibleRefilTipo(tipo);
-      const baseMs = resolveDateMs(o);
-      const w = warrantyFromBumpsStr(resolveOrderBumps(o) || '');
-      orderInfoById.set(idStr, { baseMs: Number(baseMs || 0), eligible, warranty: w });
-    }
 
     const allRows = displayOrders.map((o) => {
       const username = resolveUsername(o);
@@ -16912,17 +17122,56 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
 
       let currentFollowersCount = mon && typeof mon.followersCount === 'number' ? mon.followersCount : null;
       let currentCheckedAt = mon ? (mon.checkedAt || null) : null;
+      const parseDateMsLoose = (raw) => {
+        try {
+          const s0 = String(raw || '').trim();
+          if (!s0) return null;
+          const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+          const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+          if (mBr) {
+            const yyyy = String(mBr[3]);
+            const mm = String(mBr[2]).padStart(2, '0');
+            const dd = String(mBr[1]).padStart(2, '0');
+            const hh = String(mBr[4] || '00').padStart(2, '0');
+            const mi = String(mBr[5] || '00').padStart(2, '0');
+            const ss = String(mBr[6] || '00').padStart(2, '0');
+            const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+            const t = new Date(iso).getTime();
+            return (Number.isFinite(t) && t > 0) ? t : null;
+          }
+          const t = new Date(s).getTime();
+          return (Number.isFinite(t) && t > 0) ? t : null;
+        } catch (_) {
+          return null;
+        }
+      };
       let currentCheckedAtMs = (() => {
         try {
           if (!currentCheckedAt) return null;
-          const t = new Date(String(currentCheckedAt)).getTime();
-          return Number.isFinite(t) && t > 0 ? t : null;
+          return parseDateMsLoose(currentCheckedAt);
         } catch (_) {
           return null;
         }
       })();
       const currentCheckedAtMsRaw = currentCheckedAtMs;
-      const checkedBeforePurchase = !!(currentCheckedAtMs != null && dateMs && Number.isFinite(Number(dateMs)) && currentCheckedAtMs < Number(dateMs));
+      const dayMs = 24 * 60 * 60 * 1000;
+      const brtOffsetMs = 3 * 60 * 60 * 1000;
+      const dayNumFromMsBrt = (ms) => {
+        const d = new Date(Number(ms || 0) - brtOffsetMs);
+        return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
+      };
+      const checkedBeforePurchase = (() => {
+        try {
+          if (currentCheckedAtMs == null) return false;
+          const p = Number(dateMs || 0);
+          if (!Number.isFinite(p) || !p) return false;
+          const cDay = dayNumFromMsBrt(currentCheckedAtMs);
+          const pDay = dayNumFromMsBrt(p);
+          return cDay <= pDay;
+        } catch (_) {
+          return false;
+        }
+      })();
       if (checkedBeforePurchase) {
         currentFollowersCount = null;
         currentCheckedAt = null;
@@ -16934,10 +17183,17 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const lastAttemptAt = mon && mon.lastAttemptAt ? String(mon.lastAttemptAt) : null;
       const recoveryNotify = (o && o.recoveryNotify && typeof o.recoveryNotify === 'object') ? o.recoveryNotify : {};
       const recoveryEmail = (recoveryNotify && recoveryNotify.email && typeof recoveryNotify.email === 'object') ? recoveryNotify.email : {};
-      const recoveryEmailStatus = String(recoveryEmail.lastStatus || '').trim().toLowerCase();
+      const recoveryEmailStatus = String(recoveryEmail.lastStatus || recoveryEmail.status || '').trim().toLowerCase();
       const recoveryEmailError = String(recoveryEmail.lastError || '').trim();
       const recoveryEmailResponse = String(recoveryEmail.lastResponse || '').trim();
       const recoveryEmailAt = String(recoveryEmail.lastAttemptAt || recoveryEmail.lastSentAt || '').trim() || null;
+      const recoverySms = (recoveryNotify && recoveryNotify.sms && typeof recoveryNotify.sms === 'object') ? recoveryNotify.sms : {};
+      const recoverySmsSentAt = String(
+        recoverySms.sentAt ||
+        recoverySms.lastSentAt ||
+        ((Array.isArray(recoverySms.history) && recoverySms.history.length) ? recoverySms.history[recoverySms.history.length - 1] : '') ||
+        ''
+      ).trim() || null;
 
       let initialFollowersCount = (typeof o.initialFollowersCount === 'number') ? o.initialFollowersCount : null;
       let initialFollowersCheckedAt = o.initialFollowersCheckedAt ? String(o.initialFollowersCheckedAt) : null;
@@ -16991,6 +17247,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         recoveryEmailError,
         recoveryEmailResponse,
         recoveryEmailAt,
+        recoverySmsSentAt,
         lastPurchaseAtMs: dateMs,
         diffAbs,
         diffPct,
@@ -17001,8 +17258,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       };
     }).filter(r => {
       if (!r.username) return false;
-      if (privateKeySetUsers.has(r.username)) return false;
-      if (r.isPrivate === true) return false;
+      if (!notifiedOnly && privateKeySetUsers.has(r.username)) return false;
+      if (!notifiedOnly && r.isPrivate === true) return false;
       if (!(r.contracted > 0)) return false;
       if (!isFollowersServico(r.tipo)) return false;
       if (!String(r.fornecedorOrderId || '').trim()) return false;
@@ -17124,9 +17381,30 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       if (emailFailedOnly) {
         if (String(r.recoveryEmailStatus || '') !== 'failed') return false;
       }
+      if (notifiedOnly) {
+        const emailOk = String(r.recoveryEmailStatus || '').trim().toLowerCase() === 'sent';
+        const smsOk = !!String(r.recoverySmsSentAt || '').trim();
+        if (!(emailOk && smsOk)) return false;
+      }
+      if (refilExpiredOnly) {
+        if (r.refilIsLifetime === true) return false;
+        const hasDaysLeft = (typeof r.refilDaysLeft === 'number') && Number.isFinite(Number(r.refilDaysLeft));
+        if (hasDaysLeft) {
+          if (!(Number(r.refilDaysLeft) <= 0)) return false;
+        } else {
+          const expMs = (() => { try { const t = new Date(r.refilExpiresAt || '').getTime(); return Number.isFinite(t) ? t : 0; } catch (_) { return 0; } })();
+          if (!expMs) return false;
+          if (expMs >= nowMs) return false;
+        }
+      }
       if (filledOnly) {
         if (r.currentFollowersCount == null) return false;
         if (r.resultado == null) return false;
+      }
+      if (minDiffAbs != null) {
+        const d = (typeof r.diffAbs === 'number' && Number.isFinite(r.diffAbs)) ? r.diffAbs : null;
+        if (d == null) return false;
+        if (!(d >= minDiffAbs)) return false;
       }
       if (warrantyFilter) {
         const mode = String(r.refilWarrantyMode || '').trim().toLowerCase();
@@ -17227,7 +17505,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const followersReport = (function () {
       const total = filtered.length;
       let checked = 0;
+      let checkedValid = 0;
       let withDrop = 0;
+      let ok = 0;
       const buckets = [
         { key: '0_10', label: '0–10%', min: 0, max: 10, count: 0 },
         { key: '10_20', label: '10–20%', min: 10, max: 20, count: 0 },
@@ -17237,8 +17517,13 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         { key: '50_plus', label: '>50%', min: 50, max: null, count: 0 }
       ];
       for (const r of filtered) {
-        const checkedAtMs = Number(r && r.currentCheckedAtMs || 0) || 0;
-        if (checkedAtMs > 0) checked += 1;
+        const checkedAtMsValid = Number(r && r.currentCheckedAtMs || 0) || 0;
+        const checkedAtMsAny = Number(r && r.currentCheckedAtMsRaw || 0) || 0;
+        if (checkedAtMsAny > 0) checked += 1;
+        if (checkedAtMsValid > 0) checkedValid += 1;
+        const resultado = (r && typeof r.resultado === 'number') ? r.resultado : null;
+        const current = (r && typeof r.currentFollowersCount === 'number') ? r.currentFollowersCount : null;
+        if (resultado != null && current != null && current >= resultado) ok += 1;
         const pct = (r && typeof r.diffPct === 'number') ? r.diffPct : null;
         const abs = (r && typeof r.diffAbs === 'number') ? r.diffAbs : null;
         if (abs != null && abs > 0 && pct != null && Number.isFinite(pct) && pct > 0) {
@@ -17255,11 +17540,16 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       }
       const base = Math.max(1, withDrop);
       const bucketsOut = buckets.map(b => ({ key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 }));
+      const notOk = Math.max(0, total - ok);
       return {
         total,
         checked,
+        checkedValid,
         checkedPct: total ? (Math.round((checked / total) * 1000) / 10) : 0,
         withDrop,
+        ok,
+        notOk,
+        okPct: total ? (Math.round((ok / total) * 1000) / 10) : 0,
         buckets: bucketsOut
       };
     })();
@@ -17274,7 +17564,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyFilter, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
       followersReport,
       followersMgmtSettings,
       period: 'all'
@@ -17755,23 +18045,1350 @@ app.get('/api/painel/gerenciamento-seguidores/current', requireAdmin, async (req
   }
 });
 
-app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req, res) => {
+async function followersMgmtComputeAutoNotifyCandidates({ limit, order }) {
+  const limitRaw = parseInt(String(limit || '0'), 10);
+  const lim = Math.max(0, Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 0));
+  const orderRaw = String(order || 'recent').trim().toLowerCase();
+  const ord = (orderRaw === 'oldest') ? 'oldest' : 'recent';
+  const safe = (v) => String(v == null ? '' : v).trim();
+  const brtOffsetMs = 3 * 60 * 60 * 1000;
+  const dayKeyBrt = (ms) => {
+    const d = new Date(Number(ms || 0) - brtOffsetMs);
+    const y = String(d.getUTCFullYear());
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+  const dayRangeBrtUtcMs = (dayKey) => {
+    try {
+      const s = String(dayKey || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { startMs: 0, endMs: 0 };
+      const parts = s.split('-').map(Number);
+      const y = parts[0];
+      const m = parts[1];
+      const d = parts[2];
+      const startUtcMs = Date.UTC(y, m - 1, d, 0, 0, 0, 0) + brtOffsetMs;
+      const endUtcMs = startUtcMs + (24 * 60 * 60 * 1000);
+      return { startMs: startUtcMs, endMs: endUtcMs };
+    } catch (_) {
+      return { startMs: 0, endMs: 0 };
+    }
+  };
+
+  const { getCollection } = require('./mongodbClient');
+  const col = await getCollection('checkout_orders');
+  const monitorCol = await getCollection('followers_monitor');
+  const validatedCol = await getCollection('validated_insta_users');
+
+  const stats = {
+    monitorDocs: 0,
+    monitorUsable: 0,
+    monitorSkippedNoFollowers: 0,
+    monitorSkippedNoCheckedAt: 0,
+    validatedDocs: 0,
+    validatedUsable: 0,
+    validatedSkippedNoFollowers: 0,
+    validatedSkippedNoCheckedAt: 0,
+    ordersScanned: 0,
+    ordersSkippedNoUsername: 0,
+    ordersSkippedNoMonitor: 0,
+    ordersSkippedPrivate: 0,
+    ordersSkippedOrganicos: 0,
+    ordersLatestByUser: 0,
+    candidatesScanned: 0,
+    candidatesSkippedMissingQtyOrInitial: 0,
+    candidatesSkippedNoCurrent: 0,
+    candidatesSkippedDropBelow100: 0,
+    candidatesSkippedAlreadyNotified: 0,
+    candidatesStage0FirstEmail: 0,
+    candidatesStage1SecondEmail: 0,
+    candidatesStage1SkippedNoNewCheck: 0,
+    eligible: 0
+  };
+
+  const todayBrtKey = dayKeyBrt(Date.now());
+  const { startMs: todayStartMs, endMs: todayEndMs } = dayRangeBrtUtcMs(todayBrtKey);
+  const toIso = (ms) => (Number.isFinite(ms) && ms > 0) ? new Date(ms).toISOString() : '';
+  const todayStartIso = toIso(todayStartMs);
+  const todayEndIso = toIso(todayEndMs);
+  const dailyMaxRaw = parseInt(String(process.env.RECOVERY_EMAIL_DAILY_LIMIT || process.env.EMAIL_DAILY_LIMIT || '1000'), 10);
+  const dailyMax = Math.max(1, Number.isFinite(dailyMaxRaw) ? dailyMaxRaw : 1000);
+  const reservePctRaw = Number(String(process.env.RECOVERY_EMAIL_RESERVE_PCT || '0.2'));
+  const reservePct = (Number.isFinite(reservePctRaw) && reservePctRaw >= 0 && reservePctRaw <= 0.9) ? reservePctRaw : 0.2;
+  let paidEmailCountToday = 0;
+  let createdEmailCountToday = 0;
+  let recoveryEmailSentEventsToday = 0;
+  let recoveryEmailSentOrdersToday = 0;
+  try {
+    if (todayStartIso && todayEndIso) {
+      paidEmailCountToday = await col.countDocuments({
+        $or: [
+          { 'woovi.paidAt': { $gte: todayStartIso, $lt: todayEndIso } },
+          { paidAt: { $gte: todayStartIso, $lt: todayEndIso } }
+        ]
+      });
+      createdEmailCountToday = await col.countDocuments({
+        createdAt: { $gte: todayStartIso, $lt: todayEndIso }
+      });
+      const agg = await col.aggregate([
+        { $match: { 'recoveryNotify.email.history': { $exists: true, $ne: [] } } },
+        { $unwind: '$recoveryNotify.email.history' },
+        { $match: { 'recoveryNotify.email.history.status': 'sent', 'recoveryNotify.email.history.at': { $gte: todayStartIso, $lt: todayEndIso } } },
+        { $count: 'c' }
+      ]).toArray();
+      recoveryEmailSentEventsToday = agg && agg[0] && typeof agg[0].c === 'number' ? agg[0].c : 0;
+      const agg2 = await col.aggregate([
+        { $match: { 'recoveryNotify.email.history': { $exists: true, $ne: [] } } },
+        { $unwind: '$recoveryNotify.email.history' },
+        { $match: { 'recoveryNotify.email.history.status': 'sent', 'recoveryNotify.email.history.at': { $gte: todayStartIso, $lt: todayEndIso } } },
+        { $group: { _id: '$_id' } },
+        { $count: 'c' }
+      ]).toArray();
+      recoveryEmailSentOrdersToday = agg2 && agg2[0] && typeof agg2[0].c === 'number' ? agg2[0].c : 0;
+    }
+  } catch (_) {}
+  const pedidosEmailCountToday = Math.max(0, Number(paidEmailCountToday || 0) + Number(createdEmailCountToday || 0));
+  const availableAfterPedidos = Math.max(0, dailyMax - pedidosEmailCountToday);
+  const allowedForRecoveryToday = Math.max(0, Math.floor(availableAfterPedidos * (1 - reservePct)));
+  const remainingRecoveryToday = Math.max(0, allowedForRecoveryToday - Number(recoveryEmailSentEventsToday || 0));
+
+  const parseDateMsLoose = (raw) => {
+    try {
+      const s0 = String(raw || '').trim();
+      if (!s0) return 0;
+      const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+      const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (mBr) {
+        const yyyy = String(mBr[3]);
+        const mm = String(mBr[2]).padStart(2, '0');
+        const dd = String(mBr[1]).padStart(2, '0');
+        const hh = String(mBr[4] || '00').padStart(2, '0');
+        const mi = String(mBr[5] || '00').padStart(2, '0');
+        const ss = String(mBr[6] || '00').padStart(2, '0');
+        const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+        const t = new Date(iso).getTime();
+        return Number.isFinite(t) ? t : 0;
+      }
+      const t = new Date(s).getTime();
+      return Number.isFinite(t) ? t : 0;
+    } catch (_) {
+      return 0;
+    }
+  };
+
+  const monDocs = await monitorCol.find(
+    { checkedAt: { $exists: true, $ne: '' }, hidden: { $ne: true } },
+    { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1, hidden: 1 } }
+  ).limit(50000).toArray();
+
+  const vuDocs = await validatedCol.find(
+    { checkedAt: { $exists: true, $ne: '' } },
+    { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1 } }
+  ).limit(50000).toArray();
+
+  const monByUser = new Map();
+  stats.monitorDocs = Array.isArray(monDocs) ? monDocs.length : 0;
+  for (const m of (monDocs || [])) {
+    const u = safe(m && m.username).toLowerCase().replace(/^@/, '');
+    if (!u) continue;
+    const checkedAtMs = parseDateMsLoose(m && m.checkedAt);
+    const followersCount = (typeof m?.followersCount === 'number') ? m.followersCount : null;
+    if (!checkedAtMs) { stats.monitorSkippedNoCheckedAt += 1; continue; }
+    if (followersCount == null) { stats.monitorSkippedNoFollowers += 1; continue; }
+    stats.monitorUsable += 1;
+    const prev = monByUser.get(u);
+    if (!prev || Number(checkedAtMs || 0) >= Number(prev.checkedAtMs || 0)) {
+      monByUser.set(u, { checkedAtMs, followersCount });
+    }
+  }
+  stats.validatedDocs = Array.isArray(vuDocs) ? vuDocs.length : 0;
+  for (const v of (vuDocs || [])) {
+    const u = safe(v && v.username).toLowerCase().replace(/^@/, '');
+    if (!u) continue;
+    const checkedAtMs = parseDateMsLoose(v && v.checkedAt);
+    const followersCount = (typeof v?.followersCount === 'number') ? v.followersCount : null;
+    if (!checkedAtMs) { stats.validatedSkippedNoCheckedAt += 1; continue; }
+    if (followersCount == null) { stats.validatedSkippedNoFollowers += 1; continue; }
+    stats.validatedUsable += 1;
+    const prev = monByUser.get(u);
+    if (!prev || Number(checkedAtMs || 0) >= Number(prev.checkedAtMs || 0)) {
+      monByUser.set(u, { checkedAtMs, followersCount });
+    }
+  }
+  if (!monByUser.size) return { ok: true, total: 0, candidates: [], emailBudget: null, stats };
+
+  const vuByUser = new Map();
+  for (const v of (vuDocs || [])) {
+    const u = safe(v && v.username).toLowerCase().replace(/^@/, '');
+    if (!u) continue;
+    const followersCount = (typeof v?.followersCount === 'number') ? v.followersCount : null;
+    if (followersCount == null) continue;
+    vuByUser.set(u, { followersCount, checkedAtMs: parseDateMsLoose(v && v.checkedAt) });
+  }
+
+  const followersQuery = {
+    $and: [
+      {
+        $or: [
+          { status: 'paid' },
+          { paymentStatus: 'paid' },
+          { paymentStatus: 'approved' },
+          { paymentStatus: 'succeeded' },
+          { paymentStatus: 'received' },
+          { 'woovi.status': { $in: ['PAID', 'COMPLETED'] } },
+          { paidAt: { $exists: true, $ne: null } },
+          { 'woovi.paidAt': { $exists: true, $ne: null } }
+        ]
+      },
+      {
+        $or: [
+          { categoria_servico: { $regex: '^seguidores$', $options: 'i' } },
+          { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+          { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+          { tipo: { $regex: 'seguidores', $options: 'i' } },
+          { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+        ]
+      }
+    ]
+  };
+  const ordersCursor = col.find(followersQuery, {
+    projection: {
+      _id: 1, createdAt: 1, paidAt: 1, woovi: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1,
+      instagramUsername: 1, instauser: 1, initialFollowersCount: 1, isPrivate: 1, profilePrivacy: 1,
+      additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1,
+      recoveryNotify: 1
+    }
+  }).sort({ createdAt: -1 }).limit(50000);
+
+  const getMapObj = (o, k) => {
+    try {
+      if (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[k] !== 'undefined') return o.additionalInfoMapPaid[k];
+      if (o?.additionalInfoMap && typeof o.additionalInfoMap[k] !== 'undefined') return o.additionalInfoMap[k];
+    } catch (_) {}
+    return undefined;
+  };
+  const getArrVal = (arr, key) => {
+    try {
+      const a = Array.isArray(arr) ? arr : [];
+      const it = a.find(x => x && safe(x.key).toLowerCase() === String(key || '').toLowerCase());
+      return it && typeof it.value !== 'undefined' ? it.value : undefined;
+    } catch (_) { return undefined; }
+  };
+  const pick = (o, key) => {
+    const a = getMapObj(o, key);
+    if (typeof a !== 'undefined') return a;
+    const b = getArrVal(o?.additionalInfoPaid, key);
+    if (typeof b !== 'undefined') return b;
+    const c = getArrVal(o?.additionalInfo, key);
+    if (typeof c !== 'undefined') return c;
+    return undefined;
+  };
+  const resolveUsername = (o) => {
+    const u = safe(o?.instagramUsername || o?.instauser || pick(o, 'instagram_username') || pick(o, 'instauser')).toLowerCase();
+    return u.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+  };
+  const resolveDateMs = (o) => {
+    const t = new Date(o?.woovi?.paidAt || o?.paidAt || o?.createdAt || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  const isPrivateOrder = (o) => {
+    const a = o?.isPrivate;
+    const b = o?.profilePrivacy;
+    const c = pick(o, 'isPrivate');
+    return a === true || b === true || String(c || '').toLowerCase() === 'true';
+  };
+
+  const latestByUser = new Map();
+  for await (const o of ordersCursor) {
+    stats.ordersScanned += 1;
+    const u = resolveUsername(o);
+    if (!u) { stats.ordersSkippedNoUsername += 1; continue; }
+    if (!monByUser.has(u)) { stats.ordersSkippedNoMonitor += 1; continue; }
+    const tipoRaw = safe(o?.tipoServico || o?.tipo || pick(o, 'tipo_servico')).toLowerCase();
+    if (tipoRaw && /seguidores_organicos|organicos/.test(tipoRaw)) { stats.ordersSkippedOrganicos += 1; continue; }
+    if (isPrivateOrder(o)) stats.ordersSkippedPrivate += 1;
+    const ms = resolveDateMs(o);
+    const prev = latestByUser.get(u);
+    if (!prev || ms > prev.ms) latestByUser.set(u, { ms, order: o });
+  }
+  stats.ordersLatestByUser = latestByUser.size;
+
+  const out = [];
+  for (const [u, rec] of latestByUser.entries()) {
+    stats.candidatesScanned += 1;
+    const o = rec.order;
+    const mon = monByUser.get(u);
+    if (!o || !mon) continue;
+    const qty = Number(o?.qtd || o?.quantidade || pick(o, 'quantidade') || pick(o, 'qtd') || pick(o, 'quantity') || 0) || 0;
+    const initialRaw = (typeof o?.initialFollowersCount === 'number')
+      ? o.initialFollowersCount
+      : Number(pick(o, 'start_count') || pick(o, 'initial_followers') || pick(o, 'inicial') || 0) || 0;
+    const initial = (initialRaw > 0)
+      ? initialRaw
+      : (() => {
+        const vu = vuByUser.get(u);
+        if (vu && typeof vu.followersCount === 'number' && vu.followersCount > 0) return vu.followersCount;
+        if (typeof mon.followersCount === 'number' && mon.followersCount > 0) return mon.followersCount;
+        return 0;
+      })();
+    if (!(qty > 0 && initial > 0)) { stats.candidatesSkippedMissingQtyOrInitial += 1; continue; }
+    const expected = initial + qty;
+    const current = mon.followersCount;
+    if (current == null) { stats.candidatesSkippedNoCurrent += 1; continue; }
+    const dropAbs = Math.max(0, expected - current);
+    if (!(current < expected)) { stats.candidatesSkippedDropBelow100 += 1; continue; }
+    if (dropAbs < 100) { stats.candidatesSkippedDropBelow100 += 1; continue; }
+
+    const notify = (o && o.recoveryNotify && typeof o.recoveryNotify === 'object') ? o.recoveryNotify : {};
+    const nEmail = (notify && notify.email && typeof notify.email === 'object') ? notify.email : {};
+    const nSms = (notify && notify.sms && typeof notify.sms === 'object') ? notify.sms : {};
+    const emailOk = String(nEmail.lastStatus || '').trim().toLowerCase() === 'sent';
+    const smsOk = !!safe(nSms.sentAt);
+    if (emailOk && smsOk) { stats.candidatesSkippedAlreadyNotified += 1; continue; }
+
+    const emailHist = (Array.isArray(nEmail.history) ? nEmail.history : []);
+    let emailSentCountFromHist = 0;
+    let lastEmailSentAtMs = 0;
+    for (const h of emailHist) {
+      try {
+        if (!h || typeof h !== 'object') continue;
+        const st = String(h.status || '').trim().toLowerCase();
+        if (st !== 'sent') continue;
+        emailSentCountFromHist += 1;
+        const atMs = parseDateMsLoose(h.at || h.sentAt || h.lastSentAt || h.lastAttemptAt || '');
+        if (atMs && atMs > lastEmailSentAtMs) lastEmailSentAtMs = atMs;
+      } catch (_) {}
+    }
+    const fallbackEmailAtMs = parseDateMsLoose(nEmail.lastSentAt || nEmail.lastAttemptAt || nEmail.sentAt || '');
+    if (!lastEmailSentAtMs && fallbackEmailAtMs) lastEmailSentAtMs = fallbackEmailAtMs;
+
+    const emailSentCount = Math.max(emailSentCountFromHist, emailOk ? 1 : 0);
+    const checkedAtMs = Number(mon.checkedAtMs || 0) || 0;
+    const hasNewCheckSinceEmail = (!!lastEmailSentAtMs && checkedAtMs > lastEmailSentAtMs);
+
+    let stage = 0;
+    if (emailSentCount <= 0) stage = 0;
+    else if (emailSentCount === 1) {
+      if (!hasNewCheckSinceEmail) { stats.candidatesStage1SkippedNoNewCheck += 1; continue; }
+      stage = 1;
+    } else {
+      continue;
+    }
+    if (stage === 0) stats.candidatesStage0FirstEmail += 1;
+    if (stage === 1) stats.candidatesStage1SecondEmail += 1;
+
+    out.push({ orderId: String(o._id), username: u, checkedAtMs, dropAbs, stage, emailSentCount, lastEmailSentAtMs });
+  }
+  stats.eligible = out.length;
+
+  out.sort((a, b) => {
+    const sa = Number(a.stage || 0);
+    const sb = Number(b.stage || 0);
+    if (sa !== sb) return sa - sb;
+    const ca = Number(a.checkedAtMs || 0);
+    const cb = Number(b.checkedAtMs || 0);
+    if (ca !== cb) return ord === 'oldest' ? (ca - cb) : (cb - ca);
+    const da = Number(a.dropAbs || 0);
+    const db = Number(b.dropAbs || 0);
+    if (da !== db) return db - da;
+    return 0;
+  });
+  const dailyCap = remainingRecoveryToday > 0 ? remainingRecoveryToday : 0;
+  const capLimit = dailyCap > 0 ? dailyCap : 0;
+  const maxCandidates = (lim > 0 && capLimit > 0) ? Math.min(lim, capLimit) : (lim > 0 ? lim : (capLimit > 0 ? capLimit : 0));
+  const sliced = maxCandidates > 0 ? out.slice(0, maxCandidates) : out;
+
+  return {
+    ok: true,
+    total: out.length,
+    candidates: sliced,
+    emailBudget: {
+      todayBrtKey,
+      dailyMax,
+      reservePct,
+      paidEmailCountToday,
+      createdEmailCountToday,
+      pedidosEmailCountToday,
+      availableAfterPedidos,
+      allowedForRecoveryToday,
+      recoveryEmailSentEventsToday,
+      recoveryEmailSentOrdersToday,
+      remainingRecoveryToday
+    },
+    stats
+  };
+}
+
+app.get('/api/painel/gerenciamento-seguidores/auto-notify-candidates', requireAdmin, async (req, res) => {
+  try {
+    const limitRaw = parseInt(String(req.query.limit || '0'), 10);
+    const limit = Math.max(0, Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 0));
+    const orderRaw = String(req.query.order || 'recent').trim().toLowerCase();
+    const order = (orderRaw === 'oldest') ? 'oldest' : 'recent';
+    const data = await followersMgmtComputeAutoNotifyCandidates({ limit, order });
+    return res.json(data);
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayKeyBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      const y = String(d.getUTCFullYear());
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${dd}`;
+    };
+    const dayRangeBrtUtcMs = (dayKey) => {
+      try {
+        const s = String(dayKey || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { startMs: 0, endMs: 0 };
+        const parts = s.split('-').map(Number);
+        const y = parts[0];
+        const m = parts[1];
+        const d = parts[2];
+        const startUtcMs = Date.UTC(y, m - 1, d, 0, 0, 0, 0) + brtOffsetMs;
+        const endUtcMs = startUtcMs + (24 * 60 * 60 * 1000);
+        return { startMs: startUtcMs, endMs: endUtcMs };
+      } catch (_) {
+        return { startMs: 0, endMs: 0 };
+      }
+    };
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const stats = {
+      monitorDocs: 0,
+      monitorUsable: 0,
+      monitorSkippedNoFollowers: 0,
+      monitorSkippedNoCheckedAt: 0,
+      ordersScanned: 0,
+      ordersSkippedNoUsername: 0,
+      ordersSkippedNoMonitor: 0,
+      ordersSkippedPrivate: 0,
+      ordersSkippedOrganicos: 0,
+      ordersLatestByUser: 0,
+      candidatesScanned: 0,
+      candidatesSkippedMissingQtyOrInitial: 0,
+      candidatesSkippedNoCurrent: 0,
+      candidatesSkippedDropBelow100: 0,
+      candidatesSkippedAlreadyNotified: 0,
+      eligible: 0
+    };
+
+    const todayBrtKey = dayKeyBrt(Date.now());
+    const { startMs: todayStartMs, endMs: todayEndMs } = dayRangeBrtUtcMs(todayBrtKey);
+    const toIso = (ms) => (Number.isFinite(ms) && ms > 0) ? new Date(ms).toISOString() : '';
+    const todayStartIso = toIso(todayStartMs);
+    const todayEndIso = toIso(todayEndMs);
+    const dailyMaxRaw = parseInt(String(process.env.RECOVERY_EMAIL_DAILY_LIMIT || process.env.EMAIL_DAILY_LIMIT || '1000'), 10);
+    const dailyMax = Math.max(1, Number.isFinite(dailyMaxRaw) ? dailyMaxRaw : 1000);
+    const reservePctRaw = Number(String(process.env.RECOVERY_EMAIL_RESERVE_PCT || '0.2'));
+    const reservePct = (Number.isFinite(reservePctRaw) && reservePctRaw >= 0 && reservePctRaw <= 0.9) ? reservePctRaw : 0.2;
+    let paidEmailCountToday = 0;
+    let createdEmailCountToday = 0;
+    let recoveryEmailSentEventsToday = 0;
+    let recoveryEmailSentOrdersToday = 0;
+    try {
+      if (todayStartIso && todayEndIso) {
+        paidEmailCountToday = await col.countDocuments({
+          $or: [
+            { 'woovi.paidAt': { $gte: todayStartIso, $lt: todayEndIso } },
+            { paidAt: { $gte: todayStartIso, $lt: todayEndIso } }
+          ]
+        });
+        createdEmailCountToday = await col.countDocuments({
+          createdAt: { $gte: todayStartIso, $lt: todayEndIso }
+        });
+        const agg = await col.aggregate([
+          { $match: { 'recoveryNotify.email.history': { $exists: true, $ne: [] } } },
+          { $unwind: '$recoveryNotify.email.history' },
+          { $match: { 'recoveryNotify.email.history.status': 'sent', 'recoveryNotify.email.history.at': { $gte: todayStartIso, $lt: todayEndIso } } },
+          { $count: 'c' }
+        ]).toArray();
+        recoveryEmailSentEventsToday = agg && agg[0] && typeof agg[0].c === 'number' ? agg[0].c : 0;
+        const agg2 = await col.aggregate([
+          { $match: { 'recoveryNotify.email.history': { $exists: true, $ne: [] } } },
+          { $unwind: '$recoveryNotify.email.history' },
+          { $match: { 'recoveryNotify.email.history.status': 'sent', 'recoveryNotify.email.history.at': { $gte: todayStartIso, $lt: todayEndIso } } },
+          { $group: { _id: '$_id' } },
+          { $count: 'c' }
+        ]).toArray();
+        recoveryEmailSentOrdersToday = agg2 && agg2[0] && typeof agg2[0].c === 'number' ? agg2[0].c : 0;
+      }
+    } catch (_) {}
+    const pedidosEmailCountToday = Math.max(0, Number(paidEmailCountToday || 0) + Number(createdEmailCountToday || 0));
+    const availableAfterPedidos = Math.max(0, dailyMax - pedidosEmailCountToday);
+    const allowedForRecoveryToday = Math.max(0, Math.floor(availableAfterPedidos * (1 - reservePct)));
+    const remainingRecoveryToday = Math.max(0, allowedForRecoveryToday - Number(recoveryEmailSentEventsToday || 0));
+
+    const monDocs = await monitorCol.find(
+      { checkedAt: { $exists: true, $ne: '' }, hidden: { $ne: true } },
+      { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1, hidden: 1 } }
+    ).limit(50000).toArray();
+    const parseDateMsLoose = (raw) => {
+      try {
+        const s0 = String(raw || '').trim();
+        if (!s0) return 0;
+        const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+        const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (mBr) {
+          const yyyy = String(mBr[3]);
+          const mm = String(mBr[2]).padStart(2, '0');
+          const dd = String(mBr[1]).padStart(2, '0');
+          const hh = String(mBr[4] || '00').padStart(2, '0');
+          const mi = String(mBr[5] || '00').padStart(2, '0');
+          const ss = String(mBr[6] || '00').padStart(2, '0');
+          const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+          const t = new Date(iso).getTime();
+          return Number.isFinite(t) ? t : 0;
+        }
+        const t = new Date(s).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+    const monByUser = new Map();
+    stats.monitorDocs = Array.isArray(monDocs) ? monDocs.length : 0;
+    for (const m of (monDocs || [])) {
+      const u = safe(m && m.username).toLowerCase().replace(/^@/, '');
+      if (!u) continue;
+      const checkedAtMs = parseDateMsLoose(m && m.checkedAt);
+      const followersCount = (typeof m?.followersCount === 'number') ? m.followersCount : null;
+      if (!checkedAtMs) { stats.monitorSkippedNoCheckedAt += 1; continue; }
+      if (followersCount == null) { stats.monitorSkippedNoFollowers += 1; continue; }
+      stats.monitorUsable += 1;
+      monByUser.set(u, { checkedAtMs, followersCount });
+    }
+    if (!monByUser.size) return res.json({ ok: true, total: 0, candidates: [] });
+
+    const followersQuery = {
+      $and: [
+        {
+          $or: [
+            { status: 'paid' },
+            { paymentStatus: 'paid' },
+            { paymentStatus: 'approved' },
+            { paymentStatus: 'succeeded' },
+            { paymentStatus: 'received' },
+            { 'woovi.status': { $in: ['PAID', 'COMPLETED'] } },
+            { paidAt: { $exists: true, $ne: null } },
+            { 'woovi.paidAt': { $exists: true, $ne: null } }
+          ]
+        },
+        {
+          $or: [
+            { categoria_servico: { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { tipo: { $regex: 'seguidores', $options: 'i' } },
+            { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+          ]
+        }
+      ]
+    };
+    const ordersCursor = col.find(followersQuery, {
+      projection: {
+        _id: 1, createdAt: 1, paidAt: 1, woovi: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1,
+        instagramUsername: 1, instauser: 1, initialFollowersCount: 1, isPrivate: 1, profilePrivacy: 1,
+        additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1,
+        recoveryNotify: 1
+      }
+    }).sort({ createdAt: -1 }).limit(50000);
+
+    const getMapObj = (o, k) => {
+      try {
+        if (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[k] !== 'undefined') return o.additionalInfoMapPaid[k];
+        if (o?.additionalInfoMap && typeof o.additionalInfoMap[k] !== 'undefined') return o.additionalInfoMap[k];
+      } catch (_) {}
+      return undefined;
+    };
+    const getArrVal = (arr, key) => {
+      try {
+        const a = Array.isArray(arr) ? arr : [];
+        const it = a.find(x => x && safe(x.key).toLowerCase() === String(key || '').toLowerCase());
+        return it && typeof it.value !== 'undefined' ? it.value : undefined;
+      } catch (_) { return undefined; }
+    };
+    const pick = (o, key) => {
+      const a = getMapObj(o, key);
+      if (typeof a !== 'undefined') return a;
+      const b = getArrVal(o?.additionalInfoPaid, key);
+      if (typeof b !== 'undefined') return b;
+      const c = getArrVal(o?.additionalInfo, key);
+      if (typeof c !== 'undefined') return c;
+      return undefined;
+    };
+    const resolveUsername = (o) => {
+      const u = safe(o?.instagramUsername || o?.instauser || pick(o, 'instagram_username') || pick(o, 'instauser')).toLowerCase();
+      return u.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+    };
+    const resolveDateMs = (o) => {
+      const t = new Date(o?.woovi?.paidAt || o?.paidAt || o?.createdAt || 0).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    const isPrivateOrder = (o) => {
+      const a = o?.isPrivate;
+      const b = o?.profilePrivacy;
+      const c = pick(o, 'isPrivate');
+      return a === true || b === true || String(c || '').toLowerCase() === 'true';
+    };
+
+    const latestByUser = new Map();
+    for await (const o of ordersCursor) {
+      stats.ordersScanned += 1;
+      const u = resolveUsername(o);
+      if (!u) { stats.ordersSkippedNoUsername += 1; continue; }
+      if (!monByUser.has(u)) { stats.ordersSkippedNoMonitor += 1; continue; }
+      const tipoRaw = safe(o?.tipoServico || o?.tipo || pick(o, 'tipo_servico')).toLowerCase();
+      if (tipoRaw && /seguidores_organicos|organicos/.test(tipoRaw)) { stats.ordersSkippedOrganicos += 1; continue; }
+      const ms = resolveDateMs(o);
+      const prev = latestByUser.get(u);
+      if (!prev || ms > prev.ms) latestByUser.set(u, { ms, order: o });
+    }
+    stats.ordersLatestByUser = latestByUser.size;
+
+    const out = [];
+    for (const [u, rec] of latestByUser.entries()) {
+      stats.candidatesScanned += 1;
+      const o = rec.order;
+      const mon = monByUser.get(u);
+      if (!o || !mon) continue;
+      const qty = Number(o?.qtd || o?.quantidade || pick(o, 'quantidade') || pick(o, 'qtd') || pick(o, 'quantity') || 0) || 0;
+      const initial = (typeof o?.initialFollowersCount === 'number') ? o.initialFollowersCount : Number(pick(o, 'start_count') || pick(o, 'initial_followers') || pick(o, 'inicial') || 0) || 0;
+      if (!(qty > 0 && initial > 0)) { stats.candidatesSkippedMissingQtyOrInitial += 1; continue; }
+      const expected = initial + qty;
+      const current = mon.followersCount;
+      if (current == null) { stats.candidatesSkippedNoCurrent += 1; continue; }
+      const dropAbs = Math.max(0, expected - current);
+      if (!(current < expected)) { stats.candidatesSkippedDropBelow100 += 1; continue; }
+      if (dropAbs < 100) { stats.candidatesSkippedDropBelow100 += 1; continue; }
+
+      const notify = (o && o.recoveryNotify && typeof o.recoveryNotify === 'object') ? o.recoveryNotify : {};
+      const nEmail = (notify && notify.email && typeof notify.email === 'object') ? notify.email : {};
+      const nSms = (notify && notify.sms && typeof notify.sms === 'object') ? notify.sms : {};
+      const emailOk = String(nEmail.lastStatus || '').trim().toLowerCase() === 'sent';
+      const smsOk = !!safe(nSms.sentAt);
+      if (emailOk && smsOk) { stats.candidatesSkippedAlreadyNotified += 1; continue; }
+
+      out.push({ orderId: String(o._id), username: u, checkedAtMs: Number(mon.checkedAtMs || 0) || 0, dropAbs });
+    }
+    stats.eligible = out.length;
+
+    out.sort((a, b) => order === 'oldest' ? (a.checkedAtMs - b.checkedAtMs) : (b.checkedAtMs - a.checkedAtMs));
+    const dailyCap = remainingRecoveryToday > 0 ? remainingRecoveryToday : 0;
+    const capLimit = dailyCap > 0 ? dailyCap : 0;
+    const maxCandidates = (limit > 0 && capLimit > 0) ? Math.min(limit, capLimit) : (limit > 0 ? limit : (capLimit > 0 ? capLimit : 0));
+    const sliced = maxCandidates > 0 ? out.slice(0, maxCandidates) : out;
+    return res.json({
+      ok: true,
+      total: out.length,
+      candidates: sliced,
+      emailBudget: {
+        todayBrtKey,
+        dailyMax,
+        reservePct,
+        paidEmailCountToday,
+        createdEmailCountToday,
+        pedidosEmailCountToday,
+        availableAfterPedidos,
+        allowedForRecoveryToday,
+        recoveryEmailSentEventsToday,
+        recoveryEmailSentOrdersToday,
+        remainingRecoveryToday
+      },
+      stats
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/recovery-email-audit', requireAdmin, async (req, res) => {
   try {
     const safe = (v) => String(v == null ? '' : v).trim();
+    const dayKey = safe(req.query.day || '');
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayKeyBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      const y = String(d.getUTCFullYear());
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${dd}`;
+    };
+    const todayKey = dayKeyBrt(Date.now());
+    const useKey = /^\d{4}-\d{2}-\d{2}$/.test(dayKey) ? dayKey : todayKey;
+    const parts = useKey.split('-').map(Number);
+    const startUtcMs = Date.UTC(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0) + brtOffsetMs;
+    const endUtcMs = startUtcMs + (24 * 60 * 60 * 1000);
+    const startIso = new Date(startUtcMs).toISOString();
+    const endIso = new Date(endUtcMs).toISOString();
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const baseMatch = {
+      'recoveryNotify.email.history': { $exists: true, $ne: [] }
+    };
+    const sentMatch = {
+      'recoveryNotify.email.history.status': 'sent',
+      'recoveryNotify.email.history.at': { $gte: startIso, $lt: endIso }
+    };
+    const totalAgg = await col.aggregate([
+      { $match: baseMatch },
+      { $unwind: '$recoveryNotify.email.history' },
+      { $match: sentMatch },
+      { $count: 'c' }
+    ]).toArray();
+    const totalEvents = totalAgg && totalAgg[0] && typeof totalAgg[0].c === 'number' ? totalAgg[0].c : 0;
+
+    const ordersAgg = await col.aggregate([
+      { $match: baseMatch },
+      { $unwind: '$recoveryNotify.email.history' },
+      { $match: sentMatch },
+      { $group: { _id: '$_id' } },
+      { $count: 'c' }
+    ]).toArray();
+    const distinctOrders = ordersAgg && ordersAgg[0] && typeof ordersAgg[0].c === 'number' ? ordersAgg[0].c : 0;
+
+    const byHour = await col.aggregate([
+      { $match: baseMatch },
+      { $unwind: '$recoveryNotify.email.history' },
+      { $match: sentMatch },
+      {
+        $addFields: {
+          atDate: {
+            $convert: {
+              input: '$recoveryNotify.email.history.at',
+              to: 'date',
+              onError: null,
+              onNull: null
+            }
+          }
+        }
+      },
+      { $match: { atDate: { $ne: null } } },
+      { $group: { _id: { $hour: '$atDate' }, c: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]).toArray();
+
+    const sample = await col.aggregate([
+      { $match: baseMatch },
+      { $unwind: '$recoveryNotify.email.history' },
+      { $match: sentMatch },
+      { $sort: { 'recoveryNotify.email.history.at': -1 } },
+      { $limit: 25 },
+      { $project: { _id: 1, at: '$recoveryNotify.email.history.at', status: '$recoveryNotify.email.history.status' } }
+    ]).toArray();
+
+    return res.json({ ok: true, dayBrtKey: useKey, startIso, endIso, totalEvents, distinctOrders, byHour, sample });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/fix-checked-global', requireAdmin, async (req, res) => {
+  try {
     const body = req.body || {};
-    const orderIdRaw = safe(body.orderId || body.orderID || body.id);
-    const usernameInput = safe(body.username || '').toLowerCase().replace(/^@/, '');
-    if (!/^[0-9a-fA-F]{24}$/.test(orderIdRaw)) return res.status(400).json({ ok: false, error: 'invalid_order_id' });
+    const limitRaw = parseInt(String(body.limit || '0'), 10);
+    const limit = Math.max(0, Math.min(20000, Number.isFinite(limitRaw) ? limitRaw : 0));
+    const orderRaw = String(body.order || 'recent').trim().toLowerCase();
+    const order = (orderRaw === 'oldest') ? 'oldest' : 'recent';
+    const safe = (v) => String(v == null ? '' : v).trim();
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const monitorCol = await getCollection('followers_monitor');
+
+    const parseDateMsLoose = (raw) => {
+      try {
+        const s0 = String(raw || '').trim();
+        if (!s0) return 0;
+        const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+        const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (mBr) {
+          const yyyy = String(mBr[3]);
+          const mm = String(mBr[2]).padStart(2, '0');
+          const dd = String(mBr[1]).padStart(2, '0');
+          const hh = String(mBr[4] || '00').padStart(2, '0');
+          const mi = String(mBr[5] || '00').padStart(2, '0');
+          const ss = String(mBr[6] || '00').padStart(2, '0');
+          const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+          const t = new Date(iso).getTime();
+          return Number.isFinite(t) ? t : 0;
+        }
+        const t = new Date(s).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+    const dayMs = 24 * 60 * 60 * 1000;
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayNumFromMsBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
+    };
+
+    const monDocs = await monitorCol.find(
+      { checkedAt: { $exists: true, $ne: '' }, hidden: { $ne: true } },
+      { projection: { _id: 0, username: 1, checkedAt: 1, hidden: 1 } }
+    ).limit(80000).toArray();
+    const monByUser = new Map();
+    for (const m of (monDocs || [])) {
+      const u = safe(m && m.username).toLowerCase().replace(/^@/, '');
+      if (!u) continue;
+      const checkedAtMs = parseDateMsLoose(m && m.checkedAt);
+      if (!checkedAtMs) continue;
+      monByUser.set(u, { checkedAtMs });
+    }
+    if (!monByUser.size) return res.json({ ok: true, total: 0, fixedCount: 0 });
+
+    const followersQuery = {
+      $and: [
+        {
+          $or: [
+            { status: 'paid' },
+            { paymentStatus: 'paid' },
+            { paymentStatus: 'approved' },
+            { paymentStatus: 'succeeded' },
+            { paymentStatus: 'received' },
+            { 'woovi.status': { $in: ['PAID', 'COMPLETED'] } },
+            { paidAt: { $exists: true, $ne: null } },
+            { 'woovi.paidAt': { $exists: true, $ne: null } }
+          ]
+        },
+        {
+          $or: [
+            { categoria_servico: { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { tipo: { $regex: 'seguidores', $options: 'i' } },
+            { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+          ]
+        }
+      ]
+    };
+    const ordersCursor = col.find(followersQuery, {
+      projection: {
+        _id: 1, createdAt: 1, paidAt: 1, woovi: 1, tipo: 1, tipoServico: 1,
+        instagramUsername: 1, instauser: 1,
+        isPrivate: 1, profilePrivacy: 1,
+        additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1
+      }
+    }).sort({ createdAt: -1 }).limit(80000);
+
+    const getMapObj = (o, k) => {
+      try {
+        if (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[k] !== 'undefined') return o.additionalInfoMapPaid[k];
+        if (o?.additionalInfoMap && typeof o.additionalInfoMap[k] !== 'undefined') return o.additionalInfoMap[k];
+      } catch (_) {}
+      return undefined;
+    };
+    const getArrVal = (arr, key) => {
+      try {
+        const a = Array.isArray(arr) ? arr : [];
+        const it = a.find(x => x && safe(x.key).toLowerCase() === String(key || '').toLowerCase());
+        return it && typeof it.value !== 'undefined' ? it.value : undefined;
+      } catch (_) { return undefined; }
+    };
+    const pick = (o, key) => {
+      const a = getMapObj(o, key);
+      if (typeof a !== 'undefined') return a;
+      const b = getArrVal(o?.additionalInfoPaid, key);
+      if (typeof b !== 'undefined') return b;
+      const c = getArrVal(o?.additionalInfo, key);
+      if (typeof c !== 'undefined') return c;
+      return undefined;
+    };
+    const resolveUsername = (o) => {
+      const u = safe(o?.instagramUsername || o?.instauser || pick(o, 'instagram_username') || pick(o, 'instauser')).toLowerCase();
+      return u.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+    };
+    const resolveDateMs = (o) => {
+      const t = new Date(o?.woovi?.paidAt || o?.paidAt || o?.createdAt || 0).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    const isPrivateOrder = (o) => {
+      const a = o?.isPrivate;
+      const b = o?.profilePrivacy;
+      const c = pick(o, 'isPrivate');
+      return a === true || b === true || String(c || '').toLowerCase() === 'true';
+    };
+
+    const purchaseByUser = new Map();
+    for await (const o of ordersCursor) {
+      const u = resolveUsername(o);
+      if (!u) continue;
+      if (!monByUser.has(u)) continue;
+      if (isPrivateOrder(o)) continue;
+      const ms = resolveDateMs(o);
+      if (!ms) continue;
+      const prev = purchaseByUser.get(u) || 0;
+      if (!prev || ms > prev) purchaseByUser.set(u, ms);
+    }
+
+    const candidates = [];
+    for (const [u, mon] of monByUser.entries()) {
+      const purchaseMs = Number(purchaseByUser.get(u) || 0) || 0;
+      if (!purchaseMs) continue;
+      const checkedDay = dayNumFromMsBrt(mon.checkedAtMs);
+      const purchaseDay = dayNumFromMsBrt(purchaseMs);
+      if (checkedDay <= purchaseDay) {
+        candidates.push({ username: u, checkedAtMs: mon.checkedAtMs, purchaseMs });
+      }
+    }
+
+    candidates.sort((a, b) => order === 'oldest' ? (a.checkedAtMs - b.checkedAtMs) : (b.checkedAtMs - a.checkedAtMs));
+    const picked = (limit > 0) ? candidates.slice(0, limit) : candidates;
+    if (!picked.length) return res.json({ ok: true, total: candidates.length, fixedCount: 0 });
+
+    const ops = picked.map(it => ({
+      updateOne: {
+        filter: { username: it.username },
+        update: { $unset: { checkedAt: '', followersCount: '', source: '', error: '', isPrivate: '' } },
+        upsert: false
+      }
+    }));
+    await monitorCol.bulkWrite(ops, { ordered: false });
+    return res.json({ ok: true, total: candidates.length, fixedCount: picked.length });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const daysRaw = parseInt(String(body.days || body.daysToAdd || body.extendDays || '30'), 10);
+    const daysToAdd = Math.min(365, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 30));
+    const dryRun = String(body.dryRun || body.preview || '').trim() === '1' || body.dryRun === true || body.preview === true;
+
+    const { getCollection } = require('./mongodbClient');
+    const ordersCol = await getCollection('checkout_orders');
+    const tlCol = await getCollection('temporary_links');
+
+    if (!ordersCol || typeof ordersCol.find !== 'function' || !tlCol || typeof tlCol.find !== 'function') {
+      return res.status(500).json({ ok: false, error: 'mongo_disabled' });
+    }
+
+    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
+    const seguidoresQuery = {
+      $or: [
+        { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: { $regex: '^seguidores$', $options: 'i' } } } },
+        { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+        { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+        { tipo: { $regex: 'seguidores', $options: 'i' } },
+        { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+      ]
+    };
+    const query = { $and: [paidQuery, seguidoresQuery, { 'recoveryNotify.email.history': { $elemMatch: { status: 'sent' } } }] };
+
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o?.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const arrPaid = Array.isArray(o?.additionalInfoPaid) ? o.additionalInfoPaid : [];
+        const itemPaid = arrPaid.find(i => i && String(i.key || '').trim() === key);
+        if (itemPaid && typeof itemPaid.value !== 'undefined') return itemPaid.value;
+        const arr = Array.isArray(o?.additionalInfo) ? o.additionalInfo : [];
+        const item = arr.find(i => i && String(i.key || '').trim() === key);
+        if (item && typeof item.value !== 'undefined') return item.value;
+      } catch (_) {}
+      return '';
+    };
+    const normalizeUsernameKey = (u) => {
+      try {
+        let s = String(u || '').trim();
+        if (!s) return '';
+        if (/^https?:\/\//i.test(s)) {
+          s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+          s = s.split('?')[0].split('#')[0];
+          s = s.replace(/\/+$/, '');
+          const parts = s.split('/').filter(Boolean);
+          s = parts.length ? String(parts[parts.length - 1] || '') : s;
+        }
+        s = s.trim();
+        if (s.startsWith('@')) s = s.slice(1);
+        return s.toLowerCase().trim();
+      } catch (_) {
+        return '';
+      }
+    };
+    const normalizePhoneDigits = (raw) => {
+      try {
+        let digits = String(raw || '').replace(/\D/g, '');
+        if (digits.startsWith('55') && digits.length > 11) digits = digits.slice(2);
+        if (!(digits.length === 10 || digits.length === 11)) return '';
+        return digits;
+      } catch (_) {
+        return '';
+      }
+    };
+
+    const cursor = ordersCol.find(query, {
+      projection: {
+        _id: 1,
+        refilLinkId: 1,
+        paidAt: 1,
+        createdAt: 1,
+        woovi: 1,
+        customer: 1,
+        telefone: 1,
+        instagramUsername: 1,
+        instauser: 1,
+        additionalInfo: 1,
+        additionalInfoPaid: 1,
+        additionalInfoMap: 1,
+        additionalInfoMapPaid: 1
+      }
+    });
+    if (!cursor || typeof cursor[Symbol.asyncIterator] !== 'function') {
+      return res.status(500).json({ ok: false, error: 'mongo_cursor_not_iterable' });
+    }
+
+    let ordersMatched = 0;
+    const orderIdStrs = [];
+    const usernamesSet = new Set();
+    const phonesSet = new Set();
+    const ordersLite = [];
+    for await (const o of cursor) {
+      ordersMatched += 1;
+      const orderIdStr = (o && o._id) ? String(o._id) : '';
+      if (orderIdStr) orderIdStrs.push(orderIdStr);
+      const iu = normalizeUsernameKey(o?.instagramUsername || o?.instauser || extractInfoAny(o, 'instagram_username') || '');
+      if (iu) usernamesSet.add(iu);
+      const cust = (o && o.customer && typeof o.customer === 'object') ? o.customer : {};
+      const phoneRaw = cust.phone_number || cust.phone || cust.telefone || cust.whatsapp || o?.telefone || extractInfoAny(o, 'phone') || extractInfoAny(o, 'telefone') || extractInfoAny(o, 'whatsapp') || '';
+      const phoneDigits = normalizePhoneDigits(phoneRaw);
+      if (phoneDigits) phonesSet.add(phoneDigits);
+      const baseMs = (() => {
+        try {
+          const t = new Date(o?.woovi?.paidAt || o?.paidAt || o?.createdAt || 0).getTime();
+          return Number.isFinite(t) ? t : 0;
+        } catch (_) {
+          return 0;
+        }
+      })();
+      const bumpsStr = String((o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid.order_bumps !== 'undefined') ? o.additionalInfoMapPaid.order_bumps : ((o?.additionalInfoMap && typeof o.additionalInfoMap.order_bumps !== 'undefined') ? o.additionalInfoMap.order_bumps : (extractInfoAny(o, 'order_bumps') || ''))).trim();
+      const refilLinkId = (o && o.refilLinkId) ? String(o.refilLinkId).trim() : '';
+      if (orderIdStr) {
+        ordersLite.push({ orderIdStr, iu, phoneDigits, baseMs, bumpsStr, refilLinkId });
+      }
+      if (orderIdStrs.length > 250000) break;
+    }
+
+    const orderIdsUnique = Array.from(new Set(orderIdStrs));
+    const usernames = Array.from(usernamesSet).slice(0, 50000);
+    const phones = Array.from(phonesSet).slice(0, 50000);
+    if (!orderIdsUnique.length) {
+      return res.json({ ok: true, daysToAdd, dryRun, ordersMatched, ordersUnique: 0, linksFound: 0, linksExpired: 0, updatesPlanned: 0, updated: 0 });
+    }
+
+    const or = [{ orderId: { $in: orderIdsUnique } }, { orders: { $in: orderIdsUnique } }];
+    if (usernames.length) {
+      or.push({ instauser: { $in: usernames } });
+      or.push({ instausers: { $in: usernames } });
+    }
+    if (phones.length) {
+      or.push({ phone: { $in: phones } });
+    }
+    const tlDocs = await tlCol.find(
+      { purpose: 'refil', $or: or },
+      { projection: { _id: 1, id: 1, orderId: 1, orders: 1, phone: 1, instauser: 1, instausers: 1, expiresAt: 1, warrantyMode: 1 } }
+    ).toArray();
+
+    const nowMs = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+
+    const brtYmdFromMs = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+    };
+    const dayNumFromYmd = (y, m, d) => Math.floor(Date.UTC(Number(y), Number(m) - 1, Number(d)) / dayMs);
+    const ymdFromDayNum = (dayNum) => {
+      const dt = new Date(Number(dayNum || 0) * dayMs);
+      return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+    };
+    const endOfDayBrtIsoFromYmd = (y, m, d) => {
+      const utcMs = Date.UTC(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999) + brtOffsetMs;
+      return new Date(utcMs).toISOString();
+    };
+    const addDaysEndOfDayBrtIso = (baseMs, days) => {
+      const baseYmd = brtYmdFromMs(baseMs);
+      const baseDayNum = dayNumFromYmd(baseYmd.y, baseYmd.m, baseYmd.d);
+      const target = ymdFromDayNum(baseDayNum + Number(days || 0));
+      return endOfDayBrtIsoFromYmd(target.y, target.m, target.d);
+    };
+    const safeDateMs = (iso) => {
+      try {
+        const t = new Date(iso).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
+    const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+    const addMonthsEndOfDayBrtIso = (baseMs, monthsToAdd) => {
+      const base = brtYmdFromMs(baseMs);
+      let y = base.y;
+      let m = base.m + Number(monthsToAdd || 0);
+      while (m > 12) { y += 1; m -= 12; }
+      while (m < 1) { y -= 1; m += 12; }
+      const maxDay = daysInMonth(y, m);
+      const d = Math.min(base.d, maxDay);
+      const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59, 999) + brtOffsetMs;
+      return new Date(utcMs).toISOString();
+    };
+    const warrantyFromBumps = (bumpsStrRaw) => {
+      const out = { isLifetime: false, mode: '30', months: 1 };
+      try {
+        const s = String(bumpsStrRaw || '').trim();
+        if (!s) return out;
+        const parts = s.split(';');
+        let hasLife = false;
+        let has6m = false;
+        let has12m = false;
+        for (const raw of parts) {
+          const part = String(raw || '').trim();
+          if (!part) continue;
+          const segs = part.split(':');
+          const key = String(segs[0] || '').trim().toLowerCase();
+          const qtyRaw = segs.length > 1 ? String(segs[1] || '').trim() : '';
+          const qtyParsed = qtyRaw ? Number(qtyRaw) : 1;
+          const qty = Number.isFinite(qtyParsed) ? qtyParsed : 1;
+          if (!(qty > 0)) continue;
+          if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
+          else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
+          else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
+        }
+        if (hasLife) return { isLifetime: true, mode: 'life', months: null };
+        if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
+        if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
+      } catch (_) {}
+      return out;
+    };
+
+    const byOrderId = new Map();
+    const byPhone = new Map();
+    const byInsta = new Map();
+    const byToken = new Map();
+    for (const d of (tlDocs || [])) {
+      const token = d && d.id ? String(d.id).trim() : '';
+      if (token && !byToken.has(token)) byToken.set(token, d);
+      const phone = d && d.phone ? String(d.phone).replace(/\D/g, '') : '';
+      if (phone && !byPhone.has(phone)) byPhone.set(phone, d);
+      const iu0 = d && d.instauser ? normalizeUsernameKey(d.instauser) : '';
+      if (iu0 && !byInsta.has(iu0)) byInsta.set(iu0, d);
+      const arrIu = Array.isArray(d && d.instausers) ? d.instausers : [];
+      for (const x of arrIu) {
+        const iu = normalizeUsernameKey(x);
+        if (iu && !byInsta.has(iu)) byInsta.set(iu, d);
+      }
+      const linked = new Set();
+      if (d && d.orderId) linked.add(String(d.orderId));
+      const arr = Array.isArray(d && d.orders) ? d.orders : [];
+      for (const x of arr) { if (x) linked.add(String(x)); }
+      for (const oid of linked) {
+        const s = String(oid || '').trim();
+        if (s && !byOrderId.has(s)) byOrderId.set(s, d);
+      }
+    }
+
+    const expiredOrders = [];
+    for (const o of (ordersLite || [])) {
+      const oid = String(o && o.orderIdStr || '').trim();
+      if (!oid) continue;
+      const baseMs = Number(o && o.baseMs || 0) || 0;
+      if (!baseMs) continue;
+      const w = warrantyFromBumps(o && o.bumpsStr);
+      if (w && w.isLifetime) continue;
+      const expIso = addMonthsEndOfDayBrtIso(baseMs, Number((w && w.months) || 1));
+      const expMs = safeDateMs(expIso);
+      if (!expMs) continue;
+      if (expMs >= nowMs) continue;
+      expiredOrders.push({ orderIdStr: oid, iu: o.iu || '', phoneDigits: o.phoneDigits || '', refilLinkId: o.refilLinkId || '' });
+    }
+
+    const crypto = require('crypto');
+    const usedTokens = new Set(Array.from(byToken.keys()));
+    const safeToken = () => crypto.randomBytes(10).toString('hex');
+    const findUniqueToken = async () => {
+      for (let i = 0; i < 50; i += 1) {
+        const t = safeToken();
+        if (usedTokens.has(t)) continue;
+        const exists = await tlCol.findOne({ id: t }, { projection: { _id: 1 } });
+        if (exists) continue;
+        usedTokens.add(t);
+        return t;
+      }
+      return safeToken();
+    };
+
+    let linksExpired = 0;
+    let createdMissingLinks = 0;
+    let updatedOrders = 0;
+    const ops = [];
+    const orderOps = [];
+    const sample = [];
+
+    const maybeQueueOrderRef = (linkRec, orderIdStr, iu, phoneDigits) => {
+      try {
+        const linkToken = String(linkRec?.id || '').trim();
+        if (!linkToken) return;
+        const setObj = {};
+        if (phoneDigits && !String(linkRec?.phone || '').trim()) setObj.phone = phoneDigits;
+        if (iu && !String(linkRec?.instauser || '').trim()) setObj.instauser = iu;
+        const addToSet = {};
+        if (orderIdStr) addToSet.orders = orderIdStr;
+        if (iu) addToSet.instausers = iu;
+        const upd = {};
+        if (Object.keys(setObj).length) upd.$set = setObj;
+        if (Object.keys(addToSet).length) upd.$addToSet = addToSet;
+        if (!Object.keys(upd).length) return;
+        ops.push({ updateOne: { filter: { id: linkToken, purpose: 'refil' }, update: upd, upsert: false } });
+      } catch (_) {}
+    };
+
+    for (const it of expiredOrders) {
+      const orderIdStr = String(it && it.orderIdStr || '').trim();
+      if (!orderIdStr) continue;
+      const iu = normalizeUsernameKey(it && it.iu || '');
+      const phoneDigits = normalizePhoneDigits(it && it.phoneDigits || '');
+      const tokenHint = String(it && it.refilLinkId || '').trim().replace(/[^0-9a-z]/gi, '');
+
+      let link = null;
+      if (tokenHint && byToken.has(tokenHint)) link = byToken.get(tokenHint);
+      if (!link) link = byOrderId.get(orderIdStr) || null;
+      if (!link && iu) link = byInsta.get(iu) || null;
+      if (!link && phoneDigits) link = byPhone.get(phoneDigits) || null;
+
+      if (link && phoneDigits) {
+        const existingInsta = normalizeUsernameKey(link?.instauser || '');
+        const existingList = Array.isArray(link?.instausers) ? link.instausers.map(normalizeUsernameKey).filter(Boolean) : [];
+        const canReuse = !iu || !existingInsta || existingInsta === iu || existingList.includes(iu);
+        if (!canReuse) link = byOrderId.get(orderIdStr) || null;
+      }
+
+      if (link) {
+        maybeQueueOrderRef(link, orderIdStr, iu, phoneDigits);
+        const mode = String((link && link.warrantyMode) || '').trim().toLowerCase();
+        if (mode !== 'life') {
+          const expMs = safeDateMs(link && link.expiresAt);
+          if (expMs && expMs < nowMs) {
+            linksExpired += 1;
+            const baseMs = Math.max(expMs, nowMs);
+            const newIso = addDaysEndOfDayBrtIso(baseMs, daysToAdd);
+            if (newIso && String(newIso) !== String(link.expiresAt || '')) {
+              if (sample.length < 25) sample.push({ id: link && link.id ? String(link.id) : null, expiresAt: link && link.expiresAt ? String(link.expiresAt) : null, newExpiresAt: newIso });
+              const linkToken = String(link && link.id || '').trim();
+              if (linkToken) ops.push({ updateOne: { filter: { id: linkToken, purpose: 'refil' }, update: { $set: { expiresAt: newIso } }, upsert: false } });
+              link.expiresAt = newIso;
+            }
+          }
+        }
+        if (tokenHint && tokenHint === String(link.id || '').trim()) continue;
+        orderOps.push({
+          updateOne: { filter: { _id: new (require('mongodb').ObjectId)(orderIdStr), $or: [{ refilLinkId: { $exists: false } }, { refilLinkId: null }, { refilLinkId: '' }] }, update: { $set: { refilLinkId: String(link.id || '').trim() } }, upsert: false }
+        });
+        updatedOrders += 1;
+        continue;
+      }
+
+      const token = await findUniqueToken();
+      const newIso = addDaysEndOfDayBrtIso(nowMs, daysToAdd);
+      const rec = {
+        id: token,
+        purpose: 'refil',
+        orderId: orderIdStr,
+        phone: phoneDigits || null,
+        orders: [orderIdStr],
+        instauser: iu || null,
+        instausers: iu ? [String(iu)] : [],
+        warrantyMode: '30',
+        warrantyDays: null,
+        createdAt: new Date(nowMs).toISOString(),
+        expiresAt: newIso
+      };
+      if (sample.length < 25) sample.push({ id: token, expiresAt: null, newExpiresAt: newIso });
+      ops.push({ insertOne: { document: rec } });
+      createdMissingLinks += 1;
+      byToken.set(token, rec);
+      byOrderId.set(orderIdStr, rec);
+      if (iu) byInsta.set(iu, rec);
+      if (phoneDigits) byPhone.set(phoneDigits, rec);
+      orderOps.push({
+        updateOne: { filter: { _id: new (require('mongodb').ObjectId)(orderIdStr) }, update: { $set: { refilLinkId: token } }, upsert: false }
+      });
+      updatedOrders += 1;
+    }
+
+    if (dryRun) {
+      return res.json({
+        ok: true,
+        daysToAdd,
+        dryRun: true,
+        ordersMatched,
+        ordersUnique: orderIdsUnique.length,
+        linksFound: Array.isArray(tlDocs) ? tlDocs.length : 0,
+        linksExpired,
+        updatesPlanned: ops.length,
+        createdMissingLinks,
+        ordersExpiredCandidates: expiredOrders.length,
+        sample
+      });
+    }
+
+    let modified = 0;
+    if (ops.length) {
+      const wr = await tlCol.bulkWrite(ops, { ordered: false });
+      modified = Number(wr && wr.modifiedCount || 0) || 0;
+    }
+    if (orderOps.length) {
+      try {
+        const wr2 = await ordersCol.bulkWrite(orderOps, { ordered: false });
+        updatedOrders = Number(wr2 && wr2.modifiedCount || 0) || updatedOrders;
+      } catch (_) {}
+    }
+
+    return res.json({
+      ok: true,
+      daysToAdd,
+      dryRun: false,
+      ordersMatched,
+      ordersUnique: orderIdsUnique.length,
+      linksFound: Array.isArray(tlDocs) ? tlDocs.length : 0,
+      linksExpired,
+      updatesPlanned: ops.length,
+      updated: modified,
+      createdMissingLinks,
+      ordersExpiredCandidates: expiredOrders.length,
+      updatedOrders,
+      sample
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameInput }) {
+  try {
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const orderIdRawSafe = safe(orderIdRaw || '');
+    const usernameInputSafe = safe(usernameInput || '').toLowerCase().replace(/^@/, '');
+    if (!/^[0-9a-fA-F]{24}$/.test(orderIdRawSafe)) return { code: 400, body: { ok: false, error: 'invalid_order_id' } };
 
     const { getCollection } = require('./mongodbClient');
     const { ObjectId } = require('mongodb');
     const col = await getCollection('checkout_orders');
 
     const order = await col.findOne(
-      { _id: new ObjectId(orderIdRaw) },
-      { projection: { _id: 1, customer: 1, telefone: 1, instagramUsername: 1, instauser: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, recoveryNotify: 1 } }
+      { _id: new ObjectId(orderIdRawSafe) },
+      { projection: { _id: 1, customer: 1, telefone: 1, instagramUsername: 1, instauser: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, initialFollowersCount: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, recoveryNotify: 1 } }
     );
-    if (!order) return res.status(404).json({ ok: false, error: 'order_not_found' });
+    if (!order) return { code: 404, body: { ok: false, error: 'order_not_found' } };
 
     const addMapPaid = (order && order.additionalInfoMapPaid && typeof order.additionalInfoMapPaid === 'object') ? order.additionalInfoMapPaid : {};
     const addMap = (order && order.additionalInfoMap && typeof order.additionalInfoMap === 'object') ? order.additionalInfoMap : {};
@@ -17790,7 +19407,10 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
     };
 
     const orderUsername = safe(order.instagramUsername || order.instauser || pickAdd('instagram_username')).toLowerCase().replace(/^@/, '');
-    if (usernameInput && orderUsername && usernameInput !== orderUsername) return res.status(400).json({ ok: false, error: 'username_mismatch' });
+    if (usernameInputSafe && orderUsername && usernameInputSafe !== orderUsername) return { code: 400, body: { ok: false, error: 'username_mismatch' } };
+
+    const tipoRawNotify = safe(order.tipoServico || order.tipo || pickAdd('tipo_servico')).toLowerCase();
+    const isOrganicosNotify = !!(tipoRawNotify && /seguidores_organicos|organicos/.test(tipoRawNotify));
 
     const customer = (order && order.customer && typeof order.customer === 'object') ? order.customer : {};
     const emailRaw = safe(customer.email || pickAdd('email') || pickAdd('customer_email') || pickAdd('email_cliente'));
@@ -17801,6 +19421,26 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
     if (phoneDigits.startsWith('55') && phoneDigits.length > 11) phoneDigits = phoneDigits.slice(2);
     if (!(phoneDigits.length === 10 || phoneDigits.length === 11)) phoneDigits = '';
 
+    if (orderUsername) {
+      try {
+        const { getCollection } = require('./mongodbClient');
+        const monitorCol = await getCollection('followers_monitor');
+        const mon = await monitorCol.findOne({ username: orderUsername }, { projection: { hidden: 1, followersCount: 1, checkedAt: 1 } });
+        if (mon && mon.hidden === true) {
+          return { code: 400, body: { ok: false, error: 'hidden_profile' } };
+        }
+        const qtyRaw = Number(order.qtd || order.quantidade || pickAdd('quantidade') || pickAdd('qtd') || pickAdd('quantity') || 0) || 0;
+        const contracted = Number.isFinite(qtyRaw) ? qtyRaw : 0;
+        const initRaw = (typeof order.initialFollowersCount === 'number') ? order.initialFollowersCount : Number(pickAdd('start_count') || pickAdd('initial_followers') || pickAdd('inicial') || 0) || 0;
+        const initial = Number.isFinite(initRaw) ? initRaw : 0;
+        const current = (mon && typeof mon.followersCount === 'number') ? mon.followersCount : null;
+        const expected = (initial > 0 && contracted > 0) ? (initial + contracted) : 0;
+        const dropAbs = (expected > 0 && current != null) ? Math.max(0, expected - current) : null;
+        if (dropAbs == null) return { code: 400, body: { ok: false, error: 'drop_not_computable' } };
+        if (dropAbs < 100) return { code: 400, body: { ok: false, error: 'drop_below_100', dropAbs } };
+      } catch (_) {}
+    }
+
     const baseUrl = (function () {
       const candidates = [process.env.SITE_URL, process.env.PUBLIC_URL, process.env.APP_URL, process.env.BASE_URL];
       const picked = candidates.map(s => safe(s)).find(Boolean);
@@ -17808,6 +19448,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       return u.replace(/\/+$/, '');
     })();
     const clientUrl = `${baseUrl}/cliente`;
+    const clientUrlWithPhone = phoneDigits ? `${clientUrl}?phone=${encodeURIComponent(phoneDigits)}` : clientUrl;
     const waPhone = '553173425727';
     const whatsappHref = `https://wa.me/${waPhone}?text=${encodeURIComponent('Olá, preciso de ajuda com reposição de seguidores')}`;
 
@@ -17899,6 +19540,21 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       const dd = String(d.getUTCDate()).padStart(2, '0');
       return `${y}-${m}-${dd}`;
     };
+    const dayRangeBrtUtcMs = (dayKey) => {
+      try {
+        const s = String(dayKey || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { startMs: 0, endMs: 0 };
+        const parts = s.split('-').map(Number);
+        const y = parts[0];
+        const m = parts[1];
+        const d = parts[2];
+        const startUtcMs = Date.UTC(y, m - 1, d, 0, 0, 0, 0) + brtOffsetMs;
+        const endUtcMs = startUtcMs + (24 * 60 * 60 * 1000);
+        return { startMs: startUtcMs, endMs: endUtcMs };
+      } catch (_) {
+        return { startMs: 0, endMs: 0 };
+      }
+    };
     const nowIso = new Date().toISOString();
     const todayBrtKey = dayKeyBrt(Date.now());
     const notify = (order && order.recoveryNotify && typeof order.recoveryNotify === 'object') ? order.recoveryNotify : {};
@@ -17922,7 +19578,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       }
       const historyItem = { at: nowIso, status: safe(status || ''), error: safe(error || ''), response: safe(response || '') };
       await col.updateOne(
-        { _id: new ObjectId(orderIdRaw) },
+        { _id: new ObjectId(orderIdRawSafe) },
         {
           $set: setObj,
           $push: { 'recoveryNotify.email.history': historyItem }
@@ -17932,6 +19588,50 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
 
     const emailOut = { ok: false, error: null };
     if (email) {
+      if (isOrganicosNotify) {
+        emailOut.error = 'skipped_tipo_organicos';
+        await persistEmailNotify({ status: 'skipped_tipo_organicos', error: emailOut.error, response: '', increaseCount: false });
+      } else
+      {
+      const dailyMaxRaw = parseInt(String(process.env.RECOVERY_EMAIL_DAILY_LIMIT || process.env.EMAIL_DAILY_LIMIT || '1000'), 10);
+      const dailyMax = Math.max(1, Number.isFinite(dailyMaxRaw) ? dailyMaxRaw : 1000);
+      const reservePctRaw = Number(String(process.env.RECOVERY_EMAIL_RESERVE_PCT || '0.2'));
+      const reservePct = (Number.isFinite(reservePctRaw) && reservePctRaw >= 0 && reservePctRaw <= 0.9) ? reservePctRaw : 0.2;
+      const { startMs: todayStartMs, endMs: todayEndMs } = dayRangeBrtUtcMs(todayBrtKey);
+      const toIso = (ms) => (Number.isFinite(ms) && ms > 0) ? new Date(ms).toISOString() : '';
+      const todayStartIso = toIso(todayStartMs);
+      const todayEndIso = toIso(todayEndMs);
+      let paidEmailCountToday = 0;
+      let createdEmailCountToday = 0;
+      let recoveryEmailSentEventsToday = 0;
+      try {
+        if (todayStartIso && todayEndIso) {
+          paidEmailCountToday = await col.countDocuments({
+            $or: [
+              { 'woovi.paidAt': { $gte: todayStartIso, $lt: todayEndIso } },
+              { paidAt: { $gte: todayStartIso, $lt: todayEndIso } }
+            ]
+          });
+          createdEmailCountToday = await col.countDocuments({
+            createdAt: { $gte: todayStartIso, $lt: todayEndIso }
+          });
+          const agg = await col.aggregate([
+            { $match: { 'recoveryNotify.email.history': { $exists: true, $ne: [] } } },
+            { $unwind: '$recoveryNotify.email.history' },
+            { $match: { 'recoveryNotify.email.history.status': 'sent', 'recoveryNotify.email.history.at': { $gte: todayStartIso, $lt: todayEndIso } } },
+            { $count: 'c' }
+          ]).toArray();
+          recoveryEmailSentEventsToday = agg && agg[0] && typeof agg[0].c === 'number' ? agg[0].c : 0;
+        }
+      } catch (_) {}
+      const pedidosEmailCountToday = Math.max(0, Number(paidEmailCountToday || 0) + Number(createdEmailCountToday || 0));
+      const availableAfterPedidos = Math.max(0, dailyMax - pedidosEmailCountToday);
+      const allowedForRecoveryToday = Math.max(0, Math.floor(availableAfterPedidos * (1 - reservePct)));
+      const remainingRecoveryToday = Math.max(0, allowedForRecoveryToday - Number(recoveryEmailSentEventsToday || 0));
+      if (remainingRecoveryToday <= 0) {
+        emailOut.error = 'daily_recovery_limit_reached';
+        await persistEmailNotify({ status: 'skipped_daily_cap', error: emailOut.error, response: `paid_today=${paidEmailCountToday};created_today=${createdEmailCountToday};sent_today=${recoveryEmailSentToday};max=${dailyMax};reserve=${reservePct}`, increaseCount: false });
+      } else
       if (prevEmailCount >= 2) {
         emailOut.error = 'email_limit_reached';
         await persistEmailNotify({ status: 'skipped_limit', error: emailOut.error, response: '', increaseCount: false });
@@ -17972,6 +19672,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
           }
         }
       }
+      }
     } else {
       emailOut.error = 'missing_email';
       await persistEmailNotify({ status: 'failed', error: emailOut.error, response: '', increaseCount: false });
@@ -17979,7 +19680,9 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
 
     const smsOut = { ok: false, error: null };
     const mexToken = safe(process.env.MEX10_TOKEN || process.env.MEX10_SHORTCODE_TOKEN);
-    if (!mexToken) {
+    if (emailOut && emailOut.error === 'daily_recovery_limit_reached') {
+      smsOut.error = 'skipped_daily_email_cap';
+    } else if (!mexToken) {
       smsOut.error = 'missing_mex10_token';
     } else if (!phoneDigits) {
       smsOut.error = 'missing_phone';
@@ -17988,7 +19691,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
     } else {
       const alreadyToPhone = await col.findOne(
         {
-          _id: { $ne: new ObjectId(orderIdRaw) },
+          _id: { $ne: new ObjectId(orderIdRawSafe) },
           'recoveryNotify.sms.sentTo': phoneDigits,
           'recoveryNotify.sms.sentAt': { $exists: true, $ne: '' }
         },
@@ -18010,7 +19713,7 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       if (resp.status >= 200 && resp.status < 300 && success && !errFlag) {
         smsOut.ok = true;
         await col.updateOne(
-          { _id: new ObjectId(orderIdRaw) },
+          { _id: new ObjectId(orderIdRawSafe) },
           {
             $set: { 'recoveryNotify.sms.sentAt': nowIso, 'recoveryNotify.sms.sentTo': phoneDigits },
             $push: { 'recoveryNotify.sms.history': nowIso }
@@ -18022,7 +19725,22 @@ app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req
       }
     }
 
-    return res.json({ ok: emailOut.ok && smsOut.ok, orderId: orderIdRaw, username: orderUsername || null, email: emailOut, sms: smsOut });
+    const smsSkippedOk = !!(smsOut && smsOut.ok !== true && typeof smsOut.error === 'string' && (smsOut.error === 'sms_already_sent' || smsOut.error === 'sms_already_sent_to_phone' || smsOut.error === 'missing_phone'));
+    const overallOk = isOrganicosNotify ? (smsOut.ok || smsSkippedOk) : (emailOut.ok && (smsOut.ok || smsSkippedOk));
+    return { code: 200, body: { ok: overallOk, orderId: orderIdRawSafe, username: orderUsername || null, email: emailOut, sms: smsOut } };
+  } catch (e) {
+    return { code: 500, body: { ok: false, error: e?.message || String(e) } };
+  }
+}
+
+app.post('/api/painel/gerenciamento-seguidores/notify', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const orderIdRaw = safe(body.orderId || body.orderID || body.id);
+    const usernameInput = safe(body.username || '');
+    const out = await followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameInput });
+    return res.status(out.code).json(out.body);
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -18111,21 +19829,52 @@ app.post('/api/painel/gerenciamento-seguidores/fix-checked', requireAdmin, async
     const ops = [];
     const fixed = [];
     const skipped = [];
+    const parseDateMsLoose = (raw) => {
+      try {
+        const s0 = String(raw || '').trim();
+        if (!s0) return 0;
+        const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+        const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (mBr) {
+          const yyyy = String(mBr[3]);
+          const mm = String(mBr[2]).padStart(2, '0');
+          const dd = String(mBr[1]).padStart(2, '0');
+          const hh = String(mBr[4] || '00').padStart(2, '0');
+          const mi = String(mBr[5] || '00').padStart(2, '0');
+          const ss = String(mBr[6] || '00').padStart(2, '0');
+          const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+          const t = new Date(iso).getTime();
+          return Number.isFinite(t) ? t : 0;
+        }
+        const t = new Date(s).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+    const dayMs = 24 * 60 * 60 * 1000;
+    const brtOffsetMs = 3 * 60 * 60 * 1000;
+    const dayNumFromMsBrt = (ms) => {
+      const d = new Date(Number(ms || 0) - brtOffsetMs);
+      return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
+    };
+
     for (const it of list) {
       const doc = byUser.get(it.username) || null;
       const checkedAt = doc && doc.checkedAt ? String(doc.checkedAt) : '';
       let checkedAtMs = 0;
       try {
         if (checkedAt) {
-          const t = new Date(checkedAt).getTime();
-          checkedAtMs = Number.isFinite(t) ? t : 0;
+          checkedAtMs = parseDateMsLoose(checkedAt);
         }
       } catch (_) {}
       if (!checkedAtMs || !it.purchaseAtMs) {
         skipped.push(it.username);
         continue;
       }
-      if (checkedAtMs >= it.purchaseAtMs) {
+      const checkedDay = dayNumFromMsBrt(checkedAtMs);
+      const purchaseDay = dayNumFromMsBrt(it.purchaseAtMs);
+      if (checkedDay > purchaseDay) {
         skipped.push(it.username);
         continue;
       }
@@ -18563,6 +20312,322 @@ app.get('/api/painel/gerenciamento-seguidores/validate-general/status', requireA
     const job = global.followersMgmtGeneralValidationJob || null;
     if (!job) return res.json({ ok: true, job: null });
     return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+function followersMgmtSerializeVerifyFilteredJob(jobRaw) {
+  const job = jobRaw || null;
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    force: !!job.force,
+    total: job.total,
+    done: job.done,
+    ok: job.ok,
+    failed: job.failed,
+    lastUsername: job.lastUsername || null,
+    lastError: job.lastError || null,
+    lastFailedUsernames: Array.isArray(job.lastFailedUsernames) ? job.lastFailedUsernames.slice(0, 50) : []
+  };
+}
+
+function followersMgmtKickVerifyFilteredJob() {
+  const job = global.followersMgmtVerifyFilteredJob || null;
+  if (!job) return;
+  if (job._runnerActive) return;
+  if (job.status !== 'running') return;
+  job._runnerActive = true;
+
+  const reqLike = { session: { adminUser: { username: 'system' } }, realIP: 'followers_verify_filtered', ip: 'followers_verify_filtered' };
+  (async () => {
+    try {
+      const targets = Array.isArray(job.targets) ? job.targets : [];
+      try { console.log(`🔎 [followers-verify-filtered] start job=${String(job.id || '')} total=${targets.length}`); } catch (_) {}
+      while (job.status === 'running' && job.done < targets.length) {
+        const u = targets[job.done];
+        job.lastUsername = u;
+        job.lastError = null;
+        const stepStartedAtMs = Date.now();
+        try {
+          const out = await followersMgmtGetCurrent(reqLike, u, !!job.force);
+          try {
+            const b = out && out.body ? out.body : null;
+            const src = b ? String(b.source || '') : '';
+            const priv = (b && typeof b.isPrivate === 'boolean') ? (b.isPrivate ? '1' : '0') : '';
+            const fc = (b && typeof b.followersCount === 'number') ? String(b.followersCount) : '';
+            const ok = b && b.ok ? '1' : '0';
+            console.log(`🔎 [followers-verify-filtered] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok} @${u} source=${src} private=${priv} fc=${fc} ms=${Date.now() - stepStartedAtMs}`);
+          } catch (_) {}
+          if (out && out.body && out.body.ok) job.ok += 1;
+          else job.failed += 1;
+          if (out && out.body && out.body.error) {
+            job.lastError = String(out.body.error || '');
+            if (!job.lastFailedUsernames) job.lastFailedUsernames = [];
+            if (Array.isArray(job.lastFailedUsernames)) {
+              job.lastFailedUsernames.push(u);
+              if (job.lastFailedUsernames.length > 200) job.lastFailedUsernames.splice(0, job.lastFailedUsernames.length - 200);
+            }
+          }
+        } catch (e) {
+          job.failed += 1;
+          job.lastError = e?.message || String(e);
+          try { console.warn(`🔎 [followers-verify-filtered] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} fail @${u} ms=${Date.now() - stepStartedAtMs}:`, job.lastError); } catch (_) {}
+          if (!job.lastFailedUsernames) job.lastFailedUsernames = [];
+          if (Array.isArray(job.lastFailedUsernames)) {
+            job.lastFailedUsernames.push(u);
+            if (job.lastFailedUsernames.length > 200) job.lastFailedUsernames.splice(0, job.lastFailedUsernames.length - 200);
+          }
+        } finally {
+          job.done += 1;
+        }
+      }
+      if (job.status === 'running' && job.done >= (Array.isArray(job.targets) ? job.targets.length : 0)) {
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      }
+    } catch (e) {
+      job.status = 'error';
+      job.lastError = e?.message || String(e);
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      job._runnerActive = false;
+    }
+  })();
+}
+
+app.post('/api/painel/gerenciamento-seguidores/verify-filtered/start', requireAdmin, async (req, res) => {
+  try {
+    if (global.followersMgmtVerifyFilteredJob && global.followersMgmtVerifyFilteredJob.status === 'running') {
+      return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(global.followersMgmtVerifyFilteredJob) });
+    }
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const normalizeUsernameKey = (u) => {
+      const s0 = safe(u);
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+
+    const rawList = (req.body && Array.isArray(req.body.usernames)) ? req.body.usernames : [];
+    const force = String((req.body && req.body.force) || req.query.force || '1').trim() === '1';
+    const usernames = [];
+    const seen = new Set();
+    for (const r of rawList) {
+      const u = normalizeUsernameKey(r);
+      if (!u) continue;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      usernames.push(u);
+      if (usernames.length >= 5000) break;
+    }
+    if (!usernames.length) return res.status(400).json({ ok: false, error: 'empty_usernames' });
+
+    const job = {
+      id: String(Date.now()) + '_' + String(Math.random()).slice(2),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      force,
+      total: usernames.length,
+      done: 0,
+      ok: 0,
+      failed: 0,
+      lastUsername: null,
+      lastError: null,
+      lastFailedUsernames: [],
+      targets: usernames
+    };
+    global.followersMgmtVerifyFilteredJob = job;
+    followersMgmtKickVerifyFilteredJob();
+    return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/verify-filtered/status', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtVerifyFilteredJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+function followersMgmtSerializeAutoNotifyJob(jobRaw) {
+  const job = jobRaw || null;
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    pausedAt: job.pausedAt || null,
+    resumedAt: job.resumedAt || null,
+    limit: job.limit,
+    order: job.order || 'recent',
+    total: job.total,
+    done: job.done,
+    ok: job.ok,
+    failed: job.failed,
+    emailSkippedDaily: job.emailSkippedDaily || 0,
+    stoppedReason: job.stoppedReason || null,
+    lastUsername: job.lastUsername || null,
+    lastOrderId: job.lastOrderId || null,
+    lastError: job.lastError || null
+  };
+}
+
+function followersMgmtKickAutoNotifyJob() {
+  const job = global.followersMgmtAutoNotifyJob || null;
+  if (!job) return;
+  if (job._runnerActive) return;
+  if (job.status !== 'running') return;
+  job._runnerActive = true;
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const reqLike = { session: { adminUser: { username: 'system' } }, realIP: 'followers_auto_notify', ip: 'followers_auto_notify', get: () => '' };
+  (async () => {
+    try {
+      const targets = Array.isArray(job.targets) ? job.targets : [];
+      try { console.log(`📨 [followers-auto-notify] start job=${String(job.id || '')} total=${targets.length}`); } catch (_) {}
+      while (job.status === 'running' && job.done < targets.length) {
+        const t = targets[job.done] || {};
+        const oid = String(t.orderId || '').trim();
+        const u = String(t.username || '').trim();
+        job.lastUsername = u || null;
+        job.lastOrderId = oid || null;
+        job.lastError = null;
+        const stepStartedAtMs = Date.now();
+        try {
+          const out = await followersMgmtNotifyRecoveryForOrder(reqLike, { orderIdRaw: oid, usernameInput: u });
+          const body = out && out.body ? out.body : null;
+          const ok = !!(body && body.ok === true);
+          const emailErr = body && body.email && body.email.ok !== true && body.email.error ? String(body.email.error) : '';
+          const smsErr = body && body.sms && body.sms.ok !== true && body.sms.error ? String(body.sms.error) : '';
+          if (emailErr === 'daily_recovery_limit_reached') {
+            job.emailSkippedDaily = Number(job.emailSkippedDaily || 0) + 1;
+            job.stoppedReason = 'daily_recovery_limit_reached';
+            job.status = 'done';
+            job.finishedAt = new Date().toISOString();
+            try { console.log(`📨 [followers-auto-notify] stop job=${String(job.id || '')} daily cap i=${job.done + 1}/${targets.length} ms=${Date.now() - stepStartedAtMs}`); } catch (_) {}
+            break;
+          }
+          if (ok) job.ok += 1;
+          else job.failed += 1;
+          if (!ok) job.lastError = String(body && body.error ? body.error : (emailErr || smsErr || 'failed'));
+          try { console.log(`📨 [followers-auto-notify] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${u || ''} oid=${oid || ''} ms=${Date.now() - stepStartedAtMs}`); } catch (_) {}
+        } catch (e) {
+          job.failed += 1;
+          job.lastError = e?.message || String(e);
+          try { console.warn(`📨 [followers-auto-notify] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} fail @${u || ''} oid=${oid || ''} ms=${Date.now() - stepStartedAtMs}:`, job.lastError); } catch (_) {}
+        } finally {
+          job.done += 1;
+        }
+        await sleep(900);
+      }
+      if (job.status === 'running' && job.done >= (Array.isArray(job.targets) ? job.targets.length : 0)) {
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      }
+    } catch (e) {
+      job.status = 'error';
+      job.lastError = e?.message || String(e);
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      job._runnerActive = false;
+    }
+  })();
+}
+
+app.post('/api/painel/gerenciamento-seguidores/auto-notify/start', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const limitRaw = parseInt(String((body && typeof body.limit !== 'undefined' ? body.limit : (req.query && req.query.limit)) || '0'), 10);
+    const limit = Math.max(0, Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 0));
+    const orderRaw = String((body && body.order) || req.query.order || 'recent').trim().toLowerCase();
+    const order = (orderRaw === 'oldest') ? 'oldest' : 'recent';
+
+    if (global.followersMgmtAutoNotifyJob && (global.followersMgmtAutoNotifyJob.status === 'running' || global.followersMgmtAutoNotifyJob.status === 'paused')) {
+      return res.json({ ok: true, job: followersMgmtSerializeAutoNotifyJob(global.followersMgmtAutoNotifyJob) });
+    }
+
+    const cand = await followersMgmtComputeAutoNotifyCandidates({ limit, order });
+    const candidates = Array.isArray(cand && cand.candidates) ? cand.candidates : [];
+    const targets = candidates.map(c => ({ orderId: String(c.orderId || '').trim(), username: String(c.username || '').trim() })).filter(x => x.orderId);
+    try {
+      console.log('➡️ [followers-auto-notify] START', { limit, order, targets: targets.length });
+    } catch (_) {}
+
+    const job = {
+      id: String(Date.now()) + '_' + String(Math.random()).slice(2),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      pausedAt: null,
+      resumedAt: null,
+      limit,
+      order,
+      total: targets.length,
+      done: 0,
+      ok: 0,
+      failed: 0,
+      emailSkippedDaily: 0,
+      stoppedReason: null,
+      lastUsername: null,
+      lastOrderId: null,
+      lastError: null,
+      targets
+    };
+    global.followersMgmtAutoNotifyJob = job;
+    followersMgmtKickAutoNotifyJob();
+    return res.json({ ok: true, job: followersMgmtSerializeAutoNotifyJob(job), emailBudget: cand && cand.emailBudget ? cand.emailBudget : null, stats: cand && cand.stats ? cand.stats : null });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/auto-notify/pause', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtAutoNotifyJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    if (job.status === 'running') {
+      job.status = 'paused';
+      job.pausedAt = new Date().toISOString();
+    }
+    return res.json({ ok: true, job: followersMgmtSerializeAutoNotifyJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/auto-notify/resume', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtAutoNotifyJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    if (job.status === 'paused') {
+      job.status = 'running';
+      job.resumedAt = new Date().toISOString();
+      followersMgmtKickAutoNotifyJob();
+    }
+    return res.json({ ok: true, job: followersMgmtSerializeAutoNotifyJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/auto-notify/status', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtAutoNotifyJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    return res.json({ ok: true, job: followersMgmtSerializeAutoNotifyJob(job) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -19424,7 +21489,6 @@ app.post('/api/admin/private-order-send-email', requireAdmin, async (req, res) =
         setObj.lastContactText = text;
         setObj.lastContactChannel = 'email';
         setObj.lastContactEmail = emailTo;
-        setObj.noContact = false;
       }
       const updateObj = {
         $set: setObj,

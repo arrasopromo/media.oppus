@@ -104,13 +104,14 @@
     #cupons .coupon-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     #cupons .coupon-row--code { grid-template-columns: 1fr 90px; }
     #cupons .coupon-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
-    #cupons .coupon-list-wrap { max-height: 520px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; background: #fff; }
+    #cupons .coupon-list-wrap { max-height: 520px; overflow: auto; -webkit-overflow-scrolling: touch; border: 1px solid #eee; border-radius: 6px; background: #fff; }
     #cupons .coupons-table { width: 100%; border-collapse: collapse; min-width: 820px; }
     @media (max-width: 520px) {
       #cupons .coupon-row { grid-template-columns: 1fr; }
       #cupons .coupon-row--code { grid-template-columns: 1fr; }
       #cupons .coupon-actions { flex-direction: column; align-items: stretch; }
       #cupons .coupon-actions button { width: 100%; }
+      #cupons .coupons-table { min-width: 720px; }
     }
   </style>
 </head>
@@ -471,22 +472,10 @@
           <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer;">Iniciar validação geral</button>
           <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
           <button type="button" id="followersAutoNotifyBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto enviar Email+SMS (checados)</button>
+          <button type="button" id="followersAutoNotifyPauseBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar auto envio</button>
           <button type="button" id="followersReportBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Relatório</button>
-          <button type="button" id="followersFixCheckedBtn" style="padding: 6px 12px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados</button>
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
-              <span>Validar:</span>
-              <input id="followersValidateGeneralLimit" type="number" min="0" step="1" placeholder="0 = todos" style="width:110px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
-              <span>Ordem:</span>
-              <select id="followersValidateGeneralOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-                <option value="recent">Mais recentes</option>
-                <option value="oldest">Mais antigos</option>
-              </select>
-            </label>
-            <span style="font-size:0.85rem; color:#64748b;">Regra: somente compras com 2+ dias</span>
-          </div>
+          <button type="button" id="followersFixCheckedGlobalBtn" style="padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados (global)</button>
+          <button type="button" id="followersExtendRefilExpiredBtn" style="padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px; cursor: pointer;">Estender reposição expirada (+30d)</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Auto:</span>
@@ -500,12 +489,20 @@
               </select>
             </label>
           </div>
+          <span style="font-size:0.75rem; color:#64748b;">* Regra da validação geral: somente compras com 2+ dias.</span>
           <div id="followersValidateGeneralWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <div style="font-size:0.9rem; color:#111827; font-weight:600;">Progresso:</div>
             <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
               <div id="followersValidateGeneralProgressBar" style="height:10px; width:0%; background:#f97316;"></div>
             </div>
             <div id="followersValidateGeneralProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
+          </div>
+          <div id="followersAutoNotifyWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
+            <div style="font-size:0.9rem; color:#111827; font-weight:600;">Auto envio:</div>
+            <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
+              <div id="followersAutoNotifyProgressBar" style="height:10px; width:0%; background:#0ea5e9;"></div>
+            </div>
+            <div id="followersAutoNotifyProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
           </div>
           <button type="button" onclick="window.location.reload();" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Recarregar</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
@@ -545,12 +542,8 @@
                   <span>Brasileiros</span>
                 </label>
                 <label style="display:flex; align-items:center; gap:6px; margin:0;">
-                  <input type="checkbox" class="followersTipoChk" value="organicos" <%= tipoSet.has('organicos') ? 'checked' : '' %> />
-                  <span>Orgânicos</span>
-                </label>
-                <label style="display:flex; align-items:center; gap:6px; margin:0;">
-                  <input type="checkbox" class="followersTipoChk" value="brasileiros_reais" <%= tipoSet.has('brasileiros_reais') ? 'checked' : '' %> />
-                  <span>Brasileiros reais</span>
+                  <input type="checkbox" class="followersTipoChk" value="organicos" <%= (tipoSet.has('organicos') || tipoSet.has('brasileiros_reais')) ? 'checked' : '' %> />
+                  <span>Orgânicos (Brasileiros reais)</span>
                 </label>
               </div>
             </div>
@@ -573,6 +566,10 @@
               <span>Email recuperação falhou</span>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <input id="followersNotifiedOnly" type="checkbox" <%= (filters && filters.notifiedOnly) ? 'checked' : '' %> />
+              <span>Notificados (Email+SMS)</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <input id="followersOkOnly" type="checkbox" <%= (filters && filters.ok) ? 'checked' : '' %> />
               <span>Apenas OK</span>
             </label>
@@ -585,13 +582,18 @@
               <select id="followersWarranty" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
                 <%
                   const wf0 = (filters && filters.warranty) ? String(filters.warranty) : '';
-                  const wf = wf0 ? wf0 : ((filters && filters.lifetime) ? 'life' : 'all');
+                  const wf = wf0 ? wf0 : ((filters && filters.refilExpired) ? 'expired' : ((filters && filters.lifetime) ? 'life' : 'all'));
                 %>
                 <option value="all" <%= (!wf || wf === 'all') ? 'selected' : '' %>>Todos</option>
+                <option value="expired" <%= (wf === 'expired') ? 'selected' : '' %>>Expirada</option>
                 <option value="6m" <%= (wf === '6m') ? 'selected' : '' %>>6 meses</option>
                 <option value="12m" <%= (wf === '12m') ? 'selected' : '' %>>1 ano</option>
                 <option value="life" <%= (wf === 'life') ? 'selected' : '' %>>Vitalício</option>
               </select>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Diferença mín:</span>
+              <input id="followersMinDiffAbs" type="number" min="0" step="1" value="<%= (filters && typeof filters.minDiffAbs === 'number') ? String(filters.minDiffAbs) : '' %>" placeholder="ex: 100" style="width:120px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
             </label>
             <div style="font-size:0.9rem; color:#444; font-weight:600;">Queda mín:</div>
             <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
@@ -660,7 +662,9 @@
                 const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && contracted) ? ((diff / contracted) * 100) : null);
                 const oid = row.orderId ? String(row.orderId) : '';
                 const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
-                const hasDrop = (resultado !== null && current !== null && current < resultado);
+                const diffAbs = (typeof diff === 'number' && Number.isFinite(diff)) ? Math.max(0, diff) : null;
+                const pctNum = (typeof pct === 'number' && Number.isFinite(pct)) ? pct : null;
+                const hasDrop = (resultado !== null && current !== null && current < resultado && diffAbs !== null && diffAbs >= 100);
                 let lastPurchase = '-';
                 try {
                   const t = Number(row.lastPurchaseAtMs || 0);
@@ -707,7 +711,7 @@
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -793,7 +797,7 @@
       </div>
 
       <div id="followersReportModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:99999; align-items:center; justify-content:center; padding:16px;">
-        <div style="width:720px; max-width:calc(100vw - 32px); background:#ffffff; border-radius:12px; border:1px solid #e5e7eb; overflow:hidden; font-family: Arial,Helvetica,sans-serif;">
+        <div style="width:880px; max-width:calc(100vw - 32px); max-height:calc(100vh - 48px); overflow:auto; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb; font-family: Arial,Helvetica,sans-serif;">
           <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; background:#111827; color:#ffffff;">
             <div style="font-weight:800; letter-spacing:0.02em;">Relatório - Gerenciamento de Seguidores</div>
             <button type="button" id="followersReportCloseBtn" style="padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.25); background:transparent; color:#ffffff; cursor:pointer;">Fechar</button>
@@ -817,6 +821,12 @@
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
                   <canvas id="followersReportPie" width="260" height="260" style="width:260px; height:260px; border-radius:999px; background:#ffffff;"></canvas>
                   <div id="followersReportLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
+                </div>
+                <div style="height:14px;"></div>
+                <div style="font-size:12px; color:#6b7280;">OK x Não OK</div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                  <canvas id="followersReportOkPie" width="220" height="220" style="width:220px; height:220px; border-radius:999px; background:#ffffff;"></canvas>
+                  <div id="followersReportOkLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
                 </div>
               </div>
             </div>
@@ -864,7 +874,11 @@
               var data = null;
               for (var attempt = 1; attempt <= 3; attempt++) {
                 var url = '/api/painel/gerenciamento-seguidores/current?username=' + encodeURIComponent(username) + '&force=' + (force ? '1' : '0');
-                var resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                var resp = await fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+                if (resp && resp.status === 401) {
+                  window.location.href = '/painel';
+                  return;
+                }
                 data = await resp.json().catch(function(){ return null; });
                 if (data && data.ok) break;
                 if (attempt < 3) await sleep(900 * attempt);
@@ -948,7 +962,8 @@
               var out = await fetch('/api/painel/gerenciamento-seguidores/notify', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ orderId: orderId, username: username2 })
+                body: JSON.stringify({ orderId: orderId, username: username2 }),
+                credentials: 'same-origin'
               }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
 
               var data = out && out.json ? out.json : null;
@@ -972,6 +987,32 @@
             }
           }
 
+          async function sendNotifyByOrder(orderId, username2) {
+            var oid = String(orderId || '').trim();
+            var u2 = String(username2 || '').trim();
+            if (!oid) throw new Error('order_id_missing');
+            var out = await fetch('/api/painel/gerenciamento-seguidores/notify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify({ orderId: oid, username: u2 }),
+              credentials: 'same-origin'
+            }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+            var data = out && out.json ? out.json : null;
+            if (!data || data.ok !== true) {
+              var e0 = (data && data.error) ? String(data.error) : 'request_failed';
+              var emailErr = (data && data.email && data.email.ok === false && data.email.error) ? String(data.email.error) : '';
+              var smsErr = (data && data.sms && data.sms.ok === false && data.sms.error) ? String(data.sms.error) : '';
+              var msg = e0;
+              if (emailErr || smsErr) msg = (emailErr ? ('Email: ' + emailErr) : '') + (emailErr && smsErr ? ' | ' : '') + (smsErr ? ('SMS: ' + smsErr) : '');
+              return { ok: false, data: data, message: msg };
+            }
+            var label = 'Enviado';
+            if (data.email && data.sms) {
+              label = (data.email.ok ? 'Email OK' : ('Email: ' + String(data.email.error || 'erro'))) + ' | ' + (data.sms.ok ? 'SMS OK' : ('SMS: ' + String(data.sms.error || 'erro')));
+            }
+            return { ok: true, data: data, message: label };
+          }
+
           document.addEventListener('click', function(ev){
             var t = ev && ev.target ? ev.target : null;
             if (!t) return;
@@ -992,6 +1033,88 @@
           });
 
           var autoNotifyBtn = el('followersAutoNotifyBtn');
+          var autoNotifyPauseBtn = el('followersAutoNotifyPauseBtn');
+          var autoNotifyProgressBar = el('followersAutoNotifyProgressBar');
+          var autoNotifyProgressText = el('followersAutoNotifyProgressText');
+          var autoNotifyPollTimer = null;
+          var lastAutoNotifyJob = null;
+          function setAutoNotifyProgress(done, total){
+            try {
+              var d = Math.max(0, Number(done || 0) || 0);
+              var t = Math.max(0, Number(total || 0) || 0);
+              if (autoNotifyProgressText) autoNotifyProgressText.textContent = String(d) + '/' + String(t);
+              var pct = t > 0 ? Math.max(0, Math.min(100, (d * 100) / t)) : 0;
+              if (autoNotifyProgressBar) autoNotifyProgressBar.style.width = String(pct) + '%';
+            } catch (_) {}
+          }
+          setAutoNotifyProgress(0, 0);
+          function renderAutoNotifyJob(job){
+            lastAutoNotifyJob = job || null;
+            var st = job && job.status ? String(job.status) : '';
+            var total = job && typeof job.total === 'number' ? job.total : 0;
+            var done = job && typeof job.done === 'number' ? job.done : 0;
+            setAutoNotifyProgress(done, total);
+            if (autoNotifyBtn) {
+              autoNotifyBtn.disabled = (st === 'running' || st === 'paused');
+            }
+            if (autoNotifyPauseBtn) {
+              autoNotifyPauseBtn.disabled = !(st === 'running' || st === 'paused');
+              autoNotifyPauseBtn.textContent = (st === 'paused') ? 'Continuar auto envio' : 'Pausar auto envio';
+            }
+            try {
+              if (!st) return;
+              if (st === 'running') {
+                setStatus('Auto envio em andamento… (' + String(done) + '/' + String(total) + ')' + (job && job.lastUsername ? (' @' + String(job.lastUsername)) : ''));
+              } else if (st === 'paused') {
+                setStatus('Auto envio pausado… (' + String(done) + '/' + String(total) + ')');
+              } else if (st === 'done') {
+                var extra = (job && job.stoppedReason === 'daily_recovery_limit_reached') ? ' (parou por limite diário de email)' : '';
+                setStatus('Auto envio concluído. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + extra);
+              } else if (st === 'error') {
+                setStatus('Auto envio finalizou com erro: ' + String(job.lastError || ''));
+              }
+            } catch (_) {}
+          }
+          async function pollAutoNotifyStatus(){
+            try {
+              var out = await fetch('/api/painel/gerenciamento-seguidores/auto-notify/status', {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin'
+              }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+              var data = out && out.json ? out.json : null;
+              if (!data || data.ok !== true) return;
+              renderAutoNotifyJob(data.job || null);
+            } catch (_) {}
+          }
+          pollAutoNotifyStatus().catch(function(){});
+          if (!autoNotifyPollTimer) autoNotifyPollTimer = setInterval(pollAutoNotifyStatus, 1500);
+
+          if (autoNotifyPauseBtn) {
+            autoNotifyPauseBtn.addEventListener('click', async function(){
+              try {
+                if (!lastAutoNotifyJob || !lastAutoNotifyJob.status) return;
+                var st = String(lastAutoNotifyJob.status || '');
+                var url = (st === 'paused')
+                  ? '/api/painel/gerenciamento-seguidores/auto-notify/resume'
+                  : '/api/painel/gerenciamento-seguidores/auto-notify/pause';
+                autoNotifyPauseBtn.disabled = true;
+                var out = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({}),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (data && data.ok === true) renderAutoNotifyJob(data.job || null);
+                await pollAutoNotifyStatus();
+              } catch (e) {
+                alert('Falha ao pausar/continuar: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { autoNotifyPauseBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
           if (autoNotifyBtn) {
             autoNotifyBtn.addEventListener('click', async function(){
               var limitEl = el('followersAutoNotifyLimit');
@@ -1000,91 +1123,132 @@
               var n = parseInt(limitStr, 10);
               var limit = (limitStr && isFinite(n) && n > 0) ? n : 0;
               var order = orderEl ? String(orderEl.value || '').trim().toLowerCase() : 'recent';
-              var all = getAllRows();
-              var candidates = all.filter(function(tr){
-                try {
-                  var checkedMs = Number(tr.getAttribute('data-checkedatms') || 0) || 0;
-                  if (!checkedMs) return false;
-                  var hasNotify = !!tr.querySelector('button.btn-notify');
-                  if (!hasNotify) return false;
-                  return true;
-                } catch (_) {
-                  return false;
-                }
-              });
-              candidates.sort(function(a,b){
-                var am = Number(a.getAttribute('data-checkedatms') || 0) || 0;
-                var bm = Number(b.getAttribute('data-checkedatms') || 0) || 0;
-                return order === 'oldest' ? (am - bm) : (bm - am);
-              });
-              if (limit > 0) candidates = candidates.slice(0, limit);
-              if (!candidates.length) return alert('Nenhum pedido checado com queda para enviar nesta página.');
-              if (!confirm('Enviar Email+SMS automaticamente para ' + candidates.length + ' pedidos checados com queda?')) return;
-
-              autoNotifyBtn.disabled = true;
-              var ok = 0;
-              var fail = 0;
-              try {
-                for (var i=0;i<candidates.length;i++){
-                  var tr = candidates[i];
-                  var u = String(tr.getAttribute('data-username') || '').trim();
-                  setStatus('Auto envio: ' + (i+1) + '/' + candidates.length + (u ? (' @' + u) : '') + '…');
-                  try {
-                    var out = await sendNotifyForRow(tr);
-                    if (out && out.ok === true) ok++;
-                    else fail++;
-                  } catch (_) {
-                    fail++;
-                  }
-                  await sleep(900);
-                }
-                setStatus('Auto envio concluído. OK: ' + ok + ' | Falhas: ' + fail);
-                alert('Auto envio concluído.\nOK: ' + ok + '\nFalhas: ' + fail);
-              } finally {
-                autoNotifyBtn.disabled = false;
+              var params = new URLSearchParams();
+              params.set('order', (order === 'oldest') ? 'oldest' : 'recent');
+              if (limit > 0) params.set('limit', String(limit));
+              var candOut = await fetch('/api/painel/gerenciamento-seguidores/auto-notify-candidates?' + params.toString(), {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin'
+              }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+              var candData = candOut && candOut.json ? candOut.json : null;
+              if (!candData || candData.ok !== true) {
+                var cErr = (candData && candData.error) ? String(candData.error) : ('HTTP ' + String(candOut ? candOut.status : ''));
+                return alert('Erro ao buscar checados globais: ' + cErr);
               }
-            });
-          }
-
-          var fixCheckedBtn = el('followersFixCheckedBtn');
-          if (fixCheckedBtn) {
-            fixCheckedBtn.addEventListener('click', async function(){
-              var all = getAllRows();
-              var bad = [];
-              for (var i=0;i<all.length;i++){
-                var tr = all[i];
-                var u = String(tr.getAttribute('data-username') || '').trim();
-                if (!u) continue;
-                var checkedRaw = Number(tr.getAttribute('data-checkedatmsraw') || 0) || 0;
-                var purchaseMs = Number(tr.getAttribute('data-purchaseatms') || 0) || 0;
-                if (checkedRaw > 0 && purchaseMs > 0 && checkedRaw < purchaseMs) {
-                  bad.push({ username: u, purchaseAtMs: purchaseMs });
-                }
+              var candidates = Array.isArray(candData.candidates) ? candData.candidates : [];
+              if (!candidates.length) return alert('Nenhum pedido checado com queda para enviar no conjunto global.');
+              var budget = candData && candData.emailBudget ? candData.emailBudget : null;
+              var st0 = candData && candData.stats ? candData.stats : null;
+              var budgetTxt = '';
+              if (budget && typeof budget.remainingRecoveryToday === 'number') {
+                budgetTxt =
+                  '\n\nEmails disponíveis p/ envio (hoje): ' + String(budget.remainingRecoveryToday) +
+                  '\nPedidos pagos hoje: ' + String(budget.paidEmailCountToday || 0) +
+                  '\nPedidos gerados hoje: ' + String(budget.createdEmailCountToday || 0) +
+                  '\nRecuperação enviados hoje: ' + String(budget.recoveryEmailSentEventsToday || 0) +
+                  '\nReserva: ' + String(Math.round((Number(budget.reservePct || 0) * 100))) + '%';
               }
-              if (!bad.length) return alert('Nenhum checado inconsistente nesta página.');
-              if (!confirm('Corrigir ' + bad.length + ' registros checados com data anterior à compra? Isso vai limpar o checado atual para refazer a validação.')) return;
-              try { fixCheckedBtn.disabled = true; } catch (_) {}
-              setStatus('Corrigindo checados inconsistentes…');
+              var statsTxt = '';
+              if (st0 && typeof st0.eligible === 'number') {
+                statsTxt =
+                  '\n\nElegíveis no banco: ' + String(st0.eligible) +
+                  '\nJá notificados (Email+SMS): ' + String(st0.candidatesSkippedAlreadyNotified || 0) +
+                  '\nAbaixo de 100 (diferença): ' + String(st0.candidatesSkippedDropBelow100 || 0);
+              }
+              if (!confirm('Enviar Email+SMS automaticamente para ' + candidates.length + ' pedidos checados com queda?'+ statsTxt + budgetTxt + '\n\nObs: ao atingir o limite diário de email de recuperação, o sistema para (não envia SMS sem email).')) return;
               try {
-                var out = await fetch('/api/painel/gerenciamento-seguidores/fix-checked', {
+                autoNotifyBtn.disabled = true;
+                setStatus('Iniciando auto envio…');
+                var out = await fetch('/api/painel/gerenciamento-seguidores/auto-notify/start', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                  body: JSON.stringify({ items: bad })
+                  body: JSON.stringify({ limit: limit, order: (order === 'oldest') ? 'oldest' : 'recent' }),
+                  credentials: 'same-origin'
                 }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
                 var data = out && out.json ? out.json : null;
                 if (!data || data.ok !== true) {
                   var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
-                  setStatus('Falha ao corrigir: ' + err);
-                  return alert('Falha ao corrigir: ' + err);
+                  return alert('Falha ao iniciar auto envio: ' + err);
                 }
-                setStatus('Corrigidos: ' + String(data.fixedCount || 0));
+                renderAutoNotifyJob(data.job || null);
+                await pollAutoNotifyStatus();
+              } catch (e) {
+                alert('Falha ao iniciar auto envio: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { autoNotifyBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          var fixCheckedGlobalBtn = el('followersFixCheckedGlobalBtn');
+          if (fixCheckedGlobalBtn) {
+            fixCheckedGlobalBtn.addEventListener('click', async function(){
+              if (!confirm('Corrigir checados inconsistentes no banco inteiro? (mesmo dia ou antes da compra).')) return;
+              try { fixCheckedGlobalBtn.disabled = true; } catch (_) {}
+              setStatus('Corrigindo checados inconsistentes (global)…');
+              try {
+                var body = { limit: 0, order: 'recent' };
+                var out = await fetch('/api/painel/gerenciamento-seguidores/fix-checked-global', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify(body),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  setStatus('Falha ao corrigir global: ' + err);
+                  return alert('Falha ao corrigir global: ' + err);
+                }
+                setStatus('Corrigidos (global): ' + String(data.fixedCount || 0) + ' | Total inconsistentes: ' + String(data.total || 0));
                 window.location.reload();
               } catch (e) {
                 var em = e && e.message ? e.message : String(e);
-                setStatus('Falha ao corrigir: ' + em);
-                alert('Falha ao corrigir: ' + em);
+                setStatus('Falha ao corrigir global: ' + em);
+                alert('Falha ao corrigir global: ' + em);
               } finally {
-                try { fixCheckedBtn.disabled = false; } catch (_) {}
+                try { fixCheckedGlobalBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          var extendRefilBtn = el('followersExtendRefilExpiredBtn');
+          if (extendRefilBtn) {
+            extendRefilBtn.addEventListener('click', async function(){
+              if (!confirm('Estender em +30 dias a reposição (refil) de todo mundo que recebeu email de recuperação e está com reposição expirada?')) return;
+              try { extendRefilBtn.disabled = true; } catch (_) {}
+              setStatus('Estendendo reposição expirada (+30d)…');
+              try {
+                var out = await fetch('/api/painel/gerenciamento-seguidores/extend-refil-expired', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ days: 30 }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && (data.error || data.message)) ? String(data.error || data.message) : ('HTTP ' + String(out ? out.status : ''));
+                  setStatus('Falha ao estender reposição: ' + err);
+                  return alert('Falha ao estender reposição: ' + err);
+                }
+                var msg =
+                  'OK.\n' +
+                  'Pedidos (email recuperação sent): ' + String(data.ordersMatched || 0) + '\n' +
+                  'Pedidos expirados (calculado): ' + String(data.ordersExpiredCandidates || 0) + '\n' +
+                  'Links encontrados: ' + String(data.linksFound || 0) + '\n' +
+                  'Links expirados: ' + String(data.linksExpired || 0) + '\n' +
+                  'Atualizados: ' + String(data.updated || 0) + '\n' +
+                  'Links criados (faltantes): ' + String(data.createdMissingLinks || 0) + '\n' +
+                  'Pedidos vinculados (refilLinkId): ' + String(data.updatedOrders || 0);
+                alert(msg);
+                window.location.reload();
+              } catch (e) {
+                var em = e && e.message ? e.message : String(e);
+                setStatus('Falha ao estender reposição: ' + em);
+                alert('Falha ao estender reposição: ' + em);
+              } finally {
+                try { extendRefilBtn.disabled = false; } catch (_) {}
               }
             });
           }
@@ -1096,6 +1260,66 @@
               var raw = node.textContent || node.innerText || '';
               if (!raw) return null;
               return JSON.parse(raw);
+            } catch (_) {
+              return null;
+            }
+          }
+
+          function computeFollowersReportFromTable(){
+            try {
+              var rows = getAllRows();
+              var total = rows.length;
+              var checked = 0;
+              var ok = 0;
+              var withDrop = 0;
+              var buckets = [
+                { key: '0_10', label: '0–10%', count: 0 },
+                { key: '10_20', label: '10–20%', count: 0 },
+                { key: '20_30', label: '20–30%', count: 0 },
+                { key: '30_40', label: '30–40%', count: 0 },
+                { key: '40_50', label: '40–50%', count: 0 },
+                { key: '50_plus', label: '>50%', count: 0 }
+              ];
+              function bucketOf(v){
+                if (v > 50) return 5;
+                if (v >= 40) return 4;
+                if (v >= 30) return 3;
+                if (v >= 20) return 2;
+                if (v >= 10) return 1;
+                return 0;
+              }
+              for (var i=0;i<rows.length;i++){
+                var tr = rows[i];
+                var checkedMs = Number(tr.getAttribute('data-checkedatms') || 0) || 0;
+                if (checkedMs > 0) checked += 1;
+                var pctCell = tr.querySelector('.cell-pct');
+                var pctTxt = pctCell ? String(pctCell.textContent || '').trim() : '';
+                if (pctTxt === 'OK') {
+                  ok += 1;
+                } else if (pctTxt && pctTxt.indexOf('%') > -1) {
+                  var num = Number(pctTxt.replace('%','').replace(/\./g,'').replace(',', '.'));
+                  if (isFinite(num) && num > 0) {
+                    withDrop += 1;
+                    var idx = bucketOf(num);
+                    if (buckets[idx]) buckets[idx].count += 1;
+                  }
+                }
+              }
+              var base = Math.max(1, withDrop);
+              var bucketsOut = buckets.map(function(b){
+                return { key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 };
+              });
+              var notOk = Math.max(0, total - ok);
+              return {
+                total: total,
+                checked: checked,
+                checkedPct: total ? (Math.round((checked / total) * 1000) / 10) : 0,
+                withDrop: withDrop,
+                ok: ok,
+                notOk: notOk,
+                okPct: total ? (Math.round((ok / total) * 1000) / 10) : 0,
+                buckets: bucketsOut
+              };
             } catch (_) {
               return null;
             }
@@ -1153,14 +1377,21 @@
           }
 
           function renderFollowersReport(){
-            var report = loadFollowersReport() || {};
+            var report = loadFollowersReport();
+            var reportFromTable = computeFollowersReportFromTable();
+            if (!report || typeof report.total !== 'number') {
+              report = reportFromTable || {};
+            }
             var totalEl = el('followersReportTotal');
             var checkedEl = el('followersReportChecked');
             var checkedPctEl = el('followersReportCheckedPct');
             var dropEl = el('followersReportWithDrop');
             if (totalEl) totalEl.textContent = (report.total != null) ? String(report.total) : '-';
             if (checkedEl) checkedEl.textContent = (report.checked != null) ? (String(report.checked) + (report.total ? (' / ' + String(report.total)) : '')) : '-';
-            if (checkedPctEl) checkedPctEl.textContent = (typeof report.checkedPct === 'number') ? (String(report.checkedPct).replace('.', ',') + '% checados') : '';
+            if (checkedPctEl) {
+              var validTxt = (typeof report.checkedValid === 'number') ? (' | válidos: ' + String(report.checkedValid)) : '';
+              checkedPctEl.textContent = (typeof report.checkedPct === 'number') ? (String(report.checkedPct).replace('.', ',') + '% checados' + validTxt) : (validTxt ? validTxt.trim() : '');
+            }
             if (dropEl) dropEl.textContent = (report.withDrop != null) ? String(report.withDrop) : '-';
 
             var buckets = Array.isArray(report.buckets) ? report.buckets : [];
@@ -1185,6 +1416,31 @@
               }
               legend.innerHTML = html || '<div style="color:#6b7280;">Sem dados</div>';
             }
+
+            var okCount = Number(report.ok || 0) || 0;
+            var notOkCount = Number(report.notOk || 0) || 0;
+            var okTotal = okCount + notOkCount;
+            var okItems = [
+              { label: 'OK', count: okCount, pct: okTotal ? (Math.round((okCount / okTotal) * 1000) / 10) : 0, color: '#16a34a' },
+              { label: 'Não OK', count: notOkCount, pct: okTotal ? (Math.round((notOkCount / okTotal) * 1000) / 10) : 0, color: '#dc2626' }
+            ];
+            var okPie = el('followersReportOkPie');
+            drawPie(okPie, okItems);
+            var okLegend = el('followersReportOkLegend');
+            if (okLegend) {
+              var html2 = '';
+              for (var k=0;k<okItems.length;k++){
+                var it2 = okItems[k];
+                html2 += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0;">' +
+                  '<div style="display:flex;align-items:center;gap:8px;">' +
+                  '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + it2.color + ';"></span>' +
+                  '<span>' + it2.label + '</span>' +
+                  '</div>' +
+                  '<div style="color:#111827;font-weight:700;white-space:nowrap;">' + String(it2.count) + ' (' + String(it2.pct).replace('.', ',') + '%)</div>' +
+                  '</div>';
+              }
+              okLegend.innerHTML = html2 || '<div style="color:#6b7280;">Sem dados</div>';
+            }
           }
 
           var reportBtn = el('followersReportBtn');
@@ -1192,6 +1448,11 @@
           var reportCloseBtn = el('followersReportCloseBtn');
           function openReport(){
             if (!reportModal) return;
+            try {
+              if (reportModal.parentElement !== document.body) {
+                document.body.appendChild(reportModal);
+              }
+            } catch (_) {}
             renderFollowersReport();
             reportModal.style.display = 'flex';
           }
@@ -1212,8 +1473,103 @@
           var hideSelectedBtn = el('followersHideSelectedBtn');
           var unhideSelectedBtn = el('followersUnhideSelectedBtn');
           var selectAllEl = el('followersSelectAll');
+          var verifyFilteredPollTimer = null;
+          var verifyFilteredLastJob = null;
           function getAllRows(){
             return Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
+          }
+          function getAllUsernamesInRows(rows){
+            var out = [];
+            for (var i=0;i<(rows ? rows.length : 0);i++){
+              try {
+                var u = String(rows[i].getAttribute('data-username') || '').trim();
+                if (!u) continue;
+                u = u.replace(/^@/, '').toLowerCase().trim();
+                if (u) out.push(u);
+              } catch (_) {}
+            }
+            return out;
+          }
+          function parseRangeInput(raw, max){
+            try {
+              var s = String(raw || '').trim();
+              if (!s) return null;
+              var m = max || 0;
+              if (/^\d+$/.test(s)) {
+                var n = parseInt(s, 10);
+                if (!isFinite(n) || n <= 0) return null;
+                var end = Math.min(m || n, n);
+                return { startIndex: 0, endExclusive: end };
+              }
+              var parts = s.split('-').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+              if (parts.length !== 2) return null;
+              var a = parseInt(parts[0], 10);
+              var b = parseInt(parts[1], 10);
+              if (!isFinite(a) || !isFinite(b) || a <= 0 || b <= 0) return null;
+              var start = Math.min(a, b);
+              var end2 = Math.max(a, b);
+              var startIndex = Math.max(0, start - 1);
+              var endExclusive = Math.min(m || end2, end2);
+              if (endExclusive <= startIndex) return null;
+              return { startIndex, endExclusive };
+            } catch (_) {
+              return null;
+            }
+          }
+          async function startVerifyFilteredBackend(usernames){
+            if (!Array.isArray(usernames) || !usernames.length) return;
+            try {
+              if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
+              if (verifySelectedBtn) verifySelectedBtn.disabled = true;
+            } catch (_) {}
+            try {
+              setStatus('Iniciando verificação no backend…');
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/verify-filtered/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ usernames: usernames, force: '1' })
+              });
+              var data = await resp.json().catch(function(){ return null; });
+              if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
+              verifyFilteredLastJob = data.job || null;
+              await pollVerifyFilteredStatus();
+            } catch (e) {
+              setStatus('Erro ao iniciar verificação.');
+              alert('Erro: ' + (e && e.message ? e.message : e));
+              try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
+            }
+          }
+          async function pollVerifyFilteredStatus(){
+            try {
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/verify-filtered/status', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+              var data = await resp.json().catch(function(){ return null; });
+              var job = data && data.ok ? data.job : null;
+              verifyFilteredLastJob = job || verifyFilteredLastJob;
+              if (!job) return;
+              var done = Number(job.done || 0);
+              var total = Number(job.total || 0);
+              var ok = Number(job.ok || 0);
+              var failed = Number(job.failed || 0);
+              var lastU = job.lastUsername ? ('@' + String(job.lastUsername)) : '';
+              setStatus('Verificando (backend) ' + String(done) + '/' + String(total) + ' | ok=' + String(ok) + ' falhas=' + String(failed) + ' ' + lastU);
+              if (job.status === 'running') {
+                if (!verifyFilteredPollTimer) {
+                  verifyFilteredPollTimer = setInterval(function(){ pollVerifyFilteredStatus().catch(function(){}); }, 1500);
+                }
+              } else {
+                if (verifyFilteredPollTimer) { clearInterval(verifyFilteredPollTimer); verifyFilteredPollTimer = null; }
+                try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+                try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
+                if (job.status === 'done') {
+                  setStatus('Verificação concluída.');
+                  window.location.reload();
+                } else {
+                  setStatus('Verificação terminou com erro.');
+                }
+              }
+            } catch (_) {}
           }
           function getCheckedRows(){
             var rows = getAllRows();
@@ -1310,9 +1666,19 @@
           }
           if (verifyFilteredBtn) {
             verifyFilteredBtn.addEventListener('click', function(){
-              var rows = getAllRows();
-              if (!rows.length) return;
-              verifyRows(rows).catch(function(){});
+              try {
+                var rows = getAllRows();
+                if (!rows.length) return;
+                var allUsers = getAllUsernamesInRows(rows);
+                if (!allUsers.length) return;
+                var rangeRaw = prompt('Qual intervalo do filtro quer verificar? (ex: 1-50 ou 50)', '1-50');
+                if (rangeRaw == null) return;
+                var range = parseRangeInput(rangeRaw, allUsers.length);
+                if (!range) return alert('Intervalo inválido.');
+                var selected = allUsers.slice(range.startIndex, range.endExclusive);
+                if (!selected.length) return alert('Nenhum perfil no intervalo.');
+                startVerifyFilteredBackend(selected).catch(function(){});
+              } catch (_) {}
             });
           }
           if (verifySelectedBtn) {
@@ -1355,7 +1721,7 @@
           }
           async function pollGeneralStatus() {
             try {
-              var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/status', { headers: { 'Accept': 'application/json' } });
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/status', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
               var data = await resp.json().catch(function(){ return null; });
               if (!data || !data.ok) return;
               var job = data.job || null;
@@ -1393,18 +1759,13 @@
                 var url = isPaused ? '/api/painel/gerenciamento-seguidores/validate-general/resume' : '/api/painel/gerenciamento-seguidores/validate-general/start';
                 var body = (function(){
                   if (isPaused) return {};
-                  var limitEl = el('followersValidateGeneralLimit');
-                  var orderEl = el('followersValidateGeneralOrder');
-                  var limitStr = limitEl ? String(limitEl.value || '').trim() : '';
-                  var n = parseInt(limitStr, 10);
-                  var limit = (limitStr && isFinite(n) && n > 0) ? n : 0;
-                  var order = orderEl ? String(orderEl.value || '').trim().toLowerCase() : 'recent';
-                  return { dueDays: 2, limit: limit, order: order };
+                  return { dueDays: 2, limit: 0, order: 'recent' };
                 })();
                 var resp = await fetch(url, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                  body: JSON.stringify(body)
+                  body: JSON.stringify(body),
+                  credentials: 'same-origin'
                 });
                 var data = await resp.json().catch(function(){ return null; });
                 if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
@@ -1425,7 +1786,8 @@
                 var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/pause', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                  body: JSON.stringify({})
+                  body: JSON.stringify({}),
+                  credentials: 'same-origin'
                 });
                 var data = await resp.json().catch(function(){ return null; });
                 if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
@@ -1455,9 +1817,11 @@
                 var filledEl = el('followersFilledOnly');
                 var errorsEl = el('followersErrorsOnly');
                 var emailFailedEl = el('followersEmailFailedOnly');
+                var notifiedEl = el('followersNotifiedOnly');
                 var okEl = el('followersOkOnly');
                 var hiddenEl = el('followersHiddenOnly');
                 var warrantyEl = el('followersWarranty');
+                var minDiffEl = el('followersMinDiffAbs');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
                 var sdV = sdEl ? String(sdEl.value || '').trim() : '';
@@ -1480,9 +1844,11 @@
                 var filledV = filledEl && filledEl.checked ? '1' : '';
                 var errorsV = errorsEl && errorsEl.checked ? '1' : '';
                 var emailFailedV = emailFailedEl && emailFailedEl.checked ? '1' : '';
+                var notifiedV = notifiedEl && notifiedEl.checked ? '1' : '';
                 var okV = okEl && okEl.checked ? '1' : '';
                 var hiddenV = hiddenEl && hiddenEl.checked ? '1' : '';
                 var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
+                var minDiffV = minDiffEl ? String(minDiffEl.value || '').trim() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
                 if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
@@ -1493,10 +1859,13 @@
                 if (filledV) urlParams.set('filled', filledV); else urlParams.delete('filled');
                 if (errorsV) urlParams.set('errors', errorsV); else { urlParams.delete('errors'); urlParams.delete('err'); }
                 if (emailFailedV) urlParams.set('emailFailed', emailFailedV); else { urlParams.delete('emailFailed'); urlParams.delete('email_fail'); }
+                if (notifiedV) urlParams.set('notified', notifiedV); else urlParams.delete('notified');
                 if (okV) urlParams.set('ok', okV); else urlParams.delete('ok');
                 if (hiddenV) urlParams.set('hiddenOnly', hiddenV); else { urlParams.delete('hiddenOnly'); urlParams.delete('hidden'); }
                 if (warrantyV && warrantyV !== 'all') urlParams.set('warranty', warrantyV); else urlParams.delete('warranty');
                 if (warrantyV === 'life') urlParams.set('lifetime', '1'); else urlParams.delete('lifetime');
+                if (warrantyV === 'expired') urlParams.set('refilExpired', '1'); else { urlParams.delete('refilExpired'); urlParams.delete('refil_expired'); }
+                if (minDiffV) urlParams.set('minDiffAbs', minDiffV); else { urlParams.delete('minDiffAbs'); urlParams.delete('minDiff'); urlParams.delete('minDropAbs'); }
                 urlParams.set('page', '1');
                 var qs = urlParams.toString();
                 window.location.href = qs ? (base + '?' + qs) : base;
@@ -1531,6 +1900,12 @@
           var emailFailedEl2 = el('followersEmailFailedOnly');
           if (emailFailedEl2 && applyBtn) {
             emailFailedEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var notifiedEl2 = el('followersNotifiedOnly');
+          if (notifiedEl2 && applyBtn) {
+            notifiedEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -1658,29 +2033,16 @@
             var autoLimitRaw = parseInt(String(up.get('autoLimit') || ''), 10);
             var autoLimit = (isFinite(autoLimitRaw) && autoLimitRaw > 0) ? autoLimitRaw : null;
             if (autoVerify) {
-              var rows2 = Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
-              if (autoLimit != null) rows2 = rows2.slice(0, Math.max(0, Math.min(rows2.length, autoLimit)));
-              if (rows2.length) {
-                (async function(){
-                  try {
-                    if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
-                    if (verifySelectedBtn) verifySelectedBtn.disabled = true;
-                    if (runTodayBtn) runTodayBtn.disabled = true;
-                    for (var k=0;k<rows2.length;k++){
-                      setStatus('Verificando ' + (k+1) + ' de ' + rows2.length + '…');
-                      await refreshRow(rows2[k], false);
-                      await sleep(1500 + Math.floor(Math.random() * 450));
-                    }
-                    setStatus('Verificação concluída.');
-                  } catch (e) {
-                    setStatus('Erro na verificação.');
-                  } finally {
-                    try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
-                    try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
-                    try { if (runTodayBtn) runTodayBtn.disabled = false; } catch (_) {}
-                  }
-                })();
-              }
+              try {
+                up.delete('autoVerify');
+                up.delete('autoLimit');
+                var qs2 = up.toString();
+                history.replaceState(null, '', window.location.pathname + (qs2 ? ('?' + qs2) : ''));
+              } catch (_) {}
+              var rows2 = getAllRows();
+              var users2 = getAllUsernamesInRows(rows2);
+              if (autoLimit != null) users2 = users2.slice(0, Math.max(0, Math.min(users2.length, autoLimit)));
+              if (users2.length) startVerifyFilteredBackend(users2).catch(function(){});
             }
           } catch (_) {}
 
@@ -1697,6 +2059,7 @@
           if (filters && filters.filled) parts.push(`filled=1`);
           if (filters && filters.errors) parts.push(`errors=1`);
           if (filters && filters.emailFailed) parts.push(`emailFailed=1`);
+          if (filters && filters.notifiedOnly) parts.push(`notified=1`);
           if (filters && filters.ok) parts.push(`ok=1`);
           if (filters && filters.warranty) parts.push(`warranty=${encodeURIComponent(String(filters.warranty))}`);
           else if (filters && filters.lifetime) parts.push(`lifetime=1`);
@@ -1706,6 +2069,7 @@
           if (filters && filters.tipo) parts.push(`tipo=${encodeURIComponent(String(filters.tipo))}`);
           if (filters && typeof filters.minPct === 'number') parts.push(`minPct=${encodeURIComponent(String(filters.minPct))}`);
           if (filters && typeof filters.maxPct === 'number') parts.push(`maxPct=${encodeURIComponent(String(filters.maxPct))}`);
+          if (filters && typeof filters.minDiffAbs === 'number') parts.push(`minDiffAbs=${encodeURIComponent(String(filters.minDiffAbs))}`);
           if (filters && filters.sortBy) parts.push(`sortBy=${encodeURIComponent(String(filters.sortBy))}`);
           if (filters && filters.sortDir) parts.push(`sortDir=${encodeURIComponent(String(filters.sortDir))}`);
           parts.push(`page=${encodeURIComponent(String(targetPage || 1))}`);

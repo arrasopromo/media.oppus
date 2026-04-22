@@ -603,8 +603,8 @@ document.addEventListener('DOMContentLoaded', function() {
         id: 'section-likes-org',
         service: 'likes', 
         type: 'organicos', 
-        title: 'Curtidas Brasileiras Reais', 
-        desc: 'Curtidas de perfis brasileiros e reais para máxima credibilidade nas suas publicações.',
+        title: 'Curtidas Reais', 
+        desc: 'Curtidas de perfis reais para máxima credibilidade nas suas publicações.',
         tabela: tabelaCurtidas.organicos,
         badgeType: 'organicos'
       },
@@ -1073,7 +1073,7 @@ document.addEventListener('DOMContentLoaded', function() {
           const labels = {
               'mistos': 'Curtidas Mundiais',
               'curtidas_brasileiras': 'Curtidas Brasileiras',
-              'organicos': 'Curtidas Brasileiras Reais'
+              'organicos': 'Curtidas Reais'
           };
           return labels[tipo] || tipo;
       }

@@ -1047,7 +1047,7 @@
           ? [
               { key: 'mistos', label: 'Curtidas Mistas' },
               { key: 'curtidas_brasileiras', label: 'Curtidas Brasileiras' },
-              { key: 'organicos', label: 'Curtidas Brasileiras Reais' }
+              { key: 'organicos', label: 'Curtidas Reais' }
             ]
           : [
               { key: 'mistos', label: 'Seguidores Mistos' },
@@ -1254,7 +1254,7 @@
     const category = getServiceCategory();
     if (category === 'curtidas') {
       if (t === 'mistos') return 'Curtidas Mistas';
-      if (t === 'organicos') return 'Curtidas Brasileiras Reais';
+      if (t === 'organicos') return 'Curtidas Reais';
     }
     switch (t) {
       case 'mistos': return 'Seguidores Mistos';
@@ -1262,7 +1262,7 @@
       case 'organicos': return 'Seguidores brasileiros e reais';
       case 'seguidores_tiktok': return 'Seguidores';
       case 'curtidas_brasileiras': return 'Curtidas Brasileiras';
-      case 'curtidas_organicos': return 'Curtidas Brasileiras Reais';
+      case 'curtidas_organicos': return 'Curtidas Reais';
       case 'visualizacoes_reels': return 'Visualizações Reels';
       default: return String(t).replace(/_/g, ' ');
     }
@@ -1294,10 +1294,10 @@
           `;
         case 'organicos':
           return `
-            <p>Curtidas de perfis brasileiros e reais para máxima qualidade e credibilidade nas suas publicações.</p>
+            <p>Curtidas com alguns perfis brasileiros, mas exclusivamente perfis reais para máxima qualidade e credibilidade nas suas publicações.</p>
             <ul>
               <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-              <li>🇧🇷 Perfis brasileiros e reais para reforçar autoridade.</li>
+              <li>👤 Perfis reais para reforçar autoridade.</li>
               <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
             </ul>
           `;
@@ -2563,8 +2563,8 @@
         const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
         const cat = getServiceCategory();
         const label = (function(t){
-          if (cat === 'visualizacoes') return `Curtidas brasileiras reais (${qty})`;
-          if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+          if (cat === 'visualizacoes') return `Curtidas Reais (${qty})`;
+          if (t === 'organicos') return `Curtidas Reais (${qty})`;
           if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
           if (t === 'mistos') return `Curtidas mistas (${qty})`;
           return `Curtidas (${qty})`;
@@ -5685,7 +5685,7 @@
           if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.likes ? window.promoPricing.likes.price : '') || '';
           const tipo = String((document.getElementById('tipoSelect') && document.getElementById('tipoSelect').value) || '').toLowerCase();
           const label = (function(t){
-            if (t === 'organicos') return `Curtidas orgânicas (${qty})`;
+              if (t === 'organicos') return `Curtidas Reais (${qty})`;
             if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
             if (t === 'mistos') return `Curtidas mistas (${qty})`;
             return `Curtidas (${qty})`;
