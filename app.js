@@ -7373,10 +7373,11 @@ app.post('/api/paghiper/charge', async (req, res) => {
             profile_is_private
         } = req.body || {};
 
-        if (!value || typeof value !== 'number') {
+        const vNum = Number(value);
+        if (!Number.isFinite(vNum) || vNum <= 0) {
             return res.status(400).json({ error: 'invalid_value', message: 'Campo value (centavos) é obrigatório.' });
         }
-        if (value < 300) {
+        if (vNum < 300) {
             return res.status(400).json({ error: 'invalid_value_min', message: 'Para emitir Pix via PagHiper o valor mínimo é R$ 3,00.' });
         }
 
@@ -7422,7 +7423,8 @@ app.post('/api/paghiper/charge', async (req, res) => {
         })();
 
         let validatedPriceCents = null;
-        const vNum = Number(value);
+        let priceAdjusted = false;
+        let priceExpected = null;
         const _host = String(req.headers?.host || '').toLowerCase();
         const _origin = String(req.headers?.origin || '').toLowerCase();
         const _referer = String(req.headers?.referer || '').toLowerCase();
@@ -7437,6 +7439,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
                 validatedPriceCents = verification.matchedPrice;
             } else {
                 let acceptedByCoupon = false;
+                priceExpected = Number(verification.expectedPrice);
                 try {
                     const couponCodeRaw = addInfoMap['cupom'] || addInfoMap['coupon'] || '';
                     const couponCode = normalizeCouponCode(couponCodeRaw);
@@ -7459,10 +7462,15 @@ app.post('/api/paghiper/charge', async (req, res) => {
                     }
                 } catch (_) {}
                 if (!acceptedByCoupon) {
-                    return res.status(400).json({
-                        error: 'value_mismatch',
-                        message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.expectedPrice}).`
-                    });
+                    if (Number.isFinite(priceExpected) && priceExpected > 0) {
+                        validatedPriceCents = priceExpected;
+                        priceAdjusted = true;
+                    } else {
+                        return res.status(400).json({
+                            error: 'value_mismatch',
+                            message: `O valor do pedido (${value}) não corresponde ao preço oficial calculado pelo sistema (${verification.expectedPrice}).`
+                        });
+                    }
                 }
             }
         }
@@ -7591,7 +7599,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
             const u = picked || fallbackFromReq || 'https://agenciaoppus.site';
             return u.replace(/\/+$/, '');
         })();
-        const notificationUrl = 'https://server.trackcombo.com/webhook_new_integration/etkm1Zs1YoGm1QFebNfL/';
+        const notificationUrl = 'https://server.trackcombo.com/integration/MXERC7WMHA/mNa2IGe5qj7gaPyO67Ip/';
 
         const itemDescBase = sanitizeText(String(addInfoMap['pacote'] || addInfoMap['produto'] || comment || 'Checkout OPPUS')) || 'Checkout OPPUS';
         const paghiperTextParts = (function () {
@@ -7828,6 +7836,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
                 brCode: brCode || null,
                 qrCodeImage: qrCodeImage || null
             },
+            pricing: { requestedValueCents: vNum, expectedValueCents: priceExpected, chargedValueCents: validatedPriceCents, adjusted: priceAdjusted },
             raw: data || null
         });
     } catch (err) {
@@ -8722,6 +8731,7 @@ async function processOrderFulfillment(record, col, req) {
     const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
     const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && ( /brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo) );
     const isCurtidasMistasUpgradeEligible = isCurtidasBase && /^mistos$/i.test(String(tipo || '').trim());
+    const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
     let upgradeAdd = 0;
     if (hasUpgrade) {
         if (isFollowersUpgradeEligible) {
@@ -8739,6 +8749,10 @@ async function processOrderFulfillment(record, col, req) {
             const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
             const targetQtd = targets[qtdBase] || 0;
             upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+        } else if (isCurtidasOrganicosUpgradeEligible) {
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
         } else if (isViewsBase) {
             const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
             const targetQtd = targets[qtdBase] || 0;
@@ -8746,6 +8760,17 @@ async function processOrderFulfillment(record, col, req) {
         }
     }
     let qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
+    try {
+        const calc = {
+            baseQty: Number(qtdBase) || 0,
+            upgradeAdd: Number(upgradeAdd) || 0,
+            finalQty: Number(qtd) || 0,
+            hasUpgrade: !!hasUpgrade,
+            bumps: String(bumpsStr || ''),
+            computedAt: new Date().toISOString()
+        };
+        await col.updateOne(filter, { $set: { fulfillmentCalc: calc } });
+    } catch (_) {}
 
     const isFollowersOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
     const isCurtidasOrganicos = ((/(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo) && isCurtidasBase) || isCurtidasOrganicosStrict);
@@ -8847,74 +8872,73 @@ async function processOrderFulfillment(record, col, req) {
                     const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
                     const existingOrders = Array.isArray(record?.fama24h_multi?.orders) ? record.fama24h_multi.orders : [];
                     const allDone = existingOrders.length >= planFiltered.length && existingOrders.every(o => o && (o.orderId || o.status === 'duplicate'));
-                    if (allDone) return;
-
-                    const retryAfterIso = new Date(Date.now() - (25 * 1000)).toISOString();
-                    const lockUpdateMulti = await col.updateOne(
-                        {
-                            _id: record._id,
-                            'fama24h.orderId': { $exists: false },
-                            $or: [
-                                { 'fama24h_multi.status': { $exists: false } },
-                                { 'fama24h_multi.status': { $ne: 'processing' } },
-                                { 'fama24h_multi.attemptedAt': { $lt: retryAfterIso } },
-                                { 'fama24h_multi.attemptedAt': { $exists: false } }
-                            ]
-                        },
-                        {
-                            $set: {
-                                'fama24h_multi.status': 'processing',
-                                'fama24h_multi.attemptedAt': new Date().toISOString(),
-                                'fama24h_multi.requestPayload': { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
-                                'fama24h_multi.requestedAt': new Date().toISOString()
-                            }
-                        }
-                    );
-                    if (lockUpdateMulti.modifiedCount > 0) {
-                      const orders = [];
-                        for (const it of planFiltered) {
-                            const rawLink = it && it.link;
-                            const qtyForPost = Number(it && it.quantity) || 0;
-                            const linkForFama = sanitizeIgLink(rawLink);
-                            if (!linkForFama) {
-                                orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
-                                continue;
-                            }
-                            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyForPost) });
-                            try {
-                                const famaResp = await postFormWithRetry('https://fama24h.net/api/v2', payload.toString(), 25000, 3);
-                                const famaData = normalizeProviderResponseData(famaResp.data);
-                                const orderId = extractProviderOrderId(famaData);
-                                const hasErr = !!(famaData && (famaData.error || famaData.errors));
-                                const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
-                                const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
-                                let oid = orderId ? String(orderId) : null;
-                                if (!oid && isDup) {
-                                    const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
-                                    if (prev) oid = prev;
+                    if (!allDone) {
+                        const retryAfterIso = new Date(Date.now() - (25 * 1000)).toISOString();
+                        const lockUpdateMulti = await col.updateOne(
+                            {
+                                _id: record._id,
+                                'fama24h.orderId': { $exists: false },
+                                $or: [
+                                    { 'fama24h_multi.status': { $exists: false } },
+                                    { 'fama24h_multi.status': { $ne: 'processing' } },
+                                    { 'fama24h_multi.attemptedAt': { $lt: retryAfterIso } },
+                                    { 'fama24h_multi.attemptedAt': { $exists: false } }
+                                ]
+                            },
+                            {
+                                $set: {
+                                    'fama24h_multi.status': 'processing',
+                                    'fama24h_multi.attemptedAt': new Date().toISOString(),
+                                    'fama24h_multi.requestPayload': { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
+                                    'fama24h_multi.requestedAt': new Date().toISOString()
                                 }
-                                const st = oid ? (isDup && !orderId ? 'duplicate' : 'created') : (isDup ? 'duplicate' : (hasErr ? 'error' : 'unknown'));
-                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, response: famaData });
-                            } catch (err) {
-                                const errVal = err?.response?.data || err?.message || String(err);
-                                const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                                let oid = null;
-                                if (st === 'duplicate') {
-                                    const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
-                                    if (prev) oid = prev;
-                                }
-                                orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, error: errVal });
                             }
+                        );
+                        if (lockUpdateMulti.modifiedCount > 0) {
+                          const orders = [];
+                            for (const it of planFiltered) {
+                                const rawLink = it && it.link;
+                                const qtyForPost = Number(it && it.quantity) || 0;
+                                const linkForFama = sanitizeIgLink(rawLink);
+                                if (!linkForFama) {
+                                    orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                                    continue;
+                                }
+                                const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyForPost) });
+                                try {
+                                    const famaResp = await postFormWithRetry('https://fama24h.net/api/v2', payload.toString(), 25000, 3);
+                                    const famaData = normalizeProviderResponseData(famaResp.data);
+                                    const orderId = extractProviderOrderId(famaData);
+                                    const hasErr = !!(famaData && (famaData.error || famaData.errors));
+                                    const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
+                                    const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                                    let oid = orderId ? String(orderId) : null;
+                                    if (!oid && isDup) {
+                                        const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                                        if (prev) oid = prev;
+                                    }
+                                    const st = oid ? (isDup && !orderId ? 'duplicate' : 'created') : (isDup ? 'duplicate' : (hasErr ? 'error' : 'unknown'));
+                                    orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, response: famaData });
+                                } catch (err) {
+                                    const errVal = err?.response?.data || err?.message || String(err);
+                                    const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                                    let oid = null;
+                                    if (st === 'duplicate') {
+                                        const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
+                                        if (prev) oid = prev;
+                                    }
+                                    orders.push({ link: linkForFama, quantity: qtyForPost, orderId: oid, id: oid, status: st, error: errVal });
+                                }
+                            }
+                            const createdCount = orders.filter(o => o && o.orderId).length;
+                            const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                            const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                            await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                            try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                         }
-                        const createdCount = orders.filter(o => o && o.orderId).length;
-                        const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
-                        const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
-                        await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
-                        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                     }
-                    return;
-                }
+                } else {
                 const lockUpdate = await col.updateOne(
                     { 
                         _id: record._id, 
@@ -8997,6 +9021,7 @@ async function processOrderFulfillment(record, col, req) {
                         const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
                         await col.updateOne(filter, { $set: { fama24h: { status: st, error: errVal, requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, requestedAt: new Date().toISOString() } } });
                     }
+                }
                 }
             }
         }
@@ -9110,12 +9135,53 @@ async function processOrderFulfillment(record, col, req) {
                 const overall = createdCount === orders.length ? 'created' : (createdCount > 0 ? 'partial' : 'error');
                 await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, links: multiLinks, quantityPerPost: perPostQty, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
             }
-            return;
-        }
+        } else {
         const sanitizedLink = sanitizeLink(linkToSend);
         const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0;
         
-        if (canSendFS) {
+        const prevQtdFS = Number(record?.fornecedor_social?.requestPayload?.quantity || 0);
+        const shouldTopUp = !!alreadySentFS && prevQtdFS > 0 && Number(qtd) > prevQtdFS;
+        const topUpQty = shouldTopUp ? Math.max(0, Number(qtd) - prevQtdFS) : 0;
+        const alreadySentTopUp = !!(record && record.fornecedor_social_upgrade && (record.fornecedor_social_upgrade.orderId || record.fornecedor_social_upgrade.status === 'processing' || record.fornecedor_social_upgrade.status === 'created'));
+
+        if (canSendFS && shouldTopUp && topUpQty > 0 && !alreadySentTopUp) {
+            const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
+            const lockUpdateTopUp = await col.updateOne(
+                {
+                    _id: record._id,
+                    'fornecedor_social_upgrade.orderId': { $exists: false },
+                    $or: [
+                      { 'fornecedor_social_upgrade.status': { $ne: 'processing' } },
+                      { 'fornecedor_social_upgrade.attemptedAt': { $lt: retryAfterIso } },
+                      { 'fornecedor_social_upgrade.attemptedAt': { $exists: false } }
+                    ]
+                },
+                { $set: { 'fornecedor_social_upgrade.status': 'processing', 'fornecedor_social_upgrade.attemptedAt': new Date().toISOString(), 'fornecedor_social_upgrade.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: topUpQty }, 'fornecedor_social_upgrade.requestedAt': new Date().toISOString() } }
+            );
+
+            if (lockUpdateTopUp.modifiedCount > 0) {
+                const axios = require('axios');
+                const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(sanitizedLink), quantity: String(topUpQty) });
+                try {
+                    const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                    const dataFS = normalizeProviderResponseData(respFS.data);
+                    const orderIdFS = extractProviderOrderId(dataFS);
+                    const providerErrFS = (dataFS && (dataFS.error || (dataFS.data && dataFS.data.error) || (dataFS.response && dataFS.response.error))) || null;
+                    if (providerErrFS && !orderIdFS) {
+                        const errStr = typeof providerErrFS === 'string' ? providerErrFS : JSON.stringify(providerErrFS);
+                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        await col.updateOne(filter, { $set: { fornecedor_social_upgrade: { status: st, error: providerErrFS, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: topUpQty }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                    } else {
+                        await col.updateOne(filter, { $set: { fornecedor_social_upgrade: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: topUpQty }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                    }
+                } catch (err) {
+                    const errVal = err?.response?.data || err?.message || String(err);
+                    const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                    await col.updateOne(filter, { $set: { fornecedor_social_upgrade: { status: st, error: errVal, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: topUpQty }, requestedAt: new Date().toISOString() } } });
+                }
+            }
+        } else if (canSendFS && !alreadySentFS) {
             const minQtyFS = Number(process.env.FORNECEDOR_SOCIAL_MIN_QTY_CURTIDAS_ORGANICOS || 0);
             if (minQtyFS > 0 && qtd > 0 && qtd < minQtyFS) {
                 await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'min_quantity', 'fornecedor_social.error': { code: 'min_quantity', min: minQtyFS, quantity: qtd }, 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
@@ -9164,6 +9230,7 @@ async function processOrderFulfillment(record, col, req) {
             await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
         } else {
             await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': !keyFS ? { code: 'missing_api_key', env: 'FORNECEDOR_SOCIAL_API_KEY' } : { code: 'invalid_quantity' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+        }
         }
     }
     
@@ -9292,6 +9359,8 @@ async function processOrderFulfillment(record, col, req) {
                         }
                     }
                 }
+            } else {
+                await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': { code: 'missing_api_key', env: 'FAMA24H_API_KEY' }, 'fama24h_views.requestPayload': { service: 250, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
             }
         } else if (viewsQty > 0 && !viewsLink) {
             try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
@@ -9444,6 +9513,8 @@ async function processOrderFulfillment(record, col, req) {
                         await col.updateOne(filter, { $set: { 'worldsmm_comments.error': e4?.response?.data || e4?.message || String(e4), 'worldsmm_comments.status': 'error', 'worldsmm_comments.requestPayload': { service: serviceId, link: commentsLink, quantity: commentsQty } } });
                     }
                 }
+            } else {
+                await col.updateOne(filter, { $set: { 'worldsmm_comments.status': 'error', 'worldsmm_comments.error': { code: 'missing_api_key', env: 'WORLDSMM_API_KEY' }, 'worldsmm_comments.requestPayload': { service: Number(process.env.WORLDSMM_SERVICE_ID_COMMENTS || 90) || 90, link: commentsLink, quantity: commentsQty }, 'worldsmm_comments.requestedAt': new Date().toISOString() } });
             }
         } else if (commentsQty > 0 && !commentsLink) {
             try { console.warn('⚠️ comments_link_invalid', { commentsLinkRaw, sanitized: commentsLink }); } catch(_) {}
@@ -11229,6 +11300,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
           const isVisualizacoes = /(visualizacoes|views|reels)/i.test(tipo);
           const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && ( /brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo) );
+          const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
           let upgradeAdd = 0;
           if (hasUpgrade) {
             if (isFollowersUpgradeEligible) {
@@ -11255,6 +11327,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
             } else if (isCurtidasBrasileirasUpgradeEligible) {
                const map = { 150: 150, 500: 200, 1000: 1000 };
                upgradeAdd = map[qtdBase] || 0;
+            } else if (isCurtidasOrganicosUpgradeEligible) {
+               const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+               const targetQtd = targets[qtdBase] || 0;
+               upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
             }
           }
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
@@ -12062,12 +12138,17 @@ app.post('/api/services/dispatch', async (req, res) => {
   const bumpsStr0 = additionalInfoMap['order_bumps'] || (record.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
   const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
   const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && /^curtidas_brasileiras$/i.test(tipo);
+  const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
   const hasUpgrade = /(^|;)upgrade:\d+/i.test(String(bumpsStr0));
   let upgradeAdd = 0;
   if (hasUpgrade) {
     if (isCurtidasBrasileirasUpgradeEligible) {
       const map = { 150: 150, 500: 200, 1000: 1000 };
       upgradeAdd = map[qtdBase] || 0;
+    } else if (isCurtidasOrganicosUpgradeEligible) {
+      const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+      const targetQtd = targets[qtdBase] || 0;
+      upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
     } else if (isFollowersUpgradeEligible) {
       if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000;
       else {
@@ -13442,6 +13523,7 @@ app.post('/session/mark-paid', async (req, res) => {
         const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
         const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
         const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && /^curtidas_brasileiras$/i.test(tipo);
+        const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
         const sanitizeIgPostLink = (s) => {
           let v = String(s || '').replace(/[`\s]/g, '').trim();
           if (!v) return '';
@@ -13472,6 +13554,10 @@ app.post('/session/mark-paid', async (req, res) => {
           if (isCurtidasBrasileirasUpgradeEligible) {
             const map = { 150: 150, 500: 200, 1000: 1000 };
             upgradeAdd = map[qtdBase] || 0;
+          } else if (isCurtidasOrganicosUpgradeEligible) {
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
           } else if (isFollowersUpgradeEligible) {
             if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) upgradeAdd = 1000;
             else {
@@ -13728,6 +13814,28 @@ app.post('/session/mark-paid', async (req, res) => {
               if (modeX === 'life') {
                 setsX.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
                 setsX.warrantyMode = 'life';
+                setsX.warrantyDays = null;
+              } else if (modeX === '6m' || modeX === '12m') {
+                const monthsToAdd = modeX === '12m' ? 12 : 6;
+                const brtOffsetMs = 3 * 60 * 60 * 1000;
+                const brtYmdFromMs = (ms) => {
+                  const d = new Date(Number(ms || 0) - brtOffsetMs);
+                  return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+                };
+                const daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+                const addMonthsEndOfDayBrtIso = (baseMs, months) => {
+                  const base = brtYmdFromMs(baseMs);
+                  let y = base.y;
+                  let m = base.m + Number(months || 0);
+                  while (m > 12) { y += 1; m -= 12; }
+                  while (m < 1) { y -= 1; m += 12; }
+                  const maxDay = daysInMonth(y, m);
+                  const d = Math.min(base.d, maxDay);
+                  const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59, 999) + brtOffsetMs;
+                  return new Date(utcMs).toISOString();
+                };
+                setsX.expiresAt = addMonthsEndOfDayBrtIso(baseMsX, monthsToAdd);
+                setsX.warrantyMode = modeX;
                 setsX.warrantyDays = null;
               } else {
                 const expMsX = baseMsX + 30 * 24 * 60 * 60 * 1000;
@@ -16536,6 +16644,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: { $regex: '^seguidores$', $options: 'i' } } } },
             { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
             { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+            { additionalInfoPaid: { $elemMatch: { key: 'pacote', value: { $regex: '\\bseguidores\\b', $options: 'i' } } } },
+            { additionalInfo: { $elemMatch: { key: 'pacote', value: { $regex: '\\bseguidores\\b', $options: 'i' } } } },
+            { 'additionalInfoMapPaid.pacote': { $regex: '\\bseguidores\\b', $options: 'i' } },
+            { 'additionalInfoMap.pacote': { $regex: '\\bseguidores\\b', $options: 'i' } },
             { tipo: { $regex: 'seguidores', $options: 'i' } },
             { tipoServico: { $regex: 'seguidores', $options: 'i' } }
           ]
@@ -17870,6 +17982,100 @@ const fetchInstagramFollowersInfoRocketApi = async (username) => {
   }
 };
 
+const fetchInstagramFollowersInfoInstagramProxy = async (username) => {
+  const safeJsonResponse = (data) => {
+    try {
+      if (data == null) return null;
+      if (typeof data === 'string') return JSON.parse(data);
+      if (typeof data === 'object') return data;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const safeInt = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    const i = Math.trunc(n);
+    return Number.isFinite(i) ? i : null;
+  };
+
+  const timeoutMsRaw = Number(String(process.env.FOLLOWERS_MGMT_INSTAGRAM_PROXY_TIMEOUT_MS || process.env.REFIL2_UPSTREAM_TIMEOUT_MS || '12000').trim());
+  const timeoutMs = (Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0) ? Math.max(5000, Math.min(60000, Math.trunc(timeoutMsRaw))) : 12000;
+
+  const maxAttemptsRaw = Number(String(process.env.FOLLOWERS_MGMT_INSTAGRAM_PROXY_MAX_ATTEMPTS || process.env.REFIL2_UPSTREAM_MAX_ATTEMPTS || '2').trim());
+  const maxAttempts = (Number.isFinite(maxAttemptsRaw) && maxAttemptsRaw > 0) ? Math.max(1, Math.min(4, Math.trunc(maxAttemptsRaw))) : 2;
+
+  const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
+  const requestWithRetry = async (fn) => {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const resp = await fn();
+        return resp;
+      } catch (err) {
+        lastErr = err;
+        const code = String(err?.code || '').trim();
+        const msg = String(err?.message || String(err) || '').trim();
+        const retryable = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || /timeout/i.test(msg);
+        if (!retryable || attempt === maxAttempts) throw err;
+        await waitMs(250 * attempt);
+      }
+    }
+    throw lastErr || new Error('upstream_failed');
+  };
+
+  try {
+    const profileUrlCandidates = [
+      `https://www.instagram.com/${username}/`,
+      `https://instagram.com/${username}`,
+      `https://www.instagram.com/${username}`
+    ];
+    const profileParamCandidates = ['name_url', 'url', 'link'];
+
+    let lastStatus = null;
+    let lastData = null;
+    for (const paramName of profileParamCandidates) {
+      for (const profileUrl of profileUrlCandidates) {
+        const url = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+        const resp = await requestWithRetry(() => axios.get(url, { timeout: timeoutMs, validateStatus: () => true }));
+        lastStatus = resp && typeof resp.status === 'number' ? resp.status : null;
+        const json = safeJsonResponse(resp && resp.data);
+        lastData = json;
+        const first = Array.isArray(json) ? json[0] : json;
+
+        const followersCount = safeInt(
+          (first && (first.followerCount ?? first.follower_count ?? first.followers)) ??
+          (first && first.data && (first.data.followerCount ?? first.data.follower_count ?? first.data.followers))
+        );
+        if (followersCount == null) continue;
+
+        const isPrivateRaw =
+          (first && (first.isPrivate ?? first.is_private ?? first.private)) ??
+          (first && first.data && (first.data.isPrivate ?? first.data.is_private ?? first.data.private));
+        const isPrivate = (typeof isPrivateRaw === 'boolean')
+          ? isPrivateRaw
+          : (String(isPrivateRaw || '').trim().toLowerCase() === 'true' ? true : (String(isPrivateRaw || '').trim().toLowerCase() === 'false' ? false : null));
+
+        return {
+          success: true,
+          profile: {
+            username,
+            followersCount,
+            isPrivate,
+            checkedAt: new Date().toISOString(),
+            source: 'instagram_proxy'
+          }
+        };
+      }
+    }
+
+    return { success: false, error: `instagram_proxy_failed${lastStatus ? `_http_${lastStatus}` : ''}`, detail: lastData ? 'has_data' : null };
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) };
+  }
+};
+
 const followersMgmtGetCurrent = async (req, username, force) => {
   const { getCollection } = require('./mongodbClient');
   const monitorCol = await getCollection('followers_monitor');
@@ -17920,17 +18126,17 @@ const followersMgmtGetCurrent = async (req, username, force) => {
 
     let result = null;
     let profile = null;
-    let source = 'web_profile_info';
+    let source = 'instagram_proxy';
     let isPrivate = null;
     let followersCount = null;
     let error = null;
 
     for (let attempt = 1; attempt <= 1; attempt++) {
       try {
-        try { console.log(`👣 [followers-mgmt:${traceId}] @${username} attempt=${attempt} method=web_profile_info`); } catch (_) {}
-        result = await fetchInstagramFollowersInfo(username);
+        try { console.log(`👣 [followers-mgmt:${traceId}] @${username} attempt=${attempt} method=instagram_proxy`); } catch (_) {}
+        result = await fetchInstagramFollowersInfoInstagramProxy(username);
         profile = result && result.success ? result.profile : null;
-        source = profile ? String(profile.source || 'web_profile_info') : 'web_profile_info';
+        source = profile ? String(profile.source || 'instagram_proxy') : 'instagram_proxy';
         isPrivate = profile ? !!profile.isPrivate : null;
         followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
         error = result && !result.success ? (result.error || 'unknown_error') : null;
@@ -17940,7 +18146,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         }
       } catch (e) {
         error = e?.message || String(e);
-        try { console.warn(`⚠️ [followers-mgmt:${traceId}] @${username} fail method=web_profile_info attempt=${attempt}:`, error); } catch (_) {}
+        try { console.warn(`⚠️ [followers-mgmt:${traceId}] @${username} fail method=instagram_proxy attempt=${attempt}:`, error); } catch (_) {}
       }
       if (attempt < 1) await sleep(900 * attempt);
     }
@@ -18782,6 +18988,72 @@ app.get('/api/painel/gerenciamento-seguidores/recovery-email-audit', requireAdmi
     ]).toArray();
 
     return res.json({ ok: true, dayBrtKey: useKey, startIso, endIso, totalEvents, distinctOrders, byHour, sample });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/stats/pacote-seguidores-sem-categoria', requireAdmin, async (req, res) => {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { status: 'paid' }, { paymentStatus: 'paid' }, { paymentStatus: 'approved' }] };
+    const pacoteRegex = { $regex: '\\bseguidores\\b', $options: 'i' };
+    const hasPacoteSeguidores = {
+      $or: [
+        { additionalInfoPaid: { $elemMatch: { key: 'pacote', value: pacoteRegex } } },
+        { additionalInfo: { $elemMatch: { key: 'pacote', value: pacoteRegex } } },
+        { 'additionalInfoMapPaid.pacote': pacoteRegex },
+        { 'additionalInfoMap.pacote': pacoteRegex }
+      ]
+    };
+    const hasCategoriaSeguidores = {
+      $or: [
+        { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: { $regex: '^seguidores$', $options: 'i' } } } },
+        { 'additionalInfoMapPaid.categoria_servico': { $regex: '^seguidores$', $options: 'i' } },
+        { 'additionalInfoMap.categoria_servico': { $regex: '^seguidores$', $options: 'i' } }
+      ]
+    };
+    const hasTipoSeguidores = {
+      $or: [
+        { tipo: { $regex: 'seguidores', $options: 'i' } },
+        { tipoServico: { $regex: 'seguidores', $options: 'i' } }
+      ]
+    };
+
+    const query = { $and: [paidQuery, hasPacoteSeguidores, { $nor: [hasCategoriaSeguidores, hasTipoSeguidores] }] };
+    const total = await col.countDocuments(query);
+    const sampleDocs = await col.find(query, {
+      projection: {
+        _id: 1,
+        identifier: 1,
+        createdAt: 1,
+        paidAt: 1,
+        woovi: 1,
+        instauser: 1,
+        instagramUsername: 1,
+        tipo: 1,
+        tipoServico: 1,
+        additionalInfoMapPaid: 1,
+        additionalInfoMap: 1
+      }
+    }).sort({ createdAt: -1 }).limit(25).toArray();
+
+    const sample = (Array.isArray(sampleDocs) ? sampleDocs : []).map((d) => {
+      const pacote = (d.additionalInfoMapPaid && d.additionalInfoMapPaid.pacote) || (d.additionalInfoMap && d.additionalInfoMap.pacote) || null;
+      return {
+        id: String(d._id),
+        identifier: d.identifier || null,
+        username: d.instagramUsername || d.instauser || null,
+        tipo: d.tipoServico || d.tipo || null,
+        createdAt: d.createdAt || null,
+        paidAt: d.paidAt || (d.woovi && d.woovi.paidAt) || null,
+        pacote
+      };
+    });
+
+    return res.json({ ok: true, total, sample });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -26017,6 +26289,11 @@ app.post('/api/payment/confirm', async (req, res) => {
         if (isCurtidasBrasileirasUpgradeEligible) {
           const map = { 150: 150, 500: 200, 1000: 1000 };
           upgradeAdd = map[Number(resolvedQtd)] || 0;
+        } else if (isOrganicosCurtidasFS) {
+          const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+          const base = Number(resolvedQtd) || 0;
+          const targetQtd = targets[base] || 0;
+          upgradeAdd = targetQtd > base ? (targetQtd - base) : 0;
         } else if (isFollowersUpgradeEligible) {
           if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && Number(resolvedQtd) === 1000) upgradeAdd = 1000;
           else {
