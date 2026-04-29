@@ -2,6 +2,29 @@
 document.addEventListener('DOMContentLoaded', function() {
   const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
   const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
+  const serviceVisibility = (function(){
+    try {
+      const node = document.getElementById('oppusServiceVisibilityJson');
+      if (node) {
+        const raw = String(node.textContent || node.innerText || '').trim();
+        if (raw) return JSON.parse(raw);
+      }
+      const v = window.__oppusServiceVisibility;
+      if (!v || typeof v !== 'object') return { seguidores: [], curtidas: [], visualizacoes: [] };
+      return v;
+    } catch (_) {
+      return { seguidores: [], curtidas: [], visualizacoes: [] };
+    }
+  })();
+  const serviceCategoryKey = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+  const hiddenTipos = (function(){
+    try {
+      const arr = serviceVisibility && Array.isArray(serviceVisibility[serviceCategoryKey]) ? serviceVisibility[serviceCategoryKey] : [];
+      return arr.map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+    } catch (_) {
+      return [];
+    }
+  })();
 
   function getBrowserSessionId() {
       let bid = '';
@@ -376,6 +399,67 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function onlyDigits(v) { return String(v || '').replace(/\D+/g, ''); }
+
+  function generateValidCPF() {
+    const cpf = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += cpf[i] * (10 - i);
+    let firstDigit = 11 - (sum % 11);
+    if (firstDigit >= 10) firstDigit = 0;
+    cpf.push(firstDigit);
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += cpf[i] * (11 - i);
+    let secondDigit = 11 - (sum % 11);
+    if (secondDigit >= 10) secondDigit = 0;
+    cpf.push(secondDigit);
+    return cpf.join('').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  }
+
+  function getUserFingerprint() {
+    try {
+      const browserId = getBrowserSessionId();
+      const userAgent = navigator.userAgent || '';
+      const screen = `${window.screen.width}x${window.screen.height}`;
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      const telefone = document.getElementById('contactPhoneInput')?.value || '';
+      const email = document.getElementById('contactEmailInput')?.value || '';
+      const ig = document.getElementById('usernameCheckoutInput')?.value || '';
+      const fingerprintData = `${browserId}|${telefone}|${email}|${ig}|${userAgent}|${screen}|${timezone}`;
+      return btoa(fingerprintData).slice(0, 32);
+    } catch (_) {
+      return getBrowserSessionId();
+    }
+  }
+
+  function getCachedCPF() {
+    try {
+      const fingerprint = getUserFingerprint();
+      const cached = localStorage.getItem(`cpf_cache_${fingerprint}`);
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) return data.cpf;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function cacheCPF(cpf) {
+    try {
+      const fingerprint = getUserFingerprint();
+      const data = { cpf: cpf, timestamp: Date.now() };
+      localStorage.setItem(`cpf_cache_${fingerprint}`, JSON.stringify(data));
+    } catch (_) {}
+  }
+
+  function getOrGenerateCPF() {
+    const cachedCPF = getCachedCPF();
+    if (cachedCPF) return cachedCPF;
+    const newCPF = generateValidCPF();
+    cacheCPF(newCPF);
+    return newCPF;
+  }
 
   function maskBrPhone(v) {
     const s = onlyDigits(v).slice(0, 11);
@@ -1807,9 +1891,20 @@ document.addEventListener('DOMContentLoaded', function() {
     // Garantir visibilidade (pois vem oculto do HTML)
     tipoCards.style.display = 'grid';
     
+    try {
+      if (tipoSelect) {
+        const cur = String(tipoSelect.value || '').trim();
+        if (cur && hiddenTipos.indexOf(cur) >= 0) {
+          tipoSelect.value = '';
+          tipoSelect.dispatchEvent(new Event('change'));
+        }
+      }
+    } catch (_) {}
+
     const tipos = Object.keys(tabela).filter(t => {
       if (t === 'seguidores_tiktok') return false;
       if (isCurtidasContext && t === 'curtidas_brasileiras') return false;
+      if (hiddenTipos.indexOf(t) >= 0) return false;
       return true;
     });
 
@@ -3515,7 +3610,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  async function criarPixWoovi() {
+  async function criarPixPaghiper() {
     try { window.__oppus_pix_started = true; } catch(_) {}
     if (btnPedido) {
         btnPedido.disabled = true;
@@ -3587,13 +3682,13 @@ document.addEventListener('DOMContentLoaded', function() {
       const qtdEffective = qtd; 
 
       let correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      let wooviComment = 'Checkout OPPUS Instagram';
+      let paymentComment = 'Checkout OPPUS Instagram';
       try {
         const hn = (window.location && window.location.hostname) ? String(window.location.hostname).toLowerCase() : '';
         const isLocal = hn === 'localhost' || hn === '127.0.0.1';
         if (isLocal && Number(totalCents) > 0 && Number(totalCents) <= 100) {
           correlationID = 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-          wooviComment = 'teste pix';
+          paymentComment = 'teste pix';
         }
       } catch(_) {}
       
@@ -3601,7 +3696,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
       const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
 
-      const emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
+      let emailValue = contactEmailInput ? String(contactEmailInput.value || '').trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
+      if (!emailValue) throw new Error('Por favor, informe um e-mail válido.');
+
+      const cpfFromContact = document.getElementById('contactCpfInput');
+      const cpfFromCard = document.getElementById('cardHolderCpf');
+      const cpfRaw = String((cpfFromContact && cpfFromContact.value) ? cpfFromContact.value : (cpfFromCard && cpfFromCard.value) ? cpfFromCard.value : '').trim();
+      let cpfDigits = onlyDigits(cpfRaw);
+      if (cpfDigits.length !== 11) cpfDigits = onlyDigits(getOrGenerateCPF());
       
       // Username
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
@@ -3618,11 +3721,12 @@ document.addEventListener('DOMContentLoaded', function() {
       const payload = {
         correlationID,
         value: totalCents,
-        comment: wooviComment,
+        comment: paymentComment,
         customer: {
           name: 'Cliente Instagram',
           phone: phoneValue,
-          email: emailValue
+          email: emailValue,
+          cpf: cpfDigits
         },
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
@@ -3763,7 +3867,7 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
       if (splitErrMsg) throw new Error(splitErrMsg);
 
-      const resp = await fetch('/api/woovi/charge', {
+      const resp = await fetch('/api/paghiper/charge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -3772,7 +3876,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const data = await resp.json();
       if (!resp.ok) {
         const errMsg = (data && (data.message || (data.details && data.details.message) || data.error)) || 'Falha ao criar cobrança';
-        throw new Error(errMsg);
+        const err = new Error(errMsg);
+        err.code = data && data.error ? String(data.error) : '';
+        throw err;
       }
 
       // Renderização do PIX
@@ -3888,7 +3994,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const checkPaid = async () => {
           if (!chargeId) { await doCheckDb(); return; }
           try {
-            const stResp = await fetch(`/api/woovi/charge-status?id=${encodeURIComponent(chargeId)}`);
+            const stResp = await fetch(`/api/paghiper/charge-status?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`);
             const stData = await stResp.json();
             const status = stData?.charge?.status || stData?.status || '';
             const paidFlag = stData?.charge?.paid || stData?.paid || false;
@@ -3945,6 +4051,18 @@ document.addEventListener('DOMContentLoaded', function() {
        }
 
     } catch (err) {
+      try {
+        const code = String(err && err.code ? err.code : '').trim();
+        if (code === 'invalid_cpf' || code === 'missing_cpf') {
+          const cpfEl = document.getElementById('contactCpfInput') || document.getElementById('cardHolderCpf');
+          if (cpfEl) {
+            try { cpfEl.classList.add('input-error'); } catch (_) {}
+            try { cpfEl.classList.add('tutorial-highlight'); } catch (_) {}
+            try { cpfEl.focus(); } catch (_) {}
+            try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+          }
+        }
+      } catch (_) {}
       alert('Erro ao criar PIX: ' + (err?.message || err));
     } finally {
       if (btnPedido) {
@@ -4061,7 +4179,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   if (btnPedido) {
-    btnPedido.addEventListener('click', criarPixWoovi);
+    btnPedido.addEventListener('click', criarPixPaghiper);
   }
 
   const optionPixToggle = document.getElementById('optionPix');
@@ -4122,6 +4240,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
   if (contactPhoneInput) attachPhoneMask(contactPhoneInput);
   if (document.getElementById('checkoutPhoneInput')) attachPhoneMask(document.getElementById('checkoutPhoneInput'));
+  try {
+    const cpfContactEl = document.getElementById('contactCpfInput');
+    if (cpfContactEl) cpfContactEl.addEventListener('input', () => { cpfContactEl.value = maskCpf(cpfContactEl.value); });
+  } catch (_) {}
 
   // --- Step Navigation Listeners ---
   const backToStep1Btn = document.getElementById('backToStep1Btn');

@@ -192,11 +192,15 @@
             <div class="card-content">
               <h3 class="card-title">Tipo de serviço</h3>
               <div class="input-group" id="grupoTipo" style="position:relative;">
+                <%
+                  const _sv = (typeof serviceVisibility !== 'undefined' && serviceVisibility && typeof serviceVisibility === 'object') ? serviceVisibility : {};
+                  const _hidden = Array.isArray(_sv.curtidas) ? _sv.curtidas.map(s => String(s || '').trim()) : [];
+                %>
                 <select id="tipoSelect" class="select-input" style="flex:1;">
                   <option value="" selected>Selecione...</option>
-                  <option value="mistos">Curtidas Mistas</option>
-                  <option value="curtidas_brasileiras">Curtidas Brasileiras</option>
-                  <option value="organicos">Curtidas Reais</option>
+                  <% if (!_hidden.includes('mistos')) { %><option value="mistos">Curtidas Mistas</option><% } %>
+                  <% if (!_hidden.includes('curtidas_brasileiras')) { %><option value="curtidas_brasileiras">Curtidas Brasileiras</option><% } %>
+                  <% if (!_hidden.includes('organicos')) { %><option value="organicos">Curtidas Reais</option><% } %>
                 </select>
                 <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:none;">
                   <div class="tutorial-pop-step">2/4</div>
@@ -309,6 +313,11 @@
                       </div>
                       <label for="contactEmailInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Email <span style="color:#ef4444">*</span></label>
                       <input type="email" id="contactEmailInput" class="select-input" placeholder="Seu melhor e-mail" style="width:100%; border-radius: 8px;" />
+                   </div>
+                   <div style="margin-bottom: 1rem;">
+                      <label for="contactCpfInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">CPF <span style="color:#ef4444">*</span></label>
+                      <input type="text" id="contactCpfInput" class="select-input" placeholder="000.000.000-00" maxlength="14" style="width:100%; border-radius: 8px;" />
+                      <div style="margin-top:6px; font-size:0.85rem; color:#6b7280;">Obrigatório para pagamento via Pix (PagHiper).</div>
                    </div>
                    <div style="margin-bottom: 2rem;">
                       <label for="contactPhoneInput" style="display:block; margin-bottom:0.5rem; color:var(--text-primary); font-weight:500;">Telefone <span style="color:#ef4444">*</span></label>
@@ -701,6 +710,7 @@
 
    <script src="/js/main.js"></script>
    <script src="/js/why-us.js"></script>
+   <script type="application/json" id="oppusServiceVisibilityJson"><%- JSON.stringify(serviceVisibility || { seguidores: [], curtidas: [], visualizacoes: [] }).replace(/</g, '\\u003c') %></script>
    <script src="/js/servicos-instagram.js?v=<%= Date.now() %>"></script>
    <div id="toastContainer" class="toast-container"></div>
   <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">

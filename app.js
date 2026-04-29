@@ -556,12 +556,63 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
     );
     const instagramUser = instagramRaw.replace(/^@+/, '').trim();
     const saudacaoNome = instagramUser ? `@${instagramUser}` : (safe(customer.name) || 'Cliente');
-    const qtd = Number(record && (record.qtd || record.quantidade || 0)) || 0;
+    const parseIntLoose = (v) => {
+        const s = safe(v);
+        if (!s) return 0;
+        const n0 = Number(s);
+        if (Number.isFinite(n0) && n0 > 0) return Math.floor(n0);
+        const m = s.match(/\d+/);
+        const n1 = m ? Number(m[0]) : 0;
+        return Number.isFinite(n1) && n1 > 0 ? Math.floor(n1) : 0;
+    };
     const valueLabel = centsToBRL(record && record.valueCents);
 
+    const categoriaKey0 = normalizeKey(getAdd('categoria_servico') || (record && (record.categoriaServico || record.categoria)) || '');
+    const tipoKey0 = normalizeKey(getAdd('tipo_servico') || (record && (record.tipoServico || record.tipo)) || '');
+    const qtdBase = (function () {
+        const q0 = parseIntLoose(getAdd('quantidade') || getAdd('qtd') || (record && (record.quantidade || record.qtd)) || '');
+        return q0 > 0 ? q0 : 0;
+    })();
+    const bumpsStr0 = safe(getAdd('order_bumps') || (record?.additionalInfoMapPaid?.order_bumps) || (record?.additionalInfoMap?.order_bumps) || '');
+    const bumps0 = (function () {
+        const text = String(bumpsStr0 || '');
+        const parts = text.split(';').map(p => p.trim()).filter(Boolean);
+        const res = { views: 0, likes: 0, comments: 0, upgrade: 0 };
+        for (const p of parts) {
+            const [kRaw, vRaw] = p.split(':');
+            const k = String(kRaw || '').toLowerCase().trim();
+            const v = Number(String(vRaw || '').replace(/[^\d]/g, '')) || 0;
+            if (k === 'views') res.views = v;
+            else if (k === 'likes') res.likes = v;
+            else if (k === 'comments') res.comments = v;
+            else if (k === 'upgrade') res.upgrade = v || 1;
+        }
+        return res;
+    })();
+    const upgradeAdd0 = (function () {
+        if (!bumps0.upgrade || !qtdBase) return 0;
+        const cat = String(categoriaKey0 || '').toLowerCase().trim();
+        const tipo = String(tipoKey0 || '').toLowerCase().trim();
+        if (cat === 'visualizacoes' || cat === 'views' || tipo === 'visualizacoes_reels') {
+            const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
+            const targetQtd = targets[qtdBase] || 0;
+            return targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+        }
+        if (cat === 'curtidas' || cat === 'likes' || /curtidas/.test(tipo)) {
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            return targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+        }
+        if ((tipo === 'brasileiros' || tipo === 'organicos') && qtdBase === 1000) return 1000;
+        const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
+        return map[qtdBase] || 0;
+    })();
+    const qtdTotal = Math.max(0, Number(qtdBase) + Number(upgradeAdd0));
+    const qtd = qtdTotal || qtdBase || 0;
+
     const serviceLabel = (function () {
-        const categoria = normalizeKey(getAdd('categoria_servico') || (record && (record.categoriaServico || record.categoria)) || '');
-        const tipoRaw = normalizeKey(getAdd('tipo_servico') || (record && (record.tipoServico || record.tipo)) || '');
+        const categoria = categoriaKey0;
+        const tipoRaw = tipoKey0;
         const tipo = (function () {
             const t = String(tipoRaw || '').trim();
             if (!t) return '';
@@ -611,6 +662,24 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         return t.charAt(0).toLowerCase() + t.slice(1);
     })();
     const productTitle = `${qtd || 0} ${serviceLabelLower} - ${valueLabel}`;
+    const extraLines = (function () {
+        const lines = [];
+        if (upgradeAdd0 > 0) lines.push(`Upgrade: +${upgradeAdd0} (total ${qtdTotal || qtdBase})`);
+        if (bumps0.likes > 0) {
+            const tipo = String(tipoKey0 || '').toLowerCase().trim();
+            const likesLabel = (function () {
+                if (tipo === 'mistos') return 'curtidas mistas';
+                if (tipo === 'organicos' || tipo === 'curtidas_organicos' || tipo === 'curtidas_reais') return 'curtidas reais';
+                return 'curtidas brasileiras';
+            })();
+            lines.push(`${bumps0.likes} ${likesLabel}`);
+        }
+        if (bumps0.views > 0) lines.push(`${bumps0.views} visualizações`);
+        if (bumps0.comments > 0) lines.push(`${bumps0.comments} comentários`);
+        return lines;
+    })();
+    const extraTextBlock = extraLines.length ? ['Extras:', ...extraLines].join('\n') : '';
+    const extraHtmlBlock = extraLines.length ? `<div style="margin:10px 0 0 0;font-size:13px;line-height:1.6;color:#111827;"><strong>Extras:</strong><br/>${extraLines.map(escapeHtml).join('<br/>')}</div>` : '';
     const identifier = safe(record && (record.identifier || (record.expay && (record.expay.transactionId || record.expay.identifier)) || (record.woovi && record.woovi.identifier) || ''));
     const correlationID = safe(record && record.correlationID);
     const baseUrl = (function () {
@@ -659,6 +728,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         '',
         `Produto: ${productTitle}`,
         `QTD: ${qtd || 0}`,
+        extraTextBlock,
         `Valor: ${valueLabel}`,
         '',
         'Pagamento via Pix:',
@@ -716,6 +786,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
                   <td align="right" style="padding:10px;border:1px solid #e5e7eb;font-weight:700;">${escapeHtml(valueLabel)}</td>
                 </tr>
               </table>
+              ${extraHtmlBlock}
 
               <div style="margin:18px 0 8px 0;font-size:14px;font-weight:700;color:#166534;">Pagamento via Pix</div>
               <div style="margin:0 0 10px 0;font-size:13px;color:#111827;">Valor do Pix: <strong>${escapeHtml(valueLabel)}</strong></div>
@@ -1170,14 +1241,43 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
                 }
                 return res;
             };
-            const bumps = parseBumps(getAdd('order_bumps') || '');
+            const bumpsStr = String(getAdd('order_bumps') || '').trim();
+            const bumps = parseBumps(bumpsStr);
+            const hasUpgrade = !!bumps.upgrade;
+            const upgradeAdd = (function () {
+                if (!hasUpgrade || !qtyNum) return 0;
+                if (categoriaKey === 'visualizacoes' || categoriaKey === 'views' || tipoKey === 'visualizacoes_reels') {
+                    const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
+                    const targetQtd = targets[qtyNum] || 0;
+                    return targetQtd > qtyNum ? (targetQtd - qtyNum) : 0;
+                }
+                if (categoriaKey === 'curtidas' || categoriaKey === 'likes' || /curtidas/.test(tipoKey)) {
+                    const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+                    const targetQtd = targets[qtyNum] || 0;
+                    return targetQtd > qtyNum ? (targetQtd - qtyNum) : 0;
+                }
+                if ((/brasileiros/i.test(tipoKey) || /organicos/i.test(tipoKey)) && qtyNum === 1000) return 1000;
+                const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
+                return map[qtyNum] || 0;
+            })();
+            const qtyTotal = Math.max(0, Number(qtyNum) + Number(upgradeAdd));
 
             const lines = [];
-            if (qtyNum && tipoLabel) lines.push(`${qtyNum} ${tipoLabel}`);
+            if (qtyTotal && tipoLabel) lines.push(`${qtyTotal} ${tipoLabel}`);
             else if (qtyNum) lines.push(String(qtyNum));
             else if (tipoLabel) lines.push(tipoLabel);
 
-            if (bumps.likes > 0) lines.push(`${bumps.likes} curtidas brasileiras`);
+            if (upgradeAdd > 0) lines.push(`upgrade: +${upgradeAdd} (base ${qtyNum} → total ${qtyTotal})`);
+            if (bumps.likes > 0) {
+                const likesLabel = (function () {
+                    if (tipoKey === 'mistos') return 'curtidas mistas';
+                    if (tipoKey === 'organicos' || tipoKey === 'curtidas_organicos' || tipoKey === 'curtidas_reais') return 'curtidas reais';
+                    if (tipoKey === 'curtidas_brasileiras') return 'curtidas brasileiras';
+                    if (categoriaKey === 'curtidas') return 'curtidas';
+                    return 'curtidas brasileiras';
+                })();
+                lines.push(`${bumps.likes} ${likesLabel}`);
+            }
             if (bumps.views > 0) lines.push(`${bumps.views} visualizações`);
             if (bumps.comments > 0) lines.push(`${bumps.comments} comentários`);
 
@@ -3688,11 +3788,22 @@ app.get('/pix', async (req, res) => {
 });
 
 // Página Engajamento (duplicada da checkout até plataforma)
-app.get('/engajamento', (req, res) => {
+app.get('/engajamento', async (req, res) => {
   console.log('📈 Acessando rota /engajamento');
+  let serviceVisibility = { seguidores: [], curtidas: [], visualizacoes: [] };
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const doc = settingsCol ? await settingsCol.findOne({ _id: 'service_visibility' }, { projection: { _id: 0, values: 1 } }) : null;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    const hidden = (values && values.hidden && typeof values.hidden === 'object') ? values.hidden : {};
+    const pick = (k) => (Array.isArray(hidden[k]) ? hidden[k].map(x => String(x || '').trim()).filter(Boolean) : []);
+    serviceVisibility = { seguidores: pick('seguidores'), curtidas: pick('curtidas'), visualizacoes: pick('visualizacoes') };
+  } catch (_) {}
   res.render('engajamento', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query 
+    queryParams: req.query,
+    serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
@@ -3704,11 +3815,22 @@ app.get('/engajamento', (req, res) => {
 });
 
 // Página Engajamento Novo (com seletor de contexto e cards unificados)
-app.get('/engajamento-novo', (req, res) => {
+app.get('/engajamento-novo', async (req, res) => {
   console.log('✨ Acessando rota /engajamento-novo');
+  let serviceVisibility = { seguidores: [], curtidas: [], visualizacoes: [] };
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const doc = settingsCol ? await settingsCol.findOne({ _id: 'service_visibility' }, { projection: { _id: 0, values: 1 } }) : null;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    const hidden = (values && values.hidden && typeof values.hidden === 'object') ? values.hidden : {};
+    const pick = (k) => (Array.isArray(hidden[k]) ? hidden[k].map(x => String(x || '').trim()).filter(Boolean) : []);
+    serviceVisibility = { seguidores: pick('seguidores'), curtidas: pick('curtidas'), visualizacoes: pick('visualizacoes') };
+  } catch (_) {}
   res.render('engajamento-novo', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query
+    queryParams: req.query,
+    serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento-novo:', err.message);
@@ -3728,6 +3850,30 @@ const trackPageView = (req, path) => {
   } catch (_) {}
 };
 
+const loadServiceVisibility = async () => {
+  const fallback = { seguidores: [], curtidas: [], visualizacoes: [] };
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const doc = settingsCol ? await settingsCol.findOne({ _id: 'service_visibility' }, { projection: { _id: 0, values: 1 } }) : null;
+    const hasDoc = !!doc;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    const hidden = (values && values.hidden && typeof values.hidden === 'object') ? values.hidden : null;
+    const pick = (k) => {
+      const arr = hidden && Array.isArray(hidden[k]) ? hidden[k] : [];
+      return arr.map(x => String(x || '').trim()).filter(Boolean);
+    };
+    const out = {
+      seguidores: pick('seguidores'),
+      curtidas: pick('curtidas'),
+      visualizacoes: pick('visualizacoes')
+    };
+    return out;
+  } catch (_) {
+    return fallback;
+  }
+};
+
 // Página Serviços (três serviços iguais ao principal)
 app.get('/servicos', (req, res) => {
   console.log('🧩 Acessando rota /servicos');
@@ -3742,7 +3888,7 @@ app.get('/servicos', (req, res) => {
 });
 
 // Página Serviços Instagram (cópia do checkout)
-app.get('/servicos-instagram', (req, res) => {
+app.get('/servicos-instagram', async (req, res) => {
   console.log('📸 Acessando rota /servicos-instagram');
   const rawServico = String((req && req.query && (req.query.servico || req.query.service || req.query.tipo)) || '').trim().toLowerCase();
   const pvPath = '/servicos-instagram';
@@ -3751,9 +3897,11 @@ app.get('/servicos-instagram', (req, res) => {
   } else {
     trackPageView(req, pvPath);
   }
+  const serviceVisibility = await loadServiceVisibility();
   res.render('servicos-instagram', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query 
+    queryParams: req.query,
+    serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos-instagram:', err.message);
@@ -3765,12 +3913,14 @@ app.get('/servicos-instagram', (req, res) => {
 });
 
 // Página Serviços Visualizações (baseada em servicos-curtidas)
-app.get('/servicos-visualizacoes', (req, res) => {
+app.get('/servicos-visualizacoes', async (req, res) => {
   console.log('▶️ Acessando rota /servicos-visualizacoes');
   trackPageView(req, '/servicos-visualizacoes');
+  const serviceVisibility = await loadServiceVisibility();
   res.render('servicos-visualizacoes', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query 
+    queryParams: req.query,
+    serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos-visualizacoes:', err.message);
@@ -3782,12 +3932,14 @@ app.get('/servicos-visualizacoes', (req, res) => {
 });
 
 // Página Serviços Curtidas (estrutura similar à de serviços Instagram)
-app.get('/servicos-curtidas', (req, res) => {
+app.get('/servicos-curtidas', async (req, res) => {
   console.log('❤️ Acessando rota /servicos-curtidas');
   trackPageView(req, '/servicos-curtidas');
+  const serviceVisibility = await loadServiceVisibility();
   res.render('servicos-curtidas', { 
     PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query 
+    queryParams: req.query,
+    serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos-curtidas:', err.message);
@@ -7599,7 +7751,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
             const u = picked || fallbackFromReq || 'https://agenciaoppus.site';
             return u.replace(/\/+$/, '');
         })();
-        const notificationUrl = 'https://server.trackcombo.com/integration/MXERC7WMHA/mNa2IGe5qj7gaPyO67Ip/';
+        const notificationUrl = `${baseUrl}/api/paghiper/notification`;
 
         const itemDescBase = sanitizeText(String(addInfoMap['pacote'] || addInfoMap['produto'] || comment || 'Checkout OPPUS')) || 'Checkout OPPUS';
         const paghiperTextParts = (function () {
@@ -8032,6 +8184,15 @@ app.post('/api/paghiper/notification', async (req, res) => {
         if (!transactionId || !notificationId) {
             return res.status(400).json({ ok: false, error: 'missing_notification_fields' });
         }
+
+        try {
+            const tcUrl = String(process.env.TRACKCOMBO_NOTIFICATION_URL || 'https://server.trackcombo.com/integration/MXERC7WMHA/mNa2IGe5qj7gaPyO67Ip/').trim();
+            if (tcUrl) {
+                Promise.resolve()
+                    .then(() => axios.post(tcUrl, body, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 }))
+                    .catch(() => {});
+            }
+        } catch (_) {}
 
         const resp = await axios.post('https://pix.paghiper.com/invoice/notification/', { token, apiKey, transaction_id: transactionId, notification_id: notificationId }, {
             headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -15388,6 +15549,36 @@ app.post('/api/refil/preview', async (req, res) => {
         const ip = String(req.realIP || req.ip || '').trim();
         const ua = String(req.get('User-Agent') || req.headers['user-agent'] || '').trim();
         const referer = String(refererRaw || '').trim();
+        const parseIntLoose = (v) => {
+          try {
+            if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+            const s = String(v == null ? '' : v).trim();
+            if (!s) return null;
+            const n0 = Number(s);
+            if (Number.isFinite(n0)) return Math.trunc(n0);
+            const digits = s.replace(/[^\d-]/g, '');
+            if (!digits) return null;
+            const n1 = Number(digits);
+            return Number.isFinite(n1) ? Math.trunc(n1) : null;
+          } catch (_) {
+            return null;
+          }
+        };
+        const basePayload = (payload && typeof payload === 'object') ? payload : {};
+        const summary = (function () {
+          try {
+            const c = (basePayload && typeof basePayload.computed === 'object') ? basePayload.computed : null;
+            const d = (basePayload && typeof basePayload.data === 'object') ? basePayload.data : null;
+            const initial = parseIntLoose(c?.initial ?? d?.quantidade_inicial ?? d?.quantidadeInicial ?? d?.qtd_inicial ?? d?.initial);
+            const current = parseIntLoose(c?.current ?? d?.quantidade_atual ?? d?.quantidadeAtual ?? d?.qtd_atual ?? d?.current);
+            const drop = parseIntLoose(c?.deficit ?? d?.quantidade_de_queda ?? d?.quantidadeQueda ?? d?.qtd_queda ?? d?.drop);
+            if (initial == null && current == null && drop == null) return null;
+            const finalQty = (current != null && drop != null) ? Math.max(0, current + drop) : (initial != null ? initial : null);
+            return { initial, current, drop, final: finalQty };
+          } catch (_) {
+            return null;
+          }
+        })();
         const doc = Object.assign(
           {
             requestedAt: new Date(),
@@ -15397,8 +15588,9 @@ app.post('/api/refil/preview', async (req, res) => {
             ua,
             referer
           },
-          (payload && typeof payload === 'object') ? payload : {}
+          basePayload
         );
+        if (summary) doc.summary = summary;
         (async () => {
           try {
             const { getCollection } = require('./mongodbClient');
@@ -15411,7 +15603,7 @@ app.post('/api/refil/preview', async (req, res) => {
     };
 
     if (shouldWebhook) {
-      const MIN_DROP = 50;
+      const MIN_DROP = 100;
       const debugMode = (() => {
         try {
           if (req && req.query && String(req.query.debug || '') === '1') return true;
@@ -17406,6 +17598,39 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             return 0;
           }
         };
+        const normalizeUsernameKey = (u) => {
+          const s0 = String(u || '').trim();
+          if (!s0) return '';
+          return s0.replace(/^@+/, '').toLowerCase().trim();
+        };
+        const computeWarrantyFromLink = (d) => {
+          try {
+            const linkMode = String(d?.warrantyMode || '').trim().toLowerCase();
+            const linkExpMs = safeDateMs(d?.expiresAt);
+            const isLifetime = (linkMode === 'life') || (linkExpMs && linkExpMs >= safeDateMs('2099-01-01T00:00:00.000Z'));
+            if (isLifetime) return { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' };
+            const daysRaw = Number(d?.warrantyDays);
+            const days = Number.isFinite(daysRaw) ? daysRaw : null;
+            let mode = linkMode;
+            if (mode !== '6m' && mode !== '12m') {
+              if (days != null && days >= 330) mode = '12m';
+              else if (days != null && days >= 170) mode = '6m';
+            }
+            const left = (() => {
+              try {
+                if (!linkExpMs) return null;
+                const ymd = brtYmdFromMs(linkExpMs);
+                const expDayNum = dayNumFromYmd(ymd.y, ymd.m, ymd.d);
+                return Math.max(0, expDayNum - nowDayNumBrt);
+              } catch (_) {
+                return null;
+              }
+            })();
+            return { isLifetime: false, mode: mode || null, daysLeft: (typeof left === 'number' ? left : null), expiresAt: linkExpMs ? new Date(linkExpMs).toISOString() : null };
+          } catch (_) {
+            return null;
+          }
+        };
 
         const byOrder = new Map();
         for (const d of (tlDocs || [])) {
@@ -17423,7 +17648,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (!best || !bestId) continue;
           const linkMode = String(d?.warrantyMode || '').trim().toLowerCase();
           const linkExpMs = safeDateMs(d?.expiresAt);
+          const linkIsLifetime = (linkMode === 'life') || (linkExpMs && linkExpMs >= safeDateMs('2099-01-01T00:00:00.000Z'));
           const anyLifetime = (() => {
+            if (linkIsLifetime) return true;
             for (const oid of linked) {
               const info = orderInfoById.get(String(oid));
               if (info && info.eligible && info.warranty && info.warranty.isLifetime) return true;
@@ -17432,7 +17659,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           })();
           const computed = anyLifetime
             ? { isLifetime: true, mode: 'life', daysLeft: null, expiresAt: '2099-12-31T23:59:59.999Z' }
-            : (linkExpMs && linkMode !== 'life' && linkExpMs < safeDateMs('2099-01-01T00:00:00.000Z')
+            : (linkExpMs && !linkIsLifetime && linkExpMs < safeDateMs('2099-01-01T00:00:00.000Z')
               ? (() => {
                 const ymd = brtYmdFromMs(linkExpMs);
                 const expDayNum = dayNumFromYmd(ymd.y, ymd.m, ymd.d);
@@ -17452,7 +17679,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             if (!orderIdSet.has(oid)) continue;
             const info = orderInfoById.get(String(oid));
             if (!info || !info.eligible) continue;
-            const allowLifetime = !!(info?.warranty?.isLifetime);
+            const allowLifetime = !!(info?.warranty?.isLifetime || linkIsLifetime);
             byOrder.set(oid, mergeWarranty(byOrder.get(oid), computed, allowLifetime));
           }
         }
@@ -17473,6 +17700,67 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           r.refilDaysLeft = (typeof merged.daysLeft === 'number') ? merged.daysLeft : null;
           r.refilExpiresAt = merged.expiresAt || null;
         }
+
+        try {
+          const usernameKeys = Array.from(new Set(allRows.map(r => normalizeUsernameKey(r?.username)).filter(Boolean)));
+          if (usernameKeys.length) {
+            const tlByUserDocs = await tlCol.find(
+              { purpose: 'refil', $or: [{ instauser: { $in: usernameKeys } }, { instausers: { $in: usernameKeys } }] },
+              { projection: { _id: 0, instauser: 1, instausers: 1, createdAt: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1 } }
+            ).limit(4000).toArray();
+
+            const pickBetter = (a, b) => {
+              if (!a) return b;
+              if (!b) return a;
+              const wa = computeWarrantyFromLink(a);
+              const wb = computeWarrantyFromLink(b);
+              if (wa?.isLifetime && !wb?.isLifetime) return a;
+              if (wb?.isLifetime && !wa?.isLifetime) return b;
+              const ea = safeDateMs(a?.expiresAt);
+              const eb = safeDateMs(b?.expiresAt);
+              if (ea && eb && ea !== eb) return (eb > ea) ? b : a;
+              const ca = safeDateMs(a?.createdAt);
+              const cb = safeDateMs(b?.createdAt);
+              if (ca && cb && ca !== cb) return (cb > ca) ? b : a;
+              return a;
+            };
+
+            const bestLinkByUser = new Map();
+            for (const d of (tlByUserDocs || [])) {
+              const keys = new Set();
+              const k1 = normalizeUsernameKey(d?.instauser);
+              if (k1) keys.add(k1);
+              const arr = Array.isArray(d?.instausers) ? d.instausers : [];
+              for (const x of arr) {
+                const k = normalizeUsernameKey(x);
+                if (k) keys.add(k);
+              }
+              if (!keys.size) continue;
+              for (const k of keys) {
+                bestLinkByUser.set(k, pickBetter(bestLinkByUser.get(k), d));
+              }
+            }
+
+            for (const r of allRows) {
+              const u = normalizeUsernameKey(r?.username);
+              if (!u) continue;
+              const linkDoc = bestLinkByUser.get(u);
+              if (!linkDoc) continue;
+              const linkWarranty = computeWarrantyFromLink(linkDoc);
+              if (!linkWarranty) continue;
+              const allowLifetime = !!linkWarranty.isLifetime;
+              const merged = mergeWarranty(
+                { isLifetime: !!r.refilIsLifetime, mode: r.refilWarrantyMode || null, daysLeft: (typeof r.refilDaysLeft === 'number' ? r.refilDaysLeft : null), expiresAt: r.refilExpiresAt || null },
+                linkWarranty,
+                allowLifetime
+              );
+              r.refilIsLifetime = !!merged.isLifetime;
+              r.refilWarrantyMode = merged.mode || r.refilWarrantyMode || null;
+              r.refilDaysLeft = (typeof merged.daysLeft === 'number') ? merged.daysLeft : null;
+              r.refilExpiresAt = merged.expiresAt || null;
+            }
+          }
+        } catch (_) {}
       }
     } catch (_) {}
 
@@ -17620,6 +17908,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       let checkedValid = 0;
       let withDrop = 0;
       let ok = 0;
+      const warrantyThresholdAbs = 100;
+      const warrantyAgg = {
+        life: { key: 'life', label: 'Vitalício', ok: 0, nok: 0, total: 0 },
+        '6m': { key: '6m', label: '6 meses', ok: 0, nok: 0, total: 0 },
+        '12m': { key: '12m', label: '1 ano', ok: 0, nok: 0, total: 0 }
+      };
       const buckets = [
         { key: '0_10', label: '0–10%', min: 0, max: 10, count: 0 },
         { key: '10_20', label: '10–20%', min: 10, max: 20, count: 0 },
@@ -17638,6 +17932,15 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         if (resultado != null && current != null && current >= resultado) ok += 1;
         const pct = (r && typeof r.diffPct === 'number') ? r.diffPct : null;
         const abs = (r && typeof r.diffAbs === 'number') ? r.diffAbs : null;
+        if (abs != null && Number.isFinite(abs)) {
+          const mode = String(r && r.refilWarrantyMode ? r.refilWarrantyMode : '').trim().toLowerCase();
+          const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : ''));
+          if (wKey && warrantyAgg[wKey]) {
+            warrantyAgg[wKey].total += 1;
+            if (abs >= warrantyThresholdAbs) warrantyAgg[wKey].nok += 1;
+            else warrantyAgg[wKey].ok += 1;
+          }
+        }
         if (abs != null && abs > 0 && pct != null && Number.isFinite(pct) && pct > 0) {
           withDrop += 1;
           const v = Math.max(0, pct);
@@ -17653,6 +17956,21 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const base = Math.max(1, withDrop);
       const bucketsOut = buckets.map(b => ({ key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 }));
       const notOk = Math.max(0, total - ok);
+      const warrantyGroups = Object.keys(warrantyAgg).map(k => warrantyAgg[k]).map(g => {
+        const tot = Math.max(0, Number(g.total || 0) || 0);
+        const okC = Math.max(0, Number(g.ok || 0) || 0);
+        const nokC = Math.max(0, Number(g.nok || 0) || 0);
+        const denom = Math.max(1, tot);
+        return {
+          key: g.key,
+          label: g.label,
+          total: tot,
+          ok: okC,
+          nok: nokC,
+          okPct: Math.round((okC / denom) * 1000) / 10,
+          nokPct: Math.round((nokC / denom) * 1000) / 10
+        };
+      });
       return {
         total,
         checked,
@@ -17662,7 +17980,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         ok,
         notOk,
         okPct: total ? (Math.round((ok / total) * 1000) / 10) : 0,
-        buckets: bucketsOut
+        buckets: bucketsOut,
+        warrantyDiffReport: { thresholdAbs: warrantyThresholdAbs, groups: warrantyGroups }
       };
     })();
 
@@ -19858,9 +20177,10 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
       );
     };
 
-    const emailOut = { ok: false, error: null };
+    const emailOut = { ok: false, status: '', error: null };
     if (email) {
       if (isOrganicosNotify) {
+        emailOut.status = 'skipped_tipo_organicos';
         emailOut.error = 'skipped_tipo_organicos';
         await persistEmailNotify({ status: 'skipped_tipo_organicos', error: emailOut.error, response: '', increaseCount: false });
       } else
@@ -19901,18 +20221,22 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
       const allowedForRecoveryToday = Math.max(0, Math.floor(availableAfterPedidos * (1 - reservePct)));
       const remainingRecoveryToday = Math.max(0, allowedForRecoveryToday - Number(recoveryEmailSentEventsToday || 0));
       if (remainingRecoveryToday <= 0) {
+        emailOut.status = 'skipped_daily_cap';
         emailOut.error = 'daily_recovery_limit_reached';
-        await persistEmailNotify({ status: 'skipped_daily_cap', error: emailOut.error, response: `paid_today=${paidEmailCountToday};created_today=${createdEmailCountToday};sent_today=${recoveryEmailSentToday};max=${dailyMax};reserve=${reservePct}`, increaseCount: false });
+        await persistEmailNotify({ status: 'skipped_daily_cap', error: emailOut.error, response: `paid_today=${paidEmailCountToday};created_today=${createdEmailCountToday};sent_today=${recoveryEmailSentEventsToday};max=${dailyMax};reserve=${reservePct}`, increaseCount: false });
       } else
       if (prevEmailCount >= 2) {
+        emailOut.status = 'skipped_limit';
         emailOut.error = 'email_limit_reached';
         await persistEmailNotify({ status: 'skipped_limit', error: emailOut.error, response: '', increaseCount: false });
       } else if (prevEmailDay && prevEmailDay === todayBrtKey) {
+        emailOut.status = 'skipped_same_day';
         emailOut.error = 'email_already_sent_today';
         await persistEmailNotify({ status: 'skipped_same_day', error: emailOut.error, response: '', increaseCount: false });
       } else {
         const transporter = getRecoverySmtpTransporter() || getSmtpTransporter();
         if (!transporter) {
+          emailOut.status = 'failed';
           emailOut.error = 'smtp_not_configured';
           await persistEmailNotify({ status: 'failed', error: emailOut.error, response: '', increaseCount: false });
         } else {
@@ -19932,13 +20256,16 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
             const hasRejected = rejected.length > 0;
             if (targetAccepted || (accepted.length > 0 && !hasRejected)) {
               emailOut.ok = true;
+              emailOut.status = 'sent';
               await persistEmailNotify({ status: 'sent', error: '', response: responseText, increaseCount: true });
             } else {
+              emailOut.status = 'failed';
               emailOut.error = hasRejected ? 'email_denied_or_rejected' : 'email_send_not_accepted';
               await persistEmailNotify({ status: 'failed', error: emailOut.error, response: responseText, increaseCount: false });
             }
           } catch (sendErr) {
             const sendMsg = safe(sendErr && (sendErr.response || sendErr.message || String(sendErr)));
+            emailOut.status = 'failed';
             emailOut.error = sendMsg ? `email_send_failed:${sendMsg}` : 'email_send_failed';
             await persistEmailNotify({ status: 'failed', error: emailOut.error, response: sendMsg, increaseCount: false });
           }
@@ -19946,19 +20273,24 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
       }
       }
     } else {
+      emailOut.status = 'failed';
       emailOut.error = 'missing_email';
       await persistEmailNotify({ status: 'failed', error: emailOut.error, response: '', increaseCount: false });
     }
 
-    const smsOut = { ok: false, error: null };
+    const smsOut = { ok: false, status: '', error: null };
     const mexToken = safe(process.env.MEX10_TOKEN || process.env.MEX10_SHORTCODE_TOKEN);
     if (emailOut && emailOut.error === 'daily_recovery_limit_reached') {
+      smsOut.status = 'skipped_daily_email_cap';
       smsOut.error = 'skipped_daily_email_cap';
     } else if (!mexToken) {
+      smsOut.status = 'failed';
       smsOut.error = 'missing_mex10_token';
     } else if (!phoneDigits) {
+      smsOut.status = 'failed';
       smsOut.error = 'missing_phone';
     } else if (prevSmsSentAt) {
+      smsOut.status = 'skipped_already_sent';
       smsOut.error = 'sms_already_sent';
     } else {
       const alreadyToPhone = await col.findOne(
@@ -19970,6 +20302,7 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
         { projection: { _id: 1 } }
       );
       if (alreadyToPhone) {
+        smsOut.status = 'skipped_already_sent_to_phone';
         smsOut.error = 'sms_already_sent_to_phone';
       } else {
       const msg = 'Oppus: Voce perdeu seguidores. Enviamos no seu e-mail cadastrado na compra as orientacoes para recuperar seus seguidores.';
@@ -19984,6 +20317,7 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
       const errFlag = !!(data && data.errors && data.errors.error === true);
       if (resp.status >= 200 && resp.status < 300 && success && !errFlag) {
         smsOut.ok = true;
+        smsOut.status = 'sent';
         await col.updateOne(
           { _id: new ObjectId(orderIdRawSafe) },
           {
@@ -19992,6 +20326,7 @@ async function followersMgmtNotifyRecoveryForOrder(req, { orderIdRaw, usernameIn
           }
         );
       } else {
+        smsOut.status = 'failed';
         smsOut.error = (data && data.errors && data.errors.description) ? safe(data.errors.description) : ('HTTP ' + String(resp.status));
       }
       }
@@ -20749,11 +21084,13 @@ function followersMgmtSerializeAutoNotifyJob(jobRaw) {
     done: job.done,
     ok: job.ok,
     failed: job.failed,
+    skipped: job.skipped || 0,
     emailSkippedDaily: job.emailSkippedDaily || 0,
     stoppedReason: job.stoppedReason || null,
     lastUsername: job.lastUsername || null,
     lastOrderId: job.lastOrderId || null,
-    lastError: job.lastError || null
+    lastError: job.lastError || null,
+    skippedByReason: job.skippedByReason || null
   };
 }
 
@@ -20784,7 +21121,9 @@ function followersMgmtKickAutoNotifyJob() {
           const ok = !!(body && body.ok === true);
           const emailErr = body && body.email && body.email.ok !== true && body.email.error ? String(body.email.error) : '';
           const smsErr = body && body.sms && body.sms.ok !== true && body.sms.error ? String(body.sms.error) : '';
-          if (emailErr === 'daily_recovery_limit_reached') {
+          const emailStatus = body && body.email && body.email.status ? String(body.email.status) : '';
+          const smsStatus = body && body.sms && body.sms.status ? String(body.sms.status) : '';
+          if (emailErr === 'daily_recovery_limit_reached' || emailStatus === 'skipped_daily_cap') {
             job.emailSkippedDaily = Number(job.emailSkippedDaily || 0) + 1;
             job.stoppedReason = 'daily_recovery_limit_reached';
             job.status = 'done';
@@ -20792,8 +21131,38 @@ function followersMgmtKickAutoNotifyJob() {
             try { console.log(`📨 [followers-auto-notify] stop job=${String(job.id || '')} daily cap i=${job.done + 1}/${targets.length} ms=${Date.now() - stepStartedAtMs}`); } catch (_) {}
             break;
           }
-          if (ok) job.ok += 1;
-          else job.failed += 1;
+          const isSkippable = (function () {
+            const e = String(body && body.error ? body.error : '').trim();
+            if (e === 'hidden_profile') return true;
+            if (e === 'drop_not_computable') return true;
+            if (e === 'drop_below_100') return true;
+            const st = String(emailStatus || '').trim().toLowerCase();
+            if (st.startsWith('skipped')) return true;
+            const se = String(emailErr || '').trim().toLowerCase();
+            if (se === 'missing_email') return true;
+            if (se === 'email_already_sent_today') return true;
+            if (se === 'email_limit_reached') return true;
+            if (se === 'skipped_tipo_organicos') return true;
+            const sst = String(smsStatus || '').trim().toLowerCase();
+            if (sst.startsWith('skipped')) return true;
+            const sse = String(smsErr || '').trim().toLowerCase();
+            if (sse === 'missing_phone') return true;
+            if (sse === 'sms_already_sent') return true;
+            if (sse === 'sms_already_sent_to_phone') return true;
+            if (sse === 'skipped_daily_email_cap') return true;
+            return false;
+          })();
+
+          if (ok) {
+            job.ok += 1;
+          } else if (isSkippable) {
+            job.skipped = Number(job.skipped || 0) + 1;
+            const key = String(emailStatus || emailErr || smsStatus || smsErr || (body && body.error ? body.error : 'skipped')).trim() || 'skipped';
+            if (!job.skippedByReason) job.skippedByReason = {};
+            job.skippedByReason[key] = Number(job.skippedByReason[key] || 0) + 1;
+          } else {
+            job.failed += 1;
+          }
           if (!ok) job.lastError = String(body && body.error ? body.error : (emailErr || smsErr || 'failed'));
           try { console.log(`📨 [followers-auto-notify] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${u || ''} oid=${oid || ''} ms=${Date.now() - stepStartedAtMs}`); } catch (_) {}
         } catch (e) {
@@ -20851,11 +21220,13 @@ app.post('/api/painel/gerenciamento-seguidores/auto-notify/start', requireAdmin,
       done: 0,
       ok: 0,
       failed: 0,
+      skipped: 0,
       emailSkippedDaily: 0,
       stoppedReason: null,
       lastUsername: null,
       lastOrderId: null,
       lastError: null,
+      skippedByReason: {},
       targets
     };
     global.followersMgmtAutoNotifyJob = job;
@@ -22577,6 +22948,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     const view = String(req.query.view || 'dashboard');
     const sessionSelectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
+    if (view === 'service_types') {
+      const serviceVisibility = await loadServiceVisibility();
+      const defs = {
+        seguidores: [
+          { key: 'mistos', label: 'Seguidores Mistos' },
+          { key: 'brasileiros', label: 'Seguidores Brasileiros' },
+          { key: 'organicos', label: 'Seguidores brasileiros e reais' }
+        ],
+        curtidas: [
+          { key: 'mistos', label: 'Curtidas Mistas' },
+          { key: 'curtidas_brasileiras', label: 'Curtidas Brasileiras' },
+          { key: 'organicos', label: 'Curtidas Reais' }
+        ],
+        visualizacoes: [
+          { key: 'visualizacoes_reels', label: 'Visualizações Reels' }
+        ]
+      };
+      return res.render('painel', { view: 'service_types', serviceVisibility, serviceTypeDefs: defs });
+    }
 
     const paidStatusRegex = '\\b(pago|paid|settled|captured|authorized|succeeded|aprovado|confirmado)\\b';
     const paidQuery = {
@@ -24734,7 +25124,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       try {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('refil2_requests');
-        const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(200).toArray();
+        const lim = view === 'refil2' ? 5000 : 200;
+        const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(lim).toArray();
         refil2Requests = Array.isArray(rows) ? rows : [];
         try {
           const idStrs = Array.from(new Set(refil2Requests.map(r => String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s))));
@@ -24773,13 +25164,19 @@ app.get('/painel', requireAdmin, async (req, res) => {
           }
         } catch (_) {}
         try {
+          const usersAll = new Set(
+            refil2Requests
+              .filter(r => r && r.username)
+              .map(r => String(r.username || '').trim().replace(/^@+/, '').toLowerCase())
+              .filter(Boolean)
+          );
           const neededUsers = new Set(
             refil2Requests
               .filter(r => r && r.username && !(r.purchaseAtLabel || r.purchaseAt))
               .map(r => String(r.username || '').trim().replace(/^@+/, '').toLowerCase())
               .filter(Boolean)
           );
-          if (neededUsers.size) {
+          if (usersAll.size) {
             const ordersCol = await getCollection('checkout_orders');
             const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }];
             const followersOr = [
@@ -24799,6 +25196,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
                   createdAt: 1,
                   paidAt: 1,
                   woovi: 1,
+                  tipo: 1,
+                  tipoServico: 1,
                   instagramUsername: 1,
                   instauser: 1,
                   instagramUser: 1,
@@ -24852,6 +25251,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
               const t = dateStr ? new Date(dateStr).getTime() : 0;
               return Number.isFinite(t) ? t : 0;
             };
+            const resolveFollowersTipoKey = (o) => {
+              const rawTipo = String(extractInfoAny(o, 'tipo_servico') || o?.tipoServico || o?.tipo || '').toLowerCase().trim();
+              const rawCategoria = String(extractInfoAny(o, 'categoria_servico') || '').toLowerCase().trim();
+              const catOk = (!rawCategoria) || rawCategoria === 'seguidores' || rawCategoria === 'followers';
+              if (!catOk) return '';
+              if (/curtidas|visualiz|views|reels|coment/.test(rawTipo)) return '';
+              if (rawTipo === 'mistos' || rawTipo.includes('misto')) return 'mistos';
+              if (rawTipo === 'brasileiros' || rawTipo.includes('brasileir')) return 'brasileiros';
+              return '';
+            };
             const formatDateBR = (ms) => {
               const d = new Date(Number(ms || 0));
               if (!Number.isFinite(d.getTime())) return '';
@@ -24865,19 +25274,33 @@ app.get('/painel', requireAdmin, async (req, res) => {
             };
 
             const purchaseByUser = new Map();
+            const lastTipoByUser = new Map();
             for (const o of orderDocs) {
               const u = resolveUsername(o);
-              if (!u || !neededUsers.has(u)) continue;
-              if (purchaseByUser.has(u)) continue;
-              const t = resolveDateMs(o);
-              if (!t) continue;
-              purchaseByUser.set(u, { iso: new Date(t).toISOString(), label: formatDateBR(t) });
-              if (purchaseByUser.size >= neededUsers.size) break;
+              if (!u || !usersAll.has(u)) continue;
+              if (!lastTipoByUser.has(u)) {
+                const t = resolveFollowersTipoKey(o);
+                if (t) lastTipoByUser.set(u, t);
+              }
+              if (neededUsers.size && neededUsers.has(u) && !purchaseByUser.has(u)) {
+                const t = resolveDateMs(o);
+                if (t) purchaseByUser.set(u, { iso: new Date(t).toISOString(), label: formatDateBR(t) });
+              }
+              if (neededUsers.size) {
+                if (purchaseByUser.size >= neededUsers.size && lastTipoByUser.size >= usersAll.size) break;
+              } else if (lastTipoByUser.size >= usersAll.size) {
+                break;
+              }
             }
 
             for (const r of refil2Requests) {
               const u = String(r && r.username ? r.username : '').trim().replace(/^@+/, '').toLowerCase();
               if (!u) continue;
+              const t = lastTipoByUser.get(u);
+              if (t) {
+                r.lastFollowersTipo = t;
+                r.lastFollowersTipoLabel = (t === 'mistos') ? 'Mistos' : (t === 'brasileiros' ? 'Brasileiros' : t);
+              }
               if (r.purchaseAtLabel || r.purchaseAt) continue;
               const p = purchaseByUser.get(u);
               if (!p) continue;
@@ -24987,6 +25410,755 @@ app.get('/painel', requireAdmin, async (req, res) => {
     res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, vitalicioPurchases });
   } catch (e) {
     res.status(500).send(e.toString());
+  }
+});
+
+app.post('/api/painel/service-visibility', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const normalizeArr = (v) => {
+      const arr = Array.isArray(v) ? v : [];
+      return Array.from(new Set(arr.map(x => String(x || '').trim()).filter(Boolean)));
+    };
+    const nextHidden = (body && body.hidden && typeof body.hidden === 'object') ? body.hidden : {};
+    const values = {
+      hidden: {
+        seguidores: normalizeArr(nextHidden.seguidores),
+        curtidas: normalizeArr(nextHidden.curtidas),
+        visualizacoes: normalizeArr(nextHidden.visualizacoes)
+      }
+    };
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    await settingsCol.updateOne(
+      { _id: 'service_visibility' },
+      { $set: { values, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    return res.json({ ok: true, values });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/audit', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const itemsRaw = Array.isArray(body.items) ? body.items : [];
+    const items = [];
+    for (const it of itemsRaw) {
+      if (!it || typeof it !== 'object') continue;
+      const id = String(it.id || it._id || '').trim();
+      if (!/^[a-fA-F0-9]{24}$/.test(id)) continue;
+      let currentFollowers = null;
+      if (typeof it.currentFollowers === 'number' && Number.isFinite(it.currentFollowers)) currentFollowers = Math.trunc(it.currentFollowers);
+      else if (typeof it.currentFollowers === 'string') {
+        const s = String(it.currentFollowers || '').trim();
+        if (s !== '') {
+          const n = Number(s);
+          if (Number.isFinite(n)) currentFollowers = Math.trunc(n);
+        }
+      }
+      let result = '';
+      if (typeof it.result === 'string') result = String(it.result || '').trim();
+      else if (typeof it.result !== 'undefined') result = String(it.result || '').trim();
+      if (result.length > 200) result = result.slice(0, 200);
+      items.push({ id, currentFollowers, result });
+      if (items.length >= 200) break;
+    }
+    if (!items.length) return res.status(400).json({ ok: false, error: 'no_items', message: 'Nenhum item válido selecionado' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+
+    const nowIso = new Date().toISOString();
+    const checkedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const ops = items.map((it) => ({
+      updateOne: {
+        filter: { _id: new ObjectId(it.id) },
+        update: {
+          $set: {
+            'audit.currentFollowers': it.currentFollowers,
+            'audit.result': it.result,
+            'audit.checkedAt': nowIso,
+            'audit.checkedBy': checkedBy,
+            updatedAt: nowIso
+          }
+        }
+      }
+    }));
+    const out = await col.bulkWrite(ops, { ordered: false });
+    const updated = (out && typeof out.modifiedCount === 'number') ? out.modifiedCount : 0;
+    return res.json({ ok: true, updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'audit_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idsRaw = Array.isArray(body.ids) ? body.ids : [];
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 50);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+    const objIds = ids.map(s => new ObjectId(s));
+    const docs = await col.find(
+      { _id: { $in: objIds } },
+      { projection: { _id: 1, username: 1, summary: 1, computed: 1, data: 1, audit: 1 } }
+    ).toArray();
+    const byId = new Map(docs.map(d => [String(d._id), d]));
+
+    const nowIso = new Date().toISOString();
+    const checkedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const safeInt = (v) => {
+      try {
+        if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return null;
+        const n0 = Number(s);
+        if (Number.isFinite(n0)) return Math.trunc(n0);
+        const digits = s.replace(/[^\d-]/g, '');
+        if (!digits) return null;
+        const n1 = Number(digits);
+        return Number.isFinite(n1) ? Math.trunc(n1) : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const fetchFollowers = async (username) => {
+      const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+      if (!uname) return { ok: false, error: 'missing_username' };
+      const profileUrlCandidates = [
+        `https://www.instagram.com/${uname}/`,
+        `https://instagram.com/${uname}`,
+        `https://www.instagram.com/${uname}`
+      ];
+      const profileParamCandidates = ['name_url', 'url', 'link'];
+      let followerCount = null;
+      let used = '';
+      for (const paramName of profileParamCandidates) {
+        for (const profileUrl of profileUrlCandidates) {
+          const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+          const resp = await axios.get(profileLookupUrl, { timeout: 25000, validateStatus: () => true });
+          const status = Number(resp && resp.status ? resp.status : 0) || 0;
+          const data = resp ? resp.data : null;
+          const first = Array.isArray(data) ? data[0] : data;
+          const fc = safeInt(
+            (first && (first.followerCount ?? first.follower_count ?? first.followers)) ??
+            (first && first.data && (first.data.followerCount ?? first.data.followers))
+          );
+          if (status >= 200 && status < 300 && fc != null) {
+            followerCount = fc;
+            used = 'instagram_proxy';
+            break;
+          }
+        }
+        if (followerCount != null) break;
+      }
+      if (followerCount == null) {
+        try {
+          const rocket = await fetchInstagramFollowersInfoRocketApi(uname);
+          const fc2 = safeInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
+          if (fc2 != null) return { ok: true, currentFollowers: fc2, source: 'rocketapi' };
+        } catch (e) {
+          return { ok: false, error: 'rocketapi_failed', message: e?.message || String(e) };
+        }
+        return { ok: false, error: 'lookup_failed' };
+      }
+      return { ok: true, currentFollowers: followerCount, source: used || 'instagram_proxy' };
+    };
+
+    const q = new PQueue({ concurrency: 4 });
+    const results = [];
+    for (const id of ids) {
+      const doc = byId.get(id);
+      if (!doc || !doc.username) {
+        results.push({ id, error: 'not_found' });
+        continue;
+      }
+      q.add(async () => {
+        const r = await fetchFollowers(doc.username);
+        if (r && r.ok && typeof r.currentFollowers === 'number') {
+          const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
+          const baseCurrent = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
+          const reporQty = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
+          const existingResult = String(doc?.audit?.result || '').trim();
+          let computedResult = '';
+          try {
+            const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
+            const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ??
+              ((baseCurrent != null && reporQty != null) ? (Math.trunc(baseCurrent) + Math.trunc(reporQty)) : (initialQty != null ? Math.trunc(initialQty) : null));
+            const auditedNow = Math.trunc(r.currentFollowers);
+            if (finalQty != null && auditedNow >= Math.trunc(finalQty)) {
+              computedResult = 'OK';
+            } else if (baseCurrent != null && reporQty != null && reporQty > 0) {
+              const delta = auditedNow - Math.trunc(baseCurrent);
+              const required = Math.ceil(Math.trunc(reporQty) * 0.8);
+              computedResult = (delta >= required) ? 'OK' : 'NOK';
+            }
+          } catch (_) {}
+          await col.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                'audit.currentFollowers': Math.trunc(r.currentFollowers),
+                'audit.checkedAt': nowIso,
+                'audit.checkedBy': checkedBy,
+                'audit.source': String(r.source || ''),
+                ...(computedResult ? { 'audit.result': computedResult } : {}),
+                updatedAt: nowIso
+              }
+            }
+          );
+          results.push({ id, currentFollowers: Math.trunc(r.currentFollowers), source: String(r.source || ''), auditResult: computedResult || existingResult || '' });
+        } else {
+          results.push({ id, error: String(r && r.error ? r.error : 'lookup_failed'), message: r && r.message ? String(r.message) : '' });
+        }
+      });
+    }
+    await q.onIdle();
+    const updated = results.filter(x => x && typeof x.currentFollowers === 'number').length;
+    return res.json({ ok: true, updated, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'verify_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const id = String(body.id || '').trim();
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+
+    const doc = await col.findOne(
+      { _id: new ObjectId(id) },
+      { projection: { _id: 1, username: 1, lastFollowersTipo: 1, lastFollowersTipoLabel: 1, summary: 1, computed: 1, data: 1, audit: 1, forceRefil: 1 } }
+    );
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o && o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const pick = (arr) => {
+          const list = Array.isArray(arr) ? arr : [];
+          const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+          return (it && typeof it.value !== 'undefined') ? it.value : '';
+        };
+        const v1 = pick(o && o.additionalInfoPaid);
+        if (typeof v1 !== 'undefined' && String(v1 || '').trim() !== '') return v1;
+        const v0 = pick(o && o.additionalInfo);
+        return v0;
+      } catch (_) {}
+      return '';
+    };
+    const resolveFollowersTipoKey = (o) => {
+      const rawTipo = String(extractInfoAny(o, 'tipo_servico') || o?.tipoServico || o?.tipo || '').toLowerCase().trim();
+      const rawCategoria = String(extractInfoAny(o, 'categoria_servico') || o?.categoriaServico || '').toLowerCase().trim();
+      const catOk = (!rawCategoria) || rawCategoria === 'seguidores' || rawCategoria === 'followers';
+      if (!catOk) return '';
+      if (/curtidas|visualiz|views|reels|coment/.test(rawTipo)) return '';
+      if (rawTipo === 'mistos' || rawTipo.includes('misto')) return 'mistos';
+      if (rawTipo === 'brasileiros' || rawTipo.includes('brasileir')) return 'brasileiros';
+      return '';
+    };
+    const unameKey = normalizeUsernameKey(doc.username);
+    let resolvedTipo = String((doc.lastFollowersTipo || doc.lastFollowersTipoLabel || '')).trim().toLowerCase();
+    if (!resolvedTipo || resolvedTipo === '-') {
+      try {
+        const ordersCol = await getCollection('checkout_orders');
+        const re = unameKey ? new RegExp(`^@?${unameKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
+        if (re) {
+          const paidFilter = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } }] };
+          const conds = [
+            { instauser: { $regex: re } },
+            { instagramUsername: { $regex: re } },
+            { instagramUser: { $regex: re } },
+            { 'additionalInfoMapPaid.instagram_username': { $regex: re } },
+            { 'additionalInfoMap.instagram_username': { $regex: re } }
+          ];
+          const list = await ordersCol
+            .find({ $and: [paidFilter, { $or: conds }] }, { projection: { _id: 1, tipoServico: 1, tipo: 1, categoriaServico: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, paidAt: 1, createdAt: 1, woovi: 1 } })
+            .sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 })
+            .limit(40)
+            .toArray();
+          for (const o of list) {
+            const t = resolveFollowersTipoKey(o);
+            if (t) { resolvedTipo = t; break; }
+          }
+        }
+      } catch (_) {}
+    }
+    const tipoLower = String(resolvedTipo || '').toLowerCase();
+    const tipoRaw = tipoLower;
+    let serviceId = null;
+    if (/misto/.test(tipoLower)) serviceId = 663;
+    else if (/brasileir/.test(tipoLower)) serviceId = 23;
+    if (!serviceId) return res.status(400).json({ ok: false, error: 'unsupported_tipo', message: `Tipo não suportado para forçar refil: ${tipoRaw || '-'}` });
+
+    const safeInt = (v) => {
+      try {
+        if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return null;
+        const n = Number(s);
+        return Number.isFinite(n) ? Math.trunc(n) : null;
+      } catch (_) {
+        return null;
+      }
+    };
+    const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
+    const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
+    const baseCurrentQty = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
+    const dropQtyOriginal = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
+    const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ?? ((baseCurrentQty != null && dropQtyOriginal != null) ? (baseCurrentQty + dropQtyOriginal) : (initialQty != null ? initialQty : null));
+    if (finalQty == null) return res.status(400).json({ ok: false, error: 'missing_final', message: 'Final não identificado' });
+
+    const auditedCurrent = safeInt(doc?.audit?.currentFollowers);
+    if (auditedCurrent == null) return res.status(400).json({ ok: false, error: 'missing_audit_current', message: 'Faça a verificação de audit atual antes de forçar refil.' });
+
+    const qtyNeeded = Math.max(0, Math.trunc(finalQty) - Math.trunc(auditedCurrent));
+    if (!qtyNeeded || qtyNeeded <= 0) return res.status(400).json({ ok: false, error: 'no_refil_needed', message: 'Nenhuma reposição necessária (já está no final ou acima).' });
+    if (qtyNeeded > 50000) return res.status(400).json({ ok: false, error: 'quantity_too_large', message: 'Quantidade muito alta para forçar automaticamente.' });
+
+    const uname = String(doc.username || '').trim().replace(/^@+/, '');
+    if (!uname) return res.status(400).json({ ok: false, error: 'missing_username' });
+    const linkForFama = `https://instagram.com/${encodeURIComponent(uname)}`;
+
+    const already = doc && doc.forceRefil && typeof doc.forceRefil === 'object' ? doc.forceRefil : null;
+    const hasOrder = already && (already.orderId || already.status === 'created' || already.status === 'processing');
+    if (hasOrder) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item' });
+
+    const key = process.env.FAMA24H_API_KEY || '';
+    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
+
+    const nowIso = new Date().toISOString();
+    const requestedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const axiosLocal = require('axios');
+    const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyNeeded) });
+
+    await col.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          forceRefil: {
+            status: 'processing',
+            provider: 'fama24h',
+            requestPayload: { service: serviceId, link: linkForFama, quantity: qtyNeeded, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+            requestedAt: nowIso,
+            requestedBy
+          },
+          updatedAt: nowIso
+        }
+      }
+    );
+
+    let data = null;
+    try {
+      const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      data = resp.data || {};
+    } catch (e) {
+      const msg = e?.response?.data ? (typeof e.response.data === 'string' ? e.response.data : JSON.stringify(e.response.data)) : (e?.message || String(e));
+      await col.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { 'forceRefil.status': 'error', 'forceRefil.error': msg, 'forceRefil.finishedAt': new Date().toISOString(), updatedAt: new Date().toISOString() } }
+      );
+      return res.status(502).json({ ok: false, error: 'fama_request_error', message: msg });
+    }
+
+    const orderId = data?.order || data?.id || null;
+    const status = orderId ? 'created' : ((data && (data.error || data.errors)) ? 'error' : 'unknown');
+
+    let statusPayload = null;
+    let charge = null;
+    const pickCharge = (obj) => {
+      try {
+        if (!obj || typeof obj !== 'object') return null;
+        const v =
+          obj.charge ??
+          obj.Charge ??
+          (obj.data && (obj.data.charge ?? obj.data.Charge)) ??
+          (obj.order && (obj.order.charge ?? obj.order.Charge));
+        if (v === null || typeof v === 'undefined') return null;
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const s = String(v || '').trim();
+        if (!s) return null;
+        const n = Number(s.replace(',', '.'));
+        return Number.isFinite(n) ? n : s;
+      } catch (_) {
+        return null;
+      }
+    };
+    if (orderId) {
+      try {
+        const payloadStatus = new URLSearchParams({ key, action: 'status', order: String(orderId) });
+        const respStatus = await axiosLocal.post('https://fama24h.net/api/v2', payloadStatus.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        statusPayload = respStatus?.data || null;
+        charge = pickCharge(statusPayload);
+      } catch (_) {}
+    }
+    await col.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          'forceRefil.status': status,
+          ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
+          'forceRefil.response': data,
+          ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),
+          ...(charge !== null ? { 'forceRefil.charge': charge } : {}),
+          'forceRefil.finishedAt': new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    );
+
+    return res.json({ ok: true, provider: 'fama24h', orderId, serviceId, quantity: qtyNeeded, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idsRaw = Array.isArray(body.ids) ? body.ids : [];
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 30);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
+
+    const key = process.env.FAMA24H_API_KEY || '';
+    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+    const objIds = ids.map(s => new ObjectId(s));
+    const docs = await col.find(
+      { _id: { $in: objIds } },
+      { projection: { _id: 1, username: 1, lastFollowersTipo: 1, lastFollowersTipoLabel: 1, summary: 1, computed: 1, data: 1, audit: 1, forceRefil: 1 } }
+    ).toArray();
+    const byId = new Map();
+    for (const d of (Array.isArray(docs) ? docs : [])) byId.set(String(d && d._id ? d._id : ''), d);
+
+    const safeInt = (v) => {
+      try {
+        if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return null;
+        const n = Number(s);
+        return Number.isFinite(n) ? Math.trunc(n) : null;
+      } catch (_) {
+        return null;
+      }
+    };
+    const normalizeUsernameKey = (u) => {
+      const s0 = String(u || '').trim();
+      if (!s0) return '';
+      const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+      return s1.toLowerCase().trim();
+    };
+    const extractInfoAny = (o, key) => {
+      try {
+        if (o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid[key] !== 'undefined') return o.additionalInfoMapPaid[key];
+        if (o && o.additionalInfoMap && typeof o.additionalInfoMap[key] !== 'undefined') return o.additionalInfoMap[key];
+        const pick = (arr) => {
+          const list = Array.isArray(arr) ? arr : [];
+          const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+          return (it && typeof it.value !== 'undefined') ? it.value : '';
+        };
+        const v1 = pick(o && o.additionalInfoPaid);
+        if (typeof v1 !== 'undefined' && String(v1 || '').trim() !== '') return v1;
+        const v0 = pick(o && o.additionalInfo);
+        return v0;
+      } catch (_) {}
+      return '';
+    };
+    const resolveFollowersTipoKey = (o) => {
+      const rawTipo = String(extractInfoAny(o, 'tipo_servico') || o?.tipoServico || o?.tipo || '').toLowerCase().trim();
+      const rawCategoria = String(extractInfoAny(o, 'categoria_servico') || o?.categoriaServico || '').toLowerCase().trim();
+      const catOk = (!rawCategoria) || rawCategoria === 'seguidores' || rawCategoria === 'followers';
+      if (!catOk) return '';
+      if (/curtidas|visualiz|views|reels|coment/.test(rawTipo)) return '';
+      if (rawTipo === 'mistos' || rawTipo.includes('misto')) return 'mistos';
+      if (rawTipo === 'brasileiros' || rawTipo.includes('brasileir')) return 'brasileiros';
+      return '';
+    };
+    const pickCharge = (obj) => {
+      try {
+        if (!obj || typeof obj !== 'object') return null;
+        const v =
+          obj.charge ??
+          obj.Charge ??
+          (obj.data && (obj.data.charge ?? obj.data.Charge)) ??
+          (obj.order && (obj.order.charge ?? obj.order.Charge));
+        if (v === null || typeof v === 'undefined') return null;
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const s = String(v || '').trim();
+        if (!s) return null;
+        const n = Number(s.replace(',', '.'));
+        return Number.isFinite(n) ? n : s;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const nowIso = new Date().toISOString();
+    const requestedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+    const axiosLocal = require('axios');
+    const PQueue = require('p-queue');
+    const q = new PQueue({ concurrency: 2 });
+    const results = [];
+
+    for (const id of ids) {
+      const doc = byId.get(id);
+      if (!doc) {
+        results.push({ id, error: 'not_found' });
+        continue;
+      }
+      q.add(async () => {
+        try {
+          const already = doc && doc.forceRefil && typeof doc.forceRefil === 'object' ? doc.forceRefil : null;
+          const hasOrder = already && (already.orderId || already.status === 'created' || already.status === 'processing');
+          if (hasOrder) {
+            results.push({ id, skipped: 'already_forced' });
+            return;
+          }
+
+          const auditedCurrent = safeInt(doc?.audit?.currentFollowers);
+          if (auditedCurrent == null) {
+            results.push({ id, skipped: 'missing_audit_current' });
+            return;
+          }
+
+          const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
+          const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
+          const baseCurrentQty = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
+          const dropQtyOriginal = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
+          const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ?? ((baseCurrentQty != null && dropQtyOriginal != null) ? (baseCurrentQty + dropQtyOriginal) : (initialQty != null ? initialQty : null));
+          if (finalQty == null) {
+            results.push({ id, error: 'missing_final' });
+            return;
+          }
+
+          const qtyNeeded = Math.max(0, Math.trunc(finalQty) - Math.trunc(auditedCurrent));
+          if (!qtyNeeded || qtyNeeded <= 0) {
+            results.push({ id, skipped: 'no_refil_needed' });
+            return;
+          }
+          if (qtyNeeded > 50000) {
+            results.push({ id, skipped: 'quantity_too_large' });
+            return;
+          }
+
+          const uname = String(doc.username || '').trim().replace(/^@+/, '');
+          if (!uname) {
+            results.push({ id, error: 'missing_username' });
+            return;
+          }
+          const linkForFama = `https://instagram.com/${encodeURIComponent(uname)}`;
+
+          let resolvedTipo = String((doc.lastFollowersTipo || doc.lastFollowersTipoLabel || '')).trim().toLowerCase();
+          if (!resolvedTipo || resolvedTipo === '-') {
+            try {
+              const ordersCol = await getCollection('checkout_orders');
+              const unameKey = normalizeUsernameKey(doc.username);
+              const re = unameKey ? new RegExp(`^@?${unameKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
+              if (re) {
+                const paidFilter = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $ne: null } }, { 'woovi.paidAt': { $exists: true, $ne: null } }] };
+                const conds = [
+                  { instauser: { $regex: re } },
+                  { instagramUsername: { $regex: re } },
+                  { instagramUser: { $regex: re } },
+                  { 'additionalInfoMapPaid.instagram_username': { $regex: re } },
+                  { 'additionalInfoMap.instagram_username': { $regex: re } }
+                ];
+                const list = await ordersCol
+                  .find({ $and: [paidFilter, { $or: conds }] }, { projection: { _id: 1, tipoServico: 1, tipo: 1, categoriaServico: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, paidAt: 1, createdAt: 1, woovi: 1 } })
+                  .sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 })
+                  .limit(40)
+                  .toArray();
+                for (const o of list) {
+                  const t = resolveFollowersTipoKey(o);
+                  if (t) { resolvedTipo = t; break; }
+                }
+              }
+            } catch (_) {}
+          }
+
+          const tipoLower = String(resolvedTipo || '').toLowerCase();
+          let serviceId = null;
+          if (/misto/.test(tipoLower)) serviceId = 663;
+          else if (/brasileir/.test(tipoLower)) serviceId = 23;
+          if (!serviceId) {
+            results.push({ id, error: 'unsupported_tipo', message: `Tipo não suportado para forçar refil: ${tipoLower || '-'}` });
+            return;
+          }
+
+          await col.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                forceRefil: {
+                  status: 'processing',
+                  provider: 'fama24h',
+                  requestPayload: { service: serviceId, link: linkForFama, quantity: qtyNeeded, tipo: tipoLower || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+                  requestedAt: nowIso,
+                  requestedBy
+                },
+                updatedAt: nowIso
+              }
+            }
+          );
+
+          let data = null;
+          try {
+            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyNeeded) });
+            const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            data = resp.data || {};
+          } catch (e) {
+            const msg = e?.response?.data ? (typeof e.response.data === 'string' ? e.response.data : JSON.stringify(e.response.data)) : (e?.message || String(e));
+            await col.updateOne(
+              { _id: new ObjectId(id) },
+              { $set: { 'forceRefil.status': 'error', 'forceRefil.error': msg, 'forceRefil.finishedAt': new Date().toISOString(), updatedAt: new Date().toISOString() } }
+            );
+            results.push({ id, error: 'fama_request_error', message: msg });
+            return;
+          }
+
+          const orderId = data?.order || data?.id || null;
+          const status = orderId ? 'created' : ((data && (data.error || data.errors)) ? 'error' : 'unknown');
+
+          let statusPayload = null;
+          let charge = null;
+          if (orderId) {
+            try {
+              const payloadStatus = new URLSearchParams({ key, action: 'status', order: String(orderId) });
+              const respStatus = await axiosLocal.post('https://fama24h.net/api/v2', payloadStatus.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              statusPayload = respStatus?.data || null;
+              charge = pickCharge(statusPayload);
+            } catch (_) {}
+          }
+
+          await col.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                'forceRefil.status': status,
+                ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
+                'forceRefil.response': data,
+                ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),
+                ...(charge !== null ? { 'forceRefil.charge': charge } : {}),
+                'forceRefil.finishedAt': new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }
+            }
+          );
+
+          if (orderId) results.push({ id, ok: true, orderId, charge, quantity: qtyNeeded, serviceId });
+          else results.push({ id, error: 'orderid_missing', data });
+        } catch (e) {
+          results.push({ id, error: 'force_failed', message: e?.message || String(e) });
+        }
+      });
+    }
+
+    await q.onIdle();
+    return res.json({ ok: true, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'force_bulk_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/force-refil/charged', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const id = String(body.id || '').trim();
+    const charged = body.charged === true;
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+
+    const doc = await col.findOne({ _id: new ObjectId(id) }, { projection: { _id: 1, forceRefil: 1 } });
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+    const forceObj = (doc && doc.forceRefil && typeof doc.forceRefil === 'object') ? doc.forceRefil : null;
+    const hasOrderId = !!(forceObj && forceObj.orderId);
+    if (!hasOrderId) return res.status(400).json({ ok: false, error: 'missing_orderid', message: 'Sem Refil ID para marcar como cobrado.' });
+
+    const nowIso = new Date().toISOString();
+    const chargedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const set = {
+      'forceRefil.charged': charged,
+      updatedAt: nowIso
+    };
+    if (charged) {
+      set['forceRefil.chargedAt'] = nowIso;
+      if (chargedBy) set['forceRefil.chargedBy'] = chargedBy;
+    } else {
+      set['forceRefil.chargedAt'] = null;
+      set['forceRefil.chargedBy'] = '';
+    }
+
+    await col.updateOne({ _id: new ObjectId(id) }, { $set: set });
+    return res.json({ ok: true, charged });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'mark_charged_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/force-refil/charged-bulk', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idsRaw = Array.isArray(body.ids) ? body.ids : [];
+    const charged = body.charged === true;
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 200);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+    const objIds = ids.map(s => new ObjectId(s));
+
+    const nowIso = new Date().toISOString();
+    const chargedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const set = { 'forceRefil.charged': charged, updatedAt: nowIso };
+    if (charged) {
+      set['forceRefil.chargedAt'] = nowIso;
+      if (chargedBy) set['forceRefil.chargedBy'] = chargedBy;
+    } else {
+      set['forceRefil.chargedAt'] = null;
+      set['forceRefil.chargedBy'] = '';
+    }
+
+    const out = await col.updateMany(
+      { _id: { $in: objIds }, 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } },
+      { $set: set }
+    );
+    const updated = (out && typeof out.modifiedCount === 'number') ? out.modifiedCount : 0;
+    return res.json({ ok: true, charged, updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'mark_charged_bulk_failed', message: e?.message || String(e) });
   }
 });
 

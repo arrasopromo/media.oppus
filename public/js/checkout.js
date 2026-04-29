@@ -940,6 +940,8 @@
   function updateOrderBump(tipo, baseQtd) {
     const orderInline = document.getElementById('orderBumpInline');
     if (!orderInline) return;
+    const unit = getUnitForTipo(tipo);
+    const category = getServiceCategory();
     const labelSpan = document.getElementById('orderBumpText');
     const checkbox = document.getElementById('orderBumpCheckboxInline');
     const upgradePrices = document.querySelector('.promo-prices[data-promo="upgrade"]');
@@ -947,7 +949,11 @@
     const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
     const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
     const upHighlight = document.getElementById('orderBumpHighlight');
-    if (!isFollowersTipo(tipo) || !baseQtd) {
+    const isUpgradeEligible = !!baseQtd && (
+      tipo === 'visualizacoes_reels' ||
+      (category === 'curtidas' ? (isFollowersTipo(tipo) || tipo === 'curtidas_brasileiras') : (category === 'seguidores' ? isFollowersTipo(tipo) : false))
+    );
+    if (!isUpgradeEligible) {
       if (checkbox) {
         checkbox.checked = false;
         checkbox.disabled = true;
@@ -955,23 +961,71 @@
       orderInline.style.display = 'none';
       return;
     }
-    // Sempre mostrar o card de Promoções para serviços de seguidores
     orderInline.style.display = 'block';
     if (checkbox) {
       checkbox.checked = false;
       checkbox.disabled = false;
     }
 
-    // Promos específicas: 1000 -> 2000 com extras para brasileiros/organicos
-    if ((tipo === 'brasileiros' || tipo === 'organicos') && Number(baseQtd) === 1000) {
+    if (tipo === 'visualizacoes_reels' && baseQtd) {
+      const upsellViewsTargets = {
+        1000: 2500,
+        5000: 10000,
+        25000: 50000,
+        100000: 150000,
+        200000: 250000,
+        500000: 1000000
+      };
+      const targetQtdViews = upsellViewsTargets[Number(baseQtd)];
+      if (!targetQtdViews) {
+        if (checkbox) {
+          checkbox.checked = false;
+          checkbox.disabled = true;
+        }
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const basePriceViews = findPrice(tipo, baseQtd);
+      const targetPriceViews = findPrice(tipo, targetQtdViews);
+      if (!basePriceViews || !targetPriceViews) {
+        if (checkbox) {
+          checkbox.checked = false;
+          checkbox.disabled = true;
+        }
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const diffCentsViews = parsePrecoToCents(targetPriceViews) - parsePrecoToCents(basePriceViews);
+      const addQtdViews = targetQtdViews - baseQtd;
+      const diffStrViews = formatCentsToBRL(diffCentsViews);
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStrViews}, adicione ${addQtdViews} ${unit} e atualize para ${targetQtdViews}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${addQtdViews} ${unit}`;
+      if (upOld) upOld.textContent = targetPriceViews || '—';
+      if (upNew) upNew.textContent = diffStrViews;
+      if (upDisc) {
+        const targetCentsViews = parsePrecoToCents(targetPriceViews);
+        const pctViews = targetCentsViews ? Math.round(((targetCentsViews - diffCentsViews) / targetCentsViews) * 100) : 0;
+        upDisc.textContent = `${pctViews}% OFF`;
+      }
+      return;
+    }
+
+    if ((tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos') && Number(baseQtd) === 1000) {
       const targetQtd = 2000;
       const basePrice = findPrice(tipo, 1000);
       const targetPrice = findPrice(tipo, 2000);
       const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
       const diffStr = formatCentsToBRL(diffCents);
-      const extras = '(+400 Curtidas e 15.000 visualizações)';
-      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${getUnitForTipo(tipo)} ${extras}.`;
-      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} seguidores`;
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${unit}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} ${unit}`;
       if (upOld) upOld.textContent = targetPrice || '—';
       if (upNew) upNew.textContent = diffStr;
       if (upDisc) {
@@ -982,8 +1036,21 @@
       return;
     }
 
-    // Upgrade genérico para demais pacotes
-    const upsellTargets = { 150: 300, 500: 700, 1000: 2000, 3000: 4000, 5000: 7500, 10000: 15000 };
+    const upsellTargets = {
+      50: 150,
+      150: 300,
+      300: 500,
+      500: 700,
+      700: 1000,
+      1000: 2000,
+      1200: 2000,
+      2000: 3000,
+      3000: 4000,
+      4000: 5000,
+      5000: 7500,
+      7500: 10000,
+      10000: 15000
+    };
     const targetQtd = upsellTargets[Number(baseQtd)];
     if (!targetQtd) {
       if (checkbox) {
@@ -1002,8 +1069,8 @@
     const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
     const addQtd = targetQtd - baseQtd;
     const diffStr = formatCentsToBRL(diffCents);
-    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} seguidores e atualize para ${targetQtd}.`;
-    if (upHighlight) upHighlight.textContent = `+ ${addQtd} seguidores`;
+    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} ${unit} e atualize para ${targetQtd}.`;
+    if (upHighlight) upHighlight.textContent = `+ ${addQtd} ${unit}`;
     if (upOld) upOld.textContent = targetPrice || '—';
     if (upNew) upNew.textContent = diffStr;
     if (upDisc) {
@@ -3096,8 +3163,8 @@
         additionalInfo: [
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
-          { key: 'quantidade', value: String(qtdEffective) },
-          { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
+          { key: 'quantidade', value: String(qtd) },
+          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },
           { key: 'instagram_username', value: instagramUsernameFinal },
           { key: 'pix_gateway', value: currentPixGateway },

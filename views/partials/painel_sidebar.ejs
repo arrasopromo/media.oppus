@@ -11,9 +11,9 @@
         <li><a href="/painel/recuperacao" class="<%= typeof page !== 'undefined' && page === 'recuperacao' ? 'active' : '' %>">Recuperação</a></li>
         <li><a href="/painel/privados" class="<%= typeof page !== 'undefined' && page === 'privados' ? 'active' : '' %>">Perfis Privados</a></li>
         <li><a href="/painel/gerenciamento-seguidores" class="<%= typeof page !== 'undefined' && page === 'gerenciamento-seguidores' ? 'active' : '' %>">Gerenciamento de Seguidores</a></li>
-        <li><a href="/painel/vendas-whatsapp" class="<%= typeof page !== 'undefined' && page === 'vendas-whatsapp' ? 'active' : '' %>">Vendas WhatsApp</a></li>
+        <li><a href="/painel?view=service_types" class="<%= typeof page !== 'undefined' && page === 'service_types' ? 'active' : '' %>">Gerenciamento Tipos</a></li>
         <li><a href="/painel/consulta-perfil" class="<%= typeof page !== 'undefined' && page === 'consulta-perfil' ? 'active' : '' %>">Consulta de Perfil</a></li>
-        <li><a href="/painel?view=refil2" class="<%= typeof page !== 'undefined' && page === 'refil2' ? 'active' : '' %>">Refil2</a></li>
+        <li><a href="/painel?view=refil2" class="<%= typeof page !== 'undefined' && page === 'refil2' ? 'active' : '' %>">Gerenciamento Refil</a></li>
         <li><a href="/painel?view=unknown_orderid&period=all" class="<%= typeof page !== 'undefined' && page === 'unknown_orderid' ? 'active' : '' %>">OrderID Unknown</a></li>
         <li><a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a></li>
     </ul>

@@ -119,30 +119,42 @@
   <% const isUnknownOrderIdView = (typeof view !== 'undefined' && view === 'unknown_orderid'); %>
   <% const isCouponsView = (typeof view !== 'undefined' && view === 'coupons'); %>
   <% const isFollowersMgmtView = (typeof view !== 'undefined' && view === 'gerenciamento_seguidores'); %>
-  <% const isWhatsappSalesView = (typeof view !== 'undefined' && view === 'vendas_whatsapp'); %>
+  <% const isWhatsappSalesView = false; %>
   <% const isLtvView = (typeof view !== 'undefined' && view === 'ltv'); %>
   <% const isVendasView = (typeof view !== 'undefined' && view === 'vendas'); %>
   <% const isRefil2View = (typeof view !== 'undefined' && view === 'refil2'); %>
-  <%- include('partials/painel_sidebar', {page: isUnknownOrderIdView ? 'unknown_orderid' : (isRefil2View ? 'refil2' : (isLtvView ? 'ltv' : (isCouponsView ? 'coupons' : (isFollowersMgmtView ? 'gerenciamento-seguidores' : (isWhatsappSalesView ? 'vendas-whatsapp' : (isVendasView ? 'vendas' : 'dashboard'))))))}) %>
+  <% const isServiceTypesView = (typeof view !== 'undefined' && view === 'service_types'); %>
+  <%
+    let sidebarPage = 'dashboard';
+    if (isUnknownOrderIdView) sidebarPage = 'unknown_orderid';
+    else if (isServiceTypesView) sidebarPage = 'service_types';
+    else if (isRefil2View) sidebarPage = 'refil2';
+    else if (isLtvView) sidebarPage = 'ltv';
+    else if (isCouponsView) sidebarPage = 'coupons';
+    else if (isFollowersMgmtView) sidebarPage = 'gerenciamento-seguidores';
+    else if (isVendasView) sidebarPage = 'vendas';
+  %>
+  <%- include('partials/painel_sidebar', { page: sidebarPage }) %>
   <div class="main-content">
   <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView) ? 'container-wide' : '' %>">
     <div class="panel-header">
-        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isWhatsappSalesView ? 'Vendas WhatsApp' : (isRefil2View ? 'Refil2' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos'))))) %></h1>
+        <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isServiceTypesView ? 'Gerenciamento Tipos' : (isRefil2View ? 'Gerenciamento Refil' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos'))))) %></h1>
         <% if (!isLtvView) { %>
           <a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')" style="color: #dc3545; text-decoration: none; font-weight: 500; border: 1px solid #dc3545; padding: 5px 10px; border-radius: 4px;">Sair</a>
         <% } %>
     </div>
     
-    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel')))); %>
-    <% const sep = (isUnknownOrderIdView || isRefil2View || isLtvView || isCouponsView) ? '&' : '?'; %>
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isServiceTypesView ? '/painel?view=service_types' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel'))))); %>
+    <% const sep = (isUnknownOrderIdView || isRefil2View || isLtvView || isCouponsView || isServiceTypesView) ? '&' : '?'; %>
+    <% const panelPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all'; %>
 
-    <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && !isRefil2View) { %>
+    <% if (!isCouponsView && !isFollowersMgmtView && !isLtvView && !isRefil2View && !isServiceTypesView) { %>
     <div class="filters">
-      <a href="<%= baseUrl + sep %>period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
-      <a href="<%= baseUrl + sep %>period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
-      <a href="<%= baseUrl + sep %>period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
-      <a href="<%= baseUrl + sep %>period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
-      <a href="<%= baseUrl + sep %>period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <a href="<%= baseUrl + sep %>period=today" class="<%= panelPeriod === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="<%= baseUrl + sep %>period=last3days" class="<%= panelPeriod === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+      <a href="<%= baseUrl + sep %>period=last7days" class="<%= panelPeriod === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+      <a href="<%= baseUrl + sep %>period=thismonth" class="<%= panelPeriod === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      <a href="<%= baseUrl + sep %>period=lastmonth" class="<%= panelPeriod === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
       <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
     </div>
 
@@ -242,7 +254,7 @@
     </script>
     <% } %>
 
-    <% if (isWhatsappSalesView) { %>
+    <% if (false) { %>
       <div style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; background:#fff; margin-top: 16px;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap;">
           <strong style="font-size:0.95rem; color:#111827;">Venda WhatsApp (registrar como pago)</strong>
@@ -828,6 +840,10 @@
                   <canvas id="followersReportOkPie" width="220" height="220" style="width:220px; height:220px; border-radius:999px; background:#ffffff;"></canvas>
                   <div id="followersReportOkLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
                 </div>
+
+                <div style="height:14px;"></div>
+                <div style="font-size:12px; color:#6b7280;">OK x NOK (diferença ≥ 100) por tipo de reposição</div>
+                <div id="followersReportWarrantyBars" style="margin-top:10px; font-size:13px; line-height:1.5;"></div>
               </div>
             </div>
             <div style="margin-top:12px; font-size:12px; color:#6b7280;">
@@ -1069,7 +1085,7 @@
                 setStatus('Auto envio pausado… (' + String(done) + '/' + String(total) + ')');
               } else if (st === 'done') {
                 var extra = (job && job.stoppedReason === 'daily_recovery_limit_reached') ? ' (parou por limite diário de email)' : '';
-                setStatus('Auto envio concluído. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + extra);
+                setStatus('Auto envio concluído. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + ' | Pulados: ' + String(job.skipped || 0) + extra);
               } else if (st === 'error') {
                 setStatus('Auto envio finalizou com erro: ' + String(job.lastError || ''));
               }
@@ -1441,6 +1457,41 @@
               }
               okLegend.innerHTML = html2 || '<div style="color:#6b7280;">Sem dados</div>';
             }
+
+            try {
+              var wrap = el('followersReportWarrantyBars');
+              if (wrap) {
+                var wd = (report && report.warrantyDiffReport && typeof report.warrantyDiffReport === 'object') ? report.warrantyDiffReport : null;
+                var thr = wd && (typeof wd.thresholdAbs === 'number') ? wd.thresholdAbs : 100;
+                var groups = wd && Array.isArray(wd.groups) ? wd.groups : [];
+                if (!groups.length) {
+                  wrap.innerHTML = '<div style="color:#6b7280;">Sem dados</div>';
+                } else {
+                  var html3 = '';
+                  for (var gi=0;gi<groups.length;gi++){
+                    var g = groups[gi] || {};
+                    var label = String(g.label || g.key || '-');
+                    var total = Number(g.total || 0) || 0;
+                    var okC = Number(g.ok || 0) || 0;
+                    var nokC = Number(g.nok || 0) || 0;
+                    var denom = total > 0 ? total : 1;
+                    var okPct = Math.round((okC / denom) * 1000) / 10;
+                    var nokPct = Math.round((nokC / denom) * 1000) / 10;
+                    html3 += '<div style="margin:6px 0 10px 0;">' +
+                      '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">' +
+                      '<div style="font-weight:800;color:#111827;">' + label + '</div>' +
+                      '<div style="color:#6b7280;white-space:nowrap;">base: ' + String(total) + ' | OK<' + String(thr) + ': ' + String(okC) + ' (' + String(okPct).replace('.', ',') + '%) | NOK≥' + String(thr) + ': ' + String(nokC) + ' (' + String(nokPct).replace('.', ',') + '%)</div>' +
+                      '</div>' +
+                      '<div style="margin-top:6px;display:flex;height:10px;border-radius:999px;overflow:hidden;background:#f3f4f6;border:1px solid #e5e7eb;">' +
+                      '<div style="width:' + String(okPct) + '%;background:#16a34a;"></div>' +
+                      '<div style="width:' + String(nokPct) + '%;background:#dc2626;"></div>' +
+                      '</div>' +
+                      '</div>';
+                  }
+                  wrap.innerHTML = html3;
+                }
+              }
+            } catch (_) {}
           }
 
           var reportBtn = el('followersReportBtn');
@@ -2086,6 +2137,110 @@
         </div>
       </div>
 
+    <% } else if (isServiceTypesView) { %>
+      <%
+        const sv = (typeof serviceVisibility !== 'undefined' && serviceVisibility && typeof serviceVisibility === 'object') ? serviceVisibility : {};
+        const hidden0 = (sv && sv.hidden && typeof sv.hidden === 'object') ? sv.hidden : sv;
+        const defs = (typeof serviceTypeDefs !== 'undefined' && serviceTypeDefs && typeof serviceTypeDefs === 'object') ? serviceTypeDefs : {};
+        const hiddenSeguidores = Array.isArray(hidden0.seguidores) ? hidden0.seguidores.map(String) : [];
+        const hiddenCurtidas = Array.isArray(hidden0.curtidas) ? hidden0.curtidas.map(String) : [];
+        const hiddenVisualizacoes = Array.isArray(hidden0.visualizacoes) ? hidden0.visualizacoes.map(String) : [];
+      %>
+      <div style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:800; color:#111827;">Ocultar serviços</div>
+            <div style="font-size:0.85rem; color:#6b7280;">Marca o que deve ficar oculto nas páginas públicas</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div id="serviceTypesStatus" style="font-size:0.85rem; color:#6b7280;"></div>
+            <button type="button" id="serviceTypesSaveBtn" class="unknown-btn" style="background:#16a34a;">Salvar</button>
+          </div>
+        </div>
+        <div class="panel-table-scroll" style="margin-top: 12px;">
+          <table style="width:100%; border-collapse: collapse; min-width: 720px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Categoria</th>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Serviço</th>
+                <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Oculto</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% (Array.isArray(defs.seguidores) ? defs.seguidores : []).forEach(it => { %>
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Seguidores</td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
+                    <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="seguidores" data-key="<%= String(it.key || '') %>" <%= hiddenSeguidores.includes(String(it.key || '')) ? 'checked' : '' %> />
+                  </td>
+                </tr>
+              <% }) %>
+              <% (Array.isArray(defs.curtidas) ? defs.curtidas : []).forEach(it => { %>
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Curtidas</td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
+                    <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="curtidas" data-key="<%= String(it.key || '') %>" <%= hiddenCurtidas.includes(String(it.key || '')) ? 'checked' : '' %> />
+                  </td>
+                </tr>
+              <% }) %>
+              <% (Array.isArray(defs.visualizacoes) ? defs.visualizacoes : []).forEach(it => { %>
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Visualizações</td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
+                    <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="visualizacoes" data-key="<%= String(it.key || '') %>" <%= hiddenVisualizacoes.includes(String(it.key || '')) ? 'checked' : '' %> />
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <script>
+        (function(){
+          function el(id){ return document.getElementById(id); }
+          function setStatus(t){ var s=el('serviceTypesStatus'); if (s) s.textContent = t || ''; }
+          function collectHidden(){
+            var out = { seguidores: [], curtidas: [], visualizacoes: [] };
+            var nodes = document.querySelectorAll('.serviceTypeHiddenChk');
+            for (var i=0;i<nodes.length;i++){
+              var n = nodes[i];
+              if (!n || !n.checked) continue;
+              var ctx = String(n.getAttribute('data-ctx') || '').trim();
+              var key = String(n.getAttribute('data-key') || '').trim();
+              if (!ctx || !key) continue;
+              if (!out[ctx]) out[ctx] = [];
+              out[ctx].push(key);
+            }
+            return out;
+          }
+          var btn = el('serviceTypesSaveBtn');
+          if (btn) btn.addEventListener('click', function(){
+            try { btn.disabled = true; } catch(_) {}
+            setStatus('Salvando...');
+            fetch('/api/painel/service-visibility', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ hidden: collectHidden() })
+            }).then(function(r){
+              return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
+            }).then(function(out){
+              var data = out && out.json ? out.json : null;
+              if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_failed');
+              setStatus('Salvo.');
+              setTimeout(function(){ setStatus(''); }, 1200);
+            }).catch(function(e){
+              setStatus('Falha ao salvar.');
+              alert('Erro: ' + (e && e.message ? e.message : e));
+            }).finally(function(){
+              try { btn.disabled = false; } catch(_) {}
+            });
+          });
+        })();
+      </script>
     <% } else if (isCouponsView) { %>
       <div id="cupons" style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <h2 style="margin:0 0 8px; font-size:1rem;">Cupons</h2>
@@ -2606,23 +2761,72 @@
     <% } %>
 
     <% if (isRefil2View) { %>
-      <div id="refil2RequestsWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+      <div id="refil2RequestsWrap" style="margin-top: 12px; border:1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
-          <strong style="font-size: 1rem; color:#111827;">Solicitações Refil2</strong>
-          <div style="font-size:0.85rem; color:#6b7280;">Últimas solicitações</div>
+          <strong style="font-size: 1rem; color:#111827;">Gerenciamento Refil</strong>
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <select id="refil2StatusFilter" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;">
+              <option value="all">Status: todos</option>
+              <option value="success">Iniciado</option>
+              <option value="info">Sem queda</option>
+              <option value="blocked">Bloqueado</option>
+              <option value="error">Erro</option>
+            </select>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;">
+              <input id="refil2OnlyErrors" type="checkbox" />
+              <span>Somente erros</span>
+            </label>
+            <select id="refil2DateColumn" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;">
+              <option value="requested">Data: solicitação</option>
+              <option value="purchase">Data: compra</option>
+              <option value="forced">Data: forçado</option>
+            </select>
+            <input id="refil2DateFrom" type="date" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
+            <input id="refil2DateTo" type="date" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;">
+              <input id="refil2OnlyWithRefilId" type="checkbox" />
+              <span>Somente com Refil ID</span>
+            </label>
+            <button type="button" id="refil2AuditFetchBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar selecionados</button>
+            <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
+            <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
+            <button type="button" id="refil2ExportChargeBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Export cobrar orderids</button>
+            <button type="button" id="refil2ChargeBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#16a34a; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Cobrar</button>
+            <button type="button" id="refil2ClearFiltersBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Limpar</button>
+            <button type="button" id="refil2PrevPageBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Anterior</button>
+            <button type="button" id="refil2NextPageBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Próxima</button>
+            <div id="refil2PaginationInfo" style="font-size:0.85rem; color:#6b7280;">Página 1</div>
+          </div>
         </div>
-        <div class="panel-table-scroll" style="margin-top: 10px;">
-          <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 860px;">
+        <div class="panel-table-scroll" id="refil2ScrollTop" style="margin-top: 10px; overflow-x:auto; overflow-y:hidden; height: 14px;">
+          <div id="refil2ScrollTopInner" style="height:1px;"></div>
+        </div>
+        <div class="panel-table-scroll" id="refil2ScrollBottom" style="margin-top: 6px;">
+          <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 2080px;">
             <thead>
               <tr>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data/Hora</th>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data da compra</th>
-                <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">
+                <th style="text-align:center; padding:6px 4px; border-bottom:1px solid #e5e7eb; width:44px;">
+                  <input id="refil2SelectAll" type="checkbox" />
+                </th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Data/Hora</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Data da compra</th>
+                <th style="text-align:right; padding:6px 4px; border-bottom:1px solid #e5e7eb;">
                   <a href="#" class="refil2-sort" data-sort="days" style="color:inherit; text-decoration:none;">Dias<span id="refil2SortIconDays" style="margin-left:6px; color:#6b7280;"></span></a>
                 </th>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Perfil</th>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Status</th>
-                <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Mensagem</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Perfil</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Tipo</th>
+                <th style="text-align:right; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Atual</th>
+                <th style="text-align:right; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Repor</th>
+                <th style="text-align:right; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Final <span style="color:#6b7280;">(rec.)</span></th>
+                <th style="text-align:right; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Audit Atual</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Audit Resultado</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Status</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Mensagem</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Ações</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Forçado em</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Refil ID</th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Custo</th>
+                <th style="text-align:center; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Cobrado OK</th>
               </tr>
             </thead>
             <tbody>
@@ -2643,14 +2847,28 @@
                   } catch (_) { return '-'; }
                 };
                 const resolveStatus = (it) => {
-                  const s = String(it && (it.execStatus || it.status || it.decisionStatus || it.decision) || '').toLowerCase().trim();
-                  const err = String(it && (it.errorMessage || it.error || it.webhookMessage || it.decisionReason || it.statusMessage) || '').trim();
-                  const ok = ['success','ok','done','reposto','repored'].includes(s) || (s === 'repor' && !err);
-                  return { label: ok ? 'Sucesso' : 'Erro', cls: ok ? 'refil2-badge--green' : 'refil2-badge--red', msg: err || (ok ? 'OK' : '-') };
+                  const exec = String(it && (it.execStatus || it.exec || '') || '').toLowerCase().trim();
+                  const decision = String(it && (it.decisionStatus || it.decision || it.status || '') || '').toLowerCase().trim();
+                  const reason = String(it && (it.decisionReason || it.reason || '') || '').toLowerCase().trim();
+                  const err = String(it && (it.errorMessage || it.error || it.webhookMessage || it.statusMessage || '') || '').trim();
+                  const minDrop = (it && it.computed && typeof it.computed.min_drop === 'number') ? it.computed.min_drop : 100;
+                  if (reason === 'add_reorder_ok') return { kind: 'success', label: 'Iniciado', cls: 'refil2-badge--green', msg: 'add_reorder_ok' };
+                  if (reason === 'below_min_drop') return { kind: 'info', label: 'Sem queda', cls: 'refil2-badge--gray', msg: `Abaixo de ${minDrop}` };
+                  if (reason === 'paid_today') return { kind: 'blocked', label: 'Bloqueado', cls: 'refil2-badge--yellow', msg: 'Pago hoje' };
+                  if (reason === 'no_orders') return { kind: 'blocked', label: 'Bloqueado', cls: 'refil2-badge--yellow', msg: 'Sem pedidos' };
+                  if (reason === 'no_followers_purchase') return { kind: 'blocked', label: 'Bloqueado', cls: 'refil2-badge--yellow', msg: 'Sem compra de seguidores' };
+                  if (reason === 'reorder_expired') return { kind: 'blocked', label: 'Bloqueado', cls: 'refil2-badge--yellow', msg: 'Prazo expirado' };
+                  if (exec === 'success' && (decision === 'initiated' || decision === 'no_drop')) {
+                    return { kind: (decision === 'no_drop' ? 'info' : 'success'), label: (decision === 'no_drop' ? 'Sem queda' : 'Iniciado'), cls: (decision === 'no_drop' ? 'refil2-badge--gray' : 'refil2-badge--green'), msg: reason || 'OK' };
+                  }
+                  if (exec === 'error' || decision === 'error') return { kind: 'error', label: 'Erro', cls: 'refil2-badge--red', msg: err || reason || '-' };
+                  if (exec === 'success' && decision === 'blocked') return { kind: 'blocked', label: 'Bloqueado', cls: 'refil2-badge--yellow', msg: reason || err || '-' };
+                  return { kind: 'error', label: 'Erro', cls: 'refil2-badge--red', msg: err || reason || '-' };
                 };
               %>
               <% if (r2.length) { %>
-                <% r2.slice(0, 200).forEach(it => { 
+                <% r2.forEach(it => { 
+                  const rid = String(it && it._id ? it._id : '').trim();
                   const when = fmtDate(it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : '');
                   const purchase = String(it && (it.purchaseAtLabel || it.purchaseAt) ? (it.purchaseAtLabel || fmtDate(it.purchaseAt)) : '-');
                   const reqRaw = it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : null;
@@ -2667,27 +2885,133 @@
                     } catch (_) { return null; }
                   })();
                   const user = String(it && it.username ? it.username : '-').trim();
+                  const userSlug = String(user || '').trim().replace(/^@+/, '');
+                  const userHref = (userSlug && userSlug !== '-') ? (`https://www.instagram.com/${encodeURIComponent(userSlug)}/`) : '';
+                  const tipoLabel = String(it && (it.lastFollowersTipoLabel || it.lastFollowersTipo) ? (it.lastFollowersTipoLabel || it.lastFollowersTipo) : '-').trim() || '-';
+                  const sum = (it && (it.summary || it.computed || it.data) && typeof (it.summary || it.computed || it.data) === 'object') ? (it.summary || it.computed || it.data) : {};
+                  const initialQty = (typeof sum.initial === 'number') ? sum.initial : (typeof sum.quantidade_inicial === 'number' ? sum.quantidade_inicial : null);
+                  const currentQty = (typeof sum.current === 'number') ? sum.current : (typeof sum.quantidade_atual === 'number' ? sum.quantidade_atual : null);
+                  const dropQty = (typeof sum.drop === 'number') ? sum.drop : (typeof sum.deficit === 'number' ? sum.deficit : (typeof sum.quantidade_de_queda === 'number' ? sum.quantidade_de_queda : null));
+                  const finalQty = (typeof sum.final === 'number') ? sum.final : ((currentQty != null && dropQty != null) ? (currentQty + dropQty) : (initialQty != null ? initialQty : null));
                   const st = resolveStatus(it);
+                  const auditObj = (it && it.audit && typeof it.audit === 'object') ? it.audit : {};
+                  const auditCurrent = (typeof auditObj.currentFollowers === 'number') ? auditObj.currentFollowers : null;
+                  const auditResult = (typeof auditObj.result === 'string') ? auditObj.result : '';
+                  const forceObj = (it && it.forceRefil && typeof it.forceRefil === 'object') ? it.forceRefil : {};
+                  const forceOrderId = (forceObj && (forceObj.orderId !== null && typeof forceObj.orderId !== 'undefined')) ? String(forceObj.orderId).trim() : '';
+                  const forceChargeRaw = (forceObj && (forceObj.charge !== null && typeof forceObj.charge !== 'undefined')) ? forceObj.charge : null;
+                  const forceCharge = (forceChargeRaw === null || typeof forceChargeRaw === 'undefined') ? '' : String(forceChargeRaw).trim();
+                  const forceAt = (forceObj && (forceObj.requestedAt || forceObj.finishedAt)) ? fmtDate(forceObj.requestedAt || forceObj.finishedAt) : '-';
+                  const forceStatus = String(forceObj && forceObj.status ? forceObj.status : '').toLowerCase().trim();
+                  const hasForced = !!forceOrderId || forceStatus === 'processing' || forceStatus === 'created';
+                  const forceCharged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt));
                 %>
-                  <tr data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>">
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= when %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= purchase %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (dayDiff !== null ? String(dayDiff) : '-') %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= user ? ('@' + user.replace(/^@+/, '')) : '-' %></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
-                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
+                  <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>">
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
+                      <input type="checkbox" class="refil2SelectRow" <%= rid ? '' : 'disabled' %> />
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= when %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= purchase %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (dayDiff !== null ? String(dayDiff) : '-') %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;">
+                      <% if (userHref) { %>
+                        <a href="<%= userHref %>" target="_blank" rel="noopener" style="color:#111827; text-decoration:underline;"><%= ('@' + userSlug) %></a>
+                      <% } else { %>
+                        <%= user ? ('@' + user.replace(/^@+/, '')) : '-' %>
+                      <% } %>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= tipoLabel %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (currentQty != null ? String(currentQty) : '-') %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (dropQty != null ? String(dropQty) : '-') %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (finalQty != null ? String(finalQty) : (initialQty != null ? String(initialQty) : '-')) %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:right;">
+                      <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px;">
+                        <input type="number" class="refil2AuditCurrent" value="<%= (auditCurrent != null ? String(auditCurrent) : '') %>" placeholder="-" style="width:92px; padding:6px 2px; border:0; border-radius:0; text-align:right; outline:none; background:transparent;" />
+                        <button type="button" class="refil2AuditVerifyOne" style="padding:5px 8px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar</button>
+                      </div>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
+                      <input type="text" class="refil2AuditResult" value="<%= String(auditResult || '') %>" placeholder="" style="width:90px; max-width: 90px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px; text-transform: uppercase;" />
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
+                      <button type="button" class="refil2ForceRefilOne" style="padding:5px 8px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar refil</button>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;">
+                      <span class="refil2ForceAt"><%= forceAt %></span>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
+                      <span class="refil2ForceOrderId"><%= forceOrderId || '-' %></span>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
+                      <span class="refil2ForceCharge"><%= forceCharge || '-' %></span>
+                    </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
+                      <span class="refil2ChargedOk" style="font-weight:800; color:#16a34a;"><%= forceCharged ? 'OK' : '' %></span>
+                    </td>
                   </tr>
                 <% }) %>
               <% } else { %>
-                <tr><td colspan="6" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
+                <tr><td colspan="18" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
               <% } %>
             </tbody>
           </table>
         </div>
       </div>
+      <div id="refil2ChargeModal" style="display:none; position:fixed; inset:0; background: rgba(0,0,0,0.45); z-index: 9999; align-items:center; justify-content:center; padding: 18px;">
+        <div style="width: 100%; max-width: 920px; background:#fff; border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,0.25); overflow:hidden;">
+          <div style="padding: 12px 14px; border-bottom: 1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; gap: 10px;">
+            <div style="font-weight: 900; color:#111827;">Cobrança (copiar)</div>
+            <button type="button" id="refil2ChargeClose" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer;">Fechar</button>
+          </div>
+          <div style="padding: 12px 14px;">
+            <div id="refil2ChargeMeta" style="font-size:0.9rem; color:#6b7280; margin-bottom: 10px;"></div>
+            <pre id="refil2ChargeText" style="white-space: pre-wrap; word-break: break-word; border:1px solid #e5e7eb; background:#f9fafb; padding: 12px; border-radius: 10px; max-height: 420px; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.9rem;"></pre>
+            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top: 12px;">
+              <button type="button" id="refil2ChargeCopy" style="padding:8px 12px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:10px; cursor:pointer;">Copiar e marcar OK</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <script>
         (function(){
           function el(id){ return document.getElementById(id); }
+          try {
+            var topScroll = el('refil2ScrollTop');
+            var topInner = el('refil2ScrollTopInner');
+            var bottomScroll = el('refil2ScrollBottom');
+            var table = bottomScroll ? bottomScroll.querySelector('table') : null;
+            var syncing = false;
+            function syncTopWidth(){
+              try {
+                if (!topInner || !table) return;
+                topInner.style.width = String(table.scrollWidth || 0) + 'px';
+              } catch (_) {}
+            }
+            if (topScroll && bottomScroll) {
+              topScroll.addEventListener('scroll', function(){
+                try {
+                  if (syncing) return;
+                  syncing = true;
+                  bottomScroll.scrollLeft = topScroll.scrollLeft;
+                } catch (_) {} finally { syncing = false; }
+              });
+              bottomScroll.addEventListener('scroll', function(){
+                try {
+                  if (syncing) return;
+                  syncing = true;
+                  topScroll.scrollLeft = bottomScroll.scrollLeft;
+                } catch (_) {} finally { syncing = false; }
+              });
+            }
+            syncTopWidth();
+            window.addEventListener('resize', function(){ syncTopWidth(); });
+            setTimeout(syncTopWidth, 50);
+          } catch (_) {}
+          function readJsonResp(resp){
+            try { return resp && typeof resp.json === 'function' ? resp.json() : Promise.resolve(null); } catch (_) { return Promise.resolve(null); }
+          }
           function sortRows(dir){
             try {
               var wrap = el('refil2RequestsWrap');
@@ -2711,11 +3035,833 @@
               rows.forEach(function(r){ tbody.appendChild(r); });
             } catch (_) {}
           }
-          var state = { dir: 'desc' };
-          document.addEventListener('click', function(ev){
+          var state = { dir: 'desc', page: 1, pageSize: 50, totalMatched: 0, totalPages: 1 };
+          function parsePtBrDateTime(s){
+            try {
+              var t = String(s || '').trim();
+              if (!t || t === '-') return null;
+              var m = t.match(/(\d{2})\/(\d{2})\/(\d{4})(?:,\s*|\s+)?(\d{2}):(\d{2})(?::(\d{2}))?/);
+              if (!m) {
+                var m2 = t.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+                if (!m2) return null;
+                var dd2 = Number(m2[1]), mm2 = Number(m2[2]), yy2 = Number(m2[3]);
+                var d2 = new Date(yy2, mm2 - 1, dd2, 0, 0, 0, 0);
+                return Number.isFinite(d2.getTime()) ? d2.getTime() : null;
+              }
+              var dd = Number(m[1]), mm = Number(m[2]), yy = Number(m[3]);
+              var hh = Number(m[4] || '0'), mi = Number(m[5] || '0'), ss = Number(m[6] || '0');
+              var d = new Date(yy, mm - 1, dd, hh, mi, ss, 0);
+              return Number.isFinite(d.getTime()) ? d.getTime() : null;
+            } catch (_) { return null; }
+          }
+          function parseDateInputStart(v){
+            try {
+              var s = String(v || '').trim();
+              if (!s) return null;
+              var d = new Date(s + 'T00:00:00');
+              return Number.isFinite(d.getTime()) ? d.getTime() : null;
+            } catch (_) { return null; }
+          }
+          function parseDateInputEnd(v){
+            try {
+              var s = String(v || '').trim();
+              if (!s) return null;
+              var d = new Date(s + 'T23:59:59');
+              return Number.isFinite(d.getTime()) ? d.getTime() : null;
+            } catch (_) { return null; }
+          }
+          function applyFilters(){
+            try {
+              var cb = el('refil2OnlyErrors');
+              var sel = el('refil2StatusFilter');
+              var dateCol = el('refil2DateColumn');
+              var dateFromEl = el('refil2DateFrom');
+              var dateToEl = el('refil2DateTo');
+              var onlyOidEl = el('refil2OnlyWithRefilId');
+              var wrap = el('refil2RequestsWrap');
+              if (!wrap) return;
+              var tbody = wrap.querySelector('tbody');
+              if (!tbody) return;
+              var onlyErrors = cb ? !!cb.checked : false;
+              var kindFilter = sel ? String(sel.value || 'all').trim() : 'all';
+              var colKey = dateCol ? String(dateCol.value || 'requested').trim() : 'requested';
+              var fromMs = parseDateInputStart(dateFromEl ? dateFromEl.value : '');
+              var toMs = parseDateInputEnd(dateToEl ? dateToEl.value : '');
+              var onlyWithOid = onlyOidEl ? !!onlyOidEl.checked : false;
+              var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+              rows.forEach(function(r){
+                var kind = String(r.getAttribute('data-refil2-kind') || '').trim();
+                var show = true;
+                if (onlyErrors && kind !== 'error') show = false;
+                if (kindFilter && kindFilter !== 'all' && kind !== kindFilter) show = false;
+                if (show && onlyWithOid) {
+                  try {
+                    var oidEl = r.querySelector('.refil2ForceOrderId');
+                    var oidTxt = oidEl ? String(oidEl.textContent || '').trim() : '';
+                    if (!oidTxt || oidTxt === '-') show = false;
+                  } catch (_) { show = false; }
+                }
+                if (show && (fromMs !== null || toMs !== null)) {
+                  var rowMs = null;
+                  try {
+                    if (colKey === 'purchase') {
+                      var td = r.querySelector('td:nth-child(3)');
+                      rowMs = parsePtBrDateTime(td ? td.textContent : '');
+                    } else if (colKey === 'forced') {
+                      var f = r.querySelector('.refil2ForceAt');
+                      rowMs = parsePtBrDateTime(f ? f.textContent : '');
+                    } else {
+                      var td2 = r.querySelector('td:nth-child(2)');
+                      rowMs = parsePtBrDateTime(td2 ? td2.textContent : '');
+                    }
+                  } catch (_) { rowMs = null; }
+                  if (rowMs === null) show = false;
+                  if (show && fromMs !== null && rowMs < fromMs) show = false;
+                  if (show && toMs !== null && rowMs > toMs) show = false;
+                }
+                try { r.setAttribute('data-refil2-match', show ? '1' : '0'); } catch (_) {}
+              });
+            } catch (_) {}
+          }
+
+          function applyPagination(){
+            try {
+              var wrap = el('refil2RequestsWrap');
+              if (!wrap) return;
+              var tbody = wrap.querySelector('tbody');
+              if (!tbody) return;
+              var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+              var total = 0;
+              for (var i0 = 0; i0 < rows.length; i0++) {
+                if (String(rows[i0].getAttribute('data-refil2-match') || '') === '1') total++;
+              }
+              state.totalMatched = total;
+              var pages = Math.max(1, Math.ceil(total / state.pageSize));
+              state.totalPages = pages;
+              if (state.page > pages) state.page = pages;
+              if (state.page < 1) state.page = 1;
+              var start = (state.page - 1) * state.pageSize;
+              var end = start + state.pageSize;
+              var seen = 0;
+              for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var isMatch = String(r.getAttribute('data-refil2-match') || '') === '1';
+                if (!isMatch) { r.style.display = 'none'; continue; }
+                var idx = seen;
+                seen++;
+                r.style.display = (idx >= start && idx < end) ? '' : 'none';
+              }
+              try {
+                var info = el('refil2PaginationInfo');
+                if (info) info.textContent = 'Página ' + String(state.page) + ' / ' + String(pages) + ' · ' + String(total) + ' linhas';
+              } catch (_) {}
+              try {
+                var prev = el('refil2PrevPageBtn');
+                var next = el('refil2NextPageBtn');
+                if (prev) prev.disabled = state.page <= 1;
+                if (next) next.disabled = state.page >= pages;
+              } catch (_) {}
+            } catch (_) {}
+          }
+          try {
+            var cb = el('refil2OnlyErrors');
+            if (cb) cb.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            var sel = el('refil2StatusFilter');
+            if (sel) sel.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            var dcol = el('refil2DateColumn');
+            if (dcol) dcol.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            var dfrom = el('refil2DateFrom');
+            if (dfrom) dfrom.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            var dto = el('refil2DateTo');
+            if (dto) dto.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            var onlyOidEl = el('refil2OnlyWithRefilId');
+            if (onlyOidEl) onlyOidEl.addEventListener('change', function(){ state.page = 1; applyFilters(); applyPagination(); });
+            applyFilters();
+            applyPagination();
+            var clearBtn = el('refil2ClearFiltersBtn');
+            if (clearBtn) clearBtn.addEventListener('click', function(){
+              try {
+                var cb2 = el('refil2OnlyErrors');
+                if (cb2) cb2.checked = false;
+                var sel2 = el('refil2StatusFilter');
+                if (sel2) sel2.value = 'all';
+                var dcol2 = el('refil2DateColumn');
+                if (dcol2) dcol2.value = 'requested';
+                var df2 = el('refil2DateFrom');
+                if (df2) df2.value = '';
+                var dt2 = el('refil2DateTo');
+                if (dt2) dt2.value = '';
+                var oid2 = el('refil2OnlyWithRefilId');
+                if (oid2) oid2.checked = false;
+                try {
+                  var selAll2 = el('refil2SelectAll');
+                  if (selAll2) selAll2.checked = false;
+                } catch (_) {}
+                state.page = 1;
+                applyFilters();
+                applyPagination();
+              } catch (_) {}
+            });
+          } catch (_) {}
+          function csvEscape(v){
+            var s = (v === null || typeof v === 'undefined') ? '' : String(v);
+            if (s.includes('"')) s = s.replace(/"/g, '""');
+            if (/[;\n\r"]/.test(s)) s = '"' + s + '"';
+            return s;
+          }
+          function downloadCsv(filename, header, rows){
+            try {
+              var lines = [];
+              if (header && header.length) lines.push(header.map(csvEscape).join(';'));
+              for (var i = 0; i < rows.length; i++) lines.push(rows[i].map(csvEscape).join(';'));
+              var csv = '\ufeff' + lines.join('\r\n');
+              var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+              var url = URL.createObjectURL(blob);
+              var a = document.createElement('a');
+              a.href = url;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              setTimeout(function(){ try { URL.revokeObjectURL(url); } catch(_) {} try { a.remove(); } catch(_) {} }, 200);
+            } catch (e) {
+              alert('Erro ao exportar: ' + (e && e.message ? e.message : e));
+            }
+          }
+          function parseNumberLoose(v){
+            try {
+              var s = String(v == null ? '' : v).trim();
+              if (!s || s === '-') return null;
+              var s2 = s.replace(/[^\d,.-]/g, '').replace(',', '.');
+              if (!s2) return null;
+              var n = Number(s2);
+              return Number.isFinite(n) ? n : null;
+            } catch (_) { return null; }
+          }
+          function getVisibleRows(){
+            var wrap = el('refil2RequestsWrap');
+            if (!wrap) return [];
+            var tbody = wrap.querySelector('tbody');
+            if (!tbody) return [];
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+            return rows.filter(function(r){ return r && r.style && r.style.display !== 'none'; });
+          }
+          function getMatchedRows(){
+            var wrap = el('refil2RequestsWrap');
+            if (!wrap) return [];
+            var tbody = wrap.querySelector('tbody');
+            if (!tbody) return [];
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+            return rows.filter(function(r){ return String(r.getAttribute('data-refil2-match') || '') === '1'; });
+          }
+          function isChargedOkRow(r){
+            try { return String(r.getAttribute('data-refil2-charged') || '') === '1'; } catch (_) { return false; }
+          }
+          try {
+            var exportAllBtn = el('refil2ExportAllBtn');
+            if (exportAllBtn) {
+              exportAllBtn.addEventListener('click', function(){
+                var rows = getMatchedRows();
+                if (!rows.length) { alert('Nenhuma linha para exportar.'); return; }
+                var header = ['Solicitação', 'Compra', 'Dias', 'Usuário', 'Tipo', 'Atual', 'Repor', 'Final', 'Quantidade antes da reposição', 'Audit Resultado', 'Status', 'Mensagem', 'Forçado em', 'Refil ID', 'Custo', 'Cobrado OK'];
+                var out = rows.map(function(r){
+                  var tds = r.querySelectorAll('td');
+                  var requested = tds[1] ? String(tds[1].textContent || '').trim() : '';
+                  var purchase = tds[2] ? String(tds[2].textContent || '').trim() : '';
+                  var days = tds[3] ? String(tds[3].textContent || '').trim() : '';
+                  var user = tds[4] ? String(tds[4].textContent || '').trim() : '';
+                  var tipo = tds[5] ? String(tds[5].textContent || '').trim() : '';
+                  var atual = tds[6] ? String(tds[6].textContent || '').trim() : '';
+                  var repor = tds[7] ? String(tds[7].textContent || '').trim() : '';
+                  var finalV = tds[8] ? String(tds[8].textContent || '').trim() : '';
+                  var auditCurEl = r.querySelector('input.refil2AuditCurrent');
+                  var auditCur = auditCurEl ? String(auditCurEl.value || '').trim() : '';
+                  var auditResEl = r.querySelector('input.refil2AuditResult');
+                  var auditRes = auditResEl ? String(auditResEl.value || '').trim() : '';
+                  var st = tds[11] ? String(tds[11].textContent || '').trim() : '';
+                  var msg = tds[12] ? String(tds[12].textContent || '').trim() : '';
+                  var forcedAt = (r.querySelector('.refil2ForceAt') ? String(r.querySelector('.refil2ForceAt').textContent || '').trim() : '');
+                  var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
+                  var cost = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
+                  var charged = isChargedOkRow(r) ? 'OK' : '';
+                  return [requested, purchase, days, user, tipo, atual, repor, finalV, auditCur, auditRes, st, msg, forcedAt, oid, cost, charged];
+                });
+                var ts = new Date();
+                var name = 'refil2_export_' + ts.toISOString().slice(0,19).replace(/[:T]/g,'-') + '.csv';
+                downloadCsv(name, header, out);
+              });
+            }
+          } catch (_) {}
+          try {
+            var exportChargeBtn = el('refil2ExportChargeBtn');
+            if (exportChargeBtn) {
+              exportChargeBtn.addEventListener('click', function(){
+                var rows = getMatchedRows();
+                if (!rows.length) { alert('Nenhuma linha para exportar.'); return; }
+                var header = ['Usuário', 'Quantidade antes da reposição', 'Quantidade reposta', 'Refil ID', 'Custo', 'Cobrado OK'];
+                var out = [];
+                var total = 0;
+                for (var i = 0; i < rows.length; i++) {
+                  var r = rows[i];
+                  var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
+                  if (!oid || oid === '-') continue;
+                  var tds = r.querySelectorAll('td');
+                  var user = tds[4] ? String(tds[4].textContent || '').trim() : '';
+                  var auditCurEl = r.querySelector('input.refil2AuditCurrent');
+                  var auditCur = auditCurEl ? String(auditCurEl.value || '').trim() : '';
+                  var repor = tds[7] ? String(tds[7].textContent || '').trim() : '';
+                  var costTxt = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
+                  var costN = parseNumberLoose(costTxt);
+                  if (costN !== null) total += costN;
+                  var charged = isChargedOkRow(r) ? 'OK' : '';
+                  out.push([user, auditCur, repor, oid, costTxt, charged]);
+                }
+                if (!out.length) { alert('Nenhuma linha com Refil ID para exportar.'); return; }
+                out.push(['TOTAL', '', '', '', String(total.toFixed(2)).replace('.', ','), '']);
+                var ts = new Date();
+                var name = 'refil2_cobrar_orderids_' + ts.toISOString().slice(0,19).replace(/[:T]/g,'-') + '.csv';
+                downloadCsv(name, header, out);
+              });
+            }
+          } catch (_) {}
+          try {
+            var chargeBtn = el('refil2ChargeBtn');
+            var modal = el('refil2ChargeModal');
+            var closeBtn = el('refil2ChargeClose');
+            var copyBtn = el('refil2ChargeCopy');
+            var pre = el('refil2ChargeText');
+            var meta = el('refil2ChargeMeta');
+            var pendingChargeIds = [];
+            function openModal(){ if (modal) { modal.style.display = 'flex'; } }
+            function closeModal(){ if (modal) { modal.style.display = 'none'; } pendingChargeIds = []; }
+            if (closeBtn) closeBtn.addEventListener('click', closeModal);
+            try {
+              if (modal) modal.addEventListener('click', function(ev){ if (ev && ev.target === modal) closeModal(); });
+            } catch (_) {}
+            if (chargeBtn) chargeBtn.addEventListener('click', function(){
+              try {
+                var wrap = el('refil2RequestsWrap');
+                if (!wrap) return;
+                var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                var selected = rows.filter(function(r){
+                  try {
+                    if (r.style.display === 'none') return false;
+                    var cb = r.querySelector('input.refil2SelectRow');
+                    return cb && cb.checked;
+                  } catch (_) { return false; }
+                });
+                if (!selected.length) { alert('Selecione pelo menos 1 linha.'); return; }
+                var lines = [];
+                var total = 0;
+                var skippedOk = 0;
+                var skippedNoOid = 0;
+                pendingChargeIds = [];
+                try {
+                  lines.push('*Cobrança Refil*');
+                  lines.push('Gerado em: ' + (new Date()).toLocaleString('pt-BR'));
+                  lines.push('');
+                } catch (_) {}
+                for (var i = 0; i < selected.length; i++) {
+                  var r = selected[i];
+                  if (isChargedOkRow(r)) { skippedOk++; continue; }
+                  var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                  if (!id) continue;
+                  var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
+                  if (!oid || oid === '-') { skippedNoOid++; continue; }
+                  var tds = r.querySelectorAll('td');
+                  var user = tds[4] ? String(tds[4].textContent || '').trim() : '';
+                  var auditCurEl = r.querySelector('input.refil2AuditCurrent');
+                  var auditCur = auditCurEl ? String(auditCurEl.value || '').trim() : '';
+                  var repor = tds[7] ? String(tds[7].textContent || '').trim() : '';
+                  var costTxt = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
+                  var costN = parseNumberLoose(costTxt);
+                  if (costN !== null) total += costN;
+                  lines.push('• ' + (user || '-'));
+                  lines.push('  Antes da reposição: ' + (auditCur || '-'));
+                  lines.push('  Quantidade reposta: ' + (repor || '-'));
+                  lines.push('  Refil ID: ' + (oid || '-'));
+                  lines.push('  Custo: ' + (costTxt || '-'));
+                  lines.push('');
+                  pendingChargeIds.push(id);
+                }
+                if (!lines.length) {
+                  var m = 'Nenhuma linha elegível para cobrar.';
+                  if (skippedOk) m += ' ' + skippedOk + ' já estavam OK.';
+                  if (skippedNoOid) m += ' ' + skippedNoOid + ' sem Refil ID.';
+                  alert(m);
+                  return;
+                }
+                try {
+                  lines.push('*TOTAL CUSTO:* ' + String(total.toFixed(2)).replace('.', ','));
+                } catch (_) {
+                  lines.push('TOTAL: ' + String(total));
+                }
+                if (pre) pre.textContent = lines.join('\n');
+                if (meta) {
+                  var msg = 'Linhas: ' + String(pendingChargeIds.length);
+                  if (skippedOk) msg += ' · Ignoradas (já OK): ' + String(skippedOk);
+                  if (skippedNoOid) msg += ' · Ignoradas (sem Refil ID): ' + String(skippedNoOid);
+                  meta.textContent = msg;
+                }
+                openModal();
+              } catch (e) {
+                alert('Erro ao preparar cobrança: ' + (e && e.message ? e.message : e));
+              }
+            });
+            if (copyBtn) copyBtn.addEventListener('click', async function(){
+              try {
+                var text = pre ? String(pre.textContent || '').trim() : '';
+                if (!text) return;
+                try {
+                  if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                    await navigator.clipboard.writeText(text);
+                  } else {
+                    throw new Error('clipboard_unavailable');
+                  }
+                } catch (_) {
+                  try {
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.left = '-9999px';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                  } catch (e2) {
+                    alert('Não foi possível copiar automaticamente.');
+                    return;
+                  }
+                }
+                if (!pendingChargeIds.length) { closeModal(); return; }
+                copyBtn.disabled = true;
+                copyBtn.style.opacity = '0.7';
+                var resp = await fetch('/api/painel/refil2/force-refil/charged-bulk', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ids: pendingChargeIds, charged: true })
+                });
+                var data = await readJsonResp(resp);
+                if (!resp.ok || !(data && data.ok)) {
+                  var msg = (data && (data.message || data.error)) ? String(data.message || data.error) : ('HTTP ' + resp.status);
+                  alert('Copiado, mas erro ao marcar OK: ' + msg);
+                  return;
+                }
+                try {
+                  var wrap = el('refil2RequestsWrap');
+                  var rows = wrap ? Array.prototype.slice.call(wrap.querySelectorAll('tbody tr')) : [];
+                  rows.forEach(function(r){
+                    var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                    if (!id) return;
+                    if (pendingChargeIds.indexOf(id) < 0) return;
+                    try { r.setAttribute('data-refil2-charged', '1'); } catch (_) {}
+                    try {
+                      var okEl = r.querySelector('.refil2ChargedOk');
+                      if (okEl) okEl.textContent = 'OK';
+                    } catch (_) {}
+                    try {
+                      var cb = r.querySelector('input.refil2SelectRow');
+                      if (cb) cb.checked = false;
+                    } catch (_) {}
+                  });
+                  try {
+                    var selAll = el('refil2SelectAll');
+                    if (selAll) selAll.checked = false;
+                  } catch (_) {}
+                } catch (_) {}
+                closeModal();
+              } catch (e) {
+                alert('Erro ao copiar/marcar: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { copyBtn.disabled = false; copyBtn.style.opacity = '1'; } catch (_) {}
+              }
+            });
+          } catch (_) {}
+
+          try {
+            var prevBtn = el('refil2PrevPageBtn');
+            if (prevBtn) {
+              prevBtn.addEventListener('click', function(){
+                if (state.page > 1) { state.page--; applyPagination(); }
+              });
+            }
+            var nextBtn = el('refil2NextPageBtn');
+            if (nextBtn) {
+              nextBtn.addEventListener('click', function(){
+                if (state.page < state.totalPages) { state.page++; applyPagination(); }
+              });
+            }
+          } catch (_) {}
+          try {
+            var selAll = el('refil2SelectAll');
+            if (selAll) {
+              selAll.addEventListener('change', function(){
+                try {
+                  var wrap = el('refil2RequestsWrap');
+                  if (!wrap) return;
+                  var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                  rows.forEach(function(r){
+                    if (r.style.display === 'none') return;
+                    var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                    if (!id) return;
+                    var cb = r.querySelector('input.refil2SelectRow');
+                    if (cb && !cb.disabled) cb.checked = !!selAll.checked;
+                  });
+                } catch (_) {}
+              });
+            }
+          } catch (_) {}
+          try {
+            var fetchBtn = el('refil2AuditFetchBtn');
+            if (fetchBtn) {
+              fetchBtn.addEventListener('click', async function(){
+                try {
+                  var wrap = el('refil2RequestsWrap');
+                  if (!wrap) return;
+                  var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                  var ids = [];
+                  rows.forEach(function(r){
+                    try {
+                      var cb = r.querySelector('input.refil2SelectRow');
+                      if (!cb || !cb.checked) return;
+                      var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                      if (!id) return;
+                      ids.push(id);
+                    } catch (_) {}
+                  });
+                  if (!ids.length) { alert('Selecione pelo menos 1 linha.'); return; }
+                  fetchBtn.disabled = true;
+                  fetchBtn.style.opacity = '0.7';
+                  var resp = await fetch('/api/painel/refil2/audit-verify-current', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                  });
+                  var data = await readJsonResp(resp);
+                  if (!resp.ok || !(data && data.ok)) {
+                    var msg = (data && (data.message || data.error)) ? String(data.message || data.error) : ('HTTP ' + resp.status);
+                    alert('Erro ao verificar audit atual: ' + msg);
+                    return;
+                  }
+                  var results = Array.isArray(data.results) ? data.results : [];
+                  var map = {};
+                  results.forEach(function(it){
+                    if (!it || !it.id) return;
+                    map[String(it.id)] = it;
+                  });
+                  var updated = 0;
+                  rows.forEach(function(r){
+                    try {
+                      var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                      if (!id) return;
+                      var item = map[id];
+                      if (!item) return;
+                      var curEl = r.querySelector('input.refil2AuditCurrent');
+                      if (curEl && typeof item.currentFollowers === 'number' && isFinite(item.currentFollowers)) {
+                        curEl.value = String(Math.trunc(item.currentFollowers));
+                        try {
+                          var resEl = r.querySelector('input.refil2AuditResult');
+                          if (resEl && item.auditResult) resEl.value = String(item.auditResult);
+                        } catch (_) {}
+                        try {
+                          var tdFinal = r.querySelector('td:nth-child(9)');
+                          var tdRepor = r.querySelector('td:nth-child(8)');
+                          var finalTxt = tdFinal ? String(tdFinal.textContent || '').trim() : '';
+                          var finalN = finalTxt ? Number(String(finalTxt).replace(/[^\d-]/g, '')) : NaN;
+                          if (isFinite(finalN) && tdRepor) {
+                            var needed = Math.max(0, Math.trunc(finalN) - Math.trunc(item.currentFollowers));
+                            tdRepor.textContent = needed ? String(needed) : '0';
+                          }
+                        } catch (_) {}
+                        updated++;
+                      }
+                    } catch (_) {}
+                  });
+                  var failed = results.filter(function(x){ return x && x.error; }).length;
+                  alert('Verificação concluída: ' + updated + ' atualizado(s)' + (failed ? (' · ' + failed + ' falha(s)') : '') + '.');
+                } catch (e) {
+                  alert('Erro ao verificar audit atual: ' + (e && e.message ? e.message : e));
+                } finally {
+                  try { fetchBtn.disabled = false; fetchBtn.style.opacity = '1'; } catch (_) {}
+                }
+              });
+            }
+          } catch (_) {}
+          try {
+            var forceBulkBtn = el('refil2ForceBulkBtn');
+            if (forceBulkBtn) {
+              forceBulkBtn.addEventListener('click', async function(){
+                var wrap = el('refil2RequestsWrap');
+                if (!wrap) return;
+                var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                var ids = [];
+                var skippedForced = 0;
+                rows.forEach(function(r){
+                  try {
+                    if (r.style.display === 'none') return;
+                    var cb = r.querySelector('input.refil2SelectRow');
+                    if (!cb || !cb.checked) return;
+                    var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                    if (!id) return;
+                    var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
+                    if (oid && oid !== '-') { skippedForced++; return; }
+                    ids.push(id);
+                  } catch (_) {}
+                });
+                if (!ids.length) {
+                  alert(skippedForced ? 'Nenhuma linha elegível (as selecionadas já estão forçadas).' : 'Selecione pelo menos 1 linha.');
+                  return;
+                }
+                if (!confirm('Forçar refil para ' + ids.length + ' item(ns)?' + (skippedForced ? (' (' + skippedForced + ' já estavam forçados)') : ''))) return;
+                forceBulkBtn.disabled = true;
+                forceBulkBtn.style.opacity = '0.7';
+                try {
+                  var resp = await fetch('/api/painel/refil2/force-refil-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                  });
+                  var data = await readJsonResp(resp);
+                  if (!resp.ok || !(data && data.ok)) {
+                    var msg = (data && (data.message || data.error)) ? String(data.message || data.error) : ('HTTP ' + resp.status);
+                    alert('Erro ao forçar em massa: ' + msg);
+                    return;
+                  }
+                  var results = Array.isArray(data.results) ? data.results : [];
+                  var map = {};
+                  results.forEach(function(it){ if (it && it.id) map[String(it.id)] = it; });
+                  var ok = 0;
+                  var skipped = 0;
+                  var failed = 0;
+                  rows.forEach(function(r){
+                    try {
+                      var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                      if (!id) return;
+                      var item = map[id];
+                      if (!item) return;
+                      if (item.ok) {
+                        ok++;
+                        try {
+                          var oidEl = r.querySelector('.refil2ForceOrderId');
+                          if (oidEl) oidEl.textContent = item.orderId ? String(item.orderId) : '-';
+                        } catch (_) {}
+                        try {
+                          var atEl = r.querySelector('.refil2ForceAt');
+                          if (atEl) atEl.textContent = (new Date()).toLocaleString('pt-BR');
+                        } catch (_) {}
+                        try {
+                          var cEl = r.querySelector('.refil2ForceCharge');
+                          if (cEl) cEl.textContent = (item.charge !== null && typeof item.charge !== 'undefined' && String(item.charge).trim() !== '') ? String(item.charge) : '-';
+                        } catch (_) {}
+                        try {
+                          var btn = r.querySelector('button.refil2ForceRefilOne');
+                          if (btn) {
+                            btn.textContent = item.orderId ? ('Enviado (' + String(item.orderId) + ')') : 'Enviado';
+                            btn.disabled = true;
+                            btn.style.opacity = '0.7';
+                          }
+                        } catch (_) {}
+                        try {
+                          r.setAttribute('data-refil2-charged', '0');
+                          var okEl = r.querySelector('.refil2ChargedOk');
+                          if (okEl) okEl.textContent = '';
+                        } catch (_) {}
+                      } else if (item.skipped) {
+                        skipped++;
+                      } else if (item.error) {
+                        failed++;
+                      }
+                    } catch (_) {}
+                  });
+                  if (skippedForced) skipped += skippedForced;
+                  alert('Forçar em massa concluído: ' + ok + ' enviado(s)' + (skipped ? (' · ' + skipped + ' ignorado(s)') : '') + (failed ? (' · ' + failed + ' erro(s)') : '') + '.');
+                } catch (e) {
+                  alert('Erro ao forçar em massa: ' + (e && e.message ? e.message : e));
+                } finally {
+                  try { forceBulkBtn.disabled = false; forceBulkBtn.style.opacity = '1'; } catch (_) {}
+                }
+              });
+            }
+          } catch (_) {}
+          var refil2AuditSaveTimers = {};
+          async function saveRowAudit(row) {
+            try {
+              if (!row) return;
+              var id = String(row.getAttribute('data-refil2-id') || '').trim();
+              if (!id) return;
+              var curEl = row.querySelector('input.refil2AuditCurrent');
+              var resEl = row.querySelector('input.refil2AuditResult');
+              var curRaw = curEl ? String(curEl.value || '').trim() : '';
+              var cur = null;
+              if (curRaw !== '') {
+                var n = Number(curRaw);
+                if (isFinite(n)) cur = Math.trunc(n);
+              }
+              var result = resEl ? String(resEl.value || '').trim() : '';
+              var resp = await fetch('/api/painel/refil2/audit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: [{ id: id, currentFollowers: cur, result: result }] })
+              });
+              await readJsonResp(resp);
+            } catch (_) {}
+          }
+          document.addEventListener('input', function(ev){
             try {
               var t = ev && ev.target ? ev.target : null;
               if (!t) return;
+              if (!t.classList || !t.classList.contains('refil2AuditResult')) return;
+              var row = (t.closest && t.closest('tr')) ? t.closest('tr') : null;
+              if (!row) return;
+              var id = String(row.getAttribute('data-refil2-id') || '').trim();
+              if (!id) return;
+              if (refil2AuditSaveTimers[id]) { try { clearTimeout(refil2AuditSaveTimers[id]); } catch (_) {} }
+              refil2AuditSaveTimers[id] = setTimeout(function(){
+                try { saveRowAudit(row); } catch (_) {}
+              }, 700);
+            } catch (_) {}
+          }, true);
+          document.addEventListener('click', async function(ev){
+            try {
+              var t = ev && ev.target ? ev.target : null;
+              if (!t) return;
+              var forceBtn = (t.closest && t.closest('.refil2ForceRefilOne')) ? t.closest('.refil2ForceRefilOne') : null;
+              if (forceBtn) {
+                ev.preventDefault();
+                var rowF = (forceBtn.closest && forceBtn.closest('tr')) ? forceBtn.closest('tr') : null;
+                if (!rowF) return;
+                var idF = String(rowF.getAttribute('data-refil2-id') || '').trim();
+                if (!idF) return;
+                var forceOk = false;
+                var qtyToSend = null;
+                try {
+                  var auditEl = rowF.querySelector('input.refil2AuditCurrent');
+                  var auditRaw = auditEl ? String(auditEl.value || '').trim() : '';
+                  var auditN = auditRaw === '' ? NaN : Number(auditRaw);
+                  if (!isFinite(auditN) || auditN <= 0) {
+                    alert('Faça a verificação do audit atual antes de forçar refil.');
+                    return;
+                  }
+                } catch (_) {
+                  alert('Faça a verificação do audit atual antes de forçar refil.');
+                  return;
+                }
+                var msg = 'Forçar refil agora?';
+                try {
+                  var userTd = rowF.querySelector('td:nth-child(5)');
+                  var reporTd = rowF.querySelector('td:nth-child(8)');
+                  var finalTd = rowF.querySelector('td:nth-child(9)');
+                  var auditTd = rowF.querySelector('td:nth-child(10)');
+                  var userTxt = userTd ? String(userTd.textContent || '').trim() : '';
+                  var finalTxt2 = finalTd ? String(finalTd.textContent || '').trim() : '';
+                  var auditTxt2 = (auditTd && auditTd.querySelector('input.refil2AuditCurrent')) ? String(auditTd.querySelector('input.refil2AuditCurrent').value || '').trim() : '';
+                  var finalN2 = finalTxt2 ? Number(String(finalTxt2).replace(/[^\d-]/g, '')) : NaN;
+                  var auditN2 = auditTxt2 ? Number(String(auditTxt2).replace(/[^\d-]/g, '')) : NaN;
+                  if (isFinite(finalN2) && isFinite(auditN2)) {
+                    qtyToSend = Math.max(0, Math.trunc(finalN2) - Math.trunc(auditN2));
+                    try { if (reporTd) reporTd.textContent = String(qtyToSend); } catch (_) {}
+                  }
+                  var parts = [];
+                  if (userTxt) parts.push('para ' + userTxt);
+                  if (qtyToSend !== null && isFinite(qtyToSend)) parts.push('Enviar: ' + String(qtyToSend));
+                  if (auditTxt2) parts.push('Audit: ' + auditTxt2);
+                  if (finalTxt2) parts.push('Final: ' + finalTxt2);
+                  msg = 'Forçar refil agora' + (parts.length ? (' (' + parts.join(' · ') + ')') : '') + '?';
+                } catch (_) {}
+                if (!confirm(msg)) return;
+                forceBtn.disabled = true;
+                forceBtn.style.opacity = '0.7';
+                try {
+                  var respF = await fetch('/api/painel/refil2/force-refil', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: idF })
+                  });
+                  var dataF = await readJsonResp(respF);
+                  if (!respF.ok || !(dataF && dataF.ok)) {
+                    var msgF = (dataF && (dataF.message || dataF.error)) ? String(dataF.message || dataF.error) : ('HTTP ' + respF.status);
+                    alert('Erro ao forçar refil: ' + msgF);
+                    return;
+                  }
+                  var oid = (dataF && (dataF.orderId || (dataF.data && (dataF.data.order || dataF.data.id)))) ? String(dataF.orderId || dataF.data.order || dataF.data.id) : '';
+                  try {
+                    var oidEl = rowF.querySelector('.refil2ForceOrderId');
+                    if (oidEl) oidEl.textContent = oid ? oid : '-';
+                  } catch (_) {}
+                  try {
+                    var atEl = rowF.querySelector('.refil2ForceAt');
+                    if (atEl) atEl.textContent = (new Date()).toLocaleString('pt-BR');
+                  } catch (_) {}
+                  try {
+                    var c = (dataF && dataF.charge !== null && typeof dataF.charge !== 'undefined') ? String(dataF.charge).trim() : '';
+                    var cEl = rowF.querySelector('.refil2ForceCharge');
+                    if (cEl) cEl.textContent = c ? c : '-';
+                  } catch (_) {}
+                  try {
+                    rowF.setAttribute('data-refil2-charged', '0');
+                    var okEl = rowF.querySelector('.refil2ChargedOk');
+                    if (okEl) okEl.textContent = '';
+                  } catch (_) {}
+                  if (oid) {
+                    forceBtn.textContent = 'Enviado (' + oid + ')';
+                    forceBtn.title = 'Pedido Fama24h: ' + oid;
+                  } else {
+                    forceBtn.textContent = 'Enviado';
+                  }
+                  forceOk = true;
+                } catch (e) {
+                  alert('Erro ao forçar refil: ' + (e && e.message ? e.message : e));
+                } finally {
+                  try {
+                    if (!forceOk) { forceBtn.disabled = false; forceBtn.style.opacity = '1'; }
+                  } catch (_) {}
+                }
+                return;
+              }
+              var oneBtn = (t.closest && t.closest('.refil2AuditVerifyOne')) ? t.closest('.refil2AuditVerifyOne') : null;
+              if (oneBtn) {
+                ev.preventDefault();
+                var row = (oneBtn.closest && oneBtn.closest('tr')) ? oneBtn.closest('tr') : null;
+                if (!row) return;
+                var id = String(row.getAttribute('data-refil2-id') || '').trim();
+                if (!id) return;
+                oneBtn.disabled = true;
+                oneBtn.style.opacity = '0.7';
+                try {
+                  var resp = await fetch('/api/painel/refil2/audit-verify-current', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: [id] })
+                  });
+                  var data = await readJsonResp(resp);
+                  var results = Array.isArray(data && data.results) ? data.results : [];
+                  var item = results && results.length ? results[0] : null;
+                  if (!resp.ok || !(data && data.ok) || !(item && typeof item.currentFollowers === 'number')) {
+                    var msg = (data && (data.message || data.error)) ? String(data.message || data.error) : ('HTTP ' + resp.status);
+                    alert('Erro ao verificar audit atual: ' + msg);
+                    return;
+                  }
+                  var curEl = row.querySelector('input.refil2AuditCurrent');
+                  if (curEl) curEl.value = String(Math.trunc(item.currentFollowers));
+                  try {
+                    var resEl = row.querySelector('input.refil2AuditResult');
+                    if (resEl && item.auditResult) resEl.value = String(item.auditResult);
+                  } catch (_) {}
+                  try {
+                    var tdFinal = row.querySelector('td:nth-child(9)');
+                    var tdRepor = row.querySelector('td:nth-child(8)');
+                    var finalTxt = tdFinal ? String(tdFinal.textContent || '').trim() : '';
+                    var finalN = finalTxt ? Number(String(finalTxt).replace(/[^\d-]/g, '')) : NaN;
+                    if (isFinite(finalN) && tdRepor) {
+                      var needed = Math.max(0, Math.trunc(finalN) - Math.trunc(item.currentFollowers));
+                      tdRepor.textContent = needed ? String(needed) : '0';
+                    }
+                  } catch (_) {}
+                } finally {
+                  try { oneBtn.disabled = false; oneBtn.style.opacity = '1'; } catch (_) {}
+                }
+                return;
+              }
               var a = (t.closest && t.closest('.refil2-sort')) ? t.closest('.refil2-sort') : null;
               if (!a) return;
               ev.preventDefault();

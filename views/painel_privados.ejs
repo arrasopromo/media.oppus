@@ -36,6 +36,7 @@
     .actions-buttons { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
     .actions-buttons > button { white-space: nowrap; }
     .actions-meta { margin-top: 6px; font-size: 0.75em; color: #666; }
+    .actions-meta--error { color: #dc2626; font-weight: 700; }
     @media (max-width: 480px) {
       .container { padding: 12px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
       h1 { font-size: 1.25rem; line-height: 1.2; }
@@ -355,7 +356,7 @@
                       <div class="actions-meta">Última msg: -</div>
                     <% } %>
                     <% if (lastEmailAt || lastEmailStatus || lastEmailErr) { %>
-                      <div class="actions-meta" style="<%= lastEmailErr ? 'color:#dc2626;font-weight:700;' : '' %>" title="<%= lastEmailErr ? lastEmailErr.replace(/\"/g, '&quot;') : '' %>">
+                      <div class="actions-meta <%= lastEmailErr ? 'actions-meta--error' : '' %>" title="<%= lastEmailErr ? lastEmailErr.replace(/\"/g, '&quot;') : '' %>">
                         Último e-mail: <%= lastEmailAt ? lastEmailAt : '-' %> <%= lastEmailStatus ? ('(' + lastEmailStatus + ')') : '' %> <%= lastEmailErr ? (' - ' + lastEmailErr) : '' %>
                       </div>
                     <% } %>
