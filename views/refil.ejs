@@ -356,32 +356,34 @@
               var qa = safeNum(data.data.quantidade_atual);
               var qq = safeNum(data.data.quantidade_de_queda);
               var title = String(data.message || 'Reposição iniciada');
-              var isNoDrop = (qq != null && qq < 50);
-              var userTitle = isNoDrop ? 'Sem queda detectada' : title;
-              setStatus(statusEl, userTitle, 'success');
+              var md = safeNum(data.data.min_drop);
+              if (md == null) md = 100;
+              var isBelowMinDrop = (qq != null && md != null && qq < md);
+              var userTitle = title;
+              setStatus(statusEl, userTitle, isBelowMinDrop ? 'warning' : 'success');
               try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
-              if (isNoDrop) {
-                try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch (_) {}
-              } else {
-                if (resultEl) resultEl.style.display = 'block';
-                if (resultEl) resultEl.innerHTML = '<div style="text-align:left;">' +
-                  '<div style="background: rgba(16,185,129,0.10); border: 1px solid rgba(16,185,129,0.25); border-radius: 12px; padding: 14px 14px;">' +
-                    '<div style="display:flex; justify-content:space-between; align-items:center; gap: 12px;">' +
-                      '<div style="font-weight: 400; color: #047857;">' + escapeHtml(userTitle) + '</div>' +
-                      '<button type="button" id="refilCloseResultBtn" style="border:none; background:transparent; color:#047857; font-size:18px; line-height:18px; cursor:pointer;">×</button>' +
-                    '</div>' +
-                    '<div style="margin-top:10px; color:#065F46; font-family: inherit; font-size: 0.95rem; line-height:1.65;">' +
-                      (qi != null ? ('<div>Quantidade inicial: ' + String(qi) + '</div>') : '') +
-                      (qa != null ? ('<div>Quantidade atual: ' + String(qa) + '</div>') : '') +
-                      (qq != null ? ('<div>Quantidade de queda: ' + String(qq) + '</div>') : '') +
-                    '</div>' +
+              if (resultEl) resultEl.style.display = 'block';
+              var bg = isBelowMinDrop ? 'rgba(245,158,11,0.12)' : 'rgba(16,185,129,0.10)';
+              var bd = isBelowMinDrop ? 'rgba(245,158,11,0.35)' : 'rgba(16,185,129,0.25)';
+              var txt = isBelowMinDrop ? '#92400e' : '#047857';
+              var txt2 = isBelowMinDrop ? '#78350f' : '#065F46';
+              if (resultEl) resultEl.innerHTML = '<div style="text-align:left;">' +
+                '<div style="background: ' + bg + '; border: 1px solid ' + bd + '; border-radius: 12px; padding: 14px 14px;">' +
+                  '<div style="display:flex; justify-content:space-between; align-items:center; gap: 12px;">' +
+                    '<div style="font-weight: 400; color: ' + txt + ';">' + escapeHtml(userTitle) + '</div>' +
+                    '<button type="button" id="refilCloseResultBtn" style="border:none; background:transparent; color:' + txt + '; font-size:18px; line-height:18px; cursor:pointer;">×</button>' +
                   '</div>' +
-                '</div>';
-                try {
-                  var closeBtn = document.getElementById('refilCloseResultBtn');
-                  if (closeBtn) closeBtn.onclick = function () { try { if (resultEl) resultEl.style.display = 'none'; } catch (_) {} };
-                } catch (_) {}
-              }
+                  '<div style="margin-top:10px; color:' + txt2 + '; font-family: inherit; font-size: 0.95rem; line-height:1.65;">' +
+                    (qi != null ? ('<div>Quantidade inicial: ' + String(qi) + '</div>') : '') +
+                    (qa != null ? ('<div>Quantidade atual: ' + String(qa) + '</div>') : '') +
+                    (qq != null ? ('<div>Quantidade de queda: ' + String(qq) + '</div>') : '') +
+                  '</div>' +
+                '</div>' +
+              '</div>';
+              try {
+                var closeBtn = document.getElementById('refilCloseResultBtn');
+                if (closeBtn) closeBtn.onclick = function () { try { if (resultEl) resultEl.style.display = 'none'; } catch (_) {} };
+              } catch (_) {}
             } else {
               var outTxt = '';
               try {
@@ -389,7 +391,7 @@
                 if (!outTxt) outTxt = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
               } catch(_) { outTxt = String(data || ''); }
               outTxt = String(outTxt || '').trim();
-              if (/quantity\s+must\s+be\s+>=\s*1/i.test(outTxt)) outTxt = 'Sem queda detectada';
+              if (/timeout|econnaborted|etimedout|econnreset/i.test(outTxt)) outTxt = 'Erro, tente novamente';
               setStatus(statusEl, outTxt || ('Webhook: HTTP ' + String(statusCode || '')), ok ? 'success' : 'error');
               try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
               try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch (_) {}

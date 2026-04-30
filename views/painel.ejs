@@ -111,7 +111,29 @@
       #cupons .coupon-row--code { grid-template-columns: 1fr; }
       #cupons .coupon-actions { flex-direction: column; align-items: stretch; }
       #cupons .coupon-actions button { width: 100%; }
-      #cupons .coupons-table { min-width: 720px; }
+      #cupons .coupons-table { min-width: 0; }
+      #cupons .coupons-table th, #cupons .coupons-table td { padding: 8px; }
+      #cupons .coupons-table th:nth-child(5), #cupons .coupons-table td:nth-child(5),
+      #cupons .coupons-table th:nth-child(6), #cupons .coupons-table td:nth-child(6),
+      #cupons .coupons-table th:nth-child(7), #cupons .coupons-table td:nth-child(7) { display: none; }
+    }
+
+    #serviceTypes .service-types-table { width: 100%; border-collapse: collapse; }
+    @media (max-width: 520px) {
+      #serviceTypes #serviceTypesSaveBtn { width: 100%; }
+      #serviceTypes .panel-table-scroll { overflow-x: visible; }
+      #serviceTypes .service-types-table { width: 100%; }
+      #serviceTypes .service-types-table thead { display: none; }
+      #serviceTypes .service-types-table,
+      #serviceTypes .service-types-table tbody,
+      #serviceTypes .service-types-table tr,
+      #serviceTypes .service-types-table td { display: block; width: 100%; box-sizing: border-box; }
+      #serviceTypes .service-types-table tr { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+      #serviceTypes .service-types-table td { border-bottom: none !important; padding: 6px 0 !important; text-align: left !important; }
+      #serviceTypes .service-types-table td:nth-child(1)::before { content: "Categoria: "; font-weight: 700; color: #6b7280; }
+      #serviceTypes .service-types-table td:nth-child(2)::before { content: "Serviço: "; font-weight: 700; color: #6b7280; }
+      #serviceTypes .service-types-table td:nth-child(3) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      #serviceTypes .service-types-table td:nth-child(3)::before { content: "Oculto: "; font-weight: 700; color: #6b7280; }
     }
   </style>
 </head>
@@ -2146,7 +2168,7 @@
         const hiddenCurtidas = Array.isArray(hidden0.curtidas) ? hidden0.curtidas.map(String) : [];
         const hiddenVisualizacoes = Array.isArray(hidden0.visualizacoes) ? hidden0.visualizacoes.map(String) : [];
       %>
-      <div style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
+      <div id="serviceTypes" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
           <div>
             <div style="font-weight:800; color:#111827;">Ocultar serviços</div>
@@ -2158,7 +2180,7 @@
           </div>
         </div>
         <div class="panel-table-scroll" style="margin-top: 12px;">
-          <table style="width:100%; border-collapse: collapse; min-width: 720px;">
+          <table class="service-types-table" style="width:100%; border-collapse: collapse;">
             <thead>
               <tr>
                 <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Categoria</th>
@@ -2633,8 +2655,15 @@
             <canvas id="paidValidatedPctTimelineChart" height="140"></canvas>
           </div>
         </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
+          <div style="flex:1 1 420px; min-width: 320px;">
+            <div style="font-weight:700; margin-bottom:8px; color:#111827;">% faturamento (orderbump)</div>
+            <canvas id="orderBumpPctTimelineChart" height="140"></canvas>
+          </div>
+        </div>
         <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
         <script type="application/json" id="timelineSeriesData"><%- JSON.stringify((typeof timelineSeries !== 'undefined' && timelineSeries) ? timelineSeries : { labels: [], dailyOrders: [], dailyRevenue: [], dailyAvgTicket: [] }) %></script>
+        <script type="application/json" id="bumpRevenueSeriesData"><%- JSON.stringify((typeof bumpRevenueSeries !== 'undefined' && bumpRevenueSeries) ? bumpRevenueSeries : { labels: [], dailyPct: [], dailyTotalRevenue: [], dailyBumpRevenue: [] }) %></script>
         <script type="application/json" id="paidValidatedSeriesData"><%- JSON.stringify((typeof paidValidatedSeries !== 'undefined' && paidValidatedSeries) ? paidValidatedSeries : { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] }) %></script>
         <script>
           (function(){
@@ -2749,6 +2778,54 @@
                         max: 100,
                         ticks: { callback: function(v){ return Number(v || 0).toFixed(0) + '%'; } }
                       }
+                    }
+                  }
+                });
+              }
+
+              var brRawEl = document.getElementById('bumpRevenueSeriesData');
+              var brRaw = brRawEl ? String(brRawEl.textContent || '').trim() : '';
+              var br = brRaw ? JSON.parse(brRaw) : { labels: [], dailyPct: [], dailyTotalRevenue: [], dailyBumpRevenue: [] };
+              var brLabels = Array.isArray(br.labels) ? br.labels : [];
+              var brLabelShort = brLabels.map(fmt);
+              var brCtx = document.getElementById('orderBumpPctTimelineChart');
+              if (brCtx) {
+                new Chart(brCtx, {
+                  type: 'line',
+                  data: {
+                    labels: brLabelShort,
+                    datasets: [{
+                      label: '% orderbump',
+                      data: Array.isArray(br.dailyPct) ? br.dailyPct : [],
+                      borderColor: '#7c3aed',
+                      backgroundColor: 'rgba(124, 58, 237, 0.15)',
+                      tension: 0.3,
+                      fill: true,
+                      pointRadius: 2
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                        callbacks: {
+                          label: function(ctx){
+                            try {
+                              var idx = Number(ctx.dataIndex || 0);
+                              var pct = Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0);
+                              var bump = Array.isArray(br.dailyBumpRevenue) ? Number(br.dailyBumpRevenue[idx] || 0) : 0;
+                              var tot = Array.isArray(br.dailyTotalRevenue) ? Number(br.dailyTotalRevenue[idx] || 0) : 0;
+                              return pct.toFixed(1) + '% (R$ ' + bump.toFixed(2).replace('.', ',') + ' de R$ ' + tot.toFixed(2).replace('.', ',') + ')';
+                            } catch (_) {
+                              return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '%');
+                            }
+                          }
+                        }
+                      }
+                    },
+                    scales: {
+                      y: { min: 0, max: 100, ticks: { callback: function(v){ return Number(v || 0).toFixed(0) + '%'; } } }
                     }
                   }
                 });
@@ -2901,7 +2978,7 @@
                   const forceOrderId = (forceObj && (forceObj.orderId !== null && typeof forceObj.orderId !== 'undefined')) ? String(forceObj.orderId).trim() : '';
                   const forceChargeRaw = (forceObj && (forceObj.charge !== null && typeof forceObj.charge !== 'undefined')) ? forceObj.charge : null;
                   const forceCharge = (forceChargeRaw === null || typeof forceChargeRaw === 'undefined') ? '' : String(forceChargeRaw).trim();
-                  const forceAt = (forceObj && (forceObj.requestedAt || forceObj.finishedAt)) ? fmtDate(forceObj.requestedAt || forceObj.finishedAt) : '-';
+                  const forceAt = (forceOrderId && forceObj && (forceObj.forcedAt || forceObj.finishedAt || forceObj.requestedAt)) ? fmtDate(forceObj.forcedAt || forceObj.finishedAt || forceObj.requestedAt) : '-';
                   const forceStatus = String(forceObj && forceObj.status ? forceObj.status : '').toLowerCase().trim();
                   const hasForced = !!forceOrderId || forceStatus === 'processing' || forceStatus === 'created';
                   const forceCharged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt));
@@ -3784,6 +3861,11 @@
                     return;
                   }
                   var oid = (dataF && (dataF.orderId || (dataF.data && (dataF.data.order || dataF.data.id)))) ? String(dataF.orderId || dataF.data.order || dataF.data.id) : '';
+                  if (!oid) {
+                    var st0 = (dataF && (dataF.message || dataF.error)) ? String(dataF.message || dataF.error) : 'Fornecedor não retornou Refil ID';
+                    alert('Erro ao forçar refil: ' + st0);
+                    return;
+                  }
                   try {
                     var oidEl = rowF.querySelector('.refil2ForceOrderId');
                     if (oidEl) oidEl.textContent = oid ? oid : '-';
@@ -4378,7 +4460,7 @@
                   <td><%= order.type %></td>
                   <td><%= order.qty %></td>
                   <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
-                  <td>R$ 0,85</td>
+                  <td>R$ <%= (function(){ try { var n = Number(order && typeof order.paymentFee !== 'undefined' ? order.paymentFee : NaN); if (isFinite(n) && n > 0) return n.toFixed(2).replace('.', ','); var pm = String(order && (order.paymentMethod || order.payment_method || order.method) ? (order.paymentMethod || order.payment_method || order.method) : '').toLowerCase(); if (pm.indexOf('paghiper') >= 0) return '0,99'; return '0,85'; } catch(_) { return '0,85'; } })() %></td>
                   <td><%= (order.orderBumps || '-') %></td>
                   <td>
                     R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>

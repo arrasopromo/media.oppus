@@ -2350,6 +2350,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const pct = targetCents ? Math.round(((targetCents - diffCents) / targetCents) * 100) : 0;
       upDisc.textContent = `${pct}% OFF`;
     }
+    try { applySmartBumpPresets(tipo, baseQtd); } catch (_) {}
   }
 
   let likesTable = [];
@@ -2521,6 +2522,88 @@ document.addEventListener('DOMContentLoaded', function() {
   if (commentsDec) commentsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(-1); });
   if (commentsInc) commentsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(1); });
   if (commentsQtyEl) updateCommentsPrice(Number(commentsQtyEl.textContent || 1));
+
+  let lastSmartBumpPresetSig = '';
+  function pickPresetKey(keysAsc, base) {
+    try {
+      if (!Array.isArray(keysAsc) || keysAsc.length === 0) return null;
+      const b = Number(base || 0);
+      if (!Number.isFinite(b) || b <= 0) return keysAsc[0];
+      let chosen = keysAsc[0];
+      for (let i = 0; i < keysAsc.length; i++) {
+        const k = Number(keysAsc[i] || 0);
+        if (!Number.isFinite(k)) continue;
+        if (k <= b) chosen = k;
+        else break;
+      }
+      return chosen;
+    } catch (_) {
+      return null;
+    }
+  }
+  function pickNearestQtyFromTable(table, desired) {
+    const d = Number(desired || 0);
+    if (!Number.isFinite(d) || d <= 0) return null;
+    const arr = Array.isArray(table) ? table : [];
+    if (!arr.length) return null;
+    let best = Number(arr[0]?.q || 0);
+    let bestDist = Math.abs(best - d);
+    for (let i = 0; i < arr.length; i++) {
+      const q = Number(arr[i]?.q || 0);
+      if (!Number.isFinite(q) || q <= 0) continue;
+      const dist = Math.abs(q - d);
+      if (dist < bestDist) { bestDist = dist; best = q; }
+    }
+    return best || null;
+  }
+  function applySmartBumpPresets(tipo, baseQtd) {
+    try {
+      const t = String(tipo || '').toLowerCase().trim();
+      const base = Number(baseQtd || 0);
+      if (!Number.isFinite(base) || base <= 0) return;
+      if (!isFollowersTipo(t)) return;
+      const sig = `${t}:${base}`;
+      if (sig === lastSmartBumpPresetSig) return;
+      lastSmartBumpPresetSig = sig;
+
+      const presetsByBase = {
+        150: { likes: 150, views: 1000, comments: 1 },
+        300: { likes: 150, views: 2500, comments: 2 },
+        500: { likes: 300, views: 5000, comments: 3 },
+        700: { likes: 300, views: 10000, comments: 4 },
+        1000: { likes: 500, views: 25000, comments: 5 },
+        2000: { likes: 500, views: 50000, comments: 6 },
+        3000: { likes: 700, views: 50000, comments: 7 },
+        4000: { likes: 700, views: 100000, comments: 8 },
+        5000: { likes: 1000, views: 100000, comments: 10 },
+        7500: { likes: 1000, views: 100000, comments: 10 },
+        10000: { likes: 500, views: 100000, comments: 10 },
+        15000: { likes: 700, views: 150000, comments: 15 }
+      };
+      const keysAsc = Object.keys(presetsByBase).map(k => Number(k)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+      const chosenKey = pickPresetKey(keysAsc, base);
+      const p = chosenKey != null ? presetsByBase[String(chosenKey)] : null;
+      if (!p) return;
+
+      try { refreshLikesTable(); } catch (_) {}
+      const likesQ = pickNearestQtyFromTable(likesTable, p.likes);
+      if (likesQ != null && likesQtyEl) {
+        likesQtyEl.textContent = String(likesQ);
+        updateLikesPrice(likesQ);
+      }
+      const viewsQ = pickNearestQtyFromTable(viewsTable, p.views);
+      if (viewsQ != null && viewsQtyEl) {
+        viewsQtyEl.textContent = String(viewsQ);
+        updateViewsPrice(viewsQ);
+      }
+      const commQ = Math.max(1, Math.min(100, Math.trunc(Number(p.comments || 1)) || 1));
+      if (commentsQtyEl) {
+        commentsQtyEl.textContent = String(commQ);
+        updateCommentsPrice(commQ);
+      }
+      try { updatePromosSummary(); } catch (_) {}
+    } catch (_) {}
+  }
 
   function getSelectedPromos() {
     const promos = [];

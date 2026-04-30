@@ -8829,14 +8829,53 @@ async function processOrderFulfillment(record, col, req) {
     };
     const basePostLinks = parseIgLinksList(additionalInfoMap['post_links'] || '');
     const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
-    const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+    let categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase().trim();
+    const postLinkMaybe = sanitizeIgLink(additionalInfoMap['post_link'] || '');
+    if (!categoriaServ) {
+        if (postLinkMaybe || (Array.isArray(basePostLinks) && basePostLinks.length)) {
+            categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
+        }
+    }
     const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
     const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
     const isCurtidasOrganicosStrict = /organicos/i.test(tipo) && categoriaServ === 'curtidas';
-    if (isCurtidasOrganicosStrict) {
-        try { await col.updateOne(filter, { $unset: { fama24h: '' } }); } catch (_) {}
-    }
     const isFollowersService = categoriaServ === 'seguidores' || (!isViewsBase && !isCurtidasBase && /seguidores/i.test(String(tipo || '')));
+
+    const inferExistingMainKind = () => {
+        const pickLink = (obj) => {
+            try { return String(obj?.requestPayload?.link || '').replace(/[`\s]/g, '').trim(); } catch (_) { return ''; }
+        };
+        const links = [
+            pickLink(record?.fama24h),
+            pickLink(record?.fornecedor_social),
+            pickLink(record?.fama24h_multi),
+            pickLink(record?.fornecedor_social_multi)
+        ].filter(Boolean);
+        for (const l of links) { if (sanitizeIgLink(l)) return 'post'; }
+        for (const l of links) {
+            const s = String(l || '').toLowerCase();
+            if (/instagram\.com\/(p|reel|tv)\//i.test(s)) return 'post';
+            if (/instagram\.com\/[a-z0-9._-]+/i.test(s)) return 'followers';
+        }
+        return '';
+    };
+    const desiredMainKind = (isViewsBase || isCurtidasBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
+    const existingKind = inferExistingMainKind();
+    const blockMainDispatch = !!(existingKind && desiredMainKind && existingKind !== desiredMainKind);
+    if (blockMainDispatch) {
+        try {
+            await col.updateOne(filter, {
+                $set: {
+                    'fulfillmentDispatch.blocked': true,
+                    'fulfillmentDispatch.blockedReason': 'kind_mismatch_existing_attempt',
+                    'fulfillmentDispatch.blockedAt': new Date().toISOString(),
+                    'fulfillmentDispatch.existingKind': existingKind,
+                    'fulfillmentDispatch.desiredKind': desiredMainKind
+                }
+            });
+        } catch (_) {}
+        console.log('⚠️ Fulfillment blocked (kind mismatch)', { identifier, existingKind, desiredMainKind, categoriaServ, tipo });
+    }
     if (isFollowersService && instaUser && record.initialFollowersCount == null && liveProfile && typeof liveProfile.followersCount === 'number') {
         const nowIso = new Date().toISOString();
         try {
@@ -8847,6 +8886,15 @@ async function processOrderFulfillment(record, col, req) {
     }
     let serviceId = null;
     let linkToSend = instaUser;
+    const buildProfileLink = (u) => {
+        try {
+            const s0 = String(u || '').trim().replace(/^@+/, '');
+            if (!s0) return '';
+            return `https://instagram.com/${encodeURIComponent(s0)}`;
+        } catch (_) {
+            return '';
+        }
+    };
     if (isViewsBase) {
         serviceId = 250;
         linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
@@ -8865,7 +8913,7 @@ async function processOrderFulfillment(record, col, req) {
         } else if (/^brasileiros$/i.test(tipo)) {
             serviceId = 23;
         }
-        linkToSend = instaUser;
+        linkToSend = buildProfileLink(instaUser) || instaUser;
     }
 
     // Fallback: se serviço é de curtidas/visualizações e não há post selecionado,
@@ -8935,7 +8983,7 @@ async function processOrderFulfillment(record, col, req) {
 
     const isFollowersOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
     const isCurtidasOrganicos = ((/(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo) && isCurtidasBase) || isCurtidasOrganicosStrict);
-    if (!isFollowersOrganicos && !isCurtidasOrganicos) {
+    if (!isFollowersOrganicos && !isCurtidasOrganicos && !blockMainDispatch && !alreadySentFama && !alreadySentFS) {
         if (!key) {
             await col.updateOne(filter, { $set: { 'fama24h.status': 'error', 'fama24h.error': { code: 'missing_api_key', env: 'FAMA24H_API_KEY' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkToSend || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
             return;
@@ -8975,17 +9023,17 @@ async function processOrderFulfillment(record, col, req) {
                     const axios = require('axios');
                     const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(sanitizedLink), quantity: String(qtd) });
                     try {
-                        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                         const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                         const dataFS = respFS.data || {};
                         const orderIdFS = dataFS.order || dataFS.id || null;
-                        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                         try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                     } catch (err) {
-                        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() } });
                     }
                 } else {
-                    await col.updateOne(filter, { $unset: { fama24h: '' } });
+                    await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': { code: 'missing_api_key_or_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                 }
             } else {
                 let multiLinks = (isViewsBase || isCurtidasBase) ? basePostLinks : [];
@@ -9186,7 +9234,7 @@ async function processOrderFulfillment(record, col, req) {
                 }
             }
         }
-    } else if (isFollowersOrganicos) {
+    } else if (isFollowersOrganicos && !blockMainDispatch && !alreadySentFama && !alreadySentFS) {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
         const canSendFS = !!keyFS && !!instaUser && qtd > 0;
@@ -9209,22 +9257,22 @@ async function processOrderFulfillment(record, col, req) {
 
             if (lockUpdate.modifiedCount > 0) {
                 const axios = require('axios');
-                const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+                const linkFS = buildProfileLink(instaUser) || ((/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser).trim().replace(/^@+/, '')}`);
                 const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
                 try {
                     const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                     const dataFS = respFS.data || {};
                     const orderIdFS = dataFS.order || dataFS.id || null;
-                    await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                    await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkFS, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                 } catch (err) {
                     console.error('Erro ao enviar para FornecedorSocial:', err.message);
-                    await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err.message, 'fornecedor_social.requestPayload': { service: serviceFS, link: instaUser, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
+                    await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err.message, 'fornecedor_social.requestPayload': { service: serviceFS, link: linkFS, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                 }
             }
         } else {
             await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': !keyFS ? { code: 'missing_api_key', env: 'FORNECEDOR_SOCIAL_API_KEY' } : (!instaUser ? { code: 'missing_username' } : { code: 'invalid_quantity' }), 'fornecedor_social.requestPayload': { service: serviceFS, link: String(instaUser || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         }
-    } else if (isCurtidasOrganicos) {
+    } else if (isCurtidasOrganicos && !blockMainDispatch && !alreadySentFama && !alreadySentFS) {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const serviceFS = 194;
         const sanitizeLink = (s) => {
@@ -9294,7 +9342,7 @@ async function processOrderFulfillment(record, col, req) {
                 }
                 const createdCount = orders.filter(o => o && o.orderId).length;
                 const overall = createdCount === orders.length ? 'created' : (createdCount > 0 ? 'partial' : 'error');
-                await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, links: multiLinks, quantityPerPost: perPostQty, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, links: multiLinks, quantityPerPost: perPostQty, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
             }
         } else {
         const sanitizedLink = sanitizeLink(linkToSend);
@@ -9345,7 +9393,7 @@ async function processOrderFulfillment(record, col, req) {
         } else if (canSendFS && !alreadySentFS) {
             const minQtyFS = Number(process.env.FORNECEDOR_SOCIAL_MIN_QTY_CURTIDAS_ORGANICOS || 0);
             if (minQtyFS > 0 && qtd > 0 && qtd < minQtyFS) {
-                await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'min_quantity', 'fornecedor_social.error': { code: 'min_quantity', min: minQtyFS, quantity: qtd }, 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'min_quantity', 'fornecedor_social.error': { code: 'min_quantity', min: minQtyFS, quantity: qtd }, 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
             } else {
             const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
             const lockUpdate = await col.updateOne(
@@ -9365,7 +9413,7 @@ async function processOrderFulfillment(record, col, req) {
                 const axios = require('axios');
                 const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(sanitizedLink), quantity: String(qtd) });
                 try {
-                    await col.updateOne(filter, { $set: { 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                    await col.updateOne(filter, { $set: { 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                     const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                     const dataFS = normalizeProviderResponseData(respFS.data);
                     const orderIdFS = extractProviderOrderId(dataFS);
@@ -9373,24 +9421,24 @@ async function processOrderFulfillment(record, col, req) {
                     if (providerErrFS && !orderIdFS) {
                         const errStr = typeof providerErrFS === 'string' ? providerErrFS : JSON.stringify(providerErrFS);
                         const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                        await col.updateOne(filter, { $set: { fornecedor_social: { status: st, error: providerErrFS, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                        await col.updateOne(filter, { $set: { fornecedor_social: { status: st, error: providerErrFS, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                     } else {
-                        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                     }
                 } catch (err) {
                     console.error('Erro ao enviar para FornecedorSocial:', err.message);
                     const errVal = err?.response?.data || err?.message || String(err);
                     const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
                     const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
-                    await col.updateOne(filter, { $set: { fornecedor_social: { status: st, error: errVal, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                    await col.updateOne(filter, { $set: { fornecedor_social: { status: st, error: errVal, requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, requestedAt: new Date().toISOString() } } });
                 }
             }
             }
         }
         else if (!!keyFS && qtd > 0) {
-            await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+            await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         } else {
-            await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': !keyFS ? { code: 'missing_api_key', env: 'FORNECEDOR_SOCIAL_API_KEY' } : { code: 'invalid_quantity' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+            await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': !keyFS ? { code: 'missing_api_key', env: 'FORNECEDOR_SOCIAL_API_KEY' } : { code: 'invalid_quantity' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         }
         }
     }
@@ -11408,15 +11456,40 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const key = process.env.FAMA24H_API_KEY || '';
           
           const pacoteStr = String(additionalInfoMap['pacote'] || record?.additionalInfoMapPaid?.['pacote'] || '').toLowerCase();
-          const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+          let categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase().trim();
+          const sanitizePostLink = (s) => {
+            let v = String(s || '').replace(/[`\s]/g, '').trim();
+            if (!v) return '';
+            if (!/^https?:\/\//i.test(v)) {
+              if (/^www\./i.test(v)) v = `https://${v}`;
+              else if (/^instagram\.com\//i.test(v)) v = `https://${v}`;
+              else if (/^\/\/+/i.test(v)) v = `https:${v}`;
+            }
+            v = v.split('#')[0].split('?')[0];
+            const m = v.match(/^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/i);
+            if (!m) return '';
+            return `https://www.instagram.com/${String(m[2]).toLowerCase()}/${encodeURIComponent(String(m[3] || '').slice(0, 11))}/`;
+          };
+          const postLinkMaybe = sanitizePostLink(additionalInfoMap['post_link'] || '');
+          if (!categoriaServ) {
+            if (postLinkMaybe || String(additionalInfoMap['post_links'] || '').trim()) {
+              categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
+            }
+          }
           const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
           const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
           const isCurtidasOrganicosStrict = /organicos/i.test(tipo) && categoriaServ === 'curtidas';
-          if (isCurtidasOrganicosStrict) {
-            try { await col.updateOne(filter, { $unset: { fama24h: '' } }); } catch (_) {}
-          }
           let serviceId = null;
           let linkToSend = instaUser;
+          const buildProfileLink = (u) => {
+            try {
+              const s0 = String(u || '').trim().replace(/^@+/, '');
+              if (!s0) return '';
+              return `https://instagram.com/${encodeURIComponent(s0)}`;
+            } catch (_) {
+              return '';
+            }
+          };
           if (isViewsBase) {
               serviceId = 250;
               linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
@@ -11433,7 +11506,38 @@ app.post('/api/openpix/webhook', async (req, res) => {
               } else if (/^brasileiros$/i.test(tipo)) {
                   serviceId = 23;
               }
-              linkToSend = instaUser;
+              linkToSend = buildProfileLink(instaUser) || instaUser;
+          }
+
+          const inferExistingMainKind = () => {
+            const pickLink = (obj) => {
+              try { return String(obj?.requestPayload?.link || '').replace(/[`\s]/g, '').trim(); } catch (_) { return ''; }
+            };
+            const links = [pickLink(record?.fama24h), pickLink(record?.fornecedor_social)].filter(Boolean);
+            for (const l of links) { if (sanitizePostLink(l)) return 'post'; }
+            for (const l of links) {
+              const s = String(l || '').toLowerCase();
+              if (/instagram\.com\/(p|reel|tv)\//i.test(s)) return 'post';
+              if (/instagram\.com\/[a-z0-9._-]+/i.test(s)) return 'followers';
+            }
+            return '';
+          };
+          const desiredMainKind = (isViewsBase || isCurtidasBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
+          const existingKind = inferExistingMainKind();
+          const blockMainDispatch = !!(existingKind && desiredMainKind && existingKind !== desiredMainKind);
+          if (blockMainDispatch) {
+            try {
+              await col.updateOne(filter, {
+                $set: {
+                  'fulfillmentDispatch.blocked': true,
+                  'fulfillmentDispatch.blockedReason': 'kind_mismatch_existing_attempt',
+                  'fulfillmentDispatch.blockedAt': new Date().toISOString(),
+                  'fulfillmentDispatch.existingKind': existingKind,
+                  'fulfillmentDispatch.desiredKind': desiredMainKind
+                }
+              });
+            } catch (_) {}
+            return res.status(200).json({ ok: true, status: 'blocked', message: 'Dispatch bloqueado (tipo de serviço divergente).' });
           }
 
           // Fallback: se serviço é de curtidas/visualizações e não há post selecionado,
@@ -11497,7 +11601,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
           const isFollowersOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
           const isCurtidasOrganicos = ((/(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo) && isCurtidasBase) || isCurtidasOrganicosStrict);
-          if (!isFollowersOrganicos && !isCurtidasOrganicos) {
+          if (!isFollowersOrganicos && !isCurtidasOrganicos && !alreadySentFama && !alreadySentFS) {
             const guardCurtidasOrganicos = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo);
             if (guardCurtidasOrganicos) {
               const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
@@ -11520,23 +11624,23 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
               };
               const sanitizedLink = sanitizeLink(linkToSend);
-              const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS;
+              const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS && !alreadySentFama;
               if (canSendFS) {
                 const axios = require('axios');
                 const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(sanitizedLink), quantity: String(qtd) });
                 try {
-                  await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                  await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                   const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                   const dataFS = respFS.data || {};
                   const orderIdFS = dataFS.order || dataFS.id || null;
-                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                   try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
                 } catch (fsErr2) {
                   const errVal = fsErr2?.response?.data || fsErr2?.message || String(fsErr2);
-                  await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': errVal, 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                  await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': errVal, 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                 }
               } else {
-                await col.updateOne(filter, { $unset: { fama24h: '' } });
+                await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': { code: 'missing_api_key_or_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
               }
             } else {
               const canSend = !!key && !!serviceId && !!linkToSend && qtd > 0;
@@ -11744,7 +11848,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
           } else if (isFollowersOrganicos) {
             const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
             const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
-            const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS;
+            const canSendFS = !!keyFS && !!instaUser && qtd > 0 && !alreadySentFS && !alreadySentFama;
             if (canSendFS) {
               const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
               const lockUpdate = await col.updateOne(
@@ -11761,7 +11865,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
               );
               if (lockUpdate.modifiedCount > 0) {
                 const axios = require('axios');
-                const linkFS = (/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser)}`;
+                const linkFS = buildProfileLink(instaUser) || ((/^https?:\/\//i.test(String(instaUser))) ? String(instaUser) : `https://instagram.com/${String(instaUser).trim().replace(/^@+/, '')}`);
                 const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: linkFS, quantity: String(qtd) });
                 const payloadLog = Object.fromEntries(payloadFS.entries());
                 if (payloadLog && payloadLog.key) payloadLog.key = '***';
@@ -11771,7 +11875,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   const dataFS = respFS.data || {};
                   console.log('✅ FornecedorSocial resposta', { status: respFS.status, data: dataFS });
                   const orderIdFS = dataFS.order || dataFS.id || null;
-                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: instaUser, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
+                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkFS, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                   try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
                 } catch (fsErr) {
                   console.error('❌ FornecedorSocial erro', { message: fsErr?.message || String(fsErr), data: fsErr?.response?.data, status: fsErr?.response?.status });
@@ -11782,7 +11886,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       $set: {
                         'fornecedor_social.status': 'error',
                         'fornecedor_social.error': errVal,
-                        'fornecedor_social.requestPayload': { service: serviceFS, link: instaUser, quantity: qtd },
+                        'fornecedor_social.requestPayload': { service: serviceFS, link: linkFS, quantity: qtd },
                         'fornecedor_social.requestedAt': new Date().toISOString()
                       }
                     }
@@ -11813,7 +11917,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
               return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
             };
             const sanitizedLink = sanitizeLink(linkToSend);
-            const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS;
+            const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS && !alreadySentFama;
             if (canSendFS) {
               const minQtyFS = Number(process.env.FORNECEDOR_SOCIAL_MIN_QTY_CURTIDAS_ORGANICOS || 0);
               if (minQtyFS > 0 && qtd > 0 && qtd < minQtyFS) {
@@ -11825,8 +11929,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       'fornecedor_social.error': { code: 'min_quantity', min: minQtyFS, quantity: qtd },
                       'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd },
                       'fornecedor_social.requestedAt': new Date().toISOString()
-                    },
-                    $unset: { fama24h: '' }
+                    }
                   }
                 );
               } else {
@@ -11850,12 +11953,12 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 if (payloadLog && payloadLog.key) payloadLog.key = '***';
                 console.log('➡️ Enviando pedido FornecedorSocial', { url: 'https://fornecedorsocial.com/api/v2', payload: payloadLog });
                 try {
-                  await col.updateOne(filter, { $set: { 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                  await col.updateOne(filter, { $set: { 'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
                   const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                   const dataFS = respFS.data || {};
                   console.log('✅ FornecedorSocial resposta', { status: respFS.status, data: dataFS });
                   const orderIdFS = dataFS.order || dataFS.id || null;
-                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+                  await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: sanitizedLink, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
                   try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
                 } catch (fsErr) {
                   console.error('❌ FornecedorSocial erro', { message: fsErr?.message || String(fsErr), data: fsErr?.response?.data, status: fsErr?.response?.status });
@@ -11868,8 +11971,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                         'fornecedor_social.error': errVal,
                         'fornecedor_social.requestPayload': { service: serviceFS, link: sanitizedLink, quantity: qtd },
                         'fornecedor_social.requestedAt': new Date().toISOString()
-                      },
-                      $unset: { fama24h: '' }
+                      }
                     }
                   );
                 }
@@ -11878,7 +11980,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
             } else {
               console.log('ℹ️ FornecedorSocial não enviado', { hasKeyFS: !!keyFS, tipo, qtd: qtdBase, instaUser: sanitizedLink, alreadySentFS, hasUpgrade, reason: (!keyFS ? 'missing_key' : (!sanitizedLink ? 'missing_link' : (!qtd ? 'missing_qty' : (alreadySentFS ? 'already_sent' : 'unknown')))) });
               if (!!keyFS && qtd > 0 && !alreadySentFS && !sanitizedLink) {
-                await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+                await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSend || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
               }
             }
           }
@@ -12276,7 +12378,13 @@ app.post('/api/services/dispatch', async (req, res) => {
     const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
     const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
   const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
-  const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
+  let categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase().trim();
+  const postLinkMaybe = sanitizeLink(additionalInfoMap['post_link'] || '');
+  if (!categoriaServ) {
+    if (postLinkMaybe || String(additionalInfoMap['post_links'] || '').trim()) {
+      categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
+    }
+  }
   const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
   const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
   const sanitizeLink = (s) => {
@@ -12326,40 +12434,44 @@ app.post('/api/services/dispatch', async (req, res) => {
           instaUserRaw
         )
       : instaUserRaw;
-    const linkToSend = (/^https?:\/\//i.test(String(linkToSendRaw))) ? String(linkToSendRaw) : `https://instagram.com/${String(linkToSendRaw)}`;
+    const buildProfileLink = (u) => {
+      try {
+        const s0 = String(u || '').trim().replace(/^@+/, '');
+        if (!s0) return '';
+        return `https://instagram.com/${encodeURIComponent(s0)}`;
+      } catch (_) { return ''; }
+    };
+    const linkToSend = (/^https?:\/\//i.test(String(linkToSendRaw))) ? String(linkToSendRaw) : (buildProfileLink(linkToSendRaw) || `https://instagram.com/${String(linkToSendRaw)}`);
   const isFollowersOrganicos = /organicos/i.test(tipo) && !isCurtidasBase && !isViewsBase;
   const isCurtidasOrganicos = /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo) && isCurtidasBase;
-  if (isCurtidasOrganicos) {
-    try { await col.updateOne(filter, { $unset: { fama24h: '' } }); } catch (_) {}
-  }
   if (!isFollowersOrganicos && !isCurtidasOrganicos) {
     const guardCurtidasOrganicos = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo);
     if (guardCurtidasOrganicos) {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
       const serviceFS = 194;
       const linkSan = sanitizeLink(linkToSendRaw);
-      const canSendFSGuard = !!keyFS && !!linkSan && qtd > 0 && !alreadySentFS;
+      const canSendFSGuard = !!keyFS && !!linkSan && qtd > 0 && !alreadySentFS && !alreadySentFama;
       if (!canSendFSGuard) {
         if (!!keyFS && !alreadySentFS && !!qtd && !linkSan) {
-          await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSendRaw || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+          await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSendRaw || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         } else {
-          await col.updateOne(filter, { $unset: { fama24h: '' } });
+          await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': { code: 'cannot_send_fs' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSendRaw || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         }
         return res.status(400).json({ ok: false, error: 'cannot_send_fs', reason: { hasKeyFS: !!keyFS, linkToSend: !!linkToSendRaw, qtd, alreadySentFS } });
       }
       const axios = require('axios');
       const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(linkSan), quantity: String(qtd) });
-      await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: linkSan, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+      await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: linkSan, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
       try {
         const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
         const dataFS = respFS.data || {};
         const orderIdFS = dataFS.order || dataFS.id || null;
-        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkSan, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkSan, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
         try { await broadcastPaymentPaid(record?.identifier, record?.correlationID); } catch(_) {}
         try { await ensureRefilLink(record?.identifier, record?.correlationID, req); } catch(_) {}
         return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
       } catch (err) {
-        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() } });
         return res.status(502).json({ ok: false, error: 'fs_request_error', message: err?.message || 'request_error' });
       }
     } else {
@@ -12381,7 +12493,7 @@ app.post('/api/services/dispatch', async (req, res) => {
         }
       }
       const linkForFama = (isViewsBase || isCurtidasBase) ? sanitizeLink(linkToSendRaw) : String(linkToSend || '').replace(/[`\s]/g, '').trim();
-      const canSend = !!key && !!serviceId && !!linkForFama && qtd > 0 && !alreadySentFama;
+      const canSend = !!key && !!serviceId && !!linkForFama && qtd > 0 && !alreadySentFama && !alreadySentFS;
       if (!canSend) return res.status(400).json({ ok: false, error: 'cannot_send_fama', reason: { hasKey: !!key, serviceId, linkToSend: !!linkForFama, qtd, alreadySentFama } });
       const axios = require('axios');
       const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtd) });
@@ -12393,11 +12505,11 @@ app.post('/api/services/dispatch', async (req, res) => {
       try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
       return res.json({ ok: true, provider: 'fama24h', orderId, data: famaData });
     }
-    } else if (isFollowersOrganicos) {
+    } else if (isFollowersOrganicos && !alreadySentFama && !alreadySentFS) {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
       const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
-      const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
-      const canSendFS = !!keyFS && !!instaUserRaw && qtd > 0 && !alreadySentFS;
+      const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : (buildProfileLink(instaUserRaw) || `https://instagram.com/${String(instaUserRaw)}`);
+      const canSendFS = !!keyFS && !!instaUserRaw && qtd > 0 && !alreadySentFS && !alreadySentFama;
       if (!canSendFS) return res.status(400).json({ ok: false, error: 'cannot_send_fs', reason: { hasKeyFS: !!keyFS, instaUser: !!instaUserRaw, qtd, alreadySentFS } });
       const axios = require('axios');
       const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(instaUser), quantity: String(qtd) });
@@ -12412,26 +12524,26 @@ app.post('/api/services/dispatch', async (req, res) => {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
       const serviceFS = 194;
       const linkSan = sanitizeLink(linkToSendRaw);
-      const canSendFS = !!keyFS && !!linkSan && qtd > 0 && !alreadySentFS;
+      const canSendFS = !!keyFS && !!linkSan && qtd > 0 && !alreadySentFS && !alreadySentFama;
       if (!canSendFS) {
         if (!!keyFS && !alreadySentFS && !!qtd && !linkSan) {
-          await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSendRaw || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+          await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'invalid_link', 'fornecedor_social.error': { code: 'invalid_link' }, 'fornecedor_social.requestPayload': { service: serviceFS, link: String(linkToSendRaw || ''), quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
         }
         return res.status(400).json({ ok: false, error: 'cannot_send_fs', reason: { hasKeyFS: !!keyFS, linkToSend: !!linkToSendRaw, qtd, alreadySentFS } });
       }
       const axios = require('axios');
       const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(linkSan), quantity: String(qtd) });
-      await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: linkSan, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+      await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'processing', 'fornecedor_social.attemptedAt': new Date().toISOString(), 'fornecedor_social.requestPayload': { service: serviceFS, link: linkSan, quantity: qtd }, 'fornecedor_social.requestedAt': new Date().toISOString() } });
       try {
         const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
         const dataFS = respFS.data || {};
         const orderIdFS = dataFS.order || dataFS.id || null;
-        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkSan, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } }, $unset: { fama24h: '' } });
+        await col.updateOne(filter, { $set: { fornecedor_social: { orderId: orderIdFS, status: orderIdFS ? 'created' : 'unknown', requestPayload: { service: serviceFS, link: linkSan, quantity: qtd }, response: dataFS, requestedAt: new Date().toISOString() } } });
         try { await broadcastPaymentPaid(record?.identifier, record?.correlationID); } catch(_) {}
         try { await ensureRefilLink(record?.identifier, record?.correlationID, req); } catch(_) {}
         return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
       } catch (err) {
-        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() }, $unset: { fama24h: '' } });
+        await col.updateOne(filter, { $set: { 'fornecedor_social.status': 'error', 'fornecedor_social.error': err?.message || 'request_error', 'fornecedor_social.requestedAt': new Date().toISOString() } });
         return res.status(502).json({ ok: false, error: 'fs_request_error', message: err?.message || 'request_error' });
       }
     }
@@ -15870,19 +15982,20 @@ app.post('/api/refil/preview', async (req, res) => {
         dbg('computed', { initial, followerCount, deficit, min_drop: MIN_DROP });
 
         if (deficit < MIN_DROP) {
+          const thresholdFollowers = Math.max(0, Math.trunc(initial) - Math.trunc(MIN_DROP));
           logRefil2Request({
             execStatus: 'success',
             decisionStatus: 'no_drop',
             decisionReason: 'below_min_drop',
             meta: { step: 'computed', tookMs: Date.now() - startedAt },
             pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-            computed: { initial, current: followerCount, deficit, min_drop: MIN_DROP }
+            computed: { initial, current: followerCount, deficit, min_drop: MIN_DROP, thresholdFollowers }
           });
           return res.json({
             ok: true,
             status: 'initiated',
-            message: 'Sem queda detectada',
-            data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit }
+            message: `Queda de ${deficit} seguidores. Queda inferior a ${MIN_DROP}, não é possível realizar a reposição. Retorne aqui quando a queda estiver superior a ${MIN_DROP} — quando o perfil estiver com até ${thresholdFollowers} seguidores.`,
+            data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: thresholdFollowers }
           });
         }
 
@@ -15973,7 +16086,7 @@ app.post('/api/refil/preview', async (req, res) => {
           ok: true,
           status: 'initiated',
           message: 'Reposição iniciada',
-          data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit },
+          data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: Math.max(0, Math.trunc(initial) - Math.trunc(MIN_DROP)) },
           raw: addJson
         });
       } catch (e) {
@@ -15983,6 +16096,15 @@ app.post('/api/refil/preview', async (req, res) => {
           errorMessage: e?.message || String(e),
           meta: { step: 'exception', tookMs: Date.now() - startedAt }
         });
+        const code = String(e?.code || '').trim();
+        const msg = String(e?.message || String(e) || '').trim();
+        const isTimeout = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || /timeout/i.test(msg);
+        if (isTimeout) {
+          if (debugMode) {
+            return res.status(504).json({ ok: false, error: 'timeout', message: 'Erro, tente novamente.', debugId });
+          }
+          return res.status(504).json({ ok: false, error: 'timeout', message: 'Erro, tente novamente.' });
+        }
         if (debugMode) {
           return res.status(500).json({ ok: false, error: 'internal_error', message: 'Falha ao processar reposição.', debugId, details: { message: e?.message || String(e) } });
         }
@@ -18869,9 +18991,8 @@ async function followersMgmtComputeAutoNotifyCandidates({ limit, order }) {
     const nSms = (notify && notify.sms && typeof notify.sms === 'object') ? notify.sms : {};
     const emailOk = String(nEmail.lastStatus || '').trim().toLowerCase() === 'sent';
     const smsOk = !!safe(nSms.sentAt);
-    if (emailOk && smsOk) { stats.candidatesSkippedAlreadyNotified += 1; continue; }
-
     const emailHist = (Array.isArray(nEmail.history) ? nEmail.history : []);
+    const hasEmailHistory = emailHist.length > 0;
     let emailSentCountFromHist = 0;
     let lastEmailSentAtMs = 0;
     for (const h of emailHist) {
@@ -18897,12 +19018,13 @@ async function followersMgmtComputeAutoNotifyCandidates({ limit, order }) {
       if (!hasNewCheckSinceEmail) { stats.candidatesStage1SkippedNoNewCheck += 1; continue; }
       stage = 1;
     } else {
+      stats.candidatesSkippedAlreadyNotified += 1;
       continue;
     }
     if (stage === 0) stats.candidatesStage0FirstEmail += 1;
     if (stage === 1) stats.candidatesStage1SecondEmail += 1;
 
-    out.push({ orderId: String(o._id), username: u, checkedAtMs, dropAbs, stage, emailSentCount, lastEmailSentAtMs });
+    out.push({ orderId: String(o._id), username: u, checkedAtMs, dropAbs, stage, emailSentCount, lastEmailSentAtMs, hasEmailHistory, smsOk });
   }
   stats.eligible = out.length;
 
@@ -18910,6 +19032,9 @@ async function followersMgmtComputeAutoNotifyCandidates({ limit, order }) {
     const sa = Number(a.stage || 0);
     const sb = Number(b.stage || 0);
     if (sa !== sb) return sa - sb;
+    const ha = a.hasEmailHistory ? 1 : 0;
+    const hb = b.hasEmailHistory ? 1 : 0;
+    if (ha !== hb) return ha - hb;
     const ca = Number(a.checkedAtMs || 0);
     const cb = Number(b.checkedAtMs || 0);
     if (ca !== cb) return ord === 'oldest' ? (ca - cb) : (cb - ca);
@@ -23898,11 +24023,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const resolveType = (o) => {
         let type = o.tipo || o.tipoServico;
+        if (!type && o.additionalInfoMapPaid && o.additionalInfoMapPaid.tipo_servico) type = o.additionalInfoMapPaid.tipo_servico;
         if (!type && o.additionalInfoPaid) {
           const tItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i && i.key === 'tipo_servico') : null;
           if (tItem) type = tItem.value;
         }
         if (!type && o.additionalInfoMap && o.additionalInfoMap.tipo_servico) type = o.additionalInfoMap.tipo_servico;
+        if (!type && o.additionalInfo) {
+          const tItem = Array.isArray(o.additionalInfo) ? o.additionalInfo.find(i => i && i.key === 'tipo_servico') : null;
+          if (tItem) type = tItem.value;
+        }
         return String(type || '');
       };
 
@@ -23921,6 +24051,9 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const resolveCategory = (o) => {
         let category = '';
+        if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid.categoria_servico === 'string') {
+          category = o.additionalInfoMapPaid.categoria_servico;
+        }
         if (o.additionalInfoPaid) {
           const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
           const cItem = arr.find(i => i && i.key === 'categoria_servico');
@@ -23928,6 +24061,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }
         if (!category && o.additionalInfoMap && typeof o.additionalInfoMap.categoria_servico === 'string') {
           category = o.additionalInfoMap.categoria_servico;
+        }
+        if (!category && o.additionalInfo) {
+          const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+          const cItem = arr.find(i => i && i.key === 'categoria_servico');
+          if (cItem && typeof cItem.value === 'string') category = cItem.value;
         }
         return String(category || '');
       };
@@ -24786,7 +24924,42 @@ app.get('/painel', requireAdmin, async (req, res) => {
         upgradeCost;
       const bumpCost = ignoreBumps ? 0 : bumpCostRaw;
 
-      const totalItemCost = 0.85 + serviceCost + bumpCost;
+      let paymentFee = 0.85;
+      try {
+        const hasPaghiperField = !!(o && Object.prototype.hasOwnProperty.call(o, 'paghiper'));
+        const phRaw = hasPaghiperField ? o.paghiper : null;
+        const phA = (phRaw && typeof phRaw === 'object') ? phRaw : null;
+        const phB = (o && o.pagHiper && typeof o.pagHiper === 'object') ? o.pagHiper : null;
+        const phC = (o && o.paghiper_pix && typeof o.paghiper_pix === 'object') ? o.paghiper_pix : null;
+
+        const hasWoovi = !!(o && o.woovi && typeof o.woovi === 'object');
+        const wooviStatus = String((o && o.woovi && o.woovi.status) ? o.woovi.status : '').toLowerCase().trim();
+        const wooviPaid = hasWoovi && (wooviStatus === 'pago' || /\b(paid|settled|captured|succeeded|confirmed|confirmado|aprovado)\b/i.test(wooviStatus) || !!o.woovi.paidAt);
+
+        const phStatus = String(((phA && phA.status) || (phB && phB.status) || (phC && phC.status) || '')).toLowerCase().trim();
+        const phPaid = /\b(pago|paid|settled|captured|succeeded|confirmed|confirmado|aprovado|completed|success)\b/i.test(phStatus) || !!(phA && phA.paidAt) || !!(phB && phB.paidAt) || !!(phC && phC.paidAt);
+
+        const methodHint = String(o.paymentMethod || o.payment_method || o.method || '').toLowerCase().trim();
+        const gatewayHint = String(
+          extractInfo('gateway') ||
+          extractInfo('payment_gateway') ||
+          extractInfo('paymentGateway') ||
+          extractInfo('payment_provider') ||
+          ''
+        ).toLowerCase().trim();
+
+        let gateway = '';
+        if (phPaid) gateway = 'paghiper';
+        else if (wooviPaid) gateway = 'woovi';
+        else if (hasPaghiperField && !wooviPaid) gateway = 'paghiper';
+        else if ((phA || phB || phC) && !wooviPaid) gateway = 'paghiper';
+        else if (methodHint.includes('paghiper') || gatewayHint.includes('paghiper') || gatewayHint.includes('pag_hiper') || gatewayHint.includes('pag hiper')) gateway = 'paghiper';
+        else if (hasWoovi) gateway = 'woovi';
+
+        if (gateway === 'paghiper') paymentFee = 0.99;
+        else paymentFee = 0.85;
+      } catch (_) {}
+      const totalItemCost = paymentFee + serviceCost + bumpCost;
       totalCost += totalItemCost;
 
       const getPaidTotalCents = (order) => {
@@ -24858,6 +25031,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         type: typeForCost,
         qty,
         costPer1000,
+        paymentFee,
         cost: totalItemCost,
         bumpCost,
         orderBumps: String(bumpStrRaw || ''),
@@ -24977,6 +25151,42 @@ app.get('/painel', requireAdmin, async (req, res) => {
         dailyAvgTicket.push((Number(v.orders || 0) > 0) ? (Number(v.revenue || 0) / Number(v.orders || 0)) : 0);
       }
       return { labels, dailyOrders, dailyRevenue, dailyAvgTicket };
+    })();
+    const bumpRevenueSeries = (() => {
+      const map = new Map();
+      for (const r of paidReport) {
+        const dateStr = r && r.createdAt ? r.createdAt : '';
+        if (!dateStr) continue;
+        const d = parseOrderDateUTC(dateStr);
+        if (!d) continue;
+        const sp = toSP(d);
+        const y = sp.getUTCFullYear();
+        const m = String(sp.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(sp.getUTCDate()).padStart(2, '0');
+        const key = `${y}-${m}-${day}`;
+        const cur = map.get(key) || { total: 0, bump: 0 };
+        const totalPaid = Number(r.totalPaid || 0);
+        const bumpRevenue = Number(r.bumpRevenue || 0);
+        cur.total += totalPaid;
+        cur.bump += bumpRevenue;
+        map.set(key, cur);
+      }
+      const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+      const labels = [];
+      const dailyPct = [];
+      const dailyTotalRevenue = [];
+      const dailyBumpRevenue = [];
+      for (const k of keys) {
+        const v = map.get(k) || { total: 0, bump: 0 };
+        const total = Number(v.total || 0);
+        const bump = Number(v.bump || 0);
+        const pct = total > 0 ? (bump / total) * 100 : 0;
+        labels.push(k);
+        dailyPct.push(pct);
+        dailyTotalRevenue.push(total);
+        dailyBumpRevenue.push(bump);
+      }
+      return { labels, dailyPct, dailyTotalRevenue, dailyBumpRevenue };
     })();
     const costOverRevenuePct = revenueShown > 0 ? (Number(totalCost || 0) / Number(revenueShown || 0)) * 100 : 0;
     const bumpRevenuePctOfTotal = totalRevenue > 0 ? (Number(totalBumpRevenue || 0) / Number(totalRevenue || 0)) * 100 : 0;
@@ -25407,7 +25617,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       vitalicioPurchases = rows.slice(0, 500);
     }
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, vitalicioPurchases });
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, vitalicioPurchases });
   } catch (e) {
     res.status(500).send(e.toString());
   }
@@ -25738,14 +25948,31 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     const qtyNeeded = Math.max(0, Math.trunc(finalQty) - Math.trunc(auditedCurrent));
     if (!qtyNeeded || qtyNeeded <= 0) return res.status(400).json({ ok: false, error: 'no_refil_needed', message: 'Nenhuma reposição necessária (já está no final ou acima).' });
     if (qtyNeeded > 50000) return res.status(400).json({ ok: false, error: 'quantity_too_large', message: 'Quantidade muito alta para forçar automaticamente.' });
+    const providerMinQty = 100;
+    const qtyToSend = Math.max(providerMinQty, qtyNeeded);
 
     const uname = String(doc.username || '').trim().replace(/^@+/, '');
     if (!uname) return res.status(400).json({ ok: false, error: 'missing_username' });
     const linkForFama = `https://instagram.com/${encodeURIComponent(uname)}`;
 
     const already = doc && doc.forceRefil && typeof doc.forceRefil === 'object' ? doc.forceRefil : null;
-    const hasOrder = already && (already.orderId || already.status === 'created' || already.status === 'processing');
-    if (hasOrder) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item' });
+    const alreadyStatus = String(already && already.status ? already.status : '').toLowerCase().trim();
+    const hasOrderId = !!(already && already.orderId);
+    const isCreated = alreadyStatus === 'created';
+    const isProcessing = alreadyStatus === 'processing';
+    if (hasOrderId || isCreated) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item' });
+    if (isProcessing) {
+      const startedMs = (() => {
+        try {
+          const s = already && (already.requestedAt || already.startedAt) ? String(already.requestedAt || already.startedAt) : '';
+          const t = s ? new Date(s).getTime() : 0;
+          return Number.isFinite(t) ? t : 0;
+        } catch (_) { return 0; }
+      })();
+      const ageMs = startedMs ? (Date.now() - startedMs) : 0;
+      const graceMs = 10 * 60 * 1000;
+      if (ageMs && ageMs < graceMs) return res.status(409).json({ ok: false, error: 'already_processing', message: 'Já existe um Forçar refil em processamento para este item' });
+    }
 
     const key = process.env.FAMA24H_API_KEY || '';
     if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
@@ -25754,7 +25981,27 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     const requestedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
 
     const axiosLocal = require('axios');
-    const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyNeeded) });
+    const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyToSend) });
+    const truncate = (s, maxLen) => {
+      try {
+        const t = String(s == null ? '' : s);
+        if (!maxLen || t.length <= maxLen) return t;
+        return t.slice(0, maxLen) + '...(truncated)';
+      } catch (_) {
+        return '';
+      }
+    };
+    const normalizeHttpBody = (v) => {
+      try {
+        if (v === null || typeof v === 'undefined') return null;
+        if (typeof v === 'string') return truncate(v, 8000);
+        if (typeof v === 'number' || typeof v === 'boolean') return v;
+        try { return JSON.parse(JSON.stringify(v)); } catch (_) {}
+        return truncate(String(v), 8000);
+      } catch (_) {
+        return null;
+      }
+    };
 
     await col.updateOne(
       { _id: new ObjectId(id) },
@@ -25763,7 +26010,8 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
           forceRefil: {
             status: 'processing',
             provider: 'fama24h',
-            requestPayload: { service: serviceId, link: linkForFama, quantity: qtyNeeded, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+            requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+            startedAt: nowIso,
             requestedAt: nowIso,
             requestedBy
           },
@@ -25773,23 +26021,61 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     );
 
     let data = null;
+    let addHttpStatus = null;
+    let addElapsedMs = null;
     try {
+      const t0 = Date.now();
       const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      addElapsedMs = Date.now() - t0;
+      addHttpStatus = resp && typeof resp.status === 'number' ? resp.status : null;
       data = resp.data || {};
     } catch (e) {
-      const msg = e?.response?.data ? (typeof e.response.data === 'string' ? e.response.data : JSON.stringify(e.response.data)) : (e?.message || String(e));
+      const httpStatus = (e && e.response && typeof e.response.status === 'number') ? e.response.status : null;
+      const httpBody = normalizeHttpBody(e && e.response ? e.response.data : null);
+      const msgBase = e?.message || String(e);
+      const msg = httpBody ? (typeof httpBody === 'string' ? httpBody : truncate(JSON.stringify(httpBody), 8000)) : msgBase;
       await col.updateOne(
         { _id: new ObjectId(id) },
-        { $set: { 'forceRefil.status': 'error', 'forceRefil.error': msg, 'forceRefil.finishedAt': new Date().toISOString(), updatedAt: new Date().toISOString() } }
+        {
+          $set: {
+            'forceRefil.status': 'error',
+            'forceRefil.error': msg,
+            ...(httpStatus !== null ? { 'forceRefil.httpStatus': httpStatus } : {}),
+            ...(httpBody !== null ? { 'forceRefil.httpErrorBody': httpBody } : {}),
+            ...(e && e.code ? { 'forceRefil.axiosCode': String(e.code) } : {}),
+            ...(e && e.name ? { 'forceRefil.axiosErrorName': String(e.name) } : {}),
+            'forceRefil.finishedAt': new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        }
       );
       return res.status(502).json({ ok: false, error: 'fama_request_error', message: msg });
     }
 
     const orderId = data?.order || data?.id || null;
     const status = orderId ? 'created' : ((data && (data.error || data.errors)) ? 'error' : 'unknown');
+    if (!orderId) {
+      const msg = (data && (data.message || data.error || data.errors)) ? String(data.message || data.error || data.errors) : 'Fornecedor não retornou orderId';
+      await col.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            'forceRefil.status': 'error',
+            'forceRefil.error': msg,
+            'forceRefil.response': data || null,
+            ...(addHttpStatus !== null ? { 'forceRefil.httpStatus': addHttpStatus } : {}),
+            ...(addElapsedMs !== null ? { 'forceRefil.addElapsedMs': addElapsedMs } : {}),
+            'forceRefil.finishedAt': new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        }
+      );
+      return res.status(502).json({ ok: false, error: 'provider_no_orderid', message: msg, provider: 'fama24h', data });
+    }
 
     let statusPayload = null;
     let charge = null;
+    let statusHttpStatus = null;
     const pickCharge = (obj) => {
       try {
         if (!obj || typeof obj !== 'object') return null;
@@ -25812,6 +26098,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
       try {
         const payloadStatus = new URLSearchParams({ key, action: 'status', order: String(orderId) });
         const respStatus = await axiosLocal.post('https://fama24h.net/api/v2', payloadStatus.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+        statusHttpStatus = respStatus && typeof respStatus.status === 'number' ? respStatus.status : null;
         statusPayload = respStatus?.data || null;
         charge = pickCharge(statusPayload);
       } catch (_) {}
@@ -25825,13 +26112,17 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
           'forceRefil.response': data,
           ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),
           ...(charge !== null ? { 'forceRefil.charge': charge } : {}),
+          ...(addHttpStatus !== null ? { 'forceRefil.httpStatus': addHttpStatus } : {}),
+          ...(addElapsedMs !== null ? { 'forceRefil.addElapsedMs': addElapsedMs } : {}),
+          ...(statusHttpStatus !== null ? { 'forceRefil.statusHttpStatus': statusHttpStatus } : {}),
+          'forceRefil.forcedAt': new Date().toISOString(),
           'forceRefil.finishedAt': new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
       }
     );
 
-    return res.json({ ok: true, provider: 'fama24h', orderId, serviceId, quantity: qtyNeeded, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
+    return res.json({ ok: true, provider: 'fama24h', orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
   }
@@ -25926,6 +26217,26 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
     const PQueue = require('p-queue');
     const q = new PQueue({ concurrency: 2 });
     const results = [];
+    const truncate = (s, maxLen) => {
+      try {
+        const t = String(s == null ? '' : s);
+        if (!maxLen || t.length <= maxLen) return t;
+        return t.slice(0, maxLen) + '...(truncated)';
+      } catch (_) {
+        return '';
+      }
+    };
+    const normalizeHttpBody = (v) => {
+      try {
+        if (v === null || typeof v === 'undefined') return null;
+        if (typeof v === 'string') return truncate(v, 8000);
+        if (typeof v === 'number' || typeof v === 'boolean') return v;
+        try { return JSON.parse(JSON.stringify(v)); } catch (_) {}
+        return truncate(String(v), 8000);
+      } catch (_) {
+        return null;
+      }
+    };
 
     for (const id of ids) {
       const doc = byId.get(id);
@@ -25936,10 +26247,28 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
       q.add(async () => {
         try {
           const already = doc && doc.forceRefil && typeof doc.forceRefil === 'object' ? doc.forceRefil : null;
-          const hasOrder = already && (already.orderId || already.status === 'created' || already.status === 'processing');
-          if (hasOrder) {
+          const alreadyStatus = String(already && already.status ? already.status : '').toLowerCase().trim();
+          const hasOrderId = !!(already && already.orderId);
+          const isCreated = alreadyStatus === 'created';
+          const isProcessing = alreadyStatus === 'processing';
+          if (hasOrderId || isCreated) {
             results.push({ id, skipped: 'already_forced' });
             return;
+          }
+          if (isProcessing) {
+            const startedMs = (() => {
+              try {
+                const s = already && (already.requestedAt || already.startedAt) ? String(already.requestedAt || already.startedAt) : '';
+                const t = s ? new Date(s).getTime() : 0;
+                return Number.isFinite(t) ? t : 0;
+              } catch (_) { return 0; }
+            })();
+            const ageMs = startedMs ? (Date.now() - startedMs) : 0;
+            const graceMs = 10 * 60 * 1000;
+            if (ageMs && ageMs < graceMs) {
+              results.push({ id, skipped: 'already_processing' });
+              return;
+            }
           }
 
           const auditedCurrent = safeInt(doc?.audit?.currentFollowers);
@@ -25967,6 +26296,8 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
             results.push({ id, skipped: 'quantity_too_large' });
             return;
           }
+          const providerMinQty = 100;
+          const qtyToSend = Math.max(providerMinQty, qtyNeeded);
 
           const uname = String(doc.username || '').trim().replace(/^@+/, '');
           if (!uname) {
@@ -26019,7 +26350,8 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
                 forceRefil: {
                   status: 'processing',
                   provider: 'fama24h',
-                  requestPayload: { service: serviceId, link: linkForFama, quantity: qtyNeeded, tipo: tipoLower || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+                  requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoLower || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
+                  startedAt: nowIso,
                   requestedAt: nowIso,
                   requestedBy
                 },
@@ -26029,15 +26361,34 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
           );
 
           let data = null;
+          let addHttpStatus = null;
+          let addElapsedMs = null;
           try {
-            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyNeeded) });
+            const t0 = Date.now();
+            const payload = new URLSearchParams({ key, action: 'add', service: String(serviceId), link: String(linkForFama), quantity: String(qtyToSend) });
             const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+            addElapsedMs = Date.now() - t0;
+            addHttpStatus = resp && typeof resp.status === 'number' ? resp.status : null;
             data = resp.data || {};
           } catch (e) {
-            const msg = e?.response?.data ? (typeof e.response.data === 'string' ? e.response.data : JSON.stringify(e.response.data)) : (e?.message || String(e));
+            const httpStatus = (e && e.response && typeof e.response.status === 'number') ? e.response.status : null;
+            const httpBody = normalizeHttpBody(e && e.response ? e.response.data : null);
+            const msgBase = e?.message || String(e);
+            const msg = httpBody ? (typeof httpBody === 'string' ? httpBody : truncate(JSON.stringify(httpBody), 8000)) : msgBase;
             await col.updateOne(
               { _id: new ObjectId(id) },
-              { $set: { 'forceRefil.status': 'error', 'forceRefil.error': msg, 'forceRefil.finishedAt': new Date().toISOString(), updatedAt: new Date().toISOString() } }
+              {
+                $set: {
+                  'forceRefil.status': 'error',
+                  'forceRefil.error': msg,
+                  ...(httpStatus !== null ? { 'forceRefil.httpStatus': httpStatus } : {}),
+                  ...(httpBody !== null ? { 'forceRefil.httpErrorBody': httpBody } : {}),
+                  ...(e && e.code ? { 'forceRefil.axiosCode': String(e.code) } : {}),
+                  ...(e && e.name ? { 'forceRefil.axiosErrorName': String(e.name) } : {}),
+                  'forceRefil.finishedAt': new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                }
+              }
             );
             results.push({ id, error: 'fama_request_error', message: msg });
             return;
@@ -26048,10 +26399,12 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
 
           let statusPayload = null;
           let charge = null;
+          let statusHttpStatus = null;
           if (orderId) {
             try {
               const payloadStatus = new URLSearchParams({ key, action: 'status', order: String(orderId) });
               const respStatus = await axiosLocal.post('https://fama24h.net/api/v2', payloadStatus.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+              statusHttpStatus = respStatus && typeof respStatus.status === 'number' ? respStatus.status : null;
               statusPayload = respStatus?.data || null;
               charge = pickCharge(statusPayload);
             } catch (_) {}
@@ -26061,19 +26414,24 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
             { _id: new ObjectId(id) },
             {
               $set: {
-                'forceRefil.status': status,
+                'forceRefil.status': orderId ? status : 'error',
                 ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
                 'forceRefil.response': data,
                 ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),
                 ...(charge !== null ? { 'forceRefil.charge': charge } : {}),
+                ...(!orderId ? { 'forceRefil.error': (data && (data.message || data.error || data.errors)) ? String(data.message || data.error || data.errors) : 'Fornecedor não retornou orderId' } : {}),
+                ...(addHttpStatus !== null ? { 'forceRefil.httpStatus': addHttpStatus } : {}),
+                ...(addElapsedMs !== null ? { 'forceRefil.addElapsedMs': addElapsedMs } : {}),
+                ...(statusHttpStatus !== null ? { 'forceRefil.statusHttpStatus': statusHttpStatus } : {}),
+                ...(orderId ? { 'forceRefil.forcedAt': new Date().toISOString() } : {}),
                 'forceRefil.finishedAt': new Date().toISOString(),
                 updatedAt: new Date().toISOString()
               }
             }
           );
 
-          if (orderId) results.push({ id, ok: true, orderId, charge, quantity: qtyNeeded, serviceId });
-          else results.push({ id, error: 'orderid_missing', data });
+          if (orderId) results.push({ id, ok: true, orderId, charge, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, serviceId });
+          else results.push({ id, error: 'provider_no_orderid', message: (data && (data.message || data.error || data.errors)) ? String(data.message || data.error || data.errors) : 'Fornecedor não retornou orderId' });
         } catch (e) {
           results.push({ id, error: 'force_failed', message: e?.message || String(e) });
         }

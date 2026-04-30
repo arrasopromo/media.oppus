@@ -1216,6 +1216,27 @@
 
       try {
         var tipoServ = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
+        var catServ0 = '';
+        try {
+          var mapPaid0 = (orderData && orderData.additionalInfoMapPaid) || {};
+          if (mapPaid0 && typeof mapPaid0['categoria_servico'] === 'string') catServ0 = mapPaid0['categoria_servico'];
+          if (!catServ0) {
+            var map0 = (orderData && orderData.additionalInfoMap) || {};
+            if (map0 && typeof map0['categoria_servico'] === 'string') catServ0 = map0['categoria_servico'];
+          }
+          if (!catServ0) {
+            var arr0 = Array.isArray(orderData && orderData.additionalInfo) ? orderData.additionalInfo : [];
+            var c0 = arr0.find(function(it){ return it && it.key === 'categoria_servico'; });
+            if (c0 && typeof c0.value === 'string') catServ0 = c0.value;
+          }
+          if (!catServ0) {
+            var arrPaid0 = Array.isArray(orderData && orderData.additionalInfoPaid) ? orderData.additionalInfoPaid : [];
+            var cPaid0 = arrPaid0.find(function(it){ return it && it.key === 'categoria_servico'; });
+            if (cPaid0 && typeof cPaid0.value === 'string') catServ0 = cPaid0.value;
+          }
+        } catch(_) {}
+        catServ0 = String(catServ0 || '').toLowerCase().trim();
+        var isFollowersOrganicos = (tipoServ === 'organicos') && (catServ0 !== 'curtidas') && (catServ0 !== 'visualizacoes');
         var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
         var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })();
         var ident = String((orderData && (orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
@@ -1285,7 +1306,7 @@
               .catch(function() {})
               .then(function(){ if (tries < maxTries) setTimeout(refreshOrderFS, 1500); });
           }
-          if (isPaid && tipoServ === 'organicos') setTimeout(refreshOrderFS, 1200);
+          if (isPaid && isFollowersOrganicos) setTimeout(refreshOrderFS, 1200);
         })();
       } catch(_) {}
       var famaPollTimer = null;
@@ -1306,8 +1327,39 @@
               var paidRaw = (o.expay && o.expay.paidAt) || (o.woovi && o.woovi.paidAt) || o.paidAt || null;
               var status = String(o.status || (o.expay && o.expay.status) || (o.woovi && o.woovi.status) || 'pendente');
                 var mapPaid = o && o.additionalInfoMapPaid || {};
-                var cat0 = String(mapPaid['categoria_servico'] || '').toLowerCase();
-                var t0 = String(mapPaid['tipo_servico'] || o.tipo || o.tipoServico || '-').toLowerCase();
+                var mapOrig = o && o.additionalInfoMap || {};
+                var cat0raw = (typeof mapPaid['categoria_servico'] === 'string' ? mapPaid['categoria_servico'] : '') || (typeof mapOrig['categoria_servico'] === 'string' ? mapOrig['categoria_servico'] : '');
+                if (!cat0raw) {
+                  try {
+                    var arrA = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+                    var itA = arrA.find(function(it){ return it && it.key === 'categoria_servico'; });
+                    if (itA && typeof itA.value === 'string') cat0raw = itA.value;
+                  } catch(_) {}
+                }
+                if (!cat0raw) {
+                  try {
+                    var arrB = Array.isArray(o && o.additionalInfo) ? o.additionalInfo : [];
+                    var itB = arrB.find(function(it){ return it && it.key === 'categoria_servico'; });
+                    if (itB && typeof itB.value === 'string') cat0raw = itB.value;
+                  } catch(_) {}
+                }
+                var cat0 = String(cat0raw || '').toLowerCase();
+                var t0raw = (typeof mapPaid['tipo_servico'] === 'string' ? mapPaid['tipo_servico'] : '') || (typeof mapOrig['tipo_servico'] === 'string' ? mapOrig['tipo_servico'] : '') || (o.tipo || o.tipoServico || '-');
+                if (!t0raw) {
+                  try {
+                    var arrT = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+                    var itT = arrT.find(function(it){ return it && it.key === 'tipo_servico'; });
+                    if (itT && typeof itT.value === 'string') t0raw = itT.value;
+                  } catch(_) {}
+                }
+                if (!t0raw) {
+                  try {
+                    var arrT2 = Array.isArray(o && o.additionalInfo) ? o.additionalInfo : [];
+                    var itT2 = arrT2.find(function(it){ return it && it.key === 'tipo_servico'; });
+                    if (itT2 && typeof itT2.value === 'string') t0raw = itT2.value;
+                  } catch(_) {}
+                }
+                var t0 = String(t0raw || '-').toLowerCase();
                 var tipo = (function(){ if(cat0==='curtidas'){ if(t0==='mistos') return 'Curtidas Mistas'; if(t0==='brasileiros'||t0==='curtidas_brasileiras') return 'Curtidas Brasileiras'; if(t0==='organicos'||t0==='curtidas_reais') return 'Curtidas Reais'; } else if(cat0==='visualizacoes'){ if(t0==='visualizacoes_reels'||t0==='views'||t0==='reels') return 'Visualizações Reels'; return 'Visualizações'; } else { if(t0==='mistos') return 'Seguidores Mistos'; if(t0==='brasileiros') return 'Seguidores Brasileiros'; if(t0==='organicos') return 'Seguidores brasileiros e reais'; } return t0; })();
               var qtd = String(o.qtd || o.quantidade || '0');
               var insta = String(o.instagramUsername || o.instauser || '-');
