@@ -288,9 +288,61 @@ function addMonthsEndOfDayBrtIso(baseMs, monthsToAdd) {
   return new Date(utcMs).toISOString();
 }
 
+async function extendLinkByToken() {
+  const tokenRaw = parseCliArg('token') || parseCliArg('link') || parseCliArg('id');
+  const token = String(tokenRaw || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!token) {
+    console.log(JSON.stringify({ ok: false, error: 'missing_token' }));
+    process.exit(1);
+    return;
+  }
+
+  const modeRaw = String(parseCliArg('mode') || parseCliArg('refil_mode') || '6m').trim().toLowerCase();
+  const mode = (modeRaw === '6' || modeRaw === '6meses' || modeRaw === '6m') ? '6m'
+    : (modeRaw === '12' || modeRaw === '12meses' || modeRaw === '12m') ? '12m'
+    : (modeRaw === 'life' || modeRaw === 'lifetime' || modeRaw === 'vitalicio' || modeRaw === 'vitalício') ? 'life'
+    : '30';
+
+  const tl = await getCollection('temporary_links');
+  const rec = await tl.findOne({ purpose: 'refil', id: token });
+  if (!rec) {
+    console.log(JSON.stringify({ ok: false, error: 'not_found', token }));
+    process.exit(1);
+    return;
+  }
+
+  const expMs = safeDateMs(rec.expiresAt);
+  const baseMs = Math.max(Date.now(), expMs || 0);
+
+  const sets = {};
+  if (mode === 'life') {
+    sets.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
+    sets.warrantyMode = 'life';
+    sets.warrantyDays = null;
+  } else if (mode === '12m' || mode === '6m') {
+    const months = mode === '12m' ? 12 : 6;
+    sets.expiresAt = addMonthsEndOfDayBrtIso(baseMs, months);
+    sets.warrantyMode = mode;
+    sets.warrantyDays = null;
+  } else {
+    sets.expiresAt = new Date(baseMs + 30 * 24 * 60 * 60 * 1000).toISOString();
+    sets.warrantyMode = '30';
+    sets.warrantyDays = 30;
+  }
+
+  await tl.updateOne({ _id: rec._id }, { $set: sets });
+  const after = await tl.findOne({ _id: rec._id }, { projection: { _id: 0, id: 1, instauser: 1, phone: 1, expiresAt: 1, warrantyMode: 1, warrantyDays: 1 } });
+  console.log(JSON.stringify({ ok: true, token, mode, before: { expiresAt: rec.expiresAt || null, warrantyMode: rec.warrantyMode || null }, after }, null, 2));
+}
+
 (async () => {
   if (process.argv.includes('--extend-march-30d')) {
     await extendMarchRefilLinksBy30Days();
+    process.exit(0);
+    return;
+  }
+  if (process.argv.includes('--extend-token')) {
+    await extendLinkByToken();
     process.exit(0);
     return;
   }

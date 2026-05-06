@@ -1431,6 +1431,164 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
     return true;
 };
 
+const sendRefil2ToolEmailToCustomer = async ({ record, token, toOverride }) => {
+    const transporter = getSmtpTransporter();
+    if (!transporter) return false;
+
+    const from = getOppusFromHeader();
+    if (!from) return false;
+
+    const safe = (v) => String(v == null ? '' : v).trim();
+    const escapeHtml = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
+    const to = safe(toOverride || customer.email);
+    if (!to) return false;
+    const bcc = getAdminEmailBcc(to);
+
+    const payerName = safe(
+        record?.woovi?.payer?.name ||
+        record?.payer?.name ||
+        record?.nomeUsuario ||
+        customer?.name ||
+        ''
+    ) || 'Cliente';
+
+    const tokenSafe = safe(token).replace(/[^0-9a-z]/gi, '');
+    if (!tokenSafe) return false;
+
+    const refilUrl = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(tokenSafe)}`;
+
+    const subject = 'Ferramenta de Recuperação de Seguidores — acesso liberado';
+    const text =
+        `Olá, ${payerName}!\n\n` +
+        `Seu pagamento foi confirmado e sua Ferramenta de Recuperação de Seguidores já está liberada.\n\n` +
+        `Acesse por aqui:\n${refilUrl}\n\n` +
+        `Suporte: suporte@agenciaoppus.site`;
+
+    const html = `<div style="margin:0;padding:0;background:#f3f4f6;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;background:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:18px 10px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;border-collapse:collapse;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e5e7eb;">
+          <tr>
+            <td style="padding:18px 18px 12px 18px;">
+              <div style="font-size:18px;font-weight:900;color:#111827;">Ferramenta de Recuperação de Seguidores</div>
+              <div style="margin-top:6px;font-size:13px;color:#6b7280;line-height:1.55;">Acesso liberado para reposição de seguidores (misto/brasileiro).</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 18px 16px 18px;">
+              <div style="font-size:14px;color:#111827;line-height:1.65;">
+                Olá, <strong>${escapeHtml(payerName)}</strong>!<br/>
+                Sua ferramenta já está disponível.
+              </div>
+              <div style="margin:14px 0 10px 0;font-size:13px;color:#374151;line-height:1.6;">
+                O botão abaixo vai te direcionar para a ferramenta de reposição automática de seguidores.
+              </div>
+              <div style="margin:10px 0 0 0;text-align:center;">
+                <a href="${escapeHtml(refilUrl)}" style="display:inline-block;padding:11px 14px;background:#2563eb;color:#ffffff;border-radius:12px;font-size:14px;font-weight:900;text-decoration:none;">Clique aqui</a>
+              </div>
+              <div style="margin:14px 0 0 0;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;line-height:1.5;">
+                Para retirar dúvidas ou ajuda entre em contato com <a href="mailto:suporte@agenciaoppus.site" style="color:#2563eb;text-decoration:none;">suporte@agenciaoppus.site</a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>`;
+
+    await transporter.sendMail({
+        from,
+        to,
+        ...(bcc ? { bcc } : {}),
+        subject,
+        text,
+        html
+    });
+    return true;
+};
+
+const maybeSendRefil2ToolEmail = async (record, col, req) => {
+    try {
+        if (!record || !col || !record._id) return;
+        const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
+        const to = String(customer.email || '').trim();
+        if (!to) return;
+
+        const isPaid = (function () {
+            const st = String(record.status || '').toLowerCase();
+            const wst = String(record?.woovi?.status || '').toLowerCase();
+            if (st === 'pago' || wst === 'pago') return true;
+            if (record?.paidAt || record?.woovi?.paidAt || record?.payment?.paidAt) return true;
+            const xst = String(record?.expay?.status || '').toLowerCase();
+            if (xst === 'pago' || xst === 'paid' || xst === 'completed') return true;
+            const efiSt = String(record?.efi?.status || '').toLowerCase();
+            if (efiSt === 'paid' || efiSt === 'settled') return true;
+            const pgSt = String(record?.pagarme?.status || '').toLowerCase();
+            if (/(paid|settled|captured|authorized|succeeded|aprovado|confirmado)/i.test(pgSt)) return true;
+            const phSt = String(record?.paghiper?.status || '').toLowerCase();
+            if (phSt === 'pago' || phSt === 'paid' || phSt === 'completed') return true;
+            return false;
+        })();
+        if (!isPaid) return;
+
+        const isEligible = (function () {
+            try {
+                const buildMapFromArr = (arr) => (Array.isArray(arr) ? arr : []).reduce((acc, it) => { const k = String(it?.key || '').trim(); if (k) acc[k] = String(it?.value ?? '').trim(); return acc; }, {});
+                const mapPaid = (record && record.additionalInfoMapPaid && typeof record.additionalInfoMapPaid === 'object') ? record.additionalInfoMapPaid : buildMapFromArr(record?.additionalInfoPaid);
+                const mapOrig = (record && record.additionalInfoMap && typeof record.additionalInfoMap === 'object') ? record.additionalInfoMap : buildMapFromArr(record?.additionalInfo);
+                const map = Object.assign({}, mapOrig, mapPaid);
+                const tipoServicoRaw = String(map['tipo_servico'] || record?.tipoServico || record?.tipo || '').toLowerCase().trim();
+                const categoriaServicoRaw = String(map['categoria_servico'] || record?.categoriaServico || '').toLowerCase().trim();
+                const isSeguidores = !categoriaServicoRaw || categoriaServicoRaw.includes('seguidores');
+                const isOkTipo = tipoServicoRaw.includes('mistos') || tipoServicoRaw.includes('brasileir');
+                return isSeguidores && isOkTipo;
+            } catch (_) {
+                return false;
+            }
+        })();
+        if (!isEligible) return;
+
+        if (record?.emails?.refil2ToolSentAt) return;
+
+        const nowIso = new Date().toISOString();
+        const lockFilter = {
+            _id: record._id,
+            $and: [
+                { $or: [{ 'emails.refil2ToolSentAt': { $exists: false } }, { 'emails.refil2ToolSentAt': null }, { 'emails.refil2ToolSentAt': '' }] },
+                { $or: [{ 'emails.refil2ToolLockAt': { $exists: false } }, { 'emails.refil2ToolLockAt': null }, { 'emails.refil2ToolLockAt': '' }] }
+            ]
+        };
+        const lockRes = await col.updateOne(lockFilter, { $set: { 'emails.refil2ToolLockAt': nowIso } });
+        if (!lockRes || !lockRes.matchedCount) return;
+
+        try {
+            const reqSafe = req || { ip: '', connection: {}, headers: {}, get: () => '' };
+            const linkRec = await ensureRefilLink(record?.identifier, record?.correlationID, reqSafe);
+            const token = String(linkRec?.id || '').trim();
+            if (!token) throw new Error('refil_token_missing');
+
+            await sendRefil2ToolEmailToCustomer({ record, token });
+            await col.updateOne(
+                { _id: record._id, 'emails.refil2ToolLockAt': nowIso },
+                { $set: { 'emails.refil2ToolSentAt': new Date().toISOString() }, $unset: { 'emails.refil2ToolLockAt': '' } }
+            );
+        } catch (e) {
+            try {
+                await col.updateOne({ _id: record._id, 'emails.refil2ToolLockAt': nowIso }, { $unset: { 'emails.refil2ToolLockAt': '' }, $set: { 'emails.refil2ToolLastError': String(e?.message || e) } });
+            } catch (_) {}
+        }
+    } catch (_) {}
+};
+
 const pruneOnlinePresence = () => {
     const now = Date.now();
     for (const [k, v] of onlinePresence.entries()) {
@@ -2750,10 +2908,27 @@ async function ensureRefilLink(identifier, correlationID, req) {
     const phoneFromCustomer = (doc && doc.customer && doc.customer.phone) ? String(doc.customer.phone).replace(/\D/g, '') : '';
     const phoneFromMap = (map['phone'] ? String(map['phone']) : (pickVal(arrPaid, 'phone') || pickVal(arrOrig, 'phone'))).replace(/\D/g, '');
     const phoneDigits = phoneFromCustomer || phoneFromMap || '';
-    const tipoServicoRaw = String(map['tipo_servico'] || doc.tipoServico || doc.tipo || '').trim().toLowerCase();
-    const categoriaServicoRaw = String(map['categoria_servico'] || doc.categoriaServico || '').trim().toLowerCase();
-    const isSeguidores = !categoriaServicoRaw || categoriaServicoRaw.includes('seguidores');
-    const isEligibleRefil = isSeguidores && (tipoServicoRaw.includes('mistos') || tipoServicoRaw.includes('brasileir'));
+    const normalizeKey = (s) => {
+      try {
+        return String(s || '')
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '');
+      } catch (_) {
+        return String(s || '').trim().toLowerCase();
+      }
+    };
+    const tipoServicoKey = normalizeKey(map['tipo_servico'] || doc.tipoServico || doc.tipo || '');
+    const categoriaServicoKey = normalizeKey(map['categoria_servico'] || doc.categoriaServico || '');
+    const isSeguidores = !categoriaServicoKey || categoriaServicoKey.includes('seguidores');
+    const isEligibleRefil = isSeguidores && (
+      tipoServicoKey.includes('mistos') ||
+      tipoServicoKey.includes('brasileir') ||
+      tipoServicoKey.includes('organicos') ||
+      tipoServicoKey.includes('brasileiros_reais') ||
+      (tipoServicoKey.includes('real') && tipoServicoKey.includes('brasileir'))
+    );
     if (!isEligibleRefil) return null;
     const bumpsStr = String(map['order_bumps'] || pickVal(arrPaid, 'order_bumps') || pickVal(arrOrig, 'order_bumps') || '').trim();
     const bumpQtyMap = (() => {
@@ -7505,6 +7680,40 @@ app.post('/api/expay/charge', async (req, res) => {
     }
 });
 
+const parsePaghiperDateToIso = (raw) => {
+    try {
+        const s0 = String(raw || '').trim();
+        if (!s0) return null;
+        const m = s0.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+        if (!m) return null;
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const hh = Number(m[4]);
+        const mi = Number(m[5]);
+        const ss = Number(m[6] || '0');
+        if (![y, mo, d, hh, mi, ss].every(Number.isFinite)) return null;
+        const utcMs = Date.UTC(y, mo - 1, d, hh + 3, mi, ss, 0);
+        if (!Number.isFinite(utcMs)) return null;
+        const iso = new Date(utcMs).toISOString();
+        return iso;
+    } catch (_) {
+        return null;
+    }
+};
+
+const isPaghiperPaidStatus = (statusLower) => {
+    const s = String(statusLower || '').toLowerCase().trim();
+    if (!s) return false;
+    return /\b(paid|pago|approved|aprovado|success|confirmado|confirmed)\b/i.test(s);
+};
+
+const isPaghiperCompletedStatus = (statusLower) => {
+    const s = String(statusLower || '').toLowerCase().trim();
+    if (!s) return false;
+    return /\b(completed|complete)\b/i.test(s);
+};
+
 app.post('/api/paghiper/charge', async (req, res) => {
     try {
         const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -8031,7 +8240,7 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
                     const stRoot = data?.status_request || data || {};
                     const statusRaw = String(stRoot?.status || '').trim();
                     const statusLower = statusRaw.toLowerCase();
-                    const paidFlag = /(paid|pago|completed|success|approved|aprovado)/i.test(statusLower);
+                    const paidFlag = isPaghiperPaidStatus(statusLower);
                     const orderIdFromRemote = String(stRoot?.order_id || stRoot?.orderId || '').trim();
                     return res.json({
                         ok: true,
@@ -8051,7 +8260,7 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
         }
 
         const existingStatus = String((record?.paghiper?.status || record?.status || 'pendente') || '').trim();
-        const existingPaid = /(pago|paid|completed|success|approved|aprovado)/i.test(existingStatus.toLowerCase());
+        const existingPaid = isPaghiperPaidStatus(existingStatus.toLowerCase()) || !!(record?.paidAt || record?.paghiper?.paidAt);
 
         if (!apiKey || !token) {
             return res.json({
@@ -8084,7 +8293,8 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
         const stRoot = data?.status_request || data || {};
         const statusRaw = String(stRoot?.status || existingStatus || '').trim();
         const statusLower = statusRaw.toLowerCase();
-        const paidFlag = /(paid|pago|completed|success|approved|aprovado)/i.test(statusLower);
+        const paidFlag = isPaghiperPaidStatus(statusLower);
+        const completedFlag = isPaghiperCompletedStatus(statusLower);
 
         let paidValueCents = null;
         try {
@@ -8109,7 +8319,7 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
 
         const setFields = {
             'paghiper.statusPayload': data || null,
-            'paghiper.status': statusLower || 'pending'
+            'paghiper.status': paidFlag ? 'pago' : (statusLower || 'pending')
         };
         if (brCode) setFields['paghiper.brCode'] = brCode;
         if (qrCodeImage) setFields['paghiper.qrCodeImage'] = qrCodeImage;
@@ -8117,8 +8327,28 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
         let isDivergent = false;
         if (paidFlag) {
             setFields.status = 'pago';
-            setFields.paidAt = new Date().toISOString();
-            setFields['paghiper.paidAt'] = new Date().toISOString();
+            const existingPaidAtIso = (function () {
+                try {
+                    const d0 = parseOrderDateUTC(record?.paghiper?.paidAt || record?.paidAt || null);
+                    return d0 ? d0.toISOString() : null;
+                } catch (_) {
+                    return null;
+                }
+            })();
+            const phPaidDateIso = parsePaghiperDateToIso(stRoot?.paid_date);
+            const phStatusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const phCandidatePaidIso = phPaidDateIso || phStatusDateIso || null;
+            const shouldWritePaidAt = (function () {
+                if (!phCandidatePaidIso) return !existingPaidAtIso;
+                if (!existingPaidAtIso) return true;
+                try { return new Date(phCandidatePaidIso).getTime() < new Date(existingPaidAtIso).getTime(); } catch (_) { return false; }
+            })();
+            if (shouldWritePaidAt) {
+                const phPaidIso = phCandidatePaidIso || new Date().toISOString();
+                setFields.paidAt = phPaidIso;
+                setFields['paghiper.paidAt'] = phPaidIso;
+            }
+            if (phStatusDateIso) setFields['paghiper.statusAt'] = phStatusDateIso;
             const expected = record?.expectedValueCents;
             if (expected && typeof paidValueCents === 'number' && paidValueCents !== expected) {
                 setFields.status = 'divergent_value';
@@ -8126,6 +8356,12 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
                 setFields.mismatchDetails = { expected, paid: paidValueCents, detectedAt: new Date().toISOString() };
                 isDivergent = true;
             }
+        }
+        if (completedFlag) {
+            const phStatusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const completedIso = phStatusDateIso || new Date().toISOString();
+            setFields['paghiper.completedAt'] = completedIso;
+            if (phStatusDateIso) setFields['paghiper.statusAt'] = phStatusDateIso;
         }
 
         await col.updateOne({ _id: record._id }, { $set: setFields });
@@ -8202,7 +8438,8 @@ app.post('/api/paghiper/notification', async (req, res) => {
         const stRoot = data?.status_request || data || {};
         const statusRaw = String(stRoot?.status || '').trim();
         const statusLower = statusRaw.toLowerCase();
-        const paidFlag = /(paid|pago|completed|success|approved|aprovado)/i.test(statusLower);
+        const paidFlag = isPaghiperPaidStatus(statusLower);
+        const completedFlag = isPaghiperCompletedStatus(statusLower);
 
         let paidValueCents = null;
         try {
@@ -8245,8 +8482,28 @@ app.post('/api/paghiper/notification', async (req, res) => {
         let isDivergent = false;
         if (paidFlag) {
             setFields.status = 'pago';
-            setFields.paidAt = new Date().toISOString();
-            setFields['paghiper.paidAt'] = new Date().toISOString();
+            const existingPaidAtIso = (function () {
+                try {
+                    const d0 = parseOrderDateUTC(existingOrder?.paghiper?.paidAt || existingOrder?.paidAt || null);
+                    return d0 ? d0.toISOString() : null;
+                } catch (_) {
+                    return null;
+                }
+            })();
+            const phPaidDateIso = parsePaghiperDateToIso(stRoot?.paid_date);
+            const phStatusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const phCandidatePaidIso = phPaidDateIso || phStatusDateIso || null;
+            const shouldWritePaidAt = (function () {
+                if (!phCandidatePaidIso) return !existingPaidAtIso;
+                if (!existingPaidAtIso) return true;
+                try { return new Date(phCandidatePaidIso).getTime() < new Date(existingPaidAtIso).getTime(); } catch (_) { return false; }
+            })();
+            if (shouldWritePaidAt) {
+                const phPaidIso = phCandidatePaidIso || new Date().toISOString();
+                setFields.paidAt = phPaidIso;
+                setFields['paghiper.paidAt'] = phPaidIso;
+            }
+            if (phStatusDateIso) setFields['paghiper.statusAt'] = phStatusDateIso;
             if (existingOrder) {
                 const expected = existingOrder.expectedValueCents;
                 if (expected && typeof paidValueCents === 'number' && paidValueCents !== expected) {
@@ -8256,6 +8513,12 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     isDivergent = true;
                 }
             }
+        }
+        if (completedFlag) {
+            const phStatusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const completedIso = phStatusDateIso || new Date().toISOString();
+            setFields['paghiper.completedAt'] = completedIso;
+            if (phStatusDateIso) setFields['paghiper.statusAt'] = phStatusDateIso;
         }
 
         if (existingOrder) {
@@ -8277,6 +8540,196 @@ app.post('/api/paghiper/notification', async (req, res) => {
         try { console.error('❌ PagHiper notification error:', err?.message || String(err)); } catch (_) {}
         // Não retornar 200 em falha: a PagHiper tenta novamente automaticamente.
         return res.status(500).json({ ok: false, error: 'notification_processing_failed' });
+    }
+});
+
+app.post('/api/painel/paghiper/fix-paidat', requireAdmin, async (req, res) => {
+    try {
+        const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+        const startDate = String(body.startDate || '2026-05-01').trim();
+        const endDate = String(body.endDate || '2026-05-02').trim();
+        const dryRun = body.dryRun === true || String(body.dryRun || '') === '1';
+        const limit = Math.max(1, Math.min(5000, Number(body.limit || 2000) || 2000));
+        const forceRemote = body.forceRemote === true || String(body.forceRemote || '') === '1';
+
+        const parseYmd = (s) => {
+            const m = String(s || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!m) return null;
+            const y = Number(m[1]);
+            const mo = Number(m[2]);
+            const d = Number(m[3]);
+            if (![y, mo, d].every(Number.isFinite)) return null;
+            return { y, mo, d };
+        };
+
+        const s0 = parseYmd(startDate);
+        const e0 = parseYmd(endDate);
+        if (!s0 || !e0) {
+            return res.status(400).json({ ok: false, error: 'invalid_range', message: 'Use startDate/endDate no formato YYYY-MM-DD' });
+        }
+
+        const startUtc = new Date(Date.UTC(s0.y, s0.mo - 1, s0.d, 3, 0, 0, 0));
+        const endExclusiveUtc = new Date(Date.UTC(e0.y, e0.mo - 1, e0.d + 1, 3, 0, 0, 0));
+        const startIso = startUtc.toISOString();
+        const endIso = endExclusiveUtc.toISOString();
+
+        const parseAnyDateToIso = (v) => {
+            try {
+                if (!v) return null;
+                if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.toISOString() : null;
+                const s = String(v).trim();
+                if (!s) return null;
+                const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+                const d = new Date(hasTZ ? s : (s + 'Z'));
+                return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+            } catch (_) {
+                return null;
+            }
+        };
+
+        const isPaidLike = (st) => /(paid|pago|approved|aprovado|success)/i.test(String(st || '').toLowerCase());
+
+        const rangeOr = [];
+        const addRangeField = (path) => {
+            rangeOr.push({ $and: [{ [path]: { $type: 'date' } }, { [path]: { $gte: startUtc, $lt: endExclusiveUtc } }] });
+            rangeOr.push({ $and: [{ [path]: { $type: 'string' } }, { [path]: { $gte: startIso, $lt: endIso } }] });
+        };
+        addRangeField('paidAt');
+        addRangeField('paghiper.paidAt');
+
+        const query = {
+            $and: [
+                { 'paghiper.transactionId': { $exists: true, $nin: [null, ''] } },
+                { $or: rangeOr },
+                {
+                    $or: [
+                        { status: { $regex: '(pago|paid|approved|aprovado|success)', $options: 'i' } },
+                        { 'paghiper.status': { $regex: '(pago|paid|approved|aprovado|success)', $options: 'i' } }
+                    ]
+                }
+            ]
+        };
+
+        const { getCollection } = require('./mongodbClient');
+        const col = await getCollection('checkout_orders');
+        const docs = await col.find(query, {
+            projection: { paidAt: 1, paghiper: 1, status: 1, identifier: 1, correlationID: 1 }
+        }).sort({ _id: -1 }).limit(limit).toArray();
+
+        const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
+        const token = String(process.env.PAGHIPER_TOKEN || '').trim();
+
+        let scanned = 0;
+        let updated = 0;
+        let unchanged = 0;
+        let missingPaidDate = 0;
+        const sample = [];
+        const ops = [];
+
+        for (const d of docs) {
+            scanned += 1;
+            const ph = (d && d.paghiper && typeof d.paghiper === 'object') ? d.paghiper : null;
+            const stPayload = ph && ph.statusPayload ? ph.statusPayload : null;
+            let stRoot = (stPayload && stPayload.status_request && typeof stPayload.status_request === 'object') ? stPayload.status_request : (stPayload && typeof stPayload === 'object' ? stPayload : {});
+
+            if (forceRemote && apiKey && token) {
+                try {
+                    const tx = String(ph?.transactionId || '').trim();
+                    if (tx) {
+                        const resp = await axios.post('https://pix.paghiper.com/invoice/status/', { token, apiKey, transaction_id: tx }, {
+                            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                            timeout: 45000
+                        });
+                        const data = resp?.data || {};
+                        const root = data?.status_request || data || {};
+                        if (root && typeof root === 'object') stRoot = root;
+                        if (!dryRun) {
+                            ops.push({
+                                updateOne: {
+                                    filter: { _id: d._id },
+                                    update: { $set: { 'paghiper.statusPayload': data || null } }
+                                }
+                            });
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            const statusRaw = String(stRoot?.status || ph?.status || d?.status || '').trim();
+            const statusLower = statusRaw.toLowerCase();
+            if (!isPaidLike(statusLower)) {
+                unchanged += 1;
+                continue;
+            }
+
+            const isCompleted = /\bcompleted\b/i.test(statusLower);
+            const paidDateIso = parsePaghiperDateToIso(stRoot?.paid_date);
+            const statusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const candidatePaidIso = paidDateIso || (!isCompleted ? statusDateIso : null) || null;
+            if (!candidatePaidIso) {
+                missingPaidDate += 1;
+                continue;
+            }
+
+            const currentIso = parseAnyDateToIso((ph && ph.paidAt) || d.paidAt || null);
+            const shouldUpdate = (function () {
+                if (!currentIso) return true;
+                try {
+                    return new Date(candidatePaidIso).getTime() < new Date(currentIso).getTime();
+                } catch (_) {
+                    return false;
+                }
+            })();
+
+            if (!shouldUpdate) {
+                unchanged += 1;
+                continue;
+            }
+
+            updated += 1;
+            if (sample.length < 20) {
+                sample.push({
+                    _id: String(d._id || ''),
+                    identifier: d.identifier || null,
+                    oldPaidAt: currentIso,
+                    newPaidAt: candidatePaidIso,
+                    status: statusLower
+                });
+            }
+
+            if (!dryRun) {
+                ops.push({
+                    updateOne: {
+                        filter: { _id: d._id },
+                        update: {
+                            $set: {
+                                paidAt: candidatePaidIso,
+                                'paghiper.paidAt': candidatePaidIso
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        if (!dryRun && ops.length) {
+            try {
+                await col.bulkWrite(ops, { ordered: false });
+            } catch (_) {}
+        }
+
+        return res.json({
+            ok: true,
+            dryRun,
+            range: { startDate, endDate, startUtc: startIso, endExclusiveUtc: endIso },
+            scanned,
+            updated,
+            unchanged,
+            missingPaidDate,
+            sample
+        });
+    } catch (e) {
+        return res.status(500).json({ ok: false, error: 'fix_paidat_failed', message: String(e?.message || e) });
     }
 });
 
@@ -8396,7 +8849,7 @@ app.post('/api/expay/webhook', async (req, res) => {
     }
 });
 
-const maybeSendPaymentApprovedEmail = async (record, col) => {
+const maybeSendPaymentApprovedEmail = async (record, col, req) => {
     try {
         if (!record || !col || !record._id) return;
         const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
@@ -8415,7 +8868,7 @@ const maybeSendPaymentApprovedEmail = async (record, col) => {
             const pgSt = String(record?.pagarme?.status || '').toLowerCase();
             if (/(paid|settled|captured|authorized|succeeded|aprovado|confirmado)/i.test(pgSt)) return true;
             const phSt = String(record?.paghiper?.status || '').toLowerCase();
-            if (phSt === 'pago' || phSt === 'paid' || phSt === 'completed') return true;
+            if (phSt === 'pago' || phSt === 'paid') return true;
             return false;
         })();
         if (!isPaid) return;
@@ -8557,9 +9010,9 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             return 10;
         };
         const paidStatusTokens = [
-            'pago', 'paid', 'completed', 'complete', 'approved', 'aprovado', 'confirmado', 'confirmed',
+            'pago', 'paid', 'approved', 'aprovado', 'confirmado', 'confirmed',
             'settled', 'captured', 'succeeded', 'authorized',
-            'PAGO', 'PAID', 'COMPLETED', 'COMPLETE', 'APPROVED', 'APROVADO', 'CONFIRMADO', 'CONFIRMED',
+            'PAGO', 'PAID', 'APPROVED', 'APROVADO', 'CONFIRMADO', 'CONFIRMED',
             'SETTLED', 'CAPTURED', 'SUCCEEDED', 'AUTHORIZED'
         ];
         const isPaidRecord = (r) => {
@@ -8732,7 +9185,8 @@ async function processOrderFulfillment(record, col, req) {
     
     const instaUser = record?.instagramUsername || record?.instauser || '';
     const identifier = record?.identifier;
-    try { await maybeSendPaymentApprovedEmail(record, col); } catch (_) {}
+    try { await maybeSendPaymentApprovedEmail(record, col, req); } catch (_) {}
+    try { await maybeSendRefil2ToolEmail(record, col, req); } catch (_) {}
     try {
       await consumeCouponUsageFromOrder(record, { orderIdentifier: identifier, correlationID: record?.correlationID });
     } catch (_) {}
@@ -11623,6 +12077,99 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 if (code.length > 15) code = code.slice(0, 11);
                 return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
               };
+              const parseIgLinksList = (raw) => {
+                const str = String(raw || '').replace(/`/g, '').trim();
+                if (!str) return [];
+                const parts = str.split(',').map(s => sanitizeLink(s)).filter(Boolean);
+                const uniq = [];
+                parts.forEach((u) => { if (!uniq.includes(u)) uniq.push(u); });
+                return uniq;
+              };
+              const multiLinks = parseIgLinksList(additionalInfoMap['post_links'] || '');
+              const hasMulti = multiLinks.length > 1;
+              const existingMultiOrders = Array.isArray(record?.fornecedor_social_multi?.orders) ? record.fornecedor_social_multi.orders : [];
+              const allDoneMulti = existingMultiOrders.length > 0 && existingMultiOrders.every(o => o && (o.orderId || o.status === 'duplicate'));
+              if (hasMulti && !allDoneMulti && !alreadySentFS && !alreadySentFama) {
+                const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
+                const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();
+                const eachNum = parseInt(splitEachRaw.replace(/[^\d]/g, ''), 10);
+                const extraNum = parseInt(splitExtraRaw.replace(/[^\d]/g, ''), 10);
+                const n = multiLinks.length;
+                const plan = [];
+                if (n > 1 && Number.isFinite(qtd) && qtd > 0) {
+                  const each = Number.isFinite(eachNum) && eachNum > 0 ? eachNum : null;
+                  const extra = Number.isFinite(extraNum) && extraNum >= 0 ? extraNum : null;
+                  if (each && extra != null && (each * n - qtd) === extra && extra < n) {
+                    for (let i = 0; i < n; i++) {
+                      const q = Math.max(0, each - (extra > 0 && i >= (n - extra) ? 1 : 0));
+                      plan.push({ link: multiLinks[i], quantity: q });
+                    }
+                  } else {
+                    const base = Math.floor(qtd / n);
+                    const rem = qtd % n;
+                    for (let i = 0; i < n; i++) {
+                      const q = Math.max(0, base + (i < rem ? 1 : 0));
+                      plan.push({ link: multiLinks[i], quantity: q });
+                    }
+                  }
+                }
+                const planFiltered = plan.filter(p => p && p.quantity > 0 && p.link);
+                const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+                const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
+                const lockUpdateMulti = await col.updateOne(
+                  {
+                    _id: record._id,
+                    $or: [
+                      { 'fornecedor_social_multi.status': { $exists: false } },
+                      { 'fornecedor_social_multi.status': { $ne: 'processing' } },
+                      { 'fornecedor_social_multi.attemptedAt': { $lt: retryAfterIso } },
+                      { 'fornecedor_social_multi.attemptedAt': { $exists: false } }
+                    ]
+                  },
+                  {
+                    $set: {
+                      'fornecedor_social_multi.status': 'processing',
+                      'fornecedor_social_multi.attemptedAt': new Date().toISOString(),
+                      'fornecedor_social_multi.requestPayload': { service: serviceFS, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
+                      'fornecedor_social_multi.requestedAt': new Date().toISOString()
+                    }
+                  }
+                );
+                if (lockUpdateMulti.modifiedCount > 0) {
+                  const axios = require('axios');
+                  const orders = [];
+                  for (const it of planFiltered) {
+                    const rawLink = it && it.link;
+                    const qtyForPost = Number(it && it.quantity) || 0;
+                    const linkFS = sanitizeLink(rawLink);
+                    if (!linkFS) {
+                      orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                      continue;
+                    }
+                    const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(linkFS), quantity: String(qtyForPost) });
+                    try {
+                      const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                      const dataFS = normalizeProviderResponseData(respFS.data);
+                      const orderIdFS = extractProviderOrderId(dataFS);
+                      const providerErrFS = (dataFS && (dataFS.error || (dataFS.data && dataFS.data.error) || (dataFS.response && dataFS.response.error))) || null;
+                      const st = orderIdFS ? 'created' : (providerErrFS ? 'error' : 'unknown');
+                      orders.push({ link: linkFS, quantity: qtyForPost, orderId: orderIdFS || null, status: st, response: dataFS });
+                    } catch (err) {
+                      const errVal = err?.response?.data || err?.message || String(err);
+                      const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      orders.push({ link: linkFS, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                    }
+                  }
+                  const createdCount = orders.filter(o => o && o.orderId).length;
+                  const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                  const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                  await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                  try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
+                }
+                return;
+              }
+
               const sanitizedLink = sanitizeLink(linkToSend);
               const canSendFS = !!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS && !alreadySentFama;
               if (canSendFS) {
@@ -13167,13 +13714,15 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     const doc = await col.findOne(filter, { projection: { status: 1, woovi: 1, expay: 1, paghiper: 1 } });
     
     let paid = !!doc && (
-        /(pago|paid|completed|success|approved|aprovado)/i.test(String(doc.status || '').trim()) ||
+        /(pago|paid|success|approved|aprovado)/i.test(String(doc.status || '').trim()) ||
         String(doc.woovi?.status || '').toLowerCase() === 'pago' ||
         String(doc.woovi?.status || '').toLowerCase() === 'completed' ||
         String(doc.expay?.status || '').toLowerCase() === 'pago' ||
         String(doc.expay?.status || '').toLowerCase() === 'paid' ||
         String(doc.expay?.status || '').toLowerCase() === 'completed' ||
-        /(pago|paid|completed|success|approved|aprovado)/i.test(String(doc.paghiper?.status || '').trim())
+        /(pago|paid|success|approved|aprovado)/i.test(String(doc.paghiper?.status || '').trim()) ||
+        !!doc?.paidAt ||
+        !!doc?.paghiper?.paidAt
     );
 
     const paghiperApiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -13202,18 +13751,25 @@ app.get('/api/checkout/payment-state', async (req, res) => {
         const stRoot = data?.status_request || data || {};
         const statusRaw = String(stRoot?.status || '').trim();
         const statusLower = statusRaw.toLowerCase();
-        const paidFlag = /(paid|pago|completed|success|approved|aprovado)/i.test(statusLower);
-        remote = { ok: true, status: statusLower || statusRaw || '', paid: !!paidFlag };
+        const paidFlag = isPaghiperPaidStatus(statusLower);
+        const completedFlag = isPaghiperCompletedStatus(statusLower);
+        remote = { ok: true, status: statusLower || statusRaw || '', paid: !!paidFlag, completed: !!completedFlag };
 
         if (paidFlag && doc && doc._id) {
           try {
+            const existingPaidAt = doc?.paidAt || doc?.paghiper?.paidAt || null;
+            const phPaidDateIso = parsePaghiperDateToIso(stRoot?.paid_date);
+            const phStatusDateIso = parsePaghiperDateToIso(stRoot?.status_date);
+            const phPaidIso = phPaidDateIso || phStatusDateIso || new Date().toISOString();
             const setFields = {
               status: 'pago',
-              paidAt: new Date().toISOString(),
               'paghiper.statusPayload': data || null,
-              'paghiper.status': statusLower || 'paid',
-              'paghiper.paidAt': new Date().toISOString()
+              'paghiper.status': 'pago'
             };
+            if (!existingPaidAt) {
+              setFields.paidAt = phPaidIso;
+              setFields['paghiper.paidAt'] = phPaidIso;
+            }
             await col.updateOne({ _id: doc._id }, { $set: setFields });
             paid = true;
           } catch (_) {
@@ -13781,7 +14337,8 @@ app.post('/session/mark-paid', async (req, res) => {
         } catch (_) {}
         try {
           const recordForEmail = { ...record, status: 'pago', paidAt: record?.paidAt || nowIsoPaid, woovi: { ...(record?.woovi || {}), status: 'pago', paidAt: (record?.woovi?.paidAt || nowIsoPaid) } };
-          await maybeSendPaymentApprovedEmail(recordForEmail, col);
+          await maybeSendPaymentApprovedEmail(recordForEmail, col, req);
+          await maybeSendRefil2ToolEmail(recordForEmail, col, req);
         } catch (_) {}
         const tipo = record.tipoServico || record.tipo || additionalInfoMap['tipo_servico'] || '';
         const qtdBase = Number(record.quantidade || record.qtd || additionalInfoMap['quantidade'] || 0) || 0;
@@ -14069,13 +14626,64 @@ app.post('/session/mark-paid', async (req, res) => {
             const arrPaidX = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
             const arrOrigX = Array.isArray(record?.additionalInfo) ? record.additionalInfo : [];
             const addMapX = (arrPaidX.length ? arrPaidX : arrOrigX).reduce((acc, it) => { const k = String(it?.key||'').trim(); if (k) acc[k] = String(it?.value||'').trim(); return acc; }, {});
-            const isRefilExt = String(addMapX['tipo_servico'] || '').trim() === 'refil_extensao';
-            const linkIdX = String(addMapX['refil_link_id'] || '').trim();
-            const modeX = String(addMapX['refil_mode'] || '').trim();
-            if (isRefilExt && linkIdX) {
+
+            const tipoServicoX = String(addMapX['tipo_servico'] || '').trim().toLowerCase();
+            const isRefilExt = tipoServicoX === 'refil_extensao' || tipoServicoX === 'refil-extensao' || tipoServicoX === 'extensao_refil' || tipoServicoX === 'extensao-refil';
+
+            const rawTokenX = String(addMapX['refil_link_id'] || addMapX['refilLinkId'] || addMapX['refil_token'] || addMapX['token'] || '').trim();
+            const linkIdX = rawTokenX.replace(/[^a-zA-Z0-9_-]/g, '').trim();
+
+            const modeRawX = String(addMapX['refil_mode'] || addMapX['refilMode'] || '').trim().toLowerCase();
+            const modeX = (modeRawX === '6' || modeRawX === '6meses' || modeRawX === '6m') ? '6m'
+              : (modeRawX === '12' || modeRawX === '12meses' || modeRawX === '12m') ? '12m'
+              : (modeRawX === 'life' || modeRawX === 'lifetime' || modeRawX === 'vitalicio' || modeRawX === 'vitalício') ? 'life'
+              : (modeRawX || '30');
+
+            const extractInstaUserX = () => {
+              const v = String(
+                addMapX['instagram_username'] ||
+                addMapX['instauser'] ||
+                addMapX['perfil'] ||
+                record?.instauser ||
+                record?.instagramUsername ||
+                ''
+              ).trim();
+              return v.replace(/^@+/, '').toLowerCase().trim();
+            };
+            const extractPhoneDigitsX = () => {
+              const v = String(
+                addMapX['phone'] ||
+                addMapX['telefone'] ||
+                addMapX['celular'] ||
+                record?.customer?.phone ||
+                ''
+              );
+              const digits = v.replace(/\D/g, '');
+              return digits ? (digits.startsWith('55') ? digits : `55${digits}`) : '';
+            };
+
+            if (isRefilExt) {
               const tl = await getCollection('temporary_links');
               const nowMsX = Date.now();
-              const linkRecX = await tl.findOne({ id: linkIdX }, { projection: { expiresAt: 1 } });
+
+              let linkRecX = null;
+              if (linkIdX) {
+                linkRecX = await tl.findOne({ id: linkIdX }, { projection: { id: 1, expiresAt: 1, instauser: 1, instausers: 1, phone: 1 } });
+              }
+
+              if (!linkRecX) {
+                const iu = extractInstaUserX();
+                const ph = extractPhoneDigitsX();
+                if (iu) {
+                  linkRecX = await tl.findOne({ purpose: 'refil', $or: [{ instauser: iu }, { instausers: iu }] }, { projection: { id: 1, expiresAt: 1, instauser: 1, instausers: 1, phone: 1 } });
+                }
+                if (!linkRecX && ph) {
+                  linkRecX = await tl.findOne({ purpose: 'refil', phone: ph }, { projection: { id: 1, expiresAt: 1, instauser: 1, instausers: 1, phone: 1 } });
+                }
+              }
+
+              const resolvedLinkIdX = String(linkRecX?.id || linkIdX || '').trim();
+              if (resolvedLinkIdX) {
               const currentExpMsX = (() => {
                 try {
                   const t = new Date(linkRecX?.expiresAt).getTime();
@@ -14116,9 +14724,10 @@ app.post('/session/mark-paid', async (req, res) => {
                 setsX.warrantyMode = '30';
                 setsX.warrantyDays = 30;
               }
-              await tl.updateOne({ id: linkIdX }, { $set: setsX });
-              try { await col.updateOne(filter, { $set: { refilLinkId: linkIdX } }); } catch(_) {}
+              await tl.updateOne({ id: resolvedLinkIdX }, { $set: setsX });
+              try { await col.updateOne(filter, { $set: { refilLinkId: resolvedLinkIdX } }); } catch(_) {}
             }
+          }
           } catch(_) {}
           try {
             const axios = require('axios');
@@ -15397,6 +16006,7 @@ const DEFAULT_COST_SETTINGS = {
   seguidores_brasileiros: 15.48,
   seguidores_organicos: 35.0,
   curtidas_mistos: 0.75,
+  curtidas_brasileiras: 2.0,
   curtidas_organicas: 12.0,
   curtidas: 2.0,
   comentarios: 0.3,
@@ -15994,7 +16604,7 @@ app.post('/api/refil/preview', async (req, res) => {
           return res.json({
             ok: true,
             status: 'initiated',
-            message: `Queda de ${deficit} seguidores. Queda inferior a ${MIN_DROP}, não é possível realizar a reposição. Retorne aqui quando a queda estiver superior a ${MIN_DROP} — quando o perfil estiver com até ${thresholdFollowers} seguidores.`,
+            message: `Queda atual: ${deficit} seguidores (mínimo: ${MIN_DROP}). A reposição fica disponível quando o perfil estiver com até ${thresholdFollowers} seguidores.`,
             data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: thresholdFollowers }
           });
         }
@@ -23132,6 +23742,47 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     };
 
+    const resolvePaidAtIsoForPanel = (o) => {
+      try {
+        const ph = (o && o.paghiper && typeof o.paghiper === 'object') ? o.paghiper : null;
+        const phStatusRaw = String(
+          ph?.statusPayload?.status_request?.status ||
+          ph?.statusPayload?.status ||
+          ph?.status ||
+          ''
+        ).toLowerCase().trim();
+        const phIsCompleted = /\bcompleted\b/i.test(phStatusRaw);
+        const phPaidIsoFromPaidDate =
+          parsePaghiperDateToIso(ph?.statusPayload?.status_request?.paid_date) ||
+          parsePaghiperDateToIso(ph?.statusPayload?.paid_date) ||
+          null;
+        const phPaidIsoFromStatusDate = !phIsCompleted
+          ? (
+              parsePaghiperDateToIso(ph?.statusPayload?.status_request?.status_date) ||
+              parsePaghiperDateToIso(ph?.statusPayload?.status_date) ||
+              null
+            )
+          : null;
+        const phPaidIso = phPaidIsoFromPaidDate || phPaidIsoFromStatusDate || null;
+        if (phPaidIso) return phPaidIso;
+
+        const candidates = [
+          o?.woovi?.paidAt,
+          o?.paghiper?.paidAt,
+          o?.paidAt,
+          o?.createdAt,
+          o?.criado
+        ];
+        for (const c of candidates) {
+          const d = parseOrderDateUTC(c);
+          if (d) return d.toISOString();
+        }
+        return null;
+      } catch (_) {
+        return null;
+      }
+    };
+
     const syncRecentPagarmeOrdersForPanel = async () => {
       try {
         if (view !== 'vendas' && view !== 'dashboard') return;
@@ -23212,7 +23863,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     };
 
     const matchesPeriod = (o, period) => {
-      const dateStr = o.woovi?.paidAt || o.paidAt;
+      const dateStr = resolvePaidAtIsoForPanel(o);
       if (!dateStr) return false;
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
@@ -23834,6 +24485,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       };
       addRangeField('woovi.paidAt');
       addRangeField('paidAt');
+      addRangeField('paghiper.paidAt');
       const fallbackRangeOr = [];
       const addFallbackRangeField = (path) => {
         fallbackRangeOr.push({ $and: [{ [path]: { $type: 'date' } }, { [path]: { $gte: startUtc } }] });
@@ -23858,7 +24510,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, (costSettingsDoc && costSettingsDoc.values) || {});
 
     let filteredOrders = orders.filter(o => {
-      const dateStr = o.woovi?.paidAt || o.paidAt;
+      const dateStr = resolvePaidAtIsoForPanel(o);
       if (!dateStr) return false;
       
       const orderDateUTC = parseOrderDateUTC(dateStr);
@@ -23902,6 +24554,26 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return true;
       }
       return true;
+    });
+
+    const resolvePaidAtMsForPanel = (o) => {
+      try {
+        const iso = resolvePaidAtIsoForPanel(o);
+        if (!iso) return 0;
+        const d = parseOrderDateUTC(iso);
+        if (!d) return 0;
+        const t = d.getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
+    filteredOrders.sort((a, b) => {
+      const ta = resolvePaidAtMsForPanel(a);
+      const tb = resolvePaidAtMsForPanel(b);
+      if (tb !== ta) return tb - ta;
+      return String((b && b._id) ? b._id : '').localeCompare(String((a && a._id) ? a._id : ''));
     });
 
     if (view === 'unknown_orderid') {
@@ -24445,6 +25117,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return true;
       });
 
+      filteredUnknownOrders.sort((a, b) => {
+        const ta = resolvePaidAtMsForPanel(a);
+        const tb = resolvePaidAtMsForPanel(b);
+        if (tb !== ta) return tb - ta;
+        return String((b && b._id) ? b._id : '').localeCompare(String((a && a._id) ? a._id : ''));
+      });
+
       const summarizeMultiOrders = (orders) => {
         const arr = Array.isArray(orders) ? orders : [];
         if (!arr.length) return { orderIdDisplay: '', status: '' };
@@ -24464,7 +25143,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const unknownOrders = filteredUnknownOrders.map(o => ({
         orderBumps: resolveOrderBumps(o),
         _id: o._id,
-        createdAt: o.createdAt || o.woovi?.paidAt || o.paidAt,
+        createdAt: resolvePaidAtIsoForPanel(o),
         instaUser: resolveUser(o),
         phone: resolvePhone(o),
         postLinkViews: resolvePostLinkViews(o),
@@ -24554,7 +25233,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
 
     const paidOrdersToday = orders.filter(o => {
-      const dateStr = o.woovi?.paidAt || o.paidAt;
+      const dateStr = resolvePaidAtIsoForPanel(o);
       if (!dateStr) return false;
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
@@ -24679,7 +25358,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const paidMap = new Map();
       for (const o of filteredOrders) {
-        const dateStr = o.woovi?.paidAt || o.paidAt || o.createdAt || o.criado;
+        const dateStr = resolvePaidAtIsoForPanel(o);
         if (!dateStr) continue;
         const orderDateUTC = parseOrderDateUTC(dateStr);
         if (!orderDateUTC) continue;
@@ -24782,16 +25461,21 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       // Determine type
       let type = o.tipo || o.tipoServico;
+      if (!type && o.additionalInfoMapPaid && o.additionalInfoMapPaid.tipo_servico) type = o.additionalInfoMapPaid.tipo_servico;
       if (!type && o.additionalInfoPaid) {
          const tItem = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid.find(i => i && i.key === 'tipo_servico') : null;
          if (tItem) type = tItem.value;
       } else if (!type && o.additionalInfoMap && o.additionalInfoMap.tipo_servico) {
           type = o.additionalInfoMap.tipo_servico;
+      } else if (!type && o.additionalInfo) {
+          const tItem = Array.isArray(o.additionalInfo) ? o.additionalInfo.find(i => i && i.key === 'tipo_servico') : null;
+          if (tItem) type = tItem.value;
       }
       type = String(type || '').toLowerCase();
 
       // Determine category (seguidores/curtidas/visualizacoes/etc)
       let category = '';
+      if (o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid.categoria_servico === 'string') category = o.additionalInfoMapPaid.categoria_servico;
       if (o.additionalInfoPaid) {
         const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
         const cItem = arr.find(i => i && i.key === 'categoria_servico');
@@ -24800,19 +25484,36 @@ app.get('/painel', requireAdmin, async (req, res) => {
       if (!category && o.additionalInfoMap && typeof o.additionalInfoMap.categoria_servico === 'string') {
         category = o.additionalInfoMap.categoria_servico;
       }
+      if (!category && o.additionalInfo) {
+        const arr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+        const cItem = arr.find(i => i && i.key === 'categoria_servico');
+        if (cItem && typeof cItem.value === 'string') category = cItem.value;
+      }
       category = String(category || '').toLowerCase();
 
+      // Prefer tipo_servico from additionalInfo when category is known (avoids legacy/ambiguous o.tipo overriding)
+      const typeHint = String(extractInfo('tipo_servico') || '').toLowerCase().trim();
+      if (typeHint) {
+        if (!type) type = typeHint;
+        else if (category === 'curtidas' || category === 'curtidas_brasileiras' || category === 'visualizacoes') {
+          type = typeHint;
+        }
+      }
+
       // Normalize type for report when using new checkout (categoria_servico + tipo_servico)
+      const categoryForCost = (category === 'curtidas_brasileiras') ? 'curtidas' : category;
       let typeForCost = type;
-      if (category === 'curtidas' && type === 'mistos') typeForCost = 'curtidas_mistos';
-      else if (category === 'curtidas' && type === 'organicos') typeForCost = 'curtidas_organicas';
+      if (categoryForCost === 'curtidas' && type === 'mistos') typeForCost = 'curtidas_mistos';
+      else if (categoryForCost === 'curtidas' && (type === 'brasileiros' || type === 'curtidas_brasileiras' || /brasileir/.test(type))) typeForCost = 'curtidas_brasileiras';
+      else if (categoryForCost === 'curtidas' && type === 'organicos') typeForCost = 'curtidas_organicas';
       else if (category === 'seguidores' && type === 'mistos') typeForCost = 'seguidores_mistos';
       else if (category === 'seguidores' && type === 'brasileiros') typeForCost = 'seguidores_brasileiros';
 
       // Determine cost per 1000
       let costPer1000 = 0;
       if (typeForCost.includes('curtidas') && typeForCost.includes('mistos')) costPer1000 = costSettings.curtidas_mistos;
-      else if (category === 'curtidas' && typeForCost.includes('organicos')) costPer1000 = (typeof costSettings.curtidas_organicas !== 'undefined' ? costSettings.curtidas_organicas : costSettings.curtidas);
+      else if (typeForCost === 'curtidas_brasileiras') costPer1000 = (typeof costSettings.curtidas_brasileiras !== 'undefined' ? Number(costSettings.curtidas_brasileiras || 0) : Number(costSettings.curtidas || 0));
+      else if (categoryForCost === 'curtidas' && typeForCost.includes('organicos')) costPer1000 = (typeof costSettings.curtidas_organicas !== 'undefined' ? costSettings.curtidas_organicas : costSettings.curtidas);
       else if (typeForCost.includes('mistos')) costPer1000 = costSettings.seguidores_mistos;
       else if (typeForCost.includes('brasileiros') && !typeForCost.includes('curtidas') && !typeForCost.includes('comentarios') && !typeForCost.includes('visualiza')) costPer1000 = costSettings.seguidores_brasileiros;
       else if (typeForCost.includes('organicos')) costPer1000 = costSettings.seguidores_organicos;
@@ -24937,7 +25638,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const wooviPaid = hasWoovi && (wooviStatus === 'pago' || /\b(paid|settled|captured|succeeded|confirmed|confirmado|aprovado)\b/i.test(wooviStatus) || !!o.woovi.paidAt);
 
         const phStatus = String(((phA && phA.status) || (phB && phB.status) || (phC && phC.status) || '')).toLowerCase().trim();
-        const phPaid = /\b(pago|paid|settled|captured|succeeded|confirmed|confirmado|aprovado|completed|success)\b/i.test(phStatus) || !!(phA && phA.paidAt) || !!(phB && phB.paidAt) || !!(phC && phC.paidAt);
+        const phPaid = /\b(pago|paid|settled|captured|succeeded|confirmed|confirmado|aprovado|success)\b/i.test(phStatus) || !!(phA && phA.paidAt) || !!(phB && phB.paidAt) || !!(phC && phC.paidAt);
 
         const methodHint = String(o.paymentMethod || o.payment_method || o.method || '').toLowerCase().trim();
         const gatewayHint = String(
@@ -25027,7 +25728,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         correlationID: o.correlationID || null,
         paymentMethod: o.paymentMethod || o.payment_method || o.method || null,
         status: o.status || (o && o.woovi && o.woovi.status) || (o && o.pagarme && (o.pagarme.order_status || o.pagarme.charge_status || o.pagarme.transaction_status)) || null,
-        createdAt: ((o.woovi && o.woovi.paidAt) || o.paidAt || null),
+        createdAt: resolvePaidAtIsoForPanel(o) || null,
         type: typeForCost,
         qty,
         costPer1000,
@@ -25237,10 +25938,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
             return /(paid|settled)/i.test(st);
           } catch (_) { return false; }
         })();
+        const hasStripe = !!(o && o.stripe && (o.stripe.checkout_session_id || o.stripe.payment_intent_id));
+        const stripePaid = (function(){
+          try {
+            if (!hasStripe) return false;
+            const s0 = String((o && o.status) ? o.status : '').toLowerCase().trim();
+            if (s0 === 'pago' || s0 === 'paid') return true;
+            const st = String((o && o.stripe && o.stripe.status) ? o.stripe.status : '').toLowerCase().trim();
+            return st === 'succeeded' || st === 'paid';
+          } catch (_) { return false; }
+        })();
+        const hasPaghiper = !!(o && o.paghiper && typeof o.paghiper === 'object');
+        const paghiperStatus = String((o && o.paghiper && o.paghiper.status) ? o.paghiper.status : '').toLowerCase().trim();
+        const paghiperPaid = (hasPaghiper && (isPaghiperPaidStatus(paghiperStatus) || !!(o.paghiper && o.paghiper.paidAt)));
+        const hasExPayPix = !!(o && o.expay && typeof o.expay === 'object' && (o.expay.brCode || o.expay.qrCodeImage || o.expay.paidAt));
+
         const pmIsPix = pm === 'pix' || pm.includes('pix');
         const pmIsCard = pm === 'credit_card' || pm.includes('credit') || pm.includes('card') || pm.includes('cart');
-        const isPix = wooviPaid || wooviHasPix || (pmIsPix && !pmIsCard);
-        const isCard = pmIsCard || hasPagarme || pagarmePaid || hasEfi || efiPaid;
+        const isCard = stripePaid || hasStripe || pmIsCard || hasPagarme || pagarmePaid || hasEfi || efiPaid;
+        const isPix = (!isCard) && (wooviPaid || wooviHasPix || paghiperPaid || hasExPayPix || (pmIsPix && !pmIsCard));
 
         if (isPix && !isCard) pixCount += 1;
         else if (isCard && !isPix) cardCount += 1;
@@ -25254,8 +25970,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
       const totalCount = pixCount + cardCount;
       paymentPie = [
-        { label: 'PIX (Woovi)', count: pixCount, color: '#16a34a', pct: totalCount > 0 ? (pixCount / totalCount) * 100 : 0 },
-        { label: 'Cartão', count: cardCount, color: '#2563eb', pct: totalCount > 0 ? (cardCount / totalCount) * 100 : 0 },
+        { label: 'PIX (Woovi/PagHiper)', count: pixCount, color: '#16a34a', pct: totalCount > 0 ? (pixCount / totalCount) * 100 : 0 },
+        { label: 'Cartão (Stripe)', count: cardCount, color: '#2563eb', pct: totalCount > 0 ? (cardCount / totalCount) * 100 : 0 },
       ];
     }
     let servicePageViews = undefined;
@@ -25516,6 +26232,62 @@ app.get('/painel', requireAdmin, async (req, res) => {
               if (!p) continue;
               r.purchaseAt = p.iso;
               r.purchaseAtLabel = p.label;
+            }
+          }
+        } catch (_) {}
+
+        try {
+          const normalizeUsernameKey = (u) => {
+            const s0 = String(u || '').trim();
+            if (!s0) return '';
+            const s1 = s0.startsWith('@') ? s0.slice(1) : s0;
+            return s1.toLowerCase().trim();
+          };
+          const toLc = (v) => String(v == null ? '' : v).toLowerCase().trim();
+          const errorUsers = Array.from(
+            new Set(
+              refil2Requests
+                .filter(r => {
+                  if (!r || !r.username) return false;
+                  const exec = toLc(r.execStatus || r.exec || '');
+                  const decision = toLc(r.decisionStatus || r.decision || r.status || '');
+                  const reason = toLc(r.decisionReason || r.reason || '');
+                  const err = toLc(r.errorMessage || r.error || r.webhookMessage || r.statusMessage || '');
+                  if (!(exec === 'error' || decision === 'error')) return false;
+                  if (reason.includes('profile_lookup_failed')) return true;
+                  return (
+                    err.includes('instagram_proxy') ||
+                    err.includes('proxy') ||
+                    err.includes('rocket') ||
+                    err.includes('timeout') ||
+                    err.includes('consultar seguidores') ||
+                    err.includes('followers')
+                  );
+                })
+                .map(r => normalizeUsernameKey(r.username))
+                .filter(Boolean)
+            )
+          );
+          if (errorUsers.length) {
+            const vu = await getCollection('validated_insta_users');
+            const docs = await vu.find(
+              { username: { $in: errorUsers } },
+              { projection: { _id: 0, username: 1, latestPosts: { $slice: 1 } } }
+            ).toArray();
+            const postByUser = new Map();
+            for (const d0 of docs) {
+              const u = normalizeUsernameKey(d0 && d0.username ? d0.username : '');
+              if (!u) continue;
+              const lp0 = Array.isArray(d0.latestPosts) && d0.latestPosts.length ? d0.latestPosts[0] : null;
+              const code = lp0 && (lp0.shortcode || lp0.code) ? String(lp0.shortcode || lp0.code).trim() : '';
+              if (!code) continue;
+              postByUser.set(u, code);
+            }
+            for (const r of refil2Requests) {
+              const u = normalizeUsernameKey(r && r.username ? r.username : '');
+              if (!u) continue;
+              if (!postByUser.has(u)) continue;
+              r.latestPostShortcode = postByUser.get(u);
             }
           }
         } catch (_) {}
@@ -25839,6 +26611,67 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
     return res.json({ ok: true, updated, results });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'verify_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/generate-link', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const usernameRaw = String(body.username || body.user || body.instauser || body.instagramUsername || '').trim();
+    const username = usernameRaw.replace(/^@+/, '').toLowerCase().trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username', message: 'Informe o username' });
+    if (username.length > 60) return res.status(400).json({ ok: false, error: 'invalid_username', message: 'Username inválido' });
+
+    const { getCollection } = require('./mongodbClient');
+    const tl = await getCollection('temporary_links');
+    const ordersCol = await getCollection('checkout_orders');
+
+    const existing = await tl.findOne(
+      { purpose: 'refil', $or: [{ instauser: username }, { instausers: username }] },
+      { projection: { _id: 0, id: 1, expiresAt: 1, createdAt: 1, orderId: 1, instauser: 1, instausers: 1 } }
+    );
+    if (existing && existing.id) {
+      const token = String(existing.id || '').trim();
+      const url = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(token)}`;
+      return res.json({ ok: true, token, url, expiresAt: existing.expiresAt || null, createdAt: existing.createdAt || null, source: 'temporary_links' });
+    }
+
+    const escapeRegex = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const reUser = new RegExp(`^@?${escapeRegex(username)}$`, 'i');
+    const filterUser = {
+      $or: [
+        { instauser: reUser },
+        { instagramUsername: reUser },
+        { 'additionalInfoMapPaid.instagram_username': reUser },
+        { 'additionalInfoMap.instagram_username': reUser },
+        { additionalInfoPaid: { $elemMatch: { key: 'instagram_username', value: reUser } } },
+        { additionalInfo: { $elemMatch: { key: 'instagram_username', value: reUser } } }
+      ]
+    };
+    const paidFilter = {
+      $or: [
+        { status: { $in: ['pago', 'paid', 'completed'] } },
+        { 'woovi.status': { $in: ['pago', 'paid', 'completed'] } },
+        { 'paghiper.status': { $in: ['pago', 'paid'] } },
+        { paidAt: { $exists: true } },
+        { 'woovi.paidAt': { $exists: true } },
+        { 'paghiper.paidAt': { $exists: true } }
+      ]
+    };
+    const found = await ordersCol.find(
+      { $and: [filterUser, paidFilter] },
+      { projection: { _id: 1, identifier: 1, correlationID: 1 } }
+    ).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(1).toArray();
+    const doc = (Array.isArray(found) && found.length) ? found[0] : null;
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found', message: 'Nenhum pedido pago encontrado para este username' });
+
+    const linkRec = await ensureRefilLink(doc.identifier, doc.correlationID, req);
+    const token = String(linkRec && linkRec.id ? linkRec.id : '').trim();
+    if (!token) return res.status(404).json({ ok: false, error: 'not_eligible', message: 'Pedido encontrado, mas não é elegível para Refil2 (somente mistos/brasileiros/orgânicos)' });
+    const url = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(token)}`;
+    return res.json({ ok: true, token, url, expiresAt: linkRec.expiresAt || null, createdAt: linkRec.createdAt || null, source: 'order_lookup' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'generate_failed', message: e?.message || String(e) });
   }
 });
 
@@ -27159,6 +27992,7 @@ app.post('/painel/custos', async (req, res) => {
       seguidores_brasileiros: parseNumber('seguidores_brasileiros', DEFAULT_COST_SETTINGS.seguidores_brasileiros),
       seguidores_organicos: parseNumber('seguidores_organicos', DEFAULT_COST_SETTINGS.seguidores_organicos),
       curtidas_mistos: parseNumber('curtidas_mistos', DEFAULT_COST_SETTINGS.curtidas_mistos),
+      curtidas_brasileiras: parseNumber('curtidas_brasileiras', DEFAULT_COST_SETTINGS.curtidas_brasileiras),
       curtidas_organicas: parseNumber('curtidas_organicas', DEFAULT_COST_SETTINGS.curtidas_organicas),
       curtidas: parseNumber('curtidas', DEFAULT_COST_SETTINGS.curtidas),
       comentarios: parseNumber('comentarios', DEFAULT_COST_SETTINGS.comentarios),

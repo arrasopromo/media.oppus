@@ -167,7 +167,7 @@
     </div>
     
     <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isServiceTypesView ? '/painel?view=service_types' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel'))))); %>
-    <% const sep = (isUnknownOrderIdView || isRefil2View || isLtvView || isCouponsView || isServiceTypesView) ? '&' : '?'; %>
+    <% const sep = (String(baseUrl || '').includes('?')) ? '&' : '?'; %>
     <% const panelPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all'; %>
 
     <% if (!isCouponsView && !isFollowersMgmtView && !isLtvView && !isRefil2View && !isServiceTypesView) { %>
@@ -2641,22 +2641,20 @@
           <strong style="font-size: 1rem; color:#111827;">Evolução diária</strong>
           <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (período)</div>
         </div>
-        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
-          <div style="flex:1 1 420px; min-width: 320px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-top: 12px;">
+          <div style="width:100%; min-width: 0;">
             <div style="font-weight:700; margin-bottom:8px; color:#111827;">Ticket médio (R$)</div>
             <canvas id="avgTicketTimelineChart" height="140"></canvas>
           </div>
-          <div style="flex:1 1 420px; min-width: 320px;">
+          <div style="width:100%; min-width: 0;">
             <div style="font-weight:700; margin-bottom:8px; color:#111827;">Faturamento (R$)</div>
             <canvas id="salesRevenueTimelineChart" height="140"></canvas>
           </div>
-          <div style="flex:1 1 420px; min-width: 320px;">
+          <div style="width:100%; min-width: 0;">
             <div style="font-weight:700; margin-bottom:8px; color:#111827;">% pagos / validados</div>
             <canvas id="paidValidatedPctTimelineChart" height="140"></canvas>
           </div>
-        </div>
-        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
-          <div style="flex:1 1 420px; min-width: 320px;">
+          <div style="width:100%; min-width: 0;">
             <div style="font-weight:700; margin-bottom:8px; color:#111827;">% faturamento (orderbump)</div>
             <canvas id="orderBumpPctTimelineChart" height="140"></canvas>
           </div>
@@ -2875,6 +2873,15 @@
             <div id="refil2PaginationInfo" style="font-size:0.85rem; color:#6b7280;">Página 1</div>
           </div>
         </div>
+        <div id="refil2LinkGenWrap" style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div style="font-size:0.85rem; color:#374151;">Gerar link Refil2:</div>
+          <input id="refil2LinkGenUsername" type="text" placeholder="@usuario" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827; width:180px;" />
+          <button type="button" id="refil2LinkGenBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Gerar</button>
+          <input id="refil2LinkGenOutput" type="text" readonly value="" placeholder="https://agenciaoppus.site/refil2?token=..." style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#f9fafb; font-size:0.85rem; color:#111827; min-width:260px; flex:1 1 260px;" />
+          <button type="button" id="refil2LinkGenCopyBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Copiar</button>
+          <a id="refil2LinkGenOpenBtn" href="#" target="_blank" rel="noopener" style="display:none; padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; text-decoration:none; font-size:0.85rem;">Abrir</a>
+          <div id="refil2LinkGenStatus" style="font-size:0.85rem; color:#6b7280;"></div>
+        </div>
         <div class="panel-table-scroll" id="refil2ScrollTop" style="margin-top: 10px; overflow-x:auto; overflow-y:hidden; height: 14px;">
           <div id="refil2ScrollTopInner" style="height:1px;"></div>
         </div>
@@ -2964,6 +2971,8 @@
                   const user = String(it && it.username ? it.username : '-').trim();
                   const userSlug = String(user || '').trim().replace(/^@+/, '');
                   const userHref = (userSlug && userSlug !== '-') ? (`https://www.instagram.com/${encodeURIComponent(userSlug)}/`) : '';
+                  const postCode = String(it && (it.latestPostShortcode || it.latestPostCode) ? (it.latestPostShortcode || it.latestPostCode) : '').trim();
+                  const postHref = postCode ? (`https://www.instagram.com/p/${encodeURIComponent(postCode)}/`) : '';
                   const tipoLabel = String(it && (it.lastFollowersTipoLabel || it.lastFollowersTipo) ? (it.lastFollowersTipoLabel || it.lastFollowersTipo) : '-').trim() || '-';
                   const sum = (it && (it.summary || it.computed || it.data) && typeof (it.summary || it.computed || it.data) === 'object') ? (it.summary || it.computed || it.data) : {};
                   const initialQty = (typeof sum.initial === 'number') ? sum.initial : (typeof sum.quantidade_inicial === 'number' ? sum.quantidade_inicial : null);
@@ -2982,6 +2991,13 @@
                   const forceStatus = String(forceObj && forceObj.status ? forceObj.status : '').toLowerCase().trim();
                   const hasForced = !!forceOrderId || forceStatus === 'processing' || forceStatus === 'created';
                   const forceCharged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt));
+                  const isProxyOrLookupError = (function(){
+                    try {
+                      if (!st || st.kind !== 'error') return false;
+                      const m = String(st.msg || '').toLowerCase();
+                      return (m.includes('instagram_proxy') || m.includes('proxy') || m.includes('rocket') || m.includes('timeout') || m.includes('consultar seguidores') || m.includes('followers') || m.includes('profile_lookup_failed'));
+                    } catch (_) { return false; }
+                  })();
                 %>
                   <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>">
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
@@ -2995,6 +3011,9 @@
                         <a href="<%= userHref %>" target="_blank" rel="noopener" style="color:#111827; text-decoration:underline;"><%= ('@' + userSlug) %></a>
                       <% } else { %>
                         <%= user ? ('@' + user.replace(/^@+/, '')) : '-' %>
+                      <% } %>
+                      <% if (isProxyOrLookupError && postHref) { %>
+                        <a href="<%= postHref %>" target="_blank" rel="noopener" title="Abrir último post conhecido (ver usuário atual)" style="margin-left:8px; display:inline-block; padding:2px 6px; border:1px solid #e5e7eb; border-radius:999px; font-size:0.72rem; line-height:1.2; color:#111827; text-decoration:none; background:#fff;">POST</a>
                       <% } %>
                     </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= tipoLabel %></td>
@@ -3277,6 +3296,90 @@
                 state.page = 1;
                 applyFilters();
                 applyPagination();
+              } catch (_) {}
+            });
+          } catch (_) {}
+          try {
+            var uIn = el('refil2LinkGenUsername');
+            var genBtn = el('refil2LinkGenBtn');
+            var outIn = el('refil2LinkGenOutput');
+            var copyBtn = el('refil2LinkGenCopyBtn');
+            var openBtn = el('refil2LinkGenOpenBtn');
+            var stEl = el('refil2LinkGenStatus');
+            function setLinkGenStatus(msg, isErr){
+              try {
+                if (!stEl) return;
+                stEl.textContent = String(msg || '');
+                stEl.style.color = isErr ? '#b91c1c' : '#6b7280';
+              } catch (_) {}
+            }
+            function setLinkGenUrl(url){
+              try {
+                var s = String(url || '').trim();
+                if (outIn) outIn.value = s;
+                if (openBtn) {
+                  if (s) {
+                    openBtn.href = s;
+                    openBtn.style.display = 'inline-block';
+                  } else {
+                    openBtn.href = '#';
+                    openBtn.style.display = 'none';
+                  }
+                }
+              } catch (_) {}
+            }
+            async function runGenerate(){
+              try {
+                var raw = String(uIn && uIn.value ? uIn.value : '').trim();
+                raw = raw.replace(/^@+/, '').trim();
+                if (!raw) { setLinkGenStatus('Informe o username', true); setLinkGenUrl(''); return; }
+                setLinkGenStatus('Gerando...', false);
+                setLinkGenUrl('');
+                var resp = await fetch('/api/painel/refil2/generate-link', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: raw })
+                });
+                var data = null;
+                try { data = await resp.json(); } catch(_) { data = null; }
+                if (!resp.ok || !data || !data.ok) {
+                  var msg = (data && data.message) ? data.message : ('Erro ao gerar link');
+                  setLinkGenStatus(msg, true);
+                  return;
+                }
+                setLinkGenUrl(String(data.url || ''));
+                setLinkGenStatus('Link gerado', false);
+              } catch (e) {
+                setLinkGenStatus('Erro ao gerar link', true);
+              }
+            }
+            if (genBtn) genBtn.addEventListener('click', runGenerate);
+            if (uIn) uIn.addEventListener('keydown', function(ev){
+              try {
+                if (ev && (ev.key === 'Enter' || ev.keyCode === 13)) { ev.preventDefault(); runGenerate(); }
+              } catch (_) {}
+            });
+            if (copyBtn) copyBtn.addEventListener('click', async function(){
+              try {
+                var v = String(outIn && outIn.value ? outIn.value : '').trim();
+                if (!v) { setLinkGenStatus('Nenhum link para copiar', true); return; }
+                try {
+                  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(v);
+                    setLinkGenStatus('Copiado', false);
+                    return;
+                  }
+                } catch (_) {}
+                try {
+                  if (outIn && outIn.select) {
+                    outIn.focus();
+                    outIn.select();
+                    document.execCommand('copy');
+                    setLinkGenStatus('Copiado', false);
+                    return;
+                  }
+                } catch (_) {}
+                setLinkGenStatus('Copie manualmente', false);
               } catch (_) {}
             });
           } catch (_) {}
@@ -4437,21 +4540,40 @@
               </tr>
             </thead>
             <tbody>
+              <%
+                const formatDateTimeSP = (v) => {
+                  try {
+                    const d0 = (v instanceof Date) ? v : new Date(v || '');
+                    if (!d0 || Number.isNaN(d0.getTime())) return '-';
+                    const fmt = new Intl.DateTimeFormat('pt-BR', {
+                      timeZone: 'America/Sao_Paulo',
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false
+                    });
+                    const parts = fmt.formatToParts(d0);
+                    const get = (t) => {
+                      const p = parts.find(x => x && x.type === t);
+                      return p ? String(p.value || '') : '';
+                    };
+                    const dd = get('day');
+                    const mm = get('month');
+                    const yyyy = get('year');
+                    const hh = get('hour');
+                    const mn = get('minute');
+                    if (!dd || !mm || !yyyy || !hh || !mn) return fmt.format(d0);
+                    return `${dd}/${mm}/${yyyy} ${hh}:${mn}`;
+                  } catch (_) {
+                    return '-';
+                  }
+                };
+              %>
               <% orders.forEach(order => { %>
                 <% 
-                   let d;
-                   if (order.createdAt instanceof Date) {
-                      d = new Date(order.createdAt);
-                   } else {
-                      d = new Date(order.createdAt || new Date());
-                   }
-                   d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
-                   
-                   const dateStr = d.getUTCDate().toString().padStart(2, '0') + '/' + 
-                                   (d.getUTCMonth() + 1).toString().padStart(2, '0') + '/' + 
-                                   d.getUTCFullYear() + ' ' + 
-                                   d.getUTCHours().toString().padStart(2, '0') + ':' + 
-                                   d.getUTCMinutes().toString().padStart(2, '0');
+                   const dateStr = formatDateTimeSP(order.createdAt);
                    const userLabel = String(order.instagramUsername ? ('@' + String(order.instagramUsername).replace(/^@+/, '')) : (order.customerLabel || '-'));
                 %>
                 <tr>
@@ -4970,7 +5092,11 @@
                 <input type="number" step="0.01" name="curtidas_mistos" value="<%= ((typeof costSettings !== 'undefined' && costSettings && costSettings.curtidas_mistos) ? costSettings.curtidas_mistos : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
               </label>
               <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                <span>Curtidas BR Reais</span>
+                <span>Curtidas Brasileiras</span>
+                <input type="number" step="0.01" name="curtidas_brasileiras" value="<%= ((typeof costSettings !== 'undefined' && costSettings && typeof costSettings.curtidas_brasileiras !== 'undefined') ? costSettings.curtidas_brasileiras : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
+              </label>
+              <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <span>Curtidas Reais (Org.)</span>
                 <input type="number" step="0.01" name="curtidas_organicas" value="<%= ((typeof costSettings !== 'undefined' && costSettings && typeof costSettings.curtidas_organicas !== 'undefined') ? costSettings.curtidas_organicas : 0).toFixed(2) %>" style="width:110px; padding:4px;" />
               </label>
               <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">

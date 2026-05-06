@@ -183,7 +183,7 @@
     <main class="main-content">
       <section class="section-block">
 
-      <% if ((function(){ var s=String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })()) { %>
+      <% if ((function(){ var s=String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'); })()) { %>
         <div class="approved-payment-section" style="text-align: center; margin: 0 0 2rem 0; animation: fadeInUp 0.6s ease-out;">
             <div style="display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; background-color: #22c55e; margin-bottom: 1rem; box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1238,7 +1238,7 @@
         catServ0 = String(catServ0 || '').toLowerCase().trim();
         var isFollowersOrganicos = (tipoServ === 'organicos') && (catServ0 !== 'curtidas') && (catServ0 !== 'visualizacoes');
         var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
-        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'||s==='completed'); })();
+        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'); })();
         var ident = String((orderData && (orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
         try {
           var qs = new URLSearchParams((location && location.search) || '');
@@ -1372,9 +1372,9 @@
               var elSt = document.getElementById('orderStatus');
               if (elSt) {
                 var s = String(status||'').toLowerCase();
-                  elSt.textContent = (s==='pago'||s==='paid'||s==='completed') ? 'pedido pago' : status;
+                  elSt.textContent = (s==='pago'||s==='paid') ? 'pedido pago' : status;
                 try {
-                  elSt.classList.toggle('status-green', (s==='pago'||s==='paid'||s==='completed'));
+                  elSt.classList.toggle('status-green', (s==='pago'||s==='paid'));
                   elSt.classList.toggle('status-yellow', s==='pendente');
                 } catch(_) {}
               }
