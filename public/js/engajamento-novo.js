@@ -833,12 +833,29 @@ document.addEventListener('DOMContentLoaded', function() {
       window.visiblePostsCount = 9;
 
       const url = '/api/instagram/posts?username=' + encodeURIComponent(username);
+      const onlyVideos = window.currentService === 'views';
+      const isVideoPost = (p) => {
+          if (!p) return false;
+          if (p.isVideo) return true;
+          if (p.media_type === 2) return true;
+          const t = String(p.typename || '').toLowerCase();
+          if (t.includes('video') || t.includes('clip')) return true;
+          if (String(p.videoUrl || '').trim()) return true;
+          return false;
+      };
+      try {
+          const titleEl = container.querySelector('h3');
+          if (titleEl) titleEl.textContent = onlyVideos ? 'Selecione um Reels' : 'Selecione uma publicação';
+          if (openBtn) openBtn.textContent = onlyVideos ? 'Selecionar Reels' : 'Selecionar Post';
+      } catch (_) {}
       
       fetch(url)
           .then(r => r.json())
           .then(data => {
               if (data.posts && Array.isArray(data.posts) && data.posts.length > 0) {
-                  window.cachedPosts = data.posts;
+                  const basePosts = data.posts;
+                  const filteredPosts = onlyVideos ? basePosts.filter(isVideoPost) : basePosts;
+                  window.cachedPosts = filteredPosts;
                   renderPosts();
                   
                   // Auto-open modal for better UX (similar to servicos-instagram)
@@ -847,9 +864,9 @@ document.addEventListener('DOMContentLoaded', function() {
               } else {
                   grid.innerHTML = `
                     <div style="grid-column:1/-1;text-align:center;padding:1rem;">
-                        <p style="color:var(--text-secondary);margin-bottom:1rem;">Não encontramos publicações recentes ou o perfil é privado.</p>
+                        <p style="color:var(--text-secondary);margin-bottom:1rem;">${onlyVideos ? 'Não encontramos Reels recentes ou o perfil é privado.' : 'Não encontramos publicações recentes ou o perfil é privado.'}</p>
                         <div style="max-width:400px;margin:0 auto;">
-                            <input type="text" id="manualLinkInput" placeholder="Cole o link do post aqui (ex: https://instagram.com/p/...)" class="form-input" style="margin-bottom:0.5rem;width:100%;">
+                            <input type="text" id="manualLinkInput" placeholder="${onlyVideos ? 'Cole o link do Reels aqui (ex: https://instagram.com/reel/...)' : 'Cole o link do post aqui (ex: https://instagram.com/p/...)'}" class="form-input" style="margin-bottom:0.5rem;width:100%;">
                             <button id="manualLinkBtn" class="service-selector-btn" style="width:100%;">Usar Link</button>
                             <p id="manualLinkMsg" style="font-size:0.85rem;margin-top:0.5rem;"></p>
                         </div>
@@ -886,7 +903,7 @@ document.addEventListener('DOMContentLoaded', function() {
                               const manualPost = {
                                   shortcode: sc,
                                   displayUrl: '', // No preview for manual link yet
-                                  isVideo: val.includes('/reel/')
+                                  isVideo: onlyVideos || val.includes('/reel/') || val.includes('/tv/')
                               };
                               
                               selectPost(manualPost);
@@ -911,6 +928,46 @@ document.addEventListener('DOMContentLoaded', function() {
       grid.innerHTML = '';
       
       const postsToRender = window.cachedPosts.slice(0, window.visiblePostsCount);
+      const onlyVideos = window.currentService === 'views';
+      
+      if (!postsToRender.length) {
+          grid.innerHTML = `
+            <div style="grid-column:1/-1;text-align:center;padding:1rem;">
+                <p style="color:var(--text-secondary);margin-bottom:1rem;">${onlyVideos ? 'Não encontramos Reels recentes automaticamente.' : 'Não encontramos publicações recentes automaticamente.'}</p>
+                <div style="max-width:400px;margin:0 auto;">
+                    <input type="text" id="manualLinkInput2" placeholder="${onlyVideos ? 'Cole o link do Reels aqui (ex: https://instagram.com/reel/...)' : 'Cole o link do post aqui (ex: https://instagram.com/p/...)'}" class="form-input" style="margin-bottom:0.5rem;width:100%;">
+                    <button id="manualLinkBtn2" class="service-selector-btn" style="width:100%;">Usar Link</button>
+                    <p id="manualLinkMsg2" style="font-size:0.85rem;margin-top:0.5rem;"></p>
+                </div>
+            </div>
+          `;
+          if (loadMoreBtnContainer) loadMoreBtnContainer.style.display = 'none';
+          
+          setTimeout(() => {
+              const btn = document.getElementById('manualLinkBtn2');
+              const inp = document.getElementById('manualLinkInput2');
+              const msg = document.getElementById('manualLinkMsg2');
+              if (!btn || !inp) return;
+              btn.onclick = function() {
+                  const val = inp.value.trim();
+                  if (!val.includes('instagram.com/')) {
+                      if (msg) { msg.textContent = 'Link inválido. Certifique-se de copiar o link completo do Instagram.'; msg.style.color = '#ef4444'; }
+                      return;
+                  }
+                  let sc = '';
+                  const m = val.match(/\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+                  if (m) sc = m[1];
+                  if (!sc) {
+                      if (msg) { msg.textContent = 'Não foi possível identificar o post pelo link.'; msg.style.color = '#ef4444'; }
+                      return;
+                  }
+                  selectPost({ shortcode: sc, displayUrl: '', isVideo: onlyVideos || val.includes('/reel/') || val.includes('/tv/') });
+                  if (msg) { msg.textContent = 'Post selecionado com sucesso!'; msg.style.color = '#22c55e'; }
+              };
+          }, 100);
+          
+          return;
+      }
       
       postsToRender.forEach(p => {
           const card = document.createElement('div');
