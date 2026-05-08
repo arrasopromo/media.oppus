@@ -4636,18 +4636,107 @@
                   (function(){
                     try {
                       if (typeof Chart === 'undefined') return;
+                      function toNum(v) {
+                        var n = Number(v);
+                        return isFinite(n) ? n : 0;
+                      }
+                      function buildPie(items) {
+                        var arr = Array.isArray(items) ? items : [];
+                        var baseLabels = arr.map(function(x){ return String(x && x.label ? x.label : '-'); });
+                        var values = arr.map(function(x){ return toNum(x && typeof x.count !== 'undefined' ? x.count : 0); });
+                        var total = values.reduce(function(acc, v){ return acc + (toNum(v) || 0); }, 0);
+                        var labels = baseLabels.map(function(lbl, idx){
+                          var v = toNum(values[idx]);
+                          var pct = (total > 0 && v > 0) ? ((v / total) * 100) : 0;
+                          return String(lbl) + ' · ' + String(Math.round(v)) + ' · ' + pct.toFixed(1).replace('.', ',') + '%';
+                        });
+                        var colors = arr.map(function(x){ return String(x && x.color ? x.color : '#e5e7eb'); });
+                        return { baseLabels: baseLabels, labels: labels, values: values, colors: colors, total: total };
+                      }
+                      var donutLabelsPlugin = {
+                        id: 'donutLabelsPlugin',
+                        afterDatasetDraw: function(chart, args) {
+                          try {
+                            if (!chart || !chart.ctx) return;
+                            var ctx = chart.ctx;
+                            var meta = chart.getDatasetMeta(args.index);
+                            if (!meta || !meta.data) return;
+                            var data = chart.data && chart.data.datasets && chart.data.datasets[args.index] ? chart.data.datasets[args.index].data : [];
+                            var total = (data || []).reduce(function(acc, v){ return acc + (toNum(v) || 0); }, 0);
+                            if (!(total > 0)) return;
+                            var leftYs = [];
+                            var rightYs = [];
+                            function placeY(y, sideArr) {
+                              var yy = Number(y) || 0;
+                              var tries = 0;
+                              while (tries < 40) {
+                                var ok = true;
+                                for (var i = 0; i < sideArr.length; i++) {
+                                  if (Math.abs(sideArr[i] - yy) < 12) { ok = false; break; }
+                                }
+                                if (ok) break;
+                                yy += 12;
+                                tries++;
+                              }
+                              sideArr.push(yy);
+                              return yy;
+                            }
+                            ctx.save();
+                            ctx.fillStyle = '#111827';
+                            ctx.strokeStyle = '#94a3b8';
+                            ctx.lineWidth = 1;
+                            ctx.textBaseline = 'middle';
+                            ctx.font = '700 11px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
+                            for (var i = 0; i < meta.data.length; i++) {
+                              var v = toNum(data && typeof data[i] !== 'undefined' ? data[i] : 0);
+                              if (!(v > 0)) continue;
+                              var pct = (v / total) * 100;
+                              var el = meta.data[i];
+                              if (!el) continue;
+                              var text = String(Math.round(v)) + ' (' + pct.toFixed(0) + '%)';
+                              if (pct >= 3.5) {
+                                ctx.textAlign = 'center';
+                                var p = (typeof el.getCenterPoint === 'function') ? el.getCenterPoint() : null;
+                                if (p) ctx.fillText(text, p.x, p.y);
+                                continue;
+                              }
+                              var angle = (typeof el.startAngle === 'number' && typeof el.endAngle === 'number') ? ((el.startAngle + el.endAngle) / 2) : 0;
+                              var cx = (typeof el.x === 'number') ? el.x : (chart.chartArea ? (chart.chartArea.left + chart.chartArea.right) / 2 : 0);
+                              var cy = (typeof el.y === 'number') ? el.y : (chart.chartArea ? (chart.chartArea.top + chart.chartArea.bottom) / 2 : 0);
+                              var or = (typeof el.outerRadius === 'number') ? el.outerRadius : 0;
+                              var x0 = cx + Math.cos(angle) * or;
+                              var y0 = cy + Math.sin(angle) * or;
+                              var sideRight = Math.cos(angle) >= 0;
+                              var x1 = cx + Math.cos(angle) * (or + 18);
+                              var y1 = cy + Math.sin(angle) * (or + 18);
+                              y1 = placeY(y1, sideRight ? rightYs : leftYs);
+                              var x2 = x1 + (sideRight ? 18 : -18);
+                              ctx.beginPath();
+                              ctx.moveTo(x0, y0);
+                              ctx.lineTo(x1, y1);
+                              ctx.lineTo(x2, y1);
+                              ctx.stroke();
+                              ctx.textAlign = sideRight ? 'left' : 'right';
+                              ctx.fillText(text, x2 + (sideRight ? 2 : -2), y1);
+                            }
+                            ctx.restore();
+                          } catch (_) {}
+                        }
+                      };
                       var payEl = document.getElementById('dashboardPaymentMethodData');
                       var payRaw = payEl ? String(payEl.textContent || '').trim() : '[]';
                       var pay = JSON.parse(payRaw || '[]');
                       var payCanvas = document.getElementById('dashboardPaymentMethodChart');
                       if (payCanvas) {
+                        var p = buildPie(pay);
                         new Chart(payCanvas, {
+                          plugins: [donutLabelsPlugin],
                           type: 'doughnut',
                           data: {
-                            labels: pay.map(function(x){ return String(x && x.label ? x.label : '-'); }),
+                            labels: p.labels,
                             datasets: [{
-                              data: pay.map(function(x){ return Number(x && x.count ? x.count : 0); }),
-                              backgroundColor: pay.map(function(x){ return String(x && x.color ? x.color : '#e5e7eb'); }),
+                              data: p.values,
+                              backgroundColor: p.colors,
                               borderWidth: 0
                             }]
                           },
@@ -4655,7 +4744,26 @@
                             responsive: true,
                             maintainAspectRatio: false,
                             plugins: {
-                              legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }
+                              legend: {
+                                position: 'right',
+                                align: 'center',
+                                labels: {
+                                  boxWidth: 10,
+                                  boxHeight: 10
+                                }
+                              },
+                              tooltip: {
+                                callbacks: {
+                                  label: function(ctx){
+                                    try {
+                                      var lbl = String(ctx && ctx.label ? ctx.label : '');
+                                      return lbl;
+                                    } catch (_) {
+                                      return '';
+                                    }
+                                  }
+                                }
+                              }
                             },
                             cutout: '60%'
                           }
@@ -4665,42 +4773,16 @@
                       var svcRaw = svcEl ? String(svcEl.textContent || '').trim() : '[]';
                       var svc = JSON.parse(svcRaw || '[]');
                       var svcCanvas = document.getElementById('dashboardServiceTypePieChart');
-                      var sliceValueLabels = {
-                        id: 'sliceValueLabels',
-                        afterDatasetDraw: function(chart, args) {
-                          try {
-                            if (!chart || !chart.ctx) return;
-                            var ctx = chart.ctx;
-                            var meta = chart.getDatasetMeta(args.index);
-                            if (!meta || !meta.data) return;
-                            var data = chart.data && chart.data.datasets && chart.data.datasets[args.index] ? chart.data.datasets[args.index].data : [];
-                            ctx.save();
-                            ctx.fillStyle = '#111827';
-                            ctx.textAlign = 'center';
-                            ctx.textBaseline = 'middle';
-                            ctx.font = '600 12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
-                            for (var i = 0; i < meta.data.length; i++) {
-                              var v = Number(data && data[i] ? data[i] : 0) || 0;
-                              if (v <= 0) continue;
-                              var el = meta.data[i];
-                              if (!el) continue;
-                              var p = (typeof el.getCenterPoint === 'function') ? el.getCenterPoint() : (typeof el.tooltipPosition === 'function' ? el.tooltipPosition() : null);
-                              if (!p) continue;
-                              ctx.fillText(String(Math.round(v)), p.x, p.y);
-                            }
-                            ctx.restore();
-                          } catch (_) {}
-                        }
-                      };
                       if (svcCanvas) {
+                        var s = buildPie(svc);
                         new Chart(svcCanvas, {
-                          plugins: [sliceValueLabels],
+                          plugins: [donutLabelsPlugin],
                           type: 'doughnut',
                           data: {
-                            labels: svc.map(function(x){ return String(x && x.label ? x.label : '-'); }),
+                            labels: s.labels,
                             datasets: [{
-                              data: svc.map(function(x){ return Number(x && x.count ? x.count : 0); }),
-                              backgroundColor: svc.map(function(x){ return String(x && x.color ? x.color : '#e5e7eb'); }),
+                              data: s.values,
+                              backgroundColor: s.colors,
                               borderWidth: 0
                             }]
                           },
@@ -4708,7 +4790,26 @@
                             responsive: true,
                             maintainAspectRatio: false,
                             plugins: {
-                              legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }
+                              legend: {
+                                position: 'right',
+                                align: 'center',
+                                labels: {
+                                  boxWidth: 10,
+                                  boxHeight: 10
+                                }
+                              },
+                              tooltip: {
+                                callbacks: {
+                                  label: function(ctx){
+                                    try {
+                                      var lbl = String(ctx && ctx.label ? ctx.label : '');
+                                      return lbl;
+                                    } catch (_) {
+                                      return '';
+                                    }
+                                  }
+                                }
+                              }
                             },
                             cutout: '60%'
                           }
@@ -4756,7 +4857,10 @@
                 <div style="flex: 1 1 520px; min-width: 320px;">
                   <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
                     <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
-                      <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (mais pedidos)</div>
+                      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom: 8px;">
+                        <div style="font-weight: 700; color:#111827;">Top 5 usuários (mais pedidos)</div>
+                        <button type="button" id="ltvExpandTopOrders" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Expandir</button>
+                      </div>
                       <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
                         <thead>
                           <tr>
@@ -4781,7 +4885,10 @@
                     </div>
 
                     <div style="border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
-                      <div style="font-weight: 700; margin-bottom: 8px; color:#111827;">Top 5 usuários (maior gasto)</div>
+                      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom: 8px;">
+                        <div style="font-weight: 700; color:#111827;">Top 5 usuários (maior gasto)</div>
+                        <button type="button" id="ltvExpandTopSpend" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Expandir</button>
+                      </div>
                       <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
                         <thead>
                           <tr>
@@ -4868,11 +4975,15 @@
                   var countEl = document.getElementById('ltvCustomersCount');
                   var cardAll = document.getElementById('ltvCardAllCustomers');
                   var cardRepeat = document.getElementById('ltvCardRepeatCustomers');
+                  var expandTopOrders = document.getElementById('ltvExpandTopOrders');
+                  var expandTopSpend = document.getElementById('ltvExpandTopSpend');
                   if (!modal || !tbody) return;
                   var mode = 'all';
                   function open(newMode) {
                     mode = newMode || 'all';
-                    if (titleEl) titleEl.textContent = mode === 'repeat' ? 'Clientes recorrentes (2+)' : 'Clientes únicos';
+                    if (titleEl) titleEl.textContent =
+                      mode === 'repeat' ? 'Clientes recorrentes (2+)' :
+                      (mode === 'spend500' ? 'Clientes (gasto ≥ R$ 500)' : 'Clientes únicos');
                     if (searchEl) searchEl.value = '';
                     modal.style.display = 'flex';
                     render();
@@ -4888,6 +4999,7 @@
                     var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
                     var rows = Array.isArray(all) ? all.slice() : [];
                     if (mode === 'repeat') rows = rows.filter(function(r){ return Number(r && r.orders ? r.orders : 0) > 1; });
+                    if (mode === 'spend500') rows = rows.filter(function(r){ return Number(r && r.spend ? r.spend : 0) >= 500; });
                     rows = rows.filter(function(r){ return matchesFilter(r, q); });
                     if (countEl) countEl.textContent = rows.length + ' clientes';
                     tbody.innerHTML = '';
@@ -4937,6 +5049,8 @@
                   }
                   if (cardAll) cardAll.addEventListener('click', function(){ open('all'); });
                   if (cardRepeat) cardRepeat.addEventListener('click', function(){ open('repeat'); });
+                  if (expandTopOrders) expandTopOrders.addEventListener('click', function(){ open('repeat'); });
+                  if (expandTopSpend) expandTopSpend.addEventListener('click', function(){ open('spend500'); });
                   if (closeBtn) closeBtn.addEventListener('click', close);
                   modal.addEventListener('click', function(e){
                     if (e && e.target === modal) close();
@@ -5024,19 +5138,23 @@
               }).addTo(map);
               var bounds = [];
               (pointsVisits || []).forEach(function(p){
-                if (typeof p.lat === 'number' && typeof p.lon === 'number') {
-                  var m = L.circleMarker([p.lat, p.lon], { radius: 5, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.7, weight: 1 });
+                var lat = (typeof p.lat === 'number') ? p.lat : parseFloat(p.lat);
+                var lon = (typeof p.lon === 'number') ? p.lon : parseFloat(p.lon);
+                if (isFinite(lat) && isFinite(lon)) {
+                  var m = L.circleMarker([lat, lon], { radius: 5, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.7, weight: 1 });
                   m.bindPopup('<strong>Visitas</strong><br>'+ (p.city||'-') +', '+ (p.region||'-') +' - '+ (p.country||'-') +'<br>Qtd: '+ (p.count||0));
                   m.addTo(map);
-                  bounds.push([p.lat, p.lon]);
+                  bounds.push([lat, lon]);
                 }
               });
               (pointsProfiles || []).forEach(function(p){
-                if (typeof p.lat === 'number' && typeof p.lon === 'number') {
-                  var m = L.circleMarker([p.lat, p.lon], { radius: 6, color: '#7c3aed', fillColor: '#a78bfa', fillOpacity: 0.8, weight: 1.2 });
+                var lat = (typeof p.lat === 'number') ? p.lat : parseFloat(p.lat);
+                var lon = (typeof p.lon === 'number') ? p.lon : parseFloat(p.lon);
+                if (isFinite(lat) && isFinite(lon)) {
+                  var m = L.circleMarker([lat, lon], { radius: 6, color: '#7c3aed', fillColor: '#a78bfa', fillOpacity: 0.8, weight: 1.2 });
                   m.bindPopup('<strong>Perfis Validados</strong><br>'+ (p.city||'-') +', '+ (p.region||'-') +' - '+ (p.country||'-') +'<br>Qtd: '+ (p.count||0));
                   m.addTo(map);
-                  bounds.push([p.lat, p.lon]);
+                  bounds.push([lat, lon]);
                 }
               });
               if (bounds.length) {

@@ -4132,6 +4132,10 @@ app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
     const pageCol = await getCollection('page_views');
     const orderCol = await getCollection('checkout_orders');
     const validatedCol = await getCollection('validated_insta_users');
+    const toNum = (v) => {
+      const n = (typeof v === 'number') ? v : (typeof v === 'string' ? parseFloat(String(v).trim()) : NaN);
+      return Number.isFinite(n) ? n : null;
+    };
 
     const safeStr = (v) => String(v == null ? '' : v).trim();
     const normalizeGeoText = (v) => {
@@ -4263,8 +4267,8 @@ app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
         city: safeStr(d && d.city),
         region: safeStr(d && d.region),
         country: safeStr(d && d.country),
-        lat: (d && typeof d.lat === 'number') ? d.lat : null,
-        lon: (d && typeof d.lon === 'number') ? d.lon : null
+        lat: toNum(d && d.lat),
+        lon: toNum(d && d.lon)
       }),
       getIpFromDoc: (d) => (d && d.ip) ? d.ip : ''
     });
@@ -4275,7 +4279,7 @@ app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
       limit: 6000,
       getGeoFromDoc: (d) => {
         const g = d && d.geolocation && typeof d.geolocation === 'object' ? d.geolocation : null;
-        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null) } : null;
+        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: toNum(g.lat), lon: toNum(g.lon) } : null;
       },
       getIpFromDoc: (d) => (d && (d.ip || d.realIP)) ? (d.ip || d.realIP) : ''
     });
@@ -4286,7 +4290,7 @@ app.get('/api/geo/aggregate', requireAdmin, async (req, res) => {
       limit: 6000,
       getGeoFromDoc: (d) => {
         const g = d && d.geolocation && typeof d.geolocation === 'object' ? d.geolocation : null;
-        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: (typeof g.lat === 'number' ? g.lat : null), lon: (typeof g.lon === 'number' ? g.lon : null) } : null;
+        return g ? { city: safeStr(g.city), region: safeStr(g.region), country: safeStr(g.country), lat: toNum(g.lat), lon: toNum(g.lon) } : null;
       },
       getIpFromDoc: (d) => (d && d.ip) ? d.ip : ''
     });
@@ -16416,6 +16420,78 @@ app.post('/api/refil/preview', async (req, res) => {
         return Math.max(1, Math.min(4, Math.trunc(n)));
       })();
       const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
+      const REFILFAMA_BASE_URL = (() => {
+        try {
+          const raw = String(process.env.REFILFAMA_BASE_URL || process.env.REFILFAMA_BASE || '').trim();
+          if (raw) return raw.replace(/\/+$/, '');
+        } catch (_) {}
+        return 'https://www.refilfama24h.com';
+      })();
+      const famaUrl = (pathWithQuery) => {
+        try {
+          const p = String(pathWithQuery || '').trim();
+          if (!p) return REFILFAMA_BASE_URL;
+          if (/^https?:\/\//i.test(p)) return p;
+          return REFILFAMA_BASE_URL + (p.startsWith('/') ? '' : '/') + p;
+        } catch (_) {
+          return REFILFAMA_BASE_URL;
+        }
+      };
+      const isTlsError = (err) => {
+        try {
+          const code = String(err?.code || '').trim().toUpperCase();
+          if (!code) return false;
+          return code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT';
+        } catch (_) {
+          return false;
+        }
+      };
+      const cleanUrl = (u) => {
+        try {
+          let s = String(u || '').trim();
+          s = s.replace(/^['"`]+/, '').replace(/['"`]+$/, '').trim();
+          return s;
+        } catch (_) {
+          return String(u || '');
+        }
+      };
+      const isFamaUrl = (u) => {
+        try {
+          const s = cleanUrl(u).toLowerCase();
+          return /^(https?:\/\/)(www\.)?refilfama24h\.com\//i.test(s);
+        } catch (_) {
+          return false;
+        }
+      };
+      const toFamaHttp = (u) => {
+        const s = cleanUrl(u);
+        if (/^https:\/\//i.test(s) && /(\/\/)(www\.)?refilfama24h\.com/i.test(s)) return s.replace(/^https:/i, 'http:');
+        return s;
+      };
+      const axiosGetFama = async (url, opts) => {
+        const safeUrl = cleanUrl(url);
+        try {
+          return await axios.get(safeUrl, opts);
+        } catch (e) {
+          if (isTlsError(e) && isFamaUrl(safeUrl)) {
+            const httpUrl = toFamaHttp(safeUrl);
+            if (httpUrl && httpUrl !== safeUrl) return await axios.get(httpUrl, opts);
+          }
+          throw e;
+        }
+      };
+      const axiosPostFama = async (url, data, opts) => {
+        const safeUrl = cleanUrl(url);
+        try {
+          return await axios.post(safeUrl, data, opts);
+        } catch (e) {
+          if (isTlsError(e) && isFamaUrl(safeUrl)) {
+            const httpUrl = toFamaHttp(safeUrl);
+            if (httpUrl && httpUrl !== safeUrl) return await axios.post(httpUrl, data, opts);
+          }
+          throw e;
+        }
+      };
       const requestWithRetry = async (label, fn) => {
         let lastErr = null;
         for (let attempt = 1; attempt <= upstreamMaxAttempts; attempt++) {
@@ -16438,9 +16514,9 @@ app.post('/api/refil/preview', async (req, res) => {
       try {
         dbg('start', { username });
         const userLink = `https://instagram.com/${username}`;
-        const orderLookupUrl = `https://refilfama24h.com/api_proxy.php?link=${encodeURIComponent(userLink)}`;
+        const orderLookupUrl = famaUrl(`/api_proxy.php?link=${encodeURIComponent(userLink)}`);
         dbg('GET api_proxy url', orderLookupUrl);
-        const orderResp = await requestWithRetry('GET api_proxy', () => axios.get(orderLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
+        const orderResp = await requestWithRetry('GET api_proxy', () => axiosGetFama(orderLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
         dbg('GET api_proxy status', { status: orderResp && orderResp.status ? orderResp.status : null });
         dbg('GET api_proxy body', redactSecrets(safeJsonResponse(orderResp && orderResp.data)));
         const orderJson = safeJsonResponse(orderResp && orderResp.data);
@@ -16541,10 +16617,10 @@ app.post('/api/refil/preview', async (req, res) => {
         let profileTried = [];
         for (const paramName of profileParamCandidates) {
           for (const profileUrl of profileUrlCandidates) {
-            const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+            const profileLookupUrl = famaUrl(`/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`);
             profileTried.push({ paramName, profileUrl });
             dbg('GET instagram_proxy url', profileLookupUrl);
-            profileResp = await requestWithRetry(`GET instagram_proxy (${paramName})`, () => axios.get(profileLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
+            profileResp = await requestWithRetry(`GET instagram_proxy (${paramName})`, () => axiosGetFama(profileLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
             dbg('GET instagram_proxy status', { status: profileResp && profileResp.status ? profileResp.status : null });
             dbg('GET instagram_proxy body', redactSecrets(safeJsonResponse(profileResp && profileResp.data)));
             profileJson = safeJsonResponse(profileResp && profileResp.data);
@@ -16632,7 +16708,7 @@ app.post('/api/refil/preview', async (req, res) => {
         };
         dbg('POST add_reorder payload', redactSecrets(Object.assign({}, payload)));
 
-        let addResp = await requestWithRetry('POST add_reorder', () => axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+        let addResp = await requestWithRetry('POST add_reorder', () => axiosPostFama(famaUrl('/add_reorder.php'), payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
         let addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
         dbg('POST add_reorder status', { status: addResp && addResp.status ? addResp.status : null });
         dbg('POST add_reorder body', addJson);
@@ -16655,7 +16731,7 @@ app.post('/api/refil/preview', async (req, res) => {
             };
             dbg('POST add_reorder retry payload', redactSecrets(Object.assign({}, payload)));
             
-            addResp = await requestWithRetry('POST add_reorder retry', () => axios.post('https://refilfama24h.com/add_reorder.php', payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+            addResp = await requestWithRetry('POST add_reorder retry', () => axiosPostFama(famaUrl('/add_reorder.php'), payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
             addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
             dbg('POST add_reorder retry status', { status: addResp && addResp.status ? addResp.status : null });
             dbg('POST add_reorder retry body', addJson);
@@ -16708,6 +16784,12 @@ app.post('/api/refil/preview', async (req, res) => {
         });
         const code = String(e?.code || '').trim();
         const msg = String(e?.message || String(e) || '').trim();
+        if (isTlsError(e) && /refilfama24h\.com/i.test(msg || '') || isTlsError(e) && /refilfama24h\.com/i.test(String(e?.hostname || ''))) {
+          if (debugMode) {
+            return res.status(502).json({ ok: false, error: 'provider_tls', message: 'Fornecedor indisponível (SSL vencido).', debugId, details: { code: code || null, message: msg || null } });
+          }
+          return res.status(502).json({ ok: false, error: 'provider_tls', message: 'Fornecedor indisponível (SSL vencido).' });
+        }
         const isTimeout = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || /timeout/i.test(msg);
         if (isTimeout) {
           if (debugMode) {
@@ -18190,20 +18272,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         }
       })();
       const currentCheckedAtMsRaw = currentCheckedAtMs;
-      const dayMs = 24 * 60 * 60 * 1000;
-      const brtOffsetMs = 3 * 60 * 60 * 1000;
-      const dayNumFromMsBrt = (ms) => {
-        const d = new Date(Number(ms || 0) - brtOffsetMs);
-        return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
-      };
       const checkedBeforePurchase = (() => {
         try {
           if (currentCheckedAtMs == null) return false;
           const p = Number(dateMs || 0);
           if (!Number.isFinite(p) || !p) return false;
-          const cDay = dayNumFromMsBrt(currentCheckedAtMs);
-          const pDay = dayNumFromMsBrt(p);
-          return cDay <= pDay;
+          return currentCheckedAtMs <= p;
         } catch (_) {
           return false;
         }
@@ -19088,7 +19162,7 @@ const fetchInstagramFollowersInfoInstagramProxy = async (username) => {
     let lastData = null;
     for (const paramName of profileParamCandidates) {
       for (const profileUrl of profileUrlCandidates) {
-        const url = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+        const url = `https://www.refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
         const resp = await requestWithRetry(() => axios.get(url, { timeout: timeoutMs, validateStatus: () => true }));
         lastStatus = resp && typeof resp.status === 'number' ? resp.status : null;
         const json = safeJsonResponse(resp && resp.data);
@@ -21436,9 +21510,54 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
     };
 
     const resolveFornecedorOrderId = (o) => {
-      const v1 = String(o?.fama24h?.orderId || '').trim();
+      const isUnknown = (v) => {
+        const s = String(v ?? '').toLowerCase().trim();
+        return s === '' || s === 'unknown' || s === 'unknow' || s === 'null' || s === 'undefined';
+      };
+      const getByPath = (obj, path) => {
+        try {
+          return path.split('.').reduce((acc, k) => (acc && typeof acc === 'object') ? acc[k] : undefined, obj);
+        } catch (_) {
+          return undefined;
+        }
+      };
+      const pickProviderOrderId = (providerObj) => {
+        if (!providerObj || typeof providerObj !== 'object') return '';
+        const candidates = [
+          'orderId',
+          'orderID',
+          'orderid',
+          'order_id',
+          'id',
+          'pedidoId',
+          'pedido_id',
+          'data.orderId',
+          'data.orderID',
+          'data.order_id',
+          'data.id',
+          'response.orderId',
+          'response.orderID',
+          'response.order_id',
+          'response.id',
+          'payload.orderId',
+          'payload.orderID',
+          'payload.order_id',
+          'payload.id',
+          'statusPayload.orderId',
+          'statusPayload.orderID',
+          'statusPayload.order_id',
+          'statusPayload.id'
+        ];
+        for (const p of candidates) {
+          const v = getByPath(providerObj, p);
+          if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+          if (typeof v === 'string' && !isUnknown(v)) return String(v).trim();
+        }
+        return '';
+      };
+      const v1 = pickProviderOrderId(o && o.fama24h ? o.fama24h : null);
       if (v1) return v1;
-      const v2 = String(o?.fornecedor_social?.orderId || '').trim();
+      const v2 = pickProviderOrderId(o && o.fornecedor_social ? o.fornecedor_social : null);
       if (v2) return v2;
       return '';
     };
@@ -26526,10 +26645,52 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
       const profileParamCandidates = ['name_url', 'url', 'link'];
       let followerCount = null;
       let used = '';
+      const https = require('https');
+      const insecureAgent = new https.Agent({ rejectUnauthorized: false });
+      const isTlsError = (e) => {
+        const code = String(e && e.code ? e.code : '').trim();
+        if (!code) return false;
+        return code === 'CERT_HAS_EXPIRED' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE';
+      };
+      const fetchProxy = async (url) => {
+        const clean = (u) => {
+          try {
+            let s = String(u || '').trim();
+            s = s.replace(/^['"`]+/, '').replace(/['"`]+$/, '').trim();
+            return s;
+          } catch (_) {
+            return String(url || '');
+          }
+        };
+        const safeUrl = clean(url);
+        try {
+          return await axios.get(safeUrl, { timeout: 25000, validateStatus: () => true });
+        } catch (e) {
+          if (isTlsError(e)) {
+            try {
+              const httpUrl = String(safeUrl || '').replace(/^https:/i, 'http:');
+              if (httpUrl && httpUrl !== safeUrl) {
+                return await axios.get(httpUrl, { timeout: 25000, validateStatus: () => true });
+              }
+            } catch (_) {}
+            try {
+              return await axios.get(safeUrl, { timeout: 25000, validateStatus: () => true, httpsAgent: insecureAgent });
+            } catch (_) {}
+          }
+          throw e;
+        }
+      };
       for (const paramName of profileParamCandidates) {
         for (const profileUrl of profileUrlCandidates) {
-          const profileLookupUrl = `https://refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
-          const resp = await axios.get(profileLookupUrl, { timeout: 25000, validateStatus: () => true });
+          const profileLookupUrl = `https://www.refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+          let resp = null;
+          try {
+            resp = await fetchProxy(profileLookupUrl);
+          } catch (e) {
+            const code = String(e && e.code ? e.code : '').trim();
+            const msg = e?.message || String(e);
+            return { ok: false, error: isTlsError(e) ? 'proxy_cert_expired' : (code ? code : 'proxy_failed'), message: msg };
+          }
           const status = Number(resp && resp.status ? resp.status : 0) || 0;
           const data = resp ? resp.data : null;
           const first = Array.isArray(data) ? data[0] : data;
@@ -26567,44 +26728,48 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
         continue;
       }
       q.add(async () => {
-        const r = await fetchFollowers(doc.username);
-        if (r && r.ok && typeof r.currentFollowers === 'number') {
-          const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
-          const baseCurrent = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
-          const reporQty = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
-          const existingResult = String(doc?.audit?.result || '').trim();
-          let computedResult = '';
-          try {
-            const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
-            const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ??
-              ((baseCurrent != null && reporQty != null) ? (Math.trunc(baseCurrent) + Math.trunc(reporQty)) : (initialQty != null ? Math.trunc(initialQty) : null));
-            const auditedNow = Math.trunc(r.currentFollowers);
-            if (finalQty != null && auditedNow >= Math.trunc(finalQty)) {
-              computedResult = 'OK';
-            } else if (baseCurrent != null && reporQty != null && reporQty > 0) {
-              const delta = auditedNow - Math.trunc(baseCurrent);
-              const required = Math.ceil(Math.trunc(reporQty) * 0.8);
-              computedResult = (delta >= required) ? 'OK' : 'NOK';
-            }
-          } catch (_) {}
-          await col.updateOne(
-            { _id: new ObjectId(id) },
-            {
-              $set: {
-                'audit.currentFollowers': Math.trunc(r.currentFollowers),
-                'audit.checkedAt': nowIso,
-                'audit.checkedBy': checkedBy,
-                'audit.source': String(r.source || ''),
-                ...(computedResult ? { 'audit.result': computedResult } : {}),
-                updatedAt: nowIso
+        try {
+          const r = await fetchFollowers(doc.username);
+          if (r && r.ok && typeof r.currentFollowers === 'number') {
+            const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
+            const baseCurrent = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
+            const reporQty = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
+            const existingResult = String(doc?.audit?.result || '').trim();
+            let computedResult = '';
+            try {
+              const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
+              const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ??
+                ((baseCurrent != null && reporQty != null) ? (Math.trunc(baseCurrent) + Math.trunc(reporQty)) : (initialQty != null ? Math.trunc(initialQty) : null));
+              const auditedNow = Math.trunc(r.currentFollowers);
+              if (finalQty != null && auditedNow >= Math.trunc(finalQty)) {
+                computedResult = 'OK';
+              } else if (baseCurrent != null && reporQty != null && reporQty > 0) {
+                const delta = auditedNow - Math.trunc(baseCurrent);
+                const required = Math.ceil(Math.trunc(reporQty) * 0.8);
+                computedResult = (delta >= required) ? 'OK' : 'NOK';
               }
-            }
-          );
-          results.push({ id, currentFollowers: Math.trunc(r.currentFollowers), source: String(r.source || ''), auditResult: computedResult || existingResult || '' });
-        } else {
-          results.push({ id, error: String(r && r.error ? r.error : 'lookup_failed'), message: r && r.message ? String(r.message) : '' });
+            } catch (_) {}
+            await col.updateOne(
+              { _id: new ObjectId(id) },
+              {
+                $set: {
+                  'audit.currentFollowers': Math.trunc(r.currentFollowers),
+                  'audit.checkedAt': nowIso,
+                  'audit.checkedBy': checkedBy,
+                  'audit.source': String(r.source || ''),
+                  ...(computedResult ? { 'audit.result': computedResult } : {}),
+                  updatedAt: nowIso
+                }
+              }
+            );
+            results.push({ id, currentFollowers: Math.trunc(r.currentFollowers), source: String(r.source || ''), auditResult: computedResult || existingResult || '' });
+          } else {
+            results.push({ id, error: String(r && r.error ? r.error : 'lookup_failed'), message: r && r.message ? String(r.message) : '' });
+          }
+        } catch (e) {
+          results.push({ id, error: 'exception', message: e?.message || String(e) });
         }
-      });
+      }).catch(() => {});
     }
     await q.onIdle();
     const updated = results.filter(x => x && typeof x.currentFollowers === 'number').length;
