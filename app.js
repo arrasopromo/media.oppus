@@ -16512,6 +16512,70 @@ app.post('/api/refil/preview', async (req, res) => {
         throw lastErr || new Error('upstream_failed');
       };
       try {
+        const brtOffsetMs0 = 3 * 60 * 60 * 1000;
+        const dayMs0 = 24 * 60 * 60 * 1000;
+        const dayNumFromMsBrt0 = (ms) => {
+          const d = new Date(Number(ms || 0) - brtOffsetMs0);
+          return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs0);
+        };
+        const todayDayNumBrt0 = dayNumFromMsBrt0(Date.now());
+        try {
+          const { getCollection } = require('./mongodbClient');
+          const ordersCol = await getCollection('checkout_orders');
+          const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const re = new RegExp(`^@?${esc(username)}$`, 'i');
+          const byUserOr = [
+            { instauser: re },
+            { instagramUsername: re },
+            { instagramUser: re },
+            { 'additionalInfoMapPaid.instagram_username': re },
+            { 'additionalInfoMap.instagram_username': re },
+            { additionalInfoPaid: { $elemMatch: { key: 'instagram_username', value: re } } },
+            { additionalInfo: { $elemMatch: { key: 'instagram_username', value: re } } }
+          ];
+          const paidOr = [
+            { status: 'pago' },
+            { 'woovi.status': 'pago' },
+            { paidAt: { $exists: true, $nin: [null, ''] } },
+            { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'expay.paidAt': { $exists: true, $nin: [null, ''] } }
+          ];
+          const q = { $and: [{ $or: paidOr }, { $or: byUserOr }] };
+          const rows = await ordersCol.find(
+            q,
+            { projection: { _id: 1, status: 1, createdAt: 1, paidAt: 1, woovi: 1, paghiper: 1, payment: 1, expay: 1 } }
+          ).sort({ 'woovi.paidAt': -1, 'paghiper.paidAt': -1, 'payment.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(5).toArray();
+          const toMs = (v) => {
+            const t = new Date(String(v || '')).getTime();
+            return Number.isFinite(t) ? t : 0;
+          };
+          const resolvePaidMs = (o) => Math.max(
+            toMs(o?.woovi?.paidAt),
+            toMs(o?.paghiper?.paidAt),
+            toMs(o?.payment?.paidAt),
+            toMs(o?.expay?.paidAt),
+            toMs(o?.paidAt)
+          );
+          const paidTodayOrder = (rows || []).find((o) => {
+            const paidMs = resolvePaidMs(o);
+            if (!paidMs) return false;
+            return dayNumFromMsBrt0(paidMs) === todayDayNumBrt0;
+          }) || null;
+          if (paidTodayOrder) {
+            logRefil2Request({
+              execStatus: 'success',
+              decisionStatus: 'blocked',
+              decisionReason: 'paid_today',
+              meta: { step: 'paid_today_db_check', tookMs: Date.now() - startedAt },
+              matchedOrder: { id: String(paidTodayOrder._id || ''), status: String(paidTodayOrder.status || ''), paidAt: paidTodayOrder.paidAt || paidTodayOrder?.woovi?.paidAt || paidTodayOrder?.paghiper?.paidAt || paidTodayOrder?.payment?.paidAt || paidTodayOrder?.expay?.paidAt || null }
+            });
+            return res.status(409).json({ ok: false, error: 'paid_today', message: 'Esse serviço é para repor quedas de seguidores. Como seu pedido foi pago hoje, ainda não é possível solicitar reposição. Tente novamente amanhã.' });
+          }
+        } catch (e) {
+          dbg('paid_today_db_check_failed', { message: e?.message || String(e) });
+        }
         dbg('start', { username });
         const userLink = `https://instagram.com/${username}`;
         const orderLookupUrl = famaUrl(`/api_proxy.php?link=${encodeURIComponent(userLink)}`);
