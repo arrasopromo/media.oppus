@@ -177,6 +177,9 @@
       <a href="<%= baseUrl + sep %>period=last7days" class="<%= panelPeriod === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
       <a href="<%= baseUrl + sep %>period=thismonth" class="<%= panelPeriod === 'thismonth' ? 'active' : '' %>">Este mês</a>
       <a href="<%= baseUrl + sep %>period=lastmonth" class="<%= panelPeriod === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <% if (!isUnknownOrderIdView) { %>
+        <a href="<%= baseUrl + sep %>period=max" class="<%= panelPeriod === 'max' ? 'active' : '' %>">Máximo</a>
+      <% } %>
       <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
     </div>
 
@@ -503,11 +506,24 @@
           <button type="button" id="followersVerifySelectedBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar marcados</button>
           <button type="button" id="followersHideSelectedBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;">Ocultar marcados</button>
           <button type="button" id="followersUnhideSelectedBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Desocultar marcados</button>
-          <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px; cursor: pointer;">Iniciar validação geral</button>
-          <button type="button" id="followersValidateGeneralPauseBtn" style="padding: 6px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar</button>
-          <button type="button" id="followersAutoNotifyBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto enviar Email+SMS (checados)</button>
-          <button type="button" id="followersAutoNotifyPauseBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Pausar auto envio</button>
+          <div style="position:relative; display:flex; align-items:center;">
+            <button type="button" id="followersValidateGeneralBtn" style="padding: 6px 12px; background: #f97316; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Iniciar validação geral</button>
+            <button type="button" id="followersValidateGeneralMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #f97316; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
+            <div id="followersValidateGeneralMenu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:220px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
+              <button type="button" id="followersValidateGeneralPauseBtn" style="width:100%; padding: 8px 10px; background: #f59e0b; color: white; border: none; border-radius: 8px; cursor: pointer;" disabled>Pausar</button>
+            </div>
+          </div>
+          <div style="position:relative; display:flex; align-items:center;">
+            <button type="button" id="followersAutoNotifyBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Auto enviar Email+SMS (checados)</button>
+            <button type="button" id="followersAutoNotifyMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #0ea5e9; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
+            <div id="followersAutoNotifyMenu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:220px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
+              <button type="button" id="followersAutoNotifyPauseBtn" style="width:100%; padding: 8px 10px; background: #64748b; color: white; border: none; border-radius: 8px; cursor: pointer;" disabled>Pausar auto envio</button>
+            </div>
+          </div>
           <button type="button" id="followersReportBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Relatório</button>
+          <button type="button" id="followersBulkRefil2Btn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Solicitar Refil2 (filtrados)</button>
+          <button type="button" id="followersFixInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir inicial (marcados)</button>
+          <button type="button" id="followersUseMongoInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Usar inicial do Mongo (marcados)</button>
           <button type="button" id="followersFixCheckedGlobalBtn" style="padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados (global)</button>
           <button type="button" id="followersExtendRefilExpiredBtn" style="padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px; cursor: pointer;">Estender reposição expirada (+30d)</button>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
@@ -523,13 +539,27 @@
               </select>
             </label>
           </div>
-          <span style="font-size:0.75rem; color:#64748b;">* Regra da validação geral: somente compras com 2+ dias.</span>
+          <span style="font-size:0.75rem; color:#64748b;">* Regra da validação geral: mistos/brasileiros 1+ dia | orgânicos 2+ dias.</span>
           <div id="followersValidateGeneralWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <div style="font-size:0.9rem; color:#111827; font-weight:600;">Progresso:</div>
             <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
               <div id="followersValidateGeneralProgressBar" style="height:10px; width:0%; background:#f97316;"></div>
             </div>
             <div id="followersValidateGeneralProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
+          </div>
+          <div id="followersBulkRefil2Wrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
+            <div style="font-size:0.9rem; color:#111827; font-weight:600;">Refil2:</div>
+            <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
+              <div id="followersBulkRefil2ProgressBar" style="height:10px; width:0%; background:#111827;"></div>
+            </div>
+            <div id="followersBulkRefil2ProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
+          </div>
+          <div id="followersFixInitialWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
+            <div style="font-size:0.9rem; color:#111827; font-weight:600;">Inicial:</div>
+            <div style="width:180px; height:10px; background:#f3f4f6; border-radius:999px; overflow:hidden;">
+              <div id="followersFixInitialProgressBar" style="height:10px; width:0%; background:#111827;"></div>
+            </div>
+            <div id="followersFixInitialProgressText" style="font-size:0.9rem; color:#444; min-width:76px; text-align:right;">0/0</div>
           </div>
           <div id="followersAutoNotifyWrap" style="display:flex; align-items:center; gap:10px; padding: 6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius: 8px;">
             <div style="font-size:0.9rem; color:#111827; font-weight:600;">Auto envio:</div>
@@ -690,7 +720,8 @@
                 const username = String(row.username || '').trim();
                 const init = (typeof row.initialFollowersCount === 'number') ? row.initialFollowersCount : null;
                 const contracted = (typeof row.contracted === 'number') ? row.contracted : 0;
-                const resultado = (typeof row.resultado === 'number') ? row.resultado : ((init !== null && contracted) ? (init + contracted) : null);
+                const computedResultado = (init !== null && typeof contracted === 'number' && Number.isFinite(contracted)) ? (init + contracted) : null;
+                const resultado = (computedResultado !== null) ? computedResultado : ((typeof row.resultado === 'number') ? row.resultado : null);
                 const current = (typeof row.currentFollowersCount === 'number') ? row.currentFollowersCount : null;
                 const diff = (resultado !== null && current !== null) ? (resultado - current) : null;
                 const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && contracted) ? ((diff / contracted) * 100) : null);
@@ -745,7 +776,7 @@
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-fornecedororderid="<%= fid ? fid : '' %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -857,10 +888,17 @@
                   <div id="followersReportLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
                 </div>
                 <div style="height:14px;"></div>
-                <div style="font-size:12px; color:#6b7280;">OK x Não OK</div>
+                <div style="font-size:12px; color:#6b7280;">OK x Não OK (validados)</div>
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
                   <canvas id="followersReportOkPie" width="220" height="220" style="width:220px; height:220px; border-radius:999px; background:#ffffff;"></canvas>
                   <div id="followersReportOkLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
+                </div>
+
+                <div style="height:14px;"></div>
+                <div style="font-size:12px; color:#6b7280;">Não OK x idade da compra</div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                  <canvas id="followersReportPurchaseAgePie" width="260" height="260" style="width:260px; height:260px; border-radius:999px; background:#ffffff;"></canvas>
+                  <div id="followersReportPurchaseAgeLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
                 </div>
 
                 <div style="height:14px;"></div>
@@ -876,6 +914,7 @@
       </div>
 
       <script type="application/json" id="followersReportJson"><%- JSON.stringify(followersReport || {}).replace(/</g, '\\u003c') %></script>
+      <script type="application/json" id="followersFilteredTargetsJson"><%- JSON.stringify(followersFilteredTargets || []).replace(/</g, '\\u003c') %></script>
 
       <script>
         (function(){
@@ -1072,10 +1111,31 @@
 
           var autoNotifyBtn = el('followersAutoNotifyBtn');
           var autoNotifyPauseBtn = el('followersAutoNotifyPauseBtn');
+          var autoNotifyMenuBtn = el('followersAutoNotifyMenuBtn');
+          var autoNotifyMenu = el('followersAutoNotifyMenu');
           var autoNotifyProgressBar = el('followersAutoNotifyProgressBar');
           var autoNotifyProgressText = el('followersAutoNotifyProgressText');
           var autoNotifyPollTimer = null;
           var lastAutoNotifyJob = null;
+          function closeAutoNotifyMenu() {
+            try { if (autoNotifyMenu) autoNotifyMenu.style.display = 'none'; } catch (_) {}
+            try { if (autoNotifyMenuBtn) autoNotifyMenuBtn.setAttribute('aria-expanded', 'false'); } catch (_) {}
+          }
+          function toggleAutoNotifyMenu() {
+            try {
+              if (!autoNotifyMenu) return;
+              var open = autoNotifyMenu.style.display !== 'none';
+              autoNotifyMenu.style.display = open ? 'none' : 'block';
+              if (autoNotifyMenuBtn) autoNotifyMenuBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+            } catch (_) {}
+          }
+          if (autoNotifyMenuBtn) {
+            autoNotifyMenuBtn.addEventListener('click', function(ev){
+              try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {}
+              try { if (ev && ev.stopPropagation) ev.stopPropagation(); } catch (_) {}
+              toggleAutoNotifyMenu();
+            });
+          }
           function setAutoNotifyProgress(done, total){
             try {
               var d = Math.max(0, Number(done || 0) || 0);
@@ -1146,6 +1206,7 @@
                 var data = out && out.json ? out.json : null;
                 if (data && data.ok === true) renderAutoNotifyJob(data.job || null);
                 await pollAutoNotifyStatus();
+                closeAutoNotifyMenu();
               } catch (e) {
                 alert('Falha ao pausar/continuar: ' + (e && e.message ? e.message : e));
               } finally {
@@ -1218,6 +1279,21 @@
               }
             });
           }
+
+          document.addEventListener('click', function(ev){
+            try {
+              var t = ev && ev.target ? ev.target : null;
+              if (!t) return;
+              if (validateGeneralMenu && validateGeneralMenuBtn) {
+                var vgWrap = validateGeneralMenuBtn.parentElement;
+                if (vgWrap && !vgWrap.contains(t)) closeValidateGeneralMenu();
+              }
+              if (autoNotifyMenu && autoNotifyMenuBtn) {
+                var anWrap = autoNotifyMenuBtn.parentElement;
+                if (anWrap && !anWrap.contains(t)) closeAutoNotifyMenu();
+              }
+            } catch (_) {}
+          });
 
           var fixCheckedGlobalBtn = el('followersFixCheckedGlobalBtn');
           if (fixCheckedGlobalBtn) {
@@ -1308,7 +1384,9 @@
               var rows = getAllRows();
               var total = rows.length;
               var checked = 0;
+              var checkedValid = 0;
               var ok = 0;
+              var notOk = 0;
               var withDrop = 0;
               var buckets = [
                 { key: '0_10', label: '0–10%', count: 0 },
@@ -1316,10 +1394,12 @@
                 { key: '20_30', label: '20–30%', count: 0 },
                 { key: '30_40', label: '30–40%', count: 0 },
                 { key: '40_50', label: '40–50%', count: 0 },
-                { key: '50_plus', label: '>50%', count: 0 }
+                { key: '50_100', label: '50–100%', count: 0 },
+                { key: '100_plus', label: '>100%', count: 0 }
               ];
               function bucketOf(v){
-                if (v > 50) return 5;
+                if (v > 100) return 6;
+                if (v >= 50) return 5;
                 if (v >= 40) return 4;
                 if (v >= 30) return 3;
                 if (v >= 20) return 2;
@@ -1330,16 +1410,23 @@
                 var tr = rows[i];
                 var checkedMs = Number(tr.getAttribute('data-checkedatms') || 0) || 0;
                 if (checkedMs > 0) checked += 1;
+                var checkedMsRaw = Number(tr.getAttribute('data-checkedatmsraw') || 0) || 0;
+                if (!(checkedMsRaw > 0)) continue;
                 var pctCell = tr.querySelector('.cell-pct');
                 var pctTxt = pctCell ? String(pctCell.textContent || '').trim() : '';
                 if (pctTxt === 'OK') {
+                  checkedValid += 1;
                   ok += 1;
-                } else if (pctTxt && pctTxt.indexOf('%') > -1) {
-                  var num = Number(pctTxt.replace('%','').replace(/\./g,'').replace(',', '.'));
-                  if (isFinite(num) && num > 0) {
-                    withDrop += 1;
-                    var idx = bucketOf(num);
-                    if (buckets[idx]) buckets[idx].count += 1;
+                } else {
+                  notOk += 1;
+                  if (pctTxt && pctTxt.indexOf('%') > -1) {
+                    var num = Number(pctTxt.replace('%','').replace(/\./g,'').replace(',', '.'));
+                    if (isFinite(num) && num > 0) {
+                      checkedValid += 1;
+                      withDrop += 1;
+                      var idx = bucketOf(num);
+                      if (buckets[idx]) buckets[idx].count += 1;
+                    }
                   }
                 }
               }
@@ -1347,17 +1434,67 @@
               var bucketsOut = buckets.map(function(b){
                 return { key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 };
               });
-              var notOk = Math.max(0, total - ok);
               return {
                 total: total,
                 checked: checked,
+                checkedValid: checkedValid,
                 checkedPct: total ? (Math.round((checked / total) * 1000) / 10) : 0,
                 withDrop: withDrop,
                 ok: ok,
                 notOk: notOk,
-                okPct: total ? (Math.round((ok / total) * 1000) / 10) : 0,
+                okPct: checked ? (Math.round((ok / checked) * 1000) / 10) : 0,
                 buckets: bucketsOut
               };
+            } catch (_) {
+              return null;
+            }
+          }
+
+          function computePurchaseAgeDropReportFromTable(){
+            try {
+              var rows = getAllRows();
+              var nowMs = Date.now();
+              function brtDay(ms){
+                var n = Number(ms || 0) || 0;
+                var brtOffset = 3 * 60 * 60 * 1000;
+                return Math.floor((n - brtOffset) / (24 * 60 * 60 * 1000));
+              }
+              var buckets = [
+                { key: 'lt_3', label: '<3 dias', count: 0 },
+                { key: '3_7', label: '3–7 dias', count: 0 },
+                { key: '7_14', label: '7–14 dias', count: 0 },
+                { key: '14_30', label: '14–30 dias', count: 0 },
+                { key: 'gt_30', label: '>30 dias', count: 0 }
+                ,{ key: 'no_date', label: 'Sem data', count: 0 }
+              ];
+              var total = 0;
+              for (var i=0;i<rows.length;i++){
+                var tr = rows[i];
+                var checkedMsRaw = Number(tr.getAttribute('data-checkedatmsraw') || 0) || 0;
+                if (!(checkedMsRaw > 0)) continue;
+                var pctCell = tr.querySelector('.cell-pct');
+                var pctTxt = pctCell ? String(pctCell.textContent || '').trim() : '';
+                if (pctTxt === 'OK') continue;
+                var purchaseAtMs = Number(tr.getAttribute('data-purchaseatms') || 0) || 0;
+                total += 1;
+                if (!(purchaseAtMs > 0)) {
+                  buckets[5].count += 1;
+                } else {
+                  var ageDays = brtDay(nowMs) - brtDay(purchaseAtMs);
+                  if (!isFinite(ageDays) || ageDays < 0) ageDays = 0;
+                  if (ageDays < 3) buckets[0].count += 1;
+                  else if (ageDays < 7) buckets[1].count += 1;
+                  else if (ageDays < 14) buckets[2].count += 1;
+                  else if (ageDays < 30) buckets[3].count += 1;
+                  else buckets[4].count += 1;
+                }
+              }
+              var base = Math.max(1, total);
+              var out = buckets.map(function(b){
+                var c = Math.max(0, Math.floor(Number(b.count || 0) || 0));
+                return { key: b.key, label: b.label, count: c, pct: Math.round((c / base) * 1000) / 10 };
+              });
+              return { total: Math.max(0, Math.floor(Number(total || 0) || 0)), buckets: out };
             } catch (_) {
               return null;
             }
@@ -1433,7 +1570,7 @@
             if (dropEl) dropEl.textContent = (report.withDrop != null) ? String(report.withDrop) : '-';
 
             var buckets = Array.isArray(report.buckets) ? report.buckets : [];
-            var colors = ['#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#111827'];
+            var colors = ['#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#111827', '#64748b'];
             var items = buckets.map(function(b, idx){
               return { label: String(b.label || ''), count: Number(b.count || 0) || 0, pct: (typeof b.pct === 'number' ? b.pct : 0), color: colors[idx % colors.length] };
             });
@@ -1479,6 +1616,33 @@
               }
               okLegend.innerHTML = html2 || '<div style="color:#6b7280;">Sem dados</div>';
             }
+
+            try {
+              var pr = (report && report.purchaseAgeDropReport && typeof report.purchaseAgeDropReport === 'object') ? report.purchaseAgeDropReport : null;
+              if (!pr || !Array.isArray(pr.buckets)) pr = computePurchaseAgeDropReportFromTable();
+              var pb = pr && Array.isArray(pr.buckets) ? pr.buckets : [];
+              var pcolors = ['#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#111827'];
+              var pitems = pb.map(function(b, idx){
+                return { label: String(b.label || ''), count: Number(b.count || 0) || 0, pct: (typeof b.pct === 'number' ? b.pct : 0), color: pcolors[idx % pcolors.length] };
+              });
+              var ppie = el('followersReportPurchaseAgePie');
+              drawPie(ppie, pitems);
+              var plegend = el('followersReportPurchaseAgeLegend');
+              if (plegend) {
+                var html4 = '';
+                for (var pi=0;pi<pitems.length;pi++){
+                  var it4 = pitems[pi];
+                  html4 += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0;">' +
+                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + it4.color + ';"></span>' +
+                    '<span>' + it4.label + '</span>' +
+                    '</div>' +
+                    '<div style="color:#111827;font-weight:700;white-space:nowrap;">' + String(it4.count) + ' (' + String(it4.pct).replace('.', ',') + '%)</div>' +
+                    '</div>';
+                }
+                plegend.innerHTML = html4 || '<div style="color:#6b7280;">Sem dados</div>';
+              }
+            } catch (_) {}
 
             try {
               var wrap = el('followersReportWarrantyBars');
@@ -1637,6 +1801,14 @@
                 try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
                 if (job.status === 'done') {
                   setStatus('Verificação concluída.');
+                  try {
+                    var jid = String(job.id || '').trim();
+                    var k = 'followers_verify_filtered_done_job';
+                    var last = '';
+                    try { last = String(sessionStorage.getItem(k) || ''); } catch (_) { last = ''; }
+                    if (jid && last === jid) return;
+                    try { sessionStorage.setItem(k, jid || '1'); } catch (_) {}
+                  } catch (_) {}
                   window.location.reload();
                 } else {
                   setStatus('Verificação terminou com erro.');
@@ -1779,10 +1951,31 @@
 
           var validateGeneralBtn = el('followersValidateGeneralBtn');
           var validateGeneralPauseBtn = el('followersValidateGeneralPauseBtn');
+          var validateGeneralMenuBtn = el('followersValidateGeneralMenuBtn');
+          var validateGeneralMenu = el('followersValidateGeneralMenu');
           var validateGeneralProgressText = el('followersValidateGeneralProgressText');
           var validateGeneralProgressBar = el('followersValidateGeneralProgressBar');
           var validatePollTimer = null;
           var validateGeneralLastJob = null;
+          function closeValidateGeneralMenu() {
+            try { if (validateGeneralMenu) validateGeneralMenu.style.display = 'none'; } catch (_) {}
+            try { if (validateGeneralMenuBtn) validateGeneralMenuBtn.setAttribute('aria-expanded', 'false'); } catch (_) {}
+          }
+          function toggleValidateGeneralMenu() {
+            try {
+              if (!validateGeneralMenu) return;
+              var open = validateGeneralMenu.style.display !== 'none';
+              validateGeneralMenu.style.display = open ? 'none' : 'block';
+              if (validateGeneralMenuBtn) validateGeneralMenuBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+            } catch (_) {}
+          }
+          if (validateGeneralMenuBtn) {
+            validateGeneralMenuBtn.addEventListener('click', function(ev){
+              try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {}
+              try { if (ev && ev.stopPropagation) ev.stopPropagation(); } catch (_) {}
+              toggleValidateGeneralMenu();
+            });
+          }
           function setGeneralProgress(done, total) {
             try {
               var d = Number(done || 0);
@@ -1865,6 +2058,7 @@
                 var data = await resp.json().catch(function(){ return null; });
                 if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
                 await pollGeneralStatus();
+                closeValidateGeneralMenu();
               } catch (e) {
                 setStatus('Falha ao pausar validação geral.');
                 try { validateGeneralPauseBtn.disabled = false; } catch (_) {}
@@ -1873,6 +2067,250 @@
             });
           }
           pollGeneralStatus().catch(function(){});
+
+          var bulkRefil2Btn = el('followersBulkRefil2Btn');
+          var bulkRefil2ProgressText = el('followersBulkRefil2ProgressText');
+          var bulkRefil2ProgressBar = el('followersBulkRefil2ProgressBar');
+          var bulkRefil2PollTimer = null;
+          var bulkRefil2LastJob = null;
+          function setBulkRefil2Progress(done, total) {
+            try {
+              var d = Math.max(0, Number(done || 0) || 0);
+              var t = Math.max(0, Number(total || 0) || 0);
+              if (bulkRefil2ProgressText) bulkRefil2ProgressText.textContent = String(d) + '/' + String(t);
+              var pct = t > 0 ? Math.max(0, Math.min(100, (d * 100) / t)) : 0;
+              if (bulkRefil2ProgressBar) bulkRefil2ProgressBar.style.width = String(pct) + '%';
+            } catch (_) {}
+          }
+          setBulkRefil2Progress(0, 0);
+          function loadFollowersFilteredTargets() {
+            try {
+              var node = el('followersFilteredTargetsJson');
+              if (!node) return [];
+              var raw = node.textContent || node.innerText || '';
+              if (!raw) return [];
+              var arr = JSON.parse(raw);
+              return Array.isArray(arr) ? arr : [];
+            } catch (_) {
+              return [];
+            }
+          }
+          async function pollBulkRefil2Status() {
+            try {
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/refil2/bulk-status', { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+              var data = await resp.json().catch(function(){ return null; });
+              if (!data || data.ok !== true) return;
+              bulkRefil2LastJob = data.job || null;
+              var job = bulkRefil2LastJob;
+              if (!job) { setBulkRefil2Progress(0, 0); if (bulkRefil2PollTimer) { try { clearInterval(bulkRefil2PollTimer); } catch(_) {} bulkRefil2PollTimer = null; } return; }
+              setBulkRefil2Progress(job.done || 0, job.total || 0);
+              if (job.status === 'running') {
+                setStatus('Refil2 automático em andamento… (' + String(job.done || 0) + '/' + String(job.total || 0) + ')' + (job.lastUsername ? (' @' + String(job.lastUsername)) : ''));
+                if (!bulkRefil2PollTimer) bulkRefil2PollTimer = setInterval(pollBulkRefil2Status, 2000);
+              } else if (job.status === 'done') {
+                setStatus('Refil2 automático concluído. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + ' | Pulados: ' + String(job.skipped || 0));
+                if (bulkRefil2PollTimer) { try { clearInterval(bulkRefil2PollTimer); } catch(_) {} bulkRefil2PollTimer = null; }
+              } else if (job.status === 'error') {
+                setStatus('Refil2 automático finalizou com erro: ' + String(job.lastError || ''));
+                if (bulkRefil2PollTimer) { try { clearInterval(bulkRefil2PollTimer); } catch(_) {} bulkRefil2PollTimer = null; }
+              }
+            } catch (_) {}
+          }
+          pollBulkRefil2Status().catch(function(){});
+          document.addEventListener('visibilitychange', function(){
+            try {
+              if (document.hidden) {
+                if (bulkRefil2PollTimer) { try { clearInterval(bulkRefil2PollTimer); } catch(_) {} bulkRefil2PollTimer = null; }
+              } else {
+                pollBulkRefil2Status().catch(function(){});
+              }
+            } catch (_) {}
+          });
+
+          if (bulkRefil2Btn) {
+            bulkRefil2Btn.addEventListener('click', async function(){
+              try {
+                var targets0 = loadFollowersFilteredTargets();
+                var total0 = targets0.length;
+                if (!total0) return alert('Nenhum pedido filtrado para solicitar refil.');
+                var eligible = [];
+                var skippedOrganic = 0;
+                var skippedLowDrop = 0;
+                for (var i=0;i<targets0.length;i++){
+                  var t0 = targets0[i] || {};
+                  var u0 = String(t0.username || '').trim();
+                  var tipo0 = String(t0.tipo || '').toLowerCase();
+                  if (!u0) continue;
+                  if (tipo0.indexOf('organ') >= 0) { skippedOrganic += 1; continue; }
+                  if (!(tipo0.indexOf('misto') >= 0 || tipo0.indexOf('brasileir') >= 0)) continue;
+                  var dabs = Number(t0.diffAbs || 0) || 0;
+                  if (dabs < 101) { skippedLowDrop += 1; continue; }
+                  eligible.push(t0);
+                }
+                if (!eligible.length) return alert('Nenhum pedido elegível (somente mistos/brasileiros; orgânicos não entram).');
+                var warn = (skippedOrganic ? ('\nOrgânicos ignorados: ' + String(skippedOrganic)) : '') + (skippedLowDrop ? ('\nQueda < 101 ignorados: ' + String(skippedLowDrop)) : '');
+                if (!confirm('Solicitar Refil2 automaticamente para ' + String(eligible.length) + ' pedidos filtrados?' + warn + '\n\nObs: só entra quem tiver queda ≥ 101 e o processo roda em fila (ordenado).')) return;
+                bulkRefil2Btn.disabled = true;
+                setStatus('Iniciando Refil2 automático…');
+                var out = await fetch('/api/painel/gerenciamento-seguidores/refil2/bulk-start', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ targets: eligible }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  return alert('Falha ao iniciar Refil2 automático: ' + err);
+                }
+                await pollBulkRefil2Status();
+              } catch (e) {
+                alert('Falha ao iniciar Refil2 automático: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { bulkRefil2Btn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          var fixInitialBtn = el('followersFixInitialBtn');
+          var fixInitialProgressText = el('followersFixInitialProgressText');
+          var fixInitialProgressBar = el('followersFixInitialProgressBar');
+          var fixInitialPollTimer = null;
+          function setFixInitialProgress(done, total) {
+            try {
+              var d = Math.max(0, Number(done || 0) || 0);
+              var t = Math.max(0, Number(total || 0) || 0);
+              if (fixInitialProgressText) fixInitialProgressText.textContent = String(d) + '/' + String(t);
+              var pct = t > 0 ? Math.max(0, Math.min(100, (d * 100) / t)) : 0;
+              if (fixInitialProgressBar) fixInitialProgressBar.style.width = String(pct) + '%';
+            } catch (_) {}
+          }
+          setFixInitialProgress(0, 0);
+          async function pollFixInitialStatus() {
+            try {
+              var resp = await fetch('/api/painel/gerenciamento-seguidores/fix-initial/status', { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+              var data = await resp.json().catch(function(){ return null; });
+              if (!data || data.ok !== true) return;
+              var job = data.job || null;
+              if (!job) {
+                setFixInitialProgress(0, 0);
+                if (fixInitialPollTimer) { try { clearInterval(fixInitialPollTimer); } catch(_) {} fixInitialPollTimer = null; }
+                return;
+              }
+              setFixInitialProgress(job.done || 0, job.total || 0);
+              if (job.status === 'running') {
+                setStatus('Corrigindo inicial… (' + String(job.done || 0) + '/' + String(job.total || 0) + ')' + (job.lastUsername ? (' @' + String(job.lastUsername)) : ''));
+                if (!fixInitialPollTimer) fixInitialPollTimer = setInterval(pollFixInitialStatus, 2000);
+              } else if (job.status === 'done') {
+                setStatus('Inicial corrigido. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + ' | Pulados: ' + String(job.skipped || 0));
+                if (fixInitialPollTimer) { try { clearInterval(fixInitialPollTimer); } catch(_) {} fixInitialPollTimer = null; }
+              } else if (job.status === 'error') {
+                setStatus('Falha ao corrigir inicial: ' + String(job.lastError || ''));
+                if (fixInitialPollTimer) { try { clearInterval(fixInitialPollTimer); } catch(_) {} fixInitialPollTimer = null; }
+              }
+            } catch (_) {}
+          }
+          pollFixInitialStatus().catch(function(){});
+          document.addEventListener('visibilitychange', function(){
+            try {
+              if (document.hidden) {
+                if (fixInitialPollTimer) { try { clearInterval(fixInitialPollTimer); } catch(_) {} fixInitialPollTimer = null; }
+              } else {
+                pollFixInitialStatus().catch(function(){});
+              }
+            } catch (_) {}
+          });
+
+          function getSelectedRows() {
+            try {
+              var rows = getAllRows();
+              var out = [];
+              for (var i=0;i<rows.length;i++){
+                var tr = rows[i];
+                var cb = tr ? tr.querySelector('input.followersSelectRow') : null;
+                if (cb && cb.checked) out.push(tr);
+              }
+              return out;
+            } catch (_) {
+              return [];
+            }
+          }
+          if (fixInitialBtn) {
+            fixInitialBtn.addEventListener('click', async function(){
+              var selected = getSelectedRows();
+              if (!selected.length) return alert('Selecione os pedidos que deseja corrigir o inicial.');
+              var targets = [];
+              for (var i=0;i<selected.length;i++){
+                var tr = selected[i];
+                var orderId = String(tr.getAttribute('data-orderid') || '').trim();
+                var fornecedorOrderId = String(tr.getAttribute('data-fornecedororderid') || '').trim();
+                var username = String(tr.getAttribute('data-username') || '').trim();
+                var purchaseAtMs = Number(tr.getAttribute('data-purchaseatms') || 0) || 0;
+                if (!orderId || !username) continue;
+                targets.push({ orderId: orderId, fornecedorOrderId: fornecedorOrderId, username: username, purchaseAtMs: purchaseAtMs });
+              }
+              if (!targets.length) return alert('Nenhum pedido válido selecionado.');
+              if (!confirm('Corrigir inicial usando Fama24h api_proxy para ' + String(targets.length) + ' pedidos selecionados?\n\nObs: isso só faz a 1ª request (api_proxy), não inicia reposição.')) return;
+              try {
+                fixInitialBtn.disabled = true;
+                setStatus('Iniciando correção de inicial…');
+                var out = await fetch('/api/painel/gerenciamento-seguidores/fix-initial/start', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ targets: targets }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  return alert('Falha ao iniciar correção: ' + err);
+                }
+                await pollFixInitialStatus();
+              } catch (e) {
+                alert('Falha ao iniciar correção: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { fixInitialBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          var useMongoInitialBtn = el('followersUseMongoInitialBtn');
+          if (useMongoInitialBtn) {
+            useMongoInitialBtn.addEventListener('click', async function(){
+              var selected = getSelectedRows();
+              if (!selected.length) return alert('Selecione os pedidos que deseja marcar.');
+              var targets = [];
+              for (var i=0;i<selected.length;i++){
+                var tr = selected[i];
+                var orderId = String(tr.getAttribute('data-orderid') || '').trim();
+                var fornecedorOrderId = String(tr.getAttribute('data-fornecedororderid') || '').trim();
+                if (!fornecedorOrderId) continue;
+                targets.push({ orderId: orderId, fornecedorOrderId: fornecedorOrderId });
+              }
+              if (!targets.length) return alert('Nenhum pedido com OrderID do fornecedor (Fama24h) encontrado nos selecionados.');
+              if (!confirm('Marcar ' + String(targets.length) + ' pedidos para usar o inicial do MongoDB no Refil2 (quando o start_count do fornecedor estiver errado)?')) return;
+              try {
+                useMongoInitialBtn.disabled = true;
+                setStatus('Marcando pedidos…');
+                var out = await fetch('/api/painel/gerenciamento-seguidores/refil2/use-mongo-initial/mark', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ targets: targets }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  return alert('Falha ao marcar: ' + err);
+                }
+                setStatus('Pedidos marcados para usar inicial do Mongo no Refil2.');
+              } catch (e) {
+                alert('Falha ao marcar: ' + (e && e.message ? e.message : e));
+              } finally {
+                try { useMongoInitialBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
 
           var applyBtn = el('followersApplyFilterBtn');
           var clearBtn = el('followersClearFiltersBtn');
@@ -2862,6 +3300,8 @@
               <input id="refil2OnlyWithRefilId" type="checkbox" />
               <span>Somente com Refil ID</span>
             </label>
+            <input id="refil2ManualInitial" type="number" placeholder="Editar inicial" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
+            <button type="button" id="refil2SetInitialBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Editar inicial</button>
             <button type="button" id="refil2AuditFetchBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar selecionados</button>
             <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
             <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
@@ -2978,7 +3418,10 @@
                   const initialQty = (typeof sum.initial === 'number') ? sum.initial : (typeof sum.quantidade_inicial === 'number' ? sum.quantidade_inicial : null);
                   const currentQty = (typeof sum.current === 'number') ? sum.current : (typeof sum.quantidade_atual === 'number' ? sum.quantidade_atual : null);
                   const dropQty = (typeof sum.drop === 'number') ? sum.drop : (typeof sum.deficit === 'number' ? sum.deficit : (typeof sum.quantidade_de_queda === 'number' ? sum.quantidade_de_queda : null));
-                  const finalQty = (typeof sum.final === 'number') ? sum.final : ((currentQty != null && dropQty != null) ? (currentQty + dropQty) : (initialQty != null ? initialQty : null));
+                  const computedFinalQty = (currentQty != null && dropQty != null) ? (Number(currentQty) + Number(dropQty)) : null;
+                  const rawFinalQty = (typeof sum.final === 'number') ? sum.final : (typeof sum.quantidade_final === 'number' ? sum.quantidade_final : null);
+                  const finalQty = (computedFinalQty != null) ? computedFinalQty : (rawFinalQty != null ? rawFinalQty : (initialQty != null ? initialQty : null));
+                  const finalMismatch = (computedFinalQty != null && rawFinalQty != null) ? (Math.trunc(Number(computedFinalQty)) !== Math.trunc(Number(rawFinalQty))) : false;
                   const st = resolveStatus(it);
                   const auditObj = (it && it.audit && typeof it.audit === 'object') ? it.audit : {};
                   const auditCurrent = (typeof auditObj.currentFollowers === 'number') ? auditObj.currentFollowers : null;
@@ -3012,6 +3455,9 @@
                       <% } else { %>
                         <%= user ? ('@' + user.replace(/^@+/, '')) : '-' %>
                       <% } %>
+                      <% if (it && it.automated === true) { %>
+                        <span title="Solicitado automaticamente" style="margin-left:8px; display:inline-block; padding:2px 6px; border:1px solid #e5e7eb; border-radius:999px; font-size:0.72rem; line-height:1.2; color:#111827; background:#f3f4f6; font-weight:700;">AUTO</span>
+                      <% } %>
                       <% if (isProxyOrLookupError && postHref) { %>
                         <a href="<%= postHref %>" target="_blank" rel="noopener" title="Abrir último post conhecido (ver usuário atual)" style="margin-left:8px; display:inline-block; padding:2px 6px; border:1px solid #e5e7eb; border-radius:999px; font-size:0.72rem; line-height:1.2; color:#111827; text-decoration:none; background:#fff;">POST</a>
                       <% } %>
@@ -3019,7 +3465,12 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= tipoLabel %></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (currentQty != null ? String(currentQty) : '-') %></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (dropQty != null ? String(dropQty) : '-') %></td>
-                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;"><%= (finalQty != null ? String(finalQty) : (initialQty != null ? String(initialQty) : '-')) %></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;">
+                      <%= (finalQty != null ? String(finalQty) : (initialQty != null ? String(initialQty) : '-')) %>
+                      <% if (finalMismatch) { %>
+                        <span title="Final informado diferente do cálculo (atual+repor): <%= String(rawFinalQty) %>" style="margin-left:6px; color:#6b7280; font-weight:700;">*</span>
+                      <% } %>
+                    </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:right;">
                       <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px;">
                         <input type="number" class="refil2AuditCurrent" value="<%= (auditCurrent != null ? String(auditCurrent) : '') %>" placeholder="-" style="width:92px; padding:6px 2px; border:0; border-radius:0; text-align:right; outline:none; background:transparent;" />
@@ -3688,6 +4139,55 @@
                     if (cb && !cb.disabled) cb.checked = !!selAll.checked;
                   });
                 } catch (_) {}
+              });
+            }
+          } catch (_) {}
+          try {
+            var setInitialBtn = el('refil2SetInitialBtn');
+            var setInitialInput = el('refil2ManualInitial');
+            if (setInitialBtn) {
+              setInitialBtn.addEventListener('click', async function(){
+                try {
+                  var raw = String(setInitialInput && typeof setInitialInput.value !== 'undefined' ? setInitialInput.value : '').trim();
+                  var v = raw === '' ? NaN : Number(raw);
+                  if (!isFinite(v) || !(v > 0)) { alert('Informe um valor de inicial válido.'); return; }
+                  var initial = Math.trunc(v);
+                  var wrap = el('refil2RequestsWrap');
+                  if (!wrap) return;
+                  var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                  var ids = [];
+                  rows.forEach(function(r){
+                    try {
+                      if (r.style.display === 'none') return;
+                      var cb = r.querySelector('input.refil2SelectRow');
+                      if (!cb || !cb.checked) return;
+                      var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                      if (!id) return;
+                      ids.push(id);
+                    } catch (_) {}
+                  });
+                  if (!ids.length) { alert('Selecione pelo menos 1 linha.'); return; }
+                  if (!confirm('Aplicar inicial ' + String(initial) + ' para ' + String(ids.length) + ' item(ns)?')) return;
+                  setInitialBtn.disabled = true;
+                  setInitialBtn.style.opacity = '0.7';
+                  var resp = await fetch('/api/painel/refil2/manual-initial-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids, initial: initial })
+                  });
+                  var data = await readJsonResp(resp);
+                  if (!resp.ok || !(data && data.ok)) {
+                    var msg = (data && (data.message || data.error)) ? String(data.message || data.error) : ('HTTP ' + resp.status);
+                    alert('Erro ao editar inicial: ' + msg);
+                    return;
+                  }
+                  alert('Inicial atualizado: ' + String(data.updatedRequests || 0) + ' item(ns).');
+                  try { window.location.reload(); } catch (_) {}
+                } catch (e) {
+                  alert('Erro ao editar inicial: ' + (e && e.message ? e.message : e));
+                } finally {
+                  try { setInitialBtn.disabled = false; setInitialBtn.style.opacity = '1'; } catch (_) {}
+                }
               });
             }
           } catch (_) {}
@@ -4534,6 +5034,7 @@
                 <th>Custo/1k</th>
                 <th>Taxa</th>
                 <th>Orderbump</th>
+                <th style="text-align:center; width:44px;">X</th>
                 <th>Custo Bump</th>
                 <th>Total Item</th>
                 <th>Total Pago</th>
@@ -4584,6 +5085,9 @@
                   <td>R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %></td>
                   <td>R$ <%= (function(){ try { var n = Number(order && typeof order.paymentFee !== 'undefined' ? order.paymentFee : NaN); if (isFinite(n) && n > 0) return n.toFixed(2).replace('.', ','); var pm = String(order && (order.paymentMethod || order.payment_method || order.method) ? (order.paymentMethod || order.payment_method || order.method) : '').toLowerCase(); if (pm.indexOf('paghiper') >= 0) return '0,99'; return '0,85'; } catch(_) { return '0,85'; } })() %></td>
                   <td><%= (order.orderBumps || '-') %></td>
+                  <td style="text-align:center;">
+                    <button type="button" class="sale-delete-btn" data-sale-id="<%= String(order._id || '') %>" style="background:#dc3545; color:#fff; border:none; border-radius:8px; width:32px; height:32px; font-weight:900; cursor:pointer;">x</button>
+                  </td>
                   <td>
                     R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>
                     <% if (order.orderBumpsTotal) { %>
@@ -4597,6 +5101,49 @@
             </tbody>
           </table>
           </div>
+          <script>
+            (function(){
+              function safeTrim(v){ return String(v == null ? '' : v).trim(); }
+              function bind(){
+                var btns = Array.prototype.slice.call(document.querySelectorAll('.sale-delete-btn'));
+                if (!btns.length) return;
+                btns.forEach(function(btn){
+                  if (btn.getAttribute('data-bound') === '1') return;
+                  btn.setAttribute('data-bound', '1');
+                  btn.addEventListener('click', async function(){
+                    var id = safeTrim(btn.getAttribute('data-sale-id') || '');
+                    if (!id) return;
+                    if (!confirm('Excluir esta venda? Isso apaga o registro no MongoDB.')) return;
+                    btn.disabled = true;
+                    try {
+                      var resp = await fetch('/api/painel/vendas/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify({ id: id }),
+                        credentials: 'same-origin'
+                      });
+                      var data = await resp.json().catch(function(){ return null; });
+                      if (!data || data.ok !== true) {
+                        var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + resp.status);
+                        alert('Erro ao excluir: ' + err);
+                        btn.disabled = false;
+                        return;
+                      }
+                      try {
+                        var tr = btn.closest ? btn.closest('tr') : null;
+                        if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+                      } catch(_) {}
+                    } catch (e) {
+                      alert('Erro ao excluir: ' + (e && e.message ? e.message : String(e)));
+                      btn.disabled = false;
+                    }
+                  });
+                });
+              }
+              if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+              else bind();
+            })();
+          </script>
         <% } else { %>
           <% if (view === 'dashboard') { %>
           <div style="margin-bottom:14px;">

@@ -195,6 +195,12 @@
       function httpJson(url, method, bodyObj, cb) {
         try {
           var xhr = new XMLHttpRequest();
+          var done = false;
+          var finish = function (ok, data, status) {
+            if (done) return;
+            done = true;
+            cb(!!ok, data || {}, status || 0);
+          };
           xhr.open(method || 'GET', url, true);
           xhr.setRequestHeader('Accept', 'application/json');
           if (method === 'POST') xhr.setRequestHeader('Content-Type', 'application/json');
@@ -206,7 +212,14 @@
             var data = null;
             try { data = raw ? JSON.parse(raw) : null; } catch(_) { data = null; }
             if (!data && raw) data = { raw: raw };
-            cb(status >= 200 && status < 300, data || {}, status);
+            finish(status >= 200 && status < 300, data || {}, status);
+          };
+          try { xhr.timeout = 120000; } catch(_) {}
+          xhr.ontimeout = function () {
+            finish(false, { ok: false, error: 'timeout', message: 'Erro, tente novamente.' }, 0);
+          };
+          xhr.onerror = function () {
+            finish(false, { ok: false, error: 'network_error', message: 'Erro, tente novamente.' }, 0);
           };
           xhr.send(method === 'POST' ? JSON.stringify(bodyObj || {}) : null);
         } catch (e) {
@@ -309,7 +322,19 @@
           var merged = [];
           if (safeTrim(main)) merged.push(main);
           if (safeTrim(sub)) merged.push(sub);
-          return sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil');
+          var base = sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil');
+          try {
+            var debugFlag = false;
+            try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+            if (debugFlag && data && typeof data === 'object') {
+              var did = safeTrim(String(data.debugId || ''));
+              var stp = safeTrim(String(data.step || ''));
+              if (did || stp) {
+                base += ' (' + [stp ? ('etapa: ' + stp) : '', did ? ('debug: ' + did) : ''].filter(Boolean).join(' | ') + ')';
+              }
+            }
+          } catch(_) {}
+          return base;
         } catch(_) { return 'Falha ao solicitar refil'; }
       }
 

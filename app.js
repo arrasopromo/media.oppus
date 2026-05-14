@@ -1519,6 +1519,7 @@ const sendRefil2ToolEmailToCustomer = async ({ record, token, toOverride }) => {
 const maybeSendRefil2ToolEmail = async (record, col, req) => {
     try {
         if (!record || !col || !record._id) return;
+        if (record?.manualSale?.source === 'whatsapp' && record?.manualSale?.skipEmails === true) return;
         const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
         const to = String(customer.email || '').trim();
         if (!to) return;
@@ -2921,13 +2922,10 @@ async function ensureRefilLink(identifier, correlationID, req) {
     };
     const tipoServicoKey = normalizeKey(map['tipo_servico'] || doc.tipoServico || doc.tipo || '');
     const categoriaServicoKey = normalizeKey(map['categoria_servico'] || doc.categoriaServico || '');
-    const isSeguidores = !categoriaServicoKey || categoriaServicoKey.includes('seguidores');
+    const isSeguidores = categoriaServicoKey.includes('seguidores') || tipoServicoKey.includes('seguidores');
     const isEligibleRefil = isSeguidores && (
       tipoServicoKey.includes('mistos') ||
-      tipoServicoKey.includes('brasileir') ||
-      tipoServicoKey.includes('organicos') ||
-      tipoServicoKey.includes('brasileiros_reais') ||
-      (tipoServicoKey.includes('real') && tipoServicoKey.includes('brasileir'))
+      tipoServicoKey.includes('brasileir')
     );
     if (!isEligibleRefil) return null;
     const bumpsStr = String(map['order_bumps'] || pickVal(arrPaid, 'order_bumps') || pickVal(arrOrig, 'order_bumps') || '').trim();
@@ -8856,6 +8854,7 @@ app.post('/api/expay/webhook', async (req, res) => {
 const maybeSendPaymentApprovedEmail = async (record, col, req) => {
     try {
         if (!record || !col || !record._id) return;
+        if (record?.manualSale?.source === 'whatsapp' && record?.manualSale?.skipEmails === true) return;
         const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
         const to = String(customer.email || '').trim();
         if (!to) return;
@@ -9355,7 +9354,7 @@ async function processOrderFulfillment(record, col, req) {
     };
     if (isViewsBase) {
         serviceId = 250;
-        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
     } else if (isCurtidasBase) {
         const envCurtidasMistas = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_MISTAS || '');
         const envCurtidasBrasileiras = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_BRASILEIRAS || '');
@@ -9364,7 +9363,7 @@ async function processOrderFulfillment(record, col, req) {
         } else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) {
             serviceId = Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0 ? envCurtidasBrasileiras : 679;
         }
-        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
     } else {
         if (/^mistos$/i.test(tipo)) {
             serviceId = 663;
@@ -9476,8 +9475,99 @@ async function processOrderFulfillment(record, col, req) {
                     if (code.length > 15) code = code.slice(0, 11);
                     return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
                 };
+                const multiLinks = Array.isArray(basePostLinks) ? basePostLinks : [];
+                const existingMultiOrders = Array.isArray(record?.fornecedor_social_multi?.orders) ? record.fornecedor_social_multi.orders : [];
+                const allDoneMulti = existingMultiOrders.length > 0 && existingMultiOrders.every(o => o && (o.orderId || o.status === 'duplicate'));
+                if (multiLinks.length > 1 && !allDoneMulti && !alreadySentFS && !alreadySentFama) {
+                    const splitEachRaw = String(additionalInfoMap['post_split_each'] ?? '').trim();
+                    const splitExtraRaw = String(additionalInfoMap['post_split_extra'] ?? '').trim();
+                    const eachNum = parseInt(splitEachRaw.replace(/[^\d]/g, ''), 10);
+                    const extraNum = parseInt(splitExtraRaw.replace(/[^\d]/g, ''), 10);
+                    const n = multiLinks.length;
+                    const plan = [];
+                    if (n > 1 && Number.isFinite(qtd) && qtd > 0) {
+                        const each = Number.isFinite(eachNum) && eachNum > 0 ? eachNum : null;
+                        const extra = Number.isFinite(extraNum) && extraNum >= 0 ? extraNum : null;
+                        if (each && extra != null && (each * n - qtd) === extra && extra < n) {
+                            for (let i = 0; i < n; i++) {
+                                const q = Math.max(0, each - (extra > 0 && i >= (n - extra) ? 1 : 0));
+                                plan.push({ link: multiLinks[i], quantity: q });
+                            }
+                        } else if (each && (each * n) <= qtd) {
+                            const remaining = qtd - (each * n);
+                            const addEach = Math.floor(remaining / n);
+                            const rem = remaining % n;
+                            for (let i = 0; i < n; i++) {
+                                const q = Math.max(0, each + addEach + (i < rem ? 1 : 0));
+                                plan.push({ link: multiLinks[i], quantity: q });
+                            }
+                        } else {
+                            const base = Math.floor(qtd / n);
+                            const rem = qtd % n;
+                            for (let i = 0; i < n; i++) {
+                                const q = Math.max(0, base + (i < rem ? 1 : 0));
+                                plan.push({ link: multiLinks[i], quantity: q });
+                            }
+                        }
+                    }
+                    const planFiltered = plan.filter(p => p && p.quantity > 0 && p.link);
+                    const totalSent = planFiltered.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+                    const retryAfterIso = new Date(Date.now() - (25 * 1000)).toISOString();
+                    const lockUpdateMulti = await col.updateOne(
+                        {
+                            _id: record._id,
+                            $or: [
+                                { 'fornecedor_social_multi.status': { $exists: false } },
+                                { 'fornecedor_social_multi.status': { $ne: 'processing' } },
+                                { 'fornecedor_social_multi.attemptedAt': { $lt: retryAfterIso } },
+                                { 'fornecedor_social_multi.attemptedAt': { $exists: false } }
+                            ]
+                        },
+                        {
+                            $set: {
+                                'fornecedor_social_multi.status': 'processing',
+                                'fornecedor_social_multi.attemptedAt': new Date().toISOString(),
+                                'fornecedor_social_multi.requestPayload': { service: serviceFS, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent },
+                                'fornecedor_social_multi.requestedAt': new Date().toISOString()
+                            }
+                        }
+                    );
+                    if (lockUpdateMulti.modifiedCount > 0) {
+                        const axios = require('axios');
+                        const orders = [];
+                        for (const it of planFiltered) {
+                            const rawLink = it && it.link;
+                            const qtyForPost = Number(it && it.quantity) || 0;
+                            const linkFS = sanitizeLink(rawLink);
+                            if (!linkFS) {
+                                orders.push({ link: String(rawLink || ''), status: 'invalid_link', quantity: qtyForPost });
+                                continue;
+                            }
+                            const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(linkFS), quantity: String(qtyForPost) });
+                            try {
+                                const respFS = await axios.post('https://fornecedorsocial.com/api/v2', payloadFS.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+                                const dataFS = normalizeProviderResponseData(respFS.data);
+                                const orderIdFS = extractProviderOrderId(dataFS);
+                                const providerErrFS = (dataFS && (dataFS.error || (dataFS.data && dataFS.data.error) || (dataFS.response && dataFS.response.error))) || null;
+                                const st = orderIdFS ? 'created' : (providerErrFS ? 'error' : 'unknown');
+                                orders.push({ link: linkFS, quantity: qtyForPost, orderId: orderIdFS || null, status: st, response: dataFS });
+                            } catch (err) {
+                                const errVal = err?.response?.data || err?.message || String(err);
+                                const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+                                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                                orders.push({ link: linkFS, quantity: qtyForPost, orderId: null, status: st, error: errVal });
+                            }
+                        }
+                        const createdCount = orders.filter(o => o && o.orderId).length;
+                        const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
+                        const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
+                        await col.updateOne(filter, { $set: { fornecedor_social_multi: { status: overall, requestPayload: { service: serviceFS, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                        try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
+                    }
+                }
+
                 const sanitizedLink = sanitizeLink(linkToSend);
-                if (!!keyFS && !!sanitizedLink && qtd > 0) {
+                if (!!keyFS && !!sanitizedLink && qtd > 0 && !alreadySentFS && !alreadySentFama) {
                     const axios = require('axios');
                     const payloadFS = new URLSearchParams({ key: keyFS, action: 'add', service: String(serviceFS), link: String(sanitizedLink), quantity: String(qtd) });
                     try {
@@ -16280,7 +16370,18 @@ app.post('/api/refil/preview', async (req, res) => {
             if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
             const s = String(v == null ? '' : v).trim();
             if (!s) return null;
-            const n0 = Number(s);
+            const normalizeThousands = (raw) => {
+              const x0 = String(raw || '').trim();
+              if (!x0) return '';
+              const x = x0.replace(/\s+/g, '');
+              if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+              if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+              if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+              if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+              return x0;
+            };
+            const sNorm = normalizeThousands(s);
+            const n0 = Number(sNorm);
             if (Number.isFinite(n0)) return Math.trunc(n0);
             const digits = s.replace(/[^\d-]/g, '');
             if (!digits) return null;
@@ -16316,6 +16417,27 @@ app.post('/api/refil/preview', async (req, res) => {
           },
           basePayload
         );
+        try {
+          const createdRaw = String(basePayload?.pedido?.created_at || basePayload?.pedido?.created || '').trim();
+          if (createdRaw) {
+            const m = createdRaw.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+            if (m) {
+              const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${String(m[6] || '00').padStart(2,'0')}-03:00`;
+              const t = new Date(iso).getTime();
+              if (Number.isFinite(t) && t > 0) doc.purchaseAt = new Date(t);
+            } else {
+              const t2 = new Date(createdRaw).getTime();
+              if (Number.isFinite(t2) && t2 > 0) doc.purchaseAt = new Date(t2);
+            }
+          }
+        } catch (_) {}
+        try {
+          const b = (req && req.body && typeof req.body === 'object') ? req.body : {};
+          const automated = (b.automated === true || b.automated === 1 || String(b.automated || '').trim() === '1');
+          const batchId = String(b.automationBatchId || b.batchId || '').trim();
+          if (automated) doc.automated = true;
+          if (batchId) doc.automationBatchId = batchId;
+        } catch (_) {}
         if (summary) doc.summary = summary;
         (async () => {
           try {
@@ -16340,6 +16462,31 @@ app.post('/api/refil/preview', async (req, res) => {
         return false;
       })();
       const debugId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let lastStep = 'start';
+      let lastUpstream = { api_proxy: null, instagram_proxy: null, add_reorder: null };
+      let hardTimer = null;
+      const respondErr = (statusCode, payload) => {
+        try { if (hardTimer) clearTimeout(hardTimer); } catch (_) {}
+        if (res.headersSent) return;
+        const p = (payload && typeof payload === 'object') ? payload : { ok: false, error: 'internal_error', message: 'Falha ao processar reposição.' };
+        if (debugMode) {
+          const hasOwn = (k) => Object.prototype.hasOwnProperty.call(p, k);
+          if (!hasOwn('debugId')) p.debugId = debugId;
+          if (!hasOwn('step')) p.step = lastStep;
+          if (!hasOwn('upstream')) p.upstream = lastUpstream;
+        } else {
+          if (p && p.error === 'timeout') {
+            p.message = `${String(p.message || 'Erro, tente novamente.')} (etapa: ${lastStep})`;
+          }
+        }
+        return res.status(statusCode).json(p);
+      };
+      const hardTimeoutMs = (() => {
+        const raw = process.env.REFIL2_HARD_TIMEOUT_MS || '';
+        const n = Number(String(raw || '').trim() || '90000');
+        if (!Number.isFinite(n) || n <= 0) return 90000;
+        return Math.max(15000, Math.min(240000, Math.trunc(n)));
+      })();
       const dbg = (label, obj) => {
         if (!debugMode) return;
         try {
@@ -16352,7 +16499,17 @@ app.post('/api/refil/preview', async (req, res) => {
       const safeNumber = (v) => {
         if (typeof v === 'number' && Number.isFinite(v)) return v;
         if (typeof v === 'string') {
-          const n = Number(String(v || '').trim());
+          const normalizeThousands = (raw) => {
+            const x0 = String(raw || '').trim();
+            if (!x0) return '';
+            const x = x0.replace(/\s+/g, '');
+            if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+            if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+            if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+            if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+            return x0;
+          };
+          const n = Number(normalizeThousands(String(v || '').trim()));
           if (Number.isFinite(n)) return n;
           const digits = String(v || '').replace(/[^\d.-]/g, '');
           if (!digits) return null;
@@ -16407,11 +16564,31 @@ app.post('/api/refil/preview', async (req, res) => {
         } catch (_) { return data; }
       };
       const startedAt = Date.now();
+      const dbCheckTimeoutMs = (() => {
+        const raw = process.env.REFIL2_DB_CHECK_TIMEOUT_MS || '';
+        const n = Number(String(raw || '').trim() || '5000');
+        if (!Number.isFinite(n) || n <= 0) return 5000;
+        return Math.max(1000, Math.min(30000, Math.trunc(n)));
+      })();
+      const withTimeout = (promise, ms, code) => new Promise((resolve, reject) => {
+        let done = false;
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          const e = new Error('timeout');
+          e.code = code || 'LOCAL_TIMEOUT';
+          reject(e);
+        }, ms);
+        Promise.resolve(promise).then(
+          (v) => { if (done) return; done = true; clearTimeout(t); resolve(v); },
+          (e) => { if (done) return; done = true; clearTimeout(t); reject(e); }
+        );
+      });
       const upstreamTimeoutMs = (() => {
         const raw = process.env.REFIL2_UPSTREAM_TIMEOUT_MS || process.env.REFIL2_TIMEOUT_MS || '';
-        const n = Number(String(raw || '').trim() || '60000');
-        if (!Number.isFinite(n) || n <= 0) return 60000;
-        return Math.max(10000, Math.min(180000, Math.trunc(n)));
+        const n = Number(String(raw || '').trim() || '20000');
+        if (!Number.isFinite(n) || n <= 0) return 20000;
+        return Math.max(5000, Math.min(180000, Math.trunc(n)));
       })();
       const upstreamMaxAttempts = (() => {
         const raw = process.env.REFIL2_UPSTREAM_MAX_ATTEMPTS || process.env.REFIL2_UPSTREAM_RETRIES || '';
@@ -16420,6 +16597,13 @@ app.post('/api/refil/preview', async (req, res) => {
         return Math.max(1, Math.min(4, Math.trunc(n)));
       })();
       const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
+      try {
+        hardTimer = setTimeout(() => {
+          respondErr(504, { ok: false, error: 'timeout', message: 'Erro, tente novamente.' });
+        }, hardTimeoutMs);
+        res.once('finish', () => { try { if (hardTimer) clearTimeout(hardTimer); } catch (_) {} });
+        res.once('close', () => { try { if (hardTimer) clearTimeout(hardTimer); } catch (_) {} });
+      } catch (_) {}
       const REFILFAMA_BASE_URL = (() => {
         try {
           const raw = String(process.env.REFILFAMA_BASE_URL || process.env.REFILFAMA_BASE || '').trim();
@@ -16442,6 +16626,17 @@ app.post('/api/refil/preview', async (req, res) => {
           const code = String(err?.code || '').trim().toUpperCase();
           if (!code) return false;
           return code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT';
+        } catch (_) {
+          return false;
+        }
+      };
+      const isTimeoutish = (err) => {
+        try {
+          const code = String(err?.code || '').trim().toUpperCase();
+          const msg = String(err?.message || err || '').trim().toLowerCase();
+          if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') return true;
+          if (msg.includes('timeout')) return true;
+          return false;
         } catch (_) {
           return false;
         }
@@ -16471,11 +16666,11 @@ app.post('/api/refil/preview', async (req, res) => {
       const axiosGetFama = async (url, opts) => {
         const safeUrl = cleanUrl(url);
         try {
-          return await axios.get(safeUrl, opts);
+          return await axios.get(safeUrl, Object.assign({ family: 4 }, opts || {}));
         } catch (e) {
-          if (isTlsError(e) && isFamaUrl(safeUrl)) {
+          if ((isTlsError(e) || isTimeoutish(e)) && isFamaUrl(safeUrl)) {
             const httpUrl = toFamaHttp(safeUrl);
-            if (httpUrl && httpUrl !== safeUrl) return await axios.get(httpUrl, opts);
+            if (httpUrl && httpUrl !== safeUrl) return await axios.get(httpUrl, Object.assign({ family: 4 }, opts || {}));
           }
           throw e;
         }
@@ -16483,11 +16678,11 @@ app.post('/api/refil/preview', async (req, res) => {
       const axiosPostFama = async (url, data, opts) => {
         const safeUrl = cleanUrl(url);
         try {
-          return await axios.post(safeUrl, data, opts);
+          return await axios.post(safeUrl, data, Object.assign({ family: 4 }, opts || {}));
         } catch (e) {
-          if (isTlsError(e) && isFamaUrl(safeUrl)) {
+          if ((isTlsError(e) || isTimeoutish(e)) && isFamaUrl(safeUrl)) {
             const httpUrl = toFamaHttp(safeUrl);
-            if (httpUrl && httpUrl !== safeUrl) return await axios.post(httpUrl, data, opts);
+            if (httpUrl && httpUrl !== safeUrl) return await axios.post(httpUrl, data, Object.assign({ family: 4 }, opts || {}));
           }
           throw e;
         }
@@ -16521,7 +16716,7 @@ app.post('/api/refil/preview', async (req, res) => {
         const todayDayNumBrt0 = dayNumFromMsBrt0(Date.now());
         try {
           const { getCollection } = require('./mongodbClient');
-          const ordersCol = await getCollection('checkout_orders');
+          const ordersCol = await withTimeout(getCollection('checkout_orders'), dbCheckTimeoutMs, 'DB_TIMEOUT');
           const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const re = new RegExp(`^@?${esc(username)}$`, 'i');
           const byUserOr = [
@@ -16543,10 +16738,14 @@ app.post('/api/refil/preview', async (req, res) => {
             { 'expay.paidAt': { $exists: true, $nin: [null, ''] } }
           ];
           const q = { $and: [{ $or: paidOr }, { $or: byUserOr }] };
-          const rows = await ordersCol.find(
-            q,
-            { projection: { _id: 1, status: 1, createdAt: 1, paidAt: 1, woovi: 1, paghiper: 1, payment: 1, expay: 1 } }
-          ).sort({ 'woovi.paidAt': -1, 'paghiper.paidAt': -1, 'payment.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(5).toArray();
+          const rows = await withTimeout(
+            ordersCol.find(
+              q,
+              { projection: { _id: 1, status: 1, createdAt: 1, paidAt: 1, woovi: 1, paghiper: 1, payment: 1, expay: 1 } }
+            ).sort({ 'woovi.paidAt': -1, 'paghiper.paidAt': -1, 'payment.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(5).toArray(),
+            dbCheckTimeoutMs,
+            'DB_TIMEOUT'
+          );
           const toMs = (v) => {
             const t = new Date(String(v || '')).getTime();
             return Number.isFinite(t) ? t : 0;
@@ -16580,28 +16779,108 @@ app.post('/api/refil/preview', async (req, res) => {
         const userLink = `https://instagram.com/${username}`;
         const orderLookupUrl = famaUrl(`/api_proxy.php?link=${encodeURIComponent(userLink)}`);
         dbg('GET api_proxy url', orderLookupUrl);
+        lastStep = 'api_proxy';
         const orderResp = await requestWithRetry('GET api_proxy', () => axiosGetFama(orderLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
+        lastUpstream.api_proxy = { status: orderResp && orderResp.status ? orderResp.status : null };
         dbg('GET api_proxy status', { status: orderResp && orderResp.status ? orderResp.status : null });
         dbg('GET api_proxy body', redactSecrets(safeJsonResponse(orderResp && orderResp.data)));
         const orderJson = safeJsonResponse(orderResp && orderResp.data);
         const first = Array.isArray(orderJson) ? orderJson[0] : orderJson;
-        const pedido = first && first.data && Array.isArray(first.data.list) ? first.data.list[0] : null;
+        const pedidos = (first && first.data && Array.isArray(first.data.list)) ? first.data.list : [];
+        let pedido = null;
+        if (pedidos && pedidos.length) {
+          let preferredId = '';
+          try {
+            const ids = pedidos
+              .map(p => String(p && p.id ? p.id : '').trim())
+              .filter(Boolean)
+              .slice(0, 25);
+            if (ids.length) {
+              const { getCollection } = require('./mongodbClient');
+              const ovCol = await getCollection('refil2_initial_overrides');
+              const ovs = await ovCol.find(
+                { orderId: { $in: ids } },
+                { projection: { orderId: 1, manualInitial: 1, useMongoStartCount: 1 } }
+              ).toArray();
+              const match = (ovs || []).find(x => (safeInt(x && x.manualInitial) != null && safeInt(x && x.manualInitial) > 0) || (x && x.useMongoStartCount === true)) || null;
+              if (match && match.orderId) preferredId = String(match.orderId).trim();
+            }
+          } catch (_) {}
+          if (preferredId) {
+            pedido = pedidos.find(p => String(p && p.id ? p.id : '').trim() === preferredId) || null;
+          }
+          if (!pedido) {
+            pedido = pedidos.find(p => safeInt(p && p.start_count) != null && safeInt(p && p.start_count) > 0 && safeInt(p && p.quantity) != null && safeInt(p && p.quantity) > 0) || null;
+          }
+          if (!pedido) pedido = pedidos[0] || null;
+        }
         if (!pedido || typeof pedido !== 'object') {
           logRefil2Request({
             execStatus: 'error',
             errorMessage: 'Pedido não encontrado no api_proxy',
             meta: { step: 'api_proxy', httpStatus: orderResp && orderResp.status ? orderResp.status : null, tookMs: Date.now() - startedAt }
           });
-          return res.status(502).json({ ok: false, error: 'order_not_found', message: 'Pedido não encontrado para este usuário.' });
+          return respondErr(502, { ok: false, error: 'order_not_found', message: 'Pedido não encontrado para este usuário.' });
         }
 
-        const startCount = safeInt(pedido.start_count);
+        let startCount = safeInt(pedido.start_count);
         const qty = safeInt(pedido.quantity);
         const orderId = String(pedido.id || '').trim();
         const serviceId = String(pedido.service_id || '').trim();
         const orderCreatedAt = String(pedido.created_at || pedido.created || '').trim();
         const orderLink = String(pedido.link || username || '').trim().replace(/^@+/, '');
         dbg('pedido parsed', { orderId, serviceId, startCount, qty, orderCreatedAt, orderLink });
+
+        let refil2Override = null;
+        let manualInitial = null;
+        let useMongoStartCount = false;
+        let mongoOrderId = '';
+        try {
+          const { getCollection } = require('./mongodbClient');
+          const ovCol = await getCollection('refil2_initial_overrides');
+          if (ovCol && typeof ovCol.findOne === 'function') {
+            refil2Override = await ovCol.findOne(
+              { orderId: String(orderId) },
+              { projection: { manualInitial: 1, useMongoStartCount: 1, mongoOrderId: 1 } }
+            );
+            const n = safeInt(refil2Override && typeof refil2Override === 'object' ? refil2Override.manualInitial : null);
+            if (n != null && n > 0) manualInitial = n;
+            useMongoStartCount = refil2Override && refil2Override.useMongoStartCount === true;
+            mongoOrderId = String(refil2Override && refil2Override.mongoOrderId ? refil2Override.mongoOrderId : '').trim();
+          }
+        } catch (_) {}
+
+        if (useMongoStartCount) {
+          try {
+            const { getCollection } = require('./mongodbClient');
+            const ordersCol = await getCollection('checkout_orders');
+            const { ObjectId } = require('mongodb');
+            const or = [];
+            if (mongoOrderId && /^[0-9a-fA-F]{24}$/.test(mongoOrderId)) {
+              try { or.push({ _id: new ObjectId(mongoOrderId) }); } catch (_) {}
+            }
+            if (orderId) {
+              or.push({ 'fama24h.orderId': String(orderId) });
+              or.push({ 'fama24h_multi.orders.orderId': String(orderId) });
+            }
+            const filter = or.length ? { $or: or } : null;
+            if (filter) {
+              const row = await ordersCol.findOne(
+                filter,
+                { projection: { _id: 1, initialFollowersCount: 1, initialFollowersCheckedAt: 1 } }
+              );
+              const fallback = (row && typeof row.initialFollowersCount === 'number' && Number.isFinite(row.initialFollowersCount) && row.initialFollowersCount > 0)
+                ? Math.floor(Number(row.initialFollowersCount))
+                : 0;
+              if (fallback > 0) {
+                startCount = fallback;
+                dbg('start_count forced from checkout_orders.initialFollowersCount', { orderId, startCount });
+              }
+            }
+          } catch (e) {
+            dbg('start_count mongo forced failed', { message: e?.message || String(e) });
+          }
+        }
 
         if (!orderId || !serviceId || startCount == null || qty == null) {
           logRefil2Request({
@@ -16610,7 +16889,7 @@ app.post('/api/refil/preview', async (req, res) => {
             meta: { step: 'api_proxy_validate', tookMs: Date.now() - startedAt },
             pedido: { id: orderId || null, service_id: serviceId || null, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
           });
-          return res.status(502).json({ ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
+          return respondErr(502, { ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
         }
 
         const brtOffsetMs = 3 * 60 * 60 * 1000;
@@ -16684,7 +16963,9 @@ app.post('/api/refil/preview', async (req, res) => {
             const profileLookupUrl = famaUrl(`/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`);
             profileTried.push({ paramName, profileUrl });
             dbg('GET instagram_proxy url', profileLookupUrl);
+            lastStep = `instagram_proxy:${paramName}`;
             profileResp = await requestWithRetry(`GET instagram_proxy (${paramName})`, () => axiosGetFama(profileLookupUrl, { timeout: upstreamTimeoutMs, validateStatus: () => true }));
+            lastUpstream.instagram_proxy = { status: profileResp && profileResp.status ? profileResp.status : null, paramName };
             dbg('GET instagram_proxy status', { status: profileResp && profileResp.status ? profileResp.status : null });
             dbg('GET instagram_proxy body', redactSecrets(safeJsonResponse(profileResp && profileResp.data)));
             profileJson = safeJsonResponse(profileResp && profileResp.data);
@@ -16701,6 +16982,7 @@ app.post('/api/refil/preview', async (req, res) => {
           dbg('instagram_proxy failed, trying rocket_api', { username });
           let rocket = null;
           try {
+            lastStep = 'rocket_api';
             rocket = await fetchInstagramFollowersInfoRocketApi(username);
           } catch (e) {
             rocket = { success: false, error: e?.message || String(e) };
@@ -16722,14 +17004,28 @@ app.post('/api/refil/preview', async (req, res) => {
               },
               pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
             });
-            return res.status(502).json({ ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
+            return respondErr(502, { ok: false, error: 'profile_lookup_failed', message: 'Falha ao consultar perfil no Instagram.' });
           }
         }
 
-        const initial = startCount + qty;
-        const deficitRaw = initial - followerCount;
+        const initial = (manualInitial != null) ? manualInitial : (startCount + qty);
+        const followersSources = [];
+        if (followerCount != null) followersSources.push({ source: 'instagram_proxy', followers: followerCount });
+
+        let followerCountUsed = followerCount;
+        try {
+          const rocket = await fetchInstagramFollowersInfoRocketApi(username);
+          const rocketFollowers = safeInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
+          if (rocketFollowers != null) {
+            followersSources.push({ source: 'rocket_api', followers: rocketFollowers });
+            if (followerCountUsed == null) followerCountUsed = rocketFollowers;
+            else followerCountUsed = Math.min(followerCountUsed, rocketFollowers);
+          }
+        } catch (_) {}
+
+        const deficitRaw = initial - followerCountUsed;
         const deficit = Math.max(0, safeInt(deficitRaw) || 0);
-        dbg('computed', { initial, followerCount, deficit, min_drop: MIN_DROP });
+        dbg('computed', { initial, manualInitial: manualInitial != null ? manualInitial : null, followerCount: followerCountUsed, sources: followersSources, deficit, min_drop: MIN_DROP });
 
         if (deficit < MIN_DROP) {
           const thresholdFollowers = Math.max(0, Math.trunc(initial) - Math.trunc(MIN_DROP));
@@ -16739,13 +17035,13 @@ app.post('/api/refil/preview', async (req, res) => {
             decisionReason: 'below_min_drop',
             meta: { step: 'computed', tookMs: Date.now() - startedAt },
             pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-            computed: { initial, current: followerCount, deficit, min_drop: MIN_DROP, thresholdFollowers }
+            computed: { initial, manualInitial: manualInitial != null ? manualInitial : null, current: followerCountUsed, deficit, min_drop: MIN_DROP, thresholdFollowers, followersSources }
           });
           return res.json({
             ok: true,
             status: 'initiated',
-            message: `Queda atual: ${deficit} seguidores (mínimo: ${MIN_DROP}). A reposição fica disponível quando o perfil estiver com até ${thresholdFollowers} seguidores.`,
-            data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: thresholdFollowers }
+            message: `Queda atual: ${deficit} seguidores (mínimo: ${MIN_DROP}). Seguidores consultados: ${followerCountUsed}. A reposição fica disponível quando o perfil estiver com até ${thresholdFollowers} seguidores.`,
+            data: { quantidade_inicial: initial, quantidade_atual: followerCountUsed, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: thresholdFollowers, followers_sources: followersSources, manual_initial: manualInitial != null ? manualInitial : null }
           });
         }
 
@@ -16756,9 +17052,9 @@ app.post('/api/refil/preview', async (req, res) => {
             errorMessage: 'Chave REFILFAMA24H_API_KEY não configurada',
             meta: { step: 'add_reorder_prepare', tookMs: Date.now() - startedAt },
             pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-            computed: { initial, current: followerCount, deficit }
+            computed: { initial, manualInitial: manualInitial != null ? manualInitial : null, current: followerCountUsed, deficit, followersSources }
           });
-          return res.status(500).json({ ok: false, error: 'missing_api_key', message: 'Configuração pendente no servidor.' });
+          return respondErr(500, { ok: false, error: 'missing_api_key', message: 'Configuração pendente no servidor.' });
         }
 
         let payload = {
@@ -16772,7 +17068,9 @@ app.post('/api/refil/preview', async (req, res) => {
         };
         dbg('POST add_reorder payload', redactSecrets(Object.assign({}, payload)));
 
+        lastStep = 'add_reorder';
         let addResp = await requestWithRetry('POST add_reorder', () => axiosPostFama(famaUrl('/add_reorder.php'), payload, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+        lastUpstream.add_reorder = { status: addResp && addResp.status ? addResp.status : null };
         let addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
         dbg('POST add_reorder status', { status: addResp && addResp.status ? addResp.status : null });
         dbg('POST add_reorder body', addJson);
@@ -16812,13 +17110,13 @@ app.post('/api/refil/preview', async (req, res) => {
               errorMessage: 'Falha ao criar reorder no add_reorder',
               meta: { step: 'add_reorder', httpStatus: addResp && addResp.status ? addResp.status : null, tookMs: Date.now() - startedAt },
               pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-              computed: { initial, current: followerCount, deficit },
+              computed: { initial, current: followerCountUsed, deficit, followersSources },
               upstream: { add_reorder: addJson }
             });
             if (isExpired && !addOk) {
-              return res.status(409).json({ ok: false, error: 'reorder_expired', message: 'Prazo de reposição expirado para este serviço.', raw: addJson });
+              return respondErr(409, { ok: false, error: 'reorder_expired', message: 'Prazo de reposição expirado para este serviço.', raw: addJson });
             }
-            return res.status(502).json({ ok: false, error: 'provider_error', message: providerMsg || 'Falha ao iniciar reposição.', raw: addJson });
+            return respondErr(502, { ok: false, error: 'provider_error', message: providerMsg || 'Falha ao iniciar reposição.', raw: addJson });
           }
         }
 
@@ -16828,7 +17126,7 @@ app.post('/api/refil/preview', async (req, res) => {
           decisionReason: 'add_reorder_ok',
           meta: { step: 'done', httpStatus: addResp.status, tookMs: Date.now() - startedAt },
           pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
-          computed: { initial, current: followerCount, deficit },
+          computed: { initial, current: followerCountUsed, deficit, followersSources },
           upstream: { add_reorder: addJson }
         });
 
@@ -16836,7 +17134,7 @@ app.post('/api/refil/preview', async (req, res) => {
           ok: true,
           status: 'initiated',
           message: 'Reposição iniciada',
-          data: { quantidade_inicial: initial, quantidade_atual: followerCount, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: Math.max(0, Math.trunc(initial) - Math.trunc(MIN_DROP)) },
+          data: { quantidade_inicial: initial, quantidade_atual: followerCountUsed, quantidade_de_queda: deficit, min_drop: MIN_DROP, threshold_followers: Math.max(0, Math.trunc(initial) - Math.trunc(MIN_DROP)), followers_sources: followersSources },
           raw: addJson
         });
       } catch (e) {
@@ -16844,27 +17142,18 @@ app.post('/api/refil/preview', async (req, res) => {
         logRefil2Request({
           execStatus: 'error',
           errorMessage: e?.message || String(e),
-          meta: { step: 'exception', tookMs: Date.now() - startedAt }
+          meta: { step: 'exception', lastStep, debugId, upstream: lastUpstream, tookMs: Date.now() - startedAt }
         });
         const code = String(e?.code || '').trim();
         const msg = String(e?.message || String(e) || '').trim();
         if (isTlsError(e) && /refilfama24h\.com/i.test(msg || '') || isTlsError(e) && /refilfama24h\.com/i.test(String(e?.hostname || ''))) {
-          if (debugMode) {
-            return res.status(502).json({ ok: false, error: 'provider_tls', message: 'Fornecedor indisponível (SSL vencido).', debugId, details: { code: code || null, message: msg || null } });
-          }
-          return res.status(502).json({ ok: false, error: 'provider_tls', message: 'Fornecedor indisponível (SSL vencido).' });
+          return respondErr(502, { ok: false, error: 'provider_tls', message: 'Fornecedor indisponível (SSL vencido).', details: { code: code || null, message: msg || null } });
         }
         const isTimeout = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || /timeout/i.test(msg);
         if (isTimeout) {
-          if (debugMode) {
-            return res.status(504).json({ ok: false, error: 'timeout', message: 'Erro, tente novamente.', debugId });
-          }
-          return res.status(504).json({ ok: false, error: 'timeout', message: 'Erro, tente novamente.' });
+          return respondErr(504, { ok: false, error: 'timeout', message: 'Erro, tente novamente.' });
         }
-        if (debugMode) {
-          return res.status(500).json({ ok: false, error: 'internal_error', message: 'Falha ao processar reposição.', debugId, details: { message: e?.message || String(e) } });
-        }
-        return res.status(500).json({ ok: false, error: 'internal_error', message: 'Falha ao processar reposição.' });
+        return respondErr(500, { ok: false, error: 'internal_error', message: 'Falha ao processar reposição.', details: { message: e?.message || String(e) } });
       }
     }
 
@@ -17243,13 +17532,68 @@ app.post('/api/refil/preview', async (req, res) => {
         return { ok: false, status: 0, httpStatus: 502, message: msg };
       }
     };
+    const debugModeLegacy = (() => {
+      try {
+        if (req && req.query && String(req.query.debug || '') === '1') return true;
+        if (req && req.body && (req.body.debug === true || req.body.debug === 1 || String(req.body.debug || '') === '1')) return true;
+        const ref = String(req.get('Referer') || req.headers['referer'] || '').trim();
+        if (ref && ref.includes('debug=1')) return true;
+      } catch (_) {}
+      return false;
+    })();
+    const debugIdLegacy = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let legacyStep = 'legacy:start';
+    const legacyHardTimeoutMs = (() => {
+      const raw = process.env.REFIL_PREVIEW_HARD_TIMEOUT_MS || process.env.REFIL2_HARD_TIMEOUT_MS || '';
+      const n = Number(String(raw || '').trim() || '90000');
+      if (!Number.isFinite(n) || n <= 0) return 90000;
+      return Math.max(15000, Math.min(240000, Math.trunc(n)));
+    })();
+    const legacyDbTimeoutMs = (() => {
+      const raw = process.env.REFIL_PREVIEW_DB_TIMEOUT_MS || process.env.REFIL2_DB_CHECK_TIMEOUT_MS || '';
+      const n = Number(String(raw || '').trim() || '8000');
+      if (!Number.isFinite(n) || n <= 0) return 8000;
+      return Math.max(1000, Math.min(30000, Math.trunc(n)));
+    })();
+    const withTimeoutLegacy = (promise, ms, code) => new Promise((resolve, reject) => {
+      let done = false;
+      const t = setTimeout(() => {
+        if (done) return;
+        done = true;
+        const e = new Error('timeout');
+        e.code = code || 'LOCAL_TIMEOUT';
+        reject(e);
+      }, ms);
+      Promise.resolve(promise).then(
+        (v) => { if (done) return; done = true; clearTimeout(t); resolve(v); },
+        (e) => { if (done) return; done = true; clearTimeout(t); reject(e); }
+      );
+    });
+    let legacyTimer = null;
     const wrap = (obj) => {
       const out = Object.assign({ username }, obj || {});
+      if (debugModeLegacy) {
+        out.debugId = debugIdLegacy;
+        out.step = legacyStep;
+      }
       if (shouldWebhook) out.webhook = webhook;
       return out;
     };
+    const legacyRespondErr = (statusCode, payload) => {
+      try { if (legacyTimer) clearTimeout(legacyTimer); } catch (_) {}
+      if (res.headersSent) return;
+      return res.status(statusCode).json(wrap(payload));
+    };
+    try {
+      legacyTimer = setTimeout(() => {
+        legacyRespondErr(504, { ok: false, error: 'timeout', message: 'Erro, tente novamente.' });
+      }, legacyHardTimeoutMs);
+      res.once('finish', () => { try { if (legacyTimer) clearTimeout(legacyTimer); } catch (_) {} });
+      res.once('close', () => { try { if (legacyTimer) clearTimeout(legacyTimer); } catch (_) {} });
+    } catch (_) {}
     const { getCollection } = require('./mongodbClient');
-    const col = await getCollection('checkout_orders');
+    legacyStep = 'legacy:getCollection:checkout_orders';
+    const col = await withTimeoutLegacy(getCollection('checkout_orders'), legacyDbTimeoutMs, 'DB_TIMEOUT');
     const paidOr = [
       { status: 'pago' },
       { 'woovi.status': 'pago' }
@@ -17263,7 +17607,8 @@ app.post('/api/refil/preview', async (req, res) => {
       { 'additionalInfoMap.instagram_username': new RegExp(`^@?${username}$`, 'i') },
       { 'additionalInfoMapPaid.instagram_username': new RegExp(`^@?${username}$`, 'i') }
     ];
-    const orders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray();
+    legacyStep = 'legacy:find:orders';
+    const orders = await withTimeoutLegacy(col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray(), legacyDbTimeoutMs, 'DB_TIMEOUT');
     if (!orders.length) {
       logRefil2Request({ status: 'no_orders', decision: 'nao_repor', decisionReason: 'no_orders' });
       return res.status(404).json(wrap({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para este usuário.' }));
@@ -17277,7 +17622,8 @@ app.post('/api/refil/preview', async (req, res) => {
       { tipo: { $regex: 'seguidores', $options: 'i' } },
       { tipoServico: { $regex: 'seguidores', $options: 'i' } }
     ];
-    const followersOrders = await col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }, { $or: followersOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray();
+    legacyStep = 'legacy:find:followers_orders';
+    const followersOrders = await withTimeoutLegacy(col.find({ $and: [{ $or: paidOr }, { $or: byUserOr }, { $or: followersOr }] }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(10).toArray(), legacyDbTimeoutMs, 'DB_TIMEOUT');
     if (!followersOrders.length) {
       logRefil2Request({ status: 'no_followers_purchase', decision: 'nao_repor', decisionReason: 'no_followers_purchase' });
       return res.json(wrap({ ok: true, status: 'no_followers_purchase', message: 'Nenhuma compra de seguidores encontrada para este usuário.', data: { username } }));
@@ -17326,16 +17672,42 @@ app.post('/api/refil/preview', async (req, res) => {
       return baseQty || 0;
     };
     const qty = Math.max(0, resolveQty(order));
-    const vu = await getCollection('validated_insta_users');
+    legacyStep = 'legacy:getCollection:validated_insta_users';
+    const vu = await withTimeoutLegacy(getCollection('validated_insta_users'), legacyDbTimeoutMs, 'DB_TIMEOUT');
     const unameKey = String(username).toLowerCase();
-    const vuDocs = await vu.find({ username: unameKey }).project({ _id: 0, followersCount: 1, checkedAt: 1, checks: 1 }).toArray();
+    legacyStep = 'legacy:find:validated_insta_users';
+    let vuDocs = [];
+    try {
+      vuDocs = await withTimeoutLegacy(
+        vu.find({ username: unameKey })
+          .project({ _id: 0, followersCount: 1, checkedAt: 1, checks: { $slice: -800 } })
+          .sort({ checkedAt: -1, _id: -1 })
+          .limit(3)
+          .toArray(),
+        legacyDbTimeoutMs,
+        'DB_TIMEOUT'
+      );
+    } catch (_) {
+      vuDocs = await withTimeoutLegacy(
+        vu.find({ username: unameKey })
+          .project({ _id: 0, followersCount: 1, checkedAt: 1, checks: 1 })
+          .sort({ checkedAt: -1, _id: -1 })
+          .limit(1)
+          .toArray(),
+        legacyDbTimeoutMs,
+        'DB_TIMEOUT'
+      );
+    }
     const orderCreatedAtMs = order.createdAt ? new Date(order.createdAt).getTime() : (order.woovi && order.woovi.paidAt ? new Date(order.woovi.paidAt).getTime() : Date.now());
     let baseFollowers = null;
+    const MAX_CHECKS = 6000;
     const collectChecks = (docs) => {
       const all = [];
-      for (const d of (Array.isArray(docs) ? docs : [])) {
+      outer: for (const d of (Array.isArray(docs) ? docs : [])) {
+        if (all.length >= MAX_CHECKS) break;
         if (d && Array.isArray(d.checks)) {
           for (const c of d.checks) {
+            if (all.length >= MAX_CHECKS) break outer;
             if (!c) continue;
             const ts = new Date(c.checkedAt || 0).getTime();
             const fc = (typeof c.followersCount === 'number') ? c.followersCount : null;
@@ -18124,6 +18496,24 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const monitorMap = new Map(monitorDocs.map(d => [String(d.username || '').toLowerCase(), d]));
     const validatedDocs = usernames.length ? await validatedCol.find({ username: { $in: usernames } }, { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1 } }).toArray() : [];
     const validatedMap = new Map(validatedDocs.map(d => [String(d.username || '').toLowerCase(), d]));
+    const suspectInitialUsers = (() => {
+      const set = new Set();
+      for (const o of displayOrders) {
+        const u = resolveUsername(o);
+        if (!u) continue;
+        const purchaseMs = Number(resolveDateMs(o) || 0) || 0;
+        const initialMs = o && o.initialFollowersCheckedAt ? new Date(String(o.initialFollowersCheckedAt)).getTime() : 0;
+        const late = Number.isFinite(initialMs) && initialMs > 0 && purchaseMs > 0 && initialMs > (purchaseMs + (30 * 60 * 1000));
+        const missing = !(o && typeof o.initialFollowersCount === 'number' && Number.isFinite(o.initialFollowersCount));
+        if (late || missing) set.add(String(u).toLowerCase());
+      }
+      return set;
+    })();
+    const suspectList = Array.from(suspectInitialUsers.values());
+    const validatedChecksDocs = suspectList.length
+      ? await validatedCol.find({ username: { $in: suspectList } }, { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1, checks: 1 } }).toArray()
+      : [];
+    const validatedChecksMap = new Map(validatedChecksDocs.map(d => [String(d.username || '').toLowerCase(), d]));
 
     const backfillOps = [];
     const dayMs = 24 * 60 * 60 * 1000;
@@ -18372,12 +18762,41 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       let initialFollowersCount = (typeof o.initialFollowersCount === 'number') ? o.initialFollowersCount : null;
       let initialFollowersCheckedAt = o.initialFollowersCheckedAt ? String(o.initialFollowersCheckedAt) : null;
 
-      if (initialFollowersCount == null && vu && typeof vu.followersCount === 'number') {
-        initialFollowersCount = vu.followersCount;
-        initialFollowersCheckedAt = vu.checkedAt || null;
-      } else if (initialFollowersCount == null && mon && typeof mon.followersCount === 'number') {
-        initialFollowersCount = mon.followersCount;
-        initialFollowersCheckedAt = mon.checkedAt || null;
+      const initialCheckedAtMs = initialFollowersCheckedAt ? parseDateMsLoose(initialFollowersCheckedAt) : null;
+      const purchaseMs = Number(dateMs || 0) || 0;
+      const isInitialLate = (initialCheckedAtMs != null && purchaseMs > 0) ? (Number(initialCheckedAtMs) > (purchaseMs + (30 * 60 * 1000))) : false;
+      const pickInitialBeforePurchase = () => {
+        const d = validatedChecksMap.get(String(username || '').toLowerCase()) || null;
+        if (!d) return null;
+        const pMs = purchaseMs > 0 ? purchaseMs : 0;
+        const all = [];
+        if (Array.isArray(d.checks)) {
+          for (const c of d.checks) {
+            const ts = new Date(c && c.checkedAt ? c.checkedAt : 0).getTime();
+            const fc = (c && typeof c.followersCount === 'number') ? c.followersCount : null;
+            if (Number.isFinite(ts) && ts > 0 && fc != null) all.push({ ts, fc: Number(fc), at: c.checkedAt || null });
+          }
+        }
+        const ts2 = new Date(d && d.checkedAt ? d.checkedAt : 0).getTime();
+        if (Number.isFinite(ts2) && ts2 > 0 && typeof d.followersCount === 'number') all.push({ ts: ts2, fc: Number(d.followersCount), at: d.checkedAt || null });
+        all.sort((a, b) => a.ts - b.ts);
+        if (!all.length) return null;
+        if (!pMs) return all[all.length - 1];
+        const eligible = all.filter(x => x.ts <= pMs);
+        if (eligible.length) return eligible[eligible.length - 1];
+        return null;
+      };
+      const picked = pickInitialBeforePurchase();
+      if ((initialFollowersCount == null || isInitialLate) && picked && Number.isFinite(picked.fc) && picked.fc > 0) {
+        initialFollowersCount = picked.fc;
+        initialFollowersCheckedAt = picked.at || initialFollowersCheckedAt;
+      } else if (initialFollowersCount == null && vu && typeof vu.followersCount === 'number') {
+        const vuAtMs = vu && vu.checkedAt ? parseDateMsLoose(vu.checkedAt) : null;
+        const okTs = (purchaseMs > 0 && vuAtMs != null) ? (Number(vuAtMs) <= (purchaseMs + (30 * 60 * 1000))) : true;
+        if (okTs) {
+          initialFollowersCount = vu.followersCount;
+          initialFollowersCheckedAt = vu.checkedAt || null;
+        }
       }
 
       if ((typeof o.initialFollowersCount !== 'number') && initialFollowersCount != null) {
@@ -18778,11 +19197,27 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       let checkedValid = 0;
       let withDrop = 0;
       let ok = 0;
+      let notOk = 0;
       const warrantyThresholdAbs = 100;
       const warrantyAgg = {
         life: { key: 'life', label: 'Vitalício', ok: 0, nok: 0, total: 0 },
         '6m': { key: '6m', label: '6 meses', ok: 0, nok: 0, total: 0 },
         '12m': { key: '12m', label: '1 ano', ok: 0, nok: 0, total: 0 }
+      };
+      const purchaseAgeBuckets = [
+        { key: 'lt_3', label: '<3 dias', count: 0 },
+        { key: '3_7', label: '3–7 dias', count: 0 },
+        { key: '7_14', label: '7–14 dias', count: 0 },
+        { key: '14_30', label: '14–30 dias', count: 0 },
+        { key: 'gt_30', label: '>30 dias', count: 0 },
+        { key: 'no_date', label: 'Sem data', count: 0 }
+      ];
+      const nowMs = Date.now();
+      let purchaseAgeTotal = 0;
+      const brtDay = (ms) => {
+        const n = Number(ms || 0) || 0;
+        const brtOffset = 3 * 60 * 60 * 1000;
+        return Math.floor((n - brtOffset) / (24 * 60 * 60 * 1000));
       };
       const buckets = [
         { key: '0_10', label: '0–10%', min: 0, max: 10, count: 0 },
@@ -18790,7 +19225,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         { key: '20_30', label: '20–30%', min: 20, max: 30, count: 0 },
         { key: '30_40', label: '30–40%', min: 30, max: 40, count: 0 },
         { key: '40_50', label: '40–50%', min: 40, max: 50, count: 0 },
-        { key: '50_plus', label: '>50%', min: 50, max: null, count: 0 }
+        { key: '50_100', label: '50–100%', min: 50, max: 100, count: 0 },
+        { key: '100_plus', label: '>100%', min: 100, max: null, count: 0 }
       ];
       for (const r of filtered) {
         const checkedAtMsValid = Number(r && r.currentCheckedAtMs || 0) || 0;
@@ -18799,7 +19235,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         if (checkedAtMsValid > 0) checkedValid += 1;
         const resultado = (r && typeof r.resultado === 'number') ? r.resultado : null;
         const current = (r && typeof r.currentFollowersCount === 'number') ? r.currentFollowersCount : null;
-        if (resultado != null && current != null && current >= resultado) ok += 1;
+        const isValidated = checkedAtMsAny > 0;
+        const isOk = isValidated && resultado != null && current != null && current >= resultado;
+        if (isValidated) {
+          if (isOk) ok += 1;
+          else notOk += 1;
+        }
         const pct = (r && typeof r.diffPct === 'number') ? r.diffPct : null;
         const abs = (r && typeof r.diffAbs === 'number') ? r.diffAbs : null;
         if (abs != null && Number.isFinite(abs)) {
@@ -18811,21 +19252,52 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             else warrantyAgg[wKey].ok += 1;
           }
         }
+        if (checkedAtMsAny > 0 && !isOk) {
+          const purchaseAtMs = Number(r && r.lastPurchaseAtMs || 0) || 0;
+          purchaseAgeTotal += 1;
+          if (!(purchaseAtMs > 0 && Number.isFinite(purchaseAtMs))) {
+            purchaseAgeBuckets[5].count += 1;
+          } else {
+            let ageDays = brtDay(nowMs) - brtDay(purchaseAtMs);
+            if (!Number.isFinite(ageDays)) ageDays = 0;
+            if (ageDays < 0) ageDays = 0;
+            if (ageDays < 3) purchaseAgeBuckets[0].count += 1;
+            else if (ageDays < 7) purchaseAgeBuckets[1].count += 1;
+            else if (ageDays < 14) purchaseAgeBuckets[2].count += 1;
+            else if (ageDays < 30) purchaseAgeBuckets[3].count += 1;
+            else purchaseAgeBuckets[4].count += 1;
+          }
+        }
         if (abs != null && abs > 0 && pct != null && Number.isFinite(pct) && pct > 0) {
           withDrop += 1;
           const v = Math.max(0, pct);
-          for (const b of buckets) {
-            if (b.max == null) {
-              if (v > b.min) { b.count += 1; break; }
-            } else {
-              if (v >= b.min && v < b.max) { b.count += 1; break; }
-            }
+          if (v > 100) {
+            buckets[6].count += 1;
+          } else if (v >= 50) {
+            buckets[5].count += 1;
+          } else if (v >= 40) {
+            buckets[4].count += 1;
+          } else if (v >= 30) {
+            buckets[3].count += 1;
+          } else if (v >= 20) {
+            buckets[2].count += 1;
+          } else if (v >= 10) {
+            buckets[1].count += 1;
+          } else {
+            buckets[0].count += 1;
           }
         }
       }
       const base = Math.max(1, withDrop);
       const bucketsOut = buckets.map(b => ({ key: b.key, label: b.label, count: b.count, pct: Math.round((b.count / base) * 1000) / 10 }));
-      const notOk = Math.max(0, total - ok);
+      const purchaseAgeBase = Math.max(1, purchaseAgeTotal);
+      const purchaseAgeOut = purchaseAgeBuckets.map(b => ({
+        key: b.key,
+        label: b.label,
+        count: Math.max(0, Math.floor(Number(b.count || 0) || 0)),
+        pct: Math.round(((Number(b.count || 0) || 0) / purchaseAgeBase) * 1000) / 10
+      }));
+      const okBase = Math.max(0, checked);
       const warrantyGroups = Object.keys(warrantyAgg).map(k => warrantyAgg[k]).map(g => {
         const tot = Math.max(0, Number(g.total || 0) || 0);
         const okC = Math.max(0, Number(g.ok || 0) || 0);
@@ -18849,8 +19321,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         withDrop,
         ok,
         notOk,
-        okPct: total ? (Math.round((ok / total) * 1000) / 10) : 0,
+        okPct: okBase ? (Math.round((ok / okBase) * 1000) / 10) : 0,
         buckets: bucketsOut,
+        purchaseAgeDropReport: { total: Math.max(0, Math.floor(Number(purchaseAgeTotal || 0) || 0)), buckets: purchaseAgeOut },
         warrantyDiffReport: { thresholdAbs: warrantyThresholdAbs, groups: warrantyGroups }
       };
     })();
@@ -18860,6 +19333,17 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const safePage = Math.min(totalPages, page);
     const start = (safePage - 1) * pageSize;
     const pageRows = filtered.slice(start, start + pageSize);
+    const followersFilteredTargets = filtered
+      .map((r) => ({
+        username: r && r.username ? String(r.username) : '',
+        tipo: r && r.tipo ? String(r.tipo) : '',
+        fornecedorOrderId: r && r.fornecedorOrderId ? String(r.fornecedorOrderId) : '',
+        orderId: r && r.orderId ? String(r.orderId) : '',
+        lastPurchaseAtMs: (r && typeof r.lastPurchaseAtMs === 'number' && Number.isFinite(r.lastPurchaseAtMs)) ? r.lastPurchaseAtMs : 0,
+        diffAbs: (r && typeof r.diffAbs === 'number' && Number.isFinite(r.diffAbs)) ? Math.floor(r.diffAbs) : 0
+      }))
+      .filter((x) => !!(x && x.username))
+      .slice(0, 5000);
 
     res.render('painel', {
       view: 'gerenciamento_seguidores',
@@ -18867,6 +19351,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       pagination: { page: safePage, pageSize, totalRows, totalPages },
       filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
       followersReport,
+      followersFilteredTargets,
       followersMgmtSettings,
       period: 'all'
     });
@@ -19183,10 +19668,30 @@ const fetchInstagramFollowersInfoInstagramProxy = async (username) => {
     }
   };
   const safeInt = (v) => {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return null;
-    const i = Math.trunc(n);
-    return Number.isFinite(i) ? i : null;
+    try {
+      if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+      const s0 = String(v == null ? '' : v).trim();
+      if (!s0) return null;
+      const s = s0.replace(/\s+/g, '');
+      const normalizeThousands = (raw) => {
+        const x0 = String(raw || '').trim();
+        if (!x0) return '';
+        const x = x0.replace(/\s+/g, '');
+        if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+        if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+        if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+        if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+        return x0;
+      };
+      const n = Number(normalizeThousands(s));
+      if (Number.isFinite(n)) return Math.trunc(n);
+      const digits = s0.replace(/[^\d-]/g, '');
+      if (!digits) return null;
+      const n2 = Number(digits);
+      return Number.isFinite(n2) ? Math.trunc(n2) : null;
+    } catch (_) {
+      return null;
+    }
   };
 
   const timeoutMsRaw = Number(String(process.env.FOLLOWERS_MGMT_INSTAGRAM_PROXY_TIMEOUT_MS || process.env.REFIL2_UPSTREAM_TIMEOUT_MS || '12000').trim());
@@ -21708,7 +22213,45 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
       return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
     };
     const nowDayNumBrt = dayNumFromMsBrt(Date.now());
-    const allowedMaxPurchaseDayNumBrt = nowDayNumBrt - 2;
+    const parsePurchaseAtMs = (raw) => {
+      try {
+        if (raw == null) return 0;
+        if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+        const s0 = String(raw || '').trim();
+        if (!s0) return 0;
+        const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
+        const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (mBr) {
+          const yyyy = String(mBr[3]);
+          const mm = String(mBr[2]).padStart(2, '0');
+          const dd = String(mBr[1]).padStart(2, '0');
+          const hh = String(mBr[4] || '00').padStart(2, '0');
+          const mi = String(mBr[5] || '00').padStart(2, '0');
+          const ss = String(mBr[6] || '00').padStart(2, '0');
+          const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
+          const t = new Date(iso).getTime();
+          return Number.isFinite(t) ? t : 0;
+        }
+        const t = new Date(s).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+    const resolveTipoServico = (o) => {
+      const candidates = [
+        extractInfoAny(o, 'tipo_servico'),
+        extractInfoAny(o, 'tipoServico'),
+        extractInfoAny(o, 'tipo'),
+        o?.tipoServico,
+        o?.tipo
+      ];
+      for (const c of candidates) {
+        const s = String(c == null ? '' : c).trim().toLowerCase();
+        if (s) return s;
+      }
+      return '';
+    };
 
     const seen = new Set();
     const candidates = [];
@@ -21721,9 +22264,12 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
       const fornecedorOrderId = resolveFornecedorOrderId(o);
       if (!fornecedorOrderId) continue;
       const purchaseAtRaw = (o && o.woovi && o.woovi.paidAt) ? o.woovi.paidAt : (o && o.paidAt ? o.paidAt : (o && o.createdAt ? o.createdAt : 0));
-      const purchaseAtMs = new Date(purchaseAtRaw).getTime();
+      const purchaseAtMs = parsePurchaseAtMs(purchaseAtRaw);
       const purchaseAtDayNumBrt = (Number.isFinite(purchaseAtMs) && purchaseAtMs) ? dayNumFromMsBrt(purchaseAtMs) : null;
       seen.add(username);
+      const tipoLower = resolveTipoServico(o);
+      const minAgeDays = /organico/.test(tipoLower) ? 2 : 1;
+      const allowedMaxPurchaseDayNumBrt = nowDayNumBrt - minAgeDays;
       if (purchaseAtDayNumBrt != null && purchaseAtDayNumBrt > allowedMaxPurchaseDayNumBrt) continue;
       candidates.push(username);
     }
@@ -21837,6 +22383,516 @@ app.get('/api/painel/gerenciamento-seguidores/validate-general/status', requireA
     const job = global.followersMgmtGeneralValidationJob || null;
     if (!job) return res.json({ ok: true, job: null });
     return res.json({ ok: true, job: followersMgmtSerializeGeneralJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+function followersMgmtSerializeRefil2BulkJob(jobRaw) {
+  const job = jobRaw || null;
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    total: job.total,
+    done: job.done,
+    ok: job.ok,
+    failed: job.failed,
+    skipped: job.skipped,
+    lastUsername: job.lastUsername || null,
+    lastError: job.lastError || null,
+    batchId: job.batchId || null
+  };
+}
+
+function followersMgmtKickRefil2BulkJob() {
+  const job = global.followersMgmtRefil2BulkJob || null;
+  if (!job) return;
+  if (job._runnerActive) return;
+  if (job.status !== 'running') return;
+  job._runnerActive = true;
+
+  const isEligibleTipo = (tipoRaw) => {
+    const t = String(tipoRaw || '').toLowerCase();
+    if (t.includes('organ')) return false;
+    return t.includes('misto') || t.includes('brasileir');
+  };
+  const isEligibleDropAbs = (v) => {
+    const n = Number(v || 0);
+    return Number.isFinite(n) && n >= 101;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  (async () => {
+    try {
+      const targets = Array.isArray(job.targets) ? job.targets : [];
+      try { console.log(`🤖 [followers-refil2-bulk] start job=${String(job.id || '')} total=${targets.length} batch=${String(job.batchId || '')}`); } catch (_) {}
+      while (job.status === 'running' && job.done < targets.length) {
+        const t = targets[job.done] || {};
+        const username = String(t.username || '').trim().replace(/^@+/, '').toLowerCase();
+        job.lastUsername = username || null;
+        job.lastError = null;
+        if (!username) {
+          job.skipped += 1;
+          job.done += 1;
+          continue;
+        }
+        if (!isEligibleTipo(t.tipo)) {
+          job.skipped += 1;
+          job.done += 1;
+          continue;
+        }
+        if (!isEligibleDropAbs(t.diffAbs)) {
+          job.skipped += 1;
+          job.done += 1;
+          continue;
+        }
+        try {
+          const baseUrl = String(job.baseUrl || '').trim();
+          if (!baseUrl) throw new Error('base_url_missing');
+          const payload = {
+            username,
+            source: 'refil2',
+            automated: true,
+            automationBatchId: job.batchId || ''
+          };
+          const resp = await axios.post(`${baseUrl}/api/refil/preview`, payload, {
+            timeout: 120000,
+            validateStatus: () => true,
+            headers: { 'Accept': 'application/json' }
+          });
+          const status = Number(resp && resp.status ? resp.status : 0) || 0;
+          const body = resp ? resp.data : null;
+          const ok = !!(status >= 200 && status < 300 && body && body.ok === true);
+          if (ok) job.ok += 1;
+          else job.failed += 1;
+          if (!ok) {
+            const msg = String((body && (body.message || body.error)) || '').trim();
+            job.lastError = msg || (`HTTP ${status}`);
+          }
+          try { console.log(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${username} http=${status}`); } catch (_) {}
+        } catch (e) {
+          job.failed += 1;
+          job.lastError = e?.message || String(e);
+          try { console.warn(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} fail @${username}:`, job.lastError); } catch (_) {}
+        } finally {
+          job.done += 1;
+          await sleep(250);
+        }
+      }
+      if (job.status === 'running' && job.done >= (Array.isArray(job.targets) ? job.targets.length : 0)) {
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      }
+    } catch (e) {
+      job.status = 'error';
+      job.lastError = e?.message || String(e);
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      job._runnerActive = false;
+    }
+  })();
+}
+
+app.post('/api/painel/gerenciamento-seguidores/refil2/bulk-start', requireAdmin, async (req, res) => {
+  try {
+    if (global.followersMgmtRefil2BulkJob && global.followersMgmtRefil2BulkJob.status === 'running') {
+      return res.json({ ok: true, job: followersMgmtSerializeRefil2BulkJob(global.followersMgmtRefil2BulkJob) });
+    }
+    const rawTargets = (req.body && Array.isArray(req.body.targets)) ? req.body.targets : [];
+    if (!rawTargets.length) return res.status(400).json({ ok: false, error: 'empty_targets' });
+
+    const normalizeUsernameKey = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+    const unique = [];
+    const seen = new Set();
+    for (const r of rawTargets) {
+      const u = normalizeUsernameKey(r && r.username ? r.username : '');
+      if (!u) continue;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      const diffAbs = Math.floor(Number(r && r.diffAbs != null ? r.diffAbs : 0) || 0);
+      unique.push({
+        username: u,
+        tipo: String(r && r.tipo ? r.tipo : ''),
+        lastPurchaseAtMs: (r && typeof r.lastPurchaseAtMs === 'number' && Number.isFinite(r.lastPurchaseAtMs)) ? r.lastPurchaseAtMs : 0,
+        diffAbs
+      });
+      if (unique.length >= 5000) break;
+    }
+    unique.sort((a, b) => Number(a.lastPurchaseAtMs || 0) - Number(b.lastPurchaseAtMs || 0));
+
+    const xfProto = String((req.headers && (req.headers['x-forwarded-proto'] || req.headers['X-Forwarded-Proto'])) || '').split(',')[0].trim();
+    const proto = xfProto ? xfProto : String(req.protocol || 'http');
+    const host = String(req.get('host') || '').trim();
+    const baseUrl = host ? `${proto}://${host}` : `http://localhost:${String(process.env.PORT || '3000')}`;
+    const batchId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+    const job = {
+      id: String(Date.now()) + '_' + String(Math.random()).slice(2),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      total: unique.length,
+      done: 0,
+      ok: 0,
+      failed: 0,
+      skipped: 0,
+      lastUsername: null,
+      lastError: null,
+      batchId,
+      baseUrl,
+      targets: unique
+    };
+    global.followersMgmtRefil2BulkJob = job;
+    followersMgmtKickRefil2BulkJob();
+    return res.json({ ok: true, job: followersMgmtSerializeRefil2BulkJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/refil2/bulk-status', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtRefil2BulkJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    return res.json({ ok: true, job: followersMgmtSerializeRefil2BulkJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+function followersMgmtSerializeFixInitialJob(jobRaw) {
+  const job = jobRaw || null;
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    total: job.total,
+    done: job.done,
+    ok: job.ok,
+    failed: job.failed,
+    skipped: job.skipped,
+    lastUsername: job.lastUsername || null,
+    lastError: job.lastError || null
+  };
+}
+
+function followersMgmtKickFixInitialJob() {
+  const job = global.followersMgmtFixInitialJob || null;
+  if (!job) return;
+  if (job._runnerActive) return;
+  if (job.status !== 'running') return;
+  job._runnerActive = true;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const isTlsishError = (e) => {
+    try {
+      const code = String(e?.code || '').trim().toUpperCase();
+      const msg = String(e?.message || String(e) || '').toLowerCase();
+      if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || code === 'DEPTH_ZERO_SELF_SIGNED_CERT') return true;
+      return /certificate|ssl|tls|handshake/i.test(msg);
+    } catch (_) {
+      return false;
+    }
+  };
+  const isTimeoutishError = (e) => {
+    try {
+      const code = String(e?.code || '').trim().toUpperCase();
+      const msg = String(e?.message || String(e) || '').toLowerCase();
+      if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') return true;
+      return /timeout/i.test(msg);
+    } catch (_) {
+      return false;
+    }
+  };
+  const toIsoFromProvider = (raw) => {
+    try {
+      const s0 = String(raw || '').trim();
+      if (!s0) return null;
+      const m = s0.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+      if (m) {
+        const y = m[1], mo = m[2], d = m[3];
+        const hh = m[4] || '00', mi = m[5] || '00', ss = m[6] || '00';
+        const iso = `${y}-${mo}-${d}T${hh}:${mi}:${ss}-03:00`;
+        const t = new Date(iso).getTime();
+        if (Number.isFinite(t) && t > 0) return new Date(t).toISOString();
+      }
+      const t2 = new Date(s0).getTime();
+      if (Number.isFinite(t2) && t2 > 0) return new Date(t2).toISOString();
+      return null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const normalizeUsername = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+  const apiProxyUrl = (username) => {
+    const base = 'https://www.refilfama24h.com/api_proxy.php?link=';
+    const u = `https://instagram.com/${encodeURIComponent(normalizeUsername(username))}`;
+    return base + encodeURIComponent(u);
+  };
+  const fetchPedidoByUser = async (username) => {
+    const url = apiProxyUrl(username);
+    try {
+      const resp = await axios.get(url, { timeout: 30000, validateStatus: () => true, family: 4, headers: { 'Accept': 'application/json' } });
+      return resp;
+    } catch (e) {
+      if ((isTlsishError(e) || isTimeoutishError(e)) && /^https:\/\//i.test(url)) {
+        const httpUrl = url.replace(/^https:/i, 'http:');
+        return await axios.get(httpUrl, { timeout: 30000, validateStatus: () => true, family: 4, headers: { 'Accept': 'application/json' } });
+      }
+      throw e;
+    }
+  };
+
+  (async () => {
+    try {
+      const { getCollection } = require('./mongodbClient');
+      const ordersCol = await getCollection('checkout_orders');
+      let ObjectId = null;
+      try { ({ ObjectId } = require('mongodb')); } catch (_) { ObjectId = null; }
+
+      const targets = Array.isArray(job.targets) ? job.targets : [];
+      while (job.status === 'running' && job.done < targets.length) {
+        const t = targets[job.done] || {};
+        const username = normalizeUsername(t.username || '');
+        job.lastUsername = username || null;
+        job.lastError = null;
+        try {
+          const purchaseAtMs = Number(t.purchaseAtMs || 0) || 0;
+          if (!(purchaseAtMs > 0)) {
+            job.skipped += 1;
+            job.done += 1;
+            continue;
+          }
+          const fornecedorOrderId = String(t.fornecedorOrderId || '').trim();
+          const orderIdRaw = String(t.orderId || '').trim();
+          if (!username || !orderIdRaw) {
+            job.skipped += 1;
+            job.done += 1;
+            continue;
+          }
+
+          const resp = await fetchPedidoByUser(username);
+          const body = safeJsonResponse(resp && resp.data);
+          const first = Array.isArray(body) ? body[0] : body;
+          const list = first && first.data && Array.isArray(first.data.list) ? first.data.list : [];
+          if (!list.length) throw new Error('api_proxy_empty_list');
+          let pedido = null;
+          if (fornecedorOrderId) {
+            pedido = list.find((x) => String(x && x.id || '').trim() === fornecedorOrderId) || null;
+          }
+          if (!pedido) pedido = list[0] || null;
+          if (!pedido || typeof pedido !== 'object') throw new Error('api_proxy_invalid_pedido');
+          const startCount = Number(pedido.start_count);
+          if (!Number.isFinite(startCount) || startCount <= 0) throw new Error('api_proxy_missing_start_count');
+
+          const createdIso = toIsoFromProvider(pedido.created_at || pedido.created || '') || new Date(purchaseAtMs).toISOString();
+          const filter = (() => {
+            if (ObjectId && /^[0-9a-fA-F]{24}$/.test(orderIdRaw)) {
+              try { return { _id: new ObjectId(orderIdRaw) }; } catch (_) {}
+            }
+            return { _id: orderIdRaw };
+          })();
+          const upd = await ordersCol.updateOne(filter, { $set: { initialFollowersCount: Math.floor(startCount), initialFollowersCheckedAt: createdIso } });
+          if (upd && upd.matchedCount) job.ok += 1;
+          else job.failed += 1;
+        } catch (e) {
+          job.failed += 1;
+          job.lastError = e?.message || String(e);
+        } finally {
+          job.done += 1;
+          await sleep(250);
+        }
+      }
+      if (job.status === 'running' && job.done >= (Array.isArray(job.targets) ? job.targets.length : 0)) {
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      }
+    } catch (e) {
+      job.status = 'error';
+      job.lastError = e?.message || String(e);
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      job._runnerActive = false;
+    }
+  })();
+}
+
+app.post('/api/painel/gerenciamento-seguidores/fix-initial/start', requireAdmin, async (req, res) => {
+  try {
+    if (global.followersMgmtFixInitialJob && global.followersMgmtFixInitialJob.status === 'running') {
+      return res.json({ ok: true, job: followersMgmtSerializeFixInitialJob(global.followersMgmtFixInitialJob) });
+    }
+    const rawTargets = (req.body && Array.isArray(req.body.targets)) ? req.body.targets : [];
+    if (!rawTargets.length) return res.status(400).json({ ok: false, error: 'empty_targets' });
+    const unique = [];
+    const seen = new Set();
+    for (const r of rawTargets) {
+      const oid = String(r && r.orderId ? r.orderId : '').trim();
+      if (!oid) continue;
+      if (seen.has(oid)) continue;
+      seen.add(oid);
+      unique.push({
+        orderId: oid,
+        fornecedorOrderId: String(r && r.fornecedorOrderId ? r.fornecedorOrderId : '').trim(),
+        username: String(r && r.username ? r.username : '').trim(),
+        purchaseAtMs: Number(r && r.purchaseAtMs ? r.purchaseAtMs : 0) || 0
+      });
+      if (unique.length >= 5000) break;
+    }
+    unique.sort((a, b) => Number(a.purchaseAtMs || 0) - Number(b.purchaseAtMs || 0));
+    const job = {
+      id: String(Date.now()) + '_' + String(Math.random()).slice(2),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      total: unique.length,
+      done: 0,
+      ok: 0,
+      failed: 0,
+      skipped: 0,
+      lastUsername: null,
+      lastError: null,
+      targets: unique
+    };
+    global.followersMgmtFixInitialJob = job;
+    followersMgmtKickFixInitialJob();
+    return res.json({ ok: true, job: followersMgmtSerializeFixInitialJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/gerenciamento-seguidores/fix-initial/status', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtFixInitialJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    return res.json({ ok: true, job: followersMgmtSerializeFixInitialJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/refil2/use-mongo-initial/mark', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const rawTargets = Array.isArray(body.targets) ? body.targets : [];
+    if (!rawTargets.length) return res.status(400).json({ ok: false, error: 'empty_targets' });
+
+    const { getCollection } = require('./mongodbClient');
+    const ordersCol = await getCollection('checkout_orders');
+    const ovCol = await getCollection('refil2_initial_overrides');
+    const { ObjectId } = require('mongodb');
+
+    const nowIso = new Date().toISOString();
+    const adminUser = (req && req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    const toInt = (v) => {
+      const n = Number(String(v == null ? '' : v).replace(/[^\d\-]/g, ''));
+      return Number.isFinite(n) ? Math.trunc(n) : 0;
+    };
+    const pickAdd = (doc, key) => {
+      try {
+        const mapPaid = (doc && doc.additionalInfoMapPaid && typeof doc.additionalInfoMapPaid === 'object') ? doc.additionalInfoMapPaid : {};
+        const map = (doc && doc.additionalInfoMap && typeof doc.additionalInfoMap === 'object') ? doc.additionalInfoMap : {};
+        if (typeof mapPaid[key] !== 'undefined') return mapPaid[key];
+        if (typeof map[key] !== 'undefined') return map[key];
+        const arrPaid = Array.isArray(doc && doc.additionalInfoPaid) ? doc.additionalInfoPaid : [];
+        const itPaid = arrPaid.find(x => x && String(x.key || '').trim() === key);
+        if (itPaid && typeof itPaid.value !== 'undefined') return itPaid.value;
+        const arr = Array.isArray(doc && doc.additionalInfo) ? doc.additionalInfo : [];
+        const it = arr.find(x => x && String(x.key || '').trim() === key);
+        if (it && typeof it.value !== 'undefined') return it.value;
+      } catch (_) {}
+      return '';
+    };
+    const resolveContractedQty = (doc) => {
+      try {
+        if (typeof doc?.quantidade === 'number' && Number.isFinite(doc.quantidade)) return Math.trunc(doc.quantidade);
+        if (typeof doc?.qtd === 'number' && Number.isFinite(doc.qtd)) return Math.trunc(doc.qtd);
+        const q0 = toInt(pickAdd(doc, 'quantidade'));
+        return q0 > 0 ? q0 : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
+
+    const ops = [];
+    const orderOps = [];
+    const seen = new Set();
+    for (const t of rawTargets) {
+      const mongoOrderId = String(t && t.orderId ? t.orderId : '').trim();
+      const fornecedorOrderId = String(t && t.fornecedorOrderId ? t.fornecedorOrderId : '').trim();
+      if (!fornecedorOrderId) continue;
+      const key = `${fornecedorOrderId}|${mongoOrderId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      let manualInitial = null;
+      if (mongoOrderId && /^[0-9a-fA-F]{24}$/.test(mongoOrderId)) {
+        try {
+          const doc = await ordersCol.findOne(
+            { _id: new ObjectId(mongoOrderId) },
+            { projection: { initialFollowersCount: 1, quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } }
+          );
+          const base = (doc && typeof doc.initialFollowersCount === 'number' && Number.isFinite(doc.initialFollowersCount) && doc.initialFollowersCount > 0)
+            ? Math.trunc(doc.initialFollowersCount)
+            : 0;
+          const contracted = resolveContractedQty(doc);
+          const computed = (base > 0 && contracted > 0) ? (base + contracted) : 0;
+          if (computed > 0) manualInitial = computed;
+        } catch (_) {
+          manualInitial = null;
+        }
+      }
+
+      ops.push({
+        updateOne: {
+          filter: { orderId: fornecedorOrderId },
+          update: {
+            $set: {
+              orderId: fornecedorOrderId,
+              useMongoStartCount: true,
+              mongoOrderId: mongoOrderId || null,
+              ...(manualInitial != null ? { manualInitial, manualInitialUpdatedAt: nowIso, manualInitialUpdatedBy: adminUser } : {}),
+              updatedAt: nowIso,
+              updatedBy: adminUser
+            }
+          },
+          upsert: true
+        }
+      });
+
+      if (mongoOrderId && /^[0-9a-fA-F]{24}$/.test(mongoOrderId)) {
+        try {
+          orderOps.push({
+            updateOne: {
+              filter: { _id: new ObjectId(mongoOrderId) },
+              update: {
+                $set: {
+                  refil2UseMongoInitial: true,
+                  refil2UseMongoInitialAt: nowIso,
+                  refil2UseMongoInitialBy: adminUser
+                }
+              },
+              upsert: false
+            }
+          });
+        } catch (_) {}
+      }
+      if (ops.length >= 2000) break;
+    }
+    if (!ops.length) return res.status(400).json({ ok: false, error: 'no_valid_targets' });
+
+    const upd1 = await ovCol.bulkWrite(ops, { ordered: false });
+    let upd2 = null;
+    if (orderOps.length) {
+      try { upd2 = await ordersCol.bulkWrite(orderOps, { ordered: false }); } catch (_) { upd2 = null; }
+    }
+    return res.json({ ok: true, overrides: { matched: upd1.matchedCount || 0, upserted: (upd1.upsertedCount || 0) }, orders: { updated: upd2 ? (upd2.modifiedCount || 0) : 0 } });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -23729,6 +24785,182 @@ app.get('/painel/consulta-perfil', requireAdmin, async (req, res) => {
     }
 });
 
+app.get('/painel/whatsapp', requireAdmin, async (req, res) => {
+  try {
+    return res.render('painel_whatsapp', {});
+  } catch (e) {
+    return res.status(500).send(e?.message || String(e));
+  }
+});
+
+app.get('/painel_whatsapp', requireAdmin, async (req, res) => {
+  try {
+    return res.redirect('/painel/whatsapp');
+  } catch (e) {
+    return res.status(500).send(e?.message || String(e));
+  }
+});
+
+app.get('/api/painel/whatsapp-orders/price', requireAdmin, async (req, res) => {
+  try {
+    const category = String(req.query?.category || '').trim().toLowerCase();
+    const type = String(req.query?.type || '').trim().toLowerCase();
+    const quantity = parseInt(String(req.query?.quantity || '0'), 10) || 0;
+    if (!category || !type || !(quantity > 0)) return res.status(400).json({ ok: false, error: 'invalid_params' });
+    const { calculatePrice } = require('./pricing');
+    const valueCents = await calculatePrice(type, quantity, [{ key: 'categoria_servico', value: category }]);
+    return res.json({ ok: true, valueCents: Number(valueCents || 0) || 0 });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const category = String(body.category || '').trim().toLowerCase();
+    const type = String(body.type || '').trim().toLowerCase();
+    const link = String(body.link || '').trim();
+    const quantity = parseInt(String(body.quantity || '0'), 10) || 0;
+    const valueRaw = String(body.value || '').trim();
+    const phoneRaw = String(body.phone || '').trim();
+    const email = String(body.email || '').trim();
+    const name = String(body.name || '').trim();
+    const obs = String(body.obs || '').trim();
+
+    if (!category || !type || !link || !(quantity > 0) || !valueRaw) return res.status(400).json({ ok: false, error: 'missing_fields' });
+    const phoneDigits = phoneRaw.replace(/\D/g, '');
+    if (!phoneDigits || phoneDigits.length < 10) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+
+    const parseBrlToCents = (s) => {
+      const raw = String(s || '').trim().replace(/[^\d,\.]/g, '');
+      if (!raw) return 0;
+      const m = raw.match(/(\d+)([\,\.](\d{1,2}))?$/);
+      if (!m) return 0;
+      const whole = Number(m[1] || 0);
+      const frac = String(m[3] || '').padEnd(2, '0').slice(0, 2);
+      const cents = (whole * 100) + Number(frac || 0);
+      return Number.isFinite(cents) ? cents : 0;
+    };
+    const valueCents = parseBrlToCents(valueRaw);
+    if (!(valueCents > 0)) return res.status(400).json({ ok: false, error: 'invalid_value' });
+
+    const normalizeInstaUser = (v) => {
+      try {
+        let s = String(v || '').trim();
+        if (!s) return '';
+        if (/^https?:\/\//i.test(s)) {
+          s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+          s = s.split('?')[0].split('#')[0];
+          s = s.replace(/\/+$/, '');
+          const parts = s.split('/').filter(Boolean);
+          s = parts.length ? String(parts[parts.length - 1] || '') : s;
+        }
+        s = s.trim();
+        if (s.startsWith('@')) s = s.slice(1);
+        return s.toLowerCase().trim();
+      } catch (_) {
+        return '';
+      }
+    };
+    const instaUser = normalizeInstaUser(link);
+
+    const nowIso = new Date().toISOString();
+    const rand = Math.random().toString(36).slice(2, 10);
+    const correlationID = `wa_${Date.now()}_${rand}`;
+    const identifier = correlationID;
+
+    const additionalInfoPaid = [
+      { key: 'categoria_servico', value: category },
+      { key: 'tipo_servico', value: type },
+      { key: 'quantidade', value: String(quantity) },
+      { key: 'link', value: link },
+      { key: 'payment_method', value: 'whatsapp' },
+      { key: 'saleChannel', value: 'whatsapp' },
+      { key: 'phone', value: phoneDigits },
+      ...(email ? [{ key: 'email', value: email }] : []),
+      ...(instaUser ? [{ key: 'instagram_username', value: instaUser }] : []),
+      ...(obs ? [{ key: 'manual_obs', value: obs }] : [])
+    ];
+    const additionalInfoMapPaid = additionalInfoPaid.reduce((acc, it) => { const k = String(it?.key || '').trim(); if (k) acc[k] = String(it?.value || '').trim(); return acc; }, {});
+
+    const doc = {
+      createdAt: nowIso,
+      paidAt: nowIso,
+      status: 'pago',
+      valueCents,
+      identifier,
+      correlationID,
+      tipoServico: type,
+      tipo: type,
+      categoriaServico: category,
+      quantidade: quantity,
+      qtd: quantity,
+      instauser: instaUser || null,
+      instagramUsername: instaUser || null,
+      saleChannel: 'whatsapp',
+      isWhatsappSale: true,
+      customer: {
+        ...(name ? { name } : {}),
+        phone: `+55${phoneDigits}`,
+        ...(email ? { email } : {})
+      },
+      additionalInfoPaid,
+      additionalInfoMapPaid,
+      additionalInfo: additionalInfoPaid,
+      additionalInfoMap: additionalInfoMapPaid,
+      comment: obs ? `WhatsApp manual: ${obs}` : 'WhatsApp manual',
+      manualSale: { source: 'whatsapp', skipEmails: true }
+    };
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const ins = await col.insertOne(doc);
+    const orderId = ins && ins.insertedId ? String(ins.insertedId) : '';
+
+    try {
+      const fresh = await col.findOne({ _id: ins.insertedId });
+      if (fresh) await processOrderFulfillment(fresh, col, req);
+    } catch (_) {}
+
+    let refilUrl = null;
+    try {
+      const linkRec = await ensureRefilLink(identifier, correlationID, req);
+      if (linkRec && linkRec.id) refilUrl = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(String(linkRec.id))}`;
+    } catch (_) {}
+
+    return res.json({ ok: true, refilUrl });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/vendas/delete', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idRaw = String(body.id || body.orderId || '').trim();
+    if (!idRaw || !/^[0-9a-fA-F]{24}$/.test(idRaw)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { ObjectId } = require('mongodb');
+    const oid = new ObjectId(idRaw);
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+
+    const del = await col.deleteOne({ _id: oid });
+    const deleted = Number(del && typeof del.deletedCount !== 'undefined' ? del.deletedCount : 0) || 0;
+    if (!deleted) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    try {
+      const tl = await getCollection('temporary_links');
+      await tl.updateMany({ purpose: 'refil', orderId: idRaw }, { $unset: { orderId: '' } });
+      await tl.updateMany({ purpose: 'refil', orders: idRaw }, { $pull: { orders: idRaw } });
+    } catch (_) {}
+
+    return res.json({ ok: true, deletedCount: deleted });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post('/painel/consulta-perfil', requireAdmin, async (req, res) => {
     const usernameRaw = req?.body?.username;
     const maxFollowersRaw = req?.body?.maxFollowers;
@@ -24051,6 +25283,18 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const orderDateUTC = parseOrderDateUTC(dateStr);
       if (!orderDateUTC) return false;
       if (period === 'all') return true;
+      if (period === 'max') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = String(startStr).split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
+          const [eY, eM, eD] = String(endStr).split('-').map(Number);
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
+          return orderDateUTC >= start && orderDateUTC < endExclusive;
+        }
+        return true;
+      }
       if (period === 'today') return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
       if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
       if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
@@ -24624,6 +25868,54 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     })();
 
+    if ((view === 'dashboard' || view === 'vendas') && period === 'max') {
+      const hasStart = !!String(req.query.startDate || '').trim();
+      const hasEnd = !!String(req.query.endDate || '').trim();
+      if (!hasStart || !hasEnd) {
+        const fmtYmdBrt = (dUtc) => {
+          const sp = toSP(dUtc);
+          const y = sp.getUTCFullYear();
+          const m = String(sp.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(sp.getUTCDate()).padStart(2, '0');
+          return `${y}-${m}-${day}`;
+        };
+        let minDate = null;
+        try {
+          const agg = await col.aggregate([
+            { $match: query },
+            {
+              $project: {
+                paidCandidate: {
+                  $ifNull: [
+                    '$woovi.paidAt',
+                    { $ifNull: ['$paghiper.paidAt', { $ifNull: ['$paidAt', '$createdAt'] }] }
+                  ]
+                }
+              }
+            },
+            { $project: { paidDate: { $convert: { input: '$paidCandidate', to: 'date', onError: null, onNull: null } } } },
+            { $match: { paidDate: { $ne: null } } },
+            { $group: { _id: null, minDate: { $min: '$paidDate' } } }
+          ]).toArray();
+          minDate = (agg && agg[0] && agg[0].minDate) ? new Date(agg[0].minDate) : null;
+        } catch (_) {
+          minDate = null;
+        }
+
+        if (minDate && Number.isFinite(minDate.getTime())) {
+          try {
+            const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http');
+            const host = String(req.get('host') || 'localhost');
+            const u = new URL(String(req.originalUrl || '/painel'), `${proto}://${host}`);
+            u.searchParams.set('period', 'max');
+            u.searchParams.set('startDate', fmtYmdBrt(minDate));
+            u.searchParams.set('endDate', fmtYmdBrt(new Date()));
+            return res.redirect(u.pathname + u.search);
+          } catch (_) {}
+        }
+      }
+    }
+
     await syncRecentPagarmeOrdersForPanel();
 
     const computeScanLowerBound = (period) => {
@@ -24639,6 +25931,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return start;
       }
       if (period === 'custom') {
+        const startStr = req.query.startDate;
+        if (startStr) {
+          const [sY, sM, sD] = String(startStr).split('-').map(Number);
+          if (Number.isFinite(sY) && Number.isFinite(sM) && Number.isFinite(sD)) {
+            return new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
+          }
+        }
+        return null;
+      }
+      if (period === 'max') {
         const startStr = req.query.startDate;
         if (startStr) {
           const [sY, sM, sD] = String(startStr).split('-').map(Number);
@@ -24732,6 +26034,17 @@ app.get('/painel', requireAdmin, async (req, res) => {
           const [eY, eM, eD] = endStr.split('-').map(Number);
           const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
           
+          return orderDateUTC >= start && orderDateUTC < endExclusive;
+        }
+        return true;
+      } else if (period === 'max') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = String(startStr).split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
+          const [eY, eM, eD] = String(endStr).split('-').map(Number);
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
           return orderDateUTC >= start && orderDateUTC < endExclusive;
         }
         return true;
@@ -25482,6 +26795,17 @@ app.get('/painel', requireAdmin, async (req, res) => {
           const [sY, sM, sD] = startStr.split('-').map(Number);
           const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
           const [eY, eM, eD] = endStr.split('-').map(Number);
+          const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
+          return { start, endExclusive };
+        }
+      }
+      if (period === 'max') {
+        const startStr = req.query.startDate;
+        const endStr = req.query.endDate;
+        if (startStr && endStr) {
+          const [sY, sM, sD] = String(startStr).split('-').map(Number);
+          const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
+          const [eY, eM, eD] = String(endStr).split('-').map(Number);
           const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
           return { start, endExclusive };
         }
@@ -26685,11 +28009,22 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
     const safeInt = (v) => {
       try {
         if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
-        const s = String(v == null ? '' : v).trim();
-        if (!s) return null;
-        const n0 = Number(s);
+        const s0 = String(v == null ? '' : v).trim();
+        if (!s0) return null;
+        const s = s0.replace(/\s+/g, '');
+        const normalizeThousands = (raw) => {
+          const x0 = String(raw || '').trim();
+          if (!x0) return '';
+          const x = x0.replace(/\s+/g, '');
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+          if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+          if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+          if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+          return x0;
+        };
+        const n0 = Number(normalizeThousands(s));
         if (Number.isFinite(n0)) return Math.trunc(n0);
-        const digits = s.replace(/[^\d-]/g, '');
+        const digits = s0.replace(/[^\d-]/g, '');
         if (!digits) return null;
         const n1 = Number(digits);
         return Number.isFinite(n1) ? Math.trunc(n1) : null;
@@ -26904,6 +28239,85 @@ app.post('/api/painel/refil2/generate-link', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/painel/refil2/manual-initial-bulk', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idsRaw = Array.isArray(body.ids) ? body.ids : [];
+    const initialRaw = body.initial;
+    const initialN = Number(initialRaw);
+    if (!Number.isFinite(initialN) || !(initialN > 0)) return res.status(400).json({ ok: false, error: 'invalid_initial', message: 'Inicial inválido' });
+    const initial = Math.trunc(initialN);
+
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 500);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const ovCol = await getCollection('refil2_initial_overrides');
+    const { ObjectId } = require('mongodb');
+    const objIds = ids.map(s => new ObjectId(s));
+
+    const docs = await col.find(
+      { _id: { $in: objIds } },
+      { projection: { _id: 1, username: 1, pedido: 1 } }
+    ).toArray();
+
+    const nowIso = new Date().toISOString();
+    const by = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
+
+    const reqOps = [];
+    const ovOps = [];
+    let skippedNoOrderId = 0;
+    for (const d of (Array.isArray(docs) ? docs : [])) {
+      const id = d && d._id ? d._id : null;
+      if (!id) continue;
+      reqOps.push({
+        updateOne: {
+          filter: { _id: id },
+          update: {
+            $set: {
+              manualInitial: initial,
+              manualInitialUpdatedAt: nowIso,
+              ...(by ? { manualInitialUpdatedBy: by } : {}),
+              'summary.initial': initial,
+              updatedAt: nowIso
+            }
+          }
+        }
+      });
+      const orderId = String(d && d.pedido && d.pedido.id ? d.pedido.id : '').trim();
+      if (!orderId) { skippedNoOrderId++; continue; }
+      if (ovCol) {
+        ovOps.push({
+          updateOne: {
+            filter: { orderId },
+            update: {
+              $set: {
+                orderId,
+                username: String(d && d.username ? d.username : '').trim(),
+                manualInitial: initial,
+                updatedAt: nowIso,
+                ...(by ? { updatedBy: by } : {})
+              }
+            },
+            upsert: true
+          }
+        });
+      }
+    }
+
+    const out1 = reqOps.length ? await col.bulkWrite(reqOps, { ordered: false }) : null;
+    const updatedRequests = out1 && typeof out1.modifiedCount === 'number' ? out1.modifiedCount : 0;
+    const out2 = (ovCol && ovOps.length) ? await ovCol.bulkWrite(ovOps, { ordered: false }) : null;
+    const updatedOverrides = out2 && typeof out2.modifiedCount === 'number' ? out2.modifiedCount : 0;
+    const upsertedOverrides = out2 && out2.upsertedCount ? out2.upsertedCount : 0;
+
+    return res.json({ ok: true, initial, updatedRequests, updatedOverrides, upsertedOverrides, skippedNoOrderId });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'manual_initial_failed', message: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -26989,10 +28403,25 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     const safeInt = (v) => {
       try {
         if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
-        const s = String(v == null ? '' : v).trim();
-        if (!s) return null;
-        const n = Number(s);
-        return Number.isFinite(n) ? Math.trunc(n) : null;
+        const s0 = String(v == null ? '' : v).trim();
+        if (!s0) return null;
+        const s = s0.replace(/\s+/g, '');
+        const normalizeThousands = (raw) => {
+          const x0 = String(raw || '').trim();
+          if (!x0) return '';
+          const x = x0.replace(/\s+/g, '');
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+          if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+          if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+          if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+          return x0;
+        };
+        const n = Number(normalizeThousands(s));
+        if (Number.isFinite(n)) return Math.trunc(n);
+        const digits = s0.replace(/[^\d-]/g, '');
+        if (!digits) return null;
+        const n2 = Number(digits);
+        return Number.isFinite(n2) ? Math.trunc(n2) : null;
       } catch (_) {
         return null;
       }
@@ -27214,10 +28643,25 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
     const safeInt = (v) => {
       try {
         if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
-        const s = String(v == null ? '' : v).trim();
-        if (!s) return null;
-        const n = Number(s);
-        return Number.isFinite(n) ? Math.trunc(n) : null;
+        const s0 = String(v == null ? '' : v).trim();
+        if (!s0) return null;
+        const s = s0.replace(/\s+/g, '');
+        const normalizeThousands = (raw) => {
+          const x0 = String(raw || '').trim();
+          if (!x0) return '';
+          const x = x0.replace(/\s+/g, '');
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+          if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+          if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+          if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+          return x0;
+        };
+        const n = Number(normalizeThousands(s));
+        if (Number.isFinite(n)) return Math.trunc(n);
+        const digits = s0.replace(/[^\d-]/g, '');
+        if (!digits) return null;
+        const n2 = Number(digits);
+        return Number.isFinite(n2) ? Math.trunc(n2) : null;
       } catch (_) {
         return null;
       }
