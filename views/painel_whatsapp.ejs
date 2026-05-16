@@ -264,12 +264,25 @@
           btn.disabled = true;
           setStatus('Criando pedido…');
           try {
-            var resp = await fetch('/api/painel/whatsapp-orders/create', {
+            var controller = null;
+            var tmo = null;
+            try {
+              controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            } catch(_) { controller = null; }
+            if (controller) {
+              tmo = setTimeout(function(){
+                try { controller.abort(); } catch(_) {}
+              }, 15000);
+            }
+            var fetchOpts = {
               method:'POST',
               headers:{'Content-Type':'application/json','Accept':'application/json'},
               body: JSON.stringify(payload),
               credentials:'same-origin'
-            });
+            };
+            if (controller) fetchOpts.signal = controller.signal;
+            var resp = await fetch('/api/painel/whatsapp-orders/create', fetchOpts);
+            if (tmo) { try { clearTimeout(tmo); } catch(_) {} }
             var data = await resp.json().catch(function(){ return null; });
             if (!data || data.ok !== true) {
               var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + resp.status);
@@ -299,7 +312,18 @@
                 } catch(_) {}
               }, 0);
             } catch(_) {}
+          } catch (e) {
+            try {
+              setStatus('Falha ao criar pedido.');
+              var msg = '';
+              try {
+                if (e && e.name === 'AbortError') msg = 'Tempo excedido para criar o pedido. Tente novamente.';
+                else msg = String((e && e.message) ? e.message : 'Falha de rede ao criar o pedido.');
+              } catch(_) { msg = 'Falha de rede ao criar o pedido.'; }
+              alert('Erro: ' + msg);
+            } catch(_) {}
           } finally {
+            if (tmo) { try { clearTimeout(tmo); } catch(_) {} }
             btn.disabled = false;
             updateBtn();
           }

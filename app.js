@@ -149,11 +149,12 @@ app.use(session({
 
 // Middleware para parsing de JSON e URL encoded
 app.use(express.json({
+  limit: process.env.EXPRESS_JSON_LIMIT || '5mb',
   verify: (req, res, buf) => {
     try { req.rawBody = buf; } catch (_) {}
   }
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: process.env.EXPRESS_URLENCODED_LIMIT || '5mb' }));
 
 app.use((req, res, next) => {
   const isSandbox = process.env.EFI_SANDBOX === 'true';
@@ -24919,17 +24920,29 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
     const orderId = ins && ins.insertedId ? String(ins.insertedId) : '';
 
     try {
-      const fresh = await col.findOne({ _id: ins.insertedId });
-      if (fresh) await processOrderFulfillment(fresh, col, req);
+      Promise.resolve()
+        .then(async () => {
+          const fresh = await col.findOne({ _id: ins.insertedId });
+          if (fresh) await processOrderFulfillment(fresh, col, req);
+        })
+        .catch(() => {});
     } catch (_) {}
 
     let refilUrl = null;
     try {
-      const linkRec = await ensureRefilLink(identifier, correlationID, req);
-      if (linkRec && linkRec.id) refilUrl = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(String(linkRec.id))}`;
+      const linkPromise = Promise.resolve()
+        .then(() => ensureRefilLink(identifier, correlationID, req))
+        .catch(() => null);
+      const linkRec = await Promise.race([
+        linkPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 1500))
+      ]);
+      if (linkRec && linkRec.id) {
+        refilUrl = `https://agenciaoppus.site/refil2?token=${encodeURIComponent(String(linkRec.id))}`;
+      }
     } catch (_) {}
 
-    return res.json({ ok: true, refilUrl });
+    return res.json({ ok: true, orderId, refilUrl });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -27553,13 +27566,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
     } catch (_) {}
 
     let refil2Requests = undefined;
+    let refil2Pagination = undefined;
     if (view === 'dashboard' || view === 'refil2') {
       try {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('refil2_requests');
-        const lim = view === 'refil2' ? 5000 : 200;
-        const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(lim).toArray();
-        refil2Requests = Array.isArray(rows) ? rows : [];
+        if (view === 'refil2') {
+          const rawPage = parseInt(String(req.query.refil2Page || '1'), 10);
+          const pageSize = 200;
+          const total = await col.countDocuments({});
+          const totalPages = Math.max(1, Math.ceil((Number(total) || 0) / pageSize));
+          const page = Number.isFinite(rawPage) ? Math.max(1, Math.min(totalPages, rawPage)) : 1;
+          const skip = (page - 1) * pageSize;
+          const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).skip(skip).limit(pageSize).toArray();
+          refil2Requests = Array.isArray(rows) ? rows : [];
+          refil2Pagination = { page, pageSize, total: Number(total) || 0, totalPages };
+        } else {
+          const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).limit(200).toArray();
+          refil2Requests = Array.isArray(rows) ? rows : [];
+        }
         try {
           const idStrs = Array.from(new Set(refil2Requests.map(r => String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s))));
           if (idStrs.length) {
@@ -27896,7 +27921,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       vitalicioPurchases = rows.slice(0, 500);
     }
 
-    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, vitalicioPurchases });
+    res.render('painel', { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases });
   } catch (e) {
     res.status(500).send(e.toString());
   }
