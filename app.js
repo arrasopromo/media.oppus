@@ -734,7 +734,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         '',
         'Pagamento via Pix:',
         brCode ? `Código Pix (copia e cola): ${brCode}` : '',
-        pixPageUrl ? `Link para copiar o código Pix: ${pixPageUrl}` : '',
+        pixPageUrl ? `Link do pedido (Pix): ${pixPageUrl}` : '',
         '',
         '1. Abra o aplicativo do seu banco e entre na opção Pix.',
         '2. Escolha a opção Pagar / Pix copia e cola.',
@@ -799,10 +799,10 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
               <div style="padding:10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;line-height:1.35;color:#052e16;word-break:break-all;">
                 ${escapeHtml(brCode)}
               </div>
-              <div style="margin:8px 0 0 0;text-align:center;">
-                <a href="${escapeHtml(pixPageUrl)}" style="display:inline-block;padding:9px 12px;background:#2563eb;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Copiar código Pix</a>
-              </div>
-              <div style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">Se preferir, abra o link para copiar o código completo.</div>` : ''}
+              <div style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">No celular: toque e segure no código acima para copiar.</div>
+              <div style="margin:10px 0 0 0;text-align:center;">
+                <a href="${escapeHtml(pixPageUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir pedido</a>
+              </div>` : ''}
 
               <div style="margin:16px 0 6px 0;font-size:13px;font-weight:700;">Como pagar</div>
               <ol style="margin:0 0 0 18px;padding:0;font-size:13px;line-height:1.6;color:#111827;">
@@ -834,7 +834,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
     });
 };
 
-const sendPixRecoveryEmailToCustomer = async ({ record }) => {
+const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, subjectOverride }) => {
     const transporter = getRecoverySmtpTransporter() || getSmtpTransporter();
     if (!transporter) {
         try { console.warn(`📨 [recovery-email] smtp transporter ausente (verifique SMTP_RECOVERY_* ou SMTP_*)`); } catch (_) {}
@@ -971,7 +971,10 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
 
     if (!qrCodeImage && !brCode) return false;
 
-    const subject = `Agência Oppus - Seu pedido está aguardando pagamento`;
+    const couponCodeNorm = String(couponCode || '').trim().toUpperCase();
+    const couponPctNum = Number(couponPct || 0) || 0;
+    const couponLabel = (couponCodeNorm && couponPctNum > 0) ? `${couponCodeNorm} (${Math.round(couponPctNum)}% OFF)` : '';
+    const subject = String(subjectOverride || '').trim() || `Agência Oppus - Seu pedido está aguardando pagamento`;
 
     const text = [
         'Pagamento pendente',
@@ -979,6 +982,7 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
         `Olá, ${saudacaoNome}`,
         '',
         `Identificamos que o seu pedido de ${productTitle} ainda está aguardando pagamento.`,
+        couponLabel ? `Cupom de desconto (1x por perfil): ${couponLabel}` : '',
         'Para concluir, efetue o pagamento via Pix (QR Code ou Pix Copia e Cola).',
         '',
         `Produto: ${productTitle}`,
@@ -987,7 +991,7 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
         '',
         'Pagamento via Pix:',
         brCode ? `Código Pix (copia e cola): ${brCode}` : '',
-        pixPageUrl ? `Link para copiar o código Pix: ${pixPageUrl}` : '',
+        pixPageUrl ? `Link do pedido (Pix): ${pixPageUrl}` : '',
         '',
         '1. Abra o aplicativo do seu banco e entre na opção Pix.',
         '2. Escolha a opção Pagar / Pix copia e cola.',
@@ -1026,6 +1030,13 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
                 Identificamos que o seu pedido de <strong>${escapeHtml(productTitle)}</strong> ainda está aguardando pagamento.
                 Para concluir, efetue o pagamento via Pix.
               </div>
+              ${couponLabel ? `<div style="margin:0 0 14px 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;">
+                <div style="font-size:12px;color:#6b7280;margin:0 0 6px 0;">Cupom de desconto (1x por perfil)</div>
+                <div style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:16px;font-weight:900;letter-spacing:0.08em;color:#111827;text-align:center;">
+                  ${escapeHtml(couponCodeNorm)}
+                </div>
+                <div style="margin-top:6px;font-size:12px;color:#6b7280;text-align:center;">${escapeHtml(String(Math.round(couponPctNum)))}% OFF</div>
+              </div>` : ''}
 
               <div style="margin:14px 0 10px 0;font-size:14px;font-weight:700;">Resumo do pedido</div>
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
@@ -1051,10 +1062,10 @@ const sendPixRecoveryEmailToCustomer = async ({ record }) => {
               <div style="padding:10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;line-height:1.35;color:#052e16;word-break:break-all;">
                 ${escapeHtml(brCode)}
               </div>
-              <div style="margin:8px 0 0 0;text-align:center;">
-                <a href="${escapeHtml(pixPageUrl)}" style="display:inline-block;padding:9px 12px;background:#2563eb;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Copiar código Pix</a>
-              </div>
-              <div style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">Se preferir, abra o link para copiar o código completo.</div>` : ''}
+              <div style="margin:8px 0 0 0;font-size:12px;color:#6b7280;">No celular: toque e segure no código acima para copiar.</div>
+              <div style="margin:10px 0 0 0;text-align:center;">
+                <a href="${escapeHtml(pixPageUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir pedido</a>
+              </div>` : ''}
 
               <div style="margin:16px 0 6px 0;font-size:13px;font-weight:700;">Como pagar</div>
               <ol style="margin:0 0 0 18px;padding:0;font-size:13px;line-height:1.6;color:#111827;">
@@ -1319,11 +1330,21 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
     const whatsappPrefillText = 'Olá, vim pelo e-mail de compra e preciso de ajuda';
     const whatsappHref = `https://wa.me/553173425727?text=${encodeURIComponent(whatsappPrefillText)}`;
 
+    const show48hFollowersNotice = (function () {
+        try {
+            const isFollowers = !categoriaKey || categoriaKey.includes('seguidores');
+            return isFollowers && tipoKey === 'organicos';
+        } catch (_) {
+            return false;
+        }
+    })();
+
     const subject = `Agência Oppus - Pagamento aprovado${serviceOrderId ? ` - Pedido #${serviceOrderId}` : ''}`;
     const text = [
         `Olá ${payerName}, tudo bem?`,
         '',
         'Seu pagamento foi aprovado com sucesso!',
+        show48hFollowersNotice ? 'Prazo de finalização do serviço: até 48 horas.' : '',
         'Estamos muito felizes em ter você conosco.',
         '',
         'Detalhes do pedido',
@@ -1382,6 +1403,8 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
               <div style="font-size:14px;line-height:1.5;margin:0 0 12px 0;">
                 Seu pagamento foi aprovado com sucesso!
                 <br/>
+                ${show48hFollowersNotice ? 'Prazo de finalização do serviço: <strong>até 48 horas</strong>.' : ''}
+                ${show48hFollowersNotice ? '<br/>' : ''}
                 Estamos muito felizes em ter você conosco.
               </div>
 
@@ -4046,6 +4069,65 @@ const loadServiceVisibility = async () => {
   } catch (_) {
     return fallback;
   }
+};
+
+const loadServiceTypeServiceIds = async () => {
+  const fallback = {
+    seguidores: { mistos: { fama24h: 663 }, brasileiros: { fama24h: 23 }, organicos: { fornecedor_social: Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312) } },
+    curtidas: { mistos: { fama24h: 671 }, curtidas_brasileiras: { fama24h: 679 }, organicos: { fornecedor_social: 194 } },
+    visualizacoes: { visualizacoes_reels: { fama24h: 250 } }
+  };
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const doc = settingsCol ? await settingsCol.findOne({ _id: 'service_type_service_ids' }, { projection: { _id: 0, values: 1 } }) : null;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    const out = JSON.parse(JSON.stringify(fallback));
+    const merge = (ctx) => {
+      const vCtx = (values && values[ctx] && typeof values[ctx] === 'object') ? values[ctx] : null;
+      if (!vCtx) return;
+      for (const k of Object.keys(vCtx)) {
+        const vKey = (vCtx && vCtx[k] && typeof vCtx[k] === 'object') ? vCtx[k] : null;
+        if (!vKey) continue;
+        if (!out[ctx]) out[ctx] = {};
+        if (!out[ctx][k]) out[ctx][k] = {};
+        for (const p of Object.keys(vKey)) {
+          const n = Number(vKey[p]);
+          if (!Number.isFinite(n) || !(n > 0)) continue;
+          out[ctx][k][p] = Math.trunc(n);
+        }
+      }
+    };
+    merge('seguidores');
+    merge('curtidas');
+    merge('visualizacoes');
+    return out;
+  } catch (_) {
+    return fallback;
+  }
+};
+
+let __serviceTypeServiceIdsCache = { atMs: 0, values: null };
+const getServiceTypeServiceIdsCached = async () => {
+  try {
+    const now = Date.now();
+    if (__serviceTypeServiceIdsCache.values && (now - __serviceTypeServiceIdsCache.atMs) < 30000) return __serviceTypeServiceIdsCache.values;
+    const values = await loadServiceTypeServiceIds();
+    __serviceTypeServiceIdsCache = { atMs: now, values };
+    return values;
+  } catch (_) {
+    return __serviceTypeServiceIdsCache.values || await loadServiceTypeServiceIds();
+  }
+};
+
+const resolveServiceTypeServiceId = async ({ ctx, key, provider, fallback }) => {
+  try {
+    const ids = await getServiceTypeServiceIdsCached();
+    const n = Number(ids?.[ctx]?.[key]?.[provider]);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  } catch (_) {}
+  const fb = Number(fallback);
+  return Number.isFinite(fb) && fb > 0 ? Math.trunc(fb) : null;
 };
 
 // Página Serviços (três serviços iguais ao principal)
@@ -9007,11 +9089,17 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             if (!Number.isFinite(t) || !t) return '';
             return new Date(t).toISOString();
         };
-        const getOrderRecoveryAfterMinutes = () => {
-            const raw = String(process.env.ORDER_RECOVERY_AFTER_MINUTES || '10').trim();
+        const getOrderRecoveryStage1Minutes = () => {
+            const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '30').trim();
             const n = parseInt(raw, 10);
-            if (Number.isFinite(n) && n > 0) return Math.max(10, Math.min(180, n));
-            return 10;
+            if (Number.isFinite(n) && n > 0) return Math.max(5, Math.min(180, n));
+            return 30;
+        };
+        const getOrderRecoveryStage2Hours = () => {
+            const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '24').trim();
+            const n = parseInt(raw, 10);
+            if (Number.isFinite(n) && n > 0) return Math.max(12, Math.min(96, n));
+            return 24;
         };
         const paidStatusTokens = [
             'pago', 'paid', 'approved', 'aprovado', 'confirmado', 'confirmed',
@@ -9075,16 +9163,23 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                 return;
             }
         }
-        const afterMinutes = getOrderRecoveryAfterMinutes();
-        const requiredMs = afterMinutes * 60 * 1000;
-        if ((Date.now() - createdAtMs) < requiredMs) return;
+        const ageMs = Date.now() - createdAtMs;
+        const stage1Minutes = getOrderRecoveryStage1Minutes();
+        const stage2Hours = getOrderRecoveryStage2Hours();
+        const stage1Due = ageMs >= (stage1Minutes * 60 * 1000);
+        const stage2Due = ageMs >= (stage2Hours * 60 * 60 * 1000);
+
+        const stage1SentAt = record?.emails?.paymentRecoveryStage15SentAt || record?.emails?.paymentRecoveryCoupon15SentAt || record?.emails?.paymentRecoverySentAt;
+        const stage2SentAt = record?.emails?.paymentRecoveryStage30SentAt || record?.emails?.paymentRecoveryCoupon30SentAt;
+
+        const stage = (stage2Due && !stage2SentAt) ? 2 : ((stage1Due && !stage1SentAt) ? 1 : 0);
+        if (!stage) return;
 
         if (isPaidRecord(record)) {
             await markSkip('already_paid');
             return;
         }
 
-        if (record?.emails?.paymentRecoverySentAt) return;
         if (record?.emails?.paymentRecoverySkippedAt) return;
 
         const woovi = (record && record.woovi && typeof record.woovi === 'object') ? record.woovi : {};
@@ -9097,10 +9192,21 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         }
 
         const nowIso = new Date().toISOString();
+        const stageNotSentCond = (function(){
+          const missing = (f) => ({ $or: [{ [f]: { $exists: false } }, { [f]: null }, { [f]: '' }] });
+          if (stage === 2) return missing('emails.paymentRecoveryStage30SentAt');
+          return {
+            $and: [
+              missing('emails.paymentRecoveryStage15SentAt'),
+              missing('emails.paymentRecoveryCoupon15SentAt'),
+              missing('emails.paymentRecoverySentAt')
+            ]
+          };
+        })();
         const lockFilter = {
             _id: record._id,
             $and: [
-                { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] },
+                stageNotSentCond,
                 { $or: [{ 'emails.paymentRecoverySkippedAt': { $exists: false } }, { 'emails.paymentRecoverySkippedAt': null }, { 'emails.paymentRecoverySkippedAt': '' }] },
                 { $or: [{ 'emails.paymentRecoveryLockAt': { $exists: false } }, { 'emails.paymentRecoveryLockAt': null }, { 'emails.paymentRecoveryLockAt': '' }] },
                 { $or: [{ paidAt: { $exists: false } }, { paidAt: null }, { paidAt: '' }] },
@@ -9147,12 +9253,37 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                 );
                 return;
             }
-            try { console.log(`📨 [recovery-email] start id=${orderIdShort} to=${to} afterMin=${afterMinutes}`); } catch (_) {}
-            const sent = await sendPixRecoveryEmailToCustomer({ record });
+            const coupon15Code = normalizeCouponCode(process.env.ORDER_RECOVERY_COUPON15_CODE || 'RECUP15');
+            const coupon30Code = normalizeCouponCode(process.env.ORDER_RECOVERY_COUPON30_CODE || 'RECUP30');
+            const coupon15Pct = 15;
+            const coupon30Pct = 30;
+            try {
+              if (stage === 2) await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 });
+              else await ensureCouponExists({ code: coupon15Code, discountPercentage: coupon15Pct, maxUsesPerProfile: 1 });
+            } catch (_) {}
+
+            const subject = stage === 2
+              ? `Agência Oppus - Seu pedido ainda está aguardando pagamento (Cupom ${coupon30Pct}%)`
+              : `Agência Oppus - Seu pedido está aguardando pagamento (Cupom ${coupon15Pct}%)`;
+
+            try { console.log(`📨 [recovery-email] start id=${orderIdShort} to=${to} stage=${stage}`); } catch (_) {}
+            const sent = await sendPixRecoveryEmailToCustomer({
+              record,
+              couponCode: stage === 2 ? coupon30Code : coupon15Code,
+              couponPct: stage === 2 ? coupon30Pct : coupon15Pct,
+              subjectOverride: subject
+            });
             if (!sent) throw new Error('recovery_email_not_sent');
             await col.updateOne(
                 { _id: record._id, 'emails.paymentRecoveryLockAt': nowIso },
-                { $set: { 'emails.paymentRecoverySentAt': new Date().toISOString() }, $unset: { 'emails.paymentRecoveryLockAt': '' } }
+                {
+                  $set: Object.assign(
+                    {},
+                    stage === 1 ? { 'emails.paymentRecoverySentAt': new Date().toISOString(), 'emails.paymentRecoveryStage15SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon15Code': stage === 1 ? coupon15Code : '' } : {},
+                    stage === 2 ? { 'emails.paymentRecoveryStage30SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon30Code': stage === 2 ? coupon30Code : '' } : {}
+                  ),
+                  $unset: { 'emails.paymentRecoveryLockAt': '' }
+                }
             );
             try { console.log(`✅ [recovery-email] sent id=${orderIdShort} to=${to}`); } catch (_) {}
         } catch (e) {
@@ -9354,22 +9485,22 @@ async function processOrderFulfillment(record, col, req) {
         }
     };
     if (isViewsBase) {
-        serviceId = 250;
+        serviceId = await resolveServiceTypeServiceId({ ctx: 'visualizacoes', key: 'visualizacoes_reels', provider: 'fama24h', fallback: 250 });
         linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
     } else if (isCurtidasBase) {
         const envCurtidasMistas = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_MISTAS || '');
         const envCurtidasBrasileiras = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_BRASILEIRAS || '');
         if (/^mistos$/i.test(tipo)) {
-            serviceId = Number.isFinite(envCurtidasMistas) && envCurtidasMistas > 0 ? envCurtidasMistas : 671;
+            serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'mistos', provider: 'fama24h', fallback: (Number.isFinite(envCurtidasMistas) && envCurtidasMistas > 0 ? envCurtidasMistas : 671) });
         } else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) {
-            serviceId = Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0 ? envCurtidasBrasileiras : 679;
+            serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'curtidas_brasileiras', provider: 'fama24h', fallback: (Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0 ? envCurtidasBrasileiras : 679) });
         }
         linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
     } else {
         if (/^mistos$/i.test(tipo)) {
-            serviceId = 663;
+            serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
         } else if (/^brasileiros$/i.test(tipo)) {
-            serviceId = 23;
+            serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
         }
         linkToSend = buildProfileLink(instaUser) || instaUser;
     }
@@ -12040,20 +12171,20 @@ app.post('/api/openpix/webhook', async (req, res) => {
             }
           };
           if (isViewsBase) {
-              serviceId = 250;
+              serviceId = await resolveServiceTypeServiceId({ ctx: 'visualizacoes', key: 'visualizacoes_reels', provider: 'fama24h', fallback: 250 });
               linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_views'] || instaUser;
           } else if (isCurtidasBase) {
               if (/^mistos$/i.test(tipo)) {
-                  serviceId = 671;
+                  serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'mistos', provider: 'fama24h', fallback: 671 });
               } else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) {
-                  serviceId = 679;
+                  serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'curtidas_brasileiras', provider: 'fama24h', fallback: 679 });
               }
               linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
           } else {
               if (/^mistos$/i.test(tipo)) {
-                  serviceId = 663;
+                  serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
               } else if (/^brasileiros$/i.test(tipo)) {
-                  serviceId = 23;
+                  serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
               }
               linkToSend = buildProfileLink(instaUser) || instaUser;
           }
@@ -13120,18 +13251,18 @@ app.post('/api/services/dispatch', async (req, res) => {
       const key = process.env.FAMA24H_API_KEY || '';
       let serviceId = null;
       if (isViewsBase) {
-        serviceId = 250;
+        serviceId = await resolveServiceTypeServiceId({ ctx: 'visualizacoes', key: 'visualizacoes_reels', provider: 'fama24h', fallback: 250 });
       } else if (isCurtidasBase) {
         if (/^mistos$/i.test(tipo)) {
-          serviceId = 671;
+          serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'mistos', provider: 'fama24h', fallback: 671 });
         } else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) {
-          serviceId = 679;
+          serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'curtidas_brasileiras', provider: 'fama24h', fallback: 679 });
         }
       } else {
         if (/^mistos$/i.test(tipo)) {
-          serviceId = 663;
+          serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
         } else if (/^brasileiros$/i.test(tipo)) {
-          serviceId = 23;
+          serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
         }
       }
       const linkForFama = (isViewsBase || isCurtidasBase) ? sanitizeLink(linkToSendRaw) : String(linkToSend || '').replace(/[`\s]/g, '').trim();
@@ -13149,7 +13280,7 @@ app.post('/api/services/dispatch', async (req, res) => {
     }
     } else if (isFollowersOrganicos && !alreadySentFama && !alreadySentFS) {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-      const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+      const serviceFS = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'organicos', provider: 'fornecedor_social', fallback: Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312) });
       const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : (buildProfileLink(instaUserRaw) || `https://instagram.com/${String(instaUserRaw)}`);
       const canSendFS = !!keyFS && !!instaUserRaw && qtd > 0 && !alreadySentFS && !alreadySentFama;
       if (!canSendFS) return res.status(400).json({ ok: false, error: 'cannot_send_fs', reason: { hasKeyFS: !!keyFS, instaUser: !!instaUserRaw, qtd, alreadySentFS } });
@@ -13164,7 +13295,7 @@ app.post('/api/services/dispatch', async (req, res) => {
       return res.json({ ok: true, provider: 'fornecedor_social', orderId: orderIdFS, data: dataFS });
     } else {
       const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-      const serviceFS = 194;
+      const serviceFS = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'organicos', provider: 'fornecedor_social', fallback: 194 });
       const linkSan = sanitizeLink(linkToSendRaw);
       const canSendFS = !!keyFS && !!linkSan && qtd > 0 && !alreadySentFS && !alreadySentFama;
       if (!canSendFS) {
@@ -14496,7 +14627,7 @@ app.post('/session/mark-paid', async (req, res) => {
         const isOrganicosCurtidas = /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipo) && isCurtidasBase;
         if (isOrganicosFollowers && !alreadySentFS) {
           const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-          const serviceFS = Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312);
+          const serviceFS = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'organicos', provider: 'fornecedor_social', fallback: Number(process.env.FORNECEDOR_SOCIAL_SERVICE_ID_ORGANICOS || 312) });
           if (!!keyFS && !!instaUser && qtd > 0) {
             const retryAfterIso = new Date(Date.now() - (3 * 60 * 1000)).toISOString();
             const lockUpdate = await col.updateOne(
@@ -14520,7 +14651,7 @@ app.post('/session/mark-paid', async (req, res) => {
           }
         } else if (isOrganicosCurtidas && !alreadySentFS) {
           const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
-          const serviceFS = 194;
+          const serviceFS = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'organicos', provider: 'fornecedor_social', fallback: 194 });
           const selectedForLikes = (req.session && req.session.selectedFor && req.session.selectedFor.likes && req.session.selectedFor.likes.link) ? String(req.session.selectedFor.likes.link) : '';
           const selectedForViews = (req.session && req.session.selectedFor && req.session.selectedFor.views && req.session.selectedFor.views.link) ? String(req.session.selectedFor.views.link) : '';
           const linkCandidateRaw = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_likes'] || selectedForLikes || additionalInfoMap['orderbump_post_views'] || selectedForViews || '';
@@ -14554,15 +14685,15 @@ app.post('/session/mark-paid', async (req, res) => {
           const key = process.env.FAMA24H_API_KEY || '';
           let serviceId = null;
           if (isViewsBase) {
-            serviceId = 250;
+            serviceId = await resolveServiceTypeServiceId({ ctx: 'visualizacoes', key: 'visualizacoes_reels', provider: 'fama24h', fallback: 250 });
           } else if (isCurtidasBase) {
             const envCurtidasMistas = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_MISTAS || '');
             const envCurtidasBrasileiras = Number(process.env.FAMA24H_SERVICE_ID_CURTIDAS_BRASILEIRAS || '');
-            if (/^mistos$/i.test(tipo)) serviceId = (Number.isFinite(envCurtidasMistas) && envCurtidasMistas > 0) ? envCurtidasMistas : 671;
-            else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) serviceId = (Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0) ? envCurtidasBrasileiras : 679;
+            if (/^mistos$/i.test(tipo)) serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'mistos', provider: 'fama24h', fallback: ((Number.isFinite(envCurtidasMistas) && envCurtidasMistas > 0) ? envCurtidasMistas : 671) });
+            else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'curtidas_brasileiras', provider: 'fama24h', fallback: ((Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0) ? envCurtidasBrasileiras : 679) });
           } else {
-            if (/^mistos$/i.test(tipo)) serviceId = 663;
-            else if (/^brasileiros$/i.test(tipo)) serviceId = 23;
+            if (/^mistos$/i.test(tipo)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
+            else if (/^brasileiros$/i.test(tipo)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
           }
 
           const basePostLinks = (isViewsBase || isCurtidasBase) ? parseIgLinksList(additionalInfoMap['post_links'] || '') : [];
@@ -18411,6 +18542,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const okOnly = (String(req.query.ok || '').trim() === '1');
     const hiddenOnly = (String(req.query.hiddenOnly || req.query.hidden || '').trim() === '1');
     const lifetimeOnly = String(req.query.lifetime || '').trim() === '1';
+    const refil2AutoRaw = String(req.query.refil2Auto || '').trim().toLowerCase();
+    const refil2AutoFilter = (refil2AutoRaw === 'yes' || refil2AutoRaw === '1' || refil2AutoRaw === 'true') ? 'yes' : (refil2AutoRaw === 'no' ? 'no' : 'all');
     const dateFieldRaw = String(req.query.dateField || req.query.date || '').trim().toLowerCase();
     const dateField = (dateFieldRaw === 'checked' || dateFieldRaw === 'checado') ? 'checked' : 'purchase';
     const warrantyRaw = String(req.query.warranty || '').trim().toLowerCase();
@@ -18493,6 +18626,30 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const displayOrders = Array.from(latestOrderByUser.values()).sort((a, b) => Number(b.ms || 0) - Number(a.ms || 0)).map(x => x.order);
 
     const usernames = Array.from(new Set(displayOrders.map(resolveUsername).filter(Boolean)));
+    let autoRefil2Users = new Set();
+    try {
+      if (usernames.length) {
+        const { getCollection } = require('./mongodbClient');
+        const refil2Col = await getCollection('refil2_requests');
+        const variants = [];
+        for (const u of usernames) {
+          const key = String(u || '').trim().replace(/^@+/, '').toLowerCase();
+          if (!key) continue;
+          variants.push(key);
+          variants.push(`@${key}`);
+        }
+        const docs = variants.length
+          ? await refil2Col.find({ automated: true, username: { $in: variants } }, { projection: { _id: 0, username: 1 } }).toArray()
+          : [];
+        autoRefil2Users = new Set(
+          (Array.isArray(docs) ? docs : [])
+            .map(d => String(d && d.username ? d.username : '').trim().replace(/^@+/, '').toLowerCase())
+            .filter(Boolean)
+        );
+      }
+    } catch (_) {
+      autoRefil2Users = new Set();
+    }
     const monitorDocs = usernames.length ? await monitorCol.find({ username: { $in: usernames } }, { projection: { _id: 0 } }).toArray() : [];
     const monitorMap = new Map(monitorDocs.map(d => [String(d.username || '').toLowerCase(), d]));
     const validatedDocs = usernames.length ? await validatedCol.find({ username: { $in: usernames } }, { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1 } }).toArray() : [];
@@ -18821,6 +18978,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         orderIdentifier: resolveIdentifier(o),
         fornecedorOrderId: resolveFornecedorOrderId(o),
         username,
+        refil2AutoRequested: !!(username && autoRefil2Users.has(String(username || '').toLowerCase())),
         vip: (username ? vipUserSet.has(username) : false) && isNonOrganicTipoKey(tipoKey),
         tipo,
         fornecedor: resolveFornecedor(o),
@@ -19148,6 +19306,9 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         }
       }
 
+      if (refil2AutoFilter === 'yes' && r.refil2AutoRequested !== true) return false;
+      if (refil2AutoFilter === 'no' && r.refil2AutoRequested === true) return false;
+
       if (hiddenOnly) return r.hidden === true;
       if (r.hidden === true) return false;
 
@@ -19350,7 +19511,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, refil2Auto: refil2AutoFilter, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
       followersReport,
       followersFilteredTargets,
       followersMgmtSettings,
@@ -19782,8 +19943,23 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     const startedAtMs = Date.now();
     const cached = await monitorCol.findOne({ username }, { projection: { _id: 0 } });
     if (!force && cached && cached.checkedAt) {
-      const ageMs = Date.now() - new Date(String(cached.checkedAt)).getTime();
-      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < (2 * 24 * 60 * 60 * 1000)) {
+      const diffDaysBrt = (function(){
+        try {
+          const brtOffsetMs = 3 * 60 * 60 * 1000;
+          const toDayNum = (ms) => {
+            const d = new Date(Number(ms || 0) - brtOffsetMs);
+            if (!Number.isFinite(d.getTime())) return null;
+            return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / (24 * 60 * 60 * 1000));
+          };
+          const nowNum = toDayNum(Date.now());
+          const checkedNum = toDayNum(new Date(String(cached.checkedAt)).getTime());
+          if (nowNum == null || checkedNum == null) return null;
+          return nowNum - checkedNum;
+        } catch (_) {
+          return null;
+        }
+      })();
+      if (diffDaysBrt != null && Number.isFinite(diffDaysBrt) && diffDaysBrt >= 0 && diffDaysBrt < 2) {
         try { console.log(`🧾 [followers-mgmt:${traceId}] cache-hit @${username} source=${String(cached.source || '')} ms=${Date.now() - startedAtMs}`); } catch (_) {}
         return { code: 200, body: { ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null } };
       }
@@ -22506,6 +22682,16 @@ app.post('/api/painel/gerenciamento-seguidores/refil2/bulk-start', requireAdmin,
     if (!rawTargets.length) return res.status(400).json({ ok: false, error: 'empty_targets' });
 
     const normalizeUsernameKey = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+    const toIntLoose = (v) => {
+      try {
+        const s = String(v == null ? '' : v).trim().replace(/[^\d\-]/g, '');
+        if (!s || s === '-') return 0;
+        const n = parseInt(s, 10);
+        return Number.isFinite(n) ? Math.trunc(n) : 0;
+      } catch (_) {
+        return 0;
+      }
+    };
     const unique = [];
     const seen = new Set();
     for (const r of rawTargets) {
@@ -22513,7 +22699,7 @@ app.post('/api/painel/gerenciamento-seguidores/refil2/bulk-start', requireAdmin,
       if (!u) continue;
       if (seen.has(u)) continue;
       seen.add(u);
-      const diffAbs = Math.floor(Number(r && r.diffAbs != null ? r.diffAbs : 0) || 0);
+      const diffAbs = toIntLoose(r && r.diffAbs != null ? r.diffAbs : 0);
       unique.push({
         username: u,
         tipo: String(r && r.tipo ? r.tipo : ''),
@@ -22997,7 +23183,7 @@ app.post('/api/painel/gerenciamento-seguidores/verify-filtered/start', requireAd
     };
 
     const rawList = (req.body && Array.isArray(req.body.usernames)) ? req.body.usernames : [];
-    const force = String((req.body && req.body.force) || req.query.force || '1').trim() === '1';
+    const force = String((req.body && req.body.force) || req.query.force || '0').trim() === '1';
     const usernames = [];
     const seen = new Set();
     for (const r of rawList) {
@@ -24816,6 +25002,274 @@ app.get('/api/painel/whatsapp-orders/price', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/painel/refil2/export', requireAdmin, async (req, res) => {
+  try {
+    const scope = String(req.query?.scope || 'filtered').trim().toLowerCase();
+    const kind = String(req.query?.kind || 'full').trim().toLowerCase();
+    const isAll = scope === 'all';
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+
+    const buildRefil2Filter = () => {
+      const and = [];
+      const auto = String(req.query.refil2Auto || 'all').trim();
+      if (auto === 'auto') and.push({ automated: true });
+      if (auto === 'manual') and.push({ $or: [{ automated: { $exists: false } }, { automated: { $ne: true } }] });
+
+      const userQ = String(req.query.refil2User || '').trim();
+      if (userQ) {
+        const clean = userQ.replace(/^@+/, '').trim();
+        if (clean) {
+          const safe = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const rx = new RegExp(safe, 'i');
+          and.push({ username: { $regex: rx } });
+        }
+      }
+
+      const audit = String(req.query.refil2Audit || 'all').trim().toLowerCase();
+      if (audit === 'ok') and.push({ 'audit.result': { $regex: /^ok/i } });
+      if (audit === 'nok') and.push({ 'audit.result': { $regex: /^nok/i } });
+
+      const legacyOnlyWithOid = String(req.query.refil2OnlyWithRefilId || '') === '1';
+      const refilIdModeRaw = String(req.query.refil2RefilId || '').trim().toLowerCase();
+      const refilIdMode = (refilIdModeRaw === 'with' || refilIdModeRaw === 'without') ? refilIdModeRaw : (legacyOnlyWithOid ? 'with' : 'all');
+      if (refilIdMode === 'with') and.push({ 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } });
+      if (refilIdMode === 'without') and.push({ $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] });
+
+      const status = String(req.query.refil2Status || 'all').trim();
+      if (status && status !== 'all') {
+        const reason = (v) => ({ $or: [{ decisionReason: v }, { reason: v }] });
+        const decision = (v) => ({ $or: [{ decisionStatus: v }, { decision: v }, { status: v }] });
+        const exec = (v) => ({ $or: [{ execStatus: v }, { exec: v }] });
+        if (status === 'success') {
+          and.push({
+            $or: [
+              reason('add_reorder_ok'),
+              { $and: [exec('success'), decision('initiated')] }
+            ]
+          });
+        } else if (status === 'info') {
+          and.push({ $or: [reason('below_min_drop'), decision('no_drop')] });
+        } else if (status === 'blocked') {
+          and.push({
+            $or: [
+              decision('blocked'),
+              reason('paid_today'),
+              reason('no_orders'),
+              reason('no_followers_purchase'),
+              reason('reorder_expired')
+            ]
+          });
+        } else if (status === 'error') {
+          and.push({ $or: [exec('error'), decision('error')] });
+        }
+      }
+
+      const dateCol = String(req.query.refil2DateColumn || 'requested').trim();
+      const fromStr = String(req.query.refil2DateFrom || '').trim();
+      const toStr = String(req.query.refil2DateTo || '').trim();
+      const from = fromStr ? new Date(`${fromStr}T00:00:00.000Z`) : null;
+      const to = toStr ? new Date(`${toStr}T23:59:59.999Z`) : null;
+      const hasFrom = !!(from && Number.isFinite(from.getTime()));
+      const hasTo = !!(to && Number.isFinite(to.getTime()));
+      if (hasFrom || hasTo) {
+        const range = {};
+        if (hasFrom) range.$gte = from;
+        if (hasTo) range.$lte = to;
+        if (dateCol === 'forced') {
+          and.push({
+            $or: [
+              { 'forceRefil.forcedAt': range },
+              { 'forceRefil.finishedAt': range },
+              { 'forceRefil.requestedAt': range }
+            ]
+          });
+        } else {
+          and.push({ $or: [{ requestedAt: range }, { createdAt: range }] });
+        }
+      }
+
+      if (!and.length) return {};
+      if (and.length === 1) return and[0];
+      return { $and: and };
+    };
+
+    const filter = isAll ? {} : buildRefil2Filter();
+    const maxRows = 60000;
+    const docs = await col.find(filter).sort({ requestedAt: -1, _id: -1 }).limit(maxRows).toArray();
+
+    const fmtPtBr = (v) => {
+      try {
+        const d = v instanceof Date ? v : new Date(v || 0);
+        if (!Number.isFinite(d.getTime())) return '';
+        return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+      } catch (_) {
+        try {
+          const d = v instanceof Date ? v : new Date(v || 0);
+          if (!Number.isFinite(d.getTime())) return '';
+          return d.toISOString();
+        } catch (_) {
+          return '';
+        }
+      }
+    };
+    const pickNum = (obj, keys) => {
+      try {
+        const o = (obj && typeof obj === 'object') ? obj : {};
+        for (const k of keys) {
+          if (typeof o[k] === 'number' && Number.isFinite(o[k])) return o[k];
+        }
+      } catch (_) {}
+      return null;
+    };
+    const resolveSummary = (it) => {
+      const sum = (it && (it.summary || it.computed || it.data) && typeof (it.summary || it.computed || it.data) === 'object') ? (it.summary || it.computed || it.data) : {};
+      const initial = pickNum(sum, ['initial', 'quantidade_inicial']);
+      const current = pickNum(sum, ['current', 'quantidade_atual']);
+      const drop = pickNum(sum, ['drop', 'deficit', 'quantidade_de_queda']);
+      const rawFinal = pickNum(sum, ['final', 'quantidade_final']);
+      const computedFinal = (current != null && drop != null) ? (Number(current) + Number(drop)) : null;
+      const finalQty = (computedFinal != null) ? computedFinal : (rawFinal != null ? rawFinal : (initial != null ? initial : null));
+      return { initial, current, drop, finalQty };
+    };
+    const resolveStatus = (it) => {
+      const exec = String(it && (it.execStatus || it.exec || '') || '').toLowerCase().trim();
+      const decision = String(it && (it.decisionStatus || it.decision || it.status || '') || '').toLowerCase().trim();
+      const reason = String(it && (it.decisionReason || it.reason || '') || '').toLowerCase().trim();
+      const err = String(it && (it.errorMessage || it.error || it.webhookMessage || it.statusMessage || '') || '').trim();
+      const minDrop = (it && it.computed && typeof it.computed.min_drop === 'number') ? it.computed.min_drop : 100;
+      if (reason === 'add_reorder_ok') return { label: 'Iniciado', msg: 'add_reorder_ok' };
+      if (reason === 'below_min_drop') return { label: 'Sem queda', msg: `Abaixo de ${minDrop}` };
+      if (reason === 'paid_today') return { label: 'Bloqueado', msg: 'Pago hoje' };
+      if (reason === 'no_orders') return { label: 'Bloqueado', msg: 'Sem pedidos' };
+      if (reason === 'no_followers_purchase') return { label: 'Bloqueado', msg: 'Sem compra de seguidores' };
+      if (reason === 'reorder_expired') return { label: 'Bloqueado', msg: 'Prazo expirado' };
+      if (exec === 'success' && (decision === 'initiated' || decision === 'no_drop')) {
+        return { label: (decision === 'no_drop' ? 'Sem queda' : 'Iniciado'), msg: reason || 'OK' };
+      }
+      if (exec === 'error' || decision === 'error') return { label: 'Erro', msg: err || reason || '-' };
+      if (exec === 'success' && decision === 'blocked') return { label: 'Bloqueado', msg: reason || err || '-' };
+      return { label: 'Erro', msg: err || reason || '-' };
+    };
+
+    try {
+      const idStrs = Array.from(new Set(docs.map(r => String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s))));
+      if (idStrs.length) {
+        const { ObjectId } = require('mongodb');
+        const ids = idStrs.map(s => { try { return new ObjectId(String(s)); } catch (_) { return null; } }).filter(Boolean);
+        if (ids.length) {
+          const ordersCol = await getCollection('checkout_orders');
+          const orderDocs = await ordersCol.find({ _id: { $in: ids } }, { projection: { _id: 1, woovi: 1, paidAt: 1, createdAt: 1 } }).toArray();
+          const orderMap = new Map(orderDocs.map(o => [String(o && o._id ? o._id : ''), o]));
+          for (const r of docs) {
+            const key = String((r && (r.lastOrderId || r.orderId || r.last_order_id)) || '').trim();
+            if (!key) continue;
+            const o = orderMap.get(key);
+            if (!o) continue;
+            const dateStr = o?.woovi?.paidAt || o?.paidAt || o?.createdAt || null;
+            const t = dateStr ? new Date(dateStr).getTime() : 0;
+            if (!Number.isFinite(t) || !t) continue;
+            if (!r.purchaseAt) r.purchaseAt = new Date(t).toISOString();
+            if (!r.purchaseAtLabel) r.purchaseAtLabel = fmtPtBr(t);
+          }
+        }
+      }
+    } catch (_) {}
+
+    const escapeCsv = (v) => {
+      const s0 = (v == null) ? '' : String(v);
+      const s = s0.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const csvFrom = (header, rows) => {
+      const lines = [];
+      lines.push(header.map(escapeCsv).join(','));
+      for (const r of rows) lines.push((Array.isArray(r) ? r : []).map(escapeCsv).join(','));
+      return lines.join('\r\n');
+    };
+
+    const parseCost = (v) => {
+      try {
+        const s = String(v == null ? '' : v).trim();
+        if (!s || s === '-') return null;
+        const s2 = s.replace(/[^\d,.-]/g, '').replace(',', '.');
+        if (!s2) return null;
+        const n = Number(s2);
+        return Number.isFinite(n) ? n : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const rows = [];
+    if (kind === 'charge') {
+      const header = ['Usuário', 'Quantidade antes da reposição', 'Quantidade reposta', 'Refil ID', 'Custo', 'Cobrado OK'];
+      let total = 0;
+      for (const it of docs) {
+        const user = String(it && it.username ? it.username : '').trim();
+        const sum = resolveSummary(it);
+        const auditCur = (it && it.audit && typeof it.audit === 'object' && typeof it.audit.currentFollowers === 'number' && Number.isFinite(it.audit.currentFollowers))
+          ? Math.trunc(it.audit.currentFollowers)
+          : '';
+        const repor = (sum.drop != null) ? String(Math.trunc(Number(sum.drop))) : '';
+        const forceObj = (it && it.forceRefil && typeof it.forceRefil === 'object') ? it.forceRefil : {};
+        const oid = (forceObj && (forceObj.orderId !== null && typeof forceObj.orderId !== 'undefined')) ? String(forceObj.orderId).trim() : '';
+        if (!oid) continue;
+        const chargeRaw = (forceObj && (forceObj.charge !== null && typeof forceObj.charge !== 'undefined')) ? forceObj.charge : '';
+        const charge = (chargeRaw === null || typeof chargeRaw === 'undefined') ? '' : String(chargeRaw).trim();
+        const charged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt)) ? 'OK' : '';
+        const cN = parseCost(charge);
+        if (cN != null) total += cN;
+        rows.push([user, String(auditCur), repor, oid, charge, charged]);
+      }
+      if (rows.length) rows.push(['TOTAL', '', '', '', String(total.toFixed(2)).replace('.', ','), '']);
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const filename = `refil2_cobrar_orderids_${isAll ? 'all' : 'filtered'}_${ts}.csv`;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send('\ufeff' + csvFrom(header, rows));
+    }
+
+    const header = ['Solicitação', 'Compra', 'Dias', 'Usuário', 'Tipo', 'Atual', 'Repor', 'Final', 'Quantidade antes da reposição', 'Audit Resultado', 'Status', 'Mensagem', 'Forçado em', 'Refil ID', 'Custo', 'Cobrado OK'];
+    for (const it of docs) {
+      const requestedAt = it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : '';
+      const requested = requestedAt ? fmtPtBr(requestedAt) : '';
+      const purchaseAt = it && (it.purchaseAtLabel || it.purchaseAt) ? (it.purchaseAtLabel || fmtPtBr(it.purchaseAt)) : '';
+      const reqMs = requestedAt ? new Date(requestedAt).getTime() : 0;
+      const purMs = it && it.purchaseAt ? new Date(it.purchaseAt).getTime() : 0;
+      const days = (Number.isFinite(reqMs) && reqMs && Number.isFinite(purMs) && purMs) ? String(Math.floor((reqMs - purMs) / (24 * 60 * 60 * 1000))) : '';
+      const user = String(it && it.username ? it.username : '').trim();
+      const tipo = String(it && (it.lastFollowersTipoLabel || it.lastFollowersTipo) ? (it.lastFollowersTipoLabel || it.lastFollowersTipo) : '').trim();
+      const sum = resolveSummary(it);
+      const atual = (sum.current != null) ? String(Math.trunc(Number(sum.current))) : '';
+      const repor = (sum.drop != null) ? String(Math.trunc(Number(sum.drop))) : '';
+      const finalV = (sum.finalQty != null) ? String(Math.trunc(Number(sum.finalQty))) : '';
+      const auditCur = (it && it.audit && typeof it.audit === 'object' && typeof it.audit.currentFollowers === 'number' && Number.isFinite(it.audit.currentFollowers))
+        ? String(Math.trunc(it.audit.currentFollowers))
+        : '';
+      const auditRes = (it && it.audit && typeof it.audit === 'object' && typeof it.audit.result === 'string') ? String(it.audit.result) : '';
+      const st = resolveStatus(it);
+      const forceObj = (it && it.forceRefil && typeof it.forceRefil === 'object') ? it.forceRefil : {};
+      const forcedAtRaw = forceObj && (forceObj.forcedAt || forceObj.finishedAt || forceObj.requestedAt) ? (forceObj.forcedAt || forceObj.finishedAt || forceObj.requestedAt) : '';
+      const forcedAt = forcedAtRaw ? fmtPtBr(forcedAtRaw) : '';
+      const oid = (forceObj && (forceObj.orderId !== null && typeof forceObj.orderId !== 'undefined')) ? String(forceObj.orderId).trim() : '';
+      const chargeRaw = (forceObj && (forceObj.charge !== null && typeof forceObj.charge !== 'undefined')) ? forceObj.charge : '';
+      const charge = (chargeRaw === null || typeof chargeRaw === 'undefined') ? '' : String(chargeRaw).trim();
+      const charged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt)) ? 'OK' : '';
+      rows.push([requested, purchaseAt, days, user, tipo, atual, repor, finalV, auditCur, auditRes, st.label, st.msg, forcedAt, oid, charge, charged]);
+    }
+
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const filename = `refil2_export_${isAll ? 'all' : 'filtered'}_${ts}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send('\ufeff' + csvFrom(header, rows));
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -24824,6 +25278,7 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
     const link = String(body.link || '').trim();
     const quantity = parseInt(String(body.quantity || '0'), 10) || 0;
     const valueRaw = String(body.value || '').trim();
+    const discountPercent = Math.round(Number(body.discountPercent || 0) || 0);
     const phoneRaw = String(body.phone || '').trim();
     const email = String(body.email || '').trim();
     const name = String(body.name || '').trim();
@@ -24832,6 +25287,7 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
     if (!category || !type || !link || !(quantity > 0) || !valueRaw) return res.status(400).json({ ok: false, error: 'missing_fields' });
     const phoneDigits = phoneRaw.replace(/\D/g, '');
     if (!phoneDigits || phoneDigits.length < 10) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    if (discountPercent < 0 || discountPercent >= 100) return res.status(400).json({ ok: false, error: 'invalid_discount_percent' });
 
     const parseBrlToCents = (s) => {
       const raw = String(s || '').trim().replace(/[^\d,\.]/g, '');
@@ -24871,6 +25327,18 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
     const correlationID = `wa_${Date.now()}_${rand}`;
     const identifier = correlationID;
 
+    let discountBaseCents = null;
+    if (discountPercent > 0) {
+      try {
+        const { calculatePrice } = require('./pricing');
+        const base = await calculatePrice(type, quantity, [{ key: 'categoria_servico', value: category }]);
+        const baseNum = Number(base || 0) || 0;
+        if (baseNum > 0) discountBaseCents = baseNum;
+      } catch (_) {
+        discountBaseCents = null;
+      }
+    }
+
     const additionalInfoPaid = [
       { key: 'categoria_servico', value: category },
       { key: 'tipo_servico', value: type },
@@ -24879,12 +25347,18 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
       { key: 'payment_method', value: 'whatsapp' },
       { key: 'saleChannel', value: 'whatsapp' },
       { key: 'phone', value: phoneDigits },
+      ...(discountPercent > 0 ? [
+        { key: 'discount_percent', value: String(discountPercent) },
+        ...(discountBaseCents != null ? [{ key: 'discount_base_cents', value: String(discountBaseCents) }] : []),
+        { key: 'discount_final_cents', value: String(valueCents) }
+      ] : []),
       ...(email ? [{ key: 'email', value: email }] : []),
       ...(instaUser ? [{ key: 'instagram_username', value: instaUser }] : []),
       ...(obs ? [{ key: 'manual_obs', value: obs }] : [])
     ];
     const additionalInfoMapPaid = additionalInfoPaid.reduce((acc, it) => { const k = String(it?.key || '').trim(); if (k) acc[k] = String(it?.value || '').trim(); return acc; }, {});
 
+    const discountLabel = discountPercent > 0 ? ` (desconto ${discountPercent}%)` : '';
     const doc = {
       createdAt: nowIso,
       paidAt: nowIso,
@@ -24901,6 +25375,13 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
       instagramUsername: instaUser || null,
       saleChannel: 'whatsapp',
       isWhatsappSale: true,
+      ...(discountPercent > 0 ? {
+        discount: {
+          percent: discountPercent,
+          ...(discountBaseCents != null ? { baseCents: discountBaseCents } : {}),
+          finalCents: valueCents
+        }
+      } : {}),
       customer: {
         ...(name ? { name } : {}),
         phone: `+55${phoneDigits}`,
@@ -24910,7 +25391,7 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
       additionalInfoMapPaid,
       additionalInfo: additionalInfoPaid,
       additionalInfoMap: additionalInfoMapPaid,
-      comment: obs ? `WhatsApp manual: ${obs}` : 'WhatsApp manual',
+      comment: obs ? `WhatsApp manual${discountLabel}: ${obs}` : `WhatsApp manual${discountLabel}`,
       manualSale: { source: 'whatsapp', skipEmails: true }
     };
 
@@ -25113,6 +25594,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const sessionSelectedFor = (req.session && req.session.selectedFor) ? req.session.selectedFor : {};
     if (view === 'service_types') {
       const serviceVisibility = await loadServiceVisibility();
+      const serviceTypeServiceIds = await loadServiceTypeServiceIds();
       const defs = {
         seguidores: [
           { key: 'mistos', label: 'Seguidores Mistos' },
@@ -25128,7 +25610,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           { key: 'visualizacoes_reels', label: 'Visualizações Reels' }
         ]
       };
-      return res.render('painel', { view: 'service_types', serviceVisibility, serviceTypeDefs: defs });
+      return res.render('painel', { view: 'service_types', serviceVisibility, serviceTypeDefs: defs, serviceTypeServiceIds });
     }
 
     const paidStatusRegex = '\\b(pago|paid|settled|captured|authorized|succeeded|aprovado|confirmado)\\b';
@@ -25344,10 +25826,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return key1 === 'biel' || key1 === 'virginia' || key1 === 'pedro' || key2 === 'biel' || key2 === 'virginia' || key2 === 'pedro';
       };
       const normalizeInstaUser = (v) => {
-        const raw = String(v == null ? '' : v).trim();
-        if (!raw) return '';
-        const cleaned = raw.replace(/^@+/, '').replace(/\/+$/, '').split('/').pop().trim();
-        return cleaned.toLowerCase();
+        try {
+          const raw = String(v == null ? '' : v).trim();
+          if (!raw) return '';
+          let s = raw;
+          s = s.replace(/\s+/g, ' ').trim();
+          s = s.replace(/^@+/, '@');
+          s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+          s = s.replace(/[?#].*$/, '');
+          s = s.replace(/\/+$/, '');
+          const at = /@([a-zA-Z0-9._]{1,30})/.exec(s);
+          if (at && at[1]) return String(at[1]).toLowerCase();
+          const seg = s.split('/').map(x => String(x || '').trim()).filter(Boolean)[0] || '';
+          const cleaned = seg.replace(/^@+/, '').replace(/[^a-zA-Z0-9._]/g, '').trim();
+          if (cleaned) return cleaned.toLowerCase();
+          const m = /([a-zA-Z0-9._]{1,30})/.exec(s);
+          return (m && m[1]) ? String(m[1]).toLowerCase() : '';
+        } catch (_) {
+          return '';
+        }
       };
       const onlyDigits = (v) => String(v == null ? '' : v).replace(/\D/g, '');
       const normalizeEmail = (v) => {
@@ -25387,15 +25884,49 @@ app.get('/painel', requireAdmin, async (req, res) => {
         try {
           const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
           const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
-          const mp = mapPaid && (mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil) ? String(mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil) : '';
+          const mp = mapPaid && (
+            mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil ||
+            mapPaid.instagram || mapPaid.usuario || mapPaid.usuario_instagram || mapPaid.perfil_instagram || mapPaid.instagram_user
+          )
+            ? String(
+              mapPaid.instagram_username || mapPaid.instauser || mapPaid.username || mapPaid.perfil ||
+              mapPaid.instagram || mapPaid.usuario || mapPaid.usuario_instagram || mapPaid.perfil_instagram || mapPaid.instagram_user
+            )
+            : '';
           if (mp) return mp;
-          const m = map && (map.instagram_username || map.instauser || map.username || map.perfil) ? String(map.instagram_username || map.instauser || map.username || map.perfil) : '';
+          const m = map && (
+            map.instagram_username || map.instauser || map.username || map.perfil ||
+            map.instagram || map.usuario || map.usuario_instagram || map.perfil_instagram || map.instagram_user
+          )
+            ? String(
+              map.instagram_username || map.instauser || map.username || map.perfil ||
+              map.instagram || map.usuario || map.usuario_instagram || map.perfil_instagram || map.instagram_user
+            )
+            : '';
           if (m) return m;
           const direct = o && (o.instagramUsername || o.instauser) ? String(o.instagramUsername || o.instauser) : '';
           if (direct) return direct;
-          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'instagram_username') || pickInfoFromArray(o && o.additionalInfoPaid, 'instauser') || pickInfoFromArray(o && o.additionalInfoPaid, 'username');
+          const ap =
+            pickInfoFromArray(o && o.additionalInfoPaid, 'instagram_username') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'instauser') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'username') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'perfil') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'instagram') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'usuario') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'usuario_instagram') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'perfil_instagram') ||
+            pickInfoFromArray(o && o.additionalInfoPaid, 'instagram_user');
           if (ap) return ap;
-          const a = pickInfoFromArray(o && o.additionalInfo, 'instagram_username') || pickInfoFromArray(o && o.additionalInfo, 'instauser') || pickInfoFromArray(o && o.additionalInfo, 'username');
+          const a =
+            pickInfoFromArray(o && o.additionalInfo, 'instagram_username') ||
+            pickInfoFromArray(o && o.additionalInfo, 'instauser') ||
+            pickInfoFromArray(o && o.additionalInfo, 'username') ||
+            pickInfoFromArray(o && o.additionalInfo, 'perfil') ||
+            pickInfoFromArray(o && o.additionalInfo, 'instagram') ||
+            pickInfoFromArray(o && o.additionalInfo, 'usuario') ||
+            pickInfoFromArray(o && o.additionalInfo, 'usuario_instagram') ||
+            pickInfoFromArray(o && o.additionalInfo, 'perfil_instagram') ||
+            pickInfoFromArray(o && o.additionalInfo, 'instagram_user');
           if (a) return a;
         } catch (_) {}
         return '';
@@ -25436,7 +25967,61 @@ app.get('/painel', requireAdmin, async (req, res) => {
         } catch (_) {}
         return '';
       };
-      const resolveTypeKey = (o) => {
+      const resolveQuantity = (o) => {
+        try {
+          const q0 = (o && typeof o.qtd !== 'undefined') ? Number(o.qtd) : NaN;
+          if (Number.isFinite(q0) && q0 > 0) return q0;
+        } catch (_) {}
+        try {
+          const q1 = (o && typeof o.quantidade !== 'undefined') ? Number(o.quantidade) : NaN;
+          if (Number.isFinite(q1) && q1 > 0) return q1;
+        } catch (_) {}
+        try {
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          const qp = mapPaid && (mapPaid.qtd || mapPaid.quantidade || mapPaid.quantity) ? Number(mapPaid.qtd || mapPaid.quantidade || mapPaid.quantity) : NaN;
+          if (Number.isFinite(qp) && qp > 0) return qp;
+          const qm = map && (map.qtd || map.quantidade || map.quantity) ? Number(map.qtd || map.quantidade || map.quantity) : NaN;
+          if (Number.isFinite(qm) && qm > 0) return qm;
+        } catch (_) {}
+        try {
+          const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'qtd') || pickInfoFromArray(o && o.additionalInfoPaid, 'quantidade') || pickInfoFromArray(o && o.additionalInfoPaid, 'quantity');
+          const n = Number(ap);
+          if (Number.isFinite(n) && n > 0) return n;
+        } catch (_) {}
+        try {
+          const a = pickInfoFromArray(o && o.additionalInfo, 'qtd') || pickInfoFromArray(o && o.additionalInfo, 'quantidade') || pickInfoFromArray(o && o.additionalInfo, 'quantity');
+          const n = Number(a);
+          if (Number.isFinite(n) && n > 0) return n;
+        } catch (_) {}
+        return 0;
+      };
+      const resolveAdditionalInfoArr = (o) => {
+        try {
+          if (o && Array.isArray(o.additionalInfoPaid) && o.additionalInfoPaid.length) return o.additionalInfoPaid;
+        } catch (_) {}
+        try {
+          if (o && Array.isArray(o.additionalInfo) && o.additionalInfo.length) return o.additionalInfo;
+        } catch (_) {}
+        return [];
+      };
+      const withCategory = (arr, category) => {
+        const a = Array.isArray(arr) ? arr.slice(0) : [];
+        const c = String(category || '').trim();
+        if (!c) return a;
+        let found = false;
+        for (let i = 0; i < a.length; i++) {
+          const it = a[i];
+          if (it && it.key === 'categoria_servico') {
+            a[i] = Object.assign({}, it, { value: c });
+            found = true;
+            break;
+          }
+        }
+        if (!found) a.push({ key: 'categoria_servico', value: c });
+        return a;
+      };
+      const resolveTypeKey = async (o, paidCents, qty) => {
         try {
           let type = o.tipo || o.tipoServico;
           const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
@@ -25445,6 +26030,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
           if (!type && map && map.tipo_servico) type = map.tipo_servico;
           if (!type) type = pickInfoFromArray(o && o.additionalInfoPaid, 'tipo_servico') || pickInfoFromArray(o && o.additionalInfo, 'tipo_servico');
           const cat = (() => {
+            const c0 = (o && (o.categoriaServico || o.categoria_servico)) ? String(o.categoriaServico || o.categoria_servico) : '';
+            if (c0) return c0;
             const c1 = mapPaid && mapPaid.categoria_servico ? String(mapPaid.categoria_servico) : '';
             if (c1) return c1;
             const c2 = map && map.categoria_servico ? String(map.categoria_servico) : '';
@@ -25456,14 +26043,45 @@ app.get('/painel', requireAdmin, async (req, res) => {
           const category = (() => {
             if (categoryRaw.includes('segu')) return 'seguidores';
             if (categoryRaw.includes('curti')) return 'curtidas';
+            if (categoryRaw.includes('visual')) return 'visualizacoes';
             return categoryRaw;
           })();
+          if (t === 'curtidas_brasileiras') return 'curtidas_brasileiras';
+          if (t === 'curtidas_reais') return 'curtidas_organicas';
           if (category === 'curtidas' && t === 'mistos') return 'curtidas_mistos';
+          if (category === 'curtidas' && t === 'brasileiros') return 'curtidas_brasileiras';
           if (category === 'curtidas' && t === 'organicos') return 'curtidas_organicas';
           if (category === 'seguidores' && t === 'mistos') return 'seguidores_mistos';
           if (category === 'seguidores' && t === 'brasileiros') return 'seguidores_brasileiros';
           if (category === 'seguidores' && t === 'organicos') return 'seguidores_organicos';
-          if (!category && (t === 'mistos' || t === 'organicos' || t === 'brasileiros')) return `${t}_sem_categoria`;
+          if (!category && (t === 'mistos' || t === 'organicos' || t === 'brasileiros')) {
+            const q = Number(qty || 0) || 0;
+            const paid = Number(paidCents || 0) || 0;
+            if (q > 0 && paid > 0) {
+              try {
+                const { calculatePrice } = require('./pricing');
+                const infoBase = resolveAdditionalInfoArr(o);
+                const expFollowers = await calculatePrice(t, q, withCategory(infoBase, 'seguidores'));
+                const expLikes = await calculatePrice(t, q, withCategory(infoBase, 'curtidas'));
+                const diffF = Number.isFinite(expFollowers) && expFollowers > 0 ? Math.abs(paid - expFollowers) : Number.POSITIVE_INFINITY;
+                const diffL = Number.isFinite(expLikes) && expLikes > 0 ? Math.abs(paid - expLikes) : Number.POSITIVE_INFINITY;
+                const inferred = (diffL < diffF) ? 'curtidas' : 'seguidores';
+                if (inferred === 'curtidas') {
+                  if (t === 'mistos') return 'curtidas_mistos';
+                  if (t === 'organicos') return 'curtidas_organicas';
+                  if (t === 'brasileiros') return 'curtidas_brasileiras';
+                } else {
+                  if (t === 'mistos') return 'seguidores_mistos';
+                  if (t === 'organicos') return 'seguidores_organicos';
+                  if (t === 'brasileiros') return 'seguidores_brasileiros';
+                }
+              } catch (_) {}
+            }
+            if (t === 'mistos') return 'seguidores_mistos';
+            if (t === 'organicos') return 'seguidores_organicos';
+            if (t === 'brasileiros') return 'seguidores_brasileiros';
+            return `${t}_sem_categoria`;
+          }
           return t || '-';
         } catch (_) {
           return '-';
@@ -25528,9 +26146,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
           payment_method: 1,
           method: 1,
           valueCents: 1,
+          qtd: 1,
+          quantidade: 1,
           customer: 1,
           instagramUsername: 1,
           instauser: 1,
+          categoriaServico: 1,
+          categoria_servico: 1,
           tipo: 1,
           tipoServico: 1,
           additionalInfoMapPaid: 1,
@@ -25542,8 +26164,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
       const customerAgg = new Map();
       const serviceAgg = new Map();
+      const typeTotalOrders = new Map();
       let unknownCustomerOrders = 0;
       let consideredOrders = 0;
+      let consideredOrdersWithUsername = 0;
       let bumpOnlyOrders = 0;
 
       const getPaidTotalCents = (order) => {
@@ -25579,45 +26203,72 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const customerName = String(resolveCustomerName(o) || '').trim();
         if (isTestUser(ig, customerName)) continue;
 
-        const totalPaid = getPaidTotalCents(o) / 100;
+        const paidCents = getPaidTotalCents(o);
+        const totalPaid = paidCents / 100;
         if (!(Number.isFinite(totalPaid) && totalPaid > 0)) continue;
 
         consideredOrders += 1;
 
-        const phoneDigits = onlyDigits(resolvePhone(o));
-        const email = normalizeEmail(resolveEmail(o));
-        const customerKey = ig ? `ig:${ig}` : (phoneDigits ? `ph:${phoneDigits}` : '');
+        const customerKey = ig ? `ig:${ig}` : '';
         if (!customerKey) {
           unknownCustomerOrders += 1;
         } else {
-          const username = ig ? (`@${ig}`) : (customerName ? customerName : '');
-          const label = username || (phoneDigits ? (`+${phoneDigits}`) : '-');
-          const cur = customerAgg.get(customerKey) || { orders: 0, spend: 0, label, username, phone: phoneDigits ? (`+${phoneDigits}`) : '', email };
+          consideredOrdersWithUsername += 1;
+          const username = `@${ig}`;
+          const label = username;
+          const cur = customerAgg.get(customerKey) || { orders: 0, spend: 0, label, username, phone: '', email: '', coreTypes: new Set(), coreTypeCounts: new Map() };
           cur.orders += 1;
           if (!cur.username && username) cur.username = username;
-          if (!cur.phone && phoneDigits) cur.phone = `+${phoneDigits}`;
-          if (!cur.email && email) cur.email = email;
 
           cur.spend += totalPaid;
           customerAgg.set(customerKey, cur);
         }
 
-        const typeKey = resolveTypeKey(o);
+        const q = resolveQuantity(o);
+        const typeKey = await resolveTypeKey(o, paidCents, q);
         const bumpsRaw = resolveOrderBumpsRaw(o);
         const bumps = parseBumps(bumpsRaw);
         const hasBumps = (bumps.views || bumps.likes || bumps.comments || bumps.upgrade) ? true : false;
         const typeStr = String(typeKey || '').toLowerCase().trim();
         const typeIsEmpty = !typeStr || typeStr === '-' || typeStr === 'null' || typeStr === 'undefined';
         const typeIsBump = typeStr.includes('orderbump') || typeStr.includes('order_bump') || typeStr === 'bump';
-        const bumpOnly = hasBumps && (typeIsEmpty || typeIsBump);
+        const typeIsNonCore = typeStr.includes('refil') || typeStr.includes('repos') || typeStr.includes('extens') || typeStr.includes('token') || typeStr.includes('tempor') || typeStr.includes('link');
+        const bumpOnly = (hasBumps && (typeIsEmpty || typeIsBump)) || typeIsNonCore;
+        const isCoreType = !bumpOnly && !typeIsEmpty && !typeIsBump;
         if (bumpOnly) bumpOnlyOrders += 1;
-        if (!bumpOnly) serviceAgg.set(typeKey, (serviceAgg.get(typeKey) || 0) + 1);
+        if (isCoreType && customerKey) {
+          serviceAgg.set(typeKey, (serviceAgg.get(typeKey) || 0) + 1);
+          typeTotalOrders.set(typeKey, (typeTotalOrders.get(typeKey) || 0) + 1);
+        }
+        try {
+          if (isCoreType && customerKey) {
+            const cur = customerAgg.get(customerKey);
+            if (cur) {
+              if (!(cur.coreTypes instanceof Set)) cur.coreTypes = new Set();
+              if (!(cur.coreTypeCounts instanceof Map)) cur.coreTypeCounts = new Map();
+              cur.coreTypes.add(typeKey);
+              cur.coreTypeCounts.set(typeKey, (cur.coreTypeCounts.get(typeKey) || 0) + 1);
+            }
+          }
+        } catch (_) {}
       }
 
       const totalCustomers = customerAgg.size;
       let repeatCustomers = 0;
       for (const v of customerAgg.values()) if (v && v.orders > 1) repeatCustomers += 1;
       const repeatCustomerPct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+      const typeTotalCustomers = new Map();
+      const typeRepeatCustomers = new Map();
+      for (const v of customerAgg.values()) {
+        try {
+          const types = (v && v.coreTypes instanceof Set) ? Array.from(v.coreTypes.values()) : [];
+          if (types.length !== 1) continue;
+          const t = types[0];
+          typeTotalCustomers.set(t, (typeTotalCustomers.get(t) || 0) + 1);
+          const cnt = (v && v.coreTypeCounts instanceof Map) ? (v.coreTypeCounts.get(t) || 0) : 0;
+          if (cnt >= 2) typeRepeatCustomers.set(t, (typeRepeatCustomers.get(t) || 0) + 1);
+        } catch (_) {}
+      }
 
       const topUsersByOrders = Array.from(customerAgg.values())
         .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend))
@@ -25635,10 +26286,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
         if (key === 'seguidores_mistos') return 'Seguidores mistos';
         if (key === 'seguidores_brasileiros') return 'Seguidores brasileiros';
         if (key === 'curtidas_organicas') return 'Curtidas orgânicas';
-        if (key === 'curtidas_mistos') return 'Curtidas mistos';
-        if (key === 'mistos_sem_categoria') return 'Mistos (sem categoria)';
-        if (key === 'organicos_sem_categoria') return 'Orgânicos (sem categoria)';
-        if (key === 'brasileiros_sem_categoria') return 'Brasileiros (sem categoria)';
+        if (key === 'curtidas_mistos') return 'Curtidas mistas';
+        if (key === 'curtidas_brasileiras') return 'Curtidas brasileiras';
+        if (key === 'visualizacoes_reels') return 'Visualizações Reels';
+        if (key === 'mistos_sem_categoria') return 'Mistos (categoria ausente)';
+        if (key === 'organicos_sem_categoria') return 'Orgânicos (categoria ausente)';
+        if (key === 'brasileiros_sem_categoria') return 'Brasileiros (categoria ausente)';
         const s = raw.replace(/_/g, ' ');
         return s.charAt(0).toUpperCase() + s.slice(1);
       };
@@ -25682,12 +26335,31 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }))
         .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend) || String(a.label).localeCompare(String(b.label)));
 
+      const ltvByType = Array.from(typeTotalCustomers.entries())
+        .map(([type, total]) => {
+          const totalCustomers = Number(total || 0) || 0;
+          const repeatCustomers = Number(typeRepeatCustomers.get(type) || 0) || 0;
+          const totalOrders = Number(typeTotalOrders.get(type) || 0) || 0;
+          return {
+            type: String(type || ''),
+            label: prettyServiceLabel(type),
+            totalCustomers,
+            repeatCustomers,
+            pctRepeatCustomers: totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0,
+            totalOrders
+          };
+        })
+        .filter(it => it && it.type && it.type !== '-' && it.type !== 'null' && it.type !== 'undefined' && Number(it.totalOrders || 0) >= 2)
+        .sort((a, b) => (b.pctRepeatCustomers - a.pctRepeatCustomers) || (b.totalCustomers - a.totalCustomers) || (b.totalOrders - a.totalOrders) || String(a.label).localeCompare(String(b.label)));
+
       return {
         period,
-        totalTransactions: consideredOrders,
+        totalTransactions: consideredOrdersWithUsername,
         totalCustomers,
         repeatCustomers,
         repeatCustomerPct,
+        ltvGeneralCustomerRepeatPct: repeatCustomerPct,
+        ltvByType,
         topUsersByOrders,
         topUsersBySpend,
         topService,
@@ -27572,13 +28244,98 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('refil2_requests');
         if (view === 'refil2') {
+          const buildRefil2Filter = () => {
+            const and = [];
+            const auto = String(req.query.refil2Auto || 'all').trim();
+            if (auto === 'auto') and.push({ automated: true });
+            if (auto === 'manual') and.push({ $or: [{ automated: { $exists: false } }, { automated: { $ne: true } }] });
+
+            const userQ = String(req.query.refil2User || '').trim();
+            if (userQ) {
+              const clean = userQ.replace(/^@+/, '').trim();
+              if (clean) {
+                const safe = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const rx = new RegExp(safe, 'i');
+                and.push({ username: { $regex: rx } });
+              }
+            }
+
+            const audit = String(req.query.refil2Audit || 'all').trim().toLowerCase();
+            if (audit === 'ok') and.push({ 'audit.result': { $regex: /^ok/i } });
+            if (audit === 'nok') and.push({ 'audit.result': { $regex: /^nok/i } });
+
+            const legacyOnlyWithOid = String(req.query.refil2OnlyWithRefilId || '') === '1';
+            const refilIdModeRaw = String(req.query.refil2RefilId || '').trim().toLowerCase();
+            const refilIdMode = (refilIdModeRaw === 'with' || refilIdModeRaw === 'without') ? refilIdModeRaw : (legacyOnlyWithOid ? 'with' : 'all');
+            if (refilIdMode === 'with') and.push({ 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } });
+            if (refilIdMode === 'without') and.push({ $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] });
+
+            const status = String(req.query.refil2Status || 'all').trim();
+            if (status && status !== 'all') {
+              const reason = (v) => ({ $or: [{ decisionReason: v }, { reason: v }] });
+              const decision = (v) => ({ $or: [{ decisionStatus: v }, { decision: v }, { status: v }] });
+              const exec = (v) => ({ $or: [{ execStatus: v }, { exec: v }] });
+              if (status === 'success') {
+                and.push({
+                  $or: [
+                    reason('add_reorder_ok'),
+                    { $and: [exec('success'), decision('initiated')] }
+                  ]
+                });
+              } else if (status === 'info') {
+                and.push({ $or: [reason('below_min_drop'), decision('no_drop')] });
+              } else if (status === 'blocked') {
+                and.push({
+                  $or: [
+                    decision('blocked'),
+                    reason('paid_today'),
+                    reason('no_orders'),
+                    reason('no_followers_purchase'),
+                    reason('reorder_expired')
+                  ]
+                });
+              } else if (status === 'error') {
+                and.push({ $or: [exec('error'), decision('error')] });
+              }
+            }
+
+            const dateCol = String(req.query.refil2DateColumn || 'requested').trim();
+            const fromStr = String(req.query.refil2DateFrom || '').trim();
+            const toStr = String(req.query.refil2DateTo || '').trim();
+            const from = fromStr ? new Date(`${fromStr}T00:00:00.000Z`) : null;
+            const to = toStr ? new Date(`${toStr}T23:59:59.999Z`) : null;
+            const hasFrom = !!(from && Number.isFinite(from.getTime()));
+            const hasTo = !!(to && Number.isFinite(to.getTime()));
+            if (hasFrom || hasTo) {
+              const range = {};
+              if (hasFrom) range.$gte = from;
+              if (hasTo) range.$lte = to;
+              if (dateCol === 'forced') {
+                and.push({
+                  $or: [
+                    { 'forceRefil.forcedAt': range },
+                    { 'forceRefil.finishedAt': range },
+                    { 'forceRefil.requestedAt': range }
+                  ]
+                });
+              } else {
+                and.push({ $or: [{ requestedAt: range }, { createdAt: range }] });
+              }
+            }
+
+            if (!and.length) return {};
+            if (and.length === 1) return and[0];
+            return { $and: and };
+          };
+
           const rawPage = parseInt(String(req.query.refil2Page || '1'), 10);
           const pageSize = 200;
-          const total = await col.countDocuments({});
+          const filter = buildRefil2Filter();
+          const total = await col.countDocuments(filter);
           const totalPages = Math.max(1, Math.ceil((Number(total) || 0) / pageSize));
           const page = Number.isFinite(rawPage) ? Math.max(1, Math.min(totalPages, rawPage)) : 1;
           const skip = (page - 1) * pageSize;
-          const rows = await col.find({}).sort({ requestedAt: -1, _id: -1 }).skip(skip).limit(pageSize).toArray();
+          const rows = await col.find(filter).sort({ requestedAt: -1, _id: -1 }).skip(skip).limit(pageSize).toArray();
           refil2Requests = Array.isArray(rows) ? rows : [];
           refil2Pagination = { page, pageSize, total: Number(total) || 0, totalPages };
         } else {
@@ -27955,6 +28712,45 @@ app.post('/api/painel/service-visibility', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/painel/service-type-service-ids', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const next = (body && body.values && typeof body.values === 'object') ? body.values : {};
+    const clean = {};
+    const normalize = (ctx, key, provider, raw) => {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !(n > 0)) return;
+      if (!clean[ctx]) clean[ctx] = {};
+      if (!clean[ctx][key]) clean[ctx][key] = {};
+      clean[ctx][key][provider] = Math.trunc(n);
+    };
+    for (const ctx of ['seguidores', 'curtidas', 'visualizacoes']) {
+      const vCtx = (next && next[ctx] && typeof next[ctx] === 'object') ? next[ctx] : null;
+      if (!vCtx) continue;
+      for (const key of Object.keys(vCtx)) {
+        const vKey = (vCtx && vCtx[key] && typeof vCtx[key] === 'object') ? vCtx[key] : null;
+        if (!vKey) continue;
+        for (const provider of Object.keys(vKey)) {
+          normalize(ctx, String(key), String(provider), vKey[provider]);
+        }
+      }
+    }
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    await settingsCol.updateOne(
+      { _id: 'service_type_service_ids' },
+      { $set: { values: clean, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    __serviceTypeServiceIdsCache = { atMs: Date.now(), values: null };
+    const reloaded = await loadServiceTypeServiceIds();
+    __serviceTypeServiceIdsCache = { atMs: Date.now(), values: reloaded };
+    return res.json({ ok: true, values: reloaded });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/refil2/audit', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -28015,7 +28811,7 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
     const idsRaw = Array.isArray(body.ids) ? body.ids : [];
-    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 50);
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 300);
     if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
 
     const { getCollection } = require('./mongodbClient');
@@ -28200,6 +28996,295 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
     return res.json({ ok: true, updated, results });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'verify_failed', message: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/refil2/ids-by-filter', requireAdmin, async (req, res) => {
+  try {
+    const buildRefil2Filter = () => {
+      const and = [];
+      const auto = String(req.query.refil2Auto || 'all').trim();
+      if (auto === 'auto') and.push({ automated: true });
+      if (auto === 'manual') and.push({ $or: [{ automated: { $exists: false } }, { automated: { $ne: true } }] });
+
+      const userQ = String(req.query.refil2User || '').trim();
+      if (userQ) {
+        const clean = userQ.replace(/^@+/, '').trim();
+        if (clean) {
+          const safe = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const rx = new RegExp(safe, 'i');
+          and.push({ username: { $regex: rx } });
+        }
+      }
+
+      const audit = String(req.query.refil2Audit || 'all').trim().toLowerCase();
+      if (audit === 'ok') and.push({ 'audit.result': { $regex: /^ok/i } });
+      if (audit === 'nok') and.push({ 'audit.result': { $regex: /^nok/i } });
+
+      const legacyOnlyWithOid = String(req.query.refil2OnlyWithRefilId || '') === '1';
+      const refilIdModeRaw = String(req.query.refil2RefilId || '').trim().toLowerCase();
+      const refilIdMode = (refilIdModeRaw === 'with' || refilIdModeRaw === 'without') ? refilIdModeRaw : (legacyOnlyWithOid ? 'with' : 'all');
+      if (refilIdMode === 'with') and.push({ 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } });
+      if (refilIdMode === 'without') and.push({ $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] });
+
+      const status = String(req.query.refil2Status || 'all').trim();
+      if (status && status !== 'all') {
+        const reason = (v) => ({ $or: [{ decisionReason: v }, { reason: v }] });
+        const decision = (v) => ({ $or: [{ decisionStatus: v }, { decision: v }, { status: v }] });
+        const exec = (v) => ({ $or: [{ execStatus: v }, { exec: v }] });
+        if (status === 'success') {
+          and.push({
+            $or: [
+              reason('add_reorder_ok'),
+              { $and: [exec('success'), decision('initiated')] }
+            ]
+          });
+        } else if (status === 'info') {
+          and.push({ $or: [reason('below_min_drop'), decision('no_drop')] });
+        } else if (status === 'blocked') {
+          and.push({
+            $or: [
+              decision('blocked'),
+              reason('paid_today'),
+              reason('no_orders'),
+              reason('no_followers_purchase'),
+              reason('reorder_expired')
+            ]
+          });
+        } else if (status === 'error') {
+          and.push({ $or: [exec('error'), decision('error')] });
+        }
+      }
+
+      const dateCol = String(req.query.refil2DateColumn || 'requested').trim();
+      const fromStr = String(req.query.refil2DateFrom || '').trim();
+      const toStr = String(req.query.refil2DateTo || '').trim();
+      const from = fromStr ? new Date(`${fromStr}T00:00:00.000Z`) : null;
+      const to = toStr ? new Date(`${toStr}T23:59:59.999Z`) : null;
+      const hasFrom = !!(from && Number.isFinite(from.getTime()));
+      const hasTo = !!(to && Number.isFinite(to.getTime()));
+      if (hasFrom || hasTo) {
+        const range = {};
+        if (hasFrom) range.$gte = from;
+        if (hasTo) range.$lte = to;
+        if (dateCol === 'forced') {
+          and.push({
+            $or: [
+              { 'forceRefil.forcedAt': range },
+              { 'forceRefil.finishedAt': range },
+              { 'forceRefil.requestedAt': range }
+            ]
+          });
+        } else {
+          and.push({ $or: [{ requestedAt: range }, { createdAt: range }] });
+        }
+      }
+
+      if (!and.length) return {};
+      if (and.length === 1) return and[0];
+      return { $and: and };
+    };
+
+    const limitRaw = parseInt(String(req.query.limit || req.query.max || '2000'), 10);
+    const limit = Math.max(1, Math.min(10000, Number.isFinite(limitRaw) ? limitRaw : 2000));
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const filter = buildRefil2Filter();
+    const rows = await col.find(filter, { projection: { _id: 1 } }).sort({ requestedAt: -1, _id: -1 }).limit(limit).toArray();
+    const ids = (Array.isArray(rows) ? rows : []).map(r => String(r && r._id ? r._id : '')).filter(Boolean);
+    return res.json({ ok: true, total: ids.length, ids });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'ids_failed', message: e?.message || String(e) });
+  }
+});
+
+app.get('/api/painel/refil2/audit-report', requireAdmin, async (req, res) => {
+  try {
+    const buildRefil2Filter = () => {
+      const and = [];
+      const auto = String(req.query.refil2Auto || 'all').trim();
+      if (auto === 'auto') and.push({ automated: true });
+      if (auto === 'manual') and.push({ $or: [{ automated: { $exists: false } }, { automated: { $ne: true } }] });
+
+      const userQ = String(req.query.refil2User || '').trim();
+      if (userQ) {
+        const clean = userQ.replace(/^@+/, '').trim();
+        if (clean) {
+          const safe = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const rx = new RegExp(safe, 'i');
+          and.push({ username: { $regex: rx } });
+        }
+      }
+
+      const audit = String(req.query.refil2Audit || 'all').trim().toLowerCase();
+      if (audit === 'ok') and.push({ 'audit.result': { $regex: /^ok/i } });
+      if (audit === 'nok') and.push({ 'audit.result': { $regex: /^nok/i } });
+
+      const legacyOnlyWithOid = String(req.query.refil2OnlyWithRefilId || '') === '1';
+      const refilIdModeRaw = String(req.query.refil2RefilId || '').trim().toLowerCase();
+      const refilIdMode = (refilIdModeRaw === 'with' || refilIdModeRaw === 'without') ? refilIdModeRaw : (legacyOnlyWithOid ? 'with' : 'all');
+      if (refilIdMode === 'with') and.push({ 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } });
+      if (refilIdMode === 'without') and.push({ $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] });
+
+      const status = String(req.query.refil2Status || 'all').trim();
+      if (status && status !== 'all') {
+        const reason = (v) => ({ $or: [{ decisionReason: v }, { reason: v }] });
+        const decision = (v) => ({ $or: [{ decisionStatus: v }, { decision: v }, { status: v }] });
+        const exec = (v) => ({ $or: [{ execStatus: v }, { exec: v }] });
+        if (status === 'success') {
+          and.push({
+            $or: [
+              reason('add_reorder_ok'),
+              { $and: [exec('success'), decision('initiated')] }
+            ]
+          });
+        } else if (status === 'info') {
+          and.push({ $or: [reason('below_min_drop'), decision('no_drop')] });
+        } else if (status === 'blocked') {
+          and.push({
+            $or: [
+              decision('blocked'),
+              reason('paid_today'),
+              reason('no_orders'),
+              reason('no_followers_purchase'),
+              reason('reorder_expired')
+            ]
+          });
+        } else if (status === 'error') {
+          and.push({ $or: [exec('error'), decision('error')] });
+        }
+      }
+
+      const dateCol = String(req.query.refil2DateColumn || 'requested').trim();
+      const fromStr = String(req.query.refil2DateFrom || '').trim();
+      const toStr = String(req.query.refil2DateTo || '').trim();
+      const from = fromStr ? new Date(`${fromStr}T00:00:00.000Z`) : null;
+      const to = toStr ? new Date(`${toStr}T23:59:59.999Z`) : null;
+      const hasFrom = !!(from && Number.isFinite(from.getTime()));
+      const hasTo = !!(to && Number.isFinite(to.getTime()));
+      if (hasFrom || hasTo) {
+        const range = {};
+        if (hasFrom) range.$gte = from;
+        if (hasTo) range.$lte = to;
+        if (dateCol === 'forced') {
+          and.push({
+            $or: [
+              { 'forceRefil.forcedAt': range },
+              { 'forceRefil.finishedAt': range },
+              { 'forceRefil.requestedAt': range }
+            ]
+          });
+        } else {
+          and.push({ $or: [{ requestedAt: range }, { createdAt: range }] });
+        }
+      }
+
+      if (!and.length) return {};
+      if (and.length === 1) return and[0];
+      return { $and: and };
+    };
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+
+    const baseFilter = buildRefil2Filter();
+    const withBase = (extra) => {
+      const parts = [];
+      if (baseFilter && Object.keys(baseFilter).length) parts.push(baseFilter);
+      if (extra && typeof extra === 'object' && Object.keys(extra).length) parts.push(extra);
+      if (!parts.length) return {};
+      if (parts.length === 1) return parts[0];
+      return { $and: parts };
+    };
+
+    const totals = {
+      auditedTotal: await col.countDocuments(withBase({ 'audit.result': { $regex: /^(ok|nok)/i } })),
+      okCount: await col.countDocuments(withBase({ 'audit.result': { $regex: /^ok/i } })),
+      nokCount: await col.countDocuments(withBase({ 'audit.result': { $regex: /^nok/i } })),
+      nokWithId: await col.countDocuments(withBase({ $and: [{ 'audit.result': { $regex: /^nok/i } }, { 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } }] })),
+      nokNoId: await col.countDocuments(withBase({ $and: [{ 'audit.result': { $regex: /^nok/i } }, { $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] }] }))
+    };
+
+    const bucketRaw = String(req.query.bucket || '').trim().toLowerCase();
+    const bucket = bucketRaw || '';
+    let rows = [];
+    let more = '';
+    if (bucket) {
+      const rowFilterParts = [];
+      if (baseFilter && Object.keys(baseFilter).length) rowFilterParts.push(baseFilter);
+      rowFilterParts.push(auditExists);
+      if (bucket === 'ok') rowFilterParts.push({ 'audit.result': { $regex: /^ok/i } });
+      else if (bucket === 'nok') rowFilterParts.push({ 'audit.result': { $regex: /^nok/i } });
+      else if (bucket === 'nok_with_id') {
+        rowFilterParts.push({ 'audit.result': { $regex: /^nok/i } });
+        rowFilterParts.push({ 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } });
+      } else if (bucket === 'nok_no_id') {
+        rowFilterParts.push({ 'audit.result': { $regex: /^nok/i } });
+        rowFilterParts.push({ $or: [{ 'forceRefil.orderId': { $exists: false } }, { 'forceRefil.orderId': null }, { 'forceRefil.orderId': '' }] });
+      }
+      const rowFilter = (rowFilterParts.length === 1) ? rowFilterParts[0] : { $and: rowFilterParts };
+      const docs = await col.find(
+        rowFilter,
+        {
+          projection: {
+            _id: 1,
+            requestedAt: 1,
+            createdAt: 1,
+            username: 1,
+            lastFollowersTipoLabel: 1,
+            lastFollowersTipo: 1,
+            summary: 1,
+            computed: 1,
+            data: 1,
+            audit: 1,
+            forceRefil: 1
+          }
+        }
+      ).sort({ requestedAt: -1, _id: -1 }).limit(500).toArray();
+
+      const safeInt = (v) => {
+        try {
+          if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+          const s0 = String(v == null ? '' : v).trim();
+          if (!s0) return null;
+          const n = Number(s0.replace(/[^\d-]/g, ''));
+          return Number.isFinite(n) ? Math.trunc(n) : null;
+        } catch (_) { return null; }
+      };
+
+      rows = (Array.isArray(docs) ? docs : []).map((it) => {
+        const sum = (it && (it.summary || it.computed || it.data) && typeof (it.summary || it.computed || it.data) === 'object') ? (it.summary || it.computed || it.data) : {};
+        const auditObj = (it && it.audit && typeof it.audit === 'object') ? it.audit : {};
+        const auditCurrent = safeInt(auditObj.currentFollowers);
+        const auditResult = String(auditObj.result || '').trim();
+        const initialQty = safeInt(sum.initial ?? sum.quantidade_inicial ?? sum.quantidadeInicial);
+        const currentQty = safeInt(sum.current ?? sum.quantidade_atual ?? sum.quantidadeAtual);
+        const dropQty = safeInt(sum.drop ?? sum.deficit ?? sum.quantidade_de_queda ?? sum.quantidadeQueda);
+        const computedFinal = (currentQty != null && dropQty != null) ? (Math.trunc(currentQty) + Math.trunc(dropQty)) : null;
+        const rawFinal = safeInt(sum.final ?? sum.quantidade_final ?? sum.quantidadeFinal);
+        const finalQty = (computedFinal != null) ? computedFinal : (rawFinal != null ? rawFinal : (initialQty != null ? initialQty : null));
+        const tipo = String(it && (it.lastFollowersTipoLabel || it.lastFollowersTipo) ? (it.lastFollowersTipoLabel || it.lastFollowersTipo) : '-').trim() || '-';
+        const forceObj = (it && it.forceRefil && typeof it.forceRefil === 'object') ? it.forceRefil : {};
+        const refilId = (forceObj && typeof forceObj.orderId !== 'undefined' && forceObj.orderId !== null) ? String(forceObj.orderId).trim() : '';
+        const when = it && (it.requestedAt || it.createdAt) ? (it.requestedAt || it.createdAt) : null;
+        const ms = when ? new Date(when).getTime() : 0;
+        return {
+          id: String(it && it._id ? it._id : ''),
+          requestedAt: Number.isFinite(ms) ? ms : null,
+          username: String(it && it.username ? it.username : ''),
+          tipo,
+          final: (finalQty != null ? Number(finalQty) : null),
+          auditCurrent: (auditCurrent != null ? Number(auditCurrent) : null),
+          auditResult,
+          refilId
+        };
+      });
+      more = (docs && docs.length >= 500) ? 'Mostrando 500 (limite). Use filtros para reduzir.' : '';
+    }
+
+    return res.json({ ok: true, totals, bucket, rows, more });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'report_failed', message: e?.message || String(e) });
   }
 });
 
@@ -28421,8 +29506,8 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     const tipoLower = String(resolvedTipo || '').toLowerCase();
     const tipoRaw = tipoLower;
     let serviceId = null;
-    if (/misto/.test(tipoLower)) serviceId = 663;
-    else if (/brasileir/.test(tipoLower)) serviceId = 23;
+    if (/misto/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
+    else if (/brasileir/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
     if (!serviceId) return res.status(400).json({ ok: false, error: 'unsupported_tipo', message: `Tipo não suportado para forçar refil: ${tipoRaw || '-'}` });
 
     const safeInt = (v) => {
@@ -28745,8 +29830,10 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
     const nowIso = new Date().toISOString();
     const requestedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
     const axiosLocal = require('axios');
-    const PQueue = require('p-queue');
-    const q = new PQueue({ concurrency: 2 });
+    const PQueueMod = require('p-queue');
+    const PQueueCtor = (PQueueMod && (PQueueMod.default || PQueueMod)) ? (PQueueMod.default || PQueueMod) : null;
+    if (!PQueueCtor) return res.status(500).json({ ok: false, error: 'pqueue_missing', message: 'PQueue não disponível' });
+    const q = new PQueueCtor({ concurrency: 2 });
     const results = [];
     const truncate = (s, maxLen) => {
       try {
@@ -28805,6 +29892,11 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
           const auditedCurrent = safeInt(doc?.audit?.currentFollowers);
           if (auditedCurrent == null) {
             results.push({ id, skipped: 'missing_audit_current' });
+            return;
+          }
+          const auditRes0 = String(doc?.audit?.result || '').trim().toLowerCase();
+          if (auditRes0 && auditRes0.startsWith('ok')) {
+            results.push({ id, skipped: 'audit_ok' });
             return;
           }
 
@@ -28867,8 +29959,8 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
 
           const tipoLower = String(resolvedTipo || '').toLowerCase();
           let serviceId = null;
-          if (/misto/.test(tipoLower)) serviceId = 663;
-          else if (/brasileir/.test(tipoLower)) serviceId = 23;
+          if (/misto/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
+          else if (/brasileir/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
           if (!serviceId) {
             results.push({ id, error: 'unsupported_tipo', message: `Tipo não suportado para forçar refil: ${tipoLower || '-'}` });
             return;
@@ -28973,6 +30065,155 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
     return res.json({ ok: true, results });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_bulk_failed', message: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/refil2/force-refil-estimate', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const idsRaw = Array.isArray(body.ids) ? body.ids : [];
+    const ids = Array.from(new Set(idsRaw.map(x => String(x || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)))).slice(0, 500);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido' });
+
+    const key = process.env.FAMA24H_API_KEY || '';
+    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
+
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const { ObjectId } = require('mongodb');
+    const objIds = ids.map(s => new ObjectId(s));
+    const docs = await col.find(
+      { _id: { $in: objIds } },
+      { projection: { _id: 1, username: 1, lastFollowersTipo: 1, lastFollowersTipoLabel: 1, summary: 1, computed: 1, data: 1, audit: 1, forceRefil: 1 } }
+    ).toArray();
+
+    const safeInt = (v) => {
+      try {
+        if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+        const s0 = String(v == null ? '' : v).trim();
+        if (!s0) return null;
+        const s = s0.replace(/\s+/g, '');
+        const normalizeThousands = (raw) => {
+          const x0 = String(raw || '').trim();
+          if (!x0) return '';
+          const x = x0.replace(/\s+/g, '');
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(x)) return x.replace(/\./g, '').replace(',', '.');
+          if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(x)) return x.replace(/,/g, '');
+          if (/^\d+(\.\d{3})+$/.test(x)) return x.replace(/\./g, '');
+          if (/^\d+(,\d{3})+$/.test(x)) return x.replace(/,/g, '');
+          return x0;
+        };
+        const n = Number(normalizeThousands(s));
+        if (Number.isFinite(n)) return Math.trunc(n);
+        const digits = s0.replace(/[^\d-]/g, '');
+        if (!digits) return null;
+        const n2 = Number(digits);
+        return Number.isFinite(n2) ? Math.trunc(n2) : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const axiosLocal = require('axios');
+    const cacheKey = '__MEUAPP_FAMA24H_SERVICES_CACHE';
+    const nowMs = Date.now();
+    const cached = global && global[cacheKey] ? global[cacheKey] : null;
+    const ttlMs = 10 * 60 * 1000;
+    let services = (cached && cached.atMs && (nowMs - cached.atMs) < ttlMs && Array.isArray(cached.services)) ? cached.services : null;
+    if (!services) {
+      const payload = new URLSearchParams({ key: String(key), action: 'services' });
+      const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      const arr = Array.isArray(resp.data) ? resp.data : (Array.isArray(resp.data?.services) ? resp.data.services : []);
+      services = Array.isArray(arr) ? arr : [];
+      try { if (global) global[cacheKey] = { atMs: nowMs, services }; } catch (_) {}
+    }
+    const serviceById = new Map();
+    for (const s of (services || [])) {
+      const sid = (s && (s.service || s.id)) ? String(s.service || s.id).trim() : '';
+      if (!sid) continue;
+      if (!serviceById.has(sid)) serviceById.set(sid, s);
+    }
+    const parseRate = (v) => {
+      try {
+        if (v === null || typeof v === 'undefined') return null;
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const s = String(v || '').trim();
+        if (!s) return null;
+        const n = Number(s.replace(',', '.'));
+        return Number.isFinite(n) ? n : null;
+      } catch (_) { return null; }
+    };
+
+    const estimates = [];
+    let totalEstimated = 0;
+    let eligibleCount = 0;
+    let missingRateCount = 0;
+    let skippedAlreadyForced = 0;
+    let skippedAuditOk = 0;
+    let skippedMissingData = 0;
+
+    for (const doc of (Array.isArray(docs) ? docs : [])) {
+      const id = doc && doc._id ? String(doc._id) : '';
+      if (!id) continue;
+
+      const already = doc && doc.forceRefil && typeof doc.forceRefil === 'object' ? doc.forceRefil : null;
+      const alreadyStatus = String(already && already.status ? already.status : '').toLowerCase().trim();
+      const hasOrderId = !!(already && already.orderId);
+      if (hasOrderId || alreadyStatus === 'created') { skippedAlreadyForced++; continue; }
+
+      const auditRes0 = String(doc?.audit?.result || '').trim().toLowerCase();
+      if (auditRes0 && auditRes0.startsWith('ok')) { skippedAuditOk++; continue; }
+
+      const auditedCurrent = safeInt(doc?.audit?.currentFollowers);
+      if (auditedCurrent == null) { skippedMissingData++; continue; }
+
+      const sum = (doc && doc.summary && typeof doc.summary === 'object') ? doc.summary : (doc && doc.computed && typeof doc.computed === 'object') ? doc.computed : (doc && doc.data && typeof doc.data === 'object') ? doc.data : {};
+      const initialQty = safeInt(sum?.initial ?? sum?.quantidade_inicial ?? sum?.quantidadeInicial);
+      const baseCurrentQty = safeInt(sum?.current ?? sum?.quantidade_atual ?? sum?.quantidadeAtual);
+      const dropQtyOriginal = safeInt(sum?.drop ?? sum?.deficit ?? sum?.quantidade_de_queda ?? sum?.quantidadeQueda);
+      const finalQty = safeInt(sum?.final ?? sum?.quantidade_final ?? sum?.quantidadeFinal) ?? ((baseCurrentQty != null && dropQtyOriginal != null) ? (baseCurrentQty + dropQtyOriginal) : (initialQty != null ? initialQty : null));
+      if (finalQty == null) { skippedMissingData++; continue; }
+
+      const qtyNeeded = Math.max(0, Math.trunc(finalQty) - Math.trunc(auditedCurrent));
+      if (!qtyNeeded || qtyNeeded <= 0) { skippedMissingData++; continue; }
+      if (qtyNeeded > 50000) { skippedMissingData++; continue; }
+      const providerMinQty = 100;
+      const qtyToSend = Math.max(providerMinQty, qtyNeeded);
+
+      const tipoLower = String((doc.lastFollowersTipo || doc.lastFollowersTipoLabel || '')).trim().toLowerCase();
+      let serviceId = null;
+      if (/misto/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
+      else if (/brasileir/.test(tipoLower)) serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
+      if (!serviceId) { skippedMissingData++; continue; }
+
+      const svc = serviceById.get(String(serviceId));
+      const rate = parseRate(svc?.rate ?? svc?.price ?? svc?.cost);
+      if (rate == null) {
+        missingRateCount++;
+        estimates.push({ id, serviceId, quantity: qtyToSend, rate: null, estimated: null });
+        continue;
+      }
+      const estimated = (Number(qtyToSend) * Number(rate)) / 1000;
+      if (Number.isFinite(estimated)) {
+        totalEstimated += estimated;
+        eligibleCount++;
+        estimates.push({ id, serviceId, quantity: qtyToSend, rate, estimated });
+      } else {
+        missingRateCount++;
+        estimates.push({ id, serviceId, quantity: qtyToSend, rate, estimated: null });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      totalEstimated,
+      eligibleCount,
+      missingRateCount,
+      skipped: { alreadyForced: skippedAlreadyForced, auditOk: skippedAuditOk, missingData: skippedMissingData },
+      estimates
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'estimate_failed', message: e?.message || String(e) });
   }
 });
 
@@ -29722,6 +30963,38 @@ function normalizeProfileKey(username) {
   return String(username || '').trim().replace(/^@+/, '').toLowerCase();
 }
 
+async function ensureCouponExists({ code, discountPercentage, maxUsesPerProfile = 1, maxUsesTotal = null }) {
+  try {
+    const couponCode = normalizeCouponCode(code);
+    const pct = Number(discountPercentage || 0) || 0;
+    if (!couponCode || pct <= 0 || pct > 100) return null;
+    const { getCollection } = require('./mongodbClient');
+    const couponsCol = await getCollection('coupons');
+    await couponsCol.updateOne(
+      { code: couponCode },
+      {
+        $set: {
+          code: couponCode,
+          discountPercentage: Math.round(pct),
+          maxUsesTotal: (maxUsesTotal != null && Number(maxUsesTotal) > 0) ? Math.floor(Number(maxUsesTotal)) : null,
+          maxUsesPerProfile: (maxUsesPerProfile != null && Number(maxUsesPerProfile) > 0) ? Math.floor(Number(maxUsesPerProfile)) : null,
+          isActive: true
+        },
+        $setOnInsert: {
+          usedCount: 0,
+          createdAt: new Date(),
+          validFrom: null,
+          validTo: null
+        }
+      },
+      { upsert: true }
+    );
+    return await couponsCol.findOne({ code: couponCode });
+  } catch (_) {
+    return null;
+  }
+}
+
 function parseOptionalDate(value) {
   if (!value) return null;
   const d = new Date(value);
@@ -29805,7 +31078,32 @@ app.get('/api/admin/coupons', requireAdmin, async (req, res) => {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('coupons');
         const coupons = await col.find({}).sort({ createdAt: -1 }).toArray();
-        res.json({ success: true, coupons });
+
+        let usedProfilesCountByCouponId = new Map();
+        try {
+          const ids = (Array.isArray(coupons) ? coupons : []).map(c => c && c._id).filter(Boolean);
+          if (ids.length) {
+            const usesCol = await getCollection('coupon_uses');
+            const agg = await usesCol.aggregate([
+              { $match: { status: 'consumed', couponId: { $in: ids }, profileKey: { $exists: true, $nin: [null, ''] } } },
+              { $group: { _id: { couponId: '$couponId', profileKey: '$profileKey' } } },
+              { $group: { _id: '$_id.couponId', usedProfiles: { $sum: 1 } } }
+            ]).toArray();
+            usedProfilesCountByCouponId = new Map((agg || []).map(x => [String(x._id), Number(x.usedProfiles || 0) || 0]));
+          }
+        } catch (_) {}
+
+        const enriched = (Array.isArray(coupons) ? coupons : []).map(c => {
+          try {
+            const k = String(c && c._id ? c._id : '');
+            const usedProfiles = usedProfilesCountByCouponId.get(k) || 0;
+            return Object.assign({}, c, { usedProfiles });
+          } catch (_) {
+            return c;
+          }
+        });
+
+        res.json({ success: true, coupons: enriched });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -29933,6 +31231,61 @@ app.post('/api/validate-coupon', async (req, res) => {
     }
 });
 
+app.post('/api/checkout/abandoned-lead', async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const emailRaw = String(body.email || '').trim().toLowerCase();
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw);
+    if (!emailOk) return res.status(400).json({ ok: false, error: 'invalid_email' });
+
+    const profileKey = normalizeProfileKey(body.instagram_username || body.instagramUsername || '');
+    const fingerprint = String(body.fingerprint || '').trim();
+    const page = String(body.page || '').trim();
+    const tipo = String(body.tipo_servico || body.tipo || '').trim();
+    const qtd = Number(body.quantidade || body.qtd || 0) || 0;
+    const correlationID = String(body.correlationID || '').trim();
+
+    const { getCollection } = require('./mongodbClient');
+    const leadsCol = await getCollection('checkout_leads');
+
+    const keyParts = [
+      emailRaw,
+      profileKey || '',
+      fingerprint || '',
+      page || '',
+      tipo || '',
+      String(qtd || 0)
+    ].join('|');
+    const dedupeKey = Buffer.from(keyParts).toString('base64').slice(0, 64);
+
+    await leadsCol.updateOne(
+      { dedupeKey },
+      {
+        $setOnInsert: {
+          dedupeKey,
+          createdAt: new Date(),
+          email: emailRaw
+        },
+        $set: {
+          email: emailRaw,
+          profileKey,
+          fingerprint,
+          page,
+          tipo,
+          qtd,
+          correlationID,
+          lastSeenAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'lead_failed', message: e?.message || String(e) });
+  }
+});
+
 const maybeSendPaymentApprovedPreviewEmail = async (server) => {
   try {
     const previewTo = String(process.env.PAYMENT_APPROVED_PREVIEW_TO || '').trim();
@@ -30016,8 +31369,20 @@ const server = app.listen(port, () => {
       return 'count';
     })();
     const recoveryStartIso = (function () {
-      const raw = String(process.env.ORDER_RECOVERY_START_ISO || '11/04/26').trim();
-      if (!raw) return '';
+      const raw = String(process.env.ORDER_RECOVERY_START_ISO || '').trim();
+      if (!raw) {
+        try {
+          const now = new Date();
+          const nowSp = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+          const y = nowSp.getFullYear();
+          const m = nowSp.getMonth();
+          const d = nowSp.getDate();
+          const t = Date.UTC(y, m, d, 3, 0, 0, 0);
+          return new Date(t).toISOString();
+        } catch (_) {
+          return '';
+        }
+      }
       const s = raw;
       const m = /^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/.exec(raw);
       const parsed = m
@@ -30027,7 +31392,6 @@ const server = app.listen(port, () => {
       if (!Number.isFinite(t) || !t) return '';
       return new Date(t).toISOString();
     })();
-    if (!recoveryStartIso) return;
     let running = false;
     const intervalMs = (function () {
       const raw = String(process.env.ORDER_RECOVERY_INTERVAL_MS || '').trim();
@@ -30052,18 +31416,25 @@ const server = app.listen(port, () => {
           'PAGO', 'PAID', 'COMPLETED', 'COMPLETE', 'APPROVED', 'APROVADO', 'CONFIRMADO', 'CONFIRMED',
           'SETTLED', 'CAPTURED', 'SUCCEEDED', 'AUTHORIZED'
         ];
-        const afterMinutes = (function () {
-          const raw = String(process.env.ORDER_RECOVERY_AFTER_MINUTES || '10').trim();
+        const stage1Minutes = (function () {
+          const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '30').trim();
           const n = parseInt(raw, 10);
-          return Number.isFinite(n) && n > 0 ? Math.max(10, Math.min(180, n)) : 10;
+          return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 30;
+        })();
+        const stage2Hours = (function () {
+          const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '24').trim();
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) && n > 0 ? Math.max(12, Math.min(96, n)) : 24;
         })();
         const nowIso = new Date().toISOString();
-        const cutoffIso = new Date(Date.now() - afterMinutes * 60 * 1000).toISOString();
+        const cutoffStage1Iso = new Date(Date.now() - stage1Minutes * 60 * 1000).toISOString();
+        const cutoffStage2Iso = new Date(Date.now() - stage2Hours * 60 * 60 * 1000).toISOString();
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
+        const startCond = recoveryStartIso ? { createdAt: { $exists: true, $gte: recoveryStartIso } } : null;
         const countQuery = {
           $and: [
-            { createdAt: { $exists: true, $gte: recoveryStartIso } },
+            ...(startCond ? [startCond] : []),
             { $or: [{ status: { $exists: false } }, { status: { $nin: paidStatusTokens } }] },
             { $or: [{ 'woovi.status': { $exists: false } }, { 'woovi.status': { $nin: paidStatusTokens } }] },
             { $or: [{ 'expay.status': { $exists: false } }, { 'expay.status': { $nin: paidStatusTokens } }] },
@@ -30077,14 +31448,21 @@ const server = app.listen(port, () => {
         };
         const query = {
           $and: [
-            { createdAt: { $exists: true, $gte: recoveryStartIso } },
+            ...(startCond ? [startCond] : []),
             {
               $or: [
-                { 'emails.paymentRecoveryDueAt': { $exists: true, $lte: nowIso } },
                 {
                   $and: [
-                    { $or: [{ 'emails.paymentRecoveryDueAt': { $exists: false } }, { 'emails.paymentRecoveryDueAt': null }, { 'emails.paymentRecoveryDueAt': '' }] },
-                    { createdAt: { $exists: true, $lte: cutoffIso } }
+                    { createdAt: { $exists: true, $lte: cutoffStage2Iso } },
+                    { $or: [{ 'emails.paymentRecoveryStage30SentAt': { $exists: false } }, { 'emails.paymentRecoveryStage30SentAt': null }, { 'emails.paymentRecoveryStage30SentAt': '' }] }
+                  ]
+                },
+                {
+                  $and: [
+                    { createdAt: { $exists: true, $lte: cutoffStage1Iso } },
+                    { $or: [{ 'emails.paymentRecoveryStage15SentAt': { $exists: false } }, { 'emails.paymentRecoveryStage15SentAt': null }, { 'emails.paymentRecoveryStage15SentAt': '' }] },
+                    { $or: [{ 'emails.paymentRecoveryCoupon15SentAt': { $exists: false } }, { 'emails.paymentRecoveryCoupon15SentAt': null }, { 'emails.paymentRecoveryCoupon15SentAt': '' }] },
+                    { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] }
                   ]
                 }
               ]
@@ -30096,7 +31474,6 @@ const server = app.listen(port, () => {
             { $or: [{ 'woovi.paidAt': { $exists: false } }, { 'woovi.paidAt': null }, { 'woovi.paidAt': '' }] },
             { $or: [{ 'payment.paidAt': { $exists: false } }, { 'payment.paidAt': null }, { 'payment.paidAt': '' }] },
             { 'customer.email': { $exists: true, $nin: [null, ''] } },
-            { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] },
             { $or: [{ 'emails.paymentRecoverySkippedAt': { $exists: false } }, { 'emails.paymentRecoverySkippedAt': null }, { 'emails.paymentRecoverySkippedAt': '' }] },
             { $or: [{ 'emails.paymentRecoveryLockAt': { $exists: false } }, { 'emails.paymentRecoveryLockAt': null }, { 'emails.paymentRecoveryLockAt': '' }] },
             { $or: [{ 'woovi.brCode': { $exists: true, $ne: null } }, { 'woovi.qrCodeImage': { $exists: true, $ne: null } }, { 'expay.brCode': { $exists: true, $ne: null } }, { 'expay.qrCodeImage': { $exists: true, $ne: null } }] }
@@ -30105,19 +31482,144 @@ const server = app.listen(port, () => {
         let pendingUnpaidCount = 0;
         try { pendingUnpaidCount = await col.countDocuments(countQuery); } catch (_) { pendingUnpaidCount = 0; }
         const docs = await col.find(query).sort({ createdAt: 1, _id: 1 }).limit(batch).toArray();
-        try { console.log(`🔁 [recovery-loop] mode=${recoveryMode} afterMin=${afterMinutes} start=${recoveryStartIso} cutoff=${cutoffIso} batch=${batch} found=${docs ? docs.length : 0} pendingUnpaid=${pendingUnpaidCount}`); } catch (_) {}
+        try { console.log(`🔁 [recovery-loop] mode=${recoveryMode} stage1Min=${stage1Minutes} stage2H=${stage2Hours} start=${recoveryStartIso || 'any'} batch=${batch} found=${docs ? docs.length : 0} pendingUnpaid=${pendingUnpaidCount}`); } catch (_) {}
         try {
           global.orderRecoveryStats = {
             checkedAt: new Date().toISOString(),
             mode: recoveryMode,
-            afterMinutes,
-            startIso: recoveryStartIso,
+            stage1Minutes,
+            stage2Hours,
+            startIso: recoveryStartIso || '',
             pendingUnpaidCount,
             candidates: docs ? docs.length : 0
           };
         } catch (_) {}
+        const escapeRegExp = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const normalizeUsernameForRecovery = (v) => {
+          try {
+            let s = String(v || '').trim();
+            if (!s) return '';
+            s = s.replace(/[`"'“”‘’]/g, '').trim();
+            s = s.replace(/^@+/, '@');
+            s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+            s = s.replace(/[?#].*$/, '');
+            s = s.replace(/\/+$/, '');
+            const at = /@([a-zA-Z0-9._]{1,30})/.exec(s);
+            if (at && at[1]) return String(at[1]).toLowerCase();
+            const parts = s.split('/').map(x => String(x || '').trim()).filter(Boolean);
+            const seg = parts.length ? parts[parts.length - 1] : s;
+            const cleaned = String(seg || '').replace(/^@+/, '').replace(/[^a-zA-Z0-9._]/g, '').trim();
+            return cleaned ? cleaned.toLowerCase() : '';
+          } catch (_) {
+            return '';
+          }
+        };
+        const extractUsernameFromOrder = (o) => {
+          try {
+            if (!o) return '';
+            const mapPaid = o.additionalInfoMapPaid || {};
+            const map = o.additionalInfoMap || {};
+            const paidArr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+            const baseArr = Array.isArray(o.additionalInfo) ? o.additionalInfo : [];
+            const pickArr = (arr, key) => {
+              const it = (Array.isArray(arr) ? arr : []).find(x => x && String(x.key || '').trim() === key);
+              return it && typeof it.value !== 'undefined' ? String(it.value) : '';
+            };
+            return (
+              o.instagramUsername ||
+              o.instauser ||
+              mapPaid.instagram_username ||
+              mapPaid.username ||
+              mapPaid.perfil ||
+              map.instagram_username ||
+              map.username ||
+              map.perfil ||
+              pickArr(paidArr, 'instagram_username') ||
+              pickArr(paidArr, 'username') ||
+              pickArr(paidArr, 'perfil') ||
+              pickArr(baseArr, 'instagram_username') ||
+              pickArr(baseArr, 'username') ||
+              pickArr(baseArr, 'perfil') ||
+              ''
+            );
+          } catch (_) {
+            return '';
+          }
+        };
+        const isPaidOrderQuery = {
+          $or: [
+            { status: { $in: paidStatusTokens } },
+            { 'woovi.status': { $in: paidStatusTokens } },
+            { paidAt: { $exists: true, $nin: [null, ''] } },
+            { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } }
+          ]
+        };
+
         for (const d of (docs || [])) {
-          try { await maybeSendPaymentRecoveryEmail(d, col); } catch (_) {}
+          try {
+            const createdAt = d && d.createdAt ? new Date(d.createdAt) : null;
+            const pendingMs = createdAt && Number.isFinite(createdAt.getTime()) ? createdAt.getTime() : null;
+            const emailRaw = String(d?.customer?.email || '').trim().toLowerCase();
+            const hasEmail = !!emailRaw;
+            const u = normalizeUsernameForRecovery(extractUsernameFromOrder(d));
+            const hasUser = !!u;
+
+            const alreadyPaidNow = !!(
+              (d && typeof d.status === 'string' && paidStatusTokens.includes(d.status)) ||
+              (d && typeof d['woovi.status'] === 'string' && paidStatusTokens.includes(d['woovi.status'])) ||
+              (d && d.paidAt) ||
+              (d && d.woovi && d.woovi.paidAt) ||
+              (d && d.payment && d.payment.paidAt)
+            );
+            if (alreadyPaidNow) {
+              try { await col.updateOne({ _id: d._id }, { $set: { 'emails.paymentRecoverySkippedAt': new Date().toISOString(), 'emails.paymentRecoverySkipReason': 'already_paid' } }); } catch (_) {}
+              continue;
+            }
+
+            if (pendingMs && (hasEmail || hasUser)) {
+              const matchOr = [];
+              if (hasEmail) {
+                const er = new RegExp('^' + escapeRegExp(emailRaw) + '$', 'i');
+                matchOr.push({ 'customer.email': er });
+                matchOr.push({ 'additionalInfoMap.email': er });
+                matchOr.push({ 'additionalInfoMapPaid.email': er });
+                matchOr.push({ additionalInfo: { $elemMatch: { key: 'email', value: er } } });
+                matchOr.push({ additionalInfoPaid: { $elemMatch: { key: 'email', value: er } } });
+              }
+              if (hasUser) {
+                const ur = new RegExp(escapeRegExp(u), 'i');
+                matchOr.push({ instagramUsername: ur });
+                matchOr.push({ instauser: ur });
+                matchOr.push({ 'additionalInfoMap.instagram_username': ur });
+                matchOr.push({ 'additionalInfoMapPaid.instagram_username': ur });
+                matchOr.push({ additionalInfo: { $elemMatch: { key: 'instagram_username', value: ur } } });
+                matchOr.push({ additionalInfoPaid: { $elemMatch: { key: 'instagram_username', value: ur } } });
+              }
+
+              const newerPaid = await col.findOne(
+                {
+                  $and: [
+                    isPaidOrderQuery,
+                    { createdAt: { $gt: new Date(pendingMs).toISOString() } },
+                    { $or: matchOr }
+                  ]
+                },
+                { projection: { _id: 1, createdAt: 1 } }
+              );
+              if (newerPaid) {
+                try {
+                  await col.updateOne(
+                    { _id: d._id },
+                    { $set: { 'emails.paymentRecoverySkippedAt': new Date().toISOString(), 'emails.paymentRecoverySkipReason': 'has_newer_paid_order', 'emails.paymentRecoverySkippedBecauseOrderId': newerPaid._id } }
+                  );
+                } catch (_) {}
+                continue;
+              }
+            }
+
+            await maybeSendPaymentRecoveryEmail(d, col);
+          } catch (_) {}
         }
       } catch (_) {
       } finally {
@@ -30126,6 +31628,226 @@ const server = app.listen(port, () => {
     };
     try { console.log(`🔁 [recovery-loop] enabled mode=${recoveryMode} intervalMs=${intervalMs} defaultAfterMin=10 start=${recoveryStartIso}`); } catch (_) {}
     setTimeout(() => { tick().catch(() => {}); }, 3000);
+    setInterval(() => { tick().catch(() => {}); }, intervalMs);
+  })();
+  (function startAbandonedCheckoutRecoveryLoop() {
+    const enabledRaw = String(process.env.ABANDONED_RECOVERY_ENABLED || '1').trim().toLowerCase();
+    const enabled = !(enabledRaw === '0' || enabledRaw === 'false' || enabledRaw === 'no');
+    if (!enabled) return;
+
+    let running = false;
+    const intervalMs = (function () {
+      const raw = String(process.env.ABANDONED_RECOVERY_INTERVAL_MS || '').trim();
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n > 0) return Math.max(60 * 1000, Math.min(60 * 60 * 1000, n));
+      return 5 * 60 * 1000;
+    })();
+    const stage1Minutes = (function () {
+      const raw = String(process.env.ABANDONED_RECOVERY_STAGE1_MINUTES || process.env.ABANDONED_RECOVERY_AFTER_MINUTES || '15').trim();
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 15;
+    })();
+    const stage2Hours = (function () {
+      const raw = String(process.env.ABANDONED_RECOVERY_STAGE2_HOURS || '24').trim();
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? Math.max(12, Math.min(96, n)) : 24;
+    })();
+    const batch = (function () {
+      const raw = String(process.env.ABANDONED_RECOVERY_BATCH || '').trim();
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n > 0) return Math.max(1, Math.min(150, n));
+      return 40;
+    })();
+
+    const coupon15Code = normalizeCouponCode(process.env.ABANDONED_RECOVERY_COUPON15_CODE || 'ABRECUP15');
+    const coupon30Code = normalizeCouponCode(process.env.ABANDONED_RECOVERY_COUPON30_CODE || 'ABRECUP30');
+    const coupon15Pct = 15;
+    const coupon30Pct = 30;
+
+    const baseUrl = (function () {
+      const candidates = [
+        process.env.SITE_URL,
+        process.env.PUBLIC_URL,
+        process.env.APP_URL,
+        process.env.BASE_URL
+      ];
+      const picked = candidates.map(s => String(s || '').trim()).find(Boolean);
+      const u = picked || 'https://agenciaoppus.site';
+      return u.replace(/\/+$/, '');
+    })();
+
+    const sendAbandonedEmail = async (lead, stage) => {
+      try {
+        const to = String(lead?.email || '').trim();
+        if (!to) return false;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return false;
+        if (!transporter || typeof transporter.sendMail !== 'function') return false;
+
+        const ig = String(lead?.profileKey || '').trim();
+        const saudacao = ig ? `@${ig}` : 'Cliente';
+        const codeToSend = stage === 2 ? coupon30Code : coupon15Code;
+        const pctToSend = stage === 2 ? coupon30Pct : coupon15Pct;
+        const pctLabel = `${pctToSend}%`;
+        const checkoutUrl = (function () {
+          const p = String(lead?.page || '').trim();
+          if (p && p.startsWith('/')) return baseUrl + p;
+          return baseUrl + '/checkout';
+        })();
+
+        const subject = stage === 2
+          ? `Agência Oppus — Você ainda não finalizou seu pedido (Cupom ${coupon30Pct}%)`
+          : `Agência Oppus — Vimos que você não finalizou seu pedido (Cupom ${coupon15Pct}%)`;
+        const text = [
+          'Compra não finalizada',
+          '',
+          `Olá, ${saudacao}`,
+          '',
+          'Vimos que você informou seus dados, mas não finalizou o pedido.',
+          `Para te ajudar, liberamos um cupom de ${pctLabel} de desconto (1x por perfil).`,
+          '',
+          `Cupom: ${codeToSend}`,
+          checkoutUrl ? `Finalizar compra: ${checkoutUrl}` : '',
+          '',
+          'Obs: o cupom só pode ser usado uma vez por usuário (@).',
+          'Dúvidas: suporte@agenciaoppus.site'
+        ].filter(Boolean).join('\n');
+
+        const html = `
+<div style="margin:0;padding:0;background:#f5f7fb;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f7fb" style="background:#f5f7fb;padding:16px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td bgcolor="#111827" style="padding:14px 20px;font-family:Arial,Helvetica,sans-serif;background:#111827;background-color:#111827;color:#ffffff;text-align:center;">
+              <div style="font-size:14px;font-weight:800;letter-spacing:0.06em;color:#ffffff;">Agência Oppus</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 20px;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+              <div style="font-size:16px;font-weight:800;margin:0 0 10px 0;">Olá, ${escapeHtml(saudacao)}</div>
+              <div style="font-size:14px;line-height:1.55;margin:0 0 14px 0;">
+                Vimos que você informou seus dados, mas não finalizou o pedido.
+              </div>
+              <div style="font-size:14px;line-height:1.55;margin:0 0 14px 0;">
+                Para te ajudar, liberamos um cupom de <strong>${escapeHtml(pctLabel)}</strong> de desconto (1x por perfil).
+              </div>
+              <div style="margin:0 0 6px 0;font-size:12px;color:#6b7280;">Cupom</div>
+              <div style="padding:12px 14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:16px;font-weight:900;letter-spacing:0.08em;text-align:center;">
+                ${escapeHtml(codeToSend)}
+              </div>
+              <div style="margin:14px 0 0 0;text-align:center;">
+                <a href="${escapeHtml(checkoutUrl)}" style="display:inline-block;padding:10px 14px;background:#2563eb;color:#ffffff;border-radius:10px;font-size:14px;font-weight:900;text-decoration:none;">Finalizar compra</a>
+              </div>
+              <div style="margin:14px 0 0 0;font-size:12px;color:#6b7280;">
+                Obs: o cupom só pode ser usado uma vez por usuário (@).
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>`;
+
+        const from = 'Agência Oppus <recuperacao@agenciaoppus.site>';
+        const bcc = getAdminEmailBcc(to);
+        await transporter.sendMail({ from, to, bcc, subject, text, html });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const { getCollection } = require('./mongodbClient');
+        const leadsCol = await getCollection('checkout_leads');
+        const ordersCol = await getCollection('checkout_orders');
+
+        try { await ensureCouponExists({ code: coupon15Code, discountPercentage: coupon15Pct, maxUsesPerProfile: 1 }); } catch (_) {}
+        try { await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 }); } catch (_) {}
+
+        const cutoffStage1Iso = new Date(Date.now() - stage1Minutes * 60 * 1000).toISOString();
+        const cutoffStage2Iso = new Date(Date.now() - stage2Hours * 60 * 60 * 1000).toISOString();
+        const leads = await leadsCol.find({
+          email: { $exists: true, $nin: [null, ''] },
+          $or: [{ convertedAt: { $exists: false } }, { convertedAt: null }, { convertedAt: '' }],
+          $or: [
+            {
+              $and: [
+                { createdAt: { $exists: true, $lte: cutoffStage2Iso } },
+                { $or: [{ emailStage30SentAt: { $exists: false } }, { emailStage30SentAt: null }, { emailStage30SentAt: '' }] }
+              ]
+            },
+            {
+              $and: [
+                { createdAt: { $exists: true, $lte: cutoffStage1Iso } },
+                { $or: [{ emailStage15SentAt: { $exists: false } }, { emailStage15SentAt: null }, { emailStage15SentAt: '' }] },
+                { $or: [{ emailSentAt: { $exists: false } }, { emailSentAt: null }, { emailSentAt: '' }] }
+              ]
+            }
+          ]
+        }).sort({ createdAt: 1, _id: 1 }).limit(batch).toArray();
+
+        for (const lead of (leads || [])) {
+          try {
+            const email = String(lead?.email || '').trim().toLowerCase();
+            if (!email) continue;
+            const createdAt = lead?.createdAt ? new Date(lead.createdAt) : null;
+            const leadMs = createdAt && Number.isFinite(createdAt.getTime()) ? createdAt.getTime() : 0;
+            const ageMs = leadMs ? (Date.now() - leadMs) : 0;
+            const stage = (ageMs >= (stage2Hours * 60 * 60 * 1000) && !lead?.emailStage30SentAt) ? 2 : 1;
+
+            const ig = String(lead?.profileKey || '').trim();
+            const matchOr = [];
+            const er = new RegExp('^' + String(email).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+            matchOr.push({ 'customer.email': er });
+            matchOr.push({ 'additionalInfoMap.email': er });
+            matchOr.push({ 'additionalInfoMapPaid.email': er });
+            matchOr.push({ additionalInfo: { $elemMatch: { key: 'email', value: er } } });
+            matchOr.push({ additionalInfoPaid: { $elemMatch: { key: 'email', value: er } } });
+            if (ig) {
+              const ur = new RegExp(String(ig).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+              matchOr.push({ instagramUsername: ur });
+              matchOr.push({ instauser: ur });
+              matchOr.push({ 'additionalInfoMap.instagram_username': ur });
+              matchOr.push({ 'additionalInfoMapPaid.instagram_username': ur });
+              matchOr.push({ additionalInfo: { $elemMatch: { key: 'instagram_username', value: ur } } });
+              matchOr.push({ additionalInfoPaid: { $elemMatch: { key: 'instagram_username', value: ur } } });
+            }
+
+            const hasOrder = await ordersCol.findOne({
+              createdAt: { $exists: true, $gte: (leadMs ? new Date(leadMs).toISOString() : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) },
+              $or: matchOr
+            }, { projection: { _id: 1, createdAt: 1 } });
+
+            if (hasOrder) {
+              await leadsCol.updateOne({ _id: lead._id }, { $set: { convertedAt: new Date(), convertedOrderId: hasOrder._id } });
+              continue;
+            }
+
+            const ok = await sendAbandonedEmail(lead, stage);
+            if (ok) {
+              const set = stage === 2
+                ? { emailStage30SentAt: new Date(), couponCode: coupon30Code, couponPct: coupon30Pct }
+                : { emailStage15SentAt: new Date(), emailSentAt: new Date(), couponCode: coupon15Code, couponPct: coupon15Pct };
+              await leadsCol.updateOne({ _id: lead._id }, { $set: set });
+            } else {
+              await leadsCol.updateOne({ _id: lead._id }, { $set: { emailLastErrorAt: new Date(), emailLastError: 'send_failed' } });
+            }
+          } catch (_) {}
+        }
+      } catch (_) {
+      } finally {
+        running = false;
+      }
+    };
+
+    try { console.log(`🔁 [abandoned-recovery-loop] enabled stage1Min=${stage1Minutes} stage2H=${stage2Hours} intervalMs=${intervalMs} coupon15=${coupon15Code} coupon30=${coupon30Code}`); } catch (_) {}
+    setTimeout(() => { tick().catch(() => {}); }, 5000);
     setInterval(() => { tick().catch(() => {}); }, intervalMs);
   })();
 });
@@ -30298,15 +32020,15 @@ app.post('/api/payment/confirm', async (req, res) => {
       let serviceId = null;
       if (isCurtidasBase) {
           if (/^mistos$/i.test(resolvedTipo)) {
-              serviceId = 671;
+              serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'mistos', provider: 'fama24h', fallback: 671 });
           } else if (/brasileir/i.test(resolvedTipo) || /curtidas[\s_]?brasileiras?/i.test(resolvedTipo)) {
-              serviceId = 679;
+              serviceId = await resolveServiceTypeServiceId({ ctx: 'curtidas', key: 'curtidas_brasileiras', provider: 'fama24h', fallback: 679 });
           }
       } else {
           if (/^mistos$/i.test(resolvedTipo)) {
-              serviceId = 663;
+              serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
           } else if (/^brasileiros$/i.test(resolvedTipo)) {
-              serviceId = 23;
+              serviceId = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
           }
       }
       

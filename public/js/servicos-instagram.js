@@ -383,6 +383,56 @@ document.addEventListener('DOMContentLoaded', function() {
   const contactPhoneInput = document.getElementById('contactPhoneInput');
   const contactEmailInput = document.getElementById('contactEmailInput');
 
+  function isValidEmail(v) {
+    try {
+      const s = String(v || '').trim().toLowerCase();
+      if (!s) return false;
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+    } catch (_) { return false; }
+  }
+
+  async function sendAbandonedLeadOnce() {
+    try {
+      if (!contactEmailInput) return;
+      const email = String(contactEmailInput.value || '').trim().toLowerCase();
+      if (!isValidEmail(email)) return;
+      const igRaw = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+      const fingerprint = getUserFingerprint();
+      const tipo = String(tipoSelect && tipoSelect.value ? tipoSelect.value : '').trim();
+      const qtd = Number(qtdSelect && qtdSelect.value ? qtdSelect.value : 0) || 0;
+      const key = `oppus_abandon_lead_sent:${fingerprint}:${email}:${igRaw}:${tipo}:${qtd}:${window.location && window.location.pathname ? window.location.pathname : ''}`;
+      try {
+        const already = localStorage.getItem(key);
+        if (already) return;
+      } catch (_) {}
+
+      await fetch('/api/checkout/abandoned-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          email,
+          instagram_username: igRaw,
+          fingerprint,
+          page: (window.location && window.location.pathname) ? window.location.pathname : '',
+          tipo_servico: tipo,
+          quantidade: qtd
+        })
+      }).then(r => r.json().catch(() => null)).then(() => null).catch(() => null);
+
+      try { localStorage.setItem(key, String(Date.now())); } catch (_) {}
+    } catch (_) {}
+  }
+
+  try {
+    if (contactEmailInput) {
+      contactEmailInput.addEventListener('blur', () => { sendAbandonedLeadOnce().catch(() => {}); });
+      contactEmailInput.addEventListener('change', () => { sendAbandonedLeadOnce().catch(() => {}); });
+    }
+    if (usernameCheckoutInput) {
+      usernameCheckoutInput.addEventListener('blur', () => { sendAbandonedLeadOnce().catch(() => {}); });
+    }
+  } catch (_) {}
+
   // --- Helpers ---
   function parsePrecoToCents(precoStr) {
     if (!precoStr) return 0;

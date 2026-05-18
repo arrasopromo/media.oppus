@@ -59,6 +59,21 @@
           <label for="waValue">Valor (R$)</label>
           <input id="waValue" type="text" placeholder="Ex: 29,90" />
           <div class="hint" id="waSuggestedHint" style="display:none;"></div>
+          <div class="hint" id="waDiscountHint" style="display:none;"></div>
+        </div>
+        <div class="field">
+          <label>Desconto (opcional)</label>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:8px; font-weight:700; color:#111827;">
+              <input id="waDiscountToggle" type="checkbox" />
+              <span>Aplicar desconto</span>
+            </label>
+            <div id="waDiscountPctWrap" style="display:none; align-items:center; gap:8px;">
+              <input id="waDiscountPct" type="number" min="1" max="100" step="1" placeholder="%" style="width:110px;" />
+              <span class="hint">%</span>
+            </div>
+          </div>
+          <div class="hint">Se marcar, o % de desconto vira obrigatório e o valor é recalculado.</div>
         </div>
         <div class="field">
           <label for="waName">Nome (opcional)</label>
@@ -104,8 +119,13 @@
       var statusEl = el('waStatus');
       var resultEl = el('waResult');
       var suggestedHint = el('waSuggestedHint');
+      var discountHint = el('waDiscountHint');
+      var discountToggleEl = el('waDiscountToggle');
+      var discountPctEl = el('waDiscountPct');
+      var discountPctWrapEl = el('waDiscountPctWrap');
       var lastSuggested = '';
       var valueTouched = false;
+      var discountBaseCents = 0;
 
       var serviceOptions = {
         seguidores: [
@@ -136,7 +156,10 @@
         var qty = Number(qtyEl && qtyEl.value ? qtyEl.value : 0) || 0;
         var val = String(valueEl && valueEl.value ? valueEl.value : '').trim();
         var phone = normalizeDigits(phoneEl && phoneEl.value ? phoneEl.value : '');
-        return !!(cat && type && link && qty > 0 && val && phone.length >= 10);
+        var discOn = !!(discountToggleEl && discountToggleEl.checked);
+        var discPct = Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0;
+        var discOk = !discOn || (discPct > 0 && discPct <= 100);
+        return !!(cat && type && link && qty > 0 && val && phone.length >= 10 && discOk);
       }
       function updateBtn(){
         try { if (btn) btn.disabled = !hasRequired(); } catch(_) {}
@@ -179,6 +202,49 @@
         return String(reais) + ',' + cents;
       }
 
+      function getBaseCentsForDiscount(){
+        var base = Number(discountBaseCents || 0) || 0;
+        if (base > 0) return base;
+        var fromSuggested = parseBrlToCents(lastSuggested);
+        if (fromSuggested > 0) return fromSuggested;
+        var cur = parseBrlToCents(String(valueEl && valueEl.value ? valueEl.value : '').trim());
+        return cur > 0 ? cur : 0;
+      }
+
+      function applyDiscountRecalc(){
+        try {
+          var discOn = !!(discountToggleEl && discountToggleEl.checked);
+          if (!discOn) {
+            try { if (discountHint) discountHint.style.display = 'none'; } catch(_) {}
+            return;
+          }
+          var pct = Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0;
+          if (!(pct > 0 && pct <= 100)) {
+            try {
+              if (discountHint) {
+                discountHint.style.display = '';
+                discountHint.textContent = 'Informe o % de desconto.';
+              }
+            } catch(_) {}
+            return;
+          }
+          var base = getBaseCentsForDiscount();
+          if (!(base > 0)) return;
+          var discounted = Math.max(0, Math.round(base * (100 - pct) / 100));
+          var brl = formatCentsToBrl(discounted);
+          if (valueEl) {
+            valueEl.value = brl;
+            valueTouched = true;
+          }
+          try {
+            if (discountHint) {
+              discountHint.style.display = '';
+              discountHint.textContent = 'Preço com desconto: R$ ' + brl + ' (base R$ ' + formatCentsToBrl(base) + ')';
+            }
+          } catch(_) {}
+        } catch(_) {}
+      }
+
       async function fetchSuggested(){
         try {
           var cat = String(catEl && catEl.value ? catEl.value : '').trim();
@@ -191,6 +257,11 @@
           }
           var url = '/api/painel/whatsapp-orders/price?category=' + encodeURIComponent(cat) + '&type=' + encodeURIComponent(type) + '&quantity=' + encodeURIComponent(String(qty));
           var resp = await fetch(url, { method:'GET', headers:{'Accept':'application/json'}, credentials:'same-origin' });
+          if (resp && resp.status === 401) {
+            try { alert('Sessão expirada. Faça login novamente.'); } catch(_) {}
+            try { window.location.href = '/login'; } catch(_) {}
+            return;
+          }
           var data = await resp.json().catch(function(){ return null; });
           if (!data || data.ok !== true) {
             lastSuggested = '';
@@ -212,6 +283,10 @@
           var current = String(valueEl && valueEl.value ? valueEl.value : '').trim();
           var shouldAutofill = (!valueTouched) || (!current) || (current === lastSuggested);
           if (shouldAutofill && valueEl) valueEl.value = brl;
+          if (discountToggleEl && discountToggleEl.checked) {
+            discountBaseCents = parseBrlToCents(brl);
+            applyDiscountRecalc();
+          }
           updateBtn();
         } catch (_) {}
       }
@@ -226,6 +301,28 @@
         if (nameEl) nameEl.addEventListener('input', updateBtn);
         if (obsEl) obsEl.addEventListener('input', updateBtn);
         if (valueEl) valueEl.addEventListener('input', function(){ valueTouched = true; updateBtn(); });
+        if (discountToggleEl) discountToggleEl.addEventListener('change', function(){
+          try {
+            if (discountToggleEl.checked) {
+              try { discountBaseCents = getBaseCentsForDiscount(); } catch(_) { discountBaseCents = 0; }
+              if (discountPctWrapEl) discountPctWrapEl.style.display = 'flex';
+              if (discountPctEl) {
+                if (!discountPctEl.value) discountPctEl.value = '15';
+                discountPctEl.focus();
+              }
+              applyDiscountRecalc();
+            } else {
+              if (discountPctWrapEl) discountPctWrapEl.style.display = 'none';
+              if (discountPctEl) discountPctEl.value = '';
+              discountBaseCents = 0;
+              if (discountHint) discountHint.style.display = 'none';
+              valueTouched = false;
+              fetchSuggested();
+            }
+          } catch(_) {}
+          updateBtn();
+        });
+        if (discountPctEl) discountPctEl.addEventListener('input', function(){ applyDiscountRecalc(); updateBtn(); });
       } catch(_) {}
 
       if (clearBtn) {
@@ -238,6 +335,11 @@
           try { if (nameEl) nameEl.value = ''; } catch(_) {}
           try { if (obsEl) obsEl.value = ''; } catch(_) {}
           try { valueTouched = false; } catch(_) {}
+          try { if (discountToggleEl) discountToggleEl.checked = false; } catch(_) {}
+          try { if (discountPctWrapEl) discountPctWrapEl.style.display = 'none'; } catch(_) {}
+          try { if (discountPctEl) discountPctEl.value = ''; } catch(_) {}
+          try { discountBaseCents = 0; } catch(_) {}
+          try { if (discountHint) discountHint.style.display = 'none'; } catch(_) {}
           try { if (resultEl) resultEl.style.display = 'none'; } catch(_) {}
           setStatus('');
           updateBtn();
@@ -254,11 +356,15 @@
             link: String(linkEl && linkEl.value ? linkEl.value : '').trim(),
             quantity: Number(qtyEl && qtyEl.value ? qtyEl.value : 0) || 0,
             value: String(valueEl && valueEl.value ? valueEl.value : '').trim(),
+            discountPercent: (discountToggleEl && discountToggleEl.checked) ? (Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0) : 0,
             phone: String(phoneEl && phoneEl.value ? phoneEl.value : '').trim(),
             email: String(emailEl && emailEl.value ? emailEl.value : '').trim(),
             name: String(nameEl && nameEl.value ? nameEl.value : '').trim(),
             obs: String(obsEl && obsEl.value ? obsEl.value : '').trim()
           };
+          if (discountToggleEl && discountToggleEl.checked) {
+            if (!(payload.discountPercent > 0 && payload.discountPercent <= 100)) return alert('Informe o % de desconto.');
+          }
           var cents = parseBrlToCents(payload.value);
           if (!(cents > 0)) return alert('Valor inválido.');
           btn.disabled = true;
@@ -283,6 +389,12 @@
             if (controller) fetchOpts.signal = controller.signal;
             var resp = await fetch('/api/painel/whatsapp-orders/create', fetchOpts);
             if (tmo) { try { clearTimeout(tmo); } catch(_) {} }
+            if (resp && resp.status === 401) {
+              setStatus('Sessão expirada.');
+              try { alert('Sessão expirada. Faça login novamente.'); } catch(_) {}
+              try { window.location.href = '/login'; } catch(_) {}
+              return;
+            }
             var data = await resp.json().catch(function(){ return null; });
             if (!data || data.ok !== true) {
               var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + resp.status);
@@ -295,11 +407,13 @@
               var html = '';
               html += '<div style="font-weight:900;color:#111827;margin-bottom:8px;">Pedido solicitado</div>';
               if (data.refilUrl) {
-                html += '<div class="hint" style="margin-top:6px;">Caso precise de reposição pode utilizar o link abaixo.</div>';
-                html += '<div class="hint">Atente-se as regras de reposição.</div>';
-                html += '<div style="margin:10px 0 4px;"><div class="mono">' + esc(data.refilUrl) + '</div></div>';
+                var msgText = 'Pedido solicitado\n\n' +
+                  'Caso precise de reposição pode utilizar o link abaixo.\n' +
+                  'Atente-se as regras de reposição.\n\n' +
+                  '`' + String(data.refilUrl || '') + '`';
+                html += '<div style="margin-top:10px; white-space:pre-wrap; line-height:1.45; color:#111827;">' + esc(msgText) + '</div>';
                 html += '<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">';
-                html += '<button type="button" class="btn btn-secondary" id="waCopyRefil">Copiar link</button>';
+                html += '<button type="button" class="btn btn-secondary" id="waCopyRefilMsg">Copiar mensagem</button>';
                 html += '</div>';
               } else {
                 html += '<div style="margin-top:10px; color:#b91c1c; font-weight:800;">Link de reposição disponível apenas para Seguidores Mistos ou Brasileiros.</div>';
@@ -307,8 +421,32 @@
               if (resultEl) { resultEl.innerHTML = html; resultEl.style.display = ''; }
               setTimeout(function(){
                 try {
-                  var b1 = el('waCopyRefil');
-                  if (b1 && data.refilUrl) b1.addEventListener('click', function(){ try { navigator.clipboard.writeText(String(data.refilUrl||'')); } catch(_) {} });
+                  var b1 = el('waCopyRefilMsg');
+                  if (b1 && data.refilUrl) b1.addEventListener('click', async function(){
+                    try {
+                      var text = 'Pedido solicitado\n\n' +
+                        'Caso precise de reposição pode utilizar o link abaixo.\n' +
+                        'Atente-se as regras de reposição.\n\n' +
+                        '`' + String(data.refilUrl || '') + '`';
+                      try {
+                        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                          await navigator.clipboard.writeText(text);
+                          return;
+                        }
+                      } catch (_) {}
+                      try {
+                        var ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        document.execCommand('copy');
+                        ta.remove();
+                      } catch (_) {}
+                    } catch (_) {}
+                  });
                 } catch(_) {}
               }, 0);
             } catch(_) {}

@@ -113,9 +113,10 @@
       #cupons .coupon-actions button { width: 100%; }
       #cupons .coupons-table { min-width: 0; }
       #cupons .coupons-table th, #cupons .coupons-table td { padding: 8px; }
-      #cupons .coupons-table th:nth-child(5), #cupons .coupons-table td:nth-child(5),
+    #cupons .coupons-table th:nth-child(5), #cupons .coupons-table td:nth-child(5),
       #cupons .coupons-table th:nth-child(6), #cupons .coupons-table td:nth-child(6),
-      #cupons .coupons-table th:nth-child(7), #cupons .coupons-table td:nth-child(7) { display: none; }
+      #cupons .coupons-table th:nth-child(7), #cupons .coupons-table td:nth-child(7),
+      #cupons .coupons-table th:nth-child(8), #cupons .coupons-table td:nth-child(8) { display: none; }
     }
 
     #serviceTypes .service-types-table { width: 100%; border-collapse: collapse; }
@@ -132,8 +133,9 @@
       #serviceTypes .service-types-table td { border-bottom: none !important; padding: 6px 0 !important; text-align: left !important; }
       #serviceTypes .service-types-table td:nth-child(1)::before { content: "Categoria: "; font-weight: 700; color: #6b7280; }
       #serviceTypes .service-types-table td:nth-child(2)::before { content: "Serviço: "; font-weight: 700; color: #6b7280; }
-      #serviceTypes .service-types-table td:nth-child(3) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-      #serviceTypes .service-types-table td:nth-child(3)::before { content: "Oculto: "; font-weight: 700; color: #6b7280; }
+      #serviceTypes .service-types-table td:nth-child(3)::before { content: "ID solicitação: "; font-weight: 700; color: #6b7280; }
+      #serviceTypes .service-types-table td:nth-child(4) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      #serviceTypes .service-types-table td:nth-child(4)::before { content: "Oculto: "; font-weight: 700; color: #6b7280; }
     }
   </style>
 </head>
@@ -653,6 +655,15 @@
                 <option value="6m" <%= (wf === '6m') ? 'selected' : '' %>>6 meses</option>
                 <option value="12m" <%= (wf === '12m') ? 'selected' : '' %>>1 ano</option>
                 <option value="life" <%= (wf === 'life') ? 'selected' : '' %>>Vitalício</option>
+              </select>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
+              <span>Refil2 auto:</span>
+              <select id="followersRefil2Auto" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <% const r2a = (filters && filters.refil2Auto) ? String(filters.refil2Auto) : 'all'; %>
+                <option value="all" <%= (!r2a || r2a === 'all') ? 'selected' : '' %>>Todos</option>
+                <option value="yes" <%= (r2a === 'yes') ? 'selected' : '' %>>Solicitado</option>
+                <option value="no" <%= (r2a === 'no') ? 'selected' : '' %>>Não solicitado</option>
               </select>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
@@ -1765,7 +1776,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 credentials: 'same-origin',
-                body: JSON.stringify({ usernames: usernames, force: '1' })
+                body: JSON.stringify({ usernames: usernames, force: '0' })
               });
               var data = await resp.json().catch(function(){ return null; });
               if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
@@ -1912,17 +1923,19 @@
           if (verifyFilteredBtn) {
             verifyFilteredBtn.addEventListener('click', function(){
               try {
-                var rows = getAllRows();
-                if (!rows.length) return;
-                var allUsers = getAllUsernamesInRows(rows);
+                var targets = loadFollowersFilteredTargets();
+                var allUsers = [];
+                for (var i=0;i<(targets ? targets.length : 0);i++){
+                  try {
+                    var u = String(targets[i] && targets[i].username ? targets[i].username : '').trim();
+                    if (!u) continue;
+                    u = u.replace(/^@/, '').toLowerCase().trim();
+                    if (u) allUsers.push(u);
+                  } catch (_) {}
+                }
+                allUsers = Array.from(new Set(allUsers));
                 if (!allUsers.length) return;
-                var rangeRaw = prompt('Qual intervalo do filtro quer verificar? (ex: 1-50 ou 50)', '1-50');
-                if (rangeRaw == null) return;
-                var range = parseRangeInput(rangeRaw, allUsers.length);
-                if (!range) return alert('Intervalo inválido.');
-                var selected = allUsers.slice(range.startIndex, range.endExclusive);
-                if (!selected.length) return alert('Nenhum perfil no intervalo.');
-                startVerifyFilteredBackend(selected).catch(function(){});
+                startVerifyFilteredBackend(allUsers).catch(function(){});
               } catch (_) {}
             });
           }
@@ -2136,18 +2149,31 @@
                 var eligible = [];
                 var skippedOrganic = 0;
                 var skippedLowDrop = 0;
+                var skippedNotType = 0;
+                function toIntLoose(v){
+                  try {
+                    var s = String(v == null ? '' : v).trim();
+                    if (!s || s === '-') return 0;
+                    s = s.replace(/[^\d\-]/g, '');
+                    if (!s || s === '-') return 0;
+                    var n = parseInt(s, 10);
+                    return isFinite(n) ? n : 0;
+                  } catch (_) {
+                    return 0;
+                  }
+                }
                 for (var i=0;i<targets0.length;i++){
                   var t0 = targets0[i] || {};
                   var u0 = String(t0.username || '').trim();
                   var tipo0 = String(t0.tipo || '').toLowerCase();
                   if (!u0) continue;
                   if (tipo0.indexOf('organ') >= 0) { skippedOrganic += 1; continue; }
-                  if (!(tipo0.indexOf('misto') >= 0 || tipo0.indexOf('brasileir') >= 0)) continue;
-                  var dabs = Number(t0.diffAbs || 0) || 0;
+                  if (!(tipo0.indexOf('misto') >= 0 || tipo0.indexOf('brasileir') >= 0)) { skippedNotType += 1; continue; }
+                  var dabs = toIntLoose(t0.diffAbs);
                   if (dabs < 101) { skippedLowDrop += 1; continue; }
                   eligible.push(t0);
                 }
-                if (!eligible.length) return alert('Nenhum pedido elegível (somente mistos/brasileiros; orgânicos não entram).');
+                if (!eligible.length) return alert('Nenhum pedido elegível.\n\nMotivos:\n- Orgânicos ignorados: ' + String(skippedOrganic) + '\n- Tipo fora (não misto/brasileiro): ' + String(skippedNotType) + '\n- Queda < 101 ignorados: ' + String(skippedLowDrop));
                 var warn = (skippedOrganic ? ('\nOrgânicos ignorados: ' + String(skippedOrganic)) : '') + (skippedLowDrop ? ('\nQueda < 101 ignorados: ' + String(skippedLowDrop)) : '');
                 if (!confirm('Solicitar Refil2 automaticamente para ' + String(eligible.length) + ' pedidos filtrados?' + warn + '\n\nObs: só entra quem tiver queda ≥ 101 e o processo roda em fila (ordenado).')) return;
                 bulkRefil2Btn.disabled = true;
@@ -2332,6 +2358,7 @@
                 var okEl = el('followersOkOnly');
                 var hiddenEl = el('followersHiddenOnly');
                 var warrantyEl = el('followersWarranty');
+                var refil2AutoEl = el('followersRefil2Auto');
                 var minDiffEl = el('followersMinDiffAbs');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
@@ -2359,6 +2386,7 @@
                 var okV = okEl && okEl.checked ? '1' : '';
                 var hiddenV = hiddenEl && hiddenEl.checked ? '1' : '';
                 var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
+                var refil2AutoV = refil2AutoEl ? String(refil2AutoEl.value || '').trim().toLowerCase() : '';
                 var minDiffV = minDiffEl ? String(minDiffEl.value || '').trim() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
@@ -2376,6 +2404,7 @@
                 if (warrantyV && warrantyV !== 'all') urlParams.set('warranty', warrantyV); else urlParams.delete('warranty');
                 if (warrantyV === 'life') urlParams.set('lifetime', '1'); else urlParams.delete('lifetime');
                 if (warrantyV === 'expired') urlParams.set('refilExpired', '1'); else { urlParams.delete('refilExpired'); urlParams.delete('refil_expired'); }
+                if (refil2AutoV && refil2AutoV !== 'all') urlParams.set('refil2Auto', refil2AutoV); else urlParams.delete('refil2Auto');
                 if (minDiffV) urlParams.set('minDiffAbs', minDiffV); else { urlParams.delete('minDiffAbs'); urlParams.delete('minDiff'); urlParams.delete('minDropAbs'); }
                 urlParams.set('page', '1');
                 var qs = urlParams.toString();
@@ -2447,6 +2476,12 @@
           var warrantyEl2 = el('followersWarranty');
           if (warrantyEl2 && applyBtn) {
             warrantyEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var refil2AutoEl2 = el('followersRefil2Auto');
+          if (refil2AutoEl2 && applyBtn) {
+            refil2AutoEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -2602,9 +2637,16 @@
         const sv = (typeof serviceVisibility !== 'undefined' && serviceVisibility && typeof serviceVisibility === 'object') ? serviceVisibility : {};
         const hidden0 = (sv && sv.hidden && typeof sv.hidden === 'object') ? sv.hidden : sv;
         const defs = (typeof serviceTypeDefs !== 'undefined' && serviceTypeDefs && typeof serviceTypeDefs === 'object') ? serviceTypeDefs : {};
+        const ids0 = (typeof serviceTypeServiceIds !== 'undefined' && serviceTypeServiceIds && typeof serviceTypeServiceIds === 'object') ? serviceTypeServiceIds : {};
         const hiddenSeguidores = Array.isArray(hidden0.seguidores) ? hidden0.seguidores.map(String) : [];
         const hiddenCurtidas = Array.isArray(hidden0.curtidas) ? hidden0.curtidas.map(String) : [];
         const hiddenVisualizacoes = Array.isArray(hidden0.visualizacoes) ? hidden0.visualizacoes.map(String) : [];
+        const getSvcId = (ctx, key, provider) => {
+          try {
+            const n = Number(ids0 && ids0[ctx] && ids0[ctx][key] && ids0[ctx][key][provider] ? ids0[ctx][key][provider] : 0);
+            return (Number.isFinite(n) && n > 0) ? String(Math.trunc(n)) : '';
+          } catch (_) { return ''; }
+        };
       %>
       <div id="serviceTypes" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -2623,6 +2665,7 @@
               <tr>
                 <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Categoria</th>
                 <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Serviço</th>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">ID solicitação</th>
                 <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Oculto</th>
               </tr>
             </thead>
@@ -2631,6 +2674,13 @@
                 <tr>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Seguidores</td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
+                    <% const provS = String(it.key || '') === 'organicos' ? 'fornecedor_social' : 'fama24h'; %>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provS %></span>
+                      <input type="number" class="serviceTypeServiceIdInp" data-ctx="seguidores" data-key="<%= String(it.key || '') %>" data-provider="<%= provS %>" value="<%= getSvcId('seguidores', String(it.key || ''), provS) %>" placeholder="padrão" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
+                    </div>
+                  </td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
                     <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="seguidores" data-key="<%= String(it.key || '') %>" <%= hiddenSeguidores.includes(String(it.key || '')) ? 'checked' : '' %> />
                   </td>
@@ -2640,6 +2690,13 @@
                 <tr>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Curtidas</td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
+                    <% const provC = String(it.key || '') === 'organicos' ? 'fornecedor_social' : 'fama24h'; %>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provC %></span>
+                      <input type="number" class="serviceTypeServiceIdInp" data-ctx="curtidas" data-key="<%= String(it.key || '') %>" data-provider="<%= provC %>" value="<%= getSvcId('curtidas', String(it.key || ''), provC) %>" placeholder="padrão" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
+                    </div>
+                  </td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
                     <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="curtidas" data-key="<%= String(it.key || '') %>" <%= hiddenCurtidas.includes(String(it.key || '')) ? 'checked' : '' %> />
                   </td>
@@ -2649,6 +2706,12 @@
                 <tr>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Visualizações</td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font-size:0.82rem; color:#6b7280; min-width:110px;">fama24h</span>
+                      <input type="number" class="serviceTypeServiceIdInp" data-ctx="visualizacoes" data-key="<%= String(it.key || '') %>" data-provider="fama24h" value="<%= getSvcId('visualizacoes', String(it.key || ''), 'fama24h') %>" placeholder="padrão" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
+                    </div>
+                  </td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; text-align:center;">
                     <input type="checkbox" class="serviceTypeHiddenChk" data-ctx="visualizacoes" data-key="<%= String(it.key || '') %>" <%= hiddenVisualizacoes.includes(String(it.key || '')) ? 'checked' : '' %> />
                   </td>
@@ -2676,28 +2739,68 @@
             }
             return out;
           }
+          function collectServiceIds(){
+            var out = { seguidores: {}, curtidas: {}, visualizacoes: {} };
+            var nodes = document.querySelectorAll('.serviceTypeServiceIdInp');
+            for (var i=0;i<nodes.length;i++){
+              var n = nodes[i];
+              if (!n) continue;
+              var ctx = String(n.getAttribute('data-ctx') || '').trim();
+              var key = String(n.getAttribute('data-key') || '').trim();
+              var prov = String(n.getAttribute('data-provider') || '').trim();
+              var raw = String(n.value || '').trim();
+              if (!ctx || !key || !prov) continue;
+              if (!raw) continue;
+              var num = Number(raw);
+              if (!(isFinite(num) && num > 0)) continue;
+              if (!out[ctx]) out[ctx] = {};
+              if (!out[ctx][key]) out[ctx][key] = {};
+              out[ctx][key][prov] = Math.trunc(num);
+            }
+            return out;
+          }
           var btn = el('serviceTypesSaveBtn');
           if (btn) btn.addEventListener('click', function(){
             try { btn.disabled = true; } catch(_) {}
             setStatus('Salvando...');
-            fetch('/api/painel/service-visibility', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ hidden: collectHidden() })
-            }).then(function(r){
-              return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
-            }).then(function(out){
-              var data = out && out.json ? out.json : null;
-              if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_failed');
-              setStatus('Salvo.');
-              setTimeout(function(){ setStatus(''); }, 1200);
-            }).catch(function(e){
-              setStatus('Falha ao salvar.');
-              alert('Erro: ' + (e && e.message ? e.message : e));
-            }).finally(function(){
-              try { btn.disabled = false; } catch(_) {}
-            });
+            Promise.resolve()
+              .then(function(){
+                return fetch('/api/painel/service-visibility', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ hidden: collectHidden() })
+                }).then(function(r){
+                  return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
+                }).then(function(out){
+                  var data = out && out.json ? out.json : null;
+                  if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_failed');
+                });
+              })
+              .then(function(){
+                return fetch('/api/painel/service-type-service-ids', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ values: collectServiceIds() })
+                }).then(function(r){
+                  return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
+                }).then(function(out){
+                  var data = out && out.json ? out.json : null;
+                  if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_ids_failed');
+                });
+              })
+              .then(function(){
+                setStatus('Salvo.');
+                setTimeout(function(){ setStatus(''); }, 1200);
+              })
+              .catch(function(e){
+                setStatus('Falha ao salvar.');
+                alert('Erro: ' + (e && e.message ? e.message : e));
+              })
+              .finally(function(){
+                try { btn.disabled = false; } catch(_) {}
+              });
           });
         })();
       </script>
@@ -2741,13 +2844,14 @@
                   <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Ativo</th>
                   <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Usos</th>
                   <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite</th>
-                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Por perfil</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Perfis (usaram)</th>
+                  <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite / perfil</th>
                   <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Validade</th>
                   <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Ação</th>
                 </tr>
               </thead>
               <tbody id="couponsListBody">
-                <tr><td colspan="8" style="padding:10px; color:#777; text-align:center;">Carregando…</td></tr>
+                <tr><td colspan="9" style="padding:10px; color:#777; text-align:center;">Carregando…</td></tr>
               </tbody>
             </table>
             </div>
@@ -2829,7 +2933,7 @@
               if (!data || !data.success) throw new Error(data && (data.error || data.message) ? (data.error || data.message) : 'Falha ao carregar cupons');
               renderCoupons(Array.isArray(data.coupons) ? data.coupons : []);
             } catch (e) {
-              if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:10px; color:#dc3545; text-align:center;">Erro ao carregar cupons</td></tr>';
+              if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="padding:10px; color:#dc3545; text-align:center;">Erro ao carregar cupons</td></tr>';
             }
           }
 
@@ -2838,7 +2942,7 @@
             if (!tbody) return;
             tbody.innerHTML = '';
             if (!list.length) {
-              tbody.innerHTML = '<tr><td colspan="8" style="padding:10px; color:#777; text-align:center;">Nenhum cupom</td></tr>';
+              tbody.innerHTML = '<tr><td colspan="9" style="padding:10px; color:#777; text-align:center;">Nenhum cupom</td></tr>';
               return;
             }
             list.forEach(c => {
@@ -2848,6 +2952,7 @@
               const usedCount = (typeof c.usedCount === 'number') ? c.usedCount : 0;
               const maxTotal = (c.maxUsesTotal != null) ? String(c.maxUsesTotal) : '-';
               const maxPer = (c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '-';
+              const usedProfiles = (typeof c.usedProfiles === 'number') ? c.usedProfiles : 0;
               const isActive = !(c && c.isActive === false);
               tr.innerHTML = `
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2;"><strong>${String(c.code || '')}</strong></td>
@@ -2857,6 +2962,7 @@
                 </td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${usedCount}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxTotal}</td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${usedProfiles || 0}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${maxPer}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2;">${formatValidity(c)}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">
@@ -3285,34 +3391,51 @@
               <option value="blocked">Bloqueado</option>
               <option value="error">Erro</option>
             </select>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;">
-              <input id="refil2OnlyErrors" type="checkbox" />
-              <span>Somente erros</span>
-            </label>
+            <select id="refil2AutoFilter" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;">
+              <option value="all">Solicitação: todas</option>
+              <option value="auto">Somente AUTO</option>
+              <option value="manual">Somente manual</option>
+            </select>
+            <input id="refil2UserSearch" type="text" placeholder="Buscar @usuário" style="width:170px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
             <select id="refil2DateColumn" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;">
               <option value="requested">Data: solicitação</option>
               <option value="purchase">Data: compra</option>
               <option value="forced">Data: forçado</option>
             </select>
+            <select id="refil2AuditFilter" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;">
+              <option value="all">Audit: todos</option>
+              <option value="ok">Audit: OK</option>
+              <option value="nok">Audit: NOK</option>
+            </select>
             <input id="refil2DateFrom" type="date" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
             <input id="refil2DateTo" type="date" style="padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;">
-              <input id="refil2OnlyWithRefilId" type="checkbox" />
-              <span>Somente com Refil ID</span>
+            <label for="refil2OnlyWithRefilId" style="display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827; user-select:none; cursor:pointer;">
+              <input id="refil2OnlyWithRefilId" type="checkbox" style="width:16px; height:16px;" />
+              Refil ID preenchido
             </label>
             <input id="refil2ManualInitial" type="number" placeholder="Editar inicial" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827;" />
             <button type="button" id="refil2SetInitialBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Editar inicial</button>
             <button type="button" id="refil2AuditFetchBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar selecionados</button>
+            <button type="button" id="refil2AuditVerifyFilteredBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar filtro</button>
             <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
-            <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
-            <button type="button" id="refil2ExportChargeBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Export cobrar orderids</button>
+            <div id="refil2ExportWrap" style="position:relative; display:inline-flex; align-items:center;">
+              <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
+              <button type="button" id="refil2ExportMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding:6px 10px; border:1px solid #e5e7eb; border-left:0; background:#fff; color:#111827; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.85rem;">▾</button>
+              <div id="refil2ExportMenu" style="display:none; position:absolute; right:0; top:calc(100% + 6px); min-width:220px; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.12); padding:6px; z-index:9999;">
+                <button type="button" id="refil2ExportAllMenuBtn" style="display:block; width:100%; text-align:left; padding:10px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.9rem;">Exportar tudo</button>
+                <button type="button" id="refil2ExportFilteredBtn" style="display:block; width:100%; text-align:left; padding:10px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.9rem;">Exportar filtro</button>
+                <button type="button" id="refil2ExportChargeBtn" style="display:block; width:100%; text-align:left; padding:10px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.9rem;">Exportar cobrar orderids</button>
+              </div>
+            </div>
             <button type="button" id="refil2ReportBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Relatório</button>
             <button type="button" id="refil2ChargeBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#16a34a; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Cobrar</button>
+            <button type="button" id="refil2ApplyFiltersBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Aplicar</button>
             <button type="button" id="refil2ClearFiltersBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Limpar</button>
             <button type="button" id="refil2PrevPageBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;" <%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.page && refil2Pagination.page > 1) ? '' : 'disabled' %>>Anterior</button>
             <button type="button" id="refil2NextPageBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;" <%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.page && refil2Pagination.totalPages && refil2Pagination.page < refil2Pagination.totalPages) ? '' : 'disabled' %>>Próxima</button>
             <div id="refil2PaginationInfo" style="font-size:0.85rem; color:#6b7280;">
               Página <%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.page) ? String(refil2Pagination.page) : '1' %> / <%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.totalPages) ? String(refil2Pagination.totalPages) : '1' %> · <%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && typeof refil2Pagination.total === 'number') ? String(refil2Pagination.total) : '-' %> total
+              · Na página: <span id="refil2FilteredCount">-</span>
             </div>
           </div>
         </div>
@@ -3333,8 +3456,8 @@
             </div>
             <div style="padding:14px 16px; color:#111827;">
               <div style="display:flex; gap:14px; flex-wrap:wrap;">
-                <div style="flex:1; min-width:260px; border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb;">
-                  <div style="font-size:12px; color:#6b7280;">Total (audit marcado - página)</div>
+                <div style="flex:1; min-width:260px;">
+                  <div style="font-size:12px; color:#6b7280;">Total (audit marcado - filtro)</div>
                   <div id="refil2ReportTotal" style="font-size:22px; font-weight:800; margin-top:2px;">0</div>
                   <div style="height:10px;"></div>
                   <div style="font-size:12px; color:#6b7280;">Audit OK</div>
@@ -3352,32 +3475,24 @@
                   <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start;">
                     <div style="flex:1; min-width:220px;">
                       <div style="font-size:12px; color:#6b7280;">Pizza: OK x NOK</div>
-                      <canvas id="refil2ReportPieOkNok" width="240" height="240" style="width:240px; height:240px; margin-top:8px;"></canvas>
+                      <div style="height:170px; margin-top:8px; position:relative;">
+                        <canvas id="refil2ReportPieOkNok" style="display:block; width:100%; height:100%;"></canvas>
+                      </div>
                     </div>
                     <div style="flex:1; min-width:220px;">
                       <div style="font-size:12px; color:#6b7280;">Pizza: NOK c/ID x s/ID</div>
-                      <canvas id="refil2ReportPieNokId" width="240" height="240" style="width:240px; height:240px; margin-top:8px;"></canvas>
+                      <div style="height:170px; margin-top:8px; position:relative;">
+                        <canvas id="refil2ReportPieNokId" style="display:block; width:100%; height:100%;"></canvas>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div style="flex:1; min-width:300px; border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#ffffff;">
+                <div style="flex:1; min-width:300px;">
                   <div style="font-size:12px; color:#6b7280;">Barras: OK / NOK c/ID / NOK s/ID</div>
-                  <canvas id="refil2ReportBars" width="520" height="260" style="width:100%; height:260px; margin-top:10px;"></canvas>
-                  <div style="height:14px;"></div>
-                  <div style="font-size:12px; color:#6b7280;">NOK s/ Refil ID (lista - página)</div>
-                  <div style="height:10px;"></div>
-                  <table style="width:100%; border-collapse: collapse; font-size: 0.92rem;">
-                    <thead>
-                      <tr>
-                        <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Data/Hora</th>
-                        <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Perfil</th>
-                        <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Tipo</th>
-                        <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Final</th>
-                        <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Audit Atual</th>
-                      </tr>
-                    </thead>
-                    <tbody id="refil2ReportBody"></tbody>
-                  </table>
+                  <div style="height:220px; margin-top:10px; position:relative;">
+                    <canvas id="refil2ReportBars" style="display:block; width:100%; height:100%;"></canvas>
+                  </div>
+                  <div style="margin-top:8px; font-size:12px; color:#6b7280;">Clique nos números (OK/NOK) ou no gráfico para filtrar a tabela.</div>
                 </div>
               </div>
             </div>
@@ -3492,8 +3607,8 @@
                       const raw = String(auditResult || '').trim().toLowerCase();
                       if (!raw) return '';
                       const k = raw.replace(/[^a-z]/g, '');
-                      if (k === 'ok') return 'ok';
-                      if (k === 'nok') return 'nok';
+                      if (k === 'ok' || k.indexOf('ok') === 0) return 'ok';
+                      if (k === 'nok' || k.indexOf('nok') === 0) return 'nok';
                       return 'other';
                     } catch (_) { return ''; }
                   })();
@@ -3513,7 +3628,7 @@
                     } catch (_) { return false; }
                   })();
                 %>
-                  <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>" data-refil2-audit="<%= String(auditKey || '') %>" data-refil2-hasrefilid="<%= (forceOrderId ? '1' : '0') %>">
+                  <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>" data-refil2-audit="<%= String(auditKey || '') %>" data-refil2-hasrefilid="<%= (forceOrderId ? '1' : '0') %>" data-refil2-auto="<%= (it && it.automated === true) ? '1' : '0' %>">
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
                       <input type="checkbox" class="refil2SelectRow" <%= rid ? '' : 'disabled' %> />
                     </td>
@@ -3690,252 +3805,303 @@
           }
           function applyFilters(){
             try {
-              var cb = el('refil2OnlyErrors');
               var sel = el('refil2StatusFilter');
+              var autoSel = el('refil2AutoFilter');
+              var userSearchEl = el('refil2UserSearch');
               var dateCol = el('refil2DateColumn');
+              var auditSel = el('refil2AuditFilter');
               var dateFromEl = el('refil2DateFrom');
               var dateToEl = el('refil2DateTo');
-              var onlyOidEl = el('refil2OnlyWithRefilId');
               var wrap = el('refil2RequestsWrap');
               if (!wrap) return;
-              var tbody = wrap.querySelector('tbody');
+              var tbody = wrap.querySelector('#refil2ScrollBottom tbody');
               if (!tbody) return;
-              var onlyErrors = cb ? !!cb.checked : false;
-              var kindFilter = sel ? String(sel.value || 'all').trim() : 'all';
-              var colKey = dateCol ? String(dateCol.value || 'requested').trim() : 'requested';
-              var fromMs = parseDateInputStart(dateFromEl ? dateFromEl.value : '');
-              var toMs = parseDateInputEnd(dateToEl ? dateToEl.value : '');
-              var onlyWithOid = onlyOidEl ? !!onlyOidEl.checked : false;
               var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+              var shown = 0;
               rows.forEach(function(r){
-                var kind = String(r.getAttribute('data-refil2-kind') || '').trim();
-                var show = true;
-                if (onlyErrors && kind !== 'error') show = false;
-                if (kindFilter && kindFilter !== 'all' && kind !== kindFilter) show = false;
-                if (show && onlyWithOid) {
-                  try {
-                    var oidEl = r.querySelector('.refil2ForceOrderId');
-                    var oidTxt = oidEl ? String(oidEl.textContent || '').trim() : '';
-                    if (!oidTxt || oidTxt === '-') show = false;
-                  } catch (_) { show = false; }
-                }
-                if (show && (fromMs !== null || toMs !== null)) {
-                  var rowMs = null;
-                  try {
-                    if (colKey === 'purchase') {
-                      var td = r.querySelector('td:nth-child(3)');
-                      rowMs = parsePtBrDateTime(td ? td.textContent : '');
-                    } else if (colKey === 'forced') {
-                      var f = r.querySelector('.refil2ForceAt');
-                      rowMs = parsePtBrDateTime(f ? f.textContent : '');
-                    } else {
-                      var td2 = r.querySelector('td:nth-child(2)');
-                      rowMs = parsePtBrDateTime(td2 ? td2.textContent : '');
-                    }
-                  } catch (_) { rowMs = null; }
-                  if (rowMs === null) show = false;
-                  if (show && fromMs !== null && rowMs < fromMs) show = false;
-                  if (show && toMs !== null && rowMs > toMs) show = false;
-                }
-                try { r.setAttribute('data-refil2-match', show ? '1' : '0'); } catch (_) {}
-                try { r.style.display = show ? '' : 'none'; } catch (_) {}
+                var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                if (!id) return;
+                shown += 1;
+                try { r.setAttribute('data-refil2-match', '1'); } catch (_) {}
+                try { r.style.display = ''; } catch (_) {}
               });
+              try {
+                var fc = el('refil2FilteredCount');
+                if (fc) fc.textContent = String(shown);
+              } catch (_) {}
             } catch (_) {}
           }
 
           try {
-            var cb = el('refil2OnlyErrors');
-            if (cb) cb.addEventListener('change', function(){ applyFilters(); });
-            var sel = el('refil2StatusFilter');
-            if (sel) sel.addEventListener('change', function(){ applyFilters(); });
-            var dcol = el('refil2DateColumn');
-            if (dcol) dcol.addEventListener('change', function(){ applyFilters(); });
-            var dfrom = el('refil2DateFrom');
-            if (dfrom) dfrom.addEventListener('change', function(){ applyFilters(); });
-            var dto = el('refil2DateTo');
-            if (dto) dto.addEventListener('change', function(){ applyFilters(); });
-            var onlyOidEl = el('refil2OnlyWithRefilId');
-            if (onlyOidEl) onlyOidEl.addEventListener('change', function(){ applyFilters(); });
+            try {
+              var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+              var s0 = el('refil2StatusFilter');
+              if (s0) {
+                var v0 = String(qs.get('refil2Status') || 'all');
+                if (v0) s0.value = v0;
+              }
+              var a0 = el('refil2AutoFilter');
+              if (a0) {
+                var v1 = String(qs.get('refil2Auto') || 'all');
+                if (v1) a0.value = v1;
+              }
+              var us0 = el('refil2UserSearch');
+              if (us0) us0.value = String(qs.get('refil2User') || '');
+              var d0 = el('refil2DateColumn');
+              if (d0) {
+                var v2 = String(qs.get('refil2DateColumn') || 'requested');
+                if (v2) d0.value = v2;
+              }
+              var df0 = el('refil2DateFrom');
+              if (df0) df0.value = String(qs.get('refil2DateFrom') || '');
+              var dt0 = el('refil2DateTo');
+              if (dt0) dt0.value = String(qs.get('refil2DateTo') || '');
+              var au0 = el('refil2AuditFilter');
+              if (au0) {
+                var v3 = String(qs.get('refil2Audit') || 'all');
+                if (v3) au0.value = v3;
+              }
+              var onlyWithEl0 = el('refil2OnlyWithRefilId');
+              if (onlyWithEl0) {
+                var ridMode = String(qs.get('refil2RefilId') || '').toLowerCase().trim();
+                var legacyChecked = String(qs.get('refil2OnlyWithRefilId') || '') === '1';
+                onlyWithEl0.checked = (legacyChecked || ridMode === 'with');
+              }
+            } catch (_) {}
             applyFilters();
+            var applyBtn = el('refil2ApplyFiltersBtn');
+            if (applyBtn) applyBtn.addEventListener('click', function(){
+              try {
+                var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                qs.set('view', 'refil2');
+                qs.set('refil2Page', '1');
+                var s = el('refil2StatusFilter');
+                var a = el('refil2AutoFilter');
+                var us = el('refil2UserSearch');
+                var dcol = el('refil2DateColumn');
+                var au = el('refil2AuditFilter');
+                var onlyWithEl = el('refil2OnlyWithRefilId');
+                var df = el('refil2DateFrom');
+                var dt = el('refil2DateTo');
+                var sv = s ? String(s.value || 'all') : 'all';
+                var av = a ? String(a.value || 'all') : 'all';
+                var uv = us ? String(us.value || '').trim() : '';
+                var dv = dcol ? String(dcol.value || 'requested') : 'requested';
+                var auv = au ? String(au.value || 'all') : 'all';
+                var onlyWith = !!(onlyWithEl && onlyWithEl.checked);
+                var dfv = df ? String(df.value || '') : '';
+                var dtv = dt ? String(dt.value || '') : '';
+                if (sv && sv !== 'all') qs.set('refil2Status', sv); else qs.delete('refil2Status');
+                if (av && av !== 'all') qs.set('refil2Auto', av); else qs.delete('refil2Auto');
+                if (uv) qs.set('refil2User', uv); else qs.delete('refil2User');
+                if (dv && dv !== 'requested') qs.set('refil2DateColumn', dv); else qs.delete('refil2DateColumn');
+                if (auv && auv !== 'all') qs.set('refil2Audit', auv); else qs.delete('refil2Audit');
+                qs.delete('refil2RefilId');
+                if (onlyWith) qs.set('refil2OnlyWithRefilId', '1'); else qs.delete('refil2OnlyWithRefilId');
+                if (dfv) qs.set('refil2DateFrom', dfv); else qs.delete('refil2DateFrom');
+                if (dtv) qs.set('refil2DateTo', dtv); else qs.delete('refil2DateTo');
+                window.location.search = '?' + qs.toString();
+              } catch (_) {}
+            });
             var clearBtn = el('refil2ClearFiltersBtn');
             if (clearBtn) clearBtn.addEventListener('click', function(){
               try {
-                var cb2 = el('refil2OnlyErrors');
-                if (cb2) cb2.checked = false;
                 var sel2 = el('refil2StatusFilter');
                 if (sel2) sel2.value = 'all';
+                var a2 = el('refil2AutoFilter');
+                if (a2) a2.value = 'all';
+                var us2 = el('refil2UserSearch');
+                if (us2) us2.value = '';
                 var dcol2 = el('refil2DateColumn');
                 if (dcol2) dcol2.value = 'requested';
+                var au2 = el('refil2AuditFilter');
+                if (au2) au2.value = 'all';
+                var onlyWithEl2 = el('refil2OnlyWithRefilId');
+                if (onlyWithEl2) onlyWithEl2.checked = false;
                 var df2 = el('refil2DateFrom');
                 if (df2) df2.value = '';
                 var dt2 = el('refil2DateTo');
                 if (dt2) dt2.value = '';
-                var oid2 = el('refil2OnlyWithRefilId');
-                if (oid2) oid2.checked = false;
                 try {
                   var selAll2 = el('refil2SelectAll');
                   if (selAll2) selAll2.checked = false;
                 } catch (_) {}
-                applyFilters();
+                try {
+                  var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                  qs.set('view', 'refil2');
+                  qs.set('refil2Page', '1');
+                  qs.delete('refil2Status');
+                  qs.delete('refil2Auto');
+                  qs.delete('refil2User');
+                  qs.delete('refil2DateColumn');
+                  qs.delete('refil2DateFrom');
+                  qs.delete('refil2DateTo');
+                  qs.delete('refil2Audit');
+                  qs.delete('refil2OnlyWithRefilId');
+                  qs.delete('refil2RefilId');
+                  window.location.search = '?' + qs.toString();
+                } catch (_) {
+                  applyFilters();
+                }
               } catch (_) {}
             });
           } catch (_) {}
 
           try {
-            var btn = el('refil2ReportBtn');
-            var modal = el('refil2ReportModal');
-            var closeBtn = el('refil2ReportCloseBtn');
+            var reportBtn = el('refil2ReportBtn');
+            var reportModal = el('refil2ReportModal');
+            var reportCloseBtn = el('refil2ReportCloseBtn');
             var totalEl = el('refil2ReportTotal');
             var okEl = el('refil2ReportOk');
             var nokEl = el('refil2ReportNok');
             var nokWithIdEl = el('refil2ReportNokWithId');
             var nokNoIdEl = el('refil2ReportNokNoId');
-            var bodyEl = el('refil2ReportBody');
             var pieOkNokEl = el('refil2ReportPieOkNok');
             var pieNokIdEl = el('refil2ReportPieNokId');
             var barsEl = el('refil2ReportBars');
             var pieOkNokChart = null;
             var pieNokIdChart = null;
             var barsChart = null;
-            function escapeHtml(s){
-              try {
-                return String(s == null ? '' : s)
-                  .replace(/&/g, '&amp;')
-                  .replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;')
-                  .replace(/"/g, '&quot;')
-                  .replace(/'/g, '&#39;');
-              } catch (_) { return ''; }
-            }
-            function isInitiatedRow(r){
-              try {
-                var kind = String(r.getAttribute('data-refil2-kind') || '').trim();
-                var hasId = String(r.getAttribute('data-refil2-hasrefilid') || '').trim() === '1';
-                return (kind === 'success') || hasId;
-              } catch (_) { return false; }
-            }
-            function getAuditFromRow(r){
-              try {
-                var input = r ? r.querySelector('input.refil2AuditResult') : null;
-                var raw = String(input && typeof input.value !== 'undefined' ? input.value : '').trim().toLowerCase();
-                if (!raw) return '';
-                var k = raw.replace(/[^a-z]/g, '');
-                if (k === 'ok' || k.indexOf('ok') === 0) return 'ok';
-                if (k === 'nok' || k.indexOf('nok') === 0) return 'nok';
-                return '';
-              } catch (_) { return ''; }
-            }
-            function getHasRefilIdFromRow(r){
-              try {
-                var oidEl = r ? r.querySelector('.refil2ForceOrderId') : null;
-                var txt = String(oidEl ? oidEl.textContent : '').trim();
-                return !!(txt && txt !== '-');
-              } catch (_) { return false; }
-            }
             function destroyCharts(){
               try { if (pieOkNokChart) { pieOkNokChart.destroy(); pieOkNokChart = null; } } catch (_) {}
               try { if (pieNokIdChart) { pieNokIdChart.destroy(); pieNokIdChart = null; } } catch (_) {}
               try { if (barsChart) { barsChart.destroy(); barsChart = null; } } catch (_) {}
             }
-            function openReport(){
+            function setTotals(t){
               try {
-                if (!modal) return;
-                try { if (modal.parentElement !== document.body) document.body.appendChild(modal); } catch (_) {}
-                var wrap = el('refil2RequestsWrap');
-                var tbody = wrap ? wrap.querySelector('tbody') : null;
-                var rows = tbody ? Array.prototype.slice.call(tbody.querySelectorAll('tr')) : [];
-                var auditedTotal = 0;
-                var okCount = 0, nokCount = 0, nokWithId = 0, nokNoId = 0;
-                if (bodyEl) bodyEl.innerHTML = '';
-                var frag = document.createDocumentFragment();
-                destroyCharts();
-                rows.forEach(function(r){
+                const x = (t && typeof t === 'object') ? t : {};
+                const render = (v) => {
+                  if (typeof v === 'string') return v;
+                  const n = Number(v);
+                  return Number.isFinite(n) ? String(n) : '0';
+                };
+                if (totalEl) totalEl.textContent = render(x.auditedTotal);
+                if (okEl) okEl.textContent = render(x.okCount);
+                if (nokEl) nokEl.textContent = render(x.nokCount);
+                if (nokWithIdEl) nokWithIdEl.textContent = render(x.nokWithId);
+                if (nokNoIdEl) nokNoIdEl.textContent = render(x.nokNoId);
+              } catch (_) {}
+            }
+            function goToRefil2AuditFilter(bucket){
+              try {
+                var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                qs.set('view', 'refil2');
+                qs.set('refil2Page', '1');
+                qs.delete('refil2OnlyWithRefilId');
+                if (bucket === 'ok') {
+                  qs.set('refil2Audit', 'ok');
+                  qs.delete('refil2RefilId');
+                } else if (bucket === 'nok') {
+                  qs.set('refil2Audit', 'nok');
+                  qs.delete('refil2RefilId');
+                } else if (bucket === 'nok_with_id') {
+                  qs.set('refil2Audit', 'nok');
+                  qs.set('refil2RefilId', 'with');
+                } else if (bucket === 'nok_no_id') {
+                  qs.set('refil2Audit', 'nok');
+                  qs.set('refil2RefilId', 'without');
+                }
+                closeRefil2Report();
+                setTimeout(function(){
+                  try { window.location.search = '?' + qs.toString(); } catch (_) {}
+                }, 0);
+              } catch (_) {}
+            }
+            async function ensureChartJsLoaded(){
+              try {
+                if (typeof Chart === 'function') return true;
+                return await new Promise(function(resolve){
                   try {
-                    var m = String(r.getAttribute('data-refil2-match') || '').trim();
-                    if (m && m !== '1') return;
-                    if (!m && r.style && r.style.display === 'none') return;
-                  } catch (_) {}
-                  var a = getAuditFromRow(r);
-                  if (!a) return;
-                  auditedTotal++;
-                  if (a === 'ok') okCount++;
-                  if (a === 'nok') {
-                    nokCount++;
-                    var hasId = getHasRefilIdFromRow(r);
-                    if (hasId) nokWithId++;
-                    else {
-                      nokNoId++;
-                      var tds = r.querySelectorAll('td');
-                      var when = (tds && tds[1]) ? String(tds[1].textContent || '').trim() : '-';
-                      var userTd = (tds && tds[4]) ? tds[4] : null;
-                      var userHtml = userTd ? userTd.innerHTML : '-';
-                      var tipo = (tds && tds[5]) ? String(tds[5].textContent || '').trim() : '-';
-                      var final = (tds && tds[8]) ? String(tds[8].textContent || '').trim() : '-';
-                      var auditCurrentInput = r.querySelector('.refil2AuditCurrent');
-                      var auditCur = auditCurrentInput ? String(auditCurrentInput.value || '').trim() : '';
-                      var tr = document.createElement('tr');
-                      tr.innerHTML =
-                        '<td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;">' + escapeHtml(when) + '</td>' +
-                        '<td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;">' + userHtml + '</td>' +
-                        '<td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;">' + escapeHtml(tipo) + '</td>' +
-                        '<td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;">' + escapeHtml(final) + '</td>' +
-                        '<td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827; text-align:right;">' + escapeHtml(auditCur || '-') + '</td>';
-                      frag.appendChild(tr);
+                    var existing = document.querySelector('script[data-chartjs="1"]');
+                    if (existing) {
+                      var t = 0;
+                      var timer = setInterval(function(){
+                        t += 1;
+                        if (typeof Chart === 'function') { clearInterval(timer); resolve(true); }
+                        if (t > 50) { clearInterval(timer); resolve(false); }
+                      }, 100);
+                      return;
                     }
-                  }
+                    var s = document.createElement('script');
+                    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+                    s.async = true;
+                    s.setAttribute('data-chartjs', '1');
+                    s.onload = function(){ resolve(typeof Chart === 'function'); };
+                    s.onerror = function(){ resolve(false); };
+                    document.head.appendChild(s);
+                  } catch (_) { resolve(false); }
                 });
-                if (totalEl) totalEl.textContent = String(auditedTotal);
-                if (okEl) okEl.textContent = String(okCount);
-                if (nokEl) nokEl.textContent = String(nokCount);
-                if (nokWithIdEl) nokWithIdEl.textContent = String(nokWithId);
-                if (nokNoIdEl) nokNoIdEl.textContent = String(nokNoId);
-                if (bodyEl) bodyEl.appendChild(frag);
+              } catch (_) { return false; }
+            }
+            async function fetchJson(url, timeoutMs){
+              const controller = new AbortController();
+              const t = setTimeout(() => controller.abort(), Number(timeoutMs || 15000));
+              try {
+                const resp = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, signal: controller.signal });
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok) {
+                  const msg = (data && data.message) ? data.message : (`HTTP ${resp.status}`);
+                  throw new Error(msg);
+                }
+                return data;
+              } finally {
+                clearTimeout(t);
+              }
+            }
+            function buildReportUrl(extra){
+              const qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+              qs.delete('refil2Page');
+              if (extra && typeof extra === 'object') {
+                Object.keys(extra).forEach((k) => {
+                  const v = extra[k];
+                  if (v == null || v === '') qs.delete(k);
+                  else qs.set(k, String(v));
+                });
+              }
+              const s = qs.toString();
+              return '/api/painel/refil2/audit-report' + (s ? ('?' + s) : '');
+            }
+            function renderCharts(totals){
+              try { destroyCharts(); } catch (_) {}
+              const okCount = Number(totals && totals.okCount || 0) || 0;
+              const nokCount = Number(totals && totals.nokCount || 0) || 0;
+              const nokWithId = Number(totals && totals.nokWithId || 0) || 0;
+              const nokNoId = Number(totals && totals.nokNoId || 0) || 0;
+              try {
+                if (typeof Chart !== 'function') return;
+                if (pieOkNokEl) {
+                  pieOkNokChart = new Chart(pieOkNokEl.getContext('2d'), {
+                    type: 'pie',
+                    data: { labels: ['OK', 'NOK'], datasets: [{ data: [okCount, nokCount], backgroundColor: ['#16a34a', '#dc2626'] }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, onClick: function(_, els){ try { if (!els || !els.length) return; const idx = els[0].index; goToRefil2AuditFilter(idx === 0 ? 'ok' : 'nok'); } catch (_) {} } }
+                  });
+                }
+                if (pieNokIdEl) {
+                  pieNokIdChart = new Chart(pieNokIdEl.getContext('2d'), {
+                    type: 'pie',
+                    data: { labels: ['NOK c/ Refil ID', 'NOK s/ Refil ID'], datasets: [{ data: [nokWithId, nokNoId], backgroundColor: ['#111827', '#f59e0b'] }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, onClick: function(_, els){ try { if (!els || !els.length) return; const idx = els[0].index; goToRefil2AuditFilter(idx === 0 ? 'nok_with_id' : 'nok_no_id'); } catch (_) {} } }
+                  });
+                }
+                if (barsEl) {
+                  barsChart = new Chart(barsEl.getContext('2d'), {
+                    type: 'bar',
+                    data: { labels: ['OK', 'NOK c/ID', 'NOK s/ID'], datasets: [{ label: 'Qtd', data: [okCount, nokWithId, nokNoId], backgroundColor: ['#16a34a', '#111827', '#f59e0b'] }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, onClick: function(_, els){ try { if (!els || !els.length) return; const idx = els[0].index; if (idx === 0) goToRefil2AuditFilter('ok'); else if (idx === 1) goToRefil2AuditFilter('nok_with_id'); else goToRefil2AuditFilter('nok_no_id'); } catch (_) {} } }
+                  });
+                }
+              } catch (_) {}
+            }
+            function openRefil2Report(){
+              try {
+                if (!reportModal) return;
+                try { if (reportModal.parentElement !== document.body) document.body.appendChild(reportModal); } catch (_) {}
+                setTotals({ auditedTotal: '...', okCount: '...', nokCount: '...', nokWithId: '...', nokNoId: '...' });
+                destroyCharts();
+                reportModal.style.display = 'flex';
                 try {
-                  if (typeof Chart === 'function') {
-                    if (pieOkNokEl) {
-                      pieOkNokChart = new Chart(pieOkNokEl.getContext('2d'), {
-                        type: 'pie',
-                        data: {
-                          labels: ['OK', 'NOK'],
-                          datasets: [{ data: [okCount, nokCount], backgroundColor: ['#16a34a', '#dc2626'] }]
-                        },
-                        options: { responsive: false, plugins: { legend: { position: 'bottom' } } }
-                      });
-                    }
-                    if (pieNokIdEl) {
-                      pieNokIdChart = new Chart(pieNokIdEl.getContext('2d'), {
-                        type: 'pie',
-                        data: {
-                          labels: ['NOK c/ Refil ID', 'NOK s/ Refil ID'],
-                          datasets: [{ data: [nokWithId, nokNoId], backgroundColor: ['#111827', '#f59e0b'] }]
-                        },
-                        options: { responsive: false, plugins: { legend: { position: 'bottom' } } }
-                      });
-                    }
-                    if (barsEl) {
-                      barsChart = new Chart(barsEl.getContext('2d'), {
-                        type: 'bar',
-                        data: {
-                          labels: ['OK', 'NOK c/ID', 'NOK s/ID'],
-                          datasets: [{
-                            label: 'Qtd',
-                            data: [okCount, nokWithId, nokNoId],
-                            backgroundColor: ['#16a34a', '#111827', '#f59e0b']
-                          }]
-                        },
-                        options: {
-                          responsive: true,
-                          plugins: { legend: { display: false } },
-                          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-                        }
-                      });
-                    }
-                  }
-                } catch (_) {}
-                modal.style.display = 'flex';
-                try {
-                  modal.scrollTop = 0;
-                  if (modal.firstElementChild) modal.firstElementChild.scrollTop = 0;
+                  reportModal.scrollTop = 0;
+                  if (reportModal.firstElementChild) reportModal.firstElementChild.scrollTop = 0;
                   var y = 0;
                   try { y = Number(window.scrollY || window.pageYOffset || 0); } catch (_) { y = 0; }
                   try { document.body.setAttribute('data-refil2-report-scroll-y', String(y)); } catch (_) {}
@@ -3948,11 +4114,22 @@
                     document.body.style.overflow = 'hidden';
                   } catch (_) {}
                 } catch (_) {}
+                Promise.resolve().then(async function(){
+                  try {
+                    const out = await fetchJson(buildReportUrl({ bucket: '' }), 20000);
+                    const totals = (out && out.totals && typeof out.totals === 'object') ? out.totals : {};
+                    setTotals(totals);
+                    const ok = await ensureChartJsLoaded();
+                    if (ok) renderCharts(totals);
+                  } catch (e) {
+                    setTotals({ auditedTotal: 0, okCount: 0, nokCount: 0, nokWithId: 0, nokNoId: 0 });
+                  }
+                }).catch(function(){});
               } catch (_) {}
             }
-            function closeReport(){
+            function closeRefil2Report(){
               try { destroyCharts(); } catch (_) {}
-              try { if (modal) modal.style.display = 'none'; } catch (_) {}
+              try { if (reportModal) reportModal.style.display = 'none'; } catch (_) {}
               try {
                 var y = 0;
                 try { y = parseInt(String(document.body.getAttribute('data-refil2-report-scroll-y') || '0'), 10); } catch (_) { y = 0; }
@@ -3966,9 +4143,19 @@
                 try { window.scrollTo(0, Number.isFinite(y) ? y : 0); } catch (_) {}
               } catch (_) {}
             }
-            if (btn) btn.addEventListener('click', openReport);
-            if (closeBtn) closeBtn.addEventListener('click', closeReport);
-            if (modal) modal.addEventListener('click', function(ev){ try { if (ev && ev.target === modal) closeReport(); } catch (_) {} });
+            if (reportBtn) reportBtn.addEventListener('click', openRefil2Report);
+            if (reportCloseBtn) reportCloseBtn.addEventListener('click', closeRefil2Report);
+            if (reportModal) reportModal.addEventListener('click', function(ev){ try { if (ev && ev.target === reportModal) closeRefil2Report(); } catch (_) {} });
+            try {
+              if (okEl) okEl.style.cursor = 'pointer';
+              if (nokEl) nokEl.style.cursor = 'pointer';
+              if (nokWithIdEl) nokWithIdEl.style.cursor = 'pointer';
+              if (nokNoIdEl) nokNoIdEl.style.cursor = 'pointer';
+              if (okEl) okEl.addEventListener('click', function(){ goToRefil2AuditFilter('ok'); });
+              if (nokEl) nokEl.addEventListener('click', function(){ goToRefil2AuditFilter('nok'); });
+              if (nokWithIdEl) nokWithIdEl.addEventListener('click', function(){ goToRefil2AuditFilter('nok_with_id'); });
+              if (nokNoIdEl) nokNoIdEl.addEventListener('click', function(){ goToRefil2AuditFilter('nok_no_id'); });
+            } catch (_) {}
           } catch (_) {}
 
           try {
@@ -4114,7 +4301,7 @@
           function getVisibleRows(){
             var wrap = el('refil2RequestsWrap');
             if (!wrap) return [];
-            var tbody = wrap.querySelector('tbody');
+            var tbody = wrap.querySelector('#refil2ScrollBottom tbody');
             if (!tbody) return [];
             var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
             return rows.filter(function(r){ return r && r.style && r.style.display !== 'none'; });
@@ -4122,7 +4309,7 @@
           function getMatchedRows(){
             var wrap = el('refil2RequestsWrap');
             if (!wrap) return [];
-            var tbody = wrap.querySelector('tbody');
+            var tbody = wrap.querySelector('#refil2ScrollBottom tbody');
             if (!tbody) return [];
             var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
             return rows.filter(function(r){ return String(r.getAttribute('data-refil2-match') || '') === '1'; });
@@ -4132,90 +4319,113 @@
           }
           try {
             var exportAllBtn = el('refil2ExportAllBtn');
-            if (exportAllBtn) {
-              exportAllBtn.addEventListener('click', function(){
-                var rows = getMatchedRows();
-                if (!rows.length) { alert('Nenhuma linha para exportar.'); return; }
-                var header = ['Solicitação', 'Compra', 'Dias', 'Usuário', 'Tipo', 'Atual', 'Repor', 'Final', 'Quantidade antes da reposição', 'Audit Resultado', 'Status', 'Mensagem', 'Forçado em', 'Refil ID', 'Custo', 'Cobrado OK'];
-                var out = rows.map(function(r){
-                  var tds = r.querySelectorAll('td');
-                  var requested = tds[1] ? String(tds[1].textContent || '').trim() : '';
-                  var purchase = tds[2] ? String(tds[2].textContent || '').trim() : '';
-                  var days = tds[3] ? String(tds[3].textContent || '').trim() : '';
-                  var user = tds[4] ? String(tds[4].textContent || '').trim() : '';
-                  var tipo = tds[5] ? String(tds[5].textContent || '').trim() : '';
-                  var atual = tds[6] ? String(tds[6].textContent || '').trim() : '';
-                  var repor = tds[7] ? String(tds[7].textContent || '').trim() : '';
-                  var finalV = tds[8] ? String(tds[8].textContent || '').trim() : '';
-                  var auditCurEl = r.querySelector('input.refil2AuditCurrent');
-                  var auditCur = auditCurEl ? String(auditCurEl.value || '').trim() : '';
-                  var auditResEl = r.querySelector('input.refil2AuditResult');
-                  var auditRes = auditResEl ? String(auditResEl.value || '').trim() : '';
-                  var st = tds[11] ? String(tds[11].textContent || '').trim() : '';
-                  var msg = tds[12] ? String(tds[12].textContent || '').trim() : '';
-                  var forcedAt = (r.querySelector('.refil2ForceAt') ? String(r.querySelector('.refil2ForceAt').textContent || '').trim() : '');
-                  var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
-                  var cost = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
-                  var charged = isChargedOkRow(r) ? 'OK' : '';
-                  return [requested, purchase, days, user, tipo, atual, repor, finalV, auditCur, auditRes, st, msg, forcedAt, oid, cost, charged];
-                });
-                var ts = new Date();
-                var name = 'refil2_export_' + ts.toISOString().slice(0,19).replace(/[:T]/g,'-') + '.csv';
-                downloadCsv(name, header, out);
-              });
+            function buildExportUrl(kind, scope){
+              try {
+                var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                qs.delete('view');
+                qs.delete('refil2Page');
+                qs.set('kind', String(kind || 'full'));
+                qs.set('scope', String(scope || 'filtered'));
+                return '/api/painel/refil2/export?' + qs.toString();
+              } catch (_) {
+                return '/api/painel/refil2/export?kind=' + encodeURIComponent(String(kind || 'full')) + '&scope=' + encodeURIComponent(String(scope || 'filtered'));
+              }
             }
+            function triggerExport(kind, scope){
+              try {
+                var url = buildExportUrl(kind, scope);
+                window.location.href = url;
+              } catch (_) {}
+            }
+            if (exportAllBtn) exportAllBtn.addEventListener('click', function(){ triggerExport('full', 'all'); });
+
+            var exportAllMenuBtn = el('refil2ExportAllMenuBtn');
+            if (exportAllMenuBtn) exportAllMenuBtn.addEventListener('click', function(){ triggerExport('full', 'all'); });
+
+            var exportFilteredBtn = el('refil2ExportFilteredBtn');
+            if (exportFilteredBtn) exportFilteredBtn.addEventListener('click', function(){ triggerExport('full', 'filtered'); });
           } catch (_) {}
           try {
             var exportChargeBtn = el('refil2ExportChargeBtn');
             if (exportChargeBtn) {
               exportChargeBtn.addEventListener('click', function(){
-                var rows = getMatchedRows();
-                if (!rows.length) { alert('Nenhuma linha para exportar.'); return; }
-                var header = ['Usuário', 'Quantidade antes da reposição', 'Quantidade reposta', 'Refil ID', 'Custo', 'Cobrado OK'];
-                var out = [];
-                var total = 0;
-                for (var i = 0; i < rows.length; i++) {
-                  var r = rows[i];
-                  var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
-                  if (!oid || oid === '-') continue;
-                  var tds = r.querySelectorAll('td');
-                  var user = tds[4] ? String(tds[4].textContent || '').trim() : '';
-                  var auditCurEl = r.querySelector('input.refil2AuditCurrent');
-                  var auditCur = auditCurEl ? String(auditCurEl.value || '').trim() : '';
-                  var repor = tds[7] ? String(tds[7].textContent || '').trim() : '';
-                  var costTxt = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
-                  var costN = parseNumberLoose(costTxt);
-                  if (costN !== null) total += costN;
-                  var charged = isChargedOkRow(r) ? 'OK' : '';
-                  out.push([user, auditCur, repor, oid, costTxt, charged]);
-                }
-                if (!out.length) { alert('Nenhuma linha com Refil ID para exportar.'); return; }
-                out.push(['TOTAL', '', '', '', String(total.toFixed(2)).replace('.', ','), '']);
-                var ts = new Date();
-                var name = 'refil2_cobrar_orderids_' + ts.toISOString().slice(0,19).replace(/[:T]/g,'-') + '.csv';
-                downloadCsv(name, header, out);
+                try {
+                  var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                  qs.delete('view');
+                  qs.delete('refil2Page');
+                  qs.set('kind', 'charge');
+                  qs.set('scope', 'filtered');
+                  window.location.href = '/api/painel/refil2/export?' + qs.toString();
+                } catch (_) {}
               });
             }
           } catch (_) {}
           try {
+            var exportWrap = el('refil2ExportWrap');
+            var menuBtn = el('refil2ExportMenuBtn');
+            var menu = el('refil2ExportMenu');
+            function closeMenu(){
+              try { if (menu) menu.style.display = 'none'; } catch (_) {}
+              try { if (menuBtn) menuBtn.setAttribute('aria-expanded', 'false'); } catch (_) {}
+            }
+            function toggleMenu(){
+              try {
+                if (!menu) return;
+                var isOpen = menu.style.display !== 'none';
+                if (isOpen) closeMenu();
+                else {
+                  menu.style.display = 'block';
+                  if (menuBtn) menuBtn.setAttribute('aria-expanded', 'true');
+                }
+              } catch (_) {}
+            }
+            if (menuBtn) menuBtn.addEventListener('click', function(ev){
+              try { if (ev) ev.preventDefault(); } catch (_) {}
+              toggleMenu();
+            });
+            if (menu) menu.addEventListener('click', function(ev){
+              try {
+                var t = ev && ev.target ? ev.target : null;
+                if (!t) return;
+                if (String(t.tagName || '').toLowerCase() === 'button') closeMenu();
+              } catch (_) {}
+            });
+            document.addEventListener('click', function(ev){
+              try {
+                if (!menu || menu.style.display === 'none') return;
+                var t = ev && ev.target ? ev.target : null;
+                if (!t) return;
+                if (exportWrap && (exportWrap === t || exportWrap.contains(t))) return;
+                closeMenu();
+              } catch (_) {}
+            });
+            document.addEventListener('keydown', function(ev){
+              try {
+                if (!menu || menu.style.display === 'none') return;
+                var k = String(ev && (ev.key || ev.code) ? (ev.key || ev.code) : '');
+                if (k === 'Escape' || k === 'Esc') closeMenu();
+              } catch (_) {}
+            });
+          } catch (_) {}
+          try {
             var chargeBtn = el('refil2ChargeBtn');
-            var modal = el('refil2ChargeModal');
-            var closeBtn = el('refil2ChargeClose');
-            var copyBtn = el('refil2ChargeCopy');
+            var chargeModal = el('refil2ChargeModal');
+            var chargeCloseBtn = el('refil2ChargeClose');
+            var chargeCopyBtn = el('refil2ChargeCopy');
             var pre = el('refil2ChargeText');
             var meta = el('refil2ChargeMeta');
             var pendingChargeIds = [];
-            function openModal(){ if (modal) { modal.style.display = 'flex'; } }
-            function closeModal(){ if (modal) { modal.style.display = 'none'; } pendingChargeIds = []; }
-            if (closeBtn) closeBtn.addEventListener('click', closeModal);
+            function openModal(){ if (chargeModal) { chargeModal.style.display = 'flex'; } }
+            function closeModal(){ if (chargeModal) { chargeModal.style.display = 'none'; } pendingChargeIds = []; }
+            if (chargeCloseBtn) chargeCloseBtn.addEventListener('click', closeModal);
             try {
-              if (modal) modal.addEventListener('click', function(ev){ if (ev && ev.target === modal) closeModal(); });
+              if (chargeModal) chargeModal.addEventListener('click', function(ev){ if (ev && ev.target === chargeModal) closeModal(); });
             } catch (_) {}
             if (chargeBtn) chargeBtn.addEventListener('click', function(){
               try {
                 var wrap = el('refil2RequestsWrap');
                 if (!wrap) return;
-                var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                var rows = Array.prototype.slice.call(wrap.querySelectorAll('#refil2ScrollBottom tbody tr'));
                 var selected = rows.filter(function(r){
                   try {
                     if (r.style.display === 'none') return false;
@@ -4281,7 +4491,7 @@
                 alert('Erro ao preparar cobrança: ' + (e && e.message ? e.message : e));
               }
             });
-            if (copyBtn) copyBtn.addEventListener('click', async function(){
+            if (chargeCopyBtn) chargeCopyBtn.addEventListener('click', async function(){
               try {
                 var text = pre ? String(pre.textContent || '').trim() : '';
                 if (!text) return;
@@ -4439,6 +4649,7 @@
                     } catch (_) {}
                   });
                   if (!ids.length) { alert('Selecione pelo menos 1 linha.'); return; }
+                  if (ids.length > 300) { alert('Selecione no máximo 300 linhas por vez.'); return; }
                   fetchBtn.disabled = true;
                   fetchBtn.style.opacity = '0.7';
                   var resp = await fetch('/api/painel/refil2/audit-verify-current', {
@@ -4482,6 +4693,13 @@
                             tdRepor.textContent = needed ? String(needed) : '0';
                           }
                         } catch (_) {}
+                        try {
+                          var resEl2 = r.querySelector('input.refil2AuditResult');
+                          if (resEl2) {
+                            try { resEl2.dispatchEvent(new Event('input', { bubbles: true })); }
+                            catch (_) { try { var ev2 = document.createEvent('Event'); ev2.initEvent('input', true, true); resEl2.dispatchEvent(ev2); } catch (_) {} }
+                          }
+                        } catch (_) {}
                         updated++;
                       }
                     } catch (_) {}
@@ -4497,6 +4715,87 @@
             }
           } catch (_) {}
           try {
+            var verifyFilteredBtn = el('refil2AuditVerifyFilteredBtn');
+            if (verifyFilteredBtn) {
+              verifyFilteredBtn.addEventListener('click', async function(){
+                try {
+                  var limitRaw = prompt('Quantos itens do filtro deseja auditar agora? (recomendado: 200)', '200');
+                  if (limitRaw == null) return;
+                  var limit = parseInt(String(limitRaw || '0').replace(/[^\d]/g,''), 10);
+                  if (!isFinite(limit) || limit <= 0) return alert('Número inválido.');
+                  limit = Math.max(1, Math.min(2000, limit));
+                  verifyFilteredBtn.disabled = true;
+                  verifyFilteredBtn.style.opacity = '0.7';
+
+                  var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                  qs.delete('view');
+                  qs.delete('refil2Page');
+                  qs.set('limit', String(limit));
+                  var idsResp = await fetch('/api/painel/refil2/ids-by-filter?' + qs.toString(), { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+                  var idsData = await readJsonResp(idsResp);
+                  if (!idsResp.ok || !(idsData && idsData.ok)) {
+                    var msg0 = (idsData && (idsData.message || idsData.error)) ? String(idsData.message || idsData.error) : ('HTTP ' + idsResp.status);
+                    alert('Erro ao carregar ids do filtro: ' + msg0);
+                    return;
+                  }
+                  var idsAll = Array.isArray(idsData.ids) ? idsData.ids : [];
+                  if (!idsAll.length) { alert('Nenhum item no filtro.'); return; }
+
+                  var chunkSize = 200;
+                  var total = idsAll.length;
+                  var updatedTotal = 0;
+                  var failedTotal = 0;
+                  for (var off = 0; off < idsAll.length; off += chunkSize) {
+                    var part = idsAll.slice(off, off + chunkSize);
+                    try {
+                      var resp = await fetch('/api/painel/refil2/audit-verify-current', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: part })
+                      });
+                      var data = await readJsonResp(resp);
+                      if (!resp.ok || !(data && data.ok)) {
+                        failedTotal += part.length;
+                      } else {
+                        updatedTotal += Number(data.updated || 0) || 0;
+                        var results = Array.isArray(data.results) ? data.results : [];
+                        var map = {};
+                        results.forEach(function(it){ if (it && it.id) map[String(it.id)] = it; });
+                        try {
+                          var wrap = el('refil2RequestsWrap');
+                          if (wrap) {
+                            var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
+                            rows.forEach(function(r){
+                              try {
+                                var id = String(r.getAttribute('data-refil2-id') || '').trim();
+                                if (!id) return;
+                                var item = map[id];
+                                if (!item) return;
+                                var curEl = r.querySelector('input.refil2AuditCurrent');
+                                if (curEl && typeof item.currentFollowers === 'number' && isFinite(item.currentFollowers)) curEl.value = String(Math.trunc(item.currentFollowers));
+                                var resEl = r.querySelector('input.refil2AuditResult');
+                                if (resEl && item.auditResult) resEl.value = String(item.auditResult);
+                              } catch (_) {}
+                            });
+                          }
+                        } catch (_) {}
+                      }
+                    } catch (_) {
+                      failedTotal += part.length;
+                    }
+                    try { verifyFilteredBtn.textContent = 'Verificando… ' + String(Math.min(total, off + chunkSize)) + '/' + String(total); } catch (_) {}
+                  }
+                  try { verifyFilteredBtn.textContent = 'Verificar filtro'; } catch (_) {}
+                  alert('Auditoria concluída no filtro: ' + String(updatedTotal) + ' atualizado(s)' + (failedTotal ? (' · ' + String(failedTotal) + ' falha(s)') : '') + '.');
+                } catch (e) {
+                  alert('Erro ao verificar filtro: ' + (e && e.message ? e.message : e));
+                } finally {
+                  try { verifyFilteredBtn.disabled = false; verifyFilteredBtn.style.opacity = '1'; verifyFilteredBtn.textContent = 'Verificar filtro'; } catch (_) {}
+                }
+              });
+            }
+          } catch (_) {}
+          try {
             var forceBulkBtn = el('refil2ForceBulkBtn');
             if (forceBulkBtn) {
               forceBulkBtn.addEventListener('click', async function(){
@@ -4505,6 +4804,28 @@
                 var rows = Array.prototype.slice.call(wrap.querySelectorAll('tbody tr'));
                 var ids = [];
                 var skippedForced = 0;
+                var skippedAuditOk = 0;
+                var estTotal = 0;
+                function parseIntLoose(v){
+                  try {
+                    var s = String(v == null ? '' : v).trim();
+                    if (!s || s === '-') return null;
+                    s = s.replace(/[^\d\-]/g, '');
+                    if (!s || s === '-') return null;
+                    var n = parseInt(s, 10);
+                    return isFinite(n) ? n : null;
+                  } catch (_) { return null; }
+                }
+                function parseNumberLoose(v){
+                  try {
+                    var s = String(v == null ? '' : v).trim();
+                    if (!s || s === '-') return null;
+                    var s2 = s.replace(/[^\d,.-]/g, '').replace(',', '.');
+                    if (!s2) return null;
+                    var n = Number(s2);
+                    return isFinite(n) ? n : null;
+                  } catch (_) { return null; }
+                }
                 rows.forEach(function(r){
                   try {
                     if (r.style.display === 'none') return;
@@ -4512,16 +4833,59 @@
                     if (!cb || !cb.checked) return;
                     var id = String(r.getAttribute('data-refil2-id') || '').trim();
                     if (!id) return;
+                    try {
+                      var auditKey = String(r.getAttribute('data-refil2-audit') || '').trim().toLowerCase();
+                      var auditInput = (r.querySelector('input.refil2AuditResult') ? String(r.querySelector('input.refil2AuditResult').value || '').trim().toLowerCase() : '');
+                      var isOk = (auditKey === 'ok') || (auditInput && auditInput.indexOf('ok') === 0);
+                      if (isOk) { skippedAuditOk++; return; }
+                    } catch (_) {}
                     var oid = (r.querySelector('.refil2ForceOrderId') ? String(r.querySelector('.refil2ForceOrderId').textContent || '').trim() : '');
                     if (oid && oid !== '-') { skippedForced++; return; }
+                    try {
+                      var costTxt = (r.querySelector('.refil2ForceCharge') ? String(r.querySelector('.refil2ForceCharge').textContent || '').trim() : '');
+                      var c = parseNumberLoose(costTxt);
+                      if (c != null) estTotal += c;
+                    } catch (_) {}
                     ids.push(id);
                   } catch (_) {}
                 });
                 if (!ids.length) {
-                  alert(skippedForced ? 'Nenhuma linha elegível (as selecionadas já estão forçadas).' : 'Selecione pelo menos 1 linha.');
+                  var msg0 = 'Selecione pelo menos 1 linha.';
+                  if (skippedAuditOk && skippedForced) msg0 = 'Nenhuma linha elegível (as selecionadas já estavam forçadas e/ou estavam com audit OK).';
+                  else if (skippedAuditOk) msg0 = 'Nenhuma linha elegível (as selecionadas estavam com audit OK).';
+                  else if (skippedForced) msg0 = 'Nenhuma linha elegível (as selecionadas já estão forçadas).';
+                  alert(msg0);
                   return;
                 }
-                if (!confirm('Forçar refil para ' + ids.length + ' item(ns)?' + (skippedForced ? (' (' + skippedForced + ' já estavam forçados)') : ''))) return;
+                var totalLabel = '';
+                try {
+                  var estTotalServer = null;
+                  var missingLabel = '';
+                  try {
+                    var respEst = await fetch('/api/painel/refil2/force-refil-estimate', {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ ids: ids })
+                    });
+                    var dataEst = await readJsonResp(respEst);
+                    if (respEst.ok && dataEst && dataEst.ok && typeof dataEst.totalEstimated === 'number' && isFinite(dataEst.totalEstimated)) {
+                      estTotalServer = Number(dataEst.totalEstimated);
+                      var miss = Number(dataEst.missingRateCount || 0) || 0;
+                      if (miss > 0) missingLabel = ' · ' + String(miss) + ' sem estimativa';
+                    }
+                  } catch (_) {}
+                  var finalEst = (estTotalServer !== null) ? estTotalServer : estTotal;
+                  if (finalEst > 0) totalLabel = '\nTotal estimado: R$ ' + String(finalEst.toFixed(2)).replace('.', ',') + missingLabel;
+                } catch (_) {}
+                var skippedLabel = '';
+                if (skippedForced || skippedAuditOk) {
+                  var parts = [];
+                  if (skippedForced) parts.push(String(skippedForced) + ' já forçado(s)');
+                  if (skippedAuditOk) parts.push(String(skippedAuditOk) + ' audit OK');
+                  skippedLabel = parts.length ? (' (' + parts.join(' · ') + ')') : '';
+                }
+                if (!confirm('Forçar refil para ' + ids.length + ' item(ns)?' + skippedLabel + totalLabel)) return;
                 forceBulkBtn.disabled = true;
                 forceBulkBtn.style.opacity = '0.7';
                 try {
@@ -4771,6 +5135,13 @@
                       tdRepor.textContent = needed ? String(needed) : '0';
                     }
                   } catch (_) {}
+                  try {
+                    var resEl2 = row.querySelector('input.refil2AuditResult');
+                    if (resEl2) {
+                      try { resEl2.dispatchEvent(new Event('input', { bubbles: true })); }
+                      catch (_) { try { var ev2 = document.createEvent('Event'); ev2.initEvent('input', true, true); resEl2.dispatchEvent(ev2); } catch (_) {} }
+                    }
+                  } catch (_) {}
                 } finally {
                   try { oneBtn.disabled = false; oneBtn.style.opacity = '1'; } catch (_) {}
                 }
@@ -4798,7 +5169,7 @@
       <div style="margin-top: 12px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
           <strong style="font-size: 1rem; color:#111827;">LTV</strong>
-          <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (geral)</div>
+          <div style="font-size:0.85rem; color:#6b7280;">Base: clientes (por @usuário)</div>
         </div>
 
         <div class="summary-grid" style="margin-top: 10px;">
@@ -4812,8 +5183,45 @@
             <div class="summary-sub"><%= (typeof repeatCustomerPct !== 'undefined' ? Number(repeatCustomerPct || 0) : 0).toFixed(1).replace('.', ',') %>% dos clientes</div>
           </div>
           <div class="summary-card">
-            <div class="summary-label">Pedidos no período</div>
+            <div class="summary-label">LTV geral (recompra)</div>
+            <div class="summary-value"><%= (typeof ltvGeneralCustomerRepeatPct !== 'undefined' ? Number(ltvGeneralCustomerRepeatPct || 0) : (typeof repeatCustomerPct !== 'undefined' ? Number(repeatCustomerPct || 0) : 0)).toFixed(1).replace('.', ',') %>%</div>
+            <div class="summary-sub"><%= typeof repeatCustomers !== 'undefined' ? Number(repeatCustomers || 0) : 0 %> clientes recorrentes</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Pedidos (geral)</div>
             <div class="summary-value"><%= typeof totalTransactions !== 'undefined' ? totalTransactions : 0 %></div>
+          </div>
+        </div>
+
+        <div style="margin-top: 14px; border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+            <div style="font-weight: 800; color:#111827;">LTV por tipo de serviço</div>
+            <div style="font-size:0.85rem; color:#6b7280;">Regra: somente clientes com 2+ pedidos do mesmo tipo (misto+orgânico fica só no geral)</div>
+          </div>
+          <div class="panel-table-scroll" style="margin-top:10px;">
+            <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 820px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Tipo</th>
+                  <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Clientes (tipo)</th>
+                  <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Clientes recorrentes</th>
+                  <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">LTV (%)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% (Array.isArray(ltvByType) ? ltvByType : []).forEach(function(it){ %>
+                  <tr>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it && (it.label || it.type) ? (it.label || it.type) : '-') %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.totalCustomers ? it.totalCustomers : 0) %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.repeatCustomers ? it.repeatCustomers : 0) %></td>
+                    <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.pctRepeatCustomers ? it.pctRepeatCustomers : 0).toFixed(1).replace('.', ',') %>%</td>
+                  </tr>
+                <% }) %>
+                <% if (!(Array.isArray(ltvByType) && ltvByType.length)) { %>
+                  <tr><td colspan="4" style="padding:10px 6px; color:#6b7280;">Sem dados</td></tr>
+                <% } %>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -5602,6 +6010,8 @@
                 const ltvDashRepeatCustomers = ltvDash && typeof ltvDash.repeatCustomers !== 'undefined' ? ltvDash.repeatCustomers : 0;
                 const ltvDashRepeatPct = ltvDash && typeof ltvDash.repeatCustomerPct !== 'undefined' ? ltvDash.repeatCustomerPct : 0;
                 const ltvDashTotalTx = ltvDash && typeof ltvDash.totalTransactions !== 'undefined' ? ltvDash.totalTransactions : 0;
+                const ltvDashGeneralRepeatPct = ltvDash && typeof ltvDash.ltvGeneralCustomerRepeatPct !== 'undefined' ? ltvDash.ltvGeneralCustomerRepeatPct : ltvDashRepeatPct;
+                const ltvDashByType = ltvDash && Array.isArray(ltvDash.ltvByType) ? ltvDash.ltvByType : [];
                 const ltvDashTopService = ltvDash && ltvDash.topService ? ltvDash.topService : null;
                 const ltvDashServicePie = ltvDash && Array.isArray(ltvDash.servicePie) ? ltvDash.servicePie : [];
                 const ltvDashTopByOrders = ltvDash && Array.isArray(ltvDash.topUsersByOrders) ? ltvDash.topUsersByOrders : [];
@@ -5610,7 +6020,7 @@
               %>
               <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
                 <strong style="font-size: 1rem; color:#111827;">LTV</strong>
-                <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (geral)</div>
+                <div style="font-size:0.85rem; color:#6b7280;">Base: clientes (por @usuário)</div>
               </div>
 
               <div class="summary-grid" style="margin-top: 10px;">
@@ -5624,8 +6034,45 @@
                   <div class="summary-sub"><%= Number(ltvDashRepeatPct || 0).toFixed(1).replace('.', ',') %>% dos clientes</div>
                 </div>
                 <div class="summary-card">
+                  <div class="summary-label">LTV geral (recompra)</div>
+                  <div class="summary-value"><%= Number(ltvDashGeneralRepeatPct || 0).toFixed(1).replace('.', ',') %>%</div>
+                  <div class="summary-sub"><%= Number(ltvDashRepeatCustomers || 0) %> clientes recorrentes</div>
+                </div>
+                <div class="summary-card">
                   <div class="summary-label">Pedidos (geral)</div>
                   <div class="summary-value"><%= ltvDashTotalTx %></div>
+                </div>
+              </div>
+
+              <div style="margin-top: 14px; border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+                  <div style="font-weight: 800; color:#111827;">LTV por tipo de serviço</div>
+                  <div style="font-size:0.85rem; color:#6b7280;">Regra: somente clientes com 2+ pedidos do mesmo tipo (misto+orgânico fica só no geral)</div>
+                </div>
+                <div class="panel-table-scroll" style="margin-top:10px;">
+                  <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 820px;">
+                    <thead>
+                      <tr>
+                        <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Tipo</th>
+                        <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Clientes (tipo)</th>
+                        <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Clientes recorrentes</th>
+                        <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">LTV (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <% (Array.isArray(ltvDashByType) ? ltvDashByType : []).forEach(function(it){ %>
+                        <tr>
+                          <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it && (it.label || it.type) ? (it.label || it.type) : '-') %></td>
+                          <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.totalCustomers ? it.totalCustomers : 0) %></td>
+                          <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.repeatCustomers ? it.repeatCustomers : 0) %></td>
+                          <td style="padding:8px 6px; border-bottom:1px solid #f3f4f6; text-align:right; color:#111827;"><%= Number(it && it.pctRepeatCustomers ? it.pctRepeatCustomers : 0).toFixed(1).replace('.', ',') %>%</td>
+                        </tr>
+                      <% }) %>
+                      <% if (!(Array.isArray(ltvDashByType) && ltvDashByType.length)) { %>
+                        <tr><td colspan="4" style="padding:10px 6px; color:#6b7280;">Sem dados</td></tr>
+                      <% } %>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
