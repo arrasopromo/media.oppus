@@ -3879,6 +3879,11 @@ app.get('/pix', async (req, res) => {
       return;
     }
 
+    try {
+      const cid = String((req && req.oppusClientId) || '').trim();
+      insertPageViewIfNeeded(cid, '/pix', req);
+    } catch (_) {}
+
     const safe = (v) => String(v == null ? '' : v).trim();
     const esc = (s) => String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
@@ -5045,6 +5050,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
             if (d.length > 11) d = d.slice(-11);
             if (!(d.length === 10 || d.length === 11)) return '';
             if (d.startsWith('0')) return '';
+            if (/^(\d)\1+$/.test(d)) return '';
             if (d.length === 11 && d[2] !== '9') {
               const d2 = d.slice(0, 2) + d.slice(3);
               if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
@@ -5982,6 +5988,7 @@ app.post('/api/stripe/create-intent', async (req, res) => {
       if (d.length > 11) d = d.slice(-11);
       if (!(d.length === 10 || d.length === 11)) return '';
       if (d.startsWith('0')) return '';
+      if (/^(\d)\1+$/.test(d)) return '';
       if (d.length === 11 && d[2] !== '9') {
         const d2 = d.slice(0, 2) + d.slice(3);
         if (/^[1-9]{2}[0-9]{8}$/.test(d2)) d = d2;
@@ -7514,8 +7521,14 @@ app.post('/api/expay/charge', async (req, res) => {
         if (!cpfCnpjDigits || !(cpfCnpjDigits.length === 11 || cpfCnpjDigits.length === 14)) {
             return res.status(400).json({ error: 'missing_cpf_cnpj', message: 'Informe CPF/CNPJ válido para pagar via Pix (ExPay).' });
         }
-        if (!phoneDigits || phoneDigits.length < 10) {
+        if (!phoneDigits) {
             return res.status(400).json({ error: 'missing_phone', message: 'Informe um telefone válido para pagar via Pix (ExPay).' });
+        }
+        if (!(phoneDigits.length === 10 || phoneDigits.length === 11)) {
+            return res.status(400).json({ error: 'invalid_phone', message: 'Informe um telefone válido para pagar via Pix (ExPay).' });
+        }
+        if (/^(\d)\1+$/.test(phoneDigits)) {
+            return res.status(400).json({ error: 'invalid_phone', message: 'Informe um telefone válido para pagar via Pix (ExPay).' });
         }
         const emailFallback = String(process.env.EXPAY_FALLBACK_EMAIL || 'no-reply@agenciaoppus.site').trim();
         const invoice = {
@@ -9089,11 +9102,29 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             if (!Number.isFinite(t) || !t) return '';
             return new Date(t).toISOString();
         };
+        const getOrderRecoveryCouponStartIso = () => {
+            const raw = String(process.env.ORDER_RECOVERY_COUPON_START_ISO || '20/05/26').trim();
+            if (!raw) return '';
+            const s = raw;
+            const m = /^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/.exec(raw);
+            const parsed = m
+              ? new Date(Number((m[3].length === 2 ? ('20' + m[3]) : m[3])), Number(m[2]) - 1, Number(m[1]), 0, 0, 0).getTime() + (3 * 60 * 60 * 1000)
+              : new Date(s).getTime();
+            const t = parsed;
+            if (!Number.isFinite(t) || !t) return '';
+            return new Date(t).toISOString();
+        };
         const getOrderRecoveryStage1Minutes = () => {
-            const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '30').trim();
+            const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '30').trim();
             const n = parseInt(raw, 10);
             if (Number.isFinite(n) && n > 0) return Math.max(5, Math.min(180, n));
             return 30;
+        };
+        const getOrderRecoveryStage0Minutes = () => {
+            const raw = String(process.env.ORDER_RECOVERY_STAGE0_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '10').trim();
+            const n = parseInt(raw, 10);
+            if (Number.isFinite(n) && n > 0) return Math.max(5, Math.min(180, n));
+            return 10;
         };
         const getOrderRecoveryStage2Hours = () => {
             const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '24').trim();
@@ -9163,16 +9194,22 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                 return;
             }
         }
+        const couponStartIso = getOrderRecoveryCouponStartIso();
+        const couponStartMs = couponStartIso ? new Date(couponStartIso).getTime() : 0;
+        const canSendCoupon = !(Number.isFinite(couponStartMs) && couponStartMs > 0) || createdAtMs >= couponStartMs;
         const ageMs = Date.now() - createdAtMs;
+        const stage0Minutes = getOrderRecoveryStage0Minutes();
         const stage1Minutes = getOrderRecoveryStage1Minutes();
         const stage2Hours = getOrderRecoveryStage2Hours();
+        const stage0Due = ageMs >= (stage0Minutes * 60 * 1000);
         const stage1Due = ageMs >= (stage1Minutes * 60 * 1000);
         const stage2Due = ageMs >= (stage2Hours * 60 * 60 * 1000);
 
+        const stage0SentAt = record?.emails?.paymentRecoveryStage10SentAt || record?.emails?.paymentRecoveryStage0SentAt;
         const stage1SentAt = record?.emails?.paymentRecoveryStage15SentAt || record?.emails?.paymentRecoveryCoupon15SentAt || record?.emails?.paymentRecoverySentAt;
         const stage2SentAt = record?.emails?.paymentRecoveryStage30SentAt || record?.emails?.paymentRecoveryCoupon30SentAt;
 
-        const stage = (stage2Due && !stage2SentAt) ? 2 : ((stage1Due && !stage1SentAt) ? 1 : 0);
+        const stage = (canSendCoupon && stage2Due && !stage2SentAt) ? 2 : ((canSendCoupon && stage1Due && !stage1SentAt) ? 1 : ((stage0Due && !stage0SentAt) ? 10 : 0));
         if (!stage) return;
 
         if (isPaidRecord(record)) {
@@ -9195,13 +9232,16 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         const stageNotSentCond = (function(){
           const missing = (f) => ({ $or: [{ [f]: { $exists: false } }, { [f]: null }, { [f]: '' }] });
           if (stage === 2) return missing('emails.paymentRecoveryStage30SentAt');
-          return {
-            $and: [
-              missing('emails.paymentRecoveryStage15SentAt'),
-              missing('emails.paymentRecoveryCoupon15SentAt'),
-              missing('emails.paymentRecoverySentAt')
-            ]
-          };
+          if (stage === 1) {
+            return {
+              $and: [
+                missing('emails.paymentRecoveryStage15SentAt'),
+                missing('emails.paymentRecoveryCoupon15SentAt'),
+                missing('emails.paymentRecoverySentAt')
+              ]
+            };
+          }
+          return missing('emails.paymentRecoveryStage10SentAt');
         })();
         const lockFilter = {
             _id: record._id,
@@ -9228,19 +9268,64 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                 return;
             }
             const createdAtIso = new Date(createdAtMs).toISOString();
+            const escapeRegexLocal = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const emailRe = new RegExp(`^${escapeRegexLocal(to)}$`, 'i');
+
+            const dayAgoIso = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+            const paidInLastDayQuery = {
+                $and: [
+                    { _id: { $ne: record._id } },
+                    { 'customer.email': { $regex: emailRe } },
+                    {
+                        $or: [
+                            { 'woovi.paidAt': { $gte: dayAgoIso } },
+                            { 'paghiper.paidAt': { $gte: dayAgoIso } },
+                            { 'payment.paidAt': { $gte: dayAgoIso } },
+                            { 'expay.paidAt': { $gte: dayAgoIso } },
+                            { 'efi.paidAt': { $gte: dayAgoIso } },
+                            { paidAt: { $gte: dayAgoIso } },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { status: { $in: paidStatusTokens } }] },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { 'woovi.status': { $in: paidStatusTokens } }] },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { 'expay.status': { $in: paidStatusTokens } }] },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { 'paghiper.status': { $in: paidStatusTokens } }] },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { 'efi.status': { $in: paidStatusTokens } }] },
+                            { $and: [{ createdAt: { $gte: dayAgoIso } }, { 'pagarme.status': { $in: paidStatusTokens } }] }
+                        ]
+                    }
+                ]
+            };
+            const paidInLastDay = await col.findOne(paidInLastDayQuery, { projection: { _id: 1, createdAt: 1, status: 1, woovi: 1, paidAt: 1, paghiper: 1, payment: 1, expay: 1, efi: 1 } });
+            if (paidInLastDay) {
+                await col.updateOne(
+                    { _id: record._id, 'emails.paymentRecoveryLockAt': nowIso },
+                    { $set: { 'emails.paymentRecoverySkippedAt': new Date().toISOString(), 'emails.paymentRecoverySkipReason': 'paid_in_last_24h' }, $unset: { 'emails.paymentRecoveryLockAt': '' } }
+                );
+                return;
+            }
             const newerPaidQuery = {
                 $and: [
                     { _id: { $ne: record._id } },
-                    { 'customer.email': to },
-                    { createdAt: { $exists: true, $gt: createdAtIso } },
+                    { 'customer.email': { $regex: emailRe } },
                     {
                         $or: [
+                            { 'woovi.paidAt': { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { 'paghiper.paidAt': { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { 'payment.paidAt': { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { 'expay.paidAt': { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { 'efi.paidAt': { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { paidAt: { $exists: true, $nin: [null, ''], $gt: createdAtIso } },
+                            { createdAt: { $exists: true, $gt: createdAtIso } },
                             { status: { $in: paidStatusTokens } },
                             { 'woovi.status': { $in: paidStatusTokens } },
                             { 'expay.status': { $in: paidStatusTokens } },
+                            { 'paghiper.status': { $in: paidStatusTokens } },
+                            { 'efi.status': { $in: paidStatusTokens } },
+                            { 'pagarme.status': { $in: paidStatusTokens } },
                             { paidAt: { $exists: true, $nin: [null, ''] } },
                             { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
-                            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } }
+                            { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } },
+                            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } },
+                            { 'efi.paidAt': { $exists: true, $nin: [null, ''] } }
                         ]
                     }
                 ]
@@ -9257,20 +9342,24 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             const coupon30Code = normalizeCouponCode(process.env.ORDER_RECOVERY_COUPON30_CODE || 'RECUP30');
             const coupon15Pct = 15;
             const coupon30Pct = 30;
-            try {
-              if (stage === 2) await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 });
-              else await ensureCouponExists({ code: coupon15Code, discountPercentage: coupon15Pct, maxUsesPerProfile: 1 });
-            } catch (_) {}
+            if (stage !== 10) {
+              try {
+                if (stage === 2) await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 });
+                else await ensureCouponExists({ code: coupon15Code, discountPercentage: coupon15Pct, maxUsesPerProfile: 1 });
+              } catch (_) {}
+            }
 
             const subject = stage === 2
               ? `Agência Oppus - Seu pedido ainda está aguardando pagamento (Cupom ${coupon30Pct}%)`
-              : `Agência Oppus - Seu pedido está aguardando pagamento (Cupom ${coupon15Pct}%)`;
+              : (stage === 1
+                ? `Agência Oppus - Seu pedido está aguardando pagamento (Cupom ${coupon15Pct}%)`
+                : `Agência Oppus - Seu pedido está aguardando pagamento`);
 
             try { console.log(`📨 [recovery-email] start id=${orderIdShort} to=${to} stage=${stage}`); } catch (_) {}
             const sent = await sendPixRecoveryEmailToCustomer({
               record,
-              couponCode: stage === 2 ? coupon30Code : coupon15Code,
-              couponPct: stage === 2 ? coupon30Pct : coupon15Pct,
+              couponCode: stage === 10 ? '' : (stage === 2 ? coupon30Code : coupon15Code),
+              couponPct: stage === 10 ? 0 : (stage === 2 ? coupon30Pct : coupon15Pct),
               subjectOverride: subject
             });
             if (!sent) throw new Error('recovery_email_not_sent');
@@ -9279,6 +9368,7 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                 {
                   $set: Object.assign(
                     {},
+                    stage === 10 ? { 'emails.paymentRecoveryStage10SentAt': new Date().toISOString() } : {},
                     stage === 1 ? { 'emails.paymentRecoverySentAt': new Date().toISOString(), 'emails.paymentRecoveryStage15SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon15Code': stage === 1 ? coupon15Code : '' } : {},
                     stage === 2 ? { 'emails.paymentRecoveryStage30SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon30Code': stage === 2 ? coupon30Code : '' } : {}
                   ),
@@ -16869,7 +16959,21 @@ app.post('/api/refil/preview', async (req, res) => {
             { 'payment.paidAt': { $exists: true, $nin: [null, ''] } },
             { 'expay.paidAt': { $exists: true, $nin: [null, ''] } }
           ];
-          const q = { $and: [{ $or: paidOr }, { $or: byUserOr }] };
+          const followersPurchaseOr = [
+            { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
+            { additionalInfo: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
+            { 'additionalInfoMapPaid.categoria_servico': new RegExp('^seguidores$', 'i') },
+            { 'additionalInfoMap.categoria_servico': new RegExp('^seguidores$', 'i') },
+            { categoriaServico: new RegExp('^seguidores$', 'i') },
+            {
+              $and: [
+                { $or: [{ tipo: { $exists: true } }, { tipoServico: { $exists: true } }] },
+                { $or: [{ tipo: { $regex: 'seguidores', $options: 'i' } }, { tipoServico: { $regex: 'seguidores', $options: 'i' } }] },
+                { $and: [{ tipo: { $not: /curtidas|visualiz|views|reels|coment/i } }, { tipoServico: { $not: /curtidas|visualiz|views|reels|coment/i } }] }
+              ]
+            }
+          ];
+          const q = { $and: [{ $or: paidOr }, { $or: byUserOr }, { $or: followersPurchaseOr }] };
           const rows = await withTimeout(
             ordersCol.find(
               q,
@@ -16960,7 +17064,33 @@ app.post('/api/refil/preview', async (req, res) => {
         const orderId = String(pedido.id || '').trim();
         const serviceId = String(pedido.service_id || '').trim();
         const orderCreatedAt = String(pedido.created_at || pedido.created || '').trim();
-        const orderLink = String(pedido.link || username || '').trim().replace(/^@+/, '');
+        const sanitizeOrderLink = (raw, uname) => {
+          try {
+            const u0 = String(uname || '').trim().replace(/^@+/, '');
+            let s = String(raw || '').trim();
+            s = s.replace(/[`"'“”‘’]/g, '').trim();
+            s = s.replace(/\s+/g, '');
+            s = s.replace(/^@+/, '');
+            if (!s) return u0 || '';
+            const isUsername = /^[a-zA-Z0-9._]{1,30}$/.test(s);
+            if (isUsername) return s;
+            try {
+              const withScheme = (/^https?:\/\//i.test(s) ? s : (`https://${s.replace(/^\/+/, '')}`));
+              const u = new URL(withScheme);
+              const host = String(u.hostname || '').toLowerCase();
+              if (host.includes('instagram.com')) {
+                const parts = String(u.pathname || '').split('/').filter(Boolean);
+                const first = parts.length ? parts[0] : '';
+                if (first && /^[a-zA-Z0-9._]{1,30}$/.test(first)) return first;
+              }
+            } catch (_) {}
+            if (u0) return u0;
+            return s;
+          } catch (_) {
+            return String(uname || '').trim().replace(/^@+/, '');
+          }
+        };
+        const orderLink = sanitizeOrderLink(pedido.link || username || '', username);
         dbg('pedido parsed', { orderId, serviceId, startCount, qty, orderCreatedAt, orderLink });
 
         let refil2Override = null;
@@ -17024,61 +17154,6 @@ app.post('/api/refil/preview', async (req, res) => {
           return respondErr(502, { ok: false, error: 'invalid_order_data', message: 'Não foi possível validar o pedido para reposição.' });
         }
 
-        const brtOffsetMs = 3 * 60 * 60 * 1000;
-        const dayMs = 24 * 60 * 60 * 1000;
-        const dayNumFromMsBrt = (ms) => {
-          const d = new Date(Number(ms || 0) - brtOffsetMs);
-          return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / dayMs);
-        };
-        const todayDayNumBrt = dayNumFromMsBrt(Date.now());
-        const parseOrderCreatedAtMs = (raw) => {
-          try {
-            const s0 = String(raw || '').trim();
-            if (!s0) return 0;
-            const s = s0.replace(',', ' ').replace(/\s+/g, ' ').trim();
-            const mBr = s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
-            if (mBr) {
-              const yyyy = String(mBr[3]);
-              const mm = String(mBr[2]).padStart(2, '0');
-              const dd = String(mBr[1]).padStart(2, '0');
-              const hh = String(mBr[4] || '00').padStart(2, '0');
-              const mi = String(mBr[5] || '00').padStart(2, '0');
-              const ss = String(mBr[6] || '00').padStart(2, '0');
-              const iso = `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
-              const t = new Date(iso).getTime();
-              return Number.isFinite(t) ? t : 0;
-            }
-            const mIsoDate = s.match(/(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-            if (mIsoDate) {
-              const ymd = String(mIsoDate[1]);
-              const hh = String(mIsoDate[2] || '00').padStart(2, '0');
-              const mi = String(mIsoDate[3] || '00').padStart(2, '0');
-              const ss = String(mIsoDate[4] || '00').padStart(2, '0');
-              const hasTZ = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
-              const iso = hasTZ ? s : `${ymd}T${hh}:${mi}:${ss}-03:00`;
-              const t = new Date(iso).getTime();
-              return Number.isFinite(t) ? t : 0;
-            }
-            const t = new Date(s).getTime();
-            return Number.isFinite(t) ? t : 0;
-          } catch (_) {
-            return 0;
-          }
-        };
-
-        const orderCreatedAtMs = parseOrderCreatedAtMs(orderCreatedAt);
-        const orderDayNumBrt = orderCreatedAtMs ? dayNumFromMsBrt(orderCreatedAtMs) : null;
-        if (orderDayNumBrt != null && orderDayNumBrt === todayDayNumBrt) {
-          logRefil2Request({
-            execStatus: 'success',
-            decisionStatus: 'blocked',
-            decisionReason: 'paid_today',
-            meta: { step: 'paid_today_check', tookMs: Date.now() - startedAt },
-            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null }
-          });
-          return res.status(409).json({ ok: false, error: 'paid_today', message: 'Esse serviço é para repor quedas de seguidores. Como seu pedido foi pago hoje, ainda não é possível solicitar reposição. Tente novamente amanhã.' });
-        }
-
         const profileUrlCandidates = [
           `https://www.instagram.com/${username}/`,
           `https://instagram.com/${username}`,
@@ -17086,6 +17161,7 @@ app.post('/api/refil/preview', async (req, res) => {
         ];
         const profileParamCandidates = [ 'name_url', 'url', 'link' ];
         let followerCount = null;
+        let followerCountSource = '';
         let profileResp = null;
         let profileJson = null;
         let profileFirst = null;
@@ -17106,6 +17182,8 @@ app.post('/api/refil/preview', async (req, res) => {
               (profileFirst && (profileFirst.followerCount ?? profileFirst.follower_count ?? profileFirst.followers)) ??
               (profileFirst && profileFirst.data && (profileFirst.data.followerCount ?? profileFirst.data.followers))
             );
+            if (followerCount != null && followerCount <= 0) followerCount = null;
+            if (followerCount != null) followerCountSource = 'instagram_proxy';
             if (followerCount != null) break;
           }
           if (followerCount != null) break;
@@ -17120,8 +17198,9 @@ app.post('/api/refil/preview', async (req, res) => {
             rocket = { success: false, error: e?.message || String(e) };
           }
           const rocketFollowers = safeInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
-          if (rocketFollowers != null) {
+          if (rocketFollowers != null && rocketFollowers > 0) {
             followerCount = rocketFollowers;
+            followerCountSource = 'rocket_api';
             dbg('rocket_api ok', { followers: followerCount, private: rocket?.profile?.isPrivate === true ? 1 : 0 });
           } else {
             logRefil2Request({
@@ -17142,18 +17221,45 @@ app.post('/api/refil/preview', async (req, res) => {
 
         const initial = (manualInitial != null) ? manualInitial : (startCount + qty);
         const followersSources = [];
-        if (followerCount != null) followersSources.push({ source: 'instagram_proxy', followers: followerCount });
+        if (followerCount != null) followersSources.push({ source: followerCountSource || 'instagram_proxy', followers: followerCount });
 
         let followerCountUsed = followerCount;
-        try {
-          const rocket = await fetchInstagramFollowersInfoRocketApi(username);
-          const rocketFollowers = safeInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
-          if (rocketFollowers != null) {
-            followersSources.push({ source: 'rocket_api', followers: rocketFollowers });
-            if (followerCountUsed == null) followerCountUsed = rocketFollowers;
-            else followerCountUsed = Math.min(followerCountUsed, rocketFollowers);
-          }
-        } catch (_) {}
+        if (followerCountSource !== 'rocket_api') {
+          try {
+            const rocket = await fetchInstagramFollowersInfoRocketApi(username);
+            const rocketFollowers = safeInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
+            if (rocketFollowers != null && rocketFollowers > 0) {
+              followersSources.push({ source: 'rocket_api', followers: rocketFollowers });
+              if (followerCountUsed == null) followerCountUsed = rocketFollowers;
+              else if (followerCountUsed > 0 && rocketFollowers > 0) followerCountUsed = Math.min(followerCountUsed, rocketFollowers);
+              else if (followerCountUsed <= 0 && rocketFollowers > 0) followerCountUsed = rocketFollowers;
+            }
+          } catch (_) {}
+        }
+
+        if (!(typeof followerCountUsed === 'number' && Number.isFinite(followerCountUsed) && followerCountUsed > 0)) {
+          try {
+            const userAgent = req.get('User-Agent') || '';
+            const ip = req.realIP || req.ip || '';
+            const check = await verifyInstagramProfile(username, userAgent, ip, req, null, true, { purpose: 'refil2', skipPosts: true });
+            const live = safeInt(check && check.profile ? check.profile.followersCount : null);
+            if (live != null && live > 0) {
+              followersSources.push({ source: 'verifyInstagramProfile', followers: live });
+              followerCountUsed = live;
+            }
+          } catch (_) {}
+        }
+
+        if (!(typeof followerCountUsed === 'number' && Number.isFinite(followerCountUsed) && followerCountUsed > 0)) {
+          logRefil2Request({
+            execStatus: 'error',
+            errorMessage: 'Quantidade atual inválida (zero) - não foi possível obter seguidores atuais',
+            meta: { step: 'computed', tookMs: Date.now() - startedAt },
+            pedido: { id: orderId, service_id: serviceId, start_count: startCount, quantity: qty, created_at: orderCreatedAt || null, link: orderLink || null },
+            computed: { initial: (manualInitial != null) ? manualInitial : (startCount + qty), current: followerCountUsed, followersSources }
+          });
+          return respondErr(502, { ok: false, error: 'current_followers_zero', message: 'Quantidade atual inválida (zero). Não é possível calcular a reposição com segurança.' });
+        }
 
         const deficitRaw = initial - followerCountUsed;
         const deficit = Math.max(0, safeInt(deficitRaw) || 0);
@@ -17189,14 +17295,85 @@ app.post('/api/refil/preview', async (req, res) => {
           return respondErr(500, { ok: false, error: 'missing_api_key', message: 'Configuração pendente no servidor.' });
         }
 
+        const normalizeProviderLink = (rawLink, uname) => {
+          try {
+            const u0 = String(uname || '').trim().replace(/^@+/, '');
+            const fallback = u0 ? `https://instagram.com/${encodeURIComponent(u0)}` : '';
+            let s = String(rawLink || '').trim();
+            s = s.replace(/[`"'“”‘’]/g, '').trim();
+            s = s.replace(/\s+/g, '');
+            s = s.replace(/^@+/, '');
+            if (!s) return fallback || '';
+            const isUsername = /^[a-zA-Z0-9._]{1,30}$/.test(s);
+            if (isUsername) return `https://instagram.com/${encodeURIComponent(s)}`;
+            const withScheme = (/^https?:\/\//i.test(s) ? s : (`https://${s.replace(/^\/+/, '')}`));
+            try {
+              const u = new URL(withScheme);
+              const host = String(u.hostname || '').toLowerCase();
+              if (host.includes('instagram.com')) {
+                const parts = String(u.pathname || '').split('/').filter(Boolean);
+                const last = parts.length ? parts[0] : '';
+                if (last && /^[a-zA-Z0-9._]{1,30}$/.test(last)) return `https://instagram.com/${encodeURIComponent(last)}`;
+              }
+            } catch (_) {}
+            if (fallback) return fallback;
+            return withScheme;
+          } catch (_) {
+            return '';
+          }
+        };
+        const providerUsername = String(username || '').trim().replace(/^@+/, '');
+        const providerLink0 = providerUsername ? `https://instagram.com/${encodeURIComponent(providerUsername)}` : normalizeProviderLink(orderLink || username, username);
+        const providerLink = String(providerLink0 || '').replace(/[`"'“”‘’]/g, '').trim().replace(/\s+/g, '');
+        const profileUrl0 = `https://instagram.com/${encodeURIComponent(providerUsername || username || '')}`;
+        const profileUrl = String(profileUrl0 || '').replace(/[`"'“”‘’]/g, '').trim().replace(/\s+/g, '');
+
+        const parseOrderCreatedAtToIso = (raw) => {
+          try {
+            const s = String(raw || '').trim();
+            if (!s) return '';
+            if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+              const t0 = new Date(s).getTime();
+              return Number.isFinite(t0) ? new Date(t0).toISOString() : '';
+            }
+            const m = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/.exec(s);
+            if (m) {
+              const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+              const hh = Number(m[4]), mm = Number(m[5]), ss = Number(m[6]);
+              const utcMs = Date.UTC(y, mo - 1, d, hh + 3, mm, ss, 0);
+              return Number.isFinite(utcMs) ? new Date(utcMs).toISOString() : '';
+            }
+            const t = new Date(s).getTime();
+            return Number.isFinite(t) ? new Date(t).toISOString() : '';
+          } catch (_) {
+            return '';
+          }
+        };
+        const orderCreatedIso = parseOrderCreatedAtToIso(orderCreatedAt);
+
         let payload = {
           apiKey,
           order_id: orderId,
           service: serviceId,
           service_name: '',
-          link: orderLink || username,
-          quantity: String(deficit),
-          order_created: orderCreatedAt
+          link: providerLink,
+          order_created: orderCreatedIso || orderCreatedAt,
+          order_quantity: (qty != null && Number.isFinite(Number(qty))) ? Math.trunc(Number(qty)) : 0,
+          start_count: (startCount != null && Number.isFinite(Number(startCount))) ? Math.trunc(Number(startCount)) : 0,
+          current_count: (followerCountUsed != null && Number.isFinite(Number(followerCountUsed))) ? Math.trunc(Number(followerCountUsed)) : 0,
+          drop: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : 0,
+          quantity: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : String(deficit),
+          current_followers: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          followers_count: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          current: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          quantidade_atual: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          qtd_atual: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          atual: String(followerCountUsed != null ? Math.trunc(followerCountUsed) : ''),
+          initial_followers: String(initial != null ? Math.trunc(initial) : ''),
+          quantidade_inicial: String(initial != null ? Math.trunc(initial) : ''),
+          qtd_inicial: String(initial != null ? Math.trunc(initial) : ''),
+          inicial: String(initial != null ? Math.trunc(initial) : ''),
+          profile_url: profileUrl || providerLink
         };
         dbg('POST add_reorder payload', redactSecrets(Object.assign({}, payload)));
 
@@ -17206,11 +17383,188 @@ app.post('/api/refil/preview', async (req, res) => {
         let addJson = redactSecrets(safeJsonResponse(addResp && addResp.data));
         dbg('POST add_reorder status', { status: addResp && addResp.status ? addResp.status : null });
         dbg('POST add_reorder body', addJson);
-        let providerMsg = String(
-          (addJson && typeof addJson === 'object' && (addJson.error || addJson.message || addJson.msg)) ? (addJson.error || addJson.message || addJson.msg) : ''
-        ).trim();
+        const extractProviderErrorMessage = (json) => {
+          try {
+            if (!json) return '';
+            if (typeof json === 'string') {
+              const s = String(json || '').trim();
+              return s;
+            }
+            if (typeof json !== 'object') return '';
+            const e = String((json && (json.error || json.err)) || '').trim();
+            if (e) return e;
+            const okFlag = (json && (json.ok === true || json.success === true));
+            if (okFlag) return '';
+            const statusRaw = String((json && (json.status || json.result)) || '').trim().toLowerCase();
+            if (statusRaw && (statusRaw === 'ok' || statusRaw === 'success' || statusRaw === 'true' || statusRaw === '1' || statusRaw === 'initiated')) return '';
+            const msg = String((json && (json.message || json.msg)) || '').trim();
+            return msg;
+          } catch (_) {
+            return '';
+          }
+        };
+        const isProviderOk = (resp, json) => {
+          try {
+            const statusOk = !!(resp && resp.status >= 200 && resp.status < 300);
+            if (!statusOk) return false;
+            const err = extractProviderErrorMessage(json);
+            if (err) {
+              const s = String(err || '').toLowerCase();
+              if (/(erro|error|invalid|inv[aá]lid|n[aã]o\s+permitida|failed|falha|indispon)/i.test(s)) return false;
+            }
+            if (!json) return true;
+            if (typeof json === 'object') {
+              if (json.ok === true || json.success === true) return true;
+              const statusRaw = String((json.status || json.result) || '').trim().toLowerCase();
+              if (statusRaw && (statusRaw === 'ok' || statusRaw === 'success' || statusRaw === 'true' || statusRaw === '1' || statusRaw === 'initiated')) return true;
+              if (json.refil_id || json.refilId || json.reorder_id || json.reorderId) return true;
+            }
+            return !extractProviderErrorMessage(json);
+          } catch (_) {
+            return false;
+          }
+        };
+
+        let providerMsg = extractProviderErrorMessage(addJson);
         let isBusinessError = !!providerMsg;
-        let addOk = !!(addResp && addResp.status >= 200 && addResp.status < 300) && !isBusinessError;
+        let addOk = isProviderOk(addResp, addJson);
+        if (!addOk && providerUsername && /quantidade\s+atual\s+inv[aá]lida\s*\(zero\)/i.test(providerMsg || '')) {
+          try {
+            const payloadAlt = Object.assign({}, payload, { link: providerUsername, profile_url: `https://instagram.com/${encodeURIComponent(providerUsername)}` });
+            dbg('POST add_reorder retry (link=username) payload', redactSecrets(Object.assign({}, payloadAlt)));
+            const respAlt = await requestWithRetry('POST add_reorder (link=username)', () => axiosPostFama(famaUrl('/add_reorder.php'), payloadAlt, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+            const addJsonAlt = redactSecrets(safeJsonResponse(respAlt && respAlt.data));
+            dbg('POST add_reorder retry (link=username) status', { status: respAlt && respAlt.status ? respAlt.status : null });
+            dbg('POST add_reorder retry (link=username) body', addJsonAlt);
+            const providerMsgAlt = extractProviderErrorMessage(addJsonAlt);
+            const altOk = isProviderOk(respAlt, addJsonAlt);
+            if (altOk) {
+              addResp = respAlt;
+              addJson = addJsonAlt;
+              providerMsg = providerMsgAlt;
+              isBusinessError = !!providerMsgAlt;
+              addOk = true;
+            }
+          } catch (_) {}
+        }
+
+        const isCurrentBelowInitialProviderMsg = /reposi[cç][aã]o\s+n[aã]o\s+permitida|quantidade\s+atual.*abaixo.*quantidade\s+inicial|abaixo.*quantidade\s+inicial.*pedido/i.test(providerMsg || '');
+        if (!addOk && startCount != null && Number.isFinite(Number(startCount)) && Number(startCount) > 0 && isCurrentBelowInitialProviderMsg) {
+          try {
+            const startAsCurrent = String(Math.trunc(Number(startCount)));
+            const payloadAlt = Object.assign({}, payload, {
+              current_followers: startAsCurrent,
+              followers_count: startAsCurrent,
+              current: startAsCurrent,
+              quantidade_atual: startAsCurrent,
+              qtd_atual: startAsCurrent,
+              atual: startAsCurrent,
+              current_count: Math.trunc(Number(startCount))
+            });
+            dbg('POST add_reorder retry (current=start_count) payload', redactSecrets(Object.assign({}, payloadAlt)));
+            const respAlt = await requestWithRetry('POST add_reorder (current=start_count)', () => axiosPostFama(famaUrl('/add_reorder.php'), payloadAlt, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+            const addJsonAlt = redactSecrets(safeJsonResponse(respAlt && respAlt.data));
+            dbg('POST add_reorder retry (current=start_count) status', { status: respAlt && respAlt.status ? respAlt.status : null });
+            dbg('POST add_reorder retry (current=start_count) body', addJsonAlt);
+            const providerMsgAlt = extractProviderErrorMessage(addJsonAlt);
+            const altOk = isProviderOk(respAlt, addJsonAlt);
+            if (altOk) {
+              addResp = respAlt;
+              addJson = addJsonAlt;
+              providerMsg = providerMsgAlt;
+              isBusinessError = !!providerMsgAlt;
+              addOk = true;
+            } else if (providerUsername) {
+              try {
+                const payloadAlt2 = Object.assign({}, payloadAlt, { link: providerUsername, profile_url: `https://instagram.com/${encodeURIComponent(providerUsername)}`.replace(/[`"'“”‘’]/g, '').trim().replace(/\s+/g, '') });
+                dbg('POST add_reorder retry (current=start_count, link=username) payload', redactSecrets(Object.assign({}, payloadAlt2)));
+                const respAlt2 = await requestWithRetry('POST add_reorder (current=start_count, link=username)', () => axiosPostFama(famaUrl('/add_reorder.php'), payloadAlt2, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+                const addJsonAlt2 = redactSecrets(safeJsonResponse(respAlt2 && respAlt2.data));
+                dbg('POST add_reorder retry (current=start_count, link=username) status', { status: respAlt2 && respAlt2.status ? respAlt2.status : null });
+                dbg('POST add_reorder retry (current=start_count, link=username) body', addJsonAlt2);
+                const providerMsgAlt2 = extractProviderErrorMessage(addJsonAlt2);
+                const altOk2 = isProviderOk(respAlt2, addJsonAlt2);
+                if (altOk2) {
+                  addResp = respAlt2;
+                  addJson = addJsonAlt2;
+                  providerMsg = providerMsgAlt2;
+                  isBusinessError = !!providerMsgAlt2;
+                  addOk = true;
+                }
+              } catch (_) {}
+            }
+
+            if (!addOk && providerUsername && isCurrentBelowInitialProviderMsg) {
+              try {
+                const payloadAlt3 = Object.assign({}, payload, {
+                  link: providerUsername,
+                  profile_url: `https://instagram.com/${encodeURIComponent(providerUsername)}`.replace(/[`"'“”‘’]/g, '').trim().replace(/\s+/g, ''),
+                  current_followers: startAsCurrent,
+                  followers_count: startAsCurrent,
+                  current: startAsCurrent,
+                  quantidade_atual: startAsCurrent,
+                  qtd_atual: startAsCurrent,
+                  atual: startAsCurrent,
+                  current_count: Math.trunc(Number(startCount)),
+                  initial_followers: startAsCurrent,
+                  quantidade_inicial: startAsCurrent,
+                  qtd_inicial: startAsCurrent,
+                  inicial: startAsCurrent,
+                  start_count: Math.trunc(Number(startCount)),
+                  order_quantity: (qty != null && Number.isFinite(Number(qty))) ? Math.trunc(Number(qty)) : 0,
+                  drop: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : 0,
+                  quantity: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : String(deficit)
+                });
+                dbg('POST add_reorder retry (initial=start_count, current=start_count, qty=order_qty, link=username) payload', redactSecrets(Object.assign({}, payloadAlt3)));
+                const respAlt3 = await requestWithRetry('POST add_reorder (initial=start_count)', () => axiosPostFama(famaUrl('/add_reorder.php'), payloadAlt3, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+                const addJsonAlt3 = redactSecrets(safeJsonResponse(respAlt3 && respAlt3.data));
+                dbg('POST add_reorder retry (initial=start_count) status', { status: respAlt3 && respAlt3.status ? respAlt3.status : null });
+                dbg('POST add_reorder retry (initial=start_count) body', addJsonAlt3);
+                const providerMsgAlt3 = extractProviderErrorMessage(addJsonAlt3);
+                const altOk3 = isProviderOk(respAlt3, addJsonAlt3);
+                if (altOk3) {
+                  addResp = respAlt3;
+                  addJson = addJsonAlt3;
+                  providerMsg = providerMsgAlt3;
+                  isBusinessError = !!providerMsgAlt3;
+                  addOk = true;
+                }
+              } catch (_) {}
+            }
+
+            if (!addOk && providerUsername && isCurrentBelowInitialProviderMsg) {
+              try {
+                const minimal = {
+                  apiKey,
+                  order_id: orderId,
+                  service: serviceId,
+                  service_name: '',
+                  link: providerUsername,
+                  order_created: orderCreatedIso || orderCreatedAt,
+                  order_quantity: (qty != null && Number.isFinite(Number(qty))) ? Math.trunc(Number(qty)) : 0,
+                  start_count: (startCount != null && Number.isFinite(Number(startCount))) ? Math.trunc(Number(startCount)) : 0,
+                  current_count: (startCount != null && Number.isFinite(Number(startCount))) ? Math.trunc(Number(startCount)) : 0,
+                  drop: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : 0,
+                  quantity: (deficit != null && Number.isFinite(Number(deficit))) ? Math.trunc(Number(deficit)) : String(deficit)
+                };
+                dbg('POST add_reorder retry (minimal payload) payload', redactSecrets(Object.assign({}, minimal)));
+                const respAlt4 = await requestWithRetry('POST add_reorder (minimal payload)', () => axiosPostFama(famaUrl('/add_reorder.php'), minimal, { timeout: upstreamTimeoutMs, validateStatus: () => true, headers: { 'Accept': 'application/json' } }));
+                const addJsonAlt4 = redactSecrets(safeJsonResponse(respAlt4 && respAlt4.data));
+                dbg('POST add_reorder retry (minimal payload) status', { status: respAlt4 && respAlt4.status ? respAlt4.status : null });
+                dbg('POST add_reorder retry (minimal payload) body', addJsonAlt4);
+                const providerMsgAlt4 = extractProviderErrorMessage(addJsonAlt4);
+                const altOk4 = isProviderOk(respAlt4, addJsonAlt4);
+                if (altOk4) {
+                  addResp = respAlt4;
+                  addJson = addJsonAlt4;
+                  providerMsg = providerMsgAlt4;
+                  isBusinessError = !!providerMsgAlt4;
+                  addOk = true;
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
+        }
         
         // Se deu erro de prazo expirado, tenta novamente com data atual
         if (!addOk) {
@@ -18209,7 +18563,17 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       order: (String(followersMgmtSettingsRaw.order || 'newest').toLowerCase() === 'oldest') ? 'oldest' : 'newest'
     };
 
-    const paidQuery = { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }] };
+    const paidQuery = {
+      $or: [
+        { status: { $regex: '^pago$', $options: 'i' } },
+        { 'woovi.status': { $regex: '^pago$', $options: 'i' } },
+        { paidAt: { $exists: true, $ne: null } },
+        { 'woovi.paidAt': { $exists: true, $ne: null } },
+        { 'payment.paidAt': { $exists: true, $ne: null } },
+        { 'paghiper.paidAt': { $exists: true, $ne: null } },
+        { 'efi.paidAt': { $exists: true, $ne: null } }
+      ]
+    };
     const followersQuery = {
       $and: [
         paidQuery,
@@ -18253,7 +18617,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         initialFollowersCount: 1,
         initialFollowersCheckedAt: 1
       }
-    }).sort({ createdAt: -1 }).limit(4000);
+    }).sort({ createdAt: -1 }).batchSize(500);
 
     const extractInfoAny = (o, key) => {
       try {
@@ -18673,6 +19037,18 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       : [];
     const validatedChecksMap = new Map(validatedChecksDocs.map(d => [String(d.username || '').toLowerCase(), d]));
 
+    const invalidCurrentUsers = (Array.isArray(monitorDocs) ? monitorDocs : [])
+      .filter(d => d && typeof d.followersCount === 'number' && !(d.followersCount > 0))
+      .map(d => String(d.username || '').toLowerCase())
+      .filter(Boolean);
+    const validatedCurrentFallbackDocs = invalidCurrentUsers.length
+      ? await validatedCol.find(
+          { username: { $in: invalidCurrentUsers } },
+          { projection: { _id: 0, username: 1, followersCount: 1, checkedAt: 1, checks: { $slice: -800 } } }
+        ).toArray()
+      : [];
+    const validatedCurrentFallbackMap = new Map(validatedCurrentFallbackDocs.map(d => [String(d.username || '').toLowerCase(), d]));
+
     const backfillOps = [];
     const dayMs = 24 * 60 * 60 * 1000;
     const nowMs = Date.now();
@@ -18875,6 +19251,42 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           return null;
         }
       };
+
+      if (username && typeof currentFollowersCount === 'number' && !(currentFollowersCount > 0)) {
+        const pickCurrentFromValidated = (d) => {
+          try {
+            if (!d) return null;
+            const all = [];
+            if (Array.isArray(d.checks)) {
+              for (const c of d.checks) {
+                const ts = new Date(c && c.checkedAt ? c.checkedAt : 0).getTime();
+                const fc = (c && typeof c.followersCount === 'number') ? c.followersCount : null;
+                if (Number.isFinite(ts) && ts > 0 && fc != null && Number.isFinite(fc) && fc > 0) {
+                  all.push({ ts, fc: Number(fc), at: c.checkedAt || null });
+                }
+              }
+            }
+            const ts2 = new Date(d && d.checkedAt ? d.checkedAt : 0).getTime();
+            if (Number.isFinite(ts2) && ts2 > 0 && typeof d.followersCount === 'number' && Number.isFinite(d.followersCount) && d.followersCount > 0) {
+              all.push({ ts: ts2, fc: Number(d.followersCount), at: d.checkedAt || null });
+            }
+            if (!all.length) return null;
+            all.sort((a, b) => a.ts - b.ts);
+            return all[all.length - 1];
+          } catch (_) {
+            return null;
+          }
+        };
+        const vd = validatedCurrentFallbackMap.get(String(username || '').toLowerCase()) || null;
+        const pickedCur = pickCurrentFromValidated(vd);
+        if (pickedCur && Number.isFinite(pickedCur.fc) && pickedCur.fc > 0) {
+          currentFollowersCount = pickedCur.fc;
+          currentCheckedAt = pickedCur.at || currentCheckedAt;
+        } else {
+          currentFollowersCount = null;
+          currentCheckedAt = null;
+        }
+      }
       let currentCheckedAtMs = (() => {
         try {
           if (!currentCheckedAt) return null;
@@ -19361,6 +19773,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       let ok = 0;
       let notOk = 0;
       const warrantyThresholdAbs = 100;
+      const absDiffAgg = { thresholdAbs: warrantyThresholdAbs, base: 0, gte: 0, lt: 0 };
       const warrantyAgg = {
         life: { key: 'life', label: 'Vitalício', ok: 0, nok: 0, total: 0 },
         '6m': { key: '6m', label: '6 meses', ok: 0, nok: 0, total: 0 },
@@ -19405,6 +19818,11 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         }
         const pct = (r && typeof r.diffPct === 'number') ? r.diffPct : null;
         const abs = (r && typeof r.diffAbs === 'number') ? r.diffAbs : null;
+        if (abs != null && Number.isFinite(abs) && abs > 0) {
+          absDiffAgg.base += 1;
+          if (abs >= warrantyThresholdAbs) absDiffAgg.gte += 1;
+          else absDiffAgg.lt += 1;
+        }
         if (abs != null && Number.isFinite(abs)) {
           const mode = String(r && r.refilWarrantyMode ? r.refilWarrantyMode : '').trim().toLowerCase();
           const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : ''));
@@ -19475,6 +19893,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           nokPct: Math.round((nokC / denom) * 1000) / 10
         };
       });
+      const absDenom = Math.max(1, absDiffAgg.base);
       return {
         total,
         checked,
@@ -19485,6 +19904,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         notOk,
         okPct: okBase ? (Math.round((ok / okBase) * 1000) / 10) : 0,
         buckets: bucketsOut,
+        absDiffThresholdReport: {
+          thresholdAbs: warrantyThresholdAbs,
+          base: absDiffAgg.base,
+          gteCount: absDiffAgg.gte,
+          ltCount: absDiffAgg.lt,
+          gtePct: Math.round(((absDiffAgg.gte / absDenom) * 1000)) / 10,
+          ltPct: Math.round(((absDiffAgg.lt / absDenom) * 1000)) / 10
+        },
         purchaseAgeDropReport: { total: Math.max(0, Math.floor(Number(purchaseAgeTotal || 0) || 0)), buckets: purchaseAgeOut },
         warrantyDiffReport: { thresholdAbs: warrantyThresholdAbs, groups: warrantyGroups }
       };
@@ -19904,7 +20331,7 @@ const fetchInstagramFollowersInfoInstagramProxy = async (username) => {
           (first && (first.followerCount ?? first.follower_count ?? first.followers)) ??
           (first && first.data && (first.data.followerCount ?? first.data.follower_count ?? first.data.followers))
         );
-        if (followersCount == null) continue;
+        if (followersCount == null || !(followersCount > 0)) continue;
 
         const isPrivateRaw =
           (first && (first.isPrivate ?? first.is_private ?? first.private)) ??
@@ -19943,6 +20370,10 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     const startedAtMs = Date.now();
     const cached = await monitorCol.findOne({ username }, { projection: { _id: 0 } });
     if (!force && cached && cached.checkedAt) {
+      const cachedUsable = !!(
+        (typeof cached.followersCount === 'number' && Number.isFinite(cached.followersCount) && cached.followersCount > 0) ||
+        (typeof cached.isPrivate === 'boolean')
+      );
       const diffDaysBrt = (function(){
         try {
           const brtOffsetMs = 3 * 60 * 60 * 1000;
@@ -19960,8 +20391,11 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         }
       })();
       if (diffDaysBrt != null && Number.isFinite(diffDaysBrt) && diffDaysBrt >= 0 && diffDaysBrt < 2) {
-        try { console.log(`🧾 [followers-mgmt:${traceId}] cache-hit @${username} source=${String(cached.source || '')} ms=${Date.now() - startedAtMs}`); } catch (_) {}
-        return { code: 200, body: { ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null } };
+        if (cachedUsable) {
+          try { console.log(`🧾 [followers-mgmt:${traceId}] cache-hit @${username} source=${String(cached.source || '')} ms=${Date.now() - startedAtMs}`); } catch (_) {}
+          return { code: 200, body: { ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null } };
+        }
+        try { console.log(`🧾 [followers-mgmt:${traceId}] cache-bypass-invalid @${username} source=${String(cached.source || '')} fc=${(typeof cached.followersCount === 'number') ? cached.followersCount : ''} private=${typeof cached.isPrivate === 'boolean' ? (cached.isPrivate ? '1' : '0') : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
       }
     }
 
@@ -20008,9 +20442,13 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         result = await fetchInstagramFollowersInfoInstagramProxy(username);
         profile = result && result.success ? result.profile : null;
         source = profile ? String(profile.source || 'instagram_proxy') : 'instagram_proxy';
-        isPrivate = profile ? !!profile.isPrivate : null;
+        isPrivate = profile ? ((typeof profile.isPrivate === 'boolean') ? profile.isPrivate : null) : null;
         followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
         error = result && !result.success ? (result.error || 'unknown_error') : null;
+        if (typeof followersCount === 'number' && !(followersCount > 0)) {
+          followersCount = null;
+          if (!error) error = 'invalid_followers_count';
+        }
         if (profile) {
           try { console.log(`✅ [followers-mgmt:${traceId}] @${username} ok source=${source} private=${isPrivate === true ? '1' : (isPrivate === false ? '0' : '')} fc=${typeof followersCount === 'number' ? followersCount : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
           break;
@@ -20023,7 +20461,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     }
 
     const nowIso = new Date().toISOString();
-    let hasFresh = !!(profile && (typeof followersCount === 'number' || typeof isPrivate === 'boolean'));
+    let hasFresh = !!(profile && ((typeof followersCount === 'number' && followersCount > 0) || typeof isPrivate === 'boolean'));
 
     if (!hasFresh) {
       try {
@@ -20035,6 +20473,10 @@ const followersMgmtGetCurrent = async (req, username, force) => {
           isPrivate = (typeof profile.isPrivate === 'boolean') ? profile.isPrivate : null;
           followersCount = (typeof profile.followersCount === 'number') ? profile.followersCount : null;
           error = null;
+          if (typeof followersCount === 'number' && !(followersCount > 0)) {
+            followersCount = null;
+            error = 'invalid_followers_count';
+          }
           hasFresh = !!(typeof followersCount === 'number' || typeof isPrivate === 'boolean');
           if (hasFresh) {
             try { console.log(`✅ [followers-mgmt:${traceId}] @${username} ok source=${source} private=${isPrivate === true ? '1' : (isPrivate === false ? '0' : '')} fc=${typeof followersCount === 'number' ? followersCount : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
@@ -20077,6 +20519,9 @@ const followersMgmtGetCurrent = async (req, username, force) => {
       try { console.log(`🧊 [followers-mgmt:${traceId}] @${username} stale cached=${prevCheckedAt ? '1' : '0'} source=${source} private=${isPrivate === true ? '1' : (isPrivate === false ? '0' : '')} fc=${typeof followersCount === 'number' ? followersCount : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
       return { code: 200, body: { ok: true, cached: !!prevCheckedAt, stale: true, username, followersCount, isPrivate, checkedAt: prevCheckedAt, source, error } };
     }
+
+    const prevFollowersFinal = (cached && typeof cached.followersCount === 'number') ? cached.followersCount : null;
+    if (followersCount == null && prevFollowersFinal != null && prevFollowersFinal > 0) followersCount = prevFollowersFinal;
 
     await monitorCol.updateOne(
       { username },
@@ -22540,6 +22985,29 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/pause', requireA
   }
 });
 
+app.post('/api/painel/gerenciamento-seguidores/pause-all', requireAdmin, async (req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    const general = global.followersMgmtGeneralValidationJob || null;
+    const filtered = global.followersMgmtVerifyFilteredJob || null;
+    if (general && general.status === 'running') {
+      general.status = 'paused';
+      general.pausedAt = nowIso;
+    }
+    if (filtered && filtered.status === 'running') {
+      filtered.status = 'paused';
+      filtered.pausedAt = nowIso;
+    }
+    return res.json({
+      ok: true,
+      general: followersMgmtSerializeGeneralJob(general),
+      verifyFiltered: followersMgmtSerializeVerifyFilteredJob(filtered)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/gerenciamento-seguidores/validate-general/resume', requireAdmin, async (req, res) => {
   try {
     const job = global.followersMgmtGeneralValidationJob || null;
@@ -23093,6 +23561,8 @@ function followersMgmtSerializeVerifyFilteredJob(jobRaw) {
     status: job.status,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
+    pausedAt: job.pausedAt || null,
+    resumedAt: job.resumedAt || null,
     force: !!job.force,
     total: job.total,
     done: job.done,
@@ -23213,6 +23683,35 @@ app.post('/api/painel/gerenciamento-seguidores/verify-filtered/start', requireAd
     };
     global.followersMgmtVerifyFilteredJob = job;
     followersMgmtKickVerifyFilteredJob();
+    return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/verify-filtered/pause', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtVerifyFilteredJob || null;
+    if (!job) return res.json({ ok: true, job: null });
+    if (job.status === 'running') {
+      job.status = 'paused';
+      job.pausedAt = new Date().toISOString();
+    }
+    return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(job) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.post('/api/painel/gerenciamento-seguidores/verify-filtered/resume', requireAdmin, async (req, res) => {
+  try {
+    const job = global.followersMgmtVerifyFilteredJob || null;
+    if (!job) return res.status(404).json({ ok: false, error: 'no_job' });
+    if (job.status === 'paused') {
+      job.status = 'running';
+      job.resumedAt = new Date().toISOString();
+      followersMgmtKickVerifyFilteredJob();
+    }
     return res.json({ ok: true, job: followersMgmtSerializeVerifyFilteredJob(job) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -26261,12 +26760,26 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const typeRepeatCustomers = new Map();
       for (const v of customerAgg.values()) {
         try {
-          const types = (v && v.coreTypes instanceof Set) ? Array.from(v.coreTypes.values()) : [];
-          if (types.length !== 1) continue;
-          const t = types[0];
-          typeTotalCustomers.set(t, (typeTotalCustomers.get(t) || 0) + 1);
-          const cnt = (v && v.coreTypeCounts instanceof Map) ? (v.coreTypeCounts.get(t) || 0) : 0;
-          if (cnt >= 2) typeRepeatCustomers.set(t, (typeRepeatCustomers.get(t) || 0) + 1);
+          const counts = (v && v.coreTypeCounts instanceof Map) ? v.coreTypeCounts : null;
+          if (!counts || counts.size === 0) continue;
+          let bestType = '';
+          let bestCount = -1;
+          for (const [tRaw, cntRaw] of counts.entries()) {
+            const t = String(tRaw || '').trim();
+            if (!t) continue;
+            const cnt = Number(cntRaw || 0) || 0;
+            if (cnt > bestCount) {
+              bestCount = cnt;
+              bestType = t;
+              continue;
+            }
+            if (cnt === bestCount) {
+              if (!bestType || t.localeCompare(bestType) < 0) bestType = t;
+            }
+          }
+          if (!bestType) continue;
+          typeTotalCustomers.set(bestType, (typeTotalCustomers.get(bestType) || 0) + 1);
+          if (v && v.orders > 1) typeRepeatCustomers.set(bestType, (typeRepeatCustomers.get(bestType) || 0) + 1);
         } catch (_) {}
       }
 
@@ -26349,7 +26862,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
             totalOrders
           };
         })
-        .filter(it => it && it.type && it.type !== '-' && it.type !== 'null' && it.type !== 'undefined' && Number(it.totalOrders || 0) >= 2)
+        .filter(it => it && it.type && it.type !== '-' && it.type !== 'null' && it.type !== 'undefined' && Number(it.totalOrders || 0) >= 1)
         .sort((a, b) => (b.pctRepeatCustomers - a.pctRepeatCustomers) || (b.totalCustomers - a.totalCustomers) || (b.totalOrders - a.totalOrders) || String(a.label).localeCompare(String(b.label)));
 
       return {
@@ -28226,9 +28739,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const instagram = await uniqueClientsCount(['/servicos-instagram']);
       const curtidas = await uniqueClientsCount(['/servicos-curtidas', '/servicos-instagram:curtidas']);
       const visualizacoes = await uniqueClientsCount(['/servicos-visualizacoes', '/servicos-instagram:visualizacoes']);
-      servicePageViews = { instagram, curtidas, visualizacoes };
+      const pix = await uniqueClientsCount(['/pix']);
+      servicePageViews = { instagram, curtidas, visualizacoes, pix };
     } catch (_) {
-      servicePageViews = { instagram: 0, curtidas: 0, visualizacoes: 0 };
+      servicePageViews = { instagram: 0, curtidas: 0, visualizacoes: 0, pix: 0 };
     }
 
     let onlineNow = 0;
@@ -31416,8 +31930,13 @@ const server = app.listen(port, () => {
           'PAGO', 'PAID', 'COMPLETED', 'COMPLETE', 'APPROVED', 'APROVADO', 'CONFIRMADO', 'CONFIRMED',
           'SETTLED', 'CAPTURED', 'SUCCEEDED', 'AUTHORIZED'
         ];
+        const stage0Minutes = (function () {
+          const raw = String(process.env.ORDER_RECOVERY_STAGE0_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '10').trim();
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 10;
+        })();
         const stage1Minutes = (function () {
-          const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '30').trim();
+          const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '30').trim();
           const n = parseInt(raw, 10);
           return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 30;
         })();
@@ -31427,6 +31946,7 @@ const server = app.listen(port, () => {
           return Number.isFinite(n) && n > 0 ? Math.max(12, Math.min(96, n)) : 24;
         })();
         const nowIso = new Date().toISOString();
+        const cutoffStage0Iso = new Date(Date.now() - stage0Minutes * 60 * 1000).toISOString();
         const cutoffStage1Iso = new Date(Date.now() - stage1Minutes * 60 * 1000).toISOString();
         const cutoffStage2Iso = new Date(Date.now() - stage2Hours * 60 * 60 * 1000).toISOString();
         const { getCollection } = require('./mongodbClient');
@@ -31438,9 +31958,14 @@ const server = app.listen(port, () => {
             { $or: [{ status: { $exists: false } }, { status: { $nin: paidStatusTokens } }] },
             { $or: [{ 'woovi.status': { $exists: false } }, { 'woovi.status': { $nin: paidStatusTokens } }] },
             { $or: [{ 'expay.status': { $exists: false } }, { 'expay.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'paghiper.status': { $exists: false } }, { 'paghiper.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'efi.status': { $exists: false } }, { 'efi.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'pagarme.status': { $exists: false } }, { 'pagarme.status': { $nin: paidStatusTokens } }] },
             { $or: [{ paidAt: { $exists: false } }, { paidAt: null }, { paidAt: '' }] },
             { $or: [{ 'woovi.paidAt': { $exists: false } }, { 'woovi.paidAt': null }, { 'woovi.paidAt': '' }] },
+            { $or: [{ 'paghiper.paidAt': { $exists: false } }, { 'paghiper.paidAt': null }, { 'paghiper.paidAt': '' }] },
             { $or: [{ 'payment.paidAt': { $exists: false } }, { 'payment.paidAt': null }, { 'payment.paidAt': '' }] },
+            { $or: [{ 'efi.paidAt': { $exists: false } }, { 'efi.paidAt': null }, { 'efi.paidAt': '' }] },
             { status: { $ne: 'divergent_value' } },
             { 'woovi.status': { $ne: 'divergent_value' } },
             { $or: [{ 'emails.paymentRecoverySkippedAt': { $exists: false } }, { 'emails.paymentRecoverySkippedAt': null }, { 'emails.paymentRecoverySkippedAt': '' }] }
@@ -31465,28 +31990,50 @@ const server = app.listen(port, () => {
                     { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] }
                   ]
                 }
+                ,
+                {
+                  $and: [
+                    { createdAt: { $exists: true, $lte: cutoffStage0Iso } },
+                    { $or: [{ 'emails.paymentRecoveryStage10SentAt': { $exists: false } }, { 'emails.paymentRecoveryStage10SentAt': null }, { 'emails.paymentRecoveryStage10SentAt': '' }] }
+                  ]
+                }
               ]
             },
             { $or: [{ status: { $exists: false } }, { status: { $nin: paidStatusTokens } }] },
             { $or: [{ 'woovi.status': { $exists: false } }, { 'woovi.status': { $nin: paidStatusTokens } }] },
             { $or: [{ 'expay.status': { $exists: false } }, { 'expay.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'paghiper.status': { $exists: false } }, { 'paghiper.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'efi.status': { $exists: false } }, { 'efi.status': { $nin: paidStatusTokens } }] },
+            { $or: [{ 'pagarme.status': { $exists: false } }, { 'pagarme.status': { $nin: paidStatusTokens } }] },
             { $or: [{ paidAt: { $exists: false } }, { paidAt: null }, { paidAt: '' }] },
             { $or: [{ 'woovi.paidAt': { $exists: false } }, { 'woovi.paidAt': null }, { 'woovi.paidAt': '' }] },
+            { $or: [{ 'paghiper.paidAt': { $exists: false } }, { 'paghiper.paidAt': null }, { 'paghiper.paidAt': '' }] },
             { $or: [{ 'payment.paidAt': { $exists: false } }, { 'payment.paidAt': null }, { 'payment.paidAt': '' }] },
+            { $or: [{ 'efi.paidAt': { $exists: false } }, { 'efi.paidAt': null }, { 'efi.paidAt': '' }] },
             { 'customer.email': { $exists: true, $nin: [null, ''] } },
             { $or: [{ 'emails.paymentRecoverySkippedAt': { $exists: false } }, { 'emails.paymentRecoverySkippedAt': null }, { 'emails.paymentRecoverySkippedAt': '' }] },
             { $or: [{ 'emails.paymentRecoveryLockAt': { $exists: false } }, { 'emails.paymentRecoveryLockAt': null }, { 'emails.paymentRecoveryLockAt': '' }] },
-            { $or: [{ 'woovi.brCode': { $exists: true, $ne: null } }, { 'woovi.qrCodeImage': { $exists: true, $ne: null } }, { 'expay.brCode': { $exists: true, $ne: null } }, { 'expay.qrCodeImage': { $exists: true, $ne: null } }] }
+            {
+              $or: [
+                { 'woovi.brCode': { $exists: true, $ne: null } },
+                { 'woovi.qrCodeImage': { $exists: true, $ne: null } },
+                { 'expay.brCode': { $exists: true, $ne: null } },
+                { 'expay.qrCodeImage': { $exists: true, $ne: null } },
+                { 'paghiper.brCode': { $exists: true, $ne: null } },
+                { 'paghiper.qrCodeImage': { $exists: true, $ne: null } }
+              ]
+            }
           ]
         };
         let pendingUnpaidCount = 0;
         try { pendingUnpaidCount = await col.countDocuments(countQuery); } catch (_) { pendingUnpaidCount = 0; }
         const docs = await col.find(query).sort({ createdAt: 1, _id: 1 }).limit(batch).toArray();
-        try { console.log(`🔁 [recovery-loop] mode=${recoveryMode} stage1Min=${stage1Minutes} stage2H=${stage2Hours} start=${recoveryStartIso || 'any'} batch=${batch} found=${docs ? docs.length : 0} pendingUnpaid=${pendingUnpaidCount}`); } catch (_) {}
+        try { console.log(`🔁 [recovery-loop] mode=${recoveryMode} stage0Min=${stage0Minutes} stage1Min=${stage1Minutes} stage2H=${stage2Hours} start=${recoveryStartIso || 'any'} batch=${batch} found=${docs ? docs.length : 0} pendingUnpaid=${pendingUnpaidCount}`); } catch (_) {}
         try {
           global.orderRecoveryStats = {
             checkedAt: new Date().toISOString(),
             mode: recoveryMode,
+            stage0Minutes,
             stage1Minutes,
             stage2Hours,
             startIso: recoveryStartIso || '',
@@ -31550,9 +32097,16 @@ const server = app.listen(port, () => {
           $or: [
             { status: { $in: paidStatusTokens } },
             { 'woovi.status': { $in: paidStatusTokens } },
+            { 'expay.status': { $in: paidStatusTokens } },
+            { 'paghiper.status': { $in: paidStatusTokens } },
+            { 'efi.status': { $in: paidStatusTokens } },
+            { 'pagarme.status': { $in: paidStatusTokens } },
             { paidAt: { $exists: true, $nin: [null, ''] } },
             { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
-            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } }
+            { 'expay.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'payment.paidAt': { $exists: true, $nin: [null, ''] } },
+            { 'efi.paidAt': { $exists: true, $nin: [null, ''] } }
           ]
         };
 
@@ -31568,8 +32122,15 @@ const server = app.listen(port, () => {
             const alreadyPaidNow = !!(
               (d && typeof d.status === 'string' && paidStatusTokens.includes(d.status)) ||
               (d && typeof d['woovi.status'] === 'string' && paidStatusTokens.includes(d['woovi.status'])) ||
+              (d && typeof d?.expay?.status === 'string' && paidStatusTokens.includes(d.expay.status)) ||
+              (d && typeof d?.paghiper?.status === 'string' && paidStatusTokens.includes(d.paghiper.status)) ||
+              (d && typeof d?.efi?.status === 'string' && paidStatusTokens.includes(d.efi.status)) ||
+              (d && typeof d?.pagarme?.status === 'string' && paidStatusTokens.includes(d.pagarme.status)) ||
               (d && d.paidAt) ||
               (d && d.woovi && d.woovi.paidAt) ||
+              (d && d.expay && d.expay.paidAt) ||
+              (d && d.paghiper && d.paghiper.paidAt) ||
+              (d && d.efi && d.efi.paidAt) ||
               (d && d.payment && d.payment.paidAt)
             );
             if (alreadyPaidNow) {

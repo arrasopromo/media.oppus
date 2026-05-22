@@ -382,6 +382,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Inputs de contato
   const contactPhoneInput = document.getElementById('contactPhoneInput');
   const contactEmailInput = document.getElementById('contactEmailInput');
+  const phoneErrorMsg = document.getElementById('phoneErrorMsg');
 
   function isValidEmail(v) {
     try {
@@ -450,6 +451,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function onlyDigits(v) { return String(v || '').replace(/\D+/g, ''); }
 
+  function normalizeBrPhoneDigits(v) {
+    try {
+      let d = onlyDigits(v);
+      if (!d) return '';
+      d = d.replace(/^0+/, '');
+      if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
+      if (d.length > 11) d = d.slice(-11);
+      if (!(d.length === 10 || d.length === 11)) return '';
+      if (/^(\d)\1+$/.test(d)) return '';
+      return d;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function isValidBrPhone(v) {
+    return !!normalizeBrPhoneDigits(v);
+  }
+
   function generateValidCPF() {
     const cpf = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
     let sum = 0;
@@ -515,18 +535,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const s = onlyDigits(v).slice(0, 11);
     if (!s) return '';
     const ddd = s.slice(0, 2);
-    const first = s.slice(2, 3);
-    const mid = s.slice(3, 7);
-    const end = s.slice(7, 11);
+    const isMobile = s.length >= 11;
+    const a = isMobile ? s.slice(2, 7) : s.slice(2, 6);
+    const b = isMobile ? s.slice(7, 11) : s.slice(6, 10);
     let out = '';
     if (ddd.length < 2) {
       out = `(${ddd}`;
     } else {
       out = `(${ddd})`;
     }
-    if (first) out += ` ${first}`;
-    if (mid) out += mid;
-    if (end) out += `-${end}`;
+    if (a) out += ` ${a}`;
+    if (b) out += `-${b}`;
     return out;
   }
 
@@ -663,7 +682,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
       const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
       const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
-      const phoneValue = onlyDigits(contactPhoneInput ? contactPhoneInput.value : '');
+      const phoneValue = normalizeBrPhoneDigits(contactPhoneInput ? contactPhoneInput.value : '');
       let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
       if (emailValue && !emailValue.includes('@')) emailValue = '';
       const tipo = tipoSelect ? String(tipoSelect.value || '') : '';
@@ -1193,7 +1212,7 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
 
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
-      const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+      const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
       let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
       if (emailValue && !emailValue.includes('@')) emailValue = '';
 
@@ -1822,8 +1841,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (emailErrorMsg) emailErrorMsg.style.display = 'none';
       }
 
-      if (!phone || phone.length < 10) {
-        showStatusMessageCheckout('Por favor, informe um telefone válido.', 'error');
+      if (!isValidBrPhone(phone)) {
+        showPhoneError('Por favor, informe um telefone válido.');
         if (window.goToStep) window.goToStep(2);
 
         setTimeout(() => {
@@ -1833,6 +1852,8 @@ document.addEventListener('DOMContentLoaded', function() {
              }
         }, 300);
         return;
+      } else {
+        hidePhoneError();
       }
 
       if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
@@ -3555,6 +3576,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Funções Auxiliares UI ---
 
+  function showPhoneError(msg) {
+    const text = msg || 'Por favor, informe um telefone válido.';
+    if (phoneErrorMsg) {
+      phoneErrorMsg.textContent = text;
+      phoneErrorMsg.style.display = 'block';
+      try { hideStatusMessageCheckout(); } catch (_) {}
+      return;
+    }
+    showStatusMessageCheckout(text, 'error');
+  }
+
+  function hidePhoneError() {
+    if (phoneErrorMsg) phoneErrorMsg.style.display = 'none';
+  }
+
   function showStatusMessageCheckout(msg, type) {
     if (!statusCheckoutMessage) return;
     statusCheckoutMessage.textContent = msg;
@@ -3827,7 +3863,8 @@ document.addEventListener('DOMContentLoaded', function() {
       
       // Phone
       const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
-      const phoneValue = onlyDigits(phoneInput ? phoneInput.value : '');
+      const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
+      if (!phoneValue) throw new Error('Por favor, informe um telefone válido.');
 
       let emailValue = contactEmailInput ? String(contactEmailInput.value || '').trim() : '';
       if (emailValue && !emailValue.includes('@')) emailValue = '';
@@ -4374,6 +4411,16 @@ document.addEventListener('DOMContentLoaded', function() {
   if (contactPhoneInput) attachPhoneMask(contactPhoneInput);
   if (document.getElementById('checkoutPhoneInput')) attachPhoneMask(document.getElementById('checkoutPhoneInput'));
   try {
+    if (contactPhoneInput) {
+      contactPhoneInput.addEventListener('input', function(){
+        try {
+          const v = String(contactPhoneInput.value || '').trim();
+          if (isValidBrPhone(v)) hidePhoneError();
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
+  try {
     const cpfContactEl = document.getElementById('contactCpfInput');
     if (cpfContactEl) cpfContactEl.addEventListener('input', () => { cpfContactEl.value = maskCpf(cpfContactEl.value); });
   } catch (_) {}
@@ -4405,10 +4452,12 @@ document.addEventListener('DOMContentLoaded', function() {
               if (emailErrorMsg) emailErrorMsg.style.display = 'none';
           }
           
-          if (!phone || phone.length < 10) {
-              showStatusMessageCheckout('Por favor, informe um telefone válido.', 'error');
+          if (!isValidBrPhone(phone)) {
+              showPhoneError('Por favor, informe um telefone válido.');
               if (contactPhoneInput) contactPhoneInput.focus();
               return;
+          } else {
+              hidePhoneError();
           }
           
           if (window.goToStep) window.goToStep(3);

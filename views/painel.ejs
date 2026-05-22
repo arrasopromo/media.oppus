@@ -139,7 +139,7 @@
     }
   </style>
 </head>
-<body>
+<body class="painel-page">
   <% const isUnknownOrderIdView = (typeof view !== 'undefined' && view === 'unknown_orderid'); %>
   <% const isCouponsView = (typeof view !== 'undefined' && view === 'coupons'); %>
   <% const isFollowersMgmtView = (typeof view !== 'undefined' && view === 'gerenciamento_seguidores'); %>
@@ -504,8 +504,14 @@
     <% if (isFollowersMgmtView) { %>
       <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
         <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
-          <button type="button" id="followersVerifyFilteredBtn" style="padding: 6px 12px; background: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar filtro</button>
-          <button type="button" id="followersVerifySelectedBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Verificar marcados</button>
+          <div style="position:relative; display:flex; align-items:center;">
+            <button type="button" id="followersVerifySelectedBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Verificar marcados</button>
+            <button type="button" id="followersVerifyMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #111827; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
+            <div id="followersVerifyMenu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:220px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
+              <button type="button" id="followersVerifyFilteredBtn" style="width:100%; padding: 8px 10px; background: #0ea5e9; color: white; border: none; border-radius: 8px; cursor: pointer;">Verificar filtro</button>
+              <button type="button" id="followersForceVerifyFilteredBtn" style="width:100%; margin-top:8px; padding: 8px 10px; background: #dc2626; color: white; border: none; border-radius: 8px; cursor: pointer;">Forçar verificação do filtro</button>
+            </div>
+          </div>
           <button type="button" id="followersHideSelectedBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;">Ocultar marcados</button>
           <button type="button" id="followersUnhideSelectedBtn" style="padding: 6px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Desocultar marcados</button>
           <div style="position:relative; display:flex; align-items:center;">
@@ -523,7 +529,13 @@
             </div>
           </div>
           <button type="button" id="followersReportBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Relatório</button>
-          <button type="button" id="followersBulkRefil2Btn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Solicitar Refil2 (filtrados)</button>
+          <div style="position:relative; display:flex; align-items:center;">
+            <button type="button" id="followersBulkRefil2Btn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Solicitar Refil2 (filtrados)</button>
+            <button type="button" id="followersBulkRefil2MenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #111827; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
+            <div id="followersBulkRefil2Menu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:220px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
+              <button type="button" id="followersBulkRefil2SelectedBtn" style="width:100%; padding: 8px 10px; background: #0ea5e9; color: white; border: none; border-radius: 8px; cursor: pointer;">Solicitar Refil2 (marcados)</button>
+            </div>
+          </div>
           <button type="button" id="followersFixInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir inicial (marcados)</button>
           <button type="button" id="followersUseMongoInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Usar inicial do Mongo (marcados)</button>
           <button type="button" id="followersFixCheckedGlobalBtn" style="padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados (global)</button>
@@ -532,13 +544,6 @@
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Auto:</span>
               <input id="followersAutoNotifyLimit" type="number" min="0" step="1" placeholder="0 = todos" style="width:110px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
-            </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
-              <span>Ordem:</span>
-              <select id="followersAutoNotifyOrder" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-                <option value="recent">Mais recentes</option>
-                <option value="oldest">Mais antigos</option>
-              </select>
             </label>
           </div>
           <span style="font-size:0.75rem; color:#64748b;">* Regra da validação geral: mistos/brasileiros 1+ dia | orgânicos 2+ dias.</span>
@@ -613,12 +618,6 @@
                 </label>
               </div>
             </div>
-            <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-              <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
-              <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
-              <option value="100" <%= (pagination && pagination.pageSize === 100) ? 'selected' : '' %>>100</option>
-              <option value="200" <%= (pagination && pagination.pageSize === 200) ? 'selected' : '' %>>200</option>
-            </select>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444;">
               <input id="followersFilledOnly" type="checkbox" <%= (filters && filters.filled) ? 'checked' : '' %> />
               <span>Somente preenchidos</span>
@@ -670,14 +669,44 @@
               <span>Diferença mín:</span>
               <input id="followersMinDiffAbs" type="number" min="0" step="1" value="<%= (filters && typeof filters.minDiffAbs === 'number') ? String(filters.minDiffAbs) : '' %>" placeholder="ex: 100" style="width:120px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
             </label>
-            <div style="font-size:0.9rem; color:#444; font-weight:600;">Queda mín:</div>
-            <button type="button" class="followersPctQuickBtn" data-min="10" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">10%</button>
-            <button type="button" class="followersPctQuickBtn" data-min="20" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">20%</button>
-            <button type="button" class="followersPctQuickBtn" data-min="30" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">30%</button>
-            <button type="button" class="followersPctQuickBtn" data-min="40" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">40%</button>
-            <button type="button" class="followersPctQuickBtn" data-min="41" style="padding: 6px 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">&gt;40%</button>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Queda (%):</span>
+              <%
+                const fpMin = (filters && typeof filters.minPct === 'number') ? Number(filters.minPct) : null;
+                const fpMax = (filters && typeof filters.maxPct === 'number') ? Number(filters.maxPct) : null;
+                const bucket = (() => {
+                  if (fpMin == null && fpMax == null) return '';
+                  if (fpMin != null && fpMin >= 100 && fpMax == null) return '100plus';
+                  const candidates = [10,20,30,40,50,60,70,80,90];
+                  for (const b of candidates) {
+                    if (fpMin != null && fpMax != null && Math.abs(fpMin - b) < 0.0001 && fpMax >= (b + 9.5) && fpMax <= (b + 10)) return String(b);
+                  }
+                  return 'custom';
+                })();
+              %>
+              <select id="followersPctBucket" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="" <%= (!bucket) ? 'selected' : '' %>>Todos</option>
+                <option value="custom" <%= (bucket === 'custom') ? 'selected' : '' %>>Personalizado</option>
+                <option value="10" <%= (bucket === '10') ? 'selected' : '' %>>10–19%</option>
+                <option value="20" <%= (bucket === '20') ? 'selected' : '' %>>20–29%</option>
+                <option value="30" <%= (bucket === '30') ? 'selected' : '' %>>30–39%</option>
+                <option value="40" <%= (bucket === '40') ? 'selected' : '' %>>40–49%</option>
+                <option value="50" <%= (bucket === '50') ? 'selected' : '' %>>50–59%</option>
+                <option value="60" <%= (bucket === '60') ? 'selected' : '' %>>60–69%</option>
+                <option value="70" <%= (bucket === '70') ? 'selected' : '' %>>70–79%</option>
+                <option value="80" <%= (bucket === '80') ? 'selected' : '' %>>80–89%</option>
+                <option value="90" <%= (bucket === '90') ? 'selected' : '' %>>90–99%</option>
+                <option value="100plus" <%= (bucket === '100plus') ? 'selected' : '' %>>≥ 100%</option>
+              </select>
+            </label>
             <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
             <button type="button" id="followersClearFiltersBtn" style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Limpar</button>
+            <select id="followersPageSize" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+              <option value="25" <%= (pagination && pagination.pageSize === 25) ? 'selected' : '' %>>25</option>
+              <option value="50" <%= (!pagination || pagination.pageSize === 50) ? 'selected' : '' %>>50</option>
+              <option value="100" <%= (pagination && pagination.pageSize === 100) ? 'selected' : '' %>>100</option>
+              <option value="200" <%= (pagination && pagination.pageSize === 200) ? 'selected' : '' %>>200</option>
+            </select>
           </div>
           <div id="followersStatus" style="font-size: 0.9rem; color:#555;"></div>
           <div style="margin-left:auto; font-size:0.9rem; color:#555;">
@@ -787,7 +816,7 @@
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
               %>
-              <tr data-username="<%= username %>" data-orderid="<%= oid %>" data-fornecedororderid="<%= fid ? fid : '' %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
+              <tr data-username="<%= username %>" data-tipo="<%= row.tipo ? String(row.tipo) : '' %>" data-orderid="<%= oid %>" data-fornecedororderid="<%= fid ? fid : '' %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
                   <input type="checkbox" class="followersSelectRow" />
                 </td>
@@ -910,6 +939,13 @@
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
                   <canvas id="followersReportPurchaseAgePie" width="260" height="260" style="width:260px; height:260px; border-radius:999px; background:#ffffff;"></canvas>
                   <div id="followersReportPurchaseAgeLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
+                </div>
+
+                <div style="height:14px;"></div>
+                <div style="font-size:12px; color:#6b7280;">Diferença (abs) ≥ 100 x &lt; 100 (com queda)</div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                  <canvas id="followersReportAbsDiffPie" width="220" height="220" style="width:220px; height:220px; border-radius:999px; background:#ffffff;"></canvas>
+                  <div id="followersReportAbsDiffLegend" style="flex:1; min-width:160px; font-size:13px; line-height:1.6;"></div>
                 </div>
 
                 <div style="height:14px;"></div>
@@ -1228,11 +1264,10 @@
           if (autoNotifyBtn) {
             autoNotifyBtn.addEventListener('click', async function(){
               var limitEl = el('followersAutoNotifyLimit');
-              var orderEl = el('followersAutoNotifyOrder');
               var limitStr = limitEl ? String(limitEl.value || '').trim() : '';
               var n = parseInt(limitStr, 10);
               var limit = (limitStr && isFinite(n) && n > 0) ? n : 0;
-              var order = orderEl ? String(orderEl.value || '').trim().toLowerCase() : 'recent';
+              var order = 'recent';
               var params = new URLSearchParams();
               params.set('order', (order === 'oldest') ? 'oldest' : 'recent');
               if (limit > 0) params.set('limit', String(limit));
@@ -1511,6 +1546,37 @@
             }
           }
 
+          function computeAbsDiffThresholdReportFromTable(thresholdAbs){
+            try {
+              var thr = Number(thresholdAbs || 100) || 100;
+              var rows = getAllRows();
+              var base = 0;
+              var gte = 0;
+              var lt = 0;
+              for (var i=0;i<rows.length;i++){
+                var tr = rows[i];
+                var checkedMsRaw = Number(tr.getAttribute('data-checkedatmsraw') || 0) || 0;
+                if (!(checkedMsRaw > 0)) continue;
+                var abs = Number(tr.getAttribute('data-diffabs') || 0);
+                if (!isFinite(abs) || abs <= 0) continue;
+                base += 1;
+                if (abs >= thr) gte += 1;
+                else lt += 1;
+              }
+              var denom = Math.max(1, base);
+              return {
+                thresholdAbs: thr,
+                base: base,
+                gteCount: gte,
+                ltCount: lt,
+                gtePct: Math.round((gte / denom) * 1000) / 10,
+                ltPct: Math.round((lt / denom) * 1000) / 10
+              };
+            } catch (_) {
+              return null;
+            }
+          }
+
           function drawPie(canvas, items){
             if (!canvas || !canvas.getContext) return;
             var ctx = canvas.getContext('2d');
@@ -1656,6 +1722,39 @@
             } catch (_) {}
 
             try {
+              var thr0 = (report && report.warrantyDiffReport && typeof report.warrantyDiffReport.thresholdAbs === 'number') ? report.warrantyDiffReport.thresholdAbs : 100;
+              var adr = (report && report.absDiffThresholdReport && typeof report.absDiffThresholdReport === 'object') ? report.absDiffThresholdReport : null;
+              if (!adr) adr = computeAbsDiffThresholdReportFromTable(thr0);
+              var thr = adr && (typeof adr.thresholdAbs === 'number') ? adr.thresholdAbs : thr0;
+              var gteC = adr ? (Number(adr.gteCount || 0) || 0) : 0;
+              var ltC = adr ? (Number(adr.ltCount || 0) || 0) : 0;
+              var denom = Math.max(1, (Number(adr && adr.base || 0) || 0));
+              var gtePct = Math.round((gteC / denom) * 1000) / 10;
+              var ltPct = Math.round((ltC / denom) * 1000) / 10;
+              var absItems = [
+                { label: 'Diferença ≥ ' + String(thr), count: gteC, pct: gtePct, color: '#dc2626' },
+                { label: 'Diferença < ' + String(thr), count: ltC, pct: ltPct, color: '#16a34a' }
+              ];
+              var absPie = el('followersReportAbsDiffPie');
+              drawPie(absPie, absItems);
+              var absLegend = el('followersReportAbsDiffLegend');
+              if (absLegend) {
+                var htmlAbs = '';
+                for (var ai=0;ai<absItems.length;ai++){
+                  var itAbs = absItems[ai];
+                  htmlAbs += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0;">' +
+                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + itAbs.color + ';"></span>' +
+                    '<span>' + itAbs.label + '</span>' +
+                    '</div>' +
+                    '<div style="color:#111827;font-weight:700;white-space:nowrap;">' + String(itAbs.count) + ' (' + String(itAbs.pct).replace('.', ',') + '%)</div>' +
+                    '</div>';
+                }
+                absLegend.innerHTML = htmlAbs || '<div style="color:#6b7280;">Sem dados</div>';
+              }
+            } catch (_) {}
+
+            try {
               var wrap = el('followersReportWarrantyBars');
               if (wrap) {
                 var wd = (report && report.warrantyDiffReport && typeof report.warrantyDiffReport === 'object') ? report.warrantyDiffReport : null;
@@ -1716,13 +1815,44 @@
             });
           }
 
-          var verifyFilteredBtn = el('followersVerifyFilteredBtn');
           var verifySelectedBtn = el('followersVerifySelectedBtn');
+          var verifyMenuBtn = el('followersVerifyMenuBtn');
+          var verifyMenu = el('followersVerifyMenu');
+          var verifyFilteredBtn = el('followersVerifyFilteredBtn');
+          var forceVerifyFilteredBtn = el('followersForceVerifyFilteredBtn');
           var hideSelectedBtn = el('followersHideSelectedBtn');
           var unhideSelectedBtn = el('followersUnhideSelectedBtn');
           var selectAllEl = el('followersSelectAll');
           var verifyFilteredPollTimer = null;
           var verifyFilteredLastJob = null;
+          var verifySelectedStopRequested = false;
+          function closeVerifyMenu(){
+            try { if (verifyMenu) verifyMenu.style.display = 'none'; } catch (_) {}
+            try { if (verifyMenuBtn) verifyMenuBtn.setAttribute('aria-expanded', 'false'); } catch (_) {}
+          }
+          function openVerifyMenu(){
+            try { if (verifyMenu) verifyMenu.style.display = 'block'; } catch (_) {}
+            try { if (verifyMenuBtn) verifyMenuBtn.setAttribute('aria-expanded', 'true'); } catch (_) {}
+          }
+          if (verifyMenuBtn) {
+            verifyMenuBtn.addEventListener('click', function(ev){
+              try { ev.preventDefault(); } catch (_) {}
+              try {
+                var isOpen = verifyMenu && String(verifyMenu.style.display || '') !== 'none' && String(verifyMenu.style.display || '') !== '';
+                if (isOpen) closeVerifyMenu();
+                else openVerifyMenu();
+              } catch (_) {}
+            });
+          }
+          document.addEventListener('click', function(ev){
+            try {
+              if (!verifyMenu || !verifyMenuBtn) return;
+              var t = ev && ev.target ? ev.target : null;
+              if (!t) return;
+              if (verifyMenu.contains(t) || verifyMenuBtn.contains(t)) return;
+              closeVerifyMenu();
+            } catch (_) {}
+          }, true);
           function getAllRows(){
             return Array.prototype.slice.call(document.querySelectorAll('tr[data-username]'));
           }
@@ -1764,10 +1894,12 @@
               return null;
             }
           }
-          async function startVerifyFilteredBackend(usernames){
+          async function startVerifyFilteredBackend(usernames, force){
             if (!Array.isArray(usernames) || !usernames.length) return;
             try {
               if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
+              if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = true;
+              if (verifyMenuBtn) verifyMenuBtn.disabled = true;
               if (verifySelectedBtn) verifySelectedBtn.disabled = true;
             } catch (_) {}
             try {
@@ -1776,7 +1908,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 credentials: 'same-origin',
-                body: JSON.stringify({ usernames: usernames, force: '0' })
+                body: JSON.stringify({ usernames: usernames, force: (force ? '1' : '0') })
               });
               var data = await resp.json().catch(function(){ return null; });
               if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
@@ -1786,6 +1918,8 @@
               setStatus('Erro ao iniciar verificação.');
               alert('Erro: ' + (e && e.message ? e.message : e));
               try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (verifyMenuBtn) verifyMenuBtn.disabled = false; } catch (_) {}
               try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
             }
           }
@@ -1806,9 +1940,18 @@
                 if (!verifyFilteredPollTimer) {
                   verifyFilteredPollTimer = setInterval(function(){ pollVerifyFilteredStatus().catch(function(){}); }, 1500);
                 }
+              } else if (job.status === 'paused') {
+                if (verifyFilteredPollTimer) { clearInterval(verifyFilteredPollTimer); verifyFilteredPollTimer = null; }
+                try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+                try { if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = false; } catch (_) {}
+                try { if (verifyMenuBtn) verifyMenuBtn.disabled = false; } catch (_) {}
+                try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
+                setStatus('Verificação do filtro pausada… (' + String(done) + '/' + String(total) + ')');
               } else {
                 if (verifyFilteredPollTimer) { clearInterval(verifyFilteredPollTimer); verifyFilteredPollTimer = null; }
                 try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+                try { if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = false; } catch (_) {}
+                try { if (verifyMenuBtn) verifyMenuBtn.disabled = false; } catch (_) {}
                 try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
                 if (job.status === 'done') {
                   setStatus('Verificação concluída.');
@@ -1874,6 +2017,7 @@
           }
           async function verifyRows(rows){
             if (!rows || !rows.length) return;
+            verifySelectedStopRequested = false;
             var filteredRows = rows.filter(function(tr){
               try { return String(tr.getAttribute('data-hidden') || '0') !== '1'; } catch (_) { return true; }
             });
@@ -1883,20 +2027,32 @@
             }
             try {
               if (verifyFilteredBtn) verifyFilteredBtn.disabled = true;
+              if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = true;
+              if (verifyMenuBtn) verifyMenuBtn.disabled = true;
               if (verifySelectedBtn) verifySelectedBtn.disabled = true;
             } catch (_) {}
             try {
               for (var i=0;i<filteredRows.length;i++){
+                if (verifySelectedStopRequested) {
+                  setStatus('Verificação pausada.');
+                  break;
+                }
                 setStatus('Verificando ' + (i+1) + ' de ' + filteredRows.length + '…');
                 await refreshRow(filteredRows[i], false);
+                if (verifySelectedStopRequested) {
+                  setStatus('Verificação pausada.');
+                  break;
+                }
                 await sleep(1500 + Math.floor(Math.random() * 450));
               }
-              setStatus('Verificação concluída.');
+              if (!verifySelectedStopRequested) setStatus('Verificação concluída.');
             } catch (e) {
               setStatus('Erro na verificação.');
               alert('Erro ao verificar: ' + (e && e.message ? e.message : e));
             } finally {
               try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = false; } catch (_) {}
+              try { if (verifyMenuBtn) verifyMenuBtn.disabled = false; } catch (_) {}
               try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
             }
           }
@@ -1935,7 +2091,28 @@
                 }
                 allUsers = Array.from(new Set(allUsers));
                 if (!allUsers.length) return;
-                startVerifyFilteredBackend(allUsers).catch(function(){});
+                closeVerifyMenu();
+                startVerifyFilteredBackend(allUsers, false).catch(function(){});
+              } catch (_) {}
+            });
+          }
+          if (forceVerifyFilteredBtn) {
+            forceVerifyFilteredBtn.addEventListener('click', function(){
+              try {
+                var targets = loadFollowersFilteredTargets();
+                var allUsers = [];
+                for (var i=0;i<(targets ? targets.length : 0);i++){
+                  try {
+                    var u = String(targets[i] && targets[i].username ? targets[i].username : '').trim();
+                    if (!u) continue;
+                    u = u.replace(/^@/, '').toLowerCase().trim();
+                    if (u) allUsers.push(u);
+                  } catch (_) {}
+                }
+                allUsers = Array.from(new Set(allUsers));
+                if (!allUsers.length) return;
+                closeVerifyMenu();
+                startVerifyFilteredBackend(allUsers, true).catch(function(){});
               } catch (_) {}
             });
           }
@@ -2061,8 +2238,9 @@
             validateGeneralPauseBtn.addEventListener('click', async function(){
               try {
                 validateGeneralPauseBtn.disabled = true;
-                setStatus('Pausando validação geral…');
-                var resp = await fetch('/api/painel/gerenciamento-seguidores/validate-general/pause', {
+                try { verifySelectedStopRequested = true; } catch (_) {}
+                setStatus('Pausando…');
+                var resp = await fetch('/api/painel/gerenciamento-seguidores/pause-all', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                   body: JSON.stringify({}),
@@ -2071,6 +2249,7 @@
                 var data = await resp.json().catch(function(){ return null; });
                 if (!data || !data.ok) throw new Error((data && data.error) ? data.error : ('HTTP ' + resp.status));
                 await pollGeneralStatus();
+                try { await pollVerifyFilteredStatus(); } catch (_) {}
                 closeValidateGeneralMenu();
               } catch (e) {
                 setStatus('Falha ao pausar validação geral.');
@@ -2082,6 +2261,9 @@
           pollGeneralStatus().catch(function(){});
 
           var bulkRefil2Btn = el('followersBulkRefil2Btn');
+          var bulkRefil2MenuBtn = el('followersBulkRefil2MenuBtn');
+          var bulkRefil2Menu = el('followersBulkRefil2Menu');
+          var bulkRefil2SelectedBtn = el('followersBulkRefil2SelectedBtn');
           var bulkRefil2ProgressText = el('followersBulkRefil2ProgressText');
           var bulkRefil2ProgressBar = el('followersBulkRefil2ProgressBar');
           var bulkRefil2PollTimer = null;
@@ -2140,39 +2322,75 @@
             } catch (_) {}
           });
 
+          function openBulkRefil2Menu(){
+            if (!bulkRefil2Menu) return;
+            bulkRefil2Menu.style.display = 'block';
+            if (bulkRefil2MenuBtn) bulkRefil2MenuBtn.setAttribute('aria-expanded', 'true');
+          }
+          function closeBulkRefil2Menu(){
+            if (!bulkRefil2Menu) return;
+            bulkRefil2Menu.style.display = 'none';
+            if (bulkRefil2MenuBtn) bulkRefil2MenuBtn.setAttribute('aria-expanded', 'false');
+          }
+          if (bulkRefil2MenuBtn) {
+            bulkRefil2MenuBtn.addEventListener('click', function(e){
+              try { if (e && e.preventDefault) e.preventDefault(); } catch (_) {}
+              try { if (e && e.stopPropagation) e.stopPropagation(); } catch (_) {}
+              if (!bulkRefil2Menu) return;
+              var isOpen = bulkRefil2Menu.style.display !== 'none';
+              if (isOpen) closeBulkRefil2Menu();
+              else openBulkRefil2Menu();
+            });
+          }
+          document.addEventListener('click', function(e){
+            try {
+              if (!bulkRefil2Menu || !bulkRefil2MenuBtn) return;
+              if (bulkRefil2Menu.contains(e.target)) return;
+              if (bulkRefil2MenuBtn.contains(e.target)) return;
+              closeBulkRefil2Menu();
+            } catch (_) {}
+          });
+
+          function buildRefil2EligibleTargets(arr0) {
+            var eligible = [];
+            var skippedOrganic = 0;
+            var skippedLowDrop = 0;
+            var skippedNotType = 0;
+            function toIntLoose(v){
+              try {
+                var s = String(v == null ? '' : v).trim();
+                if (!s || s === '-') return 0;
+                s = s.replace(/[^\d\-]/g, '');
+                if (!s || s === '-') return 0;
+                var n = parseInt(s, 10);
+                return isFinite(n) ? n : 0;
+              } catch (_) { return 0; }
+            }
+            for (var i=0;i<arr0.length;i++){
+              var t0 = arr0[i] || {};
+              var u0 = String(t0.username || '').trim();
+              var tipo0 = String(t0.tipo || '').toLowerCase();
+              if (!u0) continue;
+              if (tipo0.indexOf('organ') >= 0) { skippedOrganic += 1; continue; }
+              if (!(tipo0.indexOf('misto') >= 0 || tipo0.indexOf('brasileir') >= 0)) { skippedNotType += 1; continue; }
+              var dabs = toIntLoose(t0.diffAbs);
+              if (dabs < 101) { skippedLowDrop += 1; continue; }
+              eligible.push(t0);
+            }
+            return { eligible: eligible, skippedOrganic: skippedOrganic, skippedLowDrop: skippedLowDrop, skippedNotType: skippedNotType };
+          }
+
           if (bulkRefil2Btn) {
             bulkRefil2Btn.addEventListener('click', async function(){
               try {
                 var targets0 = loadFollowersFilteredTargets();
                 var total0 = targets0.length;
                 if (!total0) return alert('Nenhum pedido filtrado para solicitar refil.');
-                var eligible = [];
-                var skippedOrganic = 0;
-                var skippedLowDrop = 0;
-                var skippedNotType = 0;
-                function toIntLoose(v){
-                  try {
-                    var s = String(v == null ? '' : v).trim();
-                    if (!s || s === '-') return 0;
-                    s = s.replace(/[^\d\-]/g, '');
-                    if (!s || s === '-') return 0;
-                    var n = parseInt(s, 10);
-                    return isFinite(n) ? n : 0;
-                  } catch (_) {
-                    return 0;
-                  }
-                }
-                for (var i=0;i<targets0.length;i++){
-                  var t0 = targets0[i] || {};
-                  var u0 = String(t0.username || '').trim();
-                  var tipo0 = String(t0.tipo || '').toLowerCase();
-                  if (!u0) continue;
-                  if (tipo0.indexOf('organ') >= 0) { skippedOrganic += 1; continue; }
-                  if (!(tipo0.indexOf('misto') >= 0 || tipo0.indexOf('brasileir') >= 0)) { skippedNotType += 1; continue; }
-                  var dabs = toIntLoose(t0.diffAbs);
-                  if (dabs < 101) { skippedLowDrop += 1; continue; }
-                  eligible.push(t0);
-                }
+                var built = buildRefil2EligibleTargets(targets0);
+                var eligible = built.eligible;
+                var skippedOrganic = built.skippedOrganic;
+                var skippedLowDrop = built.skippedLowDrop;
+                var skippedNotType = built.skippedNotType;
                 if (!eligible.length) return alert('Nenhum pedido elegível.\n\nMotivos:\n- Orgânicos ignorados: ' + String(skippedOrganic) + '\n- Tipo fora (não misto/brasileiro): ' + String(skippedNotType) + '\n- Queda < 101 ignorados: ' + String(skippedLowDrop));
                 var warn = (skippedOrganic ? ('\nOrgânicos ignorados: ' + String(skippedOrganic)) : '') + (skippedLowDrop ? ('\nQueda < 101 ignorados: ' + String(skippedLowDrop)) : '');
                 if (!confirm('Solicitar Refil2 automaticamente para ' + String(eligible.length) + ' pedidos filtrados?' + warn + '\n\nObs: só entra quem tiver queda ≥ 101 e o processo roda em fila (ordenado).')) return;
@@ -2194,6 +2412,56 @@
                 alert('Falha ao iniciar Refil2 automático: ' + (e && e.message ? e.message : e));
               } finally {
                 try { bulkRefil2Btn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          if (bulkRefil2SelectedBtn) {
+            bulkRefil2SelectedBtn.addEventListener('click', async function(){
+              try {
+                closeBulkRefil2Menu();
+                var rows = getAllRows();
+                var picked = [];
+                for (var i=0;i<rows.length;i++){
+                  var tr = rows[i];
+                  var cb = tr ? tr.querySelector('input.followersSelectRow') : null;
+                  if (!cb || !cb.checked) continue;
+                  var username = String(tr.getAttribute('data-username') || '').trim();
+                  var tipo = String(tr.getAttribute('data-tipo') || '').trim();
+                  var diffAbs = tr.getAttribute('data-diffabs');
+                  var lastPurchaseAtMs = Number(tr.getAttribute('data-purchaseatms') || 0) || 0;
+                  if (!username) continue;
+                  picked.push({ username: username, tipo: tipo, diffAbs: diffAbs, lastPurchaseAtMs: lastPurchaseAtMs });
+                }
+                if (!picked.length) return alert('Nenhum pedido marcado para solicitar refil.');
+                var built = buildRefil2EligibleTargets(picked);
+                var eligible = built.eligible;
+                var skippedOrganic = built.skippedOrganic;
+                var skippedLowDrop = built.skippedLowDrop;
+                var skippedNotType = built.skippedNotType;
+                if (!eligible.length) return alert('Nenhum pedido elegível nos marcados.\n\nMotivos:\n- Orgânicos ignorados: ' + String(skippedOrganic) + '\n- Tipo fora (não misto/brasileiro): ' + String(skippedNotType) + '\n- Queda < 101 ignorados: ' + String(skippedLowDrop));
+                var warn = (skippedOrganic ? ('\nOrgânicos ignorados: ' + String(skippedOrganic)) : '') + (skippedLowDrop ? ('\nQueda < 101 ignorados: ' + String(skippedLowDrop)) : '');
+                if (!confirm('Solicitar Refil2 automaticamente para ' + String(eligible.length) + ' pedidos marcados?' + warn + '\n\nObs: só entra quem tiver queda ≥ 101 e o processo roda em fila (ordenado).')) return;
+                if (bulkRefil2Btn) bulkRefil2Btn.disabled = true;
+                if (bulkRefil2MenuBtn) bulkRefil2MenuBtn.disabled = true;
+                setStatus('Iniciando Refil2 automático (marcados)…');
+                var out = await fetch('/api/painel/gerenciamento-seguidores/refil2/bulk-start', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ targets: eligible }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && data.error) ? String(data.error) : ('HTTP ' + String(out ? out.status : ''));
+                  return alert('Falha ao iniciar Refil2 automático (marcados): ' + err);
+                }
+                await pollBulkRefil2Status();
+              } catch (e) {
+                alert('Falha ao iniciar Refil2 automático (marcados): ' + (e && e.message ? e.message : e));
+              } finally {
+                try { if (bulkRefil2Btn) bulkRefil2Btn.disabled = false; } catch (_) {}
+                try { if (bulkRefil2MenuBtn) bulkRefil2MenuBtn.disabled = false; } catch (_) {}
               }
             });
           }
@@ -2360,6 +2628,7 @@
                 var warrantyEl = el('followersWarranty');
                 var refil2AutoEl = el('followersRefil2Auto');
                 var minDiffEl = el('followersMinDiffAbs');
+                var pctBucketEl = el('followersPctBucket');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
                 var sdV = sdEl ? String(sdEl.value || '').trim() : '';
@@ -2388,6 +2657,7 @@
                 var warrantyV = warrantyEl ? String(warrantyEl.value || '').trim().toLowerCase() : '';
                 var refil2AutoV = refil2AutoEl ? String(refil2AutoEl.value || '').trim().toLowerCase() : '';
                 var minDiffV = minDiffEl ? String(minDiffEl.value || '').trim() : '';
+                var pctBucketV = pctBucketEl ? String(pctBucketEl.value || '').trim() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
                 if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
@@ -2406,6 +2676,20 @@
                 if (warrantyV === 'expired') urlParams.set('refilExpired', '1'); else { urlParams.delete('refilExpired'); urlParams.delete('refil_expired'); }
                 if (refil2AutoV && refil2AutoV !== 'all') urlParams.set('refil2Auto', refil2AutoV); else urlParams.delete('refil2Auto');
                 if (minDiffV) urlParams.set('minDiffAbs', minDiffV); else { urlParams.delete('minDiffAbs'); urlParams.delete('minDiff'); urlParams.delete('minDropAbs'); }
+                if (pctBucketV === '') {
+                  urlParams.delete('minPct');
+                  urlParams.delete('maxPct');
+                } else if (pctBucketV === 'custom') {
+                } else if (pctBucketV === '100plus') {
+                  urlParams.set('minPct', '100');
+                  urlParams.delete('maxPct');
+                } else {
+                  var b = parseInt(pctBucketV, 10);
+                  if (isFinite(b) && b >= 0) {
+                    urlParams.set('minPct', String(b));
+                    urlParams.set('maxPct', String((b + 9.99).toFixed(2)));
+                  }
+                }
                 urlParams.set('page', '1');
                 var qs = urlParams.toString();
                 window.location.href = qs ? (base + '?' + qs) : base;
@@ -2482,6 +2766,12 @@
           var refil2AutoEl2 = el('followersRefil2Auto');
           if (refil2AutoEl2 && applyBtn) {
             refil2AutoEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
+          var pctBucketEl2 = el('followersPctBucket');
+          if (pctBucketEl2 && applyBtn) {
+            pctBucketEl2.addEventListener('change', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }
@@ -3079,6 +3369,10 @@
           <div class="summary-value"><%= (typeof costOverRevenuePct !== 'undefined' ? Number(costOverRevenuePct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
         </div>
         <div class="summary-card">
+          <div class="summary-label">% faturamento (orderbump) (período)</div>
+          <div class="summary-value"><%= (typeof bumpRevenuePctOfTotal !== 'undefined' ? Number(bumpRevenuePctOfTotal || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+        </div>
+        <div class="summary-card">
           <div class="summary-label">Perfis validados hoje</div>
           <div class="summary-value"><%= typeof validatedProfilesToday !== 'undefined' ? validatedProfilesToday : 0 %></div>
         </div>
@@ -3134,6 +3428,10 @@
           <div class="summary-card">
             <div class="summary-label">Acessos /servicos-visualizacoes (período)</div>
             <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.visualizacoes || 0) : 0) %></div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Acessos /pix (período)</div>
+            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.pix || 0) : 0) %></div>
           </div>
         </div>
         <script>
@@ -3592,7 +3890,23 @@
                   const tipoLabel = String(it && (it.lastFollowersTipoLabel || it.lastFollowersTipo) ? (it.lastFollowersTipoLabel || it.lastFollowersTipo) : '-').trim() || '-';
                   const sum = (it && (it.summary || it.computed || it.data) && typeof (it.summary || it.computed || it.data) === 'object') ? (it.summary || it.computed || it.data) : {};
                   const initialQty = (typeof sum.initial === 'number') ? sum.initial : (typeof sum.quantidade_inicial === 'number' ? sum.quantidade_inicial : null);
-                  const currentQty = (typeof sum.current === 'number') ? sum.current : (typeof sum.quantidade_atual === 'number' ? sum.quantidade_atual : null);
+                  const sourcesArr = Array.isArray(sum.followersSources) ? sum.followersSources : (Array.isArray(sum.followers_sources) ? sum.followers_sources : []);
+                  const minPositiveFromSources = (function(){
+                    try {
+                      if (!sourcesArr || !sourcesArr.length) return null;
+                      let best = null;
+                      for (const s0 of sourcesArr) {
+                        const n = Number(s0 && (s0.followers ?? s0.followerCount ?? s0.followersCount));
+                        if (!Number.isFinite(n)) continue;
+                        const v = Math.trunc(n);
+                        if (v <= 0) continue;
+                        if (best == null || v < best) best = v;
+                      }
+                      return best;
+                    } catch (_) { return null; }
+                  })();
+                  const baseCurrentQty = (typeof sum.current === 'number') ? sum.current : (typeof sum.quantidade_atual === 'number' ? sum.quantidade_atual : null);
+                  const currentQty = (baseCurrentQty != null && baseCurrentQty > 0) ? baseCurrentQty : (minPositiveFromSources != null ? minPositiveFromSources : baseCurrentQty);
                   const dropQty = (typeof sum.drop === 'number') ? sum.drop : (typeof sum.deficit === 'number' ? sum.deficit : (typeof sum.quantidade_de_queda === 'number' ? sum.quantidade_de_queda : null));
                   const computedFinalQty = (currentQty != null && dropQty != null) ? (Number(currentQty) + Number(dropQty)) : null;
                   const rawFinalQty = (typeof sum.final === 'number') ? sum.final : (typeof sum.quantidade_final === 'number' ? sum.quantidade_final : null);
@@ -6047,7 +6361,7 @@
               <div style="margin-top: 14px; border:1px solid #eee; border-radius: 8px; padding: 12px; background:#fff;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap;">
                   <div style="font-weight: 800; color:#111827;">LTV por tipo de serviço</div>
-                  <div style="font-size:0.85rem; color:#6b7280;">Regra: somente clientes com 2+ pedidos do mesmo tipo (misto+orgânico fica só no geral)</div>
+                  <div style="font-size:0.85rem; color:#6b7280;">Regra: cliente classificado pelo tipo principal (maior nº de pedidos; desempate por nome)</div>
                 </div>
                 <div class="panel-table-scroll" style="margin-top:10px;">
                   <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 820px;">
@@ -6206,7 +6520,9 @@
                     mode = newMode || 'all';
                     if (titleEl) titleEl.textContent =
                       mode === 'repeat' ? 'Clientes recorrentes (2+)' :
-                      (mode === 'spend500' ? 'Clientes (gasto ≥ R$ 500)' : 'Clientes únicos');
+                      (mode === 'spend500' ? 'Clientes (gasto ≥ R$ 500)' :
+                      (mode === 'topOrders' ? 'Top usuários (mais pedidos)' :
+                      (mode === 'topSpend' ? 'Top usuários (maior gasto)' : 'Clientes únicos')));
                     if (searchEl) searchEl.value = '';
                     modal.style.display = 'flex';
                     render();
@@ -6224,6 +6540,23 @@
                     if (mode === 'repeat') rows = rows.filter(function(r){ return Number(r && r.orders ? r.orders : 0) > 1; });
                     if (mode === 'spend500') rows = rows.filter(function(r){ return Number(r && r.spend ? r.spend : 0) >= 500; });
                     rows = rows.filter(function(r){ return matchesFilter(r, q); });
+                    if (mode === 'topSpend' || mode === 'spend500') {
+                      rows.sort(function(a, b){
+                        var sd = (Number(b && b.spend ? b.spend : 0) - Number(a && a.spend ? a.spend : 0));
+                        if (sd !== 0) return sd;
+                        var od = (Number(b && b.orders ? b.orders : 0) - Number(a && a.orders ? a.orders : 0));
+                        if (od !== 0) return od;
+                        return safeStr(a && (a.label || a.username) ? (a.label || a.username) : '').localeCompare(safeStr(b && (b.label || b.username) ? (b.label || b.username) : ''));
+                      });
+                    } else if (mode === 'topOrders' || mode === 'repeat') {
+                      rows.sort(function(a, b){
+                        var od = (Number(b && b.orders ? b.orders : 0) - Number(a && a.orders ? a.orders : 0));
+                        if (od !== 0) return od;
+                        var sd = (Number(b && b.spend ? b.spend : 0) - Number(a && a.spend ? a.spend : 0));
+                        if (sd !== 0) return sd;
+                        return safeStr(a && (a.label || a.username) ? (a.label || a.username) : '').localeCompare(safeStr(b && (b.label || b.username) ? (b.label || b.username) : ''));
+                      });
+                    }
                     if (countEl) countEl.textContent = rows.length + ' clientes';
                     tbody.innerHTML = '';
                     if (!rows.length) {
@@ -6272,8 +6605,8 @@
                   }
                   if (cardAll) cardAll.addEventListener('click', function(){ open('all'); });
                   if (cardRepeat) cardRepeat.addEventListener('click', function(){ open('repeat'); });
-                  if (expandTopOrders) expandTopOrders.addEventListener('click', function(){ open('repeat'); });
-                  if (expandTopSpend) expandTopSpend.addEventListener('click', function(){ open('spend500'); });
+                  if (expandTopOrders) expandTopOrders.addEventListener('click', function(){ open('topOrders'); });
+                  if (expandTopSpend) expandTopSpend.addEventListener('click', function(){ open('topSpend'); });
                   if (closeBtn) closeBtn.addEventListener('click', close);
                   modal.addEventListener('click', function(e){
                     if (e && e.target === modal) close();

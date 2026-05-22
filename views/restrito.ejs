@@ -147,7 +147,7 @@
                   var phone = params2.get('phone') || '47997086876';
                   var name = params2.get('name') || 'Cliente Refil';
                   var token = params2.get('token') || '';
-                  fetch('/api/woovi/charge', {
+                  fetch('/api/paghiper/charge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
