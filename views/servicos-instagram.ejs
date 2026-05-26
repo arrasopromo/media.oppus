@@ -50,13 +50,10 @@
   </script>
   <script>
     window.PAGARME_PUBLIC_KEY = "<%= PAGARME_PUBLIC_KEY %>";
-    window.STRIPE_PUBLISHABLE_KEY = "<%= typeof STRIPE_PUBLISHABLE_KEY !== 'undefined' ? STRIPE_PUBLISHABLE_KEY : '' %>";
-    window.CARD_PROVIDER = "<%= typeof CARD_PROVIDER !== 'undefined' ? CARD_PROVIDER : 'pagarme' %>";
-    window.STRIPE_USE_CHECKOUT = "<%= typeof STRIPE_USE_CHECKOUT !== 'undefined' ? STRIPE_USE_CHECKOUT : '' %>" === "true";
+    window.STRIPE_PUBLISHABLE_KEY = "";
+    window.CARD_PROVIDER = "pagarme";
+    window.STRIPE_USE_CHECKOUT = false;
   </script>
-  <% if (typeof CARD_PROVIDER !== 'undefined' && CARD_PROVIDER === 'stripe' && typeof STRIPE_PUBLISHABLE_KEY !== 'undefined' && STRIPE_PUBLISHABLE_KEY) { %>
-    <script src="https://js.stripe.com/v3/"></script>
-  <% } %>
   <link href="/css/style.css?v=9" rel="stylesheet" />
   <link href="/css/badges.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
@@ -671,7 +668,7 @@
 
                         <div class="form-group" style="margin-bottom:1rem;">
                             <label for="cardInstallments" style="display:block; font-weight:600; margin-bottom:0.25rem;">Parcelas</label>
-                            <select id="cardInstallments" class="select-input" style="width:100%;">
+                            <select id="cardInstallments" class="select-input" style="width:100%; height:44px; border:1px solid #d1d5db; border-radius:10px; padding:0 14px; font-size:1rem; outline:none; background:#ffffff;">
                                 <option value="1">1x</option>
                             </select>
                         </div>

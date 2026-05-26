@@ -3630,10 +3630,20 @@
   if (optionCardToggle) optionCardToggle.addEventListener('click', () => selectPaymentMethod('credit_card'));
 
   // Masking Helpers
+  function isAmexCardNumber(digits) {
+      const s = String(digits || '').replace(/\D/g, '');
+      return /^3[47]/.test(s);
+  }
   function maskCardNumber(v) {
-      v = v.replace(/\D/g, "");
-      v = v.substring(0, 16);
-      return v.replace(/(\d{4})(\d{4})(\d{4})(\d{4})/, "$1 $2 $3 $4").trim();
+      v = String(v || '').replace(/\D/g, "");
+      v = v.substring(0, 19);
+      if (isAmexCardNumber(v)) {
+          const a = v.substring(0, 4);
+          const b = v.substring(4, 10);
+          const c = v.substring(10, 15);
+          return [a, b, c].filter(Boolean).join(' ').trim();
+      }
+      return v.replace(/(.{4})/g, '$1 ').trim();
   }
   function maskDate(v) {
       v = v.replace(/\D/g, "");
@@ -3670,7 +3680,25 @@
   }
 
   const elCardNum = document.getElementById('cardNumber');
-  if (elCardNum) elCardNum.addEventListener('input', e => e.target.value = maskCardNumber(e.target.value));
+  const elCardCvv = document.getElementById('cardCvv');
+  function syncCvvLengthFromCardNumber() {
+      try {
+          if (!elCardCvv) return;
+          const digits = String(elCardNum && elCardNum.value ? elCardNum.value : '').replace(/\D/g, '');
+          const isAmex = isAmexCardNumber(digits);
+          const desiredMax = isAmex ? 4 : 3;
+          elCardCvv.maxLength = desiredMax;
+          elCardCvv.placeholder = isAmex ? '1234' : '123';
+          const curDigits = String(elCardCvv.value || '').replace(/\D/g, '').slice(0, desiredMax);
+          if (elCardCvv.value !== curDigits) elCardCvv.value = curDigits;
+      } catch (_) {}
+  }
+  if (elCardNum) elCardNum.addEventListener('input', e => { e.target.value = maskCardNumber(e.target.value); syncCvvLengthFromCardNumber(); });
+  if (elCardCvv) elCardCvv.addEventListener('input', e => {
+      const maxLen = Number(e && e.target ? e.target.maxLength : 0) || 4;
+      e.target.value = String(e.target.value || '').replace(/\D/g, '').slice(0, maxLen);
+  });
+  try { syncCvvLengthFromCardNumber(); } catch (_) {}
   
   const elCardExp = document.getElementById('cardExpiry');
   if (elCardExp) elCardExp.addEventListener('input', e => e.target.value = maskExpiry(e.target.value));
@@ -4269,7 +4297,7 @@
       if (!isStripe) {
         cardNum = String(values.cardNumber || '').replace(/\D/g, '');
         cardExpiry = String(values.cardExpiry || '').trim();
-        cardCvv = String(values.cardCvv || '').trim();
+        cardCvv = String(values.cardCvv || '').replace(/\D/g, '').trim();
         pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
         if (!pagarmePublicKey) {
           throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
@@ -4283,6 +4311,20 @@
         }
         if (expYear && expYear.length === 2) expYear = '20' + expYear;
         if (!expMonth || !expYear || expMonth > 12 || expMonth < 1) throw new Error('Data de validade inválida');
+        const isAmex = isAmexCardNumber(cardNum);
+        const expectedCvv = isAmex ? 4 : 3;
+        if (!new RegExp(`^\\d{${expectedCvv}}$`).test(cardCvv)) {
+          try {
+            const cvvEl = document.getElementById('cardCvv');
+            if (cvvEl) {
+              cvvEl.classList.add('input-error');
+              cvvEl.classList.add('tutorial-highlight');
+              try { cvvEl.focus(); } catch (_) {}
+              try { cvvEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+          throw new Error(`CVV inválido. Para este cartão use ${expectedCvv} dígitos.`);
+        }
       } else {
         if (!useCheckout) await ensureStripeMounted();
       }

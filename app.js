@@ -3854,6 +3854,7 @@ app.get('/checkout', (req, res) => {
         }
     } catch (_) {}
     return res.render('checkout', {
+        CARD_PROVIDER: 'pagarme',
         PIXEL_ID: process.env.PIXEL_ID || '',
         EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
     });
@@ -7875,6 +7876,15 @@ app.post('/api/paghiper/charge', async (req, res) => {
         }, {});
 
         const tipoVal = addInfoMap['tipo_servico'] || '';
+        const isRefilExtensao = (() => {
+            const t = String(tipoVal || '').trim().toLowerCase();
+            return t === 'refil_extensao' || t === 'refil-extensao' || t === 'extensao_refil' || t === 'extensao-refil';
+        })();
+        const refilLinkIdFromAdditional = (() => {
+            const raw = String(addInfoMap['refil_link_id'] || addInfoMap['refilLinkId'] || addInfoMap['refil_token'] || addInfoMap['token'] || '').trim();
+            const clean = raw.replace(/[^0-9a-zA-Z_-]/g, '').trim();
+            return clean || '';
+        })();
         const qtdVal = (function () {
             const raw = String(addInfoMap['quantidade'] ?? '').trim();
             const n = parseInt(raw.replace(/[^\d]/g, ''), 10);
@@ -7966,6 +7976,72 @@ app.post('/api/paghiper/charge', async (req, res) => {
         };
 
         let cpfDigits = String((customer && (customer.cpf || customer.cpfCnpj || customer.document)) || addInfoMap['cpf'] || addInfoMap['cpf_cnpj'] || '').replace(/\D/g, '');
+        let emailFromClient = normalizeEmail((customer && customer.email) ? customer.email : (addInfoMap['email'] || ''));
+        let customerNameFromClient = sanitizeText((customer && customer.name) ? customer.name : '');
+        let customerPhoneFromClient = normalizePhone((customer && customer.phone) ? customer.phone : '');
+
+        if (isRefilExtensao && refilLinkIdFromAdditional) {
+            try {
+                const extractFromAdditionalArr = (arr) => {
+                    try {
+                        const map = {};
+                        const list = Array.isArray(arr) ? arr : [];
+                        for (const it of list) {
+                            const k = String(it?.key || '').trim();
+                            if (!k) continue;
+                            const v = String(it?.value ?? '').trim();
+                            if (!v) continue;
+                            map[k] = v;
+                        }
+                        return map;
+                    } catch (_) {
+                        return {};
+                    }
+                };
+                const ordersCol = await getCollection('checkout_orders');
+                const refilLinkIdSafe = String(refilLinkIdFromAdditional || '').trim();
+                const doc = refilLinkIdSafe
+                    ? await ordersCol.find({ refilLinkId: refilLinkIdSafe }, { projection: { _id: 1, createdAt: 1, paidAt: 1, woovi: 1, paghiper: 1, payment: 1, expay: 1, customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } })
+                        .sort({ 'woovi.paidAt': -1, 'paghiper.paidAt': -1, 'payment.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 })
+                        .limit(1)
+                        .toArray()
+                        .then((arr) => (Array.isArray(arr) && arr.length ? arr[0] : null))
+                    : null;
+
+                if (doc) {
+                    const mapPaid = (doc?.additionalInfoMapPaid && typeof doc.additionalInfoMapPaid === 'object') ? doc.additionalInfoMapPaid : {};
+                    const map = (doc?.additionalInfoMap && typeof doc.additionalInfoMap === 'object') ? doc.additionalInfoMap : {};
+                    const arrPaid = Array.isArray(doc?.additionalInfoPaid) ? doc.additionalInfoPaid : [];
+                    const arr = Array.isArray(doc?.additionalInfo) ? doc.additionalInfo : [];
+                    const arrPaidMap = extractFromAdditionalArr(arrPaid);
+                    const arrMap = extractFromAdditionalArr(arr);
+                    const pick = (k) => {
+                        if (typeof mapPaid[k] !== 'undefined') return String(mapPaid[k] ?? '');
+                        if (typeof map[k] !== 'undefined') return String(map[k] ?? '');
+                        if (typeof arrPaidMap[k] !== 'undefined') return String(arrPaidMap[k] ?? '');
+                        if (typeof arrMap[k] !== 'undefined') return String(arrMap[k] ?? '');
+                        return '';
+                    };
+
+                    if (!cpfDigits || cpfDigits.length !== 11 || !isValidCPF(cpfDigits)) {
+                        const cpf0 = String(pick('cpf') || pick('cpf_cnpj') || pick('cpfCnpj') || '').replace(/\D/g, '');
+                        if (cpf0 && cpf0.length === 11 && isValidCPF(cpf0)) cpfDigits = cpf0;
+                    }
+                    if (!emailFromClient) {
+                        const email0 = normalizeEmail(String(doc?.customer?.email || pick('email') || '').trim());
+                        if (email0) emailFromClient = email0;
+                    }
+                    if (!customerNameFromClient) {
+                        const name0 = sanitizeText(String(doc?.customer?.name || pick('name') || pick('nome') || '').trim());
+                        if (name0) customerNameFromClient = name0;
+                    }
+                    if (!customerPhoneFromClient) {
+                        const ph0 = normalizePhone(String(doc?.customer?.phone || pick('phone') || pick('telefone') || pick('celular') || '').trim());
+                        if (ph0) customerPhoneFromClient = ph0;
+                    }
+                }
+            } catch (_) {}
+        }
         const envCpf = String(process.env.PAGHIPER_DEFAULT_CPF || '').replace(/\D/g, '').trim();
         const allowAutoCpf = (String(process.env.NODE_ENV || '').trim().toLowerCase() !== 'production') && isLocalHeader && String(process.env.PAGHIPER_AUTO_CPF || '').trim() === '1';
         const generateValidCpfDigits = () => {
@@ -7997,14 +8073,14 @@ app.post('/api/paghiper/charge', async (req, res) => {
         if (!isValidCPF(cpfDigits)) {
             return res.status(400).json({ error: 'invalid_cpf', message: 'Informe um CPF válido para pagar via Pix (PagHiper).' });
         }
-        const email = normalizeEmail((customer && customer.email) ? customer.email : (addInfoMap['email'] || ''));
+        const email = emailFromClient;
         if (!email) {
             return res.status(400).json({ error: 'missing_email', message: 'Informe seu e-mail para pagar via Pix (PagHiper).' });
         }
 
         const customerPayload = {
-            name: sanitizeText((customer && customer.name) ? customer.name : (addInfoMap['instagram_username'] ? `@${String(addInfoMap['instagram_username']).replace(/^@+/, '')}` : 'Cliente Checkout')),
-            phone: normalizePhone((customer && customer.phone) ? customer.phone : '')
+            name: sanitizeText(customerNameFromClient || (addInfoMap['instagram_username'] ? `@${String(addInfoMap['instagram_username']).replace(/^@+/, '')}` : 'Cliente Checkout')),
+            phone: customerPhoneFromClient
         };
 
         const incomingCorrelationID = (typeof correlationID === 'string' ? correlationID : '').trim();
@@ -10969,6 +11045,7 @@ app.get('/:slug', async (req, res, next) => {
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
     if (slug === 'checkout') {
         return res.render('checkout', { 
+            CARD_PROVIDER: 'pagarme',
             PIXEL_ID: process.env.PIXEL_ID || '',
             EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
         });
@@ -20435,6 +20512,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     let isPrivate = null;
     let followersCount = null;
     let error = null;
+    let primaryReturnedZeroFollowers = false;
 
     for (let attempt = 1; attempt <= 1; attempt++) {
       try {
@@ -20446,6 +20524,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         followersCount = profile && typeof profile.followersCount === 'number' ? profile.followersCount : null;
         error = result && !result.success ? (result.error || 'unknown_error') : null;
         if (typeof followersCount === 'number' && !(followersCount > 0)) {
+          primaryReturnedZeroFollowers = true;
           followersCount = null;
           if (!error) error = 'invalid_followers_count';
         }
@@ -20463,7 +20542,7 @@ const followersMgmtGetCurrent = async (req, username, force) => {
     const nowIso = new Date().toISOString();
     let hasFresh = !!(profile && ((typeof followersCount === 'number' && followersCount > 0) || typeof isPrivate === 'boolean'));
 
-    if (!hasFresh) {
+    if (!hasFresh || primaryReturnedZeroFollowers) {
       try {
         try { console.log(`🚀 [followers-mgmt:${traceId}] @${username} fallback=rocket_api start`); } catch (_) {}
         const r = await fetchInstagramFollowersInfoRocketApi(username);
@@ -23310,6 +23389,171 @@ function followersMgmtKickFixInitialJob() {
       let ObjectId = null;
       try { ({ ObjectId } = require('mongodb')); } catch (_) { ObjectId = null; }
 
+      const apiProxyCache = new Map();
+      const safeJsonResponse = (data) => {
+        try {
+          if (data == null) return null;
+          if (typeof data === 'object') return data;
+          if (typeof data === 'string') {
+            const s = String(data || '').trim();
+            if (!s) return null;
+            if (s.startsWith('{') || s.startsWith('[')) {
+              try { return JSON.parse(s); } catch (_) { return { raw: s }; }
+            }
+            return { raw: s };
+          }
+          return { raw: String(data) };
+        } catch (_) {
+          return null;
+        }
+      };
+      const fetchApiProxyListByUser = async (username) => {
+        const u = normalizeUsername(username);
+        if (!u) return [];
+        if (apiProxyCache.has(u)) return apiProxyCache.get(u) || [];
+        const resp = await fetchPedidoByUser(u);
+        const body = safeJsonResponse(resp && resp.data);
+        const first = Array.isArray(body) ? body[0] : body;
+        const list = first && first.data && Array.isArray(first.data.list) ? first.data.list : [];
+        apiProxyCache.set(u, Array.isArray(list) ? list : []);
+        return apiProxyCache.get(u) || [];
+      };
+      const toInt = (v) => {
+        try {
+          if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+          const s0 = String(v == null ? '' : v).trim();
+          if (!s0) return 0;
+          const s = s0.replace(/\s+/g, '');
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) return Math.trunc(Number(s.replace(/\./g, '').replace(',', '.')));
+          if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) return Math.trunc(Number(s.replace(/,/g, '')));
+          if (/^\d+(\.\d{3})+$/.test(s)) return Math.trunc(Number(s.replace(/\./g, '')));
+          if (/^\d+(,\d{3})+$/.test(s)) return Math.trunc(Number(s.replace(/,/g, '')));
+          const n0 = Number(s);
+          if (Number.isFinite(n0)) return Math.trunc(n0);
+          const digits = s0.replace(/[^\d\-]/g, '');
+          if (!digits) return 0;
+          const n1 = Number(digits);
+          return Number.isFinite(n1) ? Math.trunc(n1) : 0;
+        } catch (_) {
+          return 0;
+        }
+      };
+      const pickAdd = (doc, key) => {
+        try {
+          const mapPaid = (doc && doc.additionalInfoMapPaid && typeof doc.additionalInfoMapPaid === 'object') ? doc.additionalInfoMapPaid : {};
+          const map = (doc && doc.additionalInfoMap && typeof doc.additionalInfoMap === 'object') ? doc.additionalInfoMap : {};
+          if (typeof mapPaid[key] !== 'undefined') return mapPaid[key];
+          if (typeof map[key] !== 'undefined') return map[key];
+          const arrPaid = Array.isArray(doc && doc.additionalInfoPaid) ? doc.additionalInfoPaid : [];
+          const itPaid = arrPaid.find(x => x && String(x.key || '').trim() === key);
+          if (itPaid && typeof itPaid.value !== 'undefined') return itPaid.value;
+          const arr = Array.isArray(doc && doc.additionalInfo) ? doc.additionalInfo : [];
+          const it = arr.find(x => x && String(x.key || '').trim() === key);
+          if (it && typeof it.value !== 'undefined') return it.value;
+        } catch (_) {}
+        return '';
+      };
+      const resolveContractedQty = (doc) => {
+        try {
+          if (typeof doc?.quantidade === 'number' && Number.isFinite(doc.quantidade)) return Math.trunc(doc.quantidade);
+          if (typeof doc?.qtd === 'number' && Number.isFinite(doc.qtd)) return Math.trunc(doc.qtd);
+          const q0 = toInt(pickAdd(doc, 'quantidade'));
+          return q0 > 0 ? q0 : 0;
+        } catch (_) {
+          return 0;
+        }
+      };
+      const resolveProviderServiceId = (doc) => {
+        try {
+          const candidates = [
+            doc?.fama24h?.requestPayload?.service,
+            doc?.fornecedor_social?.requestPayload?.service,
+            pickAdd(doc, 'service'),
+            pickAdd(doc, 'service_id'),
+            pickAdd(doc, 'serviceId')
+          ];
+          for (const c of candidates) {
+            const n = toInt(c);
+            if (n > 0) return n;
+          }
+        } catch (_) {}
+        return 0;
+      };
+      const resolveProviderOrderIdFromOrderDoc = (doc) => {
+        try {
+          const candidates = [
+            doc?.fama24h?.orderId,
+            doc?.fama24h?.orderID,
+            doc?.fama24h?.order_id,
+            doc?.fornecedor_social?.orderId,
+            doc?.fornecedor_social?.orderID,
+            doc?.fornecedor_social?.order_id
+          ];
+          for (const c of candidates) {
+            const s = String(c == null ? '' : c).trim();
+            if (s) return s;
+          }
+          const multi = Array.isArray(doc?.fama24h_multi?.orders) ? doc.fama24h_multi.orders : [];
+          for (const it of multi) {
+            const s = String(it?.orderId || it?.orderID || it?.order_id || '').trim();
+            if (s) return s;
+          }
+        } catch (_) {}
+        return '';
+      };
+      const resolvePurchaseAtMsFromOrderDoc = (doc) => {
+        const toMs = (v) => {
+          try {
+            if (!v) return 0;
+            const t = new Date(String(v)).getTime();
+            return Number.isFinite(t) ? t : 0;
+          } catch (_) {
+            return 0;
+          }
+        };
+        try {
+          const paidMs = Math.max(
+            toMs(doc?.woovi?.paidAt),
+            toMs(doc?.paghiper?.paidAt),
+            toMs(doc?.payment?.paidAt),
+            toMs(doc?.expay?.paidAt),
+            toMs(doc?.paidAt)
+          );
+          if (paidMs > 0) return paidMs;
+        } catch (_) {}
+        try {
+          const createdMs = toMs(doc?.createdAt);
+          if (createdMs > 0) return createdMs;
+        } catch (_) {}
+        return 0;
+      };
+      const scorePedidoMatch = (pedido, want) => {
+        try {
+          if (!pedido || typeof pedido !== 'object') return -1;
+          const pStart = toInt(pedido.start_count);
+          if (!(pStart > 0)) return -1;
+          const pQty = toInt(pedido.quantity);
+          const pService = toInt(pedido.service_id || pedido.service);
+          let score = 0;
+          if (want.fornecedorOrderId && String(pedido.id || '').trim() === want.fornecedorOrderId) score += 1000;
+          if (want.serviceId && pService && pService === want.serviceId) score += 50;
+          if (want.qty && pQty && pQty === want.qty) score += 30;
+          if (want.purchaseAtMs) {
+            const createdIso = toIsoFromProvider(pedido.created_at || pedido.created || '') || null;
+            const t = createdIso ? new Date(createdIso).getTime() : 0;
+            if (Number.isFinite(t) && t > 0) {
+              const diff = Math.abs(t - Number(want.purchaseAtMs));
+              if (diff <= (6 * 60 * 60 * 1000)) score += 20;
+              else if (diff <= (24 * 60 * 60 * 1000)) score += 8;
+              else if (diff <= (72 * 60 * 60 * 1000)) score += 3;
+            }
+          }
+          return score;
+        } catch (_) {
+          return -1;
+        }
+      };
+
       const targets = Array.isArray(job.targets) ? job.targets : [];
       while (job.status === 'running' && job.done < targets.length) {
         const t = targets[job.done] || {};
@@ -23317,12 +23561,6 @@ function followersMgmtKickFixInitialJob() {
         job.lastUsername = username || null;
         job.lastError = null;
         try {
-          const purchaseAtMs = Number(t.purchaseAtMs || 0) || 0;
-          if (!(purchaseAtMs > 0)) {
-            job.skipped += 1;
-            job.done += 1;
-            continue;
-          }
           const fornecedorOrderId = String(t.fornecedorOrderId || '').trim();
           const orderIdRaw = String(t.orderId || '').trim();
           if (!username || !orderIdRaw) {
@@ -23331,27 +23569,76 @@ function followersMgmtKickFixInitialJob() {
             continue;
           }
 
-          const resp = await fetchPedidoByUser(username);
-          const body = safeJsonResponse(resp && resp.data);
-          const first = Array.isArray(body) ? body[0] : body;
-          const list = first && first.data && Array.isArray(first.data.list) ? first.data.list : [];
-          if (!list.length) throw new Error('api_proxy_empty_list');
-          let pedido = null;
-          if (fornecedorOrderId) {
-            pedido = list.find((x) => String(x && x.id || '').trim() === fornecedorOrderId) || null;
-          }
-          if (!pedido) pedido = list[0] || null;
-          if (!pedido || typeof pedido !== 'object') throw new Error('api_proxy_invalid_pedido');
-          const startCount = Number(pedido.start_count);
-          if (!Number.isFinite(startCount) || startCount <= 0) throw new Error('api_proxy_missing_start_count');
-
-          const createdIso = toIsoFromProvider(pedido.created_at || pedido.created || '') || new Date(purchaseAtMs).toISOString();
           const filter = (() => {
             if (ObjectId && /^[0-9a-fA-F]{24}$/.test(orderIdRaw)) {
               try { return { _id: new ObjectId(orderIdRaw) }; } catch (_) {}
             }
             return { _id: orderIdRaw };
           })();
+          const orderDoc = await ordersCol.findOne(
+            filter,
+            { projection: { _id: 1, quantidade: 1, qtd: 1, tipo: 1, tipoServico: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, fama24h: 1, fama24h_multi: 1, fornecedor_social: 1, woovi: 1, paghiper: 1, payment: 1, expay: 1, paidAt: 1, createdAt: 1 } }
+          );
+          const isEligibleTipo = (() => {
+            try {
+              const tipoRaw = String(
+                (t && t.tipo) ||
+                (orderDoc && (orderDoc.tipo || orderDoc.tipoServico)) ||
+                pickAdd(orderDoc, 'tipo') ||
+                pickAdd(orderDoc, 'tipo_servico') ||
+                ''
+              ).toLowerCase();
+              if (!tipoRaw) return false;
+              if (tipoRaw.includes('curtida') || tipoRaw.includes('like')) return false;
+              if (tipoRaw.includes('visualiza') || tipoRaw.includes('view')) return false;
+              if (tipoRaw.includes('organ')) return false;
+              return (tipoRaw.includes('misto') || tipoRaw.includes('brasileir'));
+            } catch (_) {
+              return false;
+            }
+          })();
+          if (!isEligibleTipo) {
+            job.skipped += 1;
+            job.done += 1;
+            continue;
+          }
+          let purchaseAtMs = Number(t.purchaseAtMs || 0) || 0;
+          if (!(purchaseAtMs > 0)) purchaseAtMs = resolvePurchaseAtMsFromOrderDoc(orderDoc);
+
+          const list = await fetchApiProxyListByUser(username);
+          if (!list.length) throw new Error('api_proxy_empty_list');
+
+          const providerOrderIdFromDoc = resolveProviderOrderIdFromOrderDoc(orderDoc);
+          const effectiveFornecedorOrderId = fornecedorOrderId || providerOrderIdFromDoc;
+          const want = {
+            fornecedorOrderId: effectiveFornecedorOrderId,
+            qty: resolveContractedQty(orderDoc),
+            serviceId: resolveProviderServiceId(orderDoc),
+            purchaseAtMs
+          };
+
+          let pedido = null;
+          let bestScore = -1;
+          for (const p of list) {
+            const s = scorePedidoMatch(p, want);
+            if (s > bestScore) {
+              bestScore = s;
+              pedido = p;
+            }
+          }
+          if (!pedido || bestScore < 0) throw new Error('api_proxy_no_matching_pedido');
+          if (effectiveFornecedorOrderId && bestScore < 900) throw new Error('api_proxy_missing_target_orderid');
+          if (!effectiveFornecedorOrderId) {
+            const pQty = toInt(pedido.quantity);
+            const pService = toInt(pedido.service_id || pedido.service);
+            const okWeak = (!!(want.serviceId && pService === want.serviceId)) || (!!(want.qty && pQty === want.qty));
+            if (!okWeak) throw new Error('api_proxy_ambiguous_match');
+          }
+          if (!pedido || typeof pedido !== 'object') throw new Error('api_proxy_invalid_pedido');
+          const startCount = toInt(pedido.start_count);
+          if (!(startCount > 0)) throw new Error('api_proxy_missing_start_count');
+
+          const createdIso = toIsoFromProvider(pedido.created_at || pedido.created || '') || ((purchaseAtMs > 0) ? new Date(purchaseAtMs).toISOString() : new Date().toISOString());
           const upd = await ordersCol.updateOne(filter, { $set: { initialFollowersCount: Math.floor(startCount), initialFollowersCheckedAt: createdIso } });
           if (upd && upd.matchedCount) job.ok += 1;
           else job.failed += 1;
@@ -23395,7 +23682,8 @@ app.post('/api/painel/gerenciamento-seguidores/fix-initial/start', requireAdmin,
         orderId: oid,
         fornecedorOrderId: String(r && r.fornecedorOrderId ? r.fornecedorOrderId : '').trim(),
         username: String(r && r.username ? r.username : '').trim(),
-        purchaseAtMs: Number(r && r.purchaseAtMs ? r.purchaseAtMs : 0) || 0
+        purchaseAtMs: Number(r && r.purchaseAtMs ? r.purchaseAtMs : 0) || 0,
+        tipo: String(r && r.tipo ? r.tipo : '').trim()
       });
       if (unique.length >= 5000) break;
     }
@@ -29432,7 +29720,7 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
             (first && (first.followerCount ?? first.follower_count ?? first.followers)) ??
             (first && first.data && (first.data.followerCount ?? first.data.followers))
           );
-          if (status >= 200 && status < 300 && fc != null) {
+          if (status >= 200 && status < 300 && fc != null && fc > 0) {
             followerCount = fc;
             used = 'instagram_proxy';
             break;

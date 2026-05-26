@@ -1058,10 +1058,20 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   window.updatePaymentMethodVisibility = updatePaymentMethodVisibility;
 
+  function isAmexCardNumber(digits) {
+    const s = String(digits || '').replace(/\D/g, '');
+    return /^3[47]/.test(s);
+  }
   function maskCardNumber(v) {
     v = String(v || '').replace(/\D/g, "");
-    v = v.substring(0, 16);
-    return v.replace(/(\d{4})(\d{4})(\d{4})(\d{4})/, "$1 $2 $3 $4").trim();
+    v = v.substring(0, 19);
+    if (isAmexCardNumber(v)) {
+      const a = v.substring(0, 4);
+      const b = v.substring(4, 10);
+      const c = v.substring(10, 15);
+      return [a, b, c].filter(Boolean).join(' ').trim();
+    }
+    return v.replace(/(.{4})/g, '$1 ').trim();
   }
   function maskExpiry(v) {
     v = String(v || '').replace(/\D/g, "");
@@ -1168,7 +1178,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!isStripe) {
         cardNum = String(values.cardNumber || '').replace(/\D/g, '');
         cardExpiry = String(values.cardExpiry || '').trim();
-        cardCvv = String(values.cardCvv || '').trim();
+        cardCvv = String(values.cardCvv || '').replace(/\D/g, '').trim();
         pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
         if (!pagarmePublicKey) {
           throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
@@ -1183,6 +1193,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (expYear && expYear.length === 2) expYear = '20' + expYear;
         if (!expMonth || !expYear || Number(expMonth) > 12 || Number(expMonth) < 1) throw new Error('Data de validade inválida');
+        const isAmex = isAmexCardNumber(cardNum);
+        const expectedCvv = isAmex ? 4 : 3;
+        if (!new RegExp(`^\\d{${expectedCvv}}$`).test(cardCvv)) {
+          try {
+            const cvvEl = document.getElementById('cardCvv');
+            if (cvvEl) {
+              cvvEl.classList.add('input-error');
+              cvvEl.classList.add('tutorial-highlight');
+              try { cvvEl.focus(); } catch (_) {}
+              try { cvvEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+          throw new Error(`CVV inválido. Para este cartão use ${expectedCvv} dígitos.`);
+        }
       } else {
         if (!isStripeCheckout) await ensureStripeMounted();
       }
@@ -4366,7 +4390,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
   try {
     const cardNumberEl = document.getElementById('cardNumber');
-    if (cardNumberEl) cardNumberEl.addEventListener('input', () => { cardNumberEl.value = maskCardNumber(cardNumberEl.value); });
+    const cardCvvEl = document.getElementById('cardCvv');
+    const syncCvvLengthFromCardNumber = () => {
+      try {
+        if (!cardCvvEl) return;
+        const digits = String(cardNumberEl && cardNumberEl.value ? cardNumberEl.value : '').replace(/\D/g, '');
+        const isAmex = isAmexCardNumber(digits);
+        const desiredMax = isAmex ? 4 : 3;
+        cardCvvEl.maxLength = desiredMax;
+        cardCvvEl.placeholder = isAmex ? '1234' : '123';
+        const curDigits = String(cardCvvEl.value || '').replace(/\D/g, '').slice(0, desiredMax);
+        if (cardCvvEl.value !== curDigits) cardCvvEl.value = curDigits;
+      } catch (_) {}
+    };
+    if (cardNumberEl) cardNumberEl.addEventListener('input', () => { cardNumberEl.value = maskCardNumber(cardNumberEl.value); syncCvvLengthFromCardNumber(); });
+    if (cardCvvEl) cardCvvEl.addEventListener('input', () => {
+      const maxLen = Number(cardCvvEl.maxLength || 0) || 4;
+      cardCvvEl.value = String(cardCvvEl.value || '').replace(/\D/g, '').slice(0, maxLen);
+    });
+    try { syncCvvLengthFromCardNumber(); } catch (_) {}
     const cardExpiryEl = document.getElementById('cardExpiry');
     if (cardExpiryEl) cardExpiryEl.addEventListener('input', () => { cardExpiryEl.value = maskExpiry(cardExpiryEl.value); });
     const cardCpfEl = document.getElementById('cardHolderCpf');
