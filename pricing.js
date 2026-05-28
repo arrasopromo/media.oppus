@@ -56,7 +56,7 @@ const tabelaSeguidores = {
 
 const tabelaCurtidas = {
     mistos: [
-        { q: 150, p: 'R$ 5,90' },
+        { q: 150, p: 'R$ 4,90' },
         { q: 300, p: 'R$ 7,90' },
         { q: 500, p: 'R$ 9,90' },
         { q: 700, p: 'R$ 14,90' },

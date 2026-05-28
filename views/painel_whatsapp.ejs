@@ -88,6 +88,13 @@
           <label for="waEmail">Email (opcional)</label>
           <input id="waEmail" type="text" placeholder="email@cliente.com" />
         </div>
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:10px; font-weight:900; color:#111827;">
+            <input id="waSkipProvider" type="checkbox" />
+            <span>Não enviar para fornecedor</span>
+          </label>
+          <div class="hint">Registra a venda e cria link de reposição, mas não despacha o pedido.</div>
+        </div>
         <div class="field" style="grid-column: 1 / -1;">
           <label for="waObs">Observação (opcional)</label>
           <textarea id="waObs" placeholder="Ex: pago via Pix, atendimento WhatsApp..."></textarea>
@@ -123,6 +130,7 @@
       var discountToggleEl = el('waDiscountToggle');
       var discountPctEl = el('waDiscountPct');
       var discountPctWrapEl = el('waDiscountPctWrap');
+      var skipProviderEl = el('waSkipProvider');
       var lastSuggested = '';
       var valueTouched = false;
       var discountBaseCents = 0;
@@ -163,6 +171,49 @@
       }
       function updateBtn(){
         try { if (btn) btn.disabled = !hasRequired(); } catch(_) {}
+      }
+
+      function normalizeIgUsernameFromInput(v){
+        try {
+          let s = String(v || '').trim();
+          if (!s) return '';
+          s = s.replace(/^['"`]+/, '').replace(/['"`]+$/, '').trim();
+          if (!s) return '';
+          if (/^https?:\/\//i.test(s)) {
+            s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+            s = s.split('?')[0].split('#')[0];
+            s = s.replace(/\/+$/, '');
+            const parts = s.split('/').filter(Boolean);
+            s = parts.length ? String(parts[0] || '') : s;
+          } else if (/^instagram\.com\//i.test(s)) {
+            s = s.replace(/^instagram\.com\//i, '');
+            s = s.split('?')[0].split('#')[0];
+            s = s.replace(/\/+$/, '');
+            const parts = s.split('/').filter(Boolean);
+            s = parts.length ? String(parts[0] || '') : s;
+          }
+          s = s.trim();
+          if (s.startsWith('@')) s = s.slice(1);
+          s = s.replace(/\/+$/, '').trim();
+          if (!/^[a-zA-Z0-9._]+$/.test(s)) return '';
+          if (s.length < 1 || s.length > 60) return '';
+          return s.toLowerCase().trim();
+        } catch (_) {
+          return '';
+        }
+      }
+      function maybeNormalizeLinkField(){
+        try {
+          if (!linkEl) return;
+          const cat = String(catEl && catEl.value ? catEl.value : '').trim().toLowerCase();
+          if (cat !== 'seguidores') return;
+          const raw = String(linkEl.value || '').trim();
+          if (!raw) return;
+          const s = raw.toLowerCase();
+          if (/(^|\/)(p|reel|tv)\//i.test(s)) return;
+          const u = normalizeIgUsernameFromInput(raw);
+          if (u) linkEl.value = u;
+        } catch (_) {}
       }
 
       function rebuildTypes(){
@@ -295,7 +346,11 @@
         if (catEl) catEl.addEventListener('change', rebuildTypes);
         if (typeEl) typeEl.addEventListener('change', function(){ updateBtn(); fetchSuggested(); });
         if (qtyEl) qtyEl.addEventListener('input', function(){ updateBtn(); fetchSuggested(); });
-        if (linkEl) linkEl.addEventListener('input', updateBtn);
+        if (linkEl) {
+          linkEl.addEventListener('input', updateBtn);
+          linkEl.addEventListener('blur', function(){ maybeNormalizeLinkField(); updateBtn(); });
+          linkEl.addEventListener('paste', function(){ setTimeout(function(){ maybeNormalizeLinkField(); updateBtn(); }, 0); });
+        }
         if (phoneEl) phoneEl.addEventListener('input', updateBtn);
         if (emailEl) emailEl.addEventListener('input', updateBtn);
         if (nameEl) nameEl.addEventListener('input', updateBtn);
@@ -334,6 +389,7 @@
           try { if (emailEl) emailEl.value = ''; } catch(_) {}
           try { if (nameEl) nameEl.value = ''; } catch(_) {}
           try { if (obsEl) obsEl.value = ''; } catch(_) {}
+          try { if (skipProviderEl) skipProviderEl.checked = false; } catch(_) {}
           try { valueTouched = false; } catch(_) {}
           try { if (discountToggleEl) discountToggleEl.checked = false; } catch(_) {}
           try { if (discountPctWrapEl) discountPctWrapEl.style.display = 'none'; } catch(_) {}
@@ -350,6 +406,7 @@
       if (btn) {
         btn.addEventListener('click', async function(){
           if (!hasRequired()) return;
+          maybeNormalizeLinkField();
           var payload = {
             category: String(catEl && catEl.value ? catEl.value : '').trim(),
             type: String(typeEl && typeEl.value ? typeEl.value : '').trim(),
@@ -360,7 +417,8 @@
             phone: String(phoneEl && phoneEl.value ? phoneEl.value : '').trim(),
             email: String(emailEl && emailEl.value ? emailEl.value : '').trim(),
             name: String(nameEl && nameEl.value ? nameEl.value : '').trim(),
-            obs: String(obsEl && obsEl.value ? obsEl.value : '').trim()
+            obs: String(obsEl && obsEl.value ? obsEl.value : '').trim(),
+            skipProvider: !!(skipProviderEl && skipProviderEl.checked)
           };
           if (discountToggleEl && discountToggleEl.checked) {
             if (!(payload.discountPercent > 0 && payload.discountPercent <= 100)) return alert('Informe o % de desconto.');

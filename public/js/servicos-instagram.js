@@ -52,6 +52,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return String(code || '').trim().toUpperCase();
       } catch(_) { return ''; }
     }
+    function getUrlUsername(){
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const raw = String(p.get('instagram_username') || p.get('username') || p.get('perfil') || '').trim();
+        return String(raw || '').trim().replace(/^@+/, '').replace(/\/+$/g, '');
+      } catch(_) { return ''; }
+    }
     const pre = getUrlCoupon();
     if (pre) {
       try { sessionStorage.setItem('oppus_coupon_code', pre); } catch(_) {}
@@ -92,6 +99,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }).catch(function(){});
       };
       const ue = document.getElementById('usernameCheckoutInput');
+      try {
+        const u = getUrlUsername();
+        if (ue && u && !String(ue.value || '').trim()) {
+          ue.value = u;
+        }
+      } catch(_) {}
       if (ue && ue.value && ue.value.trim()) {
         applyNow();
       } else if (ue) {
@@ -4546,8 +4559,75 @@ document.addEventListener('DOMContentLoaded', function() {
   try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
   
   // Default selection (Mistos)
+  const urlPrefill = (function(){
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const tipoRaw = String(p.get('tipo') || p.get('tipo_servico') || p.get('plan') || '').trim();
+      const qtdRaw = String(p.get('qtd') || p.get('quantidade') || p.get('quantity') || '').trim();
+      const stepRaw = String(p.get('step') || p.get('etapa') || p.get('autostep') || '').trim();
+      const usernameRaw = String(p.get('instagram_username') || p.get('username') || p.get('perfil') || '').trim();
+      const stepNum = parseInt(stepRaw, 10);
+      const qtdNum = parseInt(qtdRaw, 10);
+      return {
+        tipo: tipoRaw,
+        qtd: Number.isFinite(qtdNum) && qtdNum > 0 ? qtdNum : null,
+        step: Number.isFinite(stepNum) && stepNum > 0 ? stepNum : null,
+        username: usernameRaw ? usernameRaw.replace(/^@+/, '').replace(/\/+$/g, '') : ''
+      };
+    } catch (_) {
+      return { tipo: '', qtd: null, step: null, username: '' };
+    }
+  })();
+
+  function normalizeTipoForContext(raw) {
+    const t0 = String(raw || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/-+/g, '_');
+    if (isViewsContext) return 'visualizacoes_reels';
+    if (isCurtidasContext) {
+      if (!t0) return '';
+      if (t0 === 'curtidas_brasileiras' || t0 === 'brasileiros' || t0 === 'brasileiras') return 'curtidas_brasileiras';
+      if (t0 === 'organicos' || t0 === 'reais' || t0.includes('organ') || t0.includes('real')) return 'organicos';
+      if (t0 === 'mistos' || t0.includes('mist')) return 'mistos';
+      if (t0.includes('brasil')) return 'curtidas_brasileiras';
+      return t0;
+    }
+    if (!t0) return '';
+    if (t0 === 'organicos' || t0 === 'reais' || t0.includes('organ') || t0.includes('real')) return 'organicos';
+    if (t0 === 'brasileiros' || t0.includes('brasil')) return 'brasileiros';
+    if (t0 === 'mistos' || t0.includes('mist')) return 'mistos';
+    return t0;
+  }
+
+  function pickClosestQtd(tipo, desiredQtd) {
+    try {
+      const arr = (tabela && tabela[tipo]) ? tabela[tipo] : [];
+      const target = Number(desiredQtd) || 0;
+      if (!arr.length || !(target > 0)) return null;
+      let best = arr[0]?.q || null;
+      let bestDiff = Number.isFinite(best) ? Math.abs(best - target) : Number.POSITIVE_INFINITY;
+      for (const it of arr) {
+        const q = Number(it && it.q);
+        if (!Number.isFinite(q)) continue;
+        const diff = Math.abs(q - target);
+        if (diff < bestDiff) { best = q; bestDiff = diff; }
+        if (diff === 0) break;
+      }
+      return Number.isFinite(best) && best > 0 ? best : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  try {
+    if (usernameCheckoutInput && urlPrefill.username && !String(usernameCheckoutInput.value || '').trim()) {
+      usernameCheckoutInput.value = urlPrefill.username;
+    }
+  } catch (_) {}
+
   if (tipoSelect) {
-    if (!tipoSelect.value) {
+    const preTipo = normalizeTipoForContext(urlPrefill.tipo);
+    if (preTipo) {
+      tipoSelect.value = preTipo;
+    } else if (!tipoSelect.value) {
       tipoSelect.value = 'mistos';
     }
     // Always dispatch change to ensure cards are rendered and scroll logic runs
@@ -4556,8 +4636,37 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 100);
   }
 
-  // Initial Step
-  if (window.goToStep) window.goToStep(1);
+  // Apply quantity after type options exist
+  try {
+    if (qtdSelect && urlPrefill.qtd) {
+      setTimeout(() => {
+        try {
+          const tipo = tipoSelect ? String(tipoSelect.value || '').trim() : '';
+          const chosen = pickClosestQtd(tipo, urlPrefill.qtd);
+          if (chosen) {
+            qtdSelect.value = String(chosen);
+            qtdSelect.dispatchEvent(new Event('change'));
+          }
+        } catch (_) {}
+      }, 180);
+    }
+  } catch (_) {}
+ 
+  // Initial Step (prefill can open directly on Step 3)
+  const initialStep = (function(){
+    const s = Number(urlPrefill.step || 0);
+    if (s === 2 || s === 3) return s;
+    return 1;
+  })();
+  if (window.goToStep) {
+    if (initialStep === 1) {
+      window.goToStep(1);
+    } else {
+      setTimeout(() => {
+        try { window.goToStep(initialStep); } catch (_) {}
+      }, 260);
+    }
+  }
   
   // Expor função para o EJS se necessário (mas tentamos evitar scripts inline)
   window.checkInstagramProfileCheckout = checkInstagramProfileCheckout;
