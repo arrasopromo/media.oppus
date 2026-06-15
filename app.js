@@ -2652,6 +2652,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                                 isVerified: rProfileData.isVerified,
                                 isPrivate: rProfileData.isPrivate,
                                 followersCount: rProfileData.followersCount,
+                                followingCount: rProfileData.followingCount,
+                                postsCount: rProfileData.postsCount,
                     checkedAt: checkedAtIso,
                                 linkId: linkId || null,
                                 ip: String(ip || ''),
@@ -2786,6 +2788,8 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                     isVerified: profileData.isVerified,
                     isPrivate: profileData.isPrivate,
                     followersCount: profileData.followersCount,
+                    followingCount: profileData.followingCount,
+                    postsCount: profileData.postsCount,
                     checkedAt: checkedAtIso,
                     linkId: linkId || null,
                     ip: String(ip || ''),
@@ -13893,7 +13897,10 @@ app.post("/api/check-instagram-profile", async (req, res) => {
                 const doc = await vu.findOne({ username: uname }, { projection: { _id: 0, username: 1, fullName: 1, profilePicUrl: 1, originalProfilePicUrl: 1, followersCount: 1, followingCount: 1, postsCount: 1, isPrivate: 1, isVerified: 1, checkedAt: 1 } });
                 const checkedMs = doc && doc.checkedAt ? new Date(String(doc.checkedAt)).getTime() : 0;
                 const isFresh = checkedMs && (Date.now() - checkedMs) < (6 * 60 * 60 * 1000);
-                const hasCore = doc && (typeof doc.followersCount === 'number' || typeof doc.isPrivate === 'boolean');
+                // Exige os 3 contadores no cache: docs antigos/incompletos (ex: gravados por
+                // api.instagram.posts, sem following/posts) forçam verificação fresca, que salva
+                // os 3 — assim posts/seguindo deixam de vir zerados na etapa 2 (self-healing).
+                const hasCore = doc && typeof doc.followersCount === 'number' && typeof doc.followingCount === 'number' && typeof doc.postsCount === 'number';
                 if (isFresh && hasCore) {
                     const cachedProfile = {
                         username: doc.username || uname,
@@ -31231,9 +31238,17 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const scanLowerBound = computeScanLowerBound(period);
     // Projeção: exclui blobs pesados não usados pelo painel (resposta de gateway/fornecedor,
     // utms, etc). Reduz drasticamente o volume transferido do banco remoto (gargalo real).
+    // Projeção SÓ-LEITURA do dashboard: exclui blobs pesados que o painel não usa para
+    // métricas (respostas de gateway/fornecedor, payloads de status, artefatos de PIX).
+    // IMPORTANTE: isto NÃO apaga nada do banco — só evita TRANSFERIR esses campos nesta
+    // consulta. As telas de cliente/pedido seguem lendo o documento completo normalmente.
+    // Mantém status/paidAt/orderId de cada gateway (necessários p/ detectar pago e datar).
     const panelProjection = {
       utms: 0, geolocation: 0, emails: 0, fulfillmentCalc: 0, profilePrivacy: 0, mismatchDetails: 0,
       'paghiper.statusPayload': 0, 'woovi.statusPayload': 0, 'expay.statusPayload': 0, 'pagarme.statusPayload': 0, 'efi.statusPayload': 0,
+      'paghiper.response': 0, 'woovi.response': 0, 'expay.response': 0, 'pagarme.response': 0, 'efi.response': 0,
+      'paghiper.qrCodeImage': 0, 'paghiper.pixUrl': 0, 'paghiper.brCode': 0,
+      'woovi.qrCodeImage': 0, 'woovi.pixUrl': 0, 'woovi.brCode': 0,
       'fama24h.response': 0, 'fama24h.statusPayload': 0, 'fama24h.requestPayload': 0,
       'fornecedor_social.response': 0, 'fornecedor_social.statusPayload': 0, 'fornecedor_social.requestPayload': 0,
       'worldsmm_comments.response': 0, 'fama24h_views.response': 0, 'fama24h_likes.response': 0, 'fornecedor_social_likes.response': 0
@@ -31280,20 +31295,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const costValues = (costValuesRaw && costValuesRaw._custom === true) ? costValuesRaw : {};
     const costSettings = Object.assign({}, DEFAULT_COST_SETTINGS, costValues || {});
 
-    let filteredOrders = orders.filter(o => {
-      const dateStr = resolvePaidAtIsoForPanel(o);
-      if (!dateStr) return false;
-      
-      const orderDateUTC = parseOrderDateUTC(dateStr);
+    // Predicado de período reutilizável (usado no filtro principal e nas métricas de upsell)
+    const isDateInSelectedPeriod = (orderDateUTC) => {
       if (!orderDateUTC) return false;
-
       if (period === 'all') {
         return true;
       } else if (period === 'today') {
         return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'last3days') {
         const start = new Date(startOfTodayUtc);
-        start.setUTCDate(start.getUTCDate() - 2); 
+        start.setUTCDate(start.getUTCDate() - 2);
         return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc;
       } else if (period === 'last7days') {
         const start = new Date(startOfTodayUtc);
@@ -31316,10 +31327,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
         if (startStr && endStr) {
           const [sY, sM, sD] = startStr.split('-').map(Number);
           const start = new Date(Date.UTC(sY, sM - 1, sD, 3, 0, 0, 0));
-          
+
           const [eY, eM, eD] = endStr.split('-').map(Number);
           const endExclusive = new Date(Date.UTC(eY, eM - 1, eD + 1, 3, 0, 0, 0));
-          
+
           return orderDateUTC >= start && orderDateUTC < endExclusive;
         }
         return true;
@@ -31336,6 +31347,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return true;
       }
       return true;
+    };
+
+    let filteredOrders = orders.filter(o => {
+      const dateStr = resolvePaidAtIsoForPanel(o);
+      if (!dateStr) return false;
+      const orderDateUTC = parseOrderDateUTC(dateStr);
+      if (!orderDateUTC) return false;
+      return isDateInSelectedPeriod(orderDateUTC);
     });
 
     const resolvePaidAtMsForPanel = (o) => {
@@ -33389,9 +33408,9 @@ app.get('/painel', requireAdmin, async (req, res) => {
       vitalicioPurchases = rows.slice(0, 500);
     }
 
-    // ── UPSELL: métricas para o card do dashboard (respeita o período filtrado) ──
+    // ── UPSELL: métricas para o card (dashboard E vendas — o card aparece nas duas views) ──
     let upsellStats = { paidCount: 0, revenueCents: 0, revenueBRL: 'R$ 0,00', avgTicketBRL: 'R$ 0,00', conversionPct: 0, eligibleParents: 0 };
-    if (view === 'dashboard') {
+    if (view === 'dashboard' || view === 'vendas') {
       try {
         const isPaidForStats = (o) => {
           const st = String(o?.status || '').toLowerCase();
@@ -33402,19 +33421,35 @@ app.get('/painel', requireAdmin, async (req, res) => {
           if (o?.paidAt || o?.woovi?.paidAt || o?.paghiper?.paidAt) return true;
           return false;
         };
-        let upsellPaid = 0, upsellRev = 0, eligibleParents = 0;
+        const toBRL = (cents) => `R$ ${(Number(cents || 0) / 100).toFixed(2).replace('.', ',')}`;
+        // Pool elegível: pedidos pagos "normais" do período (já no fetch principal).
+        // Calculado ANTES da query de upsell pra não ser zerado caso a query falhe.
+        let eligibleParents = 0;
         for (const o of filteredOrders) {
           if (!isPaidForStats(o)) continue;
-          if (o?.upsell?.isUpsell === true) {
+          if (o?.upsell?.isUpsell === true) continue; // upsells contados por query dedicada (abaixo)
+          eligibleParents += 1;
+        }
+        // Upsells pagos: query dedicada — não sofre o limite/sort enviesado (woovi.paidAt) do fetch
+        // principal, que excluía os upsells PagHiper do dashboard. Mesmo predicado de período.
+        let upsellPaid = 0, upsellRev = 0;
+        try {
+          const upsellArr = await col.find(
+            { $and: [paidQuery, { 'upsell.isUpsell': true }] },
+            { projection: { valueCents: 1, expectedValueCents: 1, 'upsell.offerCents': 1, status: 1, paidAt: 1, criado: 1, createdAt: 1, 'woovi.status': 1, 'woovi.paidAt': 1, 'paghiper.status': 1, 'paghiper.paidAt': 1, 'expay.status': 1 } }
+          ).limit(5000).toArray();
+          for (const o of (upsellArr || [])) {
+            if (!isPaidForStats(o)) continue;
+            const dateStr = resolvePaidAtIsoForPanel(o);
+            const orderDateUTC = dateStr ? parseOrderDateUTC(dateStr) : null;
+            if (!isDateInSelectedPeriod(orderDateUTC)) continue;
             upsellPaid += 1;
             const v = Number(o.valueCents || o.expectedValueCents || (o.upsell && o.upsell.offerCents) || 0) || 0;
             upsellRev += Math.max(0, v);
-          } else {
-            // pedidos pagos "normais" = pool elegível que poderia ter pego upsell
-            eligibleParents += 1;
           }
+        } catch (eU) {
+          try { console.error('⚠️ [dashboard] consulta de upsell falhou:', eU?.message || eU); } catch (_) {}
         }
-        const toBRL = (cents) => `R$ ${(Number(cents || 0) / 100).toFixed(2).replace('.', ',')}`;
         upsellStats = {
           paidCount: upsellPaid,
           revenueCents: upsellRev,
@@ -33423,7 +33458,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
           conversionPct: eligibleParents > 0 ? Math.round((upsellPaid / eligibleParents) * 1000) / 10 : 0,
           eligibleParents
         };
-      } catch (_) {}
+        try { console.log(`📊 [dashboard] upsellStats period=${period} paid=${upsellPaid} rev=${upsellRev} eligibleParents=${eligibleParents}`); } catch (_) {}
+      } catch (e) {
+        try { console.error('⚠️ [dashboard] upsellStats erro:', e?.message || e); } catch (_) {}
+      }
     }
 
     const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats };
@@ -33448,6 +33486,48 @@ app.get('/painel', requireAdmin, async (req, res) => {
     res.render('painel', __painelRenderData);
   } catch (e) {
     res.status(500).send(e.toString());
+  }
+});
+
+// DEBUG: retorna o cálculo do upsell em JSON (sem cache). Serve para confirmar qual
+// versão do código está rodando (campo "build") e ver os números reais.
+app.get('/api/__debug/upsell-stats', requireAdmin, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const paidStatusTokensList = ['pago', 'paid', 'settled', 'captured', 'authorized', 'succeeded', 'aprovado', 'confirmado', 'completed', 'PAGO', 'PAID', 'APROVADO', 'CONFIRMADO', 'COMPLETED'];
+    const paidQuery = { $or: [
+      { status: { $in: paidStatusTokensList } },
+      { 'woovi.status': { $in: paidStatusTokensList } },
+      { 'paghiper.status': { $in: paidStatusTokensList } },
+      { paidAt: { $exists: true, $nin: [null, ''] } },
+      { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }
+    ] };
+    const isPaidForStats = (o) => {
+      const st = String(o?.status || '').toLowerCase();
+      if (st === 'pago' || st === 'paid') return true;
+      if (/(pago|paid)/.test(String(o?.woovi?.status || '').toLowerCase())) return true;
+      if (/(pago|paid)/.test(String(o?.paghiper?.status || '').toLowerCase())) return true;
+      if (o?.paidAt || o?.woovi?.paidAt || o?.paghiper?.paidAt) return true;
+      return false;
+    };
+    const totalUpsellDocs = await col.countDocuments({ 'upsell.isUpsell': true });
+    const arr = await col.find(
+      { $and: [paidQuery, { 'upsell.isUpsell': true }] },
+      { projection: { valueCents: 1, expectedValueCents: 1, 'upsell.offerCents': 1, status: 1, paidAt: 1, 'paghiper.status': 1, 'paghiper.paidAt': 1 } }
+    ).limit(5000).toArray();
+    let paid = 0, rev = 0; const items = [];
+    for (const o of arr) {
+      if (!isPaidForStats(o)) continue;
+      paid += 1;
+      const v = Number(o.valueCents || o.expectedValueCents || (o.upsell && o.upsell.offerCents) || 0) || 0;
+      rev += Math.max(0, v);
+      items.push({ id: String(o._id), status: o.status, valueCents: o.valueCents, offerCents: o.upsell && o.upsell.offerCents, paidAt: o.paidAt || (o.paghiper && o.paghiper.paidAt) || null });
+    }
+    return res.json({ ok: true, build: 'upsell-dashboard-fix-v2', totalUpsellDocs, paidUpsell: paid, revenueCents: rev, revenueBRL: `R$ ${(rev / 100).toFixed(2).replace('.', ',')}`, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
@@ -37651,6 +37731,8 @@ const server = app.listen(port, () => {
         [{ 'fama24h.orderId': 1 }, 'idx_fama_orderId'],
         [{ 'fornecedor_social.orderId': 1 }, 'idx_fs_orderId'],
         [{ instagramUsername: 1 }, 'idx_instagramUsername'],
+        // Cobre a ordenação do dashboard/vendas (evita COLLSCAN + sort em memória)
+        [{ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }, 'idx_panel_sort'],
       ];
       let created = 0;
       for (const [key, name] of specs) {
