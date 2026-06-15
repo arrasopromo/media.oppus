@@ -17,6 +17,24 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   })();
   const serviceCategoryKey = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+  // Formata a data de um post de forma robusta: aceita unix em segundos, em ms OU string ISO
+  // (o Apify devolve ISO). Evita o "Invalid Date" que aparecia embaixo dos posts no order bump.
+  function fmtPostDateBR(takenAt) {
+    try {
+      if (takenAt == null || takenAt === '') return '';
+      var ms = null;
+      if (typeof takenAt === 'number' && isFinite(takenAt)) {
+        ms = takenAt > 1e12 ? takenAt : takenAt * 1000;
+      } else {
+        var s = String(takenAt).trim();
+        if (/^\d+$/.test(s)) { var n = Number(s); ms = n > 1e12 ? n : n * 1000; }
+        else { var d0 = new Date(s).getTime(); if (isFinite(d0) && d0 > 0) ms = d0; }
+      }
+      if (ms == null || !isFinite(ms) || ms <= 0) return '';
+      var d = new Date(ms);
+      return isFinite(d.getTime()) ? d.toLocaleString('pt-BR') : '';
+    } catch (_) { return ''; }
+  }
   const hiddenTipos = (function(){
     try {
       const arr = serviceVisibility && Array.isArray(serviceVisibility[serviceCategoryKey]) ? serviceVisibility[serviceCategoryKey] : [];
@@ -3121,7 +3139,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const btnText = alreadySelected ? 'Selecionado' : 'Selecionar';
         const btnStyle = alreadySelected ? 'width:100%; text-align:center; opacity:0.65; cursor:not-allowed;' : 'width:100%; text-align:center;';
         const btnDisabled = alreadySelected ? ' disabled' : '';
-        return '<div class="service-card"><div class="card-content pick-post-card'+pickedClass+'" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(p.takenAt? new Date(Number(p.takenAt)*1000).toLocaleString('pt-BR') : '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="'+btnStyle+'" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'"'+btnDisabled+'>'+btnText+'</button></div></div></div>';
+        return '<div class="service-card"><div class="card-content pick-post-card'+pickedClass+'" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(fmtPostDateBR(p.takenAt) || '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="'+btnStyle+'" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'"'+btnDisabled+'>'+btnText+'</button></div></div></div>';
       }).join('');
       
       if (!html) {
@@ -3393,7 +3411,7 @@ document.addEventListener('DOMContentLoaded', function() {
           ? '<img src="'+dsrc+'" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>'
           : '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
         const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+media+'</div>';
-        const dateText = p.takenAt ? new Date(Number(p.takenAt) * 1000).toLocaleString('pt-BR') : '';
+        const dateText = fmtPostDateBR(p.takenAt);
         const extra = dateText ? '<div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;margin-top:6px;">'+dateText+'</div>' : '';
         return '<div style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:var(--bg-secondary);border-radius:12px;padding:0.6rem;"><div style="position:relative;">'+frame+removeBtn+'</div>'+extra+'</div>';
       }).join('');
@@ -3593,14 +3611,20 @@ document.addEventListener('DOMContentLoaded', function() {
         const contactArea = document.getElementById('contactFieldsArea');
         if (contactArea) {
             contactArea.style.display = 'block';
-            // Scroll automático para a parte de digitar o email
+            // Âncora um pouco mais para cima: mostra o PERFIL validado (foto/stats) e a
+            // mensagem "Por que pedimos esses dados?", em vez de parar direto nos campos.
             if (!silent && !noScroll) {
                 setTimeout(() => {
-                    const emailInput = document.getElementById('contactEmailInput');
-                    if (emailInput) {
-                        emailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    } else {
-                        contactArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const anchorEl = profilePreview || contactArea;
+                    if (!anchorEl) return;
+                    try {
+                        const curY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                        const top = anchorEl.getBoundingClientRect().top + curY - 100; // respiro p/ o menu fixo
+                        const targetY = Math.max(0, top);
+                        if (typeof smoothScrollToY === 'function') smoothScrollToY(targetY, 700);
+                        else window.scrollTo({ top: targetY, behavior: 'smooth' });
+                    } catch (_) {
+                        try { anchorEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
                     }
                 }, 300);
             }

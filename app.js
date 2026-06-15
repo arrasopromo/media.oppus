@@ -17132,7 +17132,15 @@ app.get('/api/instagram/posts', async (req, res) => {
                      if (item.latestPosts && Array.isArray(item.latestPosts)) {
                          const posts = item.latestPosts.map(p => ({
                              shortcode: p.shortCode || p.shortcode,
-                             takenAt: p.timestamp || (p.date ? new Date(p.date).getTime()/1000 : null),
+                             takenAt: (function () {
+                                 // Apify devolve timestamp como string ISO (ex: "2023-01-01T...Z").
+                                 // Normaliza SEMPRE para unix em segundos (o front espera segundos).
+                                 const t = (p.timestamp != null && p.timestamp !== '') ? p.timestamp : p.date;
+                                 if (t == null || t === '') return null;
+                                 if (typeof t === 'number' && Number.isFinite(t)) return t > 1e12 ? Math.floor(t / 1000) : Math.floor(t);
+                                 const ms = new Date(t).getTime();
+                                 return (Number.isFinite(ms) && ms > 0) ? Math.floor(ms / 1000) : null;
+                             })(),
                              isVideo: p.type === 'Video' || p.isVideo,
                              displayUrl: p.displayUrl || p.displayURL || p.imageUrl || p.thumbnailSrc,
                              videoUrl: p.videoUrl || p.videoURL,
