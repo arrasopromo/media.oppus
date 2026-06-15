@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Recuperação (WhatsApp)</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: var(--font-family), sans-serif; background: #f0f2f5; color: #111827; margin: 0; padding: 0; }
+    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin: 0 0 6px 0; font-size: 1.35rem; }
+    .sub { color:#6b7280; font-size: 0.95rem; margin-bottom: 18px; }
+    .section-title { font-size: 1.05rem; font-weight: 800; margin: 18px 0 10px 0; color:#111827; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field { display:flex; flex-direction:column; gap:6px; }
+    .field label { font-size:0.9rem; color:#374151; font-weight:700; }
+    .field input, .field select, .field textarea { padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; font-size: 0.95rem; outline: none; }
+    .field textarea { min-height: 90px; resize: vertical; }
+    .btn { border: 0; border-radius: 10px; padding: 10px 12px; font-weight: 800; cursor: pointer; }
+    .btn-primary { background: linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888); color:#fff; }
+    .btn-ghost { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
+    .btn-danger { background:#ef4444; color:#fff; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .badge { display:inline-flex; align-items:center; gap:6px; padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; font-weight: 800; border:1px solid #e5e7eb; background:#f8fafc; color:#111827; }
+    .badge-ok { background:#ecfdf5; border-color:#bbf7d0; color:#065f46; }
+    .badge-warn { background:#fff7ed; border-color:#fed7aa; color:#9a3412; }
+    .badge-off { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+    .badge-fail { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+    .badge-success { background:#ecfdf5; border-color:#bbf7d0; color:#065f46; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 10px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; vertical-align: top; }
+    th { background: #f9fafb; font-weight: 900; color:#111827; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.9rem; word-break: break-all; }
+    .panel-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .filters a { display:inline-block; padding: 8px 12px; border-radius: 999px; border: 1px solid #e5e7eb; text-decoration:none; color:#111827; margin-right: 8px; font-weight: 800; font-size: 0.9rem; background:#fff; }
+    .filters a.active { background:#111827; color:#fff; border-color:#111827; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(17,24,39,0.55); display:none; align-items:center; justify-content:center; z-index: 9999; padding: 14px; }
+    .modal { width: 100%; max-width: 820px; background: #ffffff; border-radius: 14px; border: 1px solid #e5e7eb; box-shadow: 0 12px 40px rgba(0,0,0,0.25); overflow: hidden; }
+    .modal-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding: 14px 16px; background:#111827; color:#fff; }
+    .modal-title { font-weight: 900; font-size: 0.98rem; letter-spacing: 0.02em; }
+    .modal-close { border:0; background: rgba(255,255,255,0.15); color:#fff; border-radius: 10px; padding: 8px 10px; font-weight: 900; cursor:pointer; }
+    .modal-body { padding: 16px; }
+    .pager a { display:inline-flex; align-items:center; justify-content:center; padding:8px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#ffffff; color:#111827; text-decoration:none; font-weight:900; }
+    .pager a.disabled { opacity: 0.45; pointer-events: none; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', {page: 'recuperacao-whatsapp'}) %>
+  <div class="main-content">
+    <div class="container">
+      <h1>Recuperação (WhatsApp / EvoAPI)</h1>
+      <div class="sub">Gerencia instâncias, limita envios de recuperação por instância e acompanha relatórios de mensagens enviadas.</div>
+
+      <%
+        const mask = (s) => {
+          const v = String(s || '').trim();
+          if (!v) return '';
+          if (v.length <= 8) return '••••••••';
+          return v.slice(0, 4) + '••••••••' + v.slice(-4);
+        };
+        const fmtDt = (d) => {
+          try {
+            const dt = d instanceof Date ? d : new Date(d || '');
+            if (!Number.isFinite(dt.getTime())) return '';
+            return dt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+          } catch (_) {
+            return '';
+          }
+        };
+        const instList = Array.isArray(instances) ? instances : [];
+        const byInst = (typeof todayByInstance === 'object' && todayByInstance) ? todayByInstance : {};
+        const evoBaseUrl = String(typeof defaultBaseUrl !== 'undefined' ? defaultBaseUrl : '').trim();
+      %>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin: 10px 0 2px 0;">
+        <div style="font-size:0.92rem; color:#6b7280;">
+          EvoAPI padrão: <span class="mono" style="color:#111827;"><%= evoBaseUrl ? evoBaseUrl : 'Não configurada (EVOLUTION_API_URL)' %></span>
+        </div>
+        <div class="row">
+          <button type="button" id="btnOpenInstanceModal" class="btn btn-primary">Cadastrar instância</button>
+          <button type="button" id="btnOpenTestModal" class="btn btn-ghost">Enviar teste</button>
+        </div>
+      </div>
+
+      <div class="section-title">Conexões (instâncias)</div>
+      <div class="panel-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Instância</th>
+              <th>Status</th>
+              <th>EvoAPI</th>
+              <th>API Key</th>
+              <th>Token</th>
+              <th>Limite diário (recuperação)</th>
+              <th>Hoje (recuperação)</th>
+              <th>Hoje (total)</th>
+              <th>Último envio</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!instList.length) { %>
+              <tr><td colspan="10" style="text-align:center;color:#6b7280;padding:18px;">Nenhuma instância cadastrada ainda.</td></tr>
+            <% } %>
+            <% instList.forEach(inst => { %>
+              <%
+                const n = String(inst && inst.name ? inst.name : '').trim();
+                const s = (typeof inst?.active === 'boolean') ? inst.active : true;
+                const daily = Number(inst?.dailyLimitRecovery || 0) || 0;
+                const t = byInst[n] || { total: 0, recovery: 0, manual: 0, lastSentAt: null };
+                const pct = daily > 0 ? Math.min(100, Math.round((Number(t.recovery || 0) || 0) * 100 / daily)) : 0;
+                const badgeCls = !s ? 'badge-off' : (daily > 0 && (Number(t.recovery || 0) || 0) >= daily ? 'badge-warn' : 'badge-ok');
+                const badgeLabel = !s ? 'Inativa' : (daily > 0 && (Number(t.recovery || 0) || 0) >= daily ? 'Limite atingido' : 'Ativa');
+                const effectiveUrl = String(inst?.effectiveBaseUrl || inst?.baseUrl || evoBaseUrl || '').trim();
+              %>
+              <tr>
+                <td class="mono"><%= n %></td>
+                <td><span class="badge <%= badgeCls %>"><%= badgeLabel %></span></td>
+                <td class="mono"><%= effectiveUrl ? effectiveUrl : '-' %></td>
+                <td class="mono"><%= mask(inst?.apiKey) %></td>
+                <td class="mono"><%= mask(inst?.token) %></td>
+                <td>
+                  <form method="post" action="/api/painel/evolution/instances/set-limit" style="display:flex; gap:8px; align-items:center;">
+                    <input type="hidden" name="name" value="<%= n %>">
+                    <input type="number" name="dailyLimitRecovery" min="0" step="1" value="<%= daily %>" style="width:110px; padding:8px 10px; border-radius:10px; border:1px solid #d1d5db;">
+                    <button type="submit" class="btn btn-ghost" style="padding:8px 10px;">Salvar</button>
+                  </form>
+                  <% if (daily > 0) { %>
+                    <div style="margin-top:6px; font-size:0.85rem; color:#6b7280;">Uso hoje: <strong style="color:#111827;"><%= pct %>%</strong></div>
+                  <% } %>
+                </td>
+                <td><strong style="color:#111827;"><%= Number(t.recovery || 0) || 0 %></strong></td>
+                <td><%= Number(t.total || 0) || 0 %></td>
+                <td><%= t.lastSentAt ? fmtDt(t.lastSentAt) : '-' %></td>
+                <td>
+                  <form method="post" action="/api/painel/evolution/instances/delete" onsubmit="return confirm('Remover instância ' + '<%= n %>' + '?');">
+                    <input type="hidden" name="name" value="<%= n %>">
+                    <button type="submit" class="btn btn-danger" style="padding:8px 10px;">Remover</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-title">Relatório</div>
+      <%
+        const baseUrl = '/painel/recuperacao-whatsapp';
+      %>
+      <div class="filters" style="margin: 12px 0 12px;">
+        <a href="<%= baseUrl %>?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
+        <a href="<%= baseUrl %>?period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+        <a href="<%= baseUrl %>?period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+        <a href="<%= baseUrl %>?period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      </div>
+      <div class="row" style="margin-bottom: 12px;">
+        <strong>Filtrar por data:</strong>
+        <input type="date" id="startDate" value="<%= startDate || '' %>" style="padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 10px;">
+        <span>até</span>
+        <input type="date" id="endDate" value="<%= endDate || '' %>" style="padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 10px;">
+        <button type="button" class="btn btn-ghost" onclick="applyCustomFilter()">Aplicar</button>
+        <span style="color:#6b7280;">Período: <strong style="color:#111827;"><%= rangeStartKey %></strong> até <strong style="color:#111827;"><%= rangeEndKey %></strong></span>
+      </div>
+
+      <%
+        const rows = Array.isArray(reportRows) ? reportRows : [];
+        const instSet = new Set();
+        const dateSet = new Set();
+        const map = {};
+        rows.forEach(r => {
+          const d = String(r.dateKey || '').trim();
+          const i = String(r.instance || '').trim();
+          const k = String(r.kind || '').trim();
+          const c = Number(r.count || 0) || 0;
+          if (!d || !i) return;
+          instSet.add(i);
+          dateSet.add(d);
+          if (!map[d]) map[d] = {};
+          if (!map[d][i]) map[d][i] = { total: 0, recovery: 0, manual: 0, other: 0 };
+          map[d][i].total += c;
+          if (k === 'recovery') map[d][i].recovery += c;
+          else if (k === 'manual') map[d][i].manual += c;
+          else map[d][i].other += c;
+        });
+        const reportInstances = Array.from(instSet).sort((a,b)=>a.localeCompare(b));
+        const reportDates = Array.from(dateSet).sort((a,b)=>b.localeCompare(a));
+      %>
+
+      <div class="panel-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Instância</th>
+              <th>Recuperação</th>
+              <th>Manual</th>
+              <th>Outros</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!reportDates.length) { %>
+              <tr><td colspan="6" style="text-align:center;color:#6b7280;padding:18px;">Sem dados no período.</td></tr>
+            <% } %>
+            <% reportDates.forEach(dk => { %>
+              <% reportInstances.forEach(inst => { %>
+                <%
+                  const cell = (map[dk] && map[dk][inst]) ? map[dk][inst] : null;
+                  if (!cell) return;
+                %>
+                <tr>
+                  <td class="mono"><%= dk %></td>
+                  <td class="mono"><%= inst %></td>
+                  <td><%= Number(cell.recovery || 0) || 0 %></td>
+                  <td><%= Number(cell.manual || 0) || 0 %></td>
+                  <td><%= Number(cell.other || 0) || 0 %></td>
+                  <td><strong style="color:#111827;"><%= Number(cell.total || 0) || 0 %></strong></td>
+                </tr>
+              <% }) %>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-title">Últimas mensagens</div>
+      <%
+        const logs = Array.isArray(recentLogs) ? recentLogs : [];
+        const curPage = Number(logsPage || 1) || 1;
+        const totalPages = Number(logsTotalPages || 1) || 1;
+        const totalLogs = Number(logsTotal || 0) || 0;
+        const perPage = Number(logsPerPage || 50) || 50;
+        const buildPagerUrl = (p) => {
+          const params = new URLSearchParams();
+          params.set('period', String(period || 'last7days'));
+          if (startDate) params.set('startDate', String(startDate));
+          if (endDate) params.set('endDate', String(endDate));
+          params.set('logsPage', String(p));
+          params.set('logsPerPage', String(perPage));
+          return baseUrl + '?' + params.toString();
+        };
+      %>
+      <div class="row" style="margin: 8px 0 10px 0; justify-content:space-between;">
+        <div style="color:#6b7280; font-size:0.92rem;">Total no período: <strong style="color:#111827;"><%= totalLogs %></strong></div>
+        <div class="row pager">
+          <a class="<%= curPage <= 1 ? 'disabled' : '' %>" href="<%= buildPagerUrl(Math.max(1, curPage - 1)) %>">Anterior</a>
+          <span style="color:#6b7280; font-weight:900;">Página <span style="color:#111827;"><%= curPage %></span> / <span style="color:#111827;"><%= totalPages %></span></span>
+          <a class="<%= curPage >= totalPages ? 'disabled' : '' %>" href="<%= buildPagerUrl(Math.min(totalPages, curPage + 1)) %>">Próxima</a>
+        </div>
+      </div>
+      <div class="panel-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Data/Hora</th>
+              <th>Tipo</th>
+              <th>Instância</th>
+              <th>Telefone</th>
+              <th>Status</th>
+              <th>Pedido</th>
+              <th>Erro</th>
+              <th>Mensagem</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!logs.length) { %>
+              <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:18px;">Sem mensagens no período.</td></tr>
+            <% } %>
+            <% logs.forEach(l => { %>
+              <%
+                const dt = l && l.sentAt ? fmtDt(l.sentAt) : '';
+                const kind = String(l?.kind || '').trim() || '-';
+                const inst = String(l?.instance || '').trim() || '-';
+                const phone = String(l?.phoneRaw || l?.number || '').trim() || '-';
+                const ok = (typeof l?.ok === 'boolean') ? l.ok : null;
+                const stLabel = ok === true ? 'Sucesso' : (ok === false ? 'Falha' : '—');
+                const stCls = ok === true ? 'badge-success' : (ok === false ? 'badge-fail' : 'badge');
+                const oid = String(l?.orderId || '').trim();
+                const errMsg = String(l?.error || '').trim();
+                const msg = String(l?.text || '').trim();
+                const msgShort = msg.length > 160 ? (msg.slice(0, 160) + '…') : msg;
+              %>
+              <tr>
+                <td class="mono"><%= dt || '-' %></td>
+                <td><span class="badge <%= kind === 'recovery' ? 'badge-ok' : 'badge' %>"><%= kind %></span></td>
+                <td class="mono"><%= inst %></td>
+                <td class="mono"><%= phone %></td>
+                <td><span class="badge <%= stCls %>"><%= stLabel %></span></td>
+                <td class="mono"><%= oid ? oid : '-' %></td>
+                <td style="color:<%= ok === false ? '#991b1b' : '#6b7280' %>; white-space:pre-wrap; line-height:1.35;"><%= errMsg ? errMsg : (ok === false ? 'Falha' : '-') %></td>
+                <td style="white-space:pre-wrap; line-height:1.35;"><%= msgShort %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="instanceModalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Cadastrar / atualizar instância</div>
+        <button type="button" class="modal-close" data-close="instance">Fechar</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" action="/api/painel/evolution/instances/upsert">
+          <div class="grid">
+            <div class="field">
+              <label for="instName">Nome da instância</label>
+              <input id="instName" name="name" type="text" placeholder="Ex: oppus01" required>
+            </div>
+            <div class="field">
+              <label for="instKey">API Key</label>
+              <input id="instKey" name="apiKey" type="text" placeholder="apikey" required>
+            </div>
+            <div class="field">
+              <label for="instToken">Token (opcional)</label>
+              <input id="instToken" name="token" type="text" placeholder="token">
+            </div>
+            <div class="field">
+              <label for="instLimit">Limite diário (recuperação)</label>
+              <input id="instLimit" name="dailyLimitRecovery" type="number" min="0" step="1" placeholder="0 = ilimitado">
+            </div>
+            <div class="field">
+              <label style="display:flex; gap:10px; align-items:center; margin-top:28px;">
+                <input type="checkbox" name="active" value="on" checked>
+                <span>Ativa</span>
+              </label>
+            </div>
+          </div>
+          <div style="margin-top:12px;">
+            <button type="submit" class="btn btn-primary">Salvar instância</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="testModalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Enviar teste (recuperação)</div>
+        <button type="button" class="modal-close" data-close="test">Fechar</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div class="field">
+            <label for="testInstance">Instância</label>
+            <select id="testInstance">
+              <% instList.forEach(inst => { %>
+                <option value="<%= String(inst?.name || '') %>"><%= String(inst?.name || '') %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="field">
+            <label for="testPhone">WhatsApp (com DDD)</label>
+            <input id="testPhone" type="text" placeholder="Ex: 31999990000">
+          </div>
+          <div class="field" style="grid-column: 1 / -1;">
+            <label for="testText">Mensagem</label>
+            <textarea id="testText" placeholder="Texto da mensagem"></textarea>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button type="button" id="btnSendTest" class="btn btn-primary">Enviar teste</button>
+          <span id="testStatus" style="color:#6b7280;"></span>
+        </div>
+        <div id="testResult" style="margin-top:10px; white-space:pre-wrap; font-size:0.9rem; color:#111827;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function applyCustomFilter() {
+      var baseUrl = '/painel/recuperacao-whatsapp';
+      var startDate = String(document.getElementById('startDate') && document.getElementById('startDate').value ? document.getElementById('startDate').value : '').trim();
+      var endDate = String(document.getElementById('endDate') && document.getElementById('endDate').value ? document.getElementById('endDate').value : '').trim();
+      var params = new URLSearchParams();
+      params.set('period', 'custom');
+      if (startDate) params.set('startDate', startDate);
+      if (endDate) params.set('endDate', endDate);
+      window.location.href = baseUrl + '?' + params.toString();
+    }
+
+    (function(){
+      var instanceBackdrop = document.getElementById('instanceModalBackdrop');
+      var testBackdrop = document.getElementById('testModalBackdrop');
+      function openModal(el) { try { if (el) { el.style.display = 'flex'; el.setAttribute('aria-hidden', 'false'); } } catch(_) {} }
+      function closeModal(el) { try { if (el) { el.style.display = 'none'; el.setAttribute('aria-hidden', 'true'); } } catch(_) {} }
+      var openInstBtn = document.getElementById('btnOpenInstanceModal');
+      var openTestBtn = document.getElementById('btnOpenTestModal');
+      if (openInstBtn) openInstBtn.addEventListener('click', function(){ openModal(instanceBackdrop); });
+      if (openTestBtn) openTestBtn.addEventListener('click', function(){ openModal(testBackdrop); });
+      document.addEventListener('click', function(e){
+        var t = e && e.target ? e.target : null;
+        if (!t) return;
+        if (t === instanceBackdrop) return closeModal(instanceBackdrop);
+        if (t === testBackdrop) return closeModal(testBackdrop);
+        var btn = t.closest ? t.closest('[data-close]') : null;
+        if (!btn) return;
+        var k = String(btn.getAttribute('data-close') || '');
+        if (k === 'instance') return closeModal(instanceBackdrop);
+        if (k === 'test') return closeModal(testBackdrop);
+      });
+
+      var btn = document.getElementById('btnSendTest');
+      var statusEl = document.getElementById('testStatus');
+      var outEl = document.getElementById('testResult');
+      var instEl = document.getElementById('testInstance');
+      var phoneEl = document.getElementById('testPhone');
+      var textEl = document.getElementById('testText');
+
+      function setStatus(t) { try { if (statusEl) statusEl.textContent = String(t || ''); } catch(_) {} }
+      function setOut(t) { try { if (outEl) outEl.textContent = String(t || ''); } catch(_) {} }
+
+      if (!btn) return;
+      btn.addEventListener('click', async function(){
+        try {
+          var instance = String(instEl && instEl.value ? instEl.value : '').trim();
+          var phone = String(phoneEl && phoneEl.value ? phoneEl.value : '').trim();
+          var text = String(textEl && textEl.value ? textEl.value : '').trim();
+          if (!instance) return alert('Selecione a instância.');
+          if (!phone) return alert('Informe o WhatsApp.');
+          if (!text) return alert('Informe a mensagem.');
+          btn.disabled = true;
+          setStatus('Enviando…');
+          setOut('');
+          var resp = await fetch('/api/admin/evolution/recovery/send-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ instance: instance, phone: phone, text: text })
+          });
+          var data = null;
+          try { data = await resp.json(); } catch(_) { data = null; }
+          if (!resp.ok || !data || data.ok !== true) {
+            var err = (data && (data.error || data.message)) ? (data.error || data.message) : ('HTTP ' + resp.status);
+            setStatus('Erro.');
+            setOut('Falha: ' + err + (data && data.details ? '\n\nDetalhes: ' + JSON.stringify(data.details) : ''));
+            return;
+          }
+          setStatus('Enviado.');
+          setOut(JSON.stringify(data.result || data, null, 2));
+          try { setTimeout(function(){ window.location.reload(); }, 800); } catch(_) {}
+        } catch (e) {
+          setStatus('Erro.');
+          setOut('Falha: ' + (e && e.message ? e.message : e));
+        } finally {
+          try { btn.disabled = false; } catch(_) {}
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

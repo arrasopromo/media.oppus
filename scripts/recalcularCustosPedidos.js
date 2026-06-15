@@ -5,14 +5,14 @@ const { getCollection } = require('../mongodbClient');
 const { ObjectId } = require('mongodb');
 
 const DEFAULT_COST_SETTINGS = {
-  seguidores_mistos: 5.40,
-  seguidores_brasileiros: 15.48,
+  seguidores_mistos: 2.70,
+  seguidores_brasileiros: 9.60,
   seguidores_organicos: 35.0,
   curtidas_mistos: 0.75,
   curtidas_brasileiras: 2.0,
   curtidas_organicas: 12.0,
-  curtidas: 2.0,
-  comentarios: 0.3,
+  curtidas: 1.65,
+  comentarios: 0.34,
   visualizacoes: 0.01
 };
 
@@ -358,4 +358,3 @@ main()
     console.error('[recalcularCustosPedidos] fatal', e?.message || String(e));
     process.exit(1);
   });
-

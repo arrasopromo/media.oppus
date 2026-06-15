@@ -75,6 +75,45 @@
       </div>
     </div>
 
+    <%
+      const m = (typeof metrics === 'object' && metrics) ? metrics : {};
+      const ms = (m && m.sent) ? m.sent : {};
+      const mr = (m && m.recovered) ? m.recovered : {};
+      const mrTotal = (mr && mr.total) ? mr.total : { orders: 0, valueCents: 0 };
+      const mrBy = (mr && mr.byStage) ? mr.byStage : {};
+      const fmtMoney = (c) => {
+        const v = (Number(c || 0) / 100);
+        return 'R$ ' + v.toFixed(2).replace('.', ',');
+      };
+      const st2 = mrBy['2'] || { orders: 0, valueCents: 0 };
+      const st3 = mrBy['3'] || { orders: 0, valueCents: 0 };
+    %>
+
+    <div style="margin: 14px 0 8px; font-weight: 700; color:#111827;">Métricas de recuperação</div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin: 10px 0 16px;">
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 1 enviado (aguardando pagamento)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email1 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 2 enviado (cupom 15%)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email2 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 3 enviado (cupom 30%)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email3 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 260px; min-width: 260px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Valor recuperado (pedidos pagos após e-mail)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= fmtMoney(mrTotal.valueCents || 0) %></div>
+        <div style="margin-top:4px; font-size: 0.85rem; color:#6b7280;">Pedidos recuperados: <strong style="color:#111827;"><%= Number(mrTotal.orders || 0) || 0 %></strong></div>
+        <div style="margin-top:8px; font-size: 0.85rem; color:#6b7280; display:flex; gap:10px; flex-wrap:wrap;">
+          <span>Via cupom 15%: <strong style="color:#111827;"><%= fmtMoney(st2.valueCents || 0) %></strong> (<%= Number(st2.orders || 0) || 0 %>)</span>
+          <span>Via cupom 30%: <strong style="color:#111827;"><%= fmtMoney(st3.valueCents || 0) %></strong> (<%= Number(st3.orders || 0) || 0 %>)</span>
+        </div>
+      </div>
+    </div>
+
     <div class="panel-table-scroll">
         <table>
           <thead>

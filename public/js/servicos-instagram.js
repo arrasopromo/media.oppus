@@ -188,6 +188,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabelaSeguidores = {
     mistos: [
+      { q: 100, p: 'R$ 3,00' }, // pacote teste upsell
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
       { q: 500, p: 'R$ 16,90' },
@@ -290,6 +291,7 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 15000, p: 'R$ 199,90' },
     ],
     organicos: [
+      { q: 100, p: 'R$ 3,00' }, // pacote de teste
       { q: 150, p: 'R$ 16,90' },
       { q: 300, p: 'R$ 28,90' },
       { q: 500, p: 'R$ 49,90' },
@@ -395,6 +397,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Inputs de contato
   const contactPhoneInput = document.getElementById('contactPhoneInput');
   const contactEmailInput = document.getElementById('contactEmailInput');
+  const contactNameInput = document.getElementById('contactNameInput');
   const phoneErrorMsg = document.getElementById('phoneErrorMsg');
 
   function isValidEmail(v) {
@@ -403,6 +406,37 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!s) return false;
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
     } catch (_) { return false; }
+  }
+
+  function normalizeFullName(v) {
+    try {
+      return String(v || '').replace(/\s+/g, ' ').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function isValidFullName(v) {
+    try {
+      const s0 = normalizeFullName(v);
+      if (!s0) return false;
+      const words0 = s0.split(' ').map(w => w.trim()).filter(Boolean);
+      if (words0.length < 2) return false;
+      const connectors = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+      const significant = words0.filter(w => {
+        const wl = w.toLowerCase();
+        if (connectors.has(wl)) return false;
+        if (w.length < 2) return false;
+        if (/^([A-Za-zÀ-ÖØ-öø-ÿ])\1+$/.test(w)) return false;
+        return true;
+      });
+      if (significant.length < 2) return false;
+      const lettersOnly = significant.join('').replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '');
+      if (lettersOnly.length < 4) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   async function sendAbandonedLeadOnce() {
@@ -1252,6 +1286,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
       let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
       if (emailValue && !emailValue.includes('@')) emailValue = '';
+      const contactNameValue = normalizeFullName(contactNameInput ? contactNameInput.value : '');
+      if (contactNameInput && !isValidFullName(contactNameValue)) throw new Error('Por favor, informe seu nome e sobrenome.');
 
       const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
       const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
@@ -1316,6 +1352,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const customerPayload = {};
       if (cardHolder) customerPayload.name = cardHolder;
+      if (!customerPayload.name && isValidFullName(contactNameValue)) customerPayload.name = contactNameValue;
       if (cpfDigits && cpfDigits.length === 11) customerPayload.cpf = cpfDigits;
       if (phoneValue) customerPayload.phone_number = phoneValue;
       if (emailValue) customerPayload.email = emailValue;
@@ -1357,6 +1394,7 @@ document.addEventListener('DOMContentLoaded', function() {
         ],
         customer: customerPayload,
         additionalInfo: [
+          ...(contactNameValue ? [{ key: 'customer_name', value: contactNameValue }] : []),
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtd) },
@@ -1841,6 +1879,18 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // --- Stepper Logic (Checkout Reference) ---
+  function isRecoveryFlowActive() {
+    try {
+      if (window.__oppusRecoveryApplied) return true;
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      const identifier = String(p.get('identifier') || '').trim();
+      const correlationID = String(p.get('correlationID') || '').trim();
+      return !!rt || !!identifier || !!correlationID;
+    } catch (_) {
+      return false;
+    }
+  }
 
   window.goToStep = function(step) {
     if (step === 2) {
@@ -2011,7 +2061,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const tipos = Object.keys(tabela).filter(t => {
       if (t === 'seguidores_tiktok') return false;
-      if (isCurtidasContext && t === 'curtidas_brasileiras') return false;
       if (hiddenTipos.indexOf(t) >= 0) return false;
       return true;
     });
@@ -2053,7 +2102,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
         if (tipo === 'curtidas_brasileiras') return [50, 150, 500, 1000, 3000, 5000, 10000];
-        if (tipo === 'organicos') return [20].concat(base.filter(function(q){ return q >= 150 && q !== 700; }));
+        if (tipo === 'organicos') return [20, 100].concat(base.filter(function(q){ return q >= 150 && q !== 700; }));
         return [50].concat(base.filter(function(q){ return q >= 150; }));
       }
       return base;
@@ -2064,6 +2113,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const quantityBadges = {
     50: 'PACOTE TESTE',
     20: 'PACOTE TESTE',
+    100: 'PACOTE TESTE',
     150: 'PACOTE INICIAL',
     500: 'PACOTE BÁSICO',
     1000: 'MAIS PEDIDO',
@@ -2248,10 +2298,10 @@ document.addEventListener('DOMContentLoaded', function() {
         break;
       case 'organicos':
         html = isCurtidasContext ? `
-          <p>Curtidas com alguns perfis brasileiros, mas exclusivamente perfis reais para máxima qualidade e credibilidade nas suas publicações.</p>
+          <p>Curtidas orgânicas com alguns perfis brasileiros, para máxima qualidade e credibilidade nas suas publicações.</p>
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-            <li>👤 Perfis reais para reforçar autoridade.</li>
+            <li>👤 Curtidas orgânicas para reforçar autoridade.</li>
             <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
           </ul>
         ` : `
@@ -2510,7 +2560,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!titleEl && !descEl) return;
     const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     const variant = (function(t){
-      if (t === 'organicos') return { title: 'Curtidas reais promocionais', desc: 'Adicionar curtidas de perfis reais ao post.' };
+      if (t === 'organicos') return { title: 'Curtidas reais promocionais', desc: 'Adicionar curtidas orgânicas ao post.' };
       if (t === 'brasileiros' || t === 'curtidas_brasileiras') return { title: 'Curtidas brasileiras promocionais', desc: 'Adicionar curtidas brasileiras ao post.' };
       if (t === 'mistos') return { title: 'Curtidas mistas promocionais', desc: 'Adicionar curtidas mistas ao post.' };
       return { title: 'Curtidas promocionais', desc: 'Adicionar curtidas ao post.' };
@@ -2941,11 +2991,10 @@ document.addEventListener('DOMContentLoaded', function() {
           n = getEffectiveQtdForSplit(tipoNow, n0);
         }
       } catch(_) {}
-      if (n >= 250000) return 5;
-      if (n >= 200000) return 4;
-      if (n >= 150000) return 3;
-      if (n >= 50000) return 2;
-      return 1;
+      // Split de visualizações: mínimo 2.500 views por post, máximo 5 posts.
+      // A partir de 5k divide. Ex.: 5k→2, 10k→4, 25k→5, 100k→5.
+      if (n < 5000) return 1;
+      return Math.max(1, Math.min(5, Math.floor(n / 2500)));
     }
     if (n0 >= 5000) return 10;
     if (n0 === 1000) return 4;
@@ -3262,13 +3311,14 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
       refs.postModalGrid.innerHTML = spinnerHTML();
-      fetch(url).then(r=>r.json()).then(d=>{
-        const arr = Array.isArray(d.posts) ? d.posts : [];
-        cachedPosts = arr; cachedPostsUser = user;
-        renderFrom(arr);
-      }).catch(function(){
-        renderFrom([]);
-      });
+      fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
+        .then(r=>r.json()).then(d=>{
+          const arr = Array.isArray(d.posts) ? d.posts : [];
+          cachedPosts = arr; cachedPostsUser = user;
+          renderFrom(arr);
+        }).catch(function(){
+          renderFrom([]);
+        });
     }
   }
 
@@ -3445,27 +3495,34 @@ document.addEventListener('DOMContentLoaded', function() {
       renderSelectedPostsPreview(kind);
   }
 
-  async function checkInstagramProfileCheckout() {
+  async function checkInstagramProfileCheckout(opts) {
+    const silent = !!(opts && opts.silent);
+    const noModal = !!(opts && opts.noModal);
+    const noScroll = !!(opts && opts.noScroll);
+    const includePosts = (typeof (opts && opts.includePosts) === 'boolean')
+      ? !!opts.includePosts
+      : (isCurtidasContext || isViewsContext);
     if (!usernameCheckoutInput) return;
     const rawInput = usernameCheckoutInput.value.trim();
     if (!rawInput) {
-      showStatusMessageCheckout('Digite o usuário ou URL do Instagram.', 'error');
-      return;
+      if (!silent) showStatusMessageCheckout('Digite o usuário ou URL do Instagram.', 'error');
+      return false;
     }
     
     const username = normalizeInstagramUsername(rawInput);
     if (!isValidInstagramUsername(username)) {
-      showStatusMessageCheckout('Nome de usuário inválido.', 'error');
-      return;
+      if (!silent) showStatusMessageCheckout('Nome de usuário inválido.', 'error');
+      return false;
     }
     if (username !== rawInput) usernameCheckoutInput.value = username;
     
-    hideStatusMessageCheckout();
-    const helpLink = document.getElementById('howToGetLinkContainer');
-    if (helpLink) helpLink.style.display = 'none';
-
-    clearProfilePreview();
-    showLoadingCheckout();
+    if (!silent) {
+      hideStatusMessageCheckout();
+      const helpLink = document.getElementById('howToGetLinkContainer');
+      if (helpLink) helpLink.style.display = 'none';
+      clearProfilePreview();
+      showLoadingCheckout();
+    }
     
     try {
       const params = new URLSearchParams(window.location.search);
@@ -3505,20 +3562,30 @@ document.addEventListener('DOMContentLoaded', function() {
       
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, utms, includePosts: (isCurtidasContext || isViewsContext) })
+        headers: { 'Content-Type': 'application/json', 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') },
+        body: JSON.stringify({ username, utms, includePosts: false, skipPosts: true, tk: (window.OPPUS_API_TK || '') })
       });
       const data = await resp.json();
-      hideLoadingCheckout();
+      if (!silent) hideLoadingCheckout();
       
       if (data.success) {
         const profile = data.profile || {};
 
-        if (checkoutProfileImage && profile.profilePicUrl) checkoutProfileImage.src = profile.profilePicUrl;
+        if (checkoutProfileImage) {
+          var _uname = String(profile.username || username || '').trim().replace(/^@/, '');
+          if (_uname) {
+            checkoutProfileImage.src = '/avatar/instagram/' + encodeURIComponent(_uname);
+          } else if (profile.profilePicUrl) {
+            var _pic = String(profile.profilePicUrl || '');
+            checkoutProfileImage.src = _pic.startsWith('/image-proxy') ? _pic : ('/image-proxy?url=' + encodeURIComponent(_pic));
+          }
+        }
         if (checkoutProfileUsername) checkoutProfileUsername.textContent = profile.username || username;
-        if (checkoutFollowersCount) checkoutFollowersCount.textContent = String(profile.followersCount || '-');
-        if (checkoutFollowingCount) checkoutFollowingCount.textContent = String(profile.followingCount || '-');
-        if (checkoutPostsCount) checkoutPostsCount.textContent = String(profile.postsCount || '-');
+        // 0 real é raro para seguindo/posts — mostra '-' quando 0 pois provavelmente é dado ausente
+        var _fmt = function(n, allowZero){ var v = Number(n); return (n != null && n !== '' && Number.isFinite(v) && (allowZero || v > 0)) ? v.toLocaleString('pt-BR') : '-'; };
+        if (checkoutFollowersCount) checkoutFollowersCount.textContent = _fmt(profile.followersCount, true);
+        if (checkoutFollowingCount) checkoutFollowingCount.textContent = _fmt(profile.followingCount, false);
+        if (checkoutPostsCount) checkoutPostsCount.textContent = _fmt(profile.postsCount, false);
         
         if (profilePreview) profilePreview.style.display = 'block';
         
@@ -3527,22 +3594,30 @@ document.addEventListener('DOMContentLoaded', function() {
         if (contactArea) {
             contactArea.style.display = 'block';
             // Scroll automático para a parte de digitar o email
-            setTimeout(() => {
-                const emailInput = document.getElementById('contactEmailInput');
-                if (emailInput) {
-                    emailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    // Opcional: focar no campo
-                    // emailInput.focus(); 
-                } else {
-                    contactArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }, 300);
+            if (!silent && !noScroll) {
+                setTimeout(() => {
+                    const emailInput = document.getElementById('contactEmailInput');
+                    if (emailInput) {
+                        emailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        contactArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }, 300);
+            }
         }
         
         const revImg = document.getElementById('reviewProfileImage');
         const revUser = document.getElementById('reviewProfileUsername');
         const revFoll = document.getElementById('reviewProfileFollowers');
-        if (revImg) revImg.src = profile.profilePicUrl || '';
+        if (revImg) {
+          var _revUname = String(profile.username || username || '').trim().replace(/^@/, '');
+          if (_revUname) {
+            revImg.src = '/avatar/instagram/' + encodeURIComponent(_revUname);
+          } else if (profile.profilePicUrl) {
+            var _revPic = String(profile.profilePicUrl || '');
+            revImg.src = _revPic.startsWith('/image-proxy') ? _revPic : ('/image-proxy?url=' + encodeURIComponent(_revPic));
+          }
+        }
         if (revUser) revUser.textContent = profile.username || username;
         if (revFoll) revFoll.textContent = String(profile.followersCount || '-');
         
@@ -3559,10 +3634,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Verificar se já não estamos buscando para este usuário
                 if (cachedPostsUser !== (profile.username || username)) {
                     const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
-                    fetch(url).then(r=>r.json()).then(d=>{ 
+                    fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
+                      .then(r=>r.json()).then(d=>{
                         if(d.posts && Array.isArray(d.posts)) {
-                            cachedPosts = d.posts; 
-                            cachedPostsUser = (profile.username || username); 
+                            cachedPosts = d.posts;
+                            cachedPostsUser = (profile.username || username);
                         }
                     }).catch(function(){});
                 }
@@ -3572,15 +3648,19 @@ document.addEventListener('DOMContentLoaded', function() {
         // Após validar perfil, abrir o modal de seleção de post:
         // - Curtidas  -> seleção de post (likes)
         // - Visualizações -> seleção de Reels (views)
-        if (isCurtidasContext || isViewsContext) {
-          openPostModal(isCurtidasContext ? 'likes' : 'views');
+        if (!silent && !noModal && (isCurtidasContext || isViewsContext)) {
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+            ? window.__oppusSelectedPostsByKind[kind]
+            : [];
+          if (!list.length) openPostModal(kind);
         }
         
         updatePedidoButtonState();
         showResumoIfAllowed();
         updatePromosSummary();
         applyCheckoutFlow();
-        showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+        if (!silent) showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         
         try {
           const bid = getBrowserSessionId();
@@ -3590,24 +3670,31 @@ document.addEventListener('DOMContentLoaded', function() {
               body: JSON.stringify({ username: profile.username || username, browserId: bid })
           }).catch(() => {});
         } catch (_) {}
+        return true;
         
       } else {
         const msg = (data && data.error) ? String(data.error) : '';
-        if (/não\s+localizad|não\s+encontrad|inexist|username_invalid|user_not_found/i.test(msg)) {
-          showStatusMessageCheckout('Usuário não encontrado. configra o nome digitado e tente novamente.', 'error');
-        } else if (/erro\s+na\s+verifica[cç][aã]o\s+do\s+perfil/i.test(msg)) {
-          showStatusMessageCheckout('Erro de usuário. configra o nome digitado e tente novamente.', 'error');
-        } else {
-          showStatusMessageCheckout(msg || 'Falha ao verificar perfil.', 'error');
+        if (!silent) {
+          if (/não\s+localizad|não\s+encontrad|inexist|username_invalid|user_not_found/i.test(msg)) {
+            showStatusMessageCheckout('Usuário não encontrado. configra o nome digitado e tente novamente.', 'error');
+          } else if (/erro\s+na\s+verifica[cç][aã]o\s+do\s+perfil/i.test(msg)) {
+            showStatusMessageCheckout('Erro de usuário. configra o nome digitado e tente novamente.', 'error');
+          } else {
+            showStatusMessageCheckout(msg || 'Falha ao verificar perfil.', 'error');
+          }
+          const helpLink = document.getElementById('howToGetLinkContainer');
+          if (helpLink) helpLink.style.display = 'block';
         }
+        return false;
+      }
+    } catch (e) {
+      if (!silent) {
+        hideLoadingCheckout();
+        showStatusMessageCheckout('Erro ao conectar com o servidor.', 'error');
         const helpLink = document.getElementById('howToGetLinkContainer');
         if (helpLink) helpLink.style.display = 'block';
       }
-    } catch (e) {
-      hideLoadingCheckout();
-      showStatusMessageCheckout('Erro ao conectar com o servidor.', 'error');
-      const helpLink = document.getElementById('howToGetLinkContainer');
-      if (helpLink) helpLink.style.display = 'block';
+      return false;
     }
   }
 
@@ -3903,6 +3990,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
       if (!phoneValue) throw new Error('Por favor, informe um telefone válido.');
 
+      const nameValue = normalizeFullName(contactNameInput ? contactNameInput.value : '');
+      if (!isValidFullName(nameValue)) throw new Error('Por favor, informe seu nome e sobrenome.');
+
       let emailValue = contactEmailInput ? String(contactEmailInput.value || '').trim() : '';
       if (emailValue && !emailValue.includes('@')) emailValue = '';
       if (!emailValue) throw new Error('Por favor, informe um e-mail válido.');
@@ -3930,12 +4020,13 @@ document.addEventListener('DOMContentLoaded', function() {
         value: totalCents,
         comment: paymentComment,
         customer: {
-          name: 'Cliente Instagram',
+          name: nameValue,
           phone: phoneValue,
           email: emailValue,
           cpf: cpfDigits
         },
         additionalInfo: [
+          { key: 'customer_name', value: nameValue },
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
           { key: 'quantidade', value: String(qtdEffective) },
@@ -4492,11 +4583,22 @@ document.addEventListener('DOMContentLoaded', function() {
   if (confirmContactDataBtn) {
       confirmContactDataBtn.addEventListener('click', (e) => {
           if (e) e.preventDefault(); // Prevent link navigation
+          const name = contactNameInput ? String(contactNameInput.value || '').trim() : '';
           const email = contactEmailInput ? contactEmailInput.value.trim() : '';
           const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
           
+          const nameErrorMsg = document.getElementById('nameErrorMsg');
           const emailErrorMsg = document.getElementById('emailErrorMsg');
           
+          if (!isValidFullName(name)) {
+              if (nameErrorMsg) nameErrorMsg.style.display = 'block';
+              else showStatusMessageCheckout('Por favor, informe seu nome e sobrenome.', 'error');
+              if (contactNameInput) contactNameInput.focus();
+              return;
+          } else {
+              if (nameErrorMsg) nameErrorMsg.style.display = 'none';
+          }
+
           if (!email || !email.includes('@')) {
               if (emailErrorMsg) emailErrorMsg.style.display = 'block';
               else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
@@ -4558,6 +4660,422 @@ document.addEventListener('DOMContentLoaded', function() {
   try { updatePaymentMethodVisibility(); } catch(_) {}
   try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
   
+  const hasRecoveryToken = (function(){
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      const identifier = String(p.get('identifier') || '').trim();
+      const correlationID = String(p.get('correlationID') || '').trim();
+      return !!rt || !!identifier || !!correlationID;
+    } catch (_) {
+      return false;
+    }
+  })();
+
+  function extractShortcodeFromIgLink(rawUrl) {
+    try {
+      const u = String(rawUrl || '').trim();
+      if (!u) return '';
+      const m = u.match(/instagram\.com\/(?:p|reel|tv)\/([^\/?#]+)/i);
+      return (m && m[1]) ? String(m[1]).trim() : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function extractIdsFromRecoveryToken(rtRaw) {
+    try {
+      const t = String(rtRaw || '').trim();
+      const idx = t.lastIndexOf('.');
+      if (idx < 1) return { identifier: '', correlationID: '' };
+      const payload = t.slice(0, idx);
+      const s = payload.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+      const json = atob(s + pad);
+      const obj = JSON.parse(json);
+      return {
+        identifier: String(obj && obj.identifier ? obj.identifier : '').trim(),
+        correlationID: String(obj && obj.correlationID ? obj.correlationID : '').trim()
+      };
+    } catch (_) {
+      return { identifier: '', correlationID: '' };
+    }
+  }
+
+  async function safeParseJson(resp) {
+    try {
+      const ct = String(resp && resp.headers && resp.headers.get ? resp.headers.get('content-type') : '').toLowerCase();
+      if (ct && ct.indexOf('application/json') === -1) return null;
+      return await resp.json().catch(() => null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function applyCouponFromCode(codeRaw) {
+    try {
+      const code = String(codeRaw || '').trim().toUpperCase();
+      if (!code) return false;
+      const input = document.getElementById('couponInput');
+      const msg = document.getElementById('couponMessage');
+      if (input) input.value = code;
+      const usernameEl = document.getElementById('usernameCheckoutInput');
+      const instagram_username = usernameEl ? String(usernameEl.value || '').trim().replace(/^@+/, '') : '';
+      const res = await fetch('/api/validate-coupon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ code, instagram_username })
+      });
+      const data = await res.json().catch(() => null);
+      if (data && data.valid) {
+        window.couponCode = data.code;
+        window.couponDiscount = data.discount || 0;
+        if (msg) {
+          const percent = Math.round((Number(data.discount || 0)) * 100);
+          msg.textContent = 'Cupom aplicado! (' + percent + '% OFF)';
+          msg.style.color = '#22c55e';
+          msg.style.display = 'block';
+        }
+        if (input) input.disabled = true;
+        const applyBtn = document.getElementById('applyCouponBtn');
+        if (applyBtn) {
+          applyBtn.disabled = true;
+          applyBtn.textContent = 'Aplicado';
+        }
+        try { updatePromosSummary(); } catch (_) {}
+        return true;
+      }
+      window.couponCode = '';
+      window.couponDiscount = 0;
+      if (msg) {
+        msg.textContent = (data && data.error) ? data.error : 'Cupom inválido.';
+        msg.style.color = '#ef4444';
+        msg.style.display = 'block';
+      }
+      try { updatePromosSummary(); } catch (_) {}
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function applyRecoveryContext(ctx) {
+    try {
+      const customer = (ctx && ctx.customer && typeof ctx.customer === 'object') ? ctx.customer : {};
+      const tipoRaw = String(ctx && (ctx.tipo_servico || ctx.tipo) || '').trim();
+      const qtdRaw = String(ctx && (ctx.quantidade || ctx.qtd) || '').trim();
+      const usernameRaw = String(ctx && (ctx.instagram_username || ctx.username) || '').trim();
+      const couponRaw = String(ctx && ctx.coupon || '').trim();
+      const postShortcode = String(ctx && (ctx.post_shortcode || (ctx.selected && ctx.selected.post_shortcode)) || '').trim();
+      const bumpsRaw = String(ctx && (ctx.order_bumps || ctx.orderBumps) || '').trim();
+
+      try { window.__oppusRecoveryApplied = true; } catch (_) {}
+
+      if (usernameCheckoutInput && usernameRaw) {
+        usernameCheckoutInput.value = usernameRaw;
+      }
+      if (tipoSelect) {
+        const normalizedTipo = normalizeTipoForContext(tipoRaw);
+        if (normalizedTipo) tipoSelect.value = normalizedTipo;
+        setTimeout(() => { try { tipoSelect.dispatchEvent(new Event('change')); } catch(_) {} }, 50);
+      }
+      const qtdNum = parseInt(qtdRaw, 10);
+      if (qtdSelect && Number.isFinite(qtdNum) && qtdNum > 0) {
+        setTimeout(() => {
+          try {
+            const tipo = tipoSelect ? String(tipoSelect.value || '').trim() : '';
+            const chosen = pickClosestQtd(tipo, qtdNum);
+            if (chosen) {
+              qtdSelect.value = String(chosen);
+              qtdSelect.dispatchEvent(new Event('change'));
+            }
+          } catch (_) {}
+        }, 180);
+      }
+
+      try {
+        const fromInput = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+        const ig0 = String(usernameRaw || fromInput || '').trim();
+        const uname = normalizeInstagramUsername(ig0);
+        const ig = String(uname || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+        if (usernameCheckoutInput && ig) usernameCheckoutInput.value = ig;
+        if (checkoutProfileUsername && ig) checkoutProfileUsername.textContent = ig;
+        if (checkoutProfileImage && !checkoutProfileImage.src) checkoutProfileImage.src = 'https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg';
+        if (profilePreview) profilePreview.style.display = 'block';
+        const contactArea = document.getElementById('contactFieldsArea');
+        if (contactArea) contactArea.style.display = 'block';
+        isInstagramVerified = false;
+        if (ig) {
+          try {
+            const priv = !!(ctx && (ctx.isPrivate === true || ctx.is_private === true));
+            isInstagramPrivate = priv;
+          } catch (_) { isInstagramPrivate = false; }
+        }
+      } catch (_) {}
+
+      try {
+        if (contactEmailInput && customer.email && !String(contactEmailInput.value || '').trim()) {
+          contactEmailInput.value = String(customer.email || '').trim();
+        }
+      } catch (_) {}
+      try {
+        const n0 = String(customer.name || customer.nome || '').trim();
+        const n1 = normalizeFullName(n0);
+        const isGeneric = !n1 || /^cliente instagram$/i.test(n1) || /^cliente$/i.test(n1);
+        if (contactNameInput && !String(contactNameInput.value || '').trim() && !isGeneric && isValidFullName(n1)) {
+          contactNameInput.value = n1;
+        }
+      } catch (_) {}
+      try {
+        if (contactPhoneInput && customer.phone && !String(contactPhoneInput.value || '').trim()) {
+          contactPhoneInput.value = String(customer.phone || '').trim();
+          try { contactPhoneInput.dispatchEvent(new Event('input')); } catch (_) {}
+          try { contactPhoneInput.dispatchEvent(new Event('change')); } catch (_) {}
+        }
+      } catch (_) {}
+
+      try {
+        if (bumpsRaw) {
+          const parts = bumpsRaw.split(';').map(s => String(s || '').trim()).filter(Boolean);
+          const map = {};
+          parts.forEach(p => {
+            const [k0, q0] = p.split(':');
+            const k = String(k0 || '').trim();
+            const q = parseInt(String(q0 || '1'), 10);
+            if (!k) return;
+            map[k] = Number.isFinite(q) && q > 0 ? q : 1;
+          });
+
+          const ob = document.getElementById('orderBumpCheckboxInline');
+          if (ob && map.upgrade) ob.checked = true;
+
+          const likesCb = document.getElementById('promoLikes');
+          if (likesCb && map.likes) {
+            likesCb.checked = true;
+            const qEl = document.getElementById('likesQty');
+            const qty = map.likes;
+            if (qEl) qEl.textContent = String(qty);
+            try { updateLikesPrice(qty); } catch (_) {}
+          }
+
+          const viewsCb = document.getElementById('promoViews');
+          if (viewsCb && map.views) {
+            viewsCb.checked = true;
+            const qEl = document.getElementById('viewsQty');
+            const qty = map.views;
+            if (qEl) qEl.textContent = String(qty);
+            try { updateViewsPrice(qty); } catch (_) {}
+          }
+
+          const commCb = document.getElementById('promoComments');
+          if (commCb && map.comments) {
+            commCb.checked = true;
+            const qEl = document.getElementById('commentsQty');
+            const qty = Math.max(1, Math.min(100, map.comments));
+            if (qEl) qEl.textContent = String(qty);
+            try { updateCommentsPrice(qty); } catch (_) {}
+          }
+
+          const warCb = document.getElementById('promoWarranty60');
+          if (warCb && map.warranty_6m) warCb.checked = true;
+
+          try { updatePromosSummary(); } catch (_) {}
+          try { updatePedidoButtonState(); } catch (_) {}
+        }
+      } catch (_) {}
+
+      try {
+        if ((isCurtidasContext || isViewsContext) && postShortcode) {
+          if (!window.__oppusSelectedPostsByKind) window.__oppusSelectedPostsByKind = {};
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          window.__oppusSelectedPostsByKind[kind] = [postShortcode];
+          setTimeout(() => { try { renderSelectedPostsPreview(kind); } catch (_) {} }, 260);
+        }
+      } catch (_) {}
+
+      if (hasRecoveryToken) {
+        const wantsPixAnchor = (function () {
+          try {
+            const h = String(window.location && window.location.hash ? window.location.hash : '').toLowerCase().trim();
+            if (h === '#pix' || h === '#pixcopy' || h === '#pix-copia' || h === '#pix-copiar') return true;
+          } catch (_) {}
+          try {
+            const p = new URLSearchParams(window.location.search || '');
+            const a = String(p.get('anchor') || p.get('scroll') || '').toLowerCase().trim();
+            if (a === 'pix' || a === 'pixcopy' || a === 'pix_copiar') return true;
+          } catch (_) {}
+          return false;
+        })();
+        const scrollToPixCopy = async () => {
+          if (!wantsPixAnchor) return;
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+          for (let i = 0; i < 20; i++) {
+            const btn = document.getElementById('copyPixBtnDynamic') || document.getElementById('copyPixBtn') || document.getElementById('copyBtn') || null;
+            const code = document.getElementById('pixBrCodeInputDynamic') || document.getElementById('pixCopiaCola') || null;
+            const target = btn || code || document.getElementById('pixResultado') || document.getElementById('pixContainer') || null;
+            if (target && typeof target.scrollIntoView === 'function') {
+              try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) { try { target.scrollIntoView(true); } catch (_) {} }
+              return;
+            }
+            await sleep(150);
+          }
+        };
+
+        const wantsAutoPix = (function(){
+          try {
+            const p = new URLSearchParams(window.location.search || '');
+            const v = String(p.get('autopix') || p.get('autopay') || '').trim();
+            return v === '1' || v.toLowerCase() === 'true';
+          } catch (_) {
+            return false;
+          }
+        })();
+
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+
+        const runAuto = async () => {
+          try {
+            const rawU = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+            const u = normalizeInstagramUsername(rawU);
+            if (usernameCheckoutInput && u) usernameCheckoutInput.value = u;
+          } catch (_) {}
+
+          try {
+            for (let i = 0; i < 12; i++) {
+              const tipoOk = !!(tipoSelect && String(tipoSelect.value || '').trim());
+              const qtdOk = !!(qtdSelect && !qtdSelect.disabled && String(qtdSelect.value || '').trim());
+              if (tipoOk && qtdOk) break;
+              await sleep(90);
+            }
+          } catch (_) {}
+
+          let verifiedOk = false;
+          try {
+            verifiedOk = await checkInstagramProfileCheckout({ silent: true, noModal: true, noScroll: true, includePosts: false });
+          } catch (_) { verifiedOk = false; }
+          if (!verifiedOk) {
+            try { showStatusMessageCheckout('Não foi possível validar o perfil automaticamente. Clique em "Buscar" para continuar.', 'error'); } catch (_) {}
+            return;
+          }
+
+          try {
+            if (couponRaw) await applyCouponFromCode(couponRaw);
+          } catch (_) {}
+
+          try { updatePromosSummary(); } catch (_) {}
+          try { updatePedidoButtonState(); } catch (_) {}
+
+          try { if (window.goToStep) window.goToStep(3); } catch (_) {}
+
+          if (wantsAutoPix) {
+            await sleep(300);
+            try { selectPaymentMethod('pix'); } catch (_) {}
+            try { await criarPixPaghiper(); } catch (_) {}
+            try { await scrollToPixCopy(); } catch (_) {}
+          }
+        };
+
+        setTimeout(function(){ runAuto().catch(function(){}); }, 220);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function applyRecoveryContextFromOrderQuery() {
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      let identifier = String(p.get('identifier') || '').trim();
+      let correlationID = String(p.get('correlationID') || '').trim();
+      if (!identifier && !correlationID) {
+        const rt = String(p.get('rt') || '').trim();
+        const ids = extractIdsFromRecoveryToken(rt);
+        identifier = String(ids.identifier || '').trim();
+        correlationID = String(ids.correlationID || '').trim();
+      }
+      if (!identifier && !correlationID) return false;
+      const qs = new URLSearchParams();
+      if (identifier) qs.set('identifier', identifier);
+      if (correlationID) qs.set('correlationID', correlationID);
+      const resp = await fetch('/api/order?' + qs.toString(), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+      const data = await safeParseJson(resp);
+      if (!data || !data.ok || !data.order) return false;
+      const order = data.order || {};
+      const mapPaid = (order.additionalInfoMapPaid && typeof order.additionalInfoMapPaid === 'object') ? order.additionalInfoMapPaid : {};
+      const map = (order.additionalInfoMap && typeof order.additionalInfoMap === 'object') ? order.additionalInfoMap : {};
+      const arrPaid = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : [];
+      const arr = Array.isArray(order.additionalInfo) ? order.additionalInfo : [];
+      const pickFromArray = (arr0, key) => {
+        const list = Array.isArray(arr0) ? arr0 : [];
+        const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+        return it && typeof it.value !== 'undefined' ? it.value : undefined;
+      };
+      const getAdd = (key) => {
+        if (typeof mapPaid[key] !== 'undefined') return mapPaid[key];
+        if (typeof map[key] !== 'undefined') return map[key];
+        const v1 = pickFromArray(arrPaid, key);
+        if (typeof v1 !== 'undefined') return v1;
+        return pickFromArray(arr, key);
+      };
+      const customer = (order.customer && typeof order.customer === 'object') ? order.customer : {};
+      const postLink = String(getAdd('post_link') || getAdd('link') || getAdd('orderbump_post_likes') || getAdd('orderbump_post_views') || '').trim();
+      const post_shortcode = extractShortcodeFromIgLink(postLink);
+      const couponFromUrl = String(p.get('cupom') || p.get('coupon') || '').trim();
+      const nameAny = String(
+        getAdd('customer_name') ||
+        getAdd('nome') ||
+        getAdd('name') ||
+        customer.name ||
+        customer.nome ||
+        ''
+      ).trim();
+      const phoneAny = String(
+        getAdd('phone') ||
+        getAdd('telefone') ||
+        getAdd('whatsapp') ||
+        customer.phone ||
+        customer.telefone ||
+        customer.whatsapp ||
+        order.phone ||
+        order.telefone ||
+        order.whatsapp ||
+        ''
+      ).trim();
+      const ctx = {
+        tipo_servico: String(getAdd('tipo_servico') || getAdd('tipoServico') || getAdd('tipo') || order.tipoServico || order.tipo || '').trim(),
+        quantidade: String(getAdd('quantidade') || getAdd('qtd') || order.quantidade || order.qtd || '').trim(),
+        instagram_username: String(getAdd('instagram_username') || getAdd('instagramUsername') || order.instagramUsername || order.instauser || '').trim(),
+        coupon: couponFromUrl,
+        customer: { email: String(customer.email || '').trim(), phone: phoneAny, name: nameAny },
+        post_shortcode,
+        order_bumps: String(getAdd('order_bumps') || '').trim()
+      };
+      return applyRecoveryContext(ctx);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function applyRecoveryContextFromTokenOrOrderQuery() {
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      if (rt) {
+        const resp = await fetch('/api/recovery/context?rt=' + encodeURIComponent(rt), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+        const data = await safeParseJson(resp);
+        if (data && data.ok && data.context) {
+          try { applyRecoveryContext(data.context); } catch (_) {}
+          try { await applyRecoveryContextFromOrderQuery(); } catch (_) {}
+          return true;
+        }
+      }
+    } catch (_) {}
+    return applyRecoveryContextFromOrderQuery();
+  }
+
+  try { applyRecoveryContextFromTokenOrOrderQuery().catch(() => {}); } catch (_) {}
+
   // Default selection (Mistos)
   const urlPrefill = (function(){
     try {
@@ -4659,7 +5177,9 @@ document.addEventListener('DOMContentLoaded', function() {
     return 1;
   })();
   if (window.goToStep) {
-    if (initialStep === 1) {
+    if (hasRecoveryToken) {
+      window.goToStep(1);
+    } else if (initialStep === 1) {
       window.goToStep(1);
     } else {
       setTimeout(() => {

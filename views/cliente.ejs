@@ -3,35 +3,619 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Consulta de Pedido</title>
+  <title>Área do Cliente</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link href="/css/style.css" rel="stylesheet" />
   <link href="/css/perfil.css" rel="stylesheet" />
+  <style>
+    body, button, input, select, textarea { font-family: var(--font-family) !important; }
+    .client-actions-top { position:relative; justify-content: center; align-items:center; margin-bottom: 0.75rem; display:grid; grid-template-columns: 1fr auto 1fr; }
+    #clientPageBackBtn { grid-column: 2; margin: 0 !important; }
+    @media (max-width: 640px) {
+      .client-actions-top { grid-template-columns: 1fr auto 1fr; gap: 10px; }
+      .client-actions-top { margin-top: -10px; margin-bottom: 0.4rem; }
+      #clientLogoutBtn { margin-top: -22px !important; }
+      main { padding-top: 1rem !important; }
+    }
+
+    #clientLogoutBtn.continue-button { background: transparent !important; color: #dc2626 !important; box-shadow:none !important; transform:none !important; animation:none !important; padding: 6px 8px !important; min-width: auto !important; font-size: 0.9rem !important; }
+    #clientLogoutBtn.continue-button::before { display:none !important; }
+    #clientLogoutBtn.continue-button:hover { box-shadow:none !important; transform:none !important; filter: brightness(0.9); }
+    #clientLogoutBtn.continue-button:active { transform:none !important; }
+    #clientLogoutBtn { grid-column: 3; justify-self: end; }
+
+    .client-filter { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin: 10px 0 8px 0; }
+    .client-filter-btn { padding:7px 12px; border-radius:999px; border:1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-secondary); font-weight:600; font-size:0.9rem; line-height:1; box-shadow: var(--shadow-sm); }
+    body.theme-light .client-filter-btn { background:#ffffff; }
+    .client-filter-btn.is-active { background: #e9d5ff; border-color: var(--primary-purple); color:#000000; }
+    .client-filter-title { text-align:center; font-size: 0.9rem; font-weight: 700; color: var(--text-secondary); margin: 12px 0 6px 0; letter-spacing: 0; }
+    .client-filter-sub { text-align:center; font-size: 0.9rem; font-weight: 700; color: var(--text-secondary); margin: 12px 0 6px 0; letter-spacing: 0; }
+
+    .client-overview { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin: 10px 0 12px 0; }
+    .client-overview-card { min-width:140px; flex:1 1 140px; max-width:220px; background: var(--bg-secondary); border:1px solid var(--border-color); border-radius:14px; padding:12px; box-shadow: var(--shadow-sm); }
+    body.theme-light .client-overview-card { background:#ffffff; }
+    .client-overview-value { font-size:20px; font-weight:700; color: var(--text-primary); line-height:1.15; }
+    .client-overview-label { margin-top:4px; font-size:12px; color: var(--text-secondary); font-weight:600; }
+    @media (max-width: 640px) {
+      .client-overview { flex-direction: column; }
+      .client-overview { width: calc(100% - 32px); margin-left: auto; margin-right: auto; }
+      .client-overview-card { max-width: none; width: 100%; }
+      .client-overview-card { flex: none !important; flex-basis: auto !important; padding: 12px 14px; border-radius: 12px; min-height: 76px; display:flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+      .client-overview-value { font-size: 16px; line-height: 1.05; }
+      .client-overview-label { margin-top: 0; font-size: 11px; text-align: right; }
+    }
+    .client-orders-summary { text-align:center; color: var(--text-secondary); font-size:0.95rem; margin: 2px 0 0 0; }
+    .client-order-card { background: var(--bg-secondary) !important; }
+    body.theme-light .client-order-card { background:#ffffff !important; }
+    .client-order-title { font-weight:700; color: var(--text-primary); font-size:1.02rem; }
+    .client-order-meta { margin-top:8px; color: var(--text-secondary); font-size:0.92rem; line-height:1.35; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .client-order-meta strong { font-weight:600; color: var(--text-primary); }
+    .client-details-btn { padding:10px 14px !important; border-radius:999px !important; min-width: 170px; font-size: 0.95rem; }
+
+    .client-refil-wrap { display:flex; justify-content:center; margin: 8px 0 0 0; }
+    .client-refil-link { width:100%; max-width: 520px; display:flex; align-items:center; justify-content:center; padding: 12px 14px; border-radius: 14px; border: none; background: var(--instagram-gradient); color: #ffffff; font-weight: 800; text-decoration: none; box-shadow: var(--shadow-md); }
+    .client-refil-link:hover { filter: brightness(0.98); transform: translateY(-1px); }
+    .client-refil-link:active { transform: translateY(0); }
+    @media (max-width: 640px) {
+      .client-refil-link { padding: 11px 14px; font-size: 0.98rem; border-radius: 14px; }
+    }
+
+    /* ── Cupom retorno — estilo OFERTA ÚNICA ── */
+    .client-coupon { margin: 10px auto 14px auto; width:100%; max-width: 860px; padding: 0 16px; }
+    .client-coupon-card { position:relative; width:100%; border-radius: 16px; border: 1.5px solid rgba(107,70,193,.35); background: linear-gradient(135deg,#f5f3ff 0%,#ede9fe 100%); padding: 14px 16px 14px 16px; font-family: var(--font-family); box-shadow: 0 4px 18px rgba(107,70,193,.12); }
+    body:not(.theme-light) .client-coupon-card { background: linear-gradient(135deg,rgba(107,70,193,.12) 0%,rgba(139,92,246,.08) 100%); border-color: rgba(107,70,193,.35); box-shadow: 0 4px 18px rgba(107,70,193,.1); }
+    .client-coupon-header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+    .client-coupon-pill { display:inline-flex; align-items:center; gap:6px; padding: 4px 10px; border-radius: 999px; background: rgba(107,70,193,.15); border: 1px solid rgba(107,70,193,.3); color: #5b21b6; font-weight: 800; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; font-family: var(--font-family); }
+    body:not(.theme-light) .client-coupon-pill { background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.4); color: #c4b5fd; }
+    .client-coupon-validity { font-size: 12px; font-weight: 700; color: #16a34a; font-family: var(--font-family); }
+    body:not(.theme-light) .client-coupon-validity { color: #4ade80; }
+    .client-coupon-headline { font-weight: 900; color: #1c1917; font-size: 17px; line-height: 1.25; letter-spacing: -.02em; font-family: var(--font-family); margin-bottom: 4px; }
+    body:not(.theme-light) .client-coupon-headline { color: #ede9fe; }
+    .client-coupon-off-wrap { background: var(--instagram-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 900; }
+    .client-coupon-off { font-weight: 900; }
+    .client-coupon-grad { background: linear-gradient(90deg,#7c3aed,#a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .client-coupon-sub { color: #6d28d9; font-weight: 500; font-size: .83rem; line-height: 1.45; font-family: var(--font-family); margin-bottom: 10px; }
+    body:not(.theme-light) .client-coupon-sub { color: #a78bfa; }
+    .client-coupon-benefits { display:flex; flex-direction:column; gap: 8px; margin-bottom: 14px; }
+    .client-coupon-benefit { display:flex; align-items:center; gap:7px; font-size: .82rem; color: #5b21b6; font-family: var(--font-family); font-weight: 600; }
+    body:not(.theme-light) .client-coupon-benefit { color: #c4b5fd; }
+    .client-coupon-benefit-icon { width: 22px; height: 22px; border-radius: 50%; display:flex; align-items:center; justify-content:center; flex-shrink: 0; font-size: 12px; background: rgba(107,70,193,.12); }
+    .client-coupon-divider { height:1px; background: rgba(251,191,36,.3); margin: 12px 0; }
+    .client-coupon-bottom { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .client-coupon-price-block { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+    .client-coupon-price-val { font-size: 26px; font-weight: 900; color: #16a34a; font-family: var(--font-family); line-height: 1; }
+    body:not(.theme-light) .client-coupon-price-val { color: #4ade80; }
+    .client-coupon-badge { display:inline-flex; align-items:center; padding: 3px 8px; border-radius: 6px; background: #dcfce7; color: #166534; font-size: 11px; font-weight: 800; }
+    body:not(.theme-light) .client-coupon-badge { background: rgba(34,197,94,.2); color: #4ade80; }
+    .client-coupon-btns { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .client-coupon-link { display:inline-flex; align-items:center; justify-content:center; flex-direction:column; gap:2px; padding: 10px 20px; border-radius: 12px; background: var(--instagram-gradient); color: #fff; font-weight: 800; font-size: .9rem; text-decoration:none; font-family: var(--font-family); line-height:1.2; box-shadow: 0 4px 12px rgba(220,39,67,.3); transition: filter .15s; }
+    .client-coupon-link:hover { filter: brightness(1.06); }
+    .client-coupon-link-timer { font-size: 11px; font-weight: 600; opacity: .85; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+    .client-coupon-dismiss { font-size: .85rem; color: #78716c; font-weight: 600; background: none; border: 1px solid #e7e5e4; border-radius: 10px; cursor: pointer; font-family: var(--font-family); padding: 9px 16px; }
+    body:not(.theme-light) .client-coupon-dismiss { color: #a8a29e; border-color: rgba(255,255,255,.15); }
+    .client-coupon-dismiss:hover { background: rgba(0,0,0,.04); }
+    .client-coupon-box { display:none; }
+    .client-coupon-foot { display:none; }
+    .client-coupon-footnote { display:none; }
+    .client-welcome-card { margin: 0 auto 12px auto; width:100%; max-width: 860px; padding: 0 16px; }
+    .client-welcome-inner { border-radius: 16px; border: 1px solid rgba(139, 92, 246, 0.25); background: rgba(139, 92, 246, 0.07); padding: 14px 16px 12px 16px; font-family: var(--font-family); }
+    body.theme-light .client-welcome-inner { background: rgba(107, 70, 193, 0.05); border-color: rgba(107, 70, 193, 0.18); }
+    .client-welcome-top { display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap: wrap; }
+    .client-welcome-greeting { font-size: 0.95rem; font-weight: 700; color: var(--text-primary); }
+    .client-welcome-email { font-size: 0.82rem; color: var(--text-secondary); font-weight: 500; margin-top: 2px; }
+    .client-welcome-divider { margin: 11px 0 10px 0; height: 1px; background: rgba(139, 92, 246, 0.15); }
+    body.theme-light .client-welcome-divider { background: rgba(107, 70, 193, 0.12); }
+    .client-welcome-refil { display:inline-flex; align-items:center; gap:8px; padding: 8px 14px; border-radius: 10px; background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.25); color: #8B5CF6; font-size: 0.85rem; font-weight: 700; font-family: var(--font-family); text-decoration: none; transition: background 0.15s; }
+    body.theme-light .client-welcome-refil { background: rgba(107, 70, 193, 0.08); border-color: rgba(107, 70, 193, 0.2); color: #6B46C1; }
+    .client-welcome-refil:hover { background: rgba(139, 92, 246, 0.2); }
+    .client-welcome-refil svg { flex-shrink: 0; opacity: 0.85; }
+    @media (max-width: 640px) {
+      .client-coupon-card { padding: 16px 14px 14px 14px; border-radius: 18px; }
+      .client-coupon-headline { font-size: 22px; }
+      .client-coupon-box { padding: 12px 12px; border-radius: 12px; }
+      .client-coupon-box-icon { width: 36px; height: 36px; border-radius: 10px; }
+      .client-coupon-box-code { font-size: 18px; }
+      .client-coupon-box-copy { padding: 9px 12px; }
+      .client-coupon-link { width: 100%; justify-content: center; }
+    }
+
+    .client-order-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+    .client-order-left { display:flex; gap:10px; align-items:center; min-width:0; }
+    .client-order-avatar { width:38px; height:38px; border-radius:999px; overflow:hidden; background: #e5e7eb; border: 1px solid rgba(0,0,0,0.06); flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+    body:not(.theme-light) .client-order-avatar { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+    .client-order-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+    .client-order-head-text { min-width:0; }
+    .client-order-ig { margin-top:2px; color: var(--text-secondary); font-size:0.86rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 220px; }
+    @media (max-width: 640px) {
+      .client-order-card { padding: 12px !important; border-radius: 14px !important; }
+      .client-order-avatar { width:30px; height:30px; }
+      .client-order-title { font-size: 0.95rem; }
+      .client-order-ig { font-size: 0.8rem; max-width: 180px; }
+      .client-order-meta { font-size: 0.85rem; margin-top: 6px; }
+      .client-details-btn { min-width: 150px; padding: 9px 12px !important; font-size: 0.92rem; }
+    }
+  </style>
 </head>
-<body class="theme-light has-fixed-menu">
+<body class="theme-light has-fixed-menu" data-disable-sale-toasts="1">
   <%- include('partials/menu') %>
-    <main style="padding: 1rem 0; font-family: var(--font-family);">
+  <%
+    const pageMode = (typeof mode !== 'undefined' && mode) ? String(mode) : 'login';
+    const pageEmail = (typeof email !== 'undefined' && email) ? String(email) : '';
+    const pageToken = (typeof token !== 'undefined' && token) ? String(token) : '';
+    const pageOrders = (typeof orders !== 'undefined' && Array.isArray(orders)) ? orders : [];
+    const pageClientCoupon = (typeof clientCoupon !== 'undefined' && clientCoupon) ? clientCoupon : null;
+    const pageClientLevel = (typeof clientLevel !== 'undefined' && Number.isFinite(Number(clientLevel))) ? Math.min(7, Math.max(1, Number(clientLevel))) : 1;
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const formatDatePtBR = (iso) => {
+      try {
+        const d = iso ? new Date(String(iso)) : null;
+        if (!d || isNaN(d.getTime())) return '-';
+        return d.toLocaleDateString('pt-BR');
+      } catch (_) {
+        return '-';
+      }
+    };
+    const prettyText = (raw) => {
+      const s0 = String(raw == null ? '' : raw).trim();
+      if (!s0) return '-';
+      const s = s0.toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+      const dict = {
+        'seguidores_mistos': 'Seguidores Mistos',
+        'seguidores_organicos': 'Seguidores Orgânicos',
+        'seguidores_brasileiros': 'Seguidores Brasileiros',
+        'mistos': 'Mistos',
+        'organicos': 'Orgânicos',
+        'brasileiros': 'Brasileiros',
+        'brasileiras': 'Brasileiras',
+        'curtidas': 'Curtidas',
+        'visualizacoes': 'Visualizações',
+        'comentarios': 'Comentários'
+      };
+      if (dict[s]) return dict[s];
+      return s.split('_').filter(Boolean).map(w => dict[w] || (w.charAt(0).toUpperCase() + w.slice(1))).join(' ');
+    };
+    const inferCategoriaKey = (o) => {
+      const c = String(o && o.categoria ? o.categoria : '').toLowerCase();
+      const t = String(o && o.tipo ? o.tipo : '').toLowerCase();
+      const s = (c || t).replace(/\s+/g, '_');
+      if (s.includes('curtid') || s.includes('likes')) return 'curtidas';
+      if (s.includes('visual') || s.includes('views')) return 'visualizacoes';
+      if (s.includes('coment') || s.includes('comments')) return 'comentarios';
+      return 'seguidores';
+    };
+    const inferInstagramUsernameLoose = (o) => {
+      try {
+        let u = '';
+        const direct = (o && (o.instagramUsername || o.instauser || o.instagram || o.ig || o.username || o.user || o.perfil || o.profile || o.instagram_user)) || '';
+        u = String(direct || '').trim();
+        if (!u && o && o.additionalInfoMapPaid && typeof o.additionalInfoMapPaid === 'object') {
+          u = String(o.additionalInfoMapPaid.instagram_username || o.additionalInfoMapPaid.ig || o.additionalInfoMapPaid.username || '').trim();
+        }
+        if (!u && o && o.additionalInfoMap && typeof o.additionalInfoMap === 'object') {
+          u = String(o.additionalInfoMap.instagram_username || o.additionalInfoMap.ig || o.additionalInfoMap.username || '').trim();
+        }
+        if (!u && o && Array.isArray(o.additionalInfoPaid)) {
+          const f = o.additionalInfoPaid.find(it => it && it.key === 'instagram_username' && String(it.value || '').trim());
+          if (f) u = String(f.value || '').trim();
+        }
+        if (!u && o && Array.isArray(o.additionalInfo)) {
+          const f = o.additionalInfo.find(it => it && it.key === 'instagram_username' && String(it.value || '').trim());
+          if (f) u = String(f.value || '').trim();
+        }
+        u = String(u || '').trim();
+        if (!u) return '';
+        if (u.startsWith('@')) u = u.slice(1).trim();
+        try {
+          const cleaned = u.replace(/\s/g, '');
+          const match = cleaned.match(/^https?:\/\/(www\.)?instagram\.com\/([^\/\?\s]+)/i);
+          if (match && match[2]) u = match[2];
+        } catch (_) {}
+        u = String(u || '').trim().replace(/^@/, '');
+        return u;
+      } catch (_) {
+        return '';
+      }
+    };
+  %>
+  <main style="padding: 1rem 0; font-family: var(--font-family);">
     <div id="clientPage" class="client-page" style="position: static; display: block;">
       <div class="client-page-inner">
-        <div class="client-actions" style="justify-content: center; margin-bottom: 0.75rem;">
-          <button id="clientPageBackBtn" class="continue-button btn-back" style="margin: 0 auto;">
-            <span class="button-text">Voltar</span>
+        <div class="client-actions client-actions-top">
+          <button id="clientPageBackBtn" class="continue-button btn-back" style="min-width: 120px; margin: 0 auto; display:flex; align-items:center; justify-content:center;">
+            <span class="button-text" style="width:100%; text-align:center;">Voltar</span>
           </button>
+          <% if (pageMode === 'orders' || pageMode === 'change') { %>
+            <button id="clientLogoutBtn" class="continue-button" style="display:flex; align-items:center; justify-content:center;">
+              <span class="button-text" style="width:100%; text-align:center;">Sair</span>
+            </button>
+          <% } %>
         </div>
-        <h2 class="client-title">Consulta de Pedido</h2>
-        <p class="client-desc">Digite seu número de telefone para localizar seu pedido.</p>
-        <div class="client-form">
-          <input id="clientPhoneInputPage" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
-          <div class="client-actions" style="justify-content: center;">
-            <button id="clientPageConsultBtn" class="continue-button"><span class="button-text">Consultar</span></button>
+
+        <h2 class="client-title">Área do Cliente</h2>
+        <% if (pageMode === 'orders') { %>
+          <%# email exibido no card de boas-vindas abaixo %>
+        <% } else if (pageMode === 'change') { %>
+          <p class="client-desc">No primeiro acesso, você precisa trocar sua senha para continuar.</p>
+        <% } else if (pageMode === 'setup') { %>
+          <p class="client-desc">Crie sua senha para acessar sua conta.</p>
+        <% } else if (pageMode === 'forgot' || pageMode === 'forgot_sent' || pageMode === 'reset' || pageMode === 'reset_invalid') { %>
+          <p class="client-desc">Recuperação de senha</p>
+        <% } else { %>
+          <p class="client-desc">Acesse com e-mail e senha para consultar seus pedidos.</p>
+        <% } %>
+
+        <% if (pageMode === 'login') { %>
+          <div class="client-form">
+            <input id="clientEmailInput" type="email" class="select-input" placeholder="Seu e-mail" autocomplete="email" />
+            <!-- Senha (login) — aparece quando o e-mail já tem conta -->
+            <input id="clientPasswordInput" type="password" class="select-input" placeholder="Sua senha" autocomplete="current-password" style="margin-top:10px; display:none;" />
+            <!-- Criação de senha — aparece quando comprou mas não tem senha -->
+            <input id="clientNewPwInput" type="password" class="select-input" placeholder="Criar senha (mínimo 8 caracteres)" autocomplete="new-password" style="margin-top:10px; display:none;" />
+            <input id="clientNewPwInput2" type="password" class="select-input" placeholder="Confirmar senha" autocomplete="new-password" style="margin-top:10px; display:none;" />
+            <div id="clientAuthHint" style="display:none; margin-top:10px; font-size:0.85rem; color: var(--text-secondary);"></div>
+            <div id="clientAuthMsg" class="status-message" style="display:none; margin-top:10px;"></div>
+            <div class="client-actions" style="justify-content: center; margin-top:10px;">
+              <button id="clientLoginBtn" class="continue-button" style="width:100%; max-width:320px; display:flex; align-items:center; justify-content:center;"><span class="button-text" style="width:100%; text-align:center;">Continuar</span></button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+              <div style="height:1px; background: var(--border-color); flex:1;"></div>
+              <div style="font-size:12px; color: var(--text-secondary); font-weight:600;">OU</div>
+              <div style="height:1px; background: var(--border-color); flex:1;"></div>
+            </div>
+            <div style="text-align:center; margin-top:12px;">
+              <a href="/cliente/esqueci-senha" id="clientForgotLink" style="color: var(--primary-purple); font-weight: 600; text-decoration: none;">Esqueci minha senha</a>
+            </div>
           </div>
-        </div>
-        <div id="clientPageOrders" class="client-orders"></div>
+
+        <% } %>
+
+        <% if (pageMode === 'forgot') { %>
+          <div class="client-form">
+            <p class="client-desc">Informe seu e-mail para receber o link de redefinição.</p>
+            <input id="clientForgotEmailStandaloneInput" type="email" class="select-input" placeholder="seu@email.com" autocomplete="email" value="<%= esc(pageEmail) %>" />
+            <div id="clientForgotMsg" class="status-message" style="display:none; margin-top:10px;"></div>
+            <div class="client-actions" style="justify-content: center; margin-top:10px;">
+              <button id="clientForgotStandaloneBtn" class="continue-button" style="width:100%; max-width:420px; display:flex; align-items:center; justify-content:center;">
+                <span class="button-text" style="width:100%; text-align:center;">Enviar link</span>
+              </button>
+            </div>
+            <div style="text-align:center; margin-top:12px;">
+              <a href="/cliente" style="color: var(--text-secondary); font-weight: 600; text-decoration: none;">Voltar pro login</a>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (pageMode === 'forgot_sent') { %>
+          <div style="display:flex; flex-direction:column; align-items:center; gap:10px; margin-top:12px;">
+            <div style="width:64px;height:64px;border-radius:999px;background:#16a34a;display:flex;align-items:center;justify-content:center;color:#ffffff;">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 6L9 17l-5-5"></path>
+              </svg>
+            </div>
+            <div style="font-size:28px; font-weight:800; color: var(--text-primary);">Tudo certo!</div>
+            <div style="text-align:center; color: var(--text-secondary); max-width:520px; line-height:1.5;">
+              Se o e-mail informado estiver cadastrado, vamos enviar as instruções por e-mail em alguns instantes.
+            </div>
+
+            <div style="width:100%; max-width:520px; margin-top:10px; padding:14px; border:1px solid var(--border-color); border-radius:14px; background: var(--bg-secondary);">
+              <div style="color: var(--text-primary); font-weight:700; margin-bottom:8px;">Não recebeu?</div>
+              <div style="color: var(--text-secondary); font-size:0.95rem; line-height:1.45;">
+                Aguarde alguns minutos e verifique sua caixa de spam.
+              </div>
+              <div id="clientResendHint" style="margin-top:10px; color: var(--text-secondary); font-size:0.9rem;"></div>
+              <div class="client-actions" style="justify-content:center; margin-top:12px; flex-direction:column; gap:10px;">
+                <button id="clientResendBtn" class="continue-button" style="width:100%; background:#e5e7eb; color:#111827; display:flex; align-items:center; justify-content:center;">
+                  <span class="button-text" style="width:100%; text-align:center;">Tentar de novo</span>
+                </button>
+                <a href="/cliente" class="continue-button" style="width:100%; text-decoration:none; display:flex; align-items:center; justify-content:center;">
+                  <span class="button-text" style="width:100%; text-align:center;">Voltar pro login</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (pageMode === 'change') { %>
+          <div class="client-form">
+            <input id="clientCurrentPasswordInput" type="password" class="select-input" placeholder="Senha atual" autocomplete="current-password" />
+            <input id="clientNewPasswordInput" type="password" class="select-input" placeholder="Nova senha (mínimo 8 caracteres)" autocomplete="new-password" style="margin-top:10px;" />
+            <input id="clientNewPasswordInput2" type="password" class="select-input" placeholder="Confirmar nova senha" autocomplete="new-password" style="margin-top:10px;" />
+            <div id="clientChangeMsg" class="status-message" style="display:none; margin-top:10px;"></div>
+            <div class="client-actions" style="justify-content: center;">
+              <button id="clientChangePasswordBtn" class="continue-button"><span class="button-text">Atualizar senha</span></button>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (pageMode === 'reset') { %>
+          <div class="client-form">
+            <p class="client-desc">Redefinir senha para <strong><%= esc(pageEmail) %></strong></p>
+            <input id="clientResetPasswordInput" type="password" class="select-input" placeholder="Nova senha (mínimo 8 caracteres)" autocomplete="new-password" />
+            <input id="clientResetPasswordInput2" type="password" class="select-input" placeholder="Confirmar nova senha" autocomplete="new-password" style="margin-top:10px;" />
+            <div id="clientResetMsg" class="status-message" style="display:none; margin-top:10px;"></div>
+            <div class="client-actions" style="justify-content:center;">
+              <button id="clientResetBtn" class="continue-button"><span class="button-text">Redefinir</span></button>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (pageMode === 'reset_invalid') { %>
+          <div style="margin-top:14px;padding:12px;border:1px solid #fecaca;background:#fef2f2;border-radius:12px;color:#991b1b;">
+            Link inválido ou expirado. Solicite um novo link em "Esqueci a senha".
+          </div>
+        <% } %>
+
+        <% if (pageMode === 'setup') { %>
+          <div class="client-form">
+            <p style="font-size:0.82rem;color:#6b7280;margin-bottom:10px;text-align:center;">Conta: <strong><%= esc(pageEmail) %></strong></p>
+            <input id="clientSetupPasswordInput" type="password" class="select-input" placeholder="Criar senha (mínimo 8 caracteres)" autocomplete="new-password" />
+            <input id="clientSetupPasswordInput2" type="password" class="select-input" placeholder="Confirmar senha" autocomplete="new-password" style="margin-top:10px;" />
+            <div id="clientSetupMsg" class="status-message" style="display:none; margin-top:10px;"></div>
+            <div class="client-actions" style="justify-content:center;">
+              <button id="clientSetupBtn" class="continue-button"><span class="button-text">Criar senha e entrar</span></button>
+            </div>
+          </div>
+          <script>
+          (function(){
+            var btn = document.getElementById('clientSetupBtn');
+            var p1  = document.getElementById('clientSetupPasswordInput');
+            var p2  = document.getElementById('clientSetupPasswordInput2');
+            var msg = document.getElementById('clientSetupMsg');
+            var email = '<%= esc(pageEmail) %>';
+            function showMsg(text, ok){ msg.style.display=''; msg.style.color = ok ? '#166534' : '#991b1b'; msg.textContent = text; }
+            if(!btn) return;
+            btn.addEventListener('click', async function(){
+              var pw1 = p1 ? p1.value.trim() : '';
+              var pw2 = p2 ? p2.value.trim() : '';
+              if(pw1.length < 8){ showMsg('A senha deve ter pelo menos 8 caracteres.', false); return; }
+              if(pw1 !== pw2){ showMsg('As senhas não coincidem.', false); return; }
+              btn.disabled = true;
+              try {
+                var r = await fetch('/cliente/setup-password', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ email: email, password: pw1 })
+                });
+                var d = await r.json();
+                if(d && d.ok){
+                  showMsg('Senha criada! Entrando...', true);
+                  setTimeout(function(){ window.location.href = '/cliente'; }, 1000);
+                } else {
+                  showMsg(d && d.message ? d.message : 'Erro ao criar senha. Tente novamente.', false);
+                  btn.disabled = false;
+                }
+              } catch(e){
+                showMsg('Erro de rede. Tente novamente.', false);
+                btn.disabled = false;
+              }
+            });
+          })();
+          </script>
+        <% } %>
+
+        <% if (pageMode === 'orders') { %>
+          <div class="client-orders" style="margin-top: 10px;">
+            <div class="client-welcome-card">
+              <div class="client-welcome-inner">
+                <div class="client-welcome-top">
+                  <div>
+                    <div class="client-welcome-greeting">Bem-vindo de volta</div>
+                    <div class="client-welcome-email"><%= esc(pageEmail) %></div>
+                  </div>
+                  <!-- Badge de Nível -->
+                  <button id="clientLevelBadge" onclick="document.getElementById('levelModal').classList.add('active')" style="background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;gap:0;flex-shrink:0">
+                    <%
+                      var _lvl = pageClientLevel;
+                      var _lvlColors = ['','#6b7280','#cd7f32','#9ca3af','#f59e0b','#e5e7eb','#60a5fa','#a855f7'];
+                      var _lvlBgs    = ['','rgba(107,114,128,.1)','rgba(205,127,50,.12)','rgba(156,163,175,.12)','rgba(245,158,11,.12)','rgba(229,231,235,.12)','rgba(96,165,250,.12)','rgba(168,85,247,.15)'];
+                      var _lvlBorder = ['','rgba(107,114,128,.3)','rgba(205,127,50,.4)','rgba(156,163,175,.4)','rgba(245,158,11,.4)','rgba(229,231,235,.5)','rgba(96,165,250,.4)','rgba(168,85,247,.45)'];
+                    %>
+                    <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:999px;background:<%= _lvlBgs[_lvl] %>;border:1.5px solid <%= _lvlBorder[_lvl] %>;color:<%= _lvlColors[_lvl] %>;font-size:12px;font-weight:800;font-family:var(--font-family);letter-spacing:.03em">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="<%= _lvlColors[_lvl] %>" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                      Nível <%= _lvl %>
+                    </span>
+                  </button>
+                </div>
+                <div class="client-welcome-divider"></div>
+                <%
+                  var _refilTok = (typeof clientRefilToken !== 'undefined' && clientRefilToken) ? String(clientRefilToken).trim() : '';
+                  var _refilHrefClient = _refilTok ? ('/refil2?token=' + encodeURIComponent(_refilTok)) : '';
+                %>
+                <% if (_refilHrefClient) { %>
+                <a href="<%= _refilHrefClient %>" class="client-welcome-refil">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                  Acessar ferramenta de reposição
+                </a>
+                <% } %>
+              </div>
+            </div>
+            <% if (pageClientCoupon && pageClientCoupon.code) { %>
+              <% var _couponUsed = !!(pageClientCoupon.used); %>
+              <div class="client-coupon" id="clientCouponWrap">
+                <div class="client-coupon-card" style="<%= _couponUsed ? 'opacity:0.7;' : '' %>">
+                  <div class="client-coupon-header">
+                    <% if (_couponUsed) { %>
+                      <div class="client-coupon-pill" style="background:rgba(107,114,128,.12);border-color:rgba(107,114,128,.25);color:#6b7280;">✓ Cupom usado</div>
+                    <% } else { %>
+                      <div class="client-coupon-pill">🎫 OFERTA ÚNICA</div>
+                    <% } %>
+                  </div>
+                  <div class="client-coupon-headline">
+                    <% if (_couponUsed) { %>Cupom já utilizado<% } else { %>Antes de ir embora: <span class="client-coupon-grad">use seu desconto exclusivo</span><% } %>
+                  </div>
+                  <div class="client-coupon-sub">
+                    <% if (_couponUsed) { %>
+                      Você já usou o cupom <strong><%= esc(pageClientCoupon.code) %></strong> em uma compra anterior.
+                    <% } else { %>
+                      Você ganhou <strong><%= esc(String(pageClientCoupon.pct || '')) %>% OFF</strong> na próxima compra — válido para seguidores, curtidas e views. Use o cupom <strong><%= esc(pageClientCoupon.code) %></strong> no checkout.
+                    <% } %>
+                  </div>
+                  <% if (!_couponUsed) { %>
+                  <div class="client-coupon-benefits">
+                    <div class="client-coupon-benefit">
+                      <div class="client-coupon-benefit-icon">🏷️</div>
+                      <span><strong><%= esc(String(pageClientCoupon.pct || '')) %>% de desconto</strong> no próximo pedido</span>
+                    </div>
+                    <div class="client-coupon-benefit">
+                      <div class="client-coupon-benefit-icon">⚡</div>
+                      <span>Vale para <strong>seguidores, curtidas e views</strong></span>
+                    </div>
+                  </div>
+                  <div class="client-coupon-divider"></div>
+                  <div class="client-coupon-bottom">
+                    <div class="client-coupon-price-block">
+                      <span class="client-coupon-price-val" style="font-size:17px;color:#1c1917;" id="couponCodeDisplay"><%= esc(pageClientCoupon.code) %></span>
+                      <span class="client-coupon-badge">-<%= esc(String(pageClientCoupon.pct || '')) %>% OFF</span>
+                    </div>
+                    <div class="client-coupon-btns">
+                      <a class="client-coupon-link" href="/servicos-instagram?cupom=<%= encodeURIComponent(String(pageClientCoupon.code || '')) %>" id="clientCouponUseBtn">
+                        <span>Usar cupom →</span>
+                        <span class="client-coupon-link-timer" id="couponBtnTimer">Copiar código: <%= esc(pageClientCoupon.code) %></span>
+                      </a>
+                    </div>
+                  </div>
+                  <% } %>
+                </div>
+              </div>
+              <span id="clientCouponCode" style="display:none"><%= esc(pageClientCoupon.code) %></span>
+            <% } %>
+
+            <!-- Modal de Roadmap de Níveis -->
+            <div id="levelModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:16px;">
+              <div style="background:var(--bg-secondary,#fff);border-radius:20px;max-width:360px;width:100%;padding:24px 20px 20px;box-shadow:0 8px 40px rgba(0,0,0,.18);position:relative;max-height:90vh;overflow-y:auto">
+                <button onclick="document.getElementById('levelModal').classList.remove('active')" style="position:absolute;top:12px;right:14px;background:none;border:none;cursor:pointer;color:var(--text-secondary,#6b7280);font-size:20px;line-height:1;opacity:.6">&times;</button>
+                <div style="font-size:16px;font-weight:900;color:var(--text-primary,#111);margin-bottom:4px;font-family:var(--font-family)">Seus Níveis</div>
+                <div style="font-size:12px;color:var(--text-secondary,#6b7280);margin-bottom:18px;font-family:var(--font-family)">Continue comprando para evoluir</div>
+                <%
+                  var _lvlData = [
+                    { n:1, label:'Iniciante',  color:'#6b7280', bg:'rgba(107,114,128,.1)',  border:'rgba(107,114,128,.25)', icon:'⭐' },
+                    { n:2, label:'Bronze',     color:'#cd7f32', bg:'rgba(205,127,50,.1)',   border:'rgba(205,127,50,.3)',   icon:'🥉' },
+                    { n:3, label:'Prata',      color:'#9ca3af', bg:'rgba(156,163,175,.1)',  border:'rgba(156,163,175,.3)', icon:'🥈' },
+                    { n:4, label:'Ouro',       color:'#d97706', bg:'rgba(245,158,11,.1)',   border:'rgba(245,158,11,.35)', icon:'🥇' },
+                    { n:5, label:'Platina',    color:'#6b7280', bg:'rgba(229,231,235,.15)', border:'rgba(209,213,219,.5)', icon:'💎' },
+                    { n:6, label:'Diamante',   color:'#3b82f6', bg:'rgba(96,165,250,.1)',   border:'rgba(96,165,250,.35)', icon:'💠' },
+                    { n:7, label:'Elite',      color:'#a855f7', bg:'rgba(168,85,247,.12)',  border:'rgba(168,85,247,.4)',  icon:'👑' }
+                  ];
+                %>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <% _lvlData.forEach(function(lv){ %>
+                    <%
+                      var _isCurrent = (lv.n === pageClientLevel);
+                      var _isPast    = (lv.n < pageClientLevel);
+                    %>
+                    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:1.5px solid <%= _isCurrent ? lv.border : (_isPast ? 'rgba(34,197,94,.3)' : 'var(--border-color,#e5e7eb)') %>;background:<%= _isCurrent ? lv.bg : (_isPast ? 'rgba(34,197,94,.05)' : 'transparent') %>;opacity:<%= (!_isCurrent && !_isPast) ? '0.5' : '1' %>">
+                      <div style="font-size:20px;flex-shrink:0"><%= _isPast ? '✅' : lv.icon %></div>
+                      <div style="flex:1">
+                        <div style="font-size:13px;font-weight:800;color:<%= _isCurrent ? lv.color : (_isPast ? '#16a34a' : 'var(--text-secondary,#6b7280)') %>;font-family:var(--font-family)">
+                          Nível <%= lv.n %> &mdash; <%= lv.label %>
+                          <% if (_isCurrent) { %><span style="font-size:10px;padding:1px 6px;border-radius:999px;background:<%= lv.color %>;color:#fff;margin-left:5px;font-weight:700">VOCÊ</span><% } %>
+                        </div>
+                      </div>
+                    </div>
+                  <% }); %>
+                </div>
+              </div>
+            </div>
+            <style>
+              #levelModal.active { display:flex !important; }
+              #levelModal { display:none; }
+            </style>
+            <script>
+              (function(){
+                var m=document.getElementById('levelModal');
+                if(m) m.addEventListener('click',function(e){ if(e.target===m) m.classList.remove('active'); });
+              })();
+            </script>
+
+            <div class="client-overview">
+              <div class="client-overview-card">
+                <div id="clientOrdersTotal" class="client-overview-value">0</div>
+                <div class="client-overview-label">Total de pedidos</div>
+              </div>
+              <div class="client-overview-card">
+                <div id="clientOrdersPaid" class="client-overview-value">0</div>
+                <div class="client-overview-label">Total de compras</div>
+              </div>
+              <div id="clientOrdersPendingCard" class="client-overview-card">
+                <div id="clientOrdersPending" class="client-overview-value">0</div>
+                <div class="client-overview-label">Pendentes</div>
+              </div>
+            </div>
+            <div class="client-orders-summary">
+              Exibindo <span id="clientOrdersShown" style="font-weight:600;">0</span> de <span id="clientOrdersTotalInline" style="font-weight:600;">0</span>
+            </div>
+            <div class="client-filter-title">Filtro por pagamento</div>
+            <div class="client-filter" aria-label="Filtro de pedidos">
+              <button type="button" class="client-filter-btn is-active" data-filter="all">Todos</button>
+              <button type="button" class="client-filter-btn" data-filter="pending">Pendente</button>
+              <button type="button" class="client-filter-btn" data-filter="paid">Pago</button>
+            </div>
+            <div id="clientCatFilterTitle" class="client-filter-sub" style="display:none;">Filtro por tipo de serviço</div>
+            <div id="clientCatFilter" class="client-filter" aria-label="Filtro por tipo" style="display:none; margin-top:6px;"></div>
+            <div id="clientPager" style="display:none; margin-top:10px; justify-content:center; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" id="clientPrevPage" class="client-filter-btn" style="box-shadow:none;">Anterior</button>
+              <div id="clientPageInfo" style="color: var(--text-secondary); font-weight:700; font-size:0.9rem;"></div>
+              <button type="button" id="clientNextPage" class="client-filter-btn" style="box-shadow:none;">Próxima</button>
+            </div>
+            <% if (!pageOrders.length) { %>
+              <div style="padding:12px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);color:var(--text-secondary);">
+                Nenhum pedido encontrado para este e-mail.
+              </div>
+            <% } else { %>
+              <div id="clientCardsWrap" style="display:grid; gap:10px;">
+                <% pageOrders.forEach(function(o){ %>
+                  <div class="client-order-card" data-pay-status="<%= esc(o.payStatus || 'pending') %>" data-cat="<%= esc(String(o.categoria || '')) %>" style="padding:14px;border:1px solid var(--border-color);border-radius:16px;background:var(--bg-secondary); box-shadow: var(--shadow-md);">
+                    <%
+                      const instaU = inferInstagramUsernameLoose(o);
+                      const avatarUrl = instaU ? ('/avatar/instagram/' + encodeURIComponent(instaU)) : '';
+                    %>
+                    <div class="client-order-head">
+                      <div class="client-order-left">
+                        <div class="client-order-avatar">
+                          <% if (instaU) { %>
+                            <img data-avatar-src="<%= avatarUrl %>" alt="Foto de perfil" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block;" />
+                          <% } else { %>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="opacity:0.65;">
+                              <path d="M20 21a8 8 0 0 0-16 0"></path>
+                              <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                          <% } %>
+                        </div>
+                        <div class="client-order-head-text">
+                          <div class="client-order-title">
+                            <%= esc(o.quantidade || '-') %> <%= esc((function(){ const k=inferCategoriaKey(o); return (k==='curtidas')?'Curtidas':(k==='visualizacoes'?'Visualizações':(k==='comentarios'?'Comentários':'Seguidores')); })()) %>
+                          </div>
+                          <% if (instaU) { %>
+                            <div class="client-order-ig">@<%= esc(instaU) %></div>
+                          <% } %>
+                        </div>
+                      </div>
+                      <div style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:0.8rem;font-weight:600;border:1px solid #e5e7eb;background:<%= (String(o.payStatus||'').toLowerCase()==='paid') ? '#dcfce7' : '#f1f5f9' %>;color:<%= (String(o.payStatus||'').toLowerCase()==='paid') ? '#166534' : '#334155' %>;">
+                        <%= (String(o.payStatus||'').toLowerCase()==='paid') ? 'pago' : 'pendente' %>
+                      </div>
+                    </div>
+                    <div class="client-order-meta">
+                      <div>Tipo: <strong><%= esc(prettyText(o.tipo || '-')) %></strong></div>
+                      <div>Data: <strong><%= esc(formatDatePtBR(o.createdAt)) %></strong></div>
+                    </div>
+                    <div style="margin-top:8px;display:flex;justify-content:center;">
+                      <a class="continue-button client-details-btn" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;" href="/pedido?t=<%= encodeURIComponent(o.identifier || '') %>&ref=<%= encodeURIComponent(o.correlationID || '') %>&from=cliente">
+                        <span class="button-text">Ver detalhes</span>
+                      </a>
+                    </div>
+                  </div>
+                <% }) %>
+              </div>
+            <% } %>
+          </div>
+        <% } %>
       </div>
     </div>
-    </main>
-  </div>
+  </main>
   <script>try{ localStorage.removeItem('oppus_selected_oid'); }catch(_){}</script>
-  <script src="/js/checkout.js"></script>
   <script src="/js/main.js"></script>
   <script>
     (function(){
@@ -41,10 +625,503 @@
       } catch (_) {}
       var backBtn = document.getElementById('clientPageBackBtn');
       if (backBtn) backBtn.addEventListener('click', function(){ window.location.href = '/'; });
-      var phone = document.getElementById('clientPhoneInputPage');
-      if (phone && typeof onlyDigits === 'function' && typeof maskBrPhone === 'function') {
-        phone.addEventListener('input', function(){ phone.value = maskBrPhone(phone.value); });
+      function setMsg(el, text, ok){
+        if (!el) return;
+        el.textContent = String(text || '');
+        el.className = 'status-message ' + (ok ? 'success' : 'error');
+        el.style.display = 'block';
       }
+      var logoutBtn = document.getElementById('clientLogoutBtn');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', async function(){
+          try { await fetch('/cliente/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }); } catch(_) {}
+          window.location.href = '/cliente';
+        });
+      }
+
+      var loginBtn = document.getElementById('clientLoginBtn');
+      if (loginBtn) {
+        var authStep = 'email'; // 'email' → verifica e-mail; depois 'login' ou 'setup'
+        var emailEl = document.getElementById('clientEmailInput');
+        var passEl = document.getElementById('clientPasswordInput');
+        var newPwEl = document.getElementById('clientNewPwInput');
+        var newPw2El = document.getElementById('clientNewPwInput2');
+        var hintEl = document.getElementById('clientAuthHint');
+        var msg = document.getElementById('clientAuthMsg');
+        function setBtn(txt){ var s = loginBtn.querySelector('.button-text'); if(s) s.textContent = txt; else loginBtn.textContent = txt; }
+        function showHint(t){ if(hintEl){ hintEl.style.display=''; hintEl.textContent=t; } }
+        // Enter em qualquer campo aciona o botão
+        [emailEl, passEl, newPwEl, newPw2El].forEach(function(el){
+          if(el) el.addEventListener('keydown', function(ev){ if(ev.key === 'Enter'){ ev.preventDefault(); loginBtn.click(); } });
+        });
+        loginBtn.addEventListener('click', async function(){
+          var email = emailEl ? String(emailEl.value || '').trim().toLowerCase() : '';
+          try {
+            // ETAPA 1: só e-mail → descobrir se tem conta
+            if (authStep === 'email') {
+              if (!email || email.indexOf('@') === -1) { setMsg(msg, 'Digite um e-mail válido.', false); return; }
+              loginBtn.disabled = true; setBtn('Verificando...');
+              var rc = await fetch('/api/cliente/first-access', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email }) });
+              var dc = await rc.json().catch(function(){ return null; });
+              loginBtn.disabled = false;
+              if (dc && dc.ok && dc.action === 'has_password') {
+                authStep = 'login';
+                if (emailEl) emailEl.setAttribute('readonly','readonly');
+                if (passEl) { passEl.style.display=''; passEl.focus(); }
+                showHint('Bem-vindo de volta! Digite sua senha para entrar.');
+                setBtn('Entrar');
+                if (msg) msg.style.display='none';
+                return;
+              }
+              if (dc && dc.ok && dc.action === 'setup') {
+                authStep = 'setup';
+                if (emailEl) emailEl.setAttribute('readonly','readonly');
+                if (newPwEl) { newPwEl.style.display=''; newPwEl.focus(); }
+                if (newPw2El) newPw2El.style.display='';
+                showHint('Encontramos sua compra! Crie uma senha para acessar sua conta.');
+                setBtn('Criar senha e entrar');
+                if (msg) msg.style.display='none';
+                return;
+              }
+              setMsg(msg, 'Não encontramos uma conta nem compra paga com esse e-mail.', false);
+              setBtn('Continuar');
+              return;
+            }
+            // ETAPA 2a: login com senha
+            if (authStep === 'login') {
+              loginBtn.disabled = true;
+              var r = await fetch('/cliente/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, password: passEl ? passEl.value : '' }) });
+              var d = await r.json().catch(function(){ return null; });
+              if (!d || d.ok !== true) { setMsg(msg, 'Senha incorreta.', false); loginBtn.disabled = false; return; }
+              window.location.href = '/cliente';
+              return;
+            }
+            // ETAPA 2b: criar senha
+            if (authStep === 'setup') {
+              var p1 = newPwEl ? String(newPwEl.value || '').trim() : '';
+              var p2 = newPw2El ? String(newPw2El.value || '').trim() : '';
+              if (p1.length < 8) { setMsg(msg, 'A senha deve ter pelo menos 8 caracteres.', false); return; }
+              if (p1 !== p2) { setMsg(msg, 'As senhas não coincidem.', false); return; }
+              loginBtn.disabled = true;
+              var rs = await fetch('/cliente/setup-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, password: p1 }) });
+              var ds = await rs.json().catch(function(){ return null; });
+              if (!ds || ds.ok !== true) { setMsg(msg, (ds && ds.message) ? ds.message : 'Erro ao criar senha.', false); loginBtn.disabled = false; return; }
+              window.location.href = '/cliente';
+              return;
+            }
+          } catch (e) {
+            setMsg(msg, 'Erro ao conectar.', false);
+            loginBtn.disabled = false;
+          }
+        });
+      }
+
+      var forgotStandaloneBtn = document.getElementById('clientForgotStandaloneBtn');
+      if (forgotStandaloneBtn) {
+        forgotStandaloneBtn.addEventListener('click', async function(){
+          var emailEl = document.getElementById('clientForgotEmailStandaloneInput');
+          var msg = document.getElementById('clientForgotMsg');
+          var email = emailEl ? String(emailEl.value || '').trim() : '';
+          try {
+            forgotStandaloneBtn.disabled = true;
+            await fetch('/cliente/forgot', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email }) });
+            window.location.href = '/cliente/esqueci-senha?sent=1&email=' + encodeURIComponent(email);
+          } catch (e) {
+            setMsg(msg, 'Erro ao enviar.', false);
+            forgotStandaloneBtn.disabled = false;
+          }
+        });
+      }
+
+      (function(){
+        var resendBtn = document.getElementById('clientResendBtn');
+        var hint = document.getElementById('clientResendHint');
+        if (!resendBtn) return;
+        var email = <%- JSON.stringify(pageEmail) %>;
+        var remaining = 60;
+        function update(){
+          if (!hint) return;
+          if (remaining > 0) {
+            hint.textContent = 'Você poderá tentar novamente em ' + remaining + 's.';
+          } else {
+            hint.textContent = '';
+          }
+        }
+        function tick(){
+          remaining -= 1;
+          if (remaining <= 0) {
+            remaining = 0;
+            try { resendBtn.disabled = false; } catch(_) {}
+            try { resendBtn.style.opacity = '1'; } catch(_) {}
+            update();
+            return;
+          }
+          update();
+          setTimeout(tick, 1000);
+        }
+        try { resendBtn.disabled = true; resendBtn.style.opacity = '0.7'; } catch(_) {}
+        update();
+        setTimeout(tick, 1000);
+        resendBtn.addEventListener('click', async function(){
+          try {
+            resendBtn.disabled = true;
+            resendBtn.style.opacity = '0.7';
+            remaining = 60;
+            update();
+            setTimeout(tick, 1000);
+            await fetch('/cliente/forgot', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: String(email || '') }) });
+          } catch(_) {}
+        });
+      })();
+
+      var changeBtn = document.getElementById('clientChangePasswordBtn');
+      if (changeBtn) {
+        changeBtn.addEventListener('click', async function(){
+          var cur = document.getElementById('clientCurrentPasswordInput');
+          var n1 = document.getElementById('clientNewPasswordInput');
+          var n2 = document.getElementById('clientNewPasswordInput2');
+          var msg = document.getElementById('clientChangeMsg');
+          var p1 = n1 ? String(n1.value || '') : '';
+          var p2 = n2 ? String(n2.value || '') : '';
+          if (p1.length < 8) return setMsg(msg, 'Nova senha muito curta.', false);
+          if (p1 !== p2) return setMsg(msg, 'As senhas não conferem.', false);
+          try {
+            changeBtn.disabled = true;
+            var r = await fetch('/cliente/change-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: cur ? cur.value : '', newPassword: p1 }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (!d || d.ok !== true) {
+              setMsg(msg, 'Não foi possível atualizar a senha.', false);
+              changeBtn.disabled = false;
+              return;
+            }
+            window.location.href = '/cliente';
+          } catch (e) {
+            setMsg(msg, 'Erro ao conectar.', false);
+            changeBtn.disabled = false;
+          }
+        });
+      }
+
+      var resetBtn = document.getElementById('clientResetBtn');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', async function(){
+          var n1 = document.getElementById('clientResetPasswordInput');
+          var n2 = document.getElementById('clientResetPasswordInput2');
+          var msg = document.getElementById('clientResetMsg');
+          var p1 = n1 ? String(n1.value || '') : '';
+          var p2 = n2 ? String(n2.value || '') : '';
+          if (p1.length < 8) return setMsg(msg, 'Nova senha muito curta.', false);
+          if (p1 !== p2) return setMsg(msg, 'As senhas não conferem.', false);
+          try {
+            resetBtn.disabled = true;
+            var r = await fetch('/cliente/reset', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: <%- JSON.stringify(pageEmail) %>, token: <%- JSON.stringify(pageToken) %>, newPassword: p1 }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (!d || d.ok !== true) {
+              setMsg(msg, 'Link inválido ou expirado.', false);
+              resetBtn.disabled = false;
+              return;
+            }
+            window.location.href = '/cliente';
+          } catch (e) {
+            setMsg(msg, 'Erro ao conectar.', false);
+            resetBtn.disabled = false;
+          }
+        });
+      }
+
+      (function(){
+        var copyBtn = document.getElementById('clientCopyCouponBtn');
+        if (!copyBtn) return;
+        copyBtn.addEventListener('click', async function(){
+          try {
+            var el = document.getElementById('clientCouponCode');
+            var code = el ? String(el.textContent || '').trim() : '';
+            if (!code) return;
+            var original = copyBtn.getAttribute('data-original-html');
+            if (!original) {
+              original = copyBtn.innerHTML;
+              copyBtn.setAttribute('data-original-html', original);
+            }
+            if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(code);
+            } else {
+              var ta = document.createElement('textarea');
+              ta.value = code;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              ta.remove();
+            }
+            copyBtn.textContent = 'Copiado';
+            setTimeout(function(){ try { copyBtn.innerHTML = original; } catch(_) {} }, 900);
+          } catch (_) {}
+        });
+      })();
+
+      (function(){
+        var payBtns = Array.from(document.querySelectorAll('.client-filter-btn[data-filter]') || []);
+        if (!payBtns.length) return;
+        var cards = Array.from(document.querySelectorAll('.client-order-card') || []);
+        var elTotal = document.getElementById('clientOrdersTotal');
+        var elPaid = document.getElementById('clientOrdersPaid');
+        var elPending = document.getElementById('clientOrdersPending');
+        var elPendingCard = document.getElementById('clientOrdersPendingCard');
+        var elShown = document.getElementById('clientOrdersShown');
+        var elTotalInline = document.getElementById('clientOrdersTotalInline');
+        var catWrap = document.getElementById('clientCatFilter');
+        var pager = document.getElementById('clientPager');
+        var prevBtn = document.getElementById('clientPrevPage');
+        var nextBtn = document.getElementById('clientNextPage');
+        var pageInfo = document.getElementById('clientPageInfo');
+
+        var perPage = 20;
+        var payFilter = 'all';
+        var catFilter = 'all';
+        var page = 1;
+        var catBtns = [];
+
+        function countFor(status){
+          var k = String(status || 'all');
+          if (k === 'all') return cards.length;
+          var n = 0;
+          cards.forEach(function(c){
+            var st = String(c.getAttribute('data-pay-status') || 'pending');
+            if (st === k) n += 1;
+          });
+          return n;
+        }
+
+        function setCounts(){
+          var total = cards.length;
+          var paid = countFor('paid');
+          var pending = countFor('pending');
+          if (elTotal) elTotal.textContent = String(total);
+          if (elPaid) elPaid.textContent = String(paid);
+          if (elPending) elPending.textContent = String(pending);
+          if (elPendingCard) elPendingCard.style.display = pending > 0 ? '' : 'none';
+          if (elTotalInline) elTotalInline.textContent = String(total);
+        }
+
+        function normalizeCat(raw){
+          var s = String(raw || '').toLowerCase().trim().replace(/\s+/g, '_');
+          if (!s) return '';
+          if (s.indexOf('curt') !== -1 || s.indexOf('like') !== -1) return 'curtidas';
+          if (s.indexOf('visual') !== -1 || s.indexOf('view') !== -1) return 'visualizacoes';
+          if (s.indexOf('coment') !== -1) return 'comentarios';
+          if (s.indexOf('segu') !== -1) return 'seguidores';
+          return s;
+        }
+        function catLabel(k){
+          if (k === 'seguidores') return 'Seguidores';
+          if (k === 'curtidas') return 'Curtidas';
+          if (k === 'visualizacoes') return 'Visualizações';
+          if (k === 'comentarios') return 'Comentários';
+          return k;
+        }
+
+        function buildCatFilter(){
+          if (!catWrap) return;
+          var title = document.getElementById('clientCatFilterTitle');
+          var set = {};
+          cards.forEach(function(c){
+            var k = normalizeCat(c.getAttribute('data-cat') || '');
+            if (k) set[k] = true;
+          });
+          var keys = Object.keys(set);
+          if (keys.length <= 1) {
+            catWrap.style.display = 'none';
+            if (title) title.style.display = 'none';
+            catBtns = [];
+            catFilter = 'all';
+            return;
+          }
+          keys.sort();
+          catWrap.innerHTML = '';
+          var mk = function(label, key){
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'client-filter-btn' + (key === 'all' ? ' is-active' : '');
+            b.setAttribute('data-cat-filter', key);
+            b.textContent = label;
+            b.addEventListener('click', function(){
+              catFilter = String(key || 'all');
+              page = 1;
+              render();
+            });
+            catWrap.appendChild(b);
+            return b;
+          };
+          catBtns = [mk('Todos tipos', 'all')].concat(keys.map(function(k){ return mk(catLabel(k), k); }));
+          catWrap.style.display = '';
+          if (title) title.style.display = '';
+        }
+
+        function updateActiveBtns(){
+          payBtns.forEach(function(b){
+            b.classList.toggle('is-active', String(b.getAttribute('data-filter') || '') === payFilter);
+          });
+          catBtns.forEach(function(b){
+            b.classList.toggle('is-active', String(b.getAttribute('data-cat-filter') || '') === catFilter);
+          });
+        }
+
+        function getFiltered(){
+          return cards.filter(function(c){
+            var st = String(c.getAttribute('data-pay-status') || 'pending');
+            var okPay = (payFilter === 'all') || (st === payFilter);
+            if (!okPay) return false;
+            if (catFilter === 'all') return true;
+            var ck = normalizeCat(c.getAttribute('data-cat') || '');
+            return ck === catFilter;
+          });
+        }
+
+        function bindAvatar(img){
+          try {
+            if (!img || img.getAttribute('data-avatar-bound') === '1') return;
+            img.setAttribute('data-avatar-bound', '1');
+            img.addEventListener('load', function(){
+              try { img.setAttribute('data-avatar-loaded', '1'); } catch(_) {}
+            });
+            img.addEventListener('error', function(){
+              try { img.setAttribute('data-avatar-loaded', '0'); } catch(_) {}
+            });
+          } catch (_) {}
+        }
+
+        function pokeAvatar(img){
+          try {
+            if (!img) return;
+            bindAvatar(img);
+            // já está carregada e com src definido — não precisa fazer nada
+            if (img.getAttribute('data-avatar-loaded') === '1' && img.getAttribute('src')) return;
+            var src = String(img.getAttribute('data-avatar-src') || '').trim();
+            if (!src) return;
+            // força eager antes de setar src — sem isso o browser ignora quando display:none
+            img.loading = 'eager';
+            img.decoding = 'async';
+            img.removeAttribute('src');
+            img.setAttribute('src', src);
+          } catch (_) {}
+        }
+
+        function render(){
+          updateActiveBtns();
+          var filtered = getFiltered();
+          var totalFiltered = filtered.length;
+          var maxPage = Math.max(1, Math.ceil(totalFiltered / perPage));
+          page = Math.max(1, Math.min(page, maxPage));
+          var start = (page - 1) * perPage;
+          var end = start + perPage;
+          cards.forEach(function(c){ c.style.display = 'none'; });
+          var shown = 0;
+          for (var i = start; i < end; i++) {
+            var c = filtered[i];
+            if (!c) continue;
+            c.style.display = 'block';
+            shown += 1;
+          }
+          try {
+            requestAnimationFrame(function(){
+              for (var i = start; i < end; i++) {
+                var c = filtered[i];
+                if (!c) continue;
+                var img = c.querySelector('img[data-avatar-src]');
+                if (img) pokeAvatar(img);
+              }
+            });
+          } catch (_) {}
+          if (elShown) elShown.textContent = String(shown);
+          if (elTotalInline) elTotalInline.textContent = String(totalFiltered);
+
+          if (pager && prevBtn && nextBtn && pageInfo) {
+            if (totalFiltered > perPage) {
+              pager.style.display = 'flex';
+              prevBtn.disabled = page <= 1;
+              nextBtn.disabled = page >= maxPage;
+              pageInfo.textContent = 'Página ' + page + ' de ' + maxPage;
+            } else {
+              pager.style.display = 'none';
+            }
+          }
+        }
+
+        payBtns.forEach(function(b){
+          b.addEventListener('click', function(){
+            payFilter = String(b.getAttribute('data-filter') || 'all');
+            page = 1;
+            render();
+          });
+        });
+        if (prevBtn) {
+          prevBtn.addEventListener('click', function(){
+            page = Math.max(1, page - 1);
+            render();
+          });
+        }
+        if (nextBtn) {
+          nextBtn.addEventListener('click', function(){
+            page = page + 1;
+            render();
+          });
+        }
+        setCounts();
+        buildCatFilter();
+        render();
+
+        // pré-carrega avatares de TODOS os pedidos em background usando fila controlada
+        (function(){
+          var allImgs = Array.from(document.querySelectorAll('#clientCardsWrap img[data-avatar-src]') || []);
+          if (!allImgs.length) return;
+          // coloca os da primeira página no início da fila
+          var firstPage = [], rest = [];
+          allImgs.forEach(function(img){
+            var card = img.closest('.client-order-card');
+            var isVisible = card && card.style.display !== 'none';
+            if (isVisible) firstPage.push(img); else rest.push(img);
+          });
+          var queue = firstPage.concat(rest);
+          var concurrency = 3;
+          var active = 0;
+
+          function loadImg(img, src){
+            return new Promise(function(resolve){
+              var probe = new Image();
+              probe.onload = function(){
+                try {
+                  // aqui o probe já aqueceu o cache do browser
+                  // agora aplica no elemento real com eager para garantir fetch
+                  img.loading = 'eager';
+                  img.removeAttribute('src');
+                  img.setAttribute('src', src);
+                  img.setAttribute('data-avatar-loaded', '1');
+                } catch(_){}
+                resolve();
+              };
+              probe.onerror = function(){
+                try { img.setAttribute('data-avatar-loaded', '0'); } catch(_){}
+                resolve();
+              };
+              probe.src = src;
+            });
+          }
+
+          function next(){
+            while (active < concurrency && queue.length) {
+              var img = queue.shift();
+              if (!img) continue;
+              // já tem src definido (foi carregado pelo pokeAvatar) — pula
+              if (img.getAttribute('data-avatar-loaded') === '1' && img.getAttribute('src')) continue;
+              var src = String(img.getAttribute('data-avatar-src') || '').trim();
+              if (!src) continue;
+              active++;
+              loadImg(img, src).then(function(){ active--; setTimeout(next, 60); });
+            }
+          }
+          // primeira página carrega imediatamente após o render
+          setTimeout(next, 200);
+        })();
+      })();
     })();
   </script>
 </body>

@@ -388,6 +388,8 @@ html, body { overflow-x: hidden; }
     transform: translateY(-3px);
     box-shadow: var(--shadow-lg);
     border-color: #6B46C1;
+
+    border-color: #6B46C1;
 }
 
 /* Card desabilitado (Seguidores Orgânicos) */
@@ -1470,11 +1472,11 @@ body.theme-light .modal-dialog { background: #ffffff; border-color: #e5e7eb; }
  .faq-section { width: 100%; }
  .faq-grid { display: grid; gap: 0.8rem; grid-template-columns: 1fr; }
  .faq-card .card-content { gap: 0.4rem; }
- .faq-question { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 0.5rem; background: transparent; border: none; color: var(--text-primary); font-size: 1.15rem; font-weight: 700; padding: 0.2rem 0.1rem; cursor: pointer; text-align: left; }
+.faq-question { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 0.5rem; background: transparent; border: none; color: var(--text-primary); font-size: 1.15rem; font-weight: 700; padding: 0.2rem 0.1rem; cursor: pointer; text-align: left; }
  .faq-toggle { color: var(--text-secondary); width: 18px; height: 18px; }
  .faq-card .faq-toggle { transition: transform 0.2s ease; }
  .faq-card.open .faq-toggle { transform: rotate(180deg); }
- .faq-answer { color: var(--text-secondary); font-size: 1rem; line-height: 1.5; }
+.faq-answer { color: var(--text-secondary); font-size: 1rem; line-height: 1.5; }
  .faq-card.open .faq-answer { display: block; }
  #faqSection .testimonials-title { font-size: calc(1rem + 11px); font-family: var(--font-family); font-weight: 700; width: 100%; box-sizing: border-box; padding: 0 1rem; word-wrap: break-word; }
 #faqSection { margin-top: 3rem; font-family: var(--font-family); width: 100%; box-sizing: border-box; }

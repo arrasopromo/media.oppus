@@ -604,7 +604,7 @@ document.addEventListener('DOMContentLoaded', function() {
         service: 'likes', 
         type: 'organicos', 
         title: 'Curtidas Reais', 
-        desc: 'Curtidas de perfis reais para máxima credibilidade nas suas publicações.',
+        desc: 'Curtidas orgânicas para máxima credibilidade nas suas publicações.',
         tabela: tabelaCurtidas.organicos,
         badgeType: 'organicos'
       },
@@ -849,7 +849,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (openBtn) openBtn.textContent = onlyVideos ? 'Selecionar Reels' : 'Selecionar Post';
       } catch (_) {}
       
-      fetch(url)
+      fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
           .then(r => r.json())
           .then(data => {
               if (data.posts && Array.isArray(data.posts) && data.posts.length > 0) {
@@ -1174,7 +1174,7 @@ document.addEventListener('DOMContentLoaded', function() {
           document.getElementById('postsSelectionContainer').style.display = 'none'; // Hide posts initially
           
           // Fetch Profile
-          fetch('/api/instagram/info?username=' + encodeURIComponent(username))
+          fetch('/api/instagram/info?username=' + encodeURIComponent(username), { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
               .then(r => {
                   if (!r.ok) {
                       throw new Error('Erro na requisição: ' + r.status);
@@ -1214,7 +1214,7 @@ document.addEventListener('DOMContentLoaded', function() {
                       // Try to fetch posts silently if not available and needed for orderbumps
                       if (window.currentService === 'followers') {
                           // Silent fetch
-                          fetch('/api/instagram/posts?username=' + encodeURIComponent(username))
+                          fetch('/api/instagram/posts?username=' + encodeURIComponent(username), { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
                             .then(r => r.json())
                             .then(pData => {
                                 if (pData.posts && Array.isArray(pData.posts)) {

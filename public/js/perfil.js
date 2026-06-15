@@ -201,9 +201,10 @@ async function checkProfile() {
         const response = await fetch('/api/check-instagram-profile', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '')
             },
-            body: JSON.stringify({ username, utms })
+            body: JSON.stringify({ username, utms, tk: (window.OPPUS_API_TK || '') })
         });
         const data = await response.json();
         hideLoading();

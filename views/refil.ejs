@@ -33,7 +33,8 @@
           </button>
           <div class="refil-info-content" id="refilInfoContent" hidden>
             <ul>
-              <li>Após solicitar reposição, aguarde 12h para solicitar uma nova.</li>
+              <li>Após solicitar reposição, aguarde 24h para solicitar uma nova.</li>
+              <li>A reposição é para repor a queda de seguidores — não é possível solicitar no mesmo dia da compra.</li>
               <li>Não é possível realizar reposição de usuários que trocam o nome do perfil.</li>
               <li>O perfil precisa estar público para reposição.</li>
             </ul>
@@ -350,6 +351,24 @@
         var pathname = '';
         try { pathname = String(window && window.location && window.location.pathname ? window.location.pathname : ''); } catch(_) { pathname = ''; }
         var isRefil2 = pathname.toLowerCase().indexOf('refil2') >= 0;
+
+        // ── /refil1: fluxo simples — dispara a reposição direto e mostra "Reposição solicitada" ──
+        if (!isRefil2) {
+          httpJson('/api/refil/simple', 'POST', { username: username }, function (ok, data) {
+            if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+            window.__refilInFlight = false;
+            try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch(_) {}
+            try { if (historyCardEl) historyCardEl.style.display = 'none'; } catch(_) {}
+            if (ok && data && data.ok) {
+              setStatus(statusEl, 'Reposição solicitada', 'success');
+            } else {
+              setStatus(statusEl, (data && (data.message || data.error)) || 'Não foi possível solicitar a reposição.', 'error');
+            }
+            try { if (statusEl) statusEl.style.fontWeight = '400'; } catch(_) {}
+          });
+          return;
+        }
+
         var stepTimer = null;
         var stepIdx = 0;
         if (isRefil2) {

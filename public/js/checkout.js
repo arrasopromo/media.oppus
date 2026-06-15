@@ -686,6 +686,9 @@
   }
   function attachPhoneMask(input){
     if (!input) return;
+    try {
+      if (String(input.getAttribute('data-no-phone-mask') || '') === '1') return;
+    } catch (_) {}
     input.addEventListener('input', ()=>{ input.value = maskBrPhone(input.value); });
     input.addEventListener('keydown', (e)=>{
       if (e.key === 'Backspace') {
@@ -752,7 +755,7 @@
 
   const tabela = {
     mistos: [
-      { q: 50, p: 'R$ 0,01' },
+      { q: 100, p: 'R$ 3,00' }, // pacote teste upsell
       { q: 150, p: 'R$ 7,90' },
       { q: 300, p: 'R$ 12,90' },
       { q: 500, p: 'R$ 16,90' },
@@ -823,6 +826,7 @@
       { q: 15000, p: 'R$ 89,90' },
     ],
     curtidas_organicos: [
+      { q: 100, p: 'R$ 3,00' }, // pacote de teste
       { q: 150, p: 'R$ 16,90' },
       { q: 300, p: 'R$ 28,90' },
       { q: 500, p: 'R$ 49,90' },
@@ -1361,10 +1365,10 @@
           `;
         case 'organicos':
           return `
-            <p>Curtidas com alguns perfis brasileiros, mas exclusivamente perfis reais para máxima qualidade e credibilidade nas suas publicações.</p>
+            <p>Curtidas orgânicas com alguns perfis brasileiros, para máxima qualidade e credibilidade nas suas publicações.</p>
             <ul>
               <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
-              <li>👤 Perfis reais para reforçar autoridade.</li>
+              <li>👤 Curtidas orgânicas para reforçar autoridade.</li>
               <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
             </ul>
           `;
@@ -2724,8 +2728,8 @@
       } catch(_) {}
       const resp = await fetch('/api/check-instagram-profile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, utms })
+        headers: { 'Content-Type': 'application/json', 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') },
+        body: JSON.stringify({ username, utms, skipPosts: true, includePosts: false, tk: (window.OPPUS_API_TK || '') })
       });
       const data = await resp.json();
       hideLoadingCheckout();
@@ -4547,7 +4551,10 @@
       const isStripe2 = provider2 === 'stripe';
       const useCheckout2 = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
       const isStripeCheckout2 = isStripe2 && useCheckout2;
-      const customerPayload = isStripeCheckout2 ? { phone_number: phoneValue } : { name: cardHolder, cpf: cardHolderCpf, phone_number: phoneValue };
+      const _contactEmailVal = (function(){ try { return String(document.getElementById('contactEmailInput')?.value || '').trim().toLowerCase(); } catch(_){ return ''; } })();
+      const customerPayload = isStripeCheckout2
+        ? { phone_number: phoneValue, ...(_contactEmailVal ? { email: _contactEmailVal } : {}) }
+        : { name: cardHolder, cpf: cardHolderCpf, phone_number: phoneValue, ...(_contactEmailVal ? { email: _contactEmailVal } : {}) };
       const buildUtmsFromLocation = function () {
         try {
           const sp = new URLSearchParams(window.location.search || '');
@@ -5332,63 +5339,8 @@
     }
     async function fetchOrders(v){
       const digits = String(v || '').replace(/\D/g, '');
-      if (!digits) { if (ordersBox) { ordersBox.style.display = 'block'; ordersBox.textContent = 'Digite seu telefone ou número de pedido.'; } return; }
+      if (!digits) { if (ordersBox) { ordersBox.style.display = 'block'; ordersBox.textContent = 'Digite seu telefone.'; } return; }
       try {
-        if (digits.length >= 5 && digits.length <= 10) {
-          const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
-          const d = await r.json();
-          const o = d && d.order ? d.order : null;
-          if (ordersBox) {
-            ordersBox.style.display = 'block';
-            if (!o) {
-              ordersBox.textContent = 'Pedido não encontrado.';
-            } else {
-              try {
-                const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
-                if (oid) {
-                  try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
-                  window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
-                  return;
-                }
-              } catch (_) {}
-              const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
-              const status = String(o.status || o.woovi?.status || '-');
-              const tipo = String(o.tipo || o.tipoServico || '-');
-              const qtd = String(o.quantidade || o.qtd || '-');
-              const user = String(o.instagramUsername || o.instauser || '-');
-              const paid = (o.woovi && o.woovi.paidAt) || o.paidAt || null;
-              let paidStr = '-';
-              if (paid) {
-                try {
-                  const d0 = new Date(paid);
-                  const sp = d0;
-                  const dd = String(sp.getUTCDate()).padStart(2,'0');
-                  const mm = String(sp.getUTCMonth()+1).padStart(2,'0');
-                  const yyyy = sp.getUTCFullYear();
-                  const hh = String(sp.getUTCHours()).padStart(2,'0');
-                  const mn = String(sp.getUTCMinutes()).padStart(2,'0');
-                  paidStr = `${dd}/${mm}/${yyyy} as ${hh}:${mn}`;
-                } catch(_) {}
-              }
-              const fama = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
-              const rawF = String((fama && (fama.status || fama.Status || fama.status_text || fama.statusText || fama.StatusText)) || '').trim();
-              const tF = rawF.toLowerCase();
-              const stF = tF ? (/cancel/.test(tF) ? 'Cancelado' : (/partial/.test(tF) ? 'Parcial' : (/pend/.test(tF) ? 'Pendente' : (/process|progress|start|running/.test(tF) ? 'Em andamento' : (/complete|success|finished|done/.test(tF) ? 'Concluído' : rawF))))) : '-';
-              const clsF = stF==='Concluído' ? 'status-green' : (stF==='Cancelado' ? 'status-red' : (stF==='Em andamento' ? 'status-yellow' : (stF==='Pendente' ? 'status-blue' : '')));
-              ordersBox.innerHTML = `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin:6px auto;max-width:620px;color:var(--text-primary);">
-                <div><strong>Status:</strong> <span class="${(String(status).toLowerCase()==='pago'?'status-green':(String(status).toLowerCase()==='pendente'?'status-yellow':''))}">${status}</span></div>
-                <div><strong>Serviço:</strong> <span>${tipo}</span></div>
-                <div><strong>Quantidade:</strong> <span>${qtd}</span></div>
-                <div><strong>Instagram:</strong> <span>${user}</span></div>
-                <div><strong>Pago em:</strong> <span>${paidStr}</span></div>
-                <div><strong>Número do pedido:</strong> <span>${oid || '-'}</span></div>
-                <div><strong>Status do serviço:</strong> <span id="famaStatus_${oid}" class="status-text ${clsF}">${stF}</span></div>
-                <div style="margin-top:8px;">${oid ? `<button type="button" class="continue-button small open-pedido-btn" data-orderid="${encodeURIComponent(oid)}">Detalhes do pedido</button>` : ''}</div>
-              </div>`;
-            }
-          }
-          return;
-        }
         const resp = await fetch(`/api/checkout-orders?phone=${encodeURIComponent(digits)}`);
         const data = await resp.json();
         const list = Array.isArray(data.orders) ? data.orders : [];
@@ -5401,9 +5353,12 @@
               try {
                 const only = list[0];
                 const onlyOid = (only && only.fama24h && only.fama24h.orderId) ? String(only.fama24h.orderId) : ((only && only.fornecedor_social && only.fornecedor_social.orderId) ? String(only.fornecedor_social.orderId) : '');
-                if (onlyOid) {
-                  try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
-                  window.location.href = '/pedido?oid=' + encodeURIComponent(String(onlyOid));
+                const onlyFunctional = onlyOid || String((only && only._id) ? only._id : '');
+                if (onlyFunctional) {
+                  if (onlyOid) {
+                    try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: onlyOid }) }); } catch(_){ }
+                  }
+                  window.location.href = '/pedido?orderID=' + encodeURIComponent(String(onlyFunctional));
                   return;
                 }
               } catch(_) {}
@@ -5411,7 +5366,7 @@
             ordersBox.innerHTML = list.map((o) => {
               const providerOid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : null);
               const functionalOid = providerOid || String(o._id || '');
-              let displayOid = providerOid || '';
+              let displayOid = providerOid || String(o.identifier || o.correlationID || o._id || '');
 
 
               const status = String(o.status || o.woovi?.status || '-');
@@ -5484,22 +5439,8 @@
       consultBtn.addEventListener('click', async () => {
         const raw = (phoneInputPage && phoneInputPage.value && phoneInputPage.value.trim()) || '';
         const v = onlyDigits(raw);
-        if (!v) { alert('Digite seu telefone ou número do pedido.'); return; }
+        if (!v) { alert('Digite seu telefone.'); return; }
         try { localStorage.setItem('oppus_client_phone', v); } catch (_) {}
-        const digits = v;
-        if (digits.length >= 5 && digits.length <= 10) {
-          try {
-            const r = await fetch(`/api/order?orderID=${encodeURIComponent(digits)}`);
-            const d = await r.json();
-            const o = d && d.order ? d.order : null;
-            const oid = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : ((o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : String(o._id || ''));
-            if (oid) {
-              try { await fetch('/pedido/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderID: oid }) }); } catch(_){ }
-              window.location.href = '/pedido?orderID=' + encodeURIComponent(String(oid));
-              return;
-            }
-          } catch(_) {}
-        }
         fetchOrders(v);
       });
     }
@@ -5672,6 +5613,14 @@
   (function initSaleToasts(){
     const isCheckout = !!document.querySelector('.checkout-page');
     if (!isCheckout) return;
+    try {
+      if (window && window.OPPUS_DISABLE_SALE_TOASTS === true) return;
+      if (document && document.body && String(document.body.getAttribute('data-disable-sale-toasts') || '') === '1') return;
+      if (window && window.location && typeof window.location.pathname === 'string') {
+        const p = window.location.pathname;
+        if (p.indexOf('/cliente') === 0 || p.indexOf('/pedido') === 0) return;
+      }
+    } catch (_) {}
     const parent = document.querySelector('.checkout-page');
     let container = document.getElementById('toastContainer');
     if (!container) {
@@ -5713,43 +5662,32 @@
       }
       setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(100%)'; setTimeout(()=>{ if(t.parentNode){ t.parentNode.removeChild(t);} },700); },4000);
     }
-    const combos = [];
-    const tiposIG = ['mistos','brasileiros','organicos'];
-    tiposIG.forEach(tp=>{ (tabela[tp]||[]).forEach(it=>{ combos.push({ q: it.q, tipo: tp }); }); });
-    function pickIG(){ const c = combos[Math.floor(Math.random()*combos.length)] || { q: 150, tipo: 'mistos' }; return c; }
-    const nomes = [
-      'Marcos','Carlos','João','Paulo','Rodrigo','Bruno','Ricardo','André','Felipe','Gustavo','Eduardo','Thiago','Diego','Leandro','Rafael','Daniel','Fábio','Alexandre','Roberto','Sérgio',
-      'Ana','Juliana','Patrícia','Fernanda','Renata','Adriana','Marcela','Camila','Luciana','Vanessa','Aline','Raquel','Sabrina','Simone','Carolina','Priscila','Bianca','Monique','Cristiane','Michele'
-    ];
-    const sobrenomes = ['Silva','Souza','Almeida','Araujo','Ferreira','Costa','Oliveira','Santos','Ribeiro','Gomes','Barbosa','Medeiros','Prado','Peixoto','Matos','Nogueira','Queiroz','Amaral','Correia'];
-    let lastToastName = '';
-    function randNome(){ return nomes[Math.floor(Math.random()*nomes.length)]; }
-    function randSobrenomeInicial(){ const s = sobrenomes[Math.floor(Math.random()*sobrenomes.length)] || 'S'; return s.charAt(0); }
-    function makeNomeUnico(){
-      let attempt = 0; let nome;
-      do {
-        nome = `${randNome()} ${randSobrenomeInicial()}.`;
-        attempt++;
-      } while (nome === lastToastName && attempt < 10);
-      lastToastName = nome;
-      return nome;
+    // Notificações de venda vêm prontas do backend (/api/social-proof).
+    // A lógica de geração fica no servidor, oculta do front-end.
+    let feed = [];
+    let feedIdx = 0;
+    async function refillFeed(){
+      try {
+        const r = await fetch('/api/social-proof?n=8', { headers: { 'Accept': 'application/json' } });
+        const d = await r.json();
+        if (d && d.ok && Array.isArray(d.items) && d.items.length) {
+          feed = d.items;
+          feedIdx = 0;
+          return true;
+        }
+      } catch (_) {}
+      return false;
     }
-    function makeToast(platform){
-      const nome = makeNomeUnico();
-      if (platform === 'tiktok') {
-        return;
-      } else {
-        const c = pickIG();
-        const unit = getUnitForTipo(c.tipo);
-        const label = getLabelForTipo(c.tipo);
-        showToast({ title: `${nome} confirmou compra`, desc: `Adquiriu ${c.q} ${unit} — ${label}`, platform: 'instagram' });
+    async function nextToast(){
+      if (feedIdx >= feed.length) {
+        const ok = await refillFeed();
+        if (!ok) return;
       }
+      const item = feed[feedIdx++];
+      if (item) showToast(item);
     }
-    const platformCycle = ['instagram','instagram','tiktok'];
-    let cycleIdx = 0;
     function cycle(){
-      makeToast(platformCycle[cycleIdx]);
-      cycleIdx = (cycleIdx + 1) % platformCycle.length;
+      nextToast();
       setTimeout(cycle, 15000);
     }
     setTimeout(cycle, 7000);

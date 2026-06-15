@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão de Upsell</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .main-content { max-width: 100% !important; width: calc(100% - 250px); box-sizing: border-box; }
+    @media (max-width: 768px) { .main-content { width: 100%; } }
+    .container { max-width: 100%; width: 100%; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); box-sizing: border-box; }
+    h1 { margin-bottom: 6px; font-size: 1.5rem; }
+    .page-sub { color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+
+    /* Stats */
+    .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+    .stat-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; background: #fafafa; }
+    .stat-label { font-size: 0.78rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .stat-value { font-size: 1.6rem; font-weight: 800; color: #111827; line-height: 1; }
+    .stat-card--green  { border-color: #bbf7d0; background: #f0fdf4; }
+    .stat-card--blue   { border-color: #bfdbfe; background: #eff6ff; }
+    .stat-card--yellow { border-color: #fde68a; background: #fffbeb; }
+    .stat-card--purple { border-color: #e9d5ff; background: #faf5ff; }
+
+    /* Filters */
+    .filterbar { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filterbar label { font-size: 0.82rem; color: #374151; font-weight: 600; display: block; margin-bottom: 4px; }
+    .filterbar select, .filterbar input { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.88rem; background: #fff; }
+    .filterbar button { padding: 7px 18px; background: #4f46e5; color: #fff; border: none; border-radius: 6px; font-size: 0.88rem; font-weight: 600; cursor: pointer; height: 34px; }
+    .filter-pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; border: 1px solid; }
+    .filter-pill--all    { background: #f3f4f6; border-color: #d1d5db; color: #374151; }
+    .filter-pill--active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+
+    /* Table */
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #e5e7eb; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; min-width: 1100px; }
+    th { background: #f9fafb; padding: 10px 12px; text-align: left; font-size: 0.82rem; font-weight: 700; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.85rem; vertical-align: middle; }
+    tr:hover td { background: #fafafa; }
+    tr:last-child td { border-bottom: none; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+    .badge--green  { background: #dcfce7; color: #166534; }
+    .badge--blue   { background: #dbeafe; color: #1e40af; }
+    .badge--yellow { background: #fef3c7; color: #92400e; }
+    .badge--red    { background: #fee2e2; color: #991b1b; }
+    .badge--gray   { background: #f3f4f6; color: #374151; }
+    .badge--purple { background: #ede9fe; color: #5b21b6; }
+    .badge--orange { background: #ffedd5; color: #9a3412; }
+
+    /* Parent status */
+    .parent-status { font-size: 0.78rem; color: #6b7280; margin-top: 3px; }
+    .parent-status--ok { color: #16a34a; font-weight: 700; }
+    .parent-status--pending { color: #d97706; font-weight: 700; }
+
+    /* Action buttons */
+    .btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 6px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: filter 0.1s; white-space: nowrap; }
+    .btn:hover { filter: brightness(0.92); }
+    .btn--primary { background: #4f46e5; color: #fff; }
+    .btn--green   { background: #16a34a; color: #fff; }
+    .btn--red     { background: #dc2626; color: #fff; }
+    .btn--gray    { background: #6b7280; color: #fff; }
+    .btn--ghost   { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+    /* Pager */
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+    .pager a { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; text-decoration: none; color: #374151; font-size: 0.85rem; background: #fff; }
+    .pager a.disabled { pointer-events: none; opacity: 0.4; }
+    .pager-info { font-size: 0.85rem; color: #6b7280; }
+
+    /* Toast */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: #111827; color: #fff; padding: 12px 18px; border-radius: 10px; font-size: 0.88rem; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.2); opacity: 0; transform: translateY(8px); transition: all 0.25s ease; pointer-events: none; z-index: 9999; max-width: 320px; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok   { background: #166534; }
+    #toast.err  { background: #991b1b; }
+
+    .empty-state { text-align: center; padding: 48px 24px; color: #9ca3af; }
+    .empty-state svg { opacity: 0.4; margin-bottom: 12px; }
+    .empty-state p { font-size: 0.95rem; margin: 0; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page: 'upsell' }) %>
+  <div class="main-content">
+  <div class="container">
+
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:6px;">
+      <div>
+        <h1>Gestão de Upsell</h1>
+        <p class="page-sub">Pedidos extras criados a partir de ofertas pós-venda. O envio aguarda o pedido original ser despachado.</p>
+      </div>
+      <a href="/painel/upsell" class="btn btn--ghost" style="text-decoration:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+        Atualizar
+      </a>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card stat-card--purple">
+        <div class="stat-label">Total Upsells</div>
+        <div class="stat-value"><%= stats.totalAll %></div>
+      </div>
+      <div class="stat-card stat-card--green">
+        <div class="stat-label">Pagos</div>
+        <div class="stat-value"><%= stats.totalPaid %></div>
+      </div>
+      <div class="stat-card stat-card--yellow">
+        <div class="stat-label">Aguardando Pai</div>
+        <div class="stat-value"><%= stats.totalWaiting %></div>
+      </div>
+      <div class="stat-card stat-card--blue">
+        <div class="stat-label">Despachados</div>
+        <div class="stat-value"><%= stats.totalDispatched %></div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <form action="/painel/upsell" method="GET" class="filterbar">
+      <div>
+        <label>Status</label>
+        <select name="status">
+          <option value="all"        <%= filterStatus === 'all'        ? 'selected' : '' %>>Todos</option>
+          <option value="pending"    <%= filterStatus === 'pending'    ? 'selected' : '' %>>Sem pagamento</option>
+          <option value="paid"       <%= filterStatus === 'paid'       ? 'selected' : '' %>>Pagos</option>
+          <option value="waiting"    <%= filterStatus === 'waiting'    ? 'selected' : '' %>>Aguardando pai</option>
+          <option value="dispatched" <%= filterStatus === 'dispatched' ? 'selected' : '' %>>Despachados</option>
+        </select>
+      </div>
+      <div>
+        <label>Tipo de Serviço</label>
+        <select name="tipo">
+          <option value=""                    <%= !filterTipo                              ? 'selected' : '' %>>Todos os tipos</option>
+          <option value="mistos"              <%= filterTipo === 'mistos'              ? 'selected' : '' %>>Seguidores Mistos</option>
+          <option value="brasileiros"         <%= filterTipo === 'brasileiros'         ? 'selected' : '' %>>Seguidores Brasileiros</option>
+          <option value="organicos"           <%= filterTipo === 'organicos'           ? 'selected' : '' %>>Seguidores Orgânicos</option>
+          <option value="curtidas_reais"      <%= filterTipo === 'curtidas_reais'      ? 'selected' : '' %>>Curtidas Reais</option>
+          <option value="curtidas_brasileiras"<%= filterTipo === 'curtidas_brasileiras'? 'selected' : '' %>>Curtidas Brasileiras</option>
+          <option value="visualizacoes_reels" <%= filterTipo === 'visualizacoes_reels' ? 'selected' : '' %>>Views Reels</option>
+        </select>
+      </div>
+      <div>
+        <label>Busca (perfil / identifier)</label>
+        <input type="text" name="q" value="<%= filterSearch %>" placeholder="@usuario ou ID..." style="min-width:200px;" />
+      </div>
+      <button type="submit">Filtrar</button>
+    </form>
+
+    <!-- Table -->
+    <% if (!upsells || !upsells.length) { %>
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+      <p>Nenhum upsell encontrado com os filtros aplicados.</p>
+    </div>
+    <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Perfil</th>
+            <th>Pedido Original</th>
+            <th>Qtd Original</th>
+            <th>Upsell Qtd</th>
+            <th>Valor Upsell</th>
+            <th>Status Pagamento</th>
+            <th>Status Pai</th>
+            <th>Status Dispatch</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%
+            var fmtDate = function(iso){
+              try { var d = new Date(String(iso||'')); return isNaN(d)?'-':d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); } catch(_){ return '-'; }
+            };
+            var fmtCents = function(c){ return 'R$ '+(Number(c||0)/100).toFixed(2).replace('.',','); };
+            var fmtQty = function(n){ return Number(n||0).toLocaleString('pt-BR'); };
+          %>
+          <% upsells.forEach(function(u){ %>
+            <%
+              var instaUser = String(u.instagramUsername || u.instauser || '').replace(/^@/,'');
+              var payStatus = String(u.status || '').toLowerCase();
+              var isPaid    = payStatus === 'pago' || payStatus === 'paid';
+              var dispatchStatus = String(u.upsell && u.upsell.dispatchStatus || 'waiting_payment').toLowerCase();
+              var parentId  = u.upsell && u.upsell.parentIdentifier ? String(u.upsell.parentIdentifier) : '';
+              var parent    = parentId ? (parentMap[parentId] || null) : null;
+              var parentQty = parent ? fmtQty(parent.quantidade) : '-';
+              var parentDispatched = parent && (
+                (parent.fama24h && parent.fama24h.orderId) ||
+                (parent.fornecedor_social && parent.fornecedor_social.orderId) ||
+                (parent.topfama && parent.topfama.orderId) ||
+                (parent.fama24h_multi && parent.fama24h_multi.status === 'created')
+              );
+              var parentPaid = parent && /pago|paid/.test(String(parent.status||'').toLowerCase());
+            %>
+            <tr>
+              <!-- Data -->
+              <td style="white-space:nowrap; font-size:0.78rem; color:#6b7280;">
+                <%= fmtDate(u.createdAt) %>
+              </td>
+
+              <!-- Perfil -->
+              <td>
+                <% if (instaUser) { %>
+                  <a href="https://instagram.com/<%= instaUser %>" target="_blank" rel="noopener" style="color:#4f46e5; font-weight:600; text-decoration:none;">@<%= instaUser %></a>
+                <% } else { %>
+                  <span style="color:#9ca3af;">—</span>
+                <% } %>
+              </td>
+
+              <!-- Pedido Original -->
+              <td style="font-size:0.78rem;">
+                <% if (parentId) { %>
+                  <a href="/pedido?identifier=<%= encodeURIComponent(parentId) %>" target="_blank" style="color:#6b7280; text-decoration:none; font-family:monospace;" title="<%= parentId %>">
+                    <%= parentId.length > 18 ? parentId.slice(0,18)+'…' : parentId %>
+                  </a>
+                  <% if (parent) { %>
+                    <div style="font-size:0.75rem; color:#9ca3af; margin-top:2px;">
+                      <%= String(parent.tipo || parent.tipoServico || '').replace(/_/g,' ') || '-' %>
+                    </div>
+                  <% } %>
+                <% } else { %><span style="color:#9ca3af;">—</span><% } %>
+              </td>
+
+              <!-- Qtd Original -->
+              <td style="font-weight:700; font-size:0.9rem;">
+                <%= parentQty %>
+              </td>
+
+              <!-- Upsell Qtd -->
+              <td>
+                <span style="font-weight:800; font-size:1rem; color:#4f46e5;">+<%= fmtQty(u.upsell && u.upsell.offerQty || u.quantidade) %></span>
+                <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;"><%= String(u.tipo||'').replace(/_/g,' ') %></div>
+              </td>
+
+              <!-- Valor -->
+              <td style="font-weight:700; white-space:nowrap;">
+                <%= fmtCents(u.valueCents) %>
+              </td>
+
+              <!-- Status Pagamento -->
+              <td>
+                <% if (isPaid) { %>
+                  <span class="badge badge--green">✓ Pago</span>
+                <% } else { %>
+                  <span class="badge badge--yellow">Aguardando</span>
+                <% } %>
+                <div style="font-size:0.72rem; color:#9ca3af; margin-top:3px;">
+                  <% if (u.identifier) { %><span title="<%= u.identifier %>"><%= u.identifier.length > 14 ? u.identifier.slice(0,14)+'…' : u.identifier %></span><% } %>
+                </div>
+              </td>
+
+              <!-- Status Pai -->
+              <td>
+                <%
+                  // Status normalizado do fornecedor → labels PT
+                  var _provStatusRaw = '';
+                  if (parent) {
+                    _provStatusRaw = String(
+                      (parent.fama24h && parent.fama24h.status) ||
+                      (parent.fornecedor_social && parent.fornecedor_social.status) ||
+                      (parent.topfama && parent.topfama.status) ||
+                      (parent.fama24h_multi && parent.fama24h_multi.status) ||
+                      (parent.fornecedor_social_multi && parent.fornecedor_social_multi.status) || ''
+                    ).toLowerCase();
+                  }
+                  var _statusLabel = '', _statusClass = 'badge--gray';
+                  if (/conclu|complete|success|finished|done/.test(_provStatusRaw)) { _statusLabel = 'Concluído'; _statusClass = 'badge--green'; }
+                  else if (/parcial|partial/.test(_provStatusRaw)) { _statusLabel = 'Parcial'; _statusClass = 'badge--orange'; }
+                  else if (/cancel/.test(_provStatusRaw)) { _statusLabel = 'Cancelado'; _statusClass = 'badge--red'; }
+                  else if (/process|progress|start|running|andamento|created/.test(_provStatusRaw)) { _statusLabel = 'Em andamento'; _statusClass = 'badge--blue'; }
+                  else if (/pend/.test(_provStatusRaw)) { _statusLabel = 'Pendente'; _statusClass = 'badge--yellow'; }
+                  var _parentOrderId = parent ? String(
+                    (parent.fama24h && parent.fama24h.orderId) ||
+                    (parent.fornecedor_social && parent.fornecedor_social.orderId) ||
+                    (parent.topfama && parent.topfama.orderId) || ''
+                  ) : '';
+                %>
+                <% if (!parent) { %>
+                  <span class="badge badge--red">Pai não encontrado</span>
+                <% } else { %>
+                  <% if (_statusLabel) { %>
+                    <span class="badge <%= _statusClass %>"><%= _statusLabel %></span>
+                  <% } else if (parentDispatched) { %>
+                    <span class="badge badge--blue">Em andamento</span>
+                  <% } else if (parentPaid) { %>
+                    <span class="badge badge--yellow">Pago, aguardando dispatch</span>
+                  <% } else { %>
+                    <span class="badge badge--gray">Pendente</span>
+                  <% } %>
+                  <!-- Editor de OrderID do pai -->
+                  <div class="parent-orderid-edit" style="margin-top:6px; display:flex; align-items:center; gap:4px;">
+                    <input type="text" class="parent-orderid-input" data-parent="<%= parentId %>" value="<%= _parentOrderId %>" placeholder="OrderID" style="width:90px; padding:3px 6px; border:1px solid #d1d5db; border-radius:6px; font-size:0.72rem; font-family:monospace;" />
+                    <button class="btn btn--ghost save-orderid-btn" data-parent="<%= parentId %>" style="font-size:0.7rem; padding:3px 8px;">Salvar</button>
+                  </div>
+                <% } %>
+              </td>
+
+              <!-- Status Dispatch -->
+              <td>
+                <% if (dispatchStatus === 'dispatching' || dispatchStatus === 'dispatched') { %>
+                  <span class="badge badge--blue">Despachado</span>
+                  <% if (u.upsell && u.upsell.dispatchTriggeredAt) { %>
+                    <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;"><%= fmtDate(u.upsell.dispatchTriggeredAt) %></div>
+                  <% } %>
+                <% } else if (dispatchStatus === 'waiting_parent') { %>
+                  <span class="badge badge--yellow">Aguardando pai concluir</span>
+                  <% if (u.upsell && u.upsell.queuedAt) { %>
+                    <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;"><%= fmtDate(u.upsell.queuedAt) %></div>
+                  <% } %>
+                <% } else if (dispatchStatus === 'paused') { %>
+                  <span class="badge badge--orange">Pausado</span>
+                <% } else if (dispatchStatus === 'cancelled') { %>
+                  <span class="badge badge--red">Cancelado</span>
+                <% } else { %>
+                  <span class="badge badge--gray">Aguardando pagamento</span>
+                <% } %>
+              </td>
+
+              <!-- Ações -->
+              <td>
+                <div class="actions">
+                  <!-- Ver pedido upsell -->
+                  <a href="/pedido?identifier=<%= encodeURIComponent(u.identifier||u.correlationID||'') %>" target="_blank" class="btn btn--ghost" style="text-decoration:none; font-size:0.75rem;">Ver pedido</a>
+
+                  <% if (isPaid && dispatchStatus !== 'dispatching' && dispatchStatus !== 'dispatched') { %>
+                    <!-- Dispatch manual (override; o envio normal é automático ao pai concluir) -->
+                    <button class="btn btn--green dispatch-btn" data-id="<%= u.identifier||u.correlationID||'' %>" style="font-size:0.75rem;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                      Despachar
+                    </button>
+                    <% if (dispatchStatus === 'paused') { %>
+                      <!-- Retomar -->
+                      <button class="btn btn--green pause-btn" data-id="<%= u.identifier||u.correlationID||'' %>" data-action="resume" style="font-size:0.75rem; background:#16a34a;">Retomar</button>
+                    <% } else { %>
+                      <!-- Pausar -->
+                      <button class="btn pause-btn" data-id="<%= u.identifier||u.correlationID||'' %>" data-action="pause" style="font-size:0.75rem; background:#f59e0b; color:#fff;">Pausar</button>
+                    <% } %>
+                  <% } %>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Paginação -->
+    <%
+      var totalPages = Math.ceil(total / perPage);
+      var buildUrl = function(p){ return '/painel/upsell?page='+p+'&status='+encodeURIComponent(filterStatus)+'&tipo='+encodeURIComponent(filterTipo)+'&q='+encodeURIComponent(filterSearch); };
+    %>
+    <div class="pager">
+      <a href="<%= buildUrl(Math.max(1, page-1)) %>" class="<%= page <= 1 ? 'disabled' : '' %>">← Anterior</a>
+      <span class="pager-info">Página <%= page %> de <%= Math.max(1, totalPages) %> — <%= total %> registros</span>
+      <a href="<%= buildUrl(Math.min(totalPages, page+1)) %>" class="<%= page >= totalPages ? 'disabled' : '' %>">Próxima →</a>
+    </div>
+    <% } %>
+
+  </div><!-- .container -->
+  </div><!-- .main-content -->
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <script>
+  (function(){
+    var toast = document.getElementById('toast');
+    function showToast(msg, ok){
+      toast.textContent = msg;
+      toast.className = 'show ' + (ok ? 'ok' : 'err');
+      clearTimeout(toast._t);
+      toast._t = setTimeout(function(){ toast.className = ''; }, 3500);
+    }
+
+    // Dispatch manual
+    document.querySelectorAll('.dispatch-btn').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var id = btn.getAttribute('data-id');
+        if (!id) return;
+        if (!confirm('Despachar upsell ' + id + ' agora?')) return;
+        btn.disabled = true;
+        try {
+          var r = await fetch('/api/painel/upsell/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upsellIdentifier: id })
+          });
+          var d = await r.json();
+          if (d && d.ok) {
+            showToast('Dispatch iniciado com sucesso!', true);
+            setTimeout(function(){ location.reload(); }, 1500);
+          } else {
+            showToast('Erro: ' + (d && d.message || d && d.error || 'Tente novamente'), false);
+            btn.disabled = false;
+          }
+        } catch(e){
+          showToast('Erro de rede', false);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Pausar / Retomar
+    document.querySelectorAll('.pause-btn').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var id = btn.getAttribute('data-id');
+        var action = btn.getAttribute('data-action') || 'pause';
+        if (!id) return;
+        var verbo = action === 'resume' ? 'Retomar' : 'Pausar';
+        if (!confirm(verbo + ' o envio do upsell ' + id + '?')) return;
+        btn.disabled = true;
+        try {
+          var r = await fetch('/api/painel/upsell/pause', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upsellIdentifier: id, action: action })
+          });
+          var d = await r.json();
+          if (d && d.ok) {
+            showToast(action === 'resume' ? 'Upsell retomado.' : 'Upsell pausado.', true);
+            setTimeout(function(){ location.reload(); }, 1200);
+          } else {
+            showToast('Erro: ' + (d && (d.message || d.error) || 'Tente novamente'), false);
+            btn.disabled = false;
+          }
+        } catch(e){
+          showToast('Erro de rede', false);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Salvar OrderID do pedido pai
+    document.querySelectorAll('.save-orderid-btn').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var parentId = btn.getAttribute('data-parent');
+        if (!parentId) return;
+        var input = document.querySelector('.parent-orderid-input[data-parent="' + parentId + '"]');
+        var newOrderId = input ? String(input.value || '').trim() : '';
+        if (!newOrderId) { showToast('Informe o OrderID.', false); return; }
+        if (!confirm('Salvar OrderID "' + newOrderId + '" para o pedido pai?\nO status será re-verificado pelo poller.')) return;
+        btn.disabled = true;
+        try {
+          var r = await fetch('/api/painel/upsell/set-parent-orderid', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parentIdentifier: parentId, orderId: newOrderId })
+          });
+          var d = await r.json();
+          if (d && d.ok) {
+            showToast('OrderID atualizado (' + (d.provider || 'fornecedor') + ').', true);
+            setTimeout(function(){ location.reload(); }, 1500);
+          } else {
+            showToast('Erro: ' + (d && (d.message || d.error) || 'Tente novamente'), false);
+            btn.disabled = false;
+          }
+        } catch(e){
+          showToast('Erro de rede', false);
+          btn.disabled = false;
+        }
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

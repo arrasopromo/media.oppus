@@ -182,7 +182,7 @@
       <% if (!isUnknownOrderIdView) { %>
         <a href="<%= baseUrl + sep %>period=max" class="<%= panelPeriod === 'max' ? 'active' : '' %>">Máximo</a>
       <% } %>
-      <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
+      <a href="javascript:(function(){try{var u=new URL(location.href);u.searchParams.set('nocache','1');location.href=u.toString();}catch(_){location.reload();}})();" style="background: #28a745; color: white;" title="Recarrega com dados atualizados (ignora cache)">Atualizar</a>
     </div>
 
     <div class="panel-filterbar" style="margin-bottom: 20px;">
@@ -736,6 +736,7 @@
               </th>
               <th>OrderID</th>
               <th>Usuário</th>
+              <th>Dias</th>
               <th>Reposição</th>
               <th>Tipo</th>
               <th>Fornecedor</th>
@@ -821,6 +822,13 @@
                 const refilIsLifetime = row.refilIsLifetime === true;
                 const refilMode = String(row.refilWarrantyMode || '').trim().toLowerCase();
                 const refilDaysLeft = (typeof row.refilDaysLeft === 'number') ? row.refilDaysLeft : null;
+                const refilPlanLabel = (function () {
+                  if (refilIsLifetime || refilMode === 'life') return 'Vitalícia';
+                  if (refilMode === '12m') return '1 ano';
+                  if (refilMode === '6m') return '6 meses';
+                  if (refilDaysLeft !== null) return '30 dias';
+                  return '-';
+                })();
               %>
               <tr data-username="<%= username %>" data-tipo="<%= row.tipo ? String(row.tipo) : '' %>" data-orderid="<%= oid %>" data-fornecedororderid="<%= fid ? fid : '' %>" data-checkedatms="<%= (row.currentCheckedAtMs ? row.currentCheckedAtMs : 0) %>" data-checkedatmsraw="<%= (row.currentCheckedAtMsRaw ? row.currentCheckedAtMsRaw : 0) %>" data-purchaseatms="<%= (row.lastPurchaseAtMs ? row.lastPurchaseAtMs : 0) %>" data-diffabs="<%= (diffAbs !== null ? diffAbs : '') %>" data-diffpct="<%= (pctNum !== null ? pctNum : '') %>" data-hidden="<%= row.hidden === true ? '1' : '0' %>" data-resultado="<%= (resultado !== null ? resultado : '') %>" data-contracted="<%= (contracted ? contracted : '') %>">
                 <td style="text-align:center; width:42px;">
@@ -870,6 +878,7 @@
                     -
                   <% } %>
                 </td>
+                <td style="white-space: nowrap;"><%= refilPlanLabel %></td>
                 <td style="white-space: nowrap;"><%= row.tipo ? String(row.tipo) : '-' %></td>
                 <td style="white-space: nowrap;"><%= row.fornecedor ? String(row.fornecedor) : '-' %></td>
                 <td style="text-align:right;" class="cell-initial"><%= (init !== null ? init : '-') %></td>
@@ -3043,11 +3052,24 @@
         const hiddenSeguidores = Array.isArray(hidden0.seguidores) ? hidden0.seguidores.map(String) : [];
         const hiddenCurtidas = Array.isArray(hidden0.curtidas) ? hidden0.curtidas.map(String) : [];
         const hiddenVisualizacoes = Array.isArray(hidden0.visualizacoes) ? hidden0.visualizacoes.map(String) : [];
+        const providers0 = (typeof serviceTypeProviders !== 'undefined' && serviceTypeProviders && typeof serviceTypeProviders === 'object') ? serviceTypeProviders : {};
         const getSvcId = (ctx, key, provider) => {
           try {
             const n = Number(ids0 && ids0[ctx] && ids0[ctx][key] && ids0[ctx][key][provider] ? ids0[ctx][key][provider] : 0);
             return (Number.isFinite(n) && n > 0) ? String(Math.trunc(n)) : '';
           } catch (_) { return ''; }
+        };
+        const getProvider = (ctx, key, fallback) => {
+          try {
+            const v = String(providers0 && providers0[ctx] && providers0[ctx][key] ? providers0[ctx][key] : '').trim();
+            return v || String(fallback || '').trim();
+          } catch (_) { return String(fallback || '').trim(); }
+        };
+        const allowedProviders = (ctx, key) => {
+          const k = String(key || '').trim();
+          if (ctx === 'curtidas' && k === 'organicos') return ['topfama', 'fornecedor_social'];
+          if (ctx === 'seguidores' && k === 'organicos') return ['fornecedor_social'];
+          return ['fama24h'];
         };
       %>
       <div id="serviceTypes" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
@@ -3077,9 +3099,18 @@
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Seguidores</td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
-                    <% const provS = String(it.key || '') === 'organicos' ? 'fornecedor_social' : 'fama24h'; %>
+                    <% const provSList = allowedProviders('seguidores', String(it.key || '')); %>
+                    <% const provS = getProvider('seguidores', String(it.key || ''), provSList[0]); %>
                     <div style="display:flex; align-items:center; gap:10px;">
-                      <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provS %></span>
+                      <% if (provSList.length > 1) { %>
+                        <select class="serviceTypeProviderSel" data-ctx="seguidores" data-key="<%= String(it.key || '') %>" style="min-width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;">
+                          <% provSList.forEach(p => { %>
+                            <option value="<%= p %>" <%= String(p) === String(provS) ? 'selected' : '' %>><%= p %></option>
+                          <% }) %>
+                        </select>
+                      <% } else { %>
+                        <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provS %></span>
+                      <% } %>
                       <input type="number" class="serviceTypeServiceIdInp" data-ctx="seguidores" data-key="<%= String(it.key || '') %>" data-provider="<%= provS %>" value="<%= getSvcId('seguidores', String(it.key || ''), provS) %>" placeholder="padrão" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
                     </div>
                   </td>
@@ -3093,9 +3124,18 @@
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;">Curtidas</td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= String(it.label || it.key || '') %></td>
                   <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
-                    <% const provC = String(it.key || '') === 'organicos' ? 'fornecedor_social' : 'fama24h'; %>
+                    <% const provCList = allowedProviders('curtidas', String(it.key || '')); %>
+                    <% const provC = getProvider('curtidas', String(it.key || ''), provCList[0]); %>
                     <div style="display:flex; align-items:center; gap:10px;">
-                      <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provC %></span>
+                      <% if (provCList.length > 1) { %>
+                        <select class="serviceTypeProviderSel" data-ctx="curtidas" data-key="<%= String(it.key || '') %>" style="min-width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;">
+                          <% provCList.forEach(p => { %>
+                            <option value="<%= p %>" <%= String(p) === String(provC) ? 'selected' : '' %>><%= p %></option>
+                          <% }) %>
+                        </select>
+                      <% } else { %>
+                        <span style="font-size:0.82rem; color:#6b7280; min-width:110px;"><%= provC %></span>
+                      <% } %>
                       <input type="number" class="serviceTypeServiceIdInp" data-ctx="curtidas" data-key="<%= String(it.key || '') %>" data-provider="<%= provC %>" value="<%= getSvcId('curtidas', String(it.key || ''), provC) %>" placeholder="padrão" style="width:140px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
                     </div>
                   </td>
@@ -3123,10 +3163,21 @@
           </table>
         </div>
       </div>
+      <script type="application/json" id="serviceTypeServiceIdsJson"><%- JSON.stringify(ids0 || {}).replace(/</g, '\\u003c') %></script>
       <script>
         (function(){
           function el(id){ return document.getElementById(id); }
           function setStatus(t){ var s=el('serviceTypesStatus'); if (s) s.textContent = t || ''; }
+          function safeJson(nodeId){
+            try {
+              var n = document.getElementById(nodeId);
+              if (!n) return null;
+              var raw = String(n.textContent || n.innerText || '').trim();
+              if (!raw) return null;
+              return JSON.parse(raw);
+            } catch(e) { return null; }
+          }
+          var existingIds = safeJson('serviceTypeServiceIdsJson') || {};
           function collectHidden(){
             var out = { seguidores: [], curtidas: [], visualizacoes: [] };
             var nodes = document.querySelectorAll('.serviceTypeHiddenChk');
@@ -3142,7 +3193,8 @@
             return out;
           }
           function collectServiceIds(){
-            var out = { seguidores: {}, curtidas: {}, visualizacoes: {} };
+            var out = {};
+            try { out = JSON.parse(JSON.stringify(existingIds || {})); } catch(e) { out = {}; }
             var nodes = document.querySelectorAll('.serviceTypeServiceIdInp');
             for (var i=0;i<nodes.length;i++){
               var n = nodes[i];
@@ -3161,7 +3213,46 @@
             }
             return out;
           }
+          function collectProviders(){
+            var out = { seguidores: {}, curtidas: {}, visualizacoes: {} };
+            var nodes = document.querySelectorAll('.serviceTypeProviderSel');
+            for (var i=0;i<nodes.length;i++){
+              var n = nodes[i];
+              if (!n) continue;
+              var ctx = String(n.getAttribute('data-ctx') || '').trim();
+              var key = String(n.getAttribute('data-key') || '').trim();
+              var v = String(n.value || '').trim();
+              if (!ctx || !key || !v) continue;
+              if (!out[ctx]) out[ctx] = {};
+              out[ctx][key] = v;
+            }
+            return out;
+          }
+          function attachProviderHandlers(){
+            var nodes = document.querySelectorAll('.serviceTypeProviderSel');
+            for (var i=0;i<nodes.length;i++){
+              (function(sel){
+                if (!sel) return;
+                sel.addEventListener('change', function(){
+                  try {
+                    var ctx = String(sel.getAttribute('data-ctx') || '').trim();
+                    var key = String(sel.getAttribute('data-key') || '').trim();
+                    var prov = String(sel.value || '').trim();
+                    if (!ctx || !key || !prov) return;
+                    var inp = document.querySelector('.serviceTypeServiceIdInp[data-ctx="'+ctx+'"][data-key="'+key+'"]');
+                    if (!inp) return;
+                    try { inp.setAttribute('data-provider', prov); } catch(e){}
+                    var prev = '';
+                    try { prev = String(existingIds && existingIds[ctx] && existingIds[ctx][key] && existingIds[ctx][key][prov] ? existingIds[ctx][key][prov] : '').trim(); } catch(e){ prev = ''; }
+                    if (prev) inp.value = prev;
+                    else inp.value = '';
+                  } catch(e){}
+                });
+              })(nodes[i]);
+            }
+          }
           var btn = el('serviceTypesSaveBtn');
+          attachProviderHandlers();
           if (btn) btn.addEventListener('click', function(){
             try { btn.disabled = true; } catch(_) {}
             setStatus('Salvando...');
@@ -3190,6 +3281,19 @@
                 }).then(function(out){
                   var data = out && out.json ? out.json : null;
                   if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_ids_failed');
+                });
+              })
+              .then(function(){
+                return fetch('/api/painel/service-type-providers', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ values: collectProviders() })
+                }).then(function(r){
+                  return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
+                }).then(function(out){
+                  var data = out && out.json ? out.json : null;
+                  if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_providers_failed');
                 });
               })
               .then(function(){
@@ -3516,6 +3620,17 @@
               <%= (typeof ignoreBumpRevenue !== 'undefined' && ignoreBumpRevenue) ? 'Considerar venda de orderbump' : 'Retirar venda de orderbump' %>
             </a>
           </div>
+        </div>
+        <% var _us = (typeof upsellStats !== 'undefined' && upsellStats) ? upsellStats : { revenueBRL:'R$ 0,00', conversionPct:0, paidCount:0, avgTicketBRL:'R$ 0,00', eligibleParents:0 }; %>
+        <div class="summary-card">
+          <div class="summary-label">Vendas de Upsell (período)</div>
+          <div class="summary-value"><%= _us.revenueBRL %></div>
+          <div class="summary-sub" style="margin-top:6px;"><%= _us.paidCount %> upsell(s) pago(s) · ticket médio <%= _us.avgTicketBRL %></div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">Conversão de Upsell</div>
+          <div class="summary-value"><%= Number(_us.conversionPct || 0).toFixed(1).replace('.', ',') %>%</div>
+          <div class="summary-sub" style="margin-top:6px;">dos <%= _us.eligibleParents %> pedidos pagos pegaram upsell</div>
         </div>
       </div>
       <% if (view === 'dashboard') { %>
@@ -6215,16 +6330,22 @@
                   <strong style="font-size: 1rem; color:#111827;">Distribuição</strong>
                   <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (período)</div>
                 </div>
-                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top: 12px;">
-                  <div style="flex:1 1 420px; min-width: 320px; display:flex; flex-direction:column;">
+                <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px 24px; margin-top:12px; align-items:start;">
+                  <div style="display:flex; flex-direction:column;">
+                    <div style="font-weight:700; margin-bottom:8px; color:#111827;">Canal de vendas</div>
+                    <div style="height:160px; position:relative;">
+                      <canvas id="dashboardChannelPieChart" style="display:block; width:100%; height:100%;"></canvas>
+                    </div>
+                  </div>
+                  <div style="display:flex; flex-direction:column;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Vendas por método</div>
-                    <div style="height:140px; position:relative; flex:1;">
+                    <div style="height:160px; position:relative;">
                       <canvas id="dashboardPaymentMethodChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
                   </div>
-                  <div style="flex:1 1 420px; min-width: 320px; display:flex; flex-direction:column;">
+                  <div style="display:flex; flex-direction:column;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Pedidos por tipo (pizza)</div>
-                    <div style="height:170px; position:relative; flex:1;">
+                    <div style="height:160px; position:relative;">
                       <canvas id="dashboardServiceTypePieChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
                     <%
@@ -6239,9 +6360,17 @@
                       <div style="margin-top:8px; font-size:0.82rem; color:#6b7280; line-height:1.3;">Outros inclui: <%= othersText3 %><%= othersRest3 > 0 ? (' · +' + othersRest3 + ' tipos') : '' %></div>
                     <% } %>
                   </div>
+                  <div style="display:flex; flex-direction:column;">
+                    <div style="font-weight:700; margin-bottom:8px; color:#111827;">Compras por plataforma</div>
+                    <div style="height:160px; position:relative;">
+                      <canvas id="dashboardPlatformPieChart" style="display:block; width:100%; height:100%;"></canvas>
+                    </div>
+                  </div>
                 </div>
                 <script type="application/json" id="dashboardPaymentMethodData"><%- JSON.stringify(Array.isArray(paymentPie) ? paymentPie : []) %></script>
                 <script type="application/json" id="dashboardServiceTypePieData"><%- JSON.stringify(Array.isArray(servicePie) ? servicePie : []) %></script>
+                <script type="application/json" id="dashboardChannelPieData"><%- JSON.stringify(Array.isArray(channelPie) ? channelPie : []) %></script>
+                <script type="application/json" id="dashboardPlatformPieData"><%- JSON.stringify(Array.isArray(platformPie) ? platformPie : []) %></script>
                 <script>
                   (function(){
                     try {
@@ -6333,6 +6462,32 @@
                           } catch (_) {}
                         }
                       };
+                      var chEl = document.getElementById('dashboardChannelPieData');
+                      var chRaw = chEl ? String(chEl.textContent || '').trim() : '[]';
+                      var ch = JSON.parse(chRaw || '[]');
+                      var chCanvas = document.getElementById('dashboardChannelPieChart');
+                      if (chCanvas) {
+                        var c = buildPie(ch);
+                        new Chart(chCanvas, {
+                          plugins: [donutLabelsPlugin],
+                          type: 'doughnut',
+                          data: { labels: c.labels, datasets: [{ data: c.values, backgroundColor: c.colors, borderWidth: 0 }] },
+                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ return String(ctx && ctx.label ? ctx.label : ''); } } } }, cutout: '60%' }
+                        });
+                      }
+                      var platEl = document.getElementById('dashboardPlatformPieData');
+                      var platRaw = platEl ? String(platEl.textContent || '').trim() : '[]';
+                      var plat = JSON.parse(platRaw || '[]');
+                      var platCanvas = document.getElementById('dashboardPlatformPieChart');
+                      if (platCanvas) {
+                        var pl = buildPie(plat);
+                        new Chart(platCanvas, {
+                          plugins: [donutLabelsPlugin],
+                          type: 'doughnut',
+                          data: { labels: pl.labels, datasets: [{ data: pl.values, backgroundColor: pl.colors, borderWidth: 0 }] },
+                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ return String(ctx && ctx.label ? ctx.label : ''); } } } }, cutout: '60%' }
+                        });
+                      }
                       var payEl = document.getElementById('dashboardPaymentMethodData');
                       var payRaw = payEl ? String(payEl.textContent || '').trim() : '[]';
                       var pay = JSON.parse(payRaw || '[]');
