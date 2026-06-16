@@ -99,7 +99,6 @@ const tabelaCurtidas = {
         { q: 15000, p: 'R$ 199,90' },
     ],
     organicos: [
-        { q: 100, p: 'R$ 3,00' }, // pacote de teste
         { q: 150, p: 'R$ 16,90' },
         { q: 300, p: 'R$ 28,90' },
         { q: 500, p: 'R$ 49,90' },
@@ -113,7 +112,6 @@ const tabelaCurtidas = {
         { q: 15000, p: 'R$ 449,90' },
     ],
     curtidas_reais: [
-        { q: 100, p: 'R$ 3,00' }, // pacote de teste
         { q: 150, p: 'R$ 16,90' },
         { q: 300, p: 'R$ 28,90' },
         { q: 500, p: 'R$ 49,90' },

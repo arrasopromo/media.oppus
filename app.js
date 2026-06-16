@@ -2157,6 +2157,53 @@ async function postFormWithRetry(url, formBodyString, timeoutMs, maxAttempts, ax
     throw lastErr || new Error('request_failed');
 }
 
+// Despacha o bump de CURTIDAS REAIS para o TopFama (mesma API SMM do fornecedor_social).
+// Grava no campo `topfama_likes`, com lock anti-duplicidade (status processing/created).
+// Usado pelos vários caminhos de fulfillment (principal, retry, mark-paid, recovery).
+async function dispatchTopfamaLikesBump(col, filter, serviceId, link, quantity) {
+    try {
+        const keyTop = process.env.TOPFAMA_API_KEY || '';
+        if (!keyTop) {
+            await col.updateOne(filter, { $set: { 'topfama_likes.status': 'missing_key', 'topfama_likes.error': { code: 'missing_api_key', env: 'TOPFAMA_API_KEY' }, 'topfama_likes.requestPayload': { service: serviceId, link: String(link || ''), quantity }, 'topfama_likes.requestedAt': new Date().toISOString() } });
+            return;
+        }
+        const lock = await col.updateOne(
+            { ...filter, 'topfama_likes.orderId': { $exists: false }, 'topfama_likes.status': { $nin: ['processing', 'created'] } },
+            { $set: { 'topfama_likes.status': 'processing', 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.requestedAt': new Date().toISOString() }, $unset: { 'topfama_likes.error': '' } }
+        );
+        if (lock.modifiedCount <= 0) return;
+        const payload = new URLSearchParams({ key: String(keyTop), action: 'add', service: String(serviceId), link: String(link), quantity: String(quantity) });
+        try { console.log('🚀 sending_topfama_likes', { service: serviceId, link, quantity }); } catch (_) {}
+        try {
+            const resp = await postFormWithRetry('https://topfama.com/api/v2', payload.toString(), 60000, 3);
+            const data = normalizeProviderResponseData(resp.data);
+            const orderId = extractProviderOrderId(data);
+            const provErr = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
+            if (provErr && !orderId) {
+                const errStr = typeof provErr === 'string' ? provErr : JSON.stringify(provErr);
+                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                const setObj = { 'topfama_likes.status': st, 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.response': data, 'topfama_likes.requestedAt': new Date().toISOString() };
+                setObj[st === 'duplicate' ? 'topfama_likes.duplicate' : 'topfama_likes.error'] = provErr;
+                if (st === 'duplicate') await col.updateOne(filter, { $set: setObj, $unset: { 'topfama_likes.error': '' } });
+                else await col.updateOne(filter, { $set: setObj });
+            } else {
+                const setObj = { 'topfama_likes.status': orderId ? 'created' : 'unknown', 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.response': data, 'topfama_likes.requestedAt': new Date().toISOString() };
+                if (orderId) setObj['topfama_likes.orderId'] = orderId;
+                await col.updateOne(filter, { $set: setObj, $unset: { 'topfama_likes.error': '', 'topfama_likes.duplicate': '' } });
+            }
+        } catch (e) {
+            try { console.error('❌ topfama_likes_error', e?.response?.data || e?.message || String(e), { link, quantity }); } catch (_) {}
+            const errVal = e?.response?.data || e?.message || String(e);
+            const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
+            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+            const setObj = { 'topfama_likes.status': st, 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.requestedAt': new Date().toISOString() };
+            setObj[st === 'duplicate' ? 'topfama_likes.duplicate' : 'topfama_likes.error'] = errVal;
+            if (st === 'duplicate') await col.updateOne(filter, { $set: setObj, $unset: { 'topfama_likes.error': '' } });
+            else await col.updateOne(filter, { $set: setObj });
+        }
+    } catch (_) {}
+}
+
 // Ensure default admin exists on startup
 async function ensureAdminUser() {
     try {
@@ -12879,8 +12926,9 @@ async function processOrderFulfillment(record, col, req) {
           const isFollowerOrg = isFollowersBase && /organicos/.test(t);
           const isFollowerBr = isFollowersBase && /brasileir/.test(t);
           const isCurtidasReais = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(t);
-          if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
-          if (isFollowerOrg) return { provider: 'fornecedor_social', serviceId: 194 };
+          // Curtidas reais (bump atrelado a seguidores reais OU produto principal de curtidas reais) → topfama:233
+          if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
+          if (isFollowerOrg) return { provider: 'topfama', serviceId: 233 };
           if (t.includes('brasileiros') || t.includes('curtidas_brasileiras') || isFollowerBr) return { provider: 'fama24h', serviceId: 679 };
           return { provider: 'fama24h', serviceId: 671 };
         })();
@@ -12969,6 +13017,8 @@ async function processOrderFulfillment(record, col, req) {
                     }
                 }
             }
+        } else if (likesQty > 0 && likesLink && likesBumpConf.provider === 'topfama') {
+            await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLink, likesQty);
         } else if (likesQty > 0 && !likesLink) {
             try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
         }
@@ -15554,8 +15604,8 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 const isFollowerOrg = isFollowerBase && /organicos/.test(t);
                 const isFollowerBr = isFollowerBase && /brasileir/.test(t);
                 const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(t);
-                if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
-                if (isFollowerOrg) return { provider: 'fornecedor_social', serviceId: 194 };
+                if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
+                if (isFollowerOrg) return { provider: 'topfama', serviceId: 233 };
                 if (t.includes('brasileiros') || t.includes('curtidas_brasileiras') || isFollowerBr) return { provider: 'fama24h', serviceId: 679 };
                 return { provider: 'fama24h', serviceId: 671 };
               })();
@@ -15566,7 +15616,9 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'error', 'fama24h_likes.error': 'invalid_link', 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
                 }
               } else {
-                if (likesBumpConf.provider === 'fornecedor_social') {
+                if (likesBumpConf.provider === 'topfama') {
+                  await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLinkSel, likesQtyForStatus);
+                } else if (likesBumpConf.provider === 'fornecedor_social') {
                   const keyFSLikes = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
                   const alreadyLikesFS = !!(record && record.fornecedor_social_likes && (record.fornecedor_social_likes.orderId || record.fornecedor_social_likes.status === 'processing' || record.fornecedor_social_likes.status === 'created' || record.fornecedor_social_likes.status === 'duplicate' || typeof record.fornecedor_social_likes.error !== 'undefined' || typeof record.fornecedor_social_likes.duplicate !== 'undefined'));
                   if (keyFSLikes && !alreadyLikesFS) {
@@ -16271,12 +16323,15 @@ app.post('/api/orderbump/resend', async (req, res) => {
         const isFollowerOrg = isFollowerBase && /organicos/.test(t);
         const isFollowerBr = isFollowerBase && /brasileir/.test(t);
         const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(t);
-        if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
-        if (isFollowerOrg) return { provider: 'fornecedor_social', serviceId: 194 };
+        if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
+        if (isFollowerOrg) return { provider: 'topfama', serviceId: 233 };
         if (t.includes('brasileiros') || t.includes('curtidas_brasileiras') || isFollowerBr) return { provider: 'fama24h', serviceId: 679 };
         return { provider: 'fama24h', serviceId: 671 };
       })();
-      if (likesBumpConf.provider === 'fornecedor_social') {
+      if (likesBumpConf.provider === 'topfama') {
+        await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLink, likesQty);
+        results.likes = { provider: 'topfama' };
+      } else if (likesBumpConf.provider === 'fornecedor_social') {
         const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
         const alreadyLikesFS = !!(record && record.fornecedor_social_likes && (record.fornecedor_social_likes.orderId || record.fornecedor_social_likes.status === 'processing' || record.fornecedor_social_likes.status === 'created'));
         if (keyFS && !alreadyLikesFS) {
@@ -16460,12 +16515,15 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
           const isFollowerOrg = isFollowerBase && /organicos/.test(t);
           const isFollowerBr = isFollowerBase && /brasileir/.test(t);
           const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(t);
-          if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
-          if (isFollowerOrg) return { provider: 'fornecedor_social', serviceId: 194 };
+          if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
+          if (isFollowerOrg) return { provider: 'topfama', serviceId: 233 };
           if (t.includes('brasileiros') || t.includes('curtidas_brasileiras') || isFollowerBr) return { provider: 'fama24h', serviceId: 679 };
           return { provider: 'fama24h', serviceId: 671 };
         })();
-        if (likesBumpConf.provider === 'fornecedor_social') {
+        if (likesBumpConf.provider === 'topfama') {
+          await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLink, likesQty);
+          resultItem.likes = { provider: 'topfama' };
+        } else if (likesBumpConf.provider === 'fornecedor_social') {
           const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
           if (keyFS) {
             const lockUpdate = await col.updateOne(
@@ -17965,15 +18023,18 @@ app.post('/session/mark-paid', async (req, res) => {
             const isFollowerOrg = isFollowerBase && /organicos/.test(t);
             const isFollowerBr = isFollowerBase && /brasileir/.test(t);
             const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(t);
-            if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
-            if (isFollowerOrg) return { provider: 'fornecedor_social', serviceId: 194 };
+            if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
+            if (isFollowerOrg) return { provider: 'topfama', serviceId: 233 };
             if (t.includes('brasileiros') || t.includes('curtidas_brasileiras') || isFollowerBr) return { provider: 'fama24h', serviceId: 679 };
             return { provider: 'fama24h', serviceId: 671 };
           })();
           const alreadyLikesFama = !!(record && record.fama24h_likes && (record.fama24h_likes.orderId || record.fama24h_likes.status === 'processing' || record.fama24h_likes.status === 'created'));
           const alreadyLikesFS = !!(record && record.fornecedor_social_likes && (record.fornecedor_social_likes.orderId || record.fornecedor_social_likes.status === 'processing' || record.fornecedor_social_likes.status === 'created'));
           if (likesQty > 0) {
-            if (likesBumpConf.provider === 'fornecedor_social') {
+            if (likesBumpConf.provider === 'topfama') {
+              if (likesLinkSel) await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLinkSel, likesQty);
+              else { try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {} }
+            } else if (likesBumpConf.provider === 'fornecedor_social') {
               if ((process.env.FORNECEDOR_SOCIAL_API_KEY || '') && !alreadyLikesFS) {
                 if (!likesLinkSel) {
                   try { console.warn('⚠️ [mark-paid] likes_link_invalid', { likesLinkRaw }); } catch(_) {}
@@ -38918,12 +38979,14 @@ app.post('/api/payment/confirm', async (req, res) => {
         const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const likesBumpConf = (() => {
           const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipoLocal);
-          if (isCurtidasReais) return { provider: 'fornecedor_social', serviceId: 194 };
+          if (isCurtidasReais) return { provider: 'topfama', serviceId: 233 };
           if (tipoLocal.includes('brasileiros') || tipoLocal.includes('curtidas_brasileiras')) return { provider: 'fama24h', serviceId: 679 };
           return { provider: 'fama24h', serviceId: 671 };
         })();
         if (likesQty > 0 && likesLinkSel) {
-          if (likesBumpConf.provider === 'fornecedor_social') {
+          if (likesBumpConf.provider === 'topfama') {
+            await dispatchTopfamaLikesBump(col, filter, likesBumpConf.serviceId, likesLinkSel, likesQty);
+          } else if (likesBumpConf.provider === 'fornecedor_social') {
             const keyFS = process.env.FORNECEDOR_SOCIAL_API_KEY || '';
             const alreadyLikesFS4 = !!(record && record.fornecedor_social_likes && (record.fornecedor_social_likes.orderId || record.fornecedor_social_likes.status === 'processing' || record.fornecedor_social_likes.status === 'created'));
             if (keyFS && !alreadyLikesFS4) {
