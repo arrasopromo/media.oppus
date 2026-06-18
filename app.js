@@ -10616,9 +10616,24 @@ app.post('/api/paghiper/notification', async (req, res) => {
         try {
             const tcUrl = String(process.env.TRACKCOMBO_NOTIFICATION_URL || 'https://server.trackcombo.com/integration/MXERC7WMHA/mNa2IGe5qj7gaPyO67Ip/').trim();
             if (tcUrl) {
-                Promise.resolve()
-                    .then(() => axios.post(tcUrl, body, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 }))
-                    .catch(() => {});
+                // Encaminha o body da PagHiper para a TrackCombo, ENRIQUECIDO com o nome do
+                // cliente (payer_name). O body cru da PagHiper só traz transaction_id/notification_id,
+                // então buscamos o pedido para anexar o nome. Fire-and-forget (não trava o webhook).
+                (async () => {
+                    let payerName = '';
+                    try {
+                        const col0 = await getCollection('checkout_orders');
+                        const o0 = await col0.findOne(
+                            { $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] },
+                            { projection: { 'customer.name': 1 } }
+                        );
+                        payerName = sanitizeText(String((o0 && o0.customer && o0.customer.name) || '').trim());
+                    } catch (_) {}
+                    const tcBody = Object.assign({}, body, payerName ? { payer_name: payerName } : {});
+                    try {
+                        await axios.post(tcUrl, tcBody, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
+                    } catch (_) {}
+                })().catch(() => {});
             }
         } catch (_) {}
 
@@ -18420,16 +18435,37 @@ app.post('/api/refil/simple', async (req, res) => {
       const a = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o.additionalInfo) ? o.additionalInfo : []);
       return String(o.tipo || o.tipoServico || m.tipo_servico || (a.find(x => x && x.key === 'tipo_servico') || {}).value || '').toLowerCase().trim();
     };
-    // pega o pedido pago mais recente que seja mistos/brasileiros E já tenha orderId do fama
+    const getCat = (o) => {
+      const m = o.additionalInfoMapPaid || o.additionalInfoMap || {};
+      const a = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o.additionalInfo) ? o.additionalInfo : []);
+      return String(o.categoria || o.categoriaServico || m.categoria_servico || (a.find(x => x && x.key === 'categoria_servico') || {}).value || '').toLowerCase().trim();
+    };
+    // SEGURANÇA: curtidas e visualizações também usam tipo 'mistos'/'brasileiros' e podem ter
+    // fama24h.orderId — o refil1 é SÓ para SEGUIDORES. Confirmamos a categoria real pelo serviço
+    // do fama (663 mistos / 23 brasileiros = seguidores; 671/679 = curtidas; 250 = views),
+    // pela categoria_servico, pelo multi-post (curtidas/views) e pelo link (perfil x post).
+    const isSeguidoresOrder = (o) => {
+      const cat = getCat(o);
+      if (/curtida|visualiz|view|reel/.test(cat)) return false;
+      const svc = String((o && o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.service) || '').trim();
+      if (svc === '671' || svc === '679' || svc === '250') return false; // curtidas/views
+      if (o && o.fama24h_multi) return false;                            // multi-post = curtidas/views (seguidores nunca é multi)
+      if (cat === 'seguidores') return true;
+      if (svc === '663' || svc === '23') return true;                    // seguidores mistos/brasileiros
+      const link = String((o && o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.link) || '').toLowerCase();
+      if (/\/(p|reel|reels|tv)\//.test(link)) return false;              // link de post = curtidas/views
+      return true; // sem nenhum sinal de curtidas/views: trata como seguidores
+    };
+    // pega o pedido pago mais recente que seja SEGUIDORES mistos/brasileiros E já tenha orderId do fama
     let order = null, famaOrderId = '';
     for (const o of paidArr) {
       const tipo = getTipo(o);
       const isSimple = (tipo === 'mistos' || tipo === 'brasileiros');
       const oid = String(o?.fama24h?.orderId || '').trim();
-      if (isSimple && /^[0-9]+$/.test(oid)) { order = o; famaOrderId = oid; break; }
+      if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) { order = o; famaOrderId = oid; break; }
     }
     if (!order) {
-      const anySimple = paidArr.some(o => { const t = getTipo(o); return t === 'mistos' || t === 'brasileiros'; });
+      const anySimple = paidArr.some(o => { const t = getTipo(o); return (t === 'mistos' || t === 'brasileiros') && isSeguidoresOrder(o); });
       if (!anySimple) return res.status(400).json({ ok: false, error: 'not_supported', message: 'Reposição disponível apenas para seguidores mistos e brasileiros.' });
       return res.status(400).json({ ok: false, error: 'no_provider_order', message: 'Seu pedido ainda está em processamento. Tente novamente mais tarde.' });
     }

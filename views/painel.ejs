@@ -3580,6 +3580,12 @@
           <div class="summary-label">Custo Total no Período</div>
           <div class="summary-value">R$ <%= totalCost.toFixed(2).replace('.', ',') %></div>
         </div>
+        <% var _vendasOper = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _lucroOper = _vendasOper - Number(totalCost || 0); %>
+        <div class="summary-card">
+          <div class="summary-label">Lucro Operacional (período)</div>
+          <div class="summary-value" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-sub" style="margin-top:6px;">Total de Vendas − Custo Total</div>
+        </div>
         <div class="summary-card">
           <div class="summary-label">% custo / vendas (período)</div>
           <div class="summary-value"><%= (typeof costOverRevenuePct !== 'undefined' ? Number(costOverRevenuePct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>

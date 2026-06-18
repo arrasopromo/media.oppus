@@ -199,14 +199,20 @@ const calculateOrderBumps = (bumpsStr, baseType) => {
         const q = parseInt(qtyStr, 10) || 1;
         
         if (key === 'likes') {
-            const isReelsViewsBase = base.includes('visualiz') || base === 'views' || base === 'reels' || base.includes('visualizacoes_reels');
-            const variant = isReelsViewsBase
-              ? 'organicos'
-              : (base.includes('organicos') ? 'organicos' : ((base.includes('brasileiros') || base.includes('curtidas_brasileiras')) ? 'brasileiros' : 'mistos'));
-            const table = tabelaCurtidasPromo[variant] || tabelaCurtidasPromo.mistos;
+            // ESPELHA o front (servicos-instagram.js: getLikesVariantKey + tabelaCurtidas).
+            // O front precifica o bump de curtidas pela tabela PRINCIPAL (tabelaCurtidas) e a
+            // variante é: 'organicos'→organicos; 'curtidas_brasileiras'→curtidas_brasileiras;
+            // TODO o resto (mistos, brasileiros de seguidores, views) → 'mistos'.
+            // Antes o backend usava tabelaCurtidasPromo (mais cara) + variante por base,
+            // o que cobrava ~R$2 a mais do que o cliente via no checkout.
+            let variant;
+            if (base === 'organicos' || base === 'curtidas_organicos' || base === 'curtidas_reais') variant = 'organicos';
+            else if (base === 'curtidas_brasileiras') variant = 'curtidas_brasileiras';
+            else variant = 'mistos';
+            const table = tabelaCurtidas[variant] || tabelaCurtidas.mistos;
             const item = table.find(x => x.q === q);
             if (item) total += parsePrecoToCents(item.p);
-            
+
         } else if (key === 'views') {
             const item = tabelaVisualizacoes.visualizacoes_reels.find(x => x.q === q);
             if (item) total += parsePrecoToCents(item.p);
