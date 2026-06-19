@@ -18416,6 +18416,44 @@ app.post('/api/refil/simple', async (req, res) => {
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username', message: 'Informe o @ do Instagram.' });
     const viaTag = (function () { const v = String((req.body && (req.body.via || req.body.source)) || '').trim(); return /^[a-z0-9_]{1,40}$/i.test(v) ? v : 'refil1_simple'; })();
 
+    // Loga TODA reposição do refil1 em `refil2_requests` para aparecer no Gerenciamento de Refil
+    // (auto via painel e manual via /refil1). Antes só o /api/refil/preview gravava lá, então
+    // depois que o refil1/bulk passaram a usar este endpoint, as reposições sumiam do gerenciamento.
+    let __refilLogOrderId = '';
+    {
+      const __origResJson = res.json.bind(res);
+      let __refilLogged = false;
+      res.json = function (body) {
+        try {
+          if (username && !__refilLogged) {
+            __refilLogged = true;
+            const b = (req && req.body && typeof req.body === 'object') ? req.body : {};
+            const automated = (b.automated === true || b.automated === 1 || String(b.automated || '').trim() === '1');
+            const ok = !!(body && body.ok);
+            const errCode = String((body && body.error) || '').trim();
+            const blocked = ['no_orders', 'not_supported', 'no_provider_order', 'paid_today', 'refill_unavailable'].indexOf(errCode) >= 0;
+            const doc = {
+              requestedAt: new Date(),
+              source: viaTag,
+              username,
+              ip: String(req.realIP || req.ip || '').trim(),
+              ua: String(req.get('User-Agent') || req.headers['user-agent'] || '').trim(),
+              execStatus: ok ? 'success' : (blocked ? 'blocked' : 'error'),
+              decisionStatus: ok ? 'initiated' : (blocked ? 'blocked' : 'error'),
+              decisionReason: ok ? 'add_reorder_ok' : (errCode || 'error'),
+              responseMessage: String((body && body.message) || '').trim()
+            };
+            if (automated) doc.automated = true;
+            if (b.automationBatchId) doc.automationBatchId = String(b.automationBatchId).trim();
+            if (__refilLogOrderId) doc.pedido = { id: __refilLogOrderId, link: 'https://instagram.com/' + username };
+            if (ok && body && body.refill) doc.forceRefil = { orderId: String(body.refill), provider: 'fama24h', finishedAt: new Date() };
+            (async () => { try { const c = await getCollection('refil2_requests'); if (c && typeof c.insertOne === 'function') await c.insertOne(doc); } catch (_) {} })();
+          }
+        } catch (_) {}
+        return __origResJson(body);
+      };
+    }
+
     const col = await getCollection('checkout_orders');
     const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`^@?${esc(username)}$`, 'i');
@@ -18462,7 +18500,7 @@ app.post('/api/refil/simple', async (req, res) => {
       const tipo = getTipo(o);
       const isSimple = (tipo === 'mistos' || tipo === 'brasileiros');
       const oid = String(o?.fama24h?.orderId || '').trim();
-      if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) { order = o; famaOrderId = oid; break; }
+      if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) { order = o; famaOrderId = oid; __refilLogOrderId = oid; break; }
     }
     if (!order) {
       const anySimple = paidArr.some(o => { const t = getTipo(o); return (t === 'mistos' || t === 'brasileiros') && isSeguidoresOrder(o); });
@@ -30246,6 +30284,35 @@ app.post('/painel/consulta-perfil', requireAdmin, async (req, res) => {
 // Cache em memória do painel (dashboard/vendas) — evita re-consultar o banco a cada filtro/refresh
 const __painelCache = new Map(); // chave (URL) → { html, exp }
 const PAINEL_CACHE_TTL_MS = Number(process.env.PAINEL_CACHE_TTL_MS || 60000);
+// Janela "stale": depois de expirar, ainda servimos o HTML velho na hora e atualizamos
+// em background por até este tempo. Faz o dashboard ficar instantâneo (só o 1º load frio
+// — ou após >30min ocioso — espera a query pesada). Dados ficam no máx. ~TTL+refresh velhos.
+const PAINEL_CACHE_STALE_MS = Number(process.env.PAINEL_CACHE_STALE_MS || 1800000);
+const __painelRefreshing = new Set(); // chaves em atualização (evita disparar refresh duplicado)
+function __painelTriggerRefresh(cacheKey, req) {
+  try {
+    if (!cacheKey || __painelRefreshing.has(cacheKey)) return;
+    __painelRefreshing.add(cacheKey);
+    const http = require('http');
+    const done = () => { try { __painelRefreshing.delete(cacheKey); } catch (_) {} };
+    // Auto-requisição interna: reusa o handler inteiro (dados frescos) reaproveitando o
+    // cookie do admin. O header X-Painel-Refresh força recomputar e regravar no MESMO cacheKey.
+    const r = http.request({
+      host: '127.0.0.1',
+      port: port,
+      path: (req && req.originalUrl) || cacheKey,
+      method: 'GET',
+      headers: {
+        'Cookie': (req && req.headers && req.headers.cookie) || '',
+        'X-Painel-Refresh': '1',
+        'Accept': 'text/html'
+      }
+    }, (resp) => { resp.on('data', () => {}); resp.on('end', done); resp.on('error', done); });
+    r.on('error', done);
+    r.setTimeout(45000, () => { try { r.destroy(); } catch (_) {} done(); });
+    r.end();
+  } catch (_) { try { __painelRefreshing.delete(cacheKey); } catch (e) {} }
+}
 
 app.get('/painel', requireAdmin, async (req, res) => {
   try {
@@ -30259,11 +30326,23 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const __painelCacheable = (view === 'dashboard' || view === 'vendas');
     const __painelCacheKey = String(req.originalUrl || ('/painel?view=' + view));
     const __painelBypassCache = String(req.query.nocache || '') === '1';
-    if (__painelCacheable && !__painelBypassCache) {
+    // Requisição interna de refresh (vinda de __painelTriggerRefresh): força recomputar
+    // e regravar no cache, sem ler/servir o cache existente (evita loop).
+    const __painelInternalRefresh = String(req.headers['x-painel-refresh'] || '') === '1';
+    if (__painelCacheable && !__painelBypassCache && !__painelInternalRefresh) {
       try {
         const hit = __painelCache.get(__painelCacheKey);
-        if (hit && hit.exp > Date.now()) {
+        const __now = Date.now();
+        if (hit && hit.exp > __now) {
           res.set('X-Painel-Cache', 'HIT');
+          return res.type('text/html').send(hit.html);
+        }
+        // Stale-while-revalidate: cache expirado mas dentro da janela → entrega o velho na
+        // hora (instantâneo) e dispara a atualização em background. Só recomputa de forma
+        // síncrona (load lento) quando não há cache ou ele está velho demais.
+        if (hit && (hit.exp + PAINEL_CACHE_STALE_MS) > __now) {
+          __painelTriggerRefresh(__painelCacheKey, req);
+          res.set('X-Painel-Cache', 'STALE');
           return res.type('text/html').send(hit.html);
         }
       } catch (_) {}

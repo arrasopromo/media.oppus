@@ -24,11 +24,19 @@
   <meta charset="utf-8" />
   <title>Checkout - Seguidores</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <!-- Preconnect às origens externas (ganha tempo no 1º request) -->
+  <link rel="preconnect" href="https://track.agenciaoppus.site" />
+  <link rel="preconnect" href="https://connect.facebook.net" crossorigin />
   <link href="/css/style.css?v=2" rel="stylesheet" />
-  <link href="/css/perfil.css" rel="stylesheet" />
-  <!-- Testimonials CSS -->
-  <link href="/css/testimonials.css" rel="stylesheet" />
-  <link href="/css/why-us.css?v=5" rel="stylesheet" />
+  <!-- CSS abaixo da dobra (perfil/testimonials/why-us): carrega sem bloquear o render -->
+  <link rel="stylesheet" href="/css/perfil.css" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/css/testimonials.css" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/css/why-us.css?v=5" media="print" onload="this.media='all'" />
+  <noscript>
+    <link rel="stylesheet" href="/css/perfil.css" />
+    <link rel="stylesheet" href="/css/testimonials.css" />
+    <link rel="stylesheet" href="/css/why-us.css?v=5" />
+  </noscript>
   <link rel="icon" type="image/png" href="/images/logo.png" />
   <!-- TRACK COMBO -->
   <script>
@@ -232,21 +240,21 @@
               <div class="value-props">
                 <div class="value-prop-item">
                   <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" />
+                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" loading="lazy" decoding="async" />
                     <div class="value-prop-metric">+3</div>
                   </div>
                   <div class="value-prop-caption"><span class="caption-desktop">anos de operação</span><span class="caption-mobile">anos de<br>operação</span></div>
                 </div>
                 <div class="value-prop-item">
                   <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" />
+                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" loading="lazy" decoding="async" />
                     <div class="value-prop-metric">+2</div>
                   </div>
                   <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
                 </div>
                 <div class="value-prop-item">
                   <div class="value-prop-row">
-                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" />
+                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" loading="lazy" decoding="async" />
                     <div class="value-prop-metric">R$<span class="value-prop-arrow">↓</span></div>
                   </div>
                   <div class="value-prop-caption"><span class="caption-desktop">melhores preços do mercado</span><span class="caption-mobile">melhores<br>preços do<br>mercado</span></div>
@@ -262,9 +270,9 @@
               <button type="button" class="carousel-btn prev" aria-label="Anterior">‹</button>
               <div class="carousel-viewport">
               <div class="carousel-track">
-                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" /></div>
-                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" /></div>
-                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" /></div>
+                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" loading="lazy" decoding="async" /></div>
+                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" loading="lazy" decoding="async" /></div>
+                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" loading="lazy" decoding="async" /></div>
               </div>
               </div>
               <button type="button" class="carousel-btn next" aria-label="Próximo">›</button>
@@ -531,7 +539,7 @@
               Conheça nossa tecnologia exclusiva de reposição automática de seguidores.
             </p>
             <div style="max-width: 500px; margin: 0 auto;">
-              <img src="/images/refil%20(1).png" alt="Ferramenta de Reposição" style="width: 100%; max-width: 500px !important; display: block; margin: 0 auto; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
+              <img src="/images/refil%20(1).png" alt="Ferramenta de Reposição" loading="lazy" decoding="async" style="width: 100%; max-width: 500px !important; display: block; margin: 0 auto; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
             </div>
           </div>
 
@@ -830,7 +838,7 @@
           </div>
           <div class="modal-body">
             <p style="margin-top:0.75rem; color: var(--text-secondary);">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de seguidores que teve queda.</p>
-            <img src="/images/reposicao.jpeg" alt="Reposição de seguidores" style="width:100%; height: clamp(420px, 70vh, 720px); aspect-ratio: 9 / 16; object-fit: cover; border-radius:12px; margin-top:0.75rem;">
+            <img src="/images/reposicao.jpeg" alt="Reposição de seguidores" loading="lazy" decoding="async" style="width:100%; height: clamp(420px, 70vh, 720px); aspect-ratio: 9 / 16; object-fit: cover; border-radius:12px; margin-top:0.75rem;">
           </div>
           <div class="modal-footer">
             <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>
@@ -900,9 +908,9 @@
     </footer>
   </div>
 
-   <script src="/js/main.js"></script>
-   <script src="/js/checkout.js?v=<%= Date.now() %>"></script>
-   <script src="/js/why-us.js"></script>
+   <script defer src="/js/main.js"></script>
+   <script defer src="/js/checkout.js?v=<%= Date.now() %>"></script>
+   <script defer src="/js/why-us.js"></script>
    <div id="toastContainer" class="toast-container"></div>
   <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
     <div class="client-page-inner">

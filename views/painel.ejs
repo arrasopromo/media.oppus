@@ -17,12 +17,13 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
     th { background: #f9f9f9; }
-    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 16px; }
     @media (min-width: 1200px) { .summary-grid.summary-grid-dashboard { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
-    .summary-card { border: 1px solid #e8e8e8; background: #fafafa; border-radius: 10px; padding: 12px 14px; }
-    .summary-label { font-size: 0.85rem; color: #666; margin-bottom: 6px; }
-    .summary-value { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.2px; color: #111; }
-    .summary-sub { font-size: 0.8rem; color: #666; margin-top: 6px; }
+    .summary-card { border: 1px solid #eef0f4; background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06); transition: box-shadow .15s ease; }
+    .summary-card:hover { box-shadow: 0 4px 12px rgba(16,24,40,0.08); }
+    .summary-label { font-size: 0.72rem; color: #6b7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 500; }
+    .summary-value { font-size: 1.45rem; font-weight: 600; letter-spacing: -0.3px; color: #1f2937; line-height: 1.15; }
+    .summary-sub { font-size: 0.78rem; color: #6b7280; margin-top: 8px; line-height: 1.35; }
     .dashboard-layout { display: flex; gap: 24px; align-items: flex-start; margin-top: 16px; flex-wrap: wrap; }
     @media (min-width: 1100px) { .dashboard-layout { flex-wrap: nowrap; } }
     .dashboard-layout { width: 100%; }
@@ -85,9 +86,9 @@
       .filters a { padding: 8px 12px; font-size: 0.95rem; }
       .panel-filterbar { padding: 12px; }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .summary-card { padding: 10px 12px; border-radius: 10px; }
-      .summary-value { font-size: 1.1rem; }
-      .summary-label { font-size: 0.78rem; }
+      .summary-card { padding: 12px; border-radius: 10px; }
+      .summary-value { font-size: 1.2rem; }
+      .summary-label { font-size: 0.66rem; }
     }
 
     @media (max-width: 480px) {
@@ -510,6 +511,7 @@
             <div id="followersVerifyMenu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:220px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
               <button type="button" id="followersVerifyFilteredBtn" style="width:100%; padding: 8px 10px; background: #0ea5e9; color: white; border: none; border-radius: 8px; cursor: pointer;">Verificar filtro</button>
               <button type="button" id="followersForceVerifyFilteredBtn" style="width:100%; margin-top:8px; padding: 8px 10px; background: #dc2626; color: white; border: none; border-radius: 8px; cursor: pointer;">Forçar verificação do filtro</button>
+              <button type="button" id="followersForceVerifySelectedBtn" style="width:100%; margin-top:8px; padding: 8px 10px; background: #b91c1c; color: white; border: none; border-radius: 8px; cursor: pointer;">Forçar verificação de marcados</button>
             </div>
           </div>
           <button type="button" id="followersHideSelectedBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; cursor: pointer;">Ocultar marcados</button>
@@ -1835,6 +1837,7 @@
           var verifyMenu = el('followersVerifyMenu');
           var verifyFilteredBtn = el('followersVerifyFilteredBtn');
           var forceVerifyFilteredBtn = el('followersForceVerifyFilteredBtn');
+          var forceVerifySelectedBtn = el('followersForceVerifySelectedBtn');
           var hideSelectedBtn = el('followersHideSelectedBtn');
           var unhideSelectedBtn = el('followersUnhideSelectedBtn');
           var selectAllEl = el('followersSelectAll');
@@ -2050,7 +2053,7 @@
               try { if (unhideSelectedBtn) unhideSelectedBtn.disabled = false; } catch (_) {}
             }
           }
-          async function verifyRows(rows){
+          async function verifyRows(rows, force){
             if (!rows || !rows.length) return;
             verifySelectedStopRequested = false;
             verifySelectedRunning = true;
@@ -2076,8 +2079,8 @@
                   setStatus('Verificação pausada.');
                   break;
                 }
-                setStatus('Verificando ' + (i+1) + ' de ' + filteredRows.length + '…');
-                await refreshRow(filteredRows[i], false);
+                setStatus((force ? 'Forçando verificação ' : 'Verificando ') + (i+1) + ' de ' + filteredRows.length + '…');
+                await refreshRow(filteredRows[i], !!force);
                 if (verifySelectedStopRequested) {
                   setStatus('Verificação pausada.');
                   break;
@@ -2165,6 +2168,19 @@
                 return;
               }
               verifyRows(rows).catch(function(){});
+            });
+          }
+          if (forceVerifySelectedBtn) {
+            forceVerifySelectedBtn.addEventListener('click', function(){
+              var rows = getCheckedRows();
+              if (!rows.length) {
+                alert('Selecione pelo menos 1 perfil.');
+                return;
+              }
+              try { closeVerifyMenu(); } catch (_) {}
+              // Audita a quantidade ATUAL de seguidores dos marcados, forçando re-consulta
+              // (ignora o cache de 2 dias) e SEM aplicar regras de elegibilidade.
+              verifyRows(rows, true).catch(function(){});
             });
           }
           if (selectAllEl) {
