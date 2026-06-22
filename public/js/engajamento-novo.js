@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/validate-coupon', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: pre, instagram_username })
+          body: JSON.stringify({ code: pre, instagram_username, categoria: (window.currentService === 'likes' ? 'curtidas' : (window.currentService === 'views' ? 'visualizacoes' : 'seguidores')), tipo: (window.selectedType || '') })
         })
         .then(function(res){ return res.json(); })
         .then(function(data){
@@ -116,7 +116,7 @@ document.addEventListener('DOMContentLoaded', function() {
           fetch('/api/validate-coupon', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code, instagram_username })
+              body: JSON.stringify({ code, instagram_username, categoria: (window.currentService === 'likes' ? 'curtidas' : (window.currentService === 'views' ? 'visualizacoes' : 'seguidores')), tipo: (window.selectedType || '') })
           })
           .then(res => res.json())
           .then(data => {
@@ -208,17 +208,17 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 15000, p: 'R$ 199,90' }
     ],
     organicos: [
-      { q: 150, p: 'R$ 16,90' },
-      { q: 300, p: 'R$ 28,90' },
-      { q: 500, p: 'R$ 49,90' },
-      { q: 1000, p: 'R$ 69,90' },
-      { q: 2000, p: 'R$ 104,90' },
-      { q: 3000, p: 'R$ 139,90' },
-      { q: 4000, p: 'R$ 174,90' },
-      { q: 5000, p: 'R$ 224,90' },
-      { q: 7500, p: 'R$ 279,90' },
-      { q: 10000, p: 'R$ 349,90' },
-      { q: 15000, p: 'R$ 449,90' }
+      { q: 150, p: 'R$ 11,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 34,90' },
+      { q: 1000, p: 'R$ 48,90' },
+      { q: 2000, p: 'R$ 73,90' },
+      { q: 3000, p: 'R$ 97,90' },
+      { q: 4000, p: 'R$ 122,90' },
+      { q: 5000, p: 'R$ 157,90' },
+      { q: 7500, p: 'R$ 195,90' },
+      { q: 10000, p: 'R$ 244,90' },
+      { q: 15000, p: 'R$ 314,90' }
     ]
   };
 
@@ -275,10 +275,10 @@ document.addEventListener('DOMContentLoaded', function() {
         { q: 7500, price: 'R$ 109,90' }, { q: 10000, price: 'R$ 139,90' }, { q: 15000, price: 'R$ 199,90' }
       ],
       organicos: [
-        { q: 150, price: 'R$ 16,90' }, { q: 300, price: 'R$ 28,90' }, { q: 500, price: 'R$ 49,90' },
-        { q: 1000, price: 'R$ 69,90' }, { q: 2000, price: 'R$ 104,90' }, { q: 3000, price: 'R$ 139,90' },
-        { q: 4000, price: 'R$ 174,90' }, { q: 5000, price: 'R$ 224,90' }, { q: 7500, price: 'R$ 279,90' },
-        { q: 10000, price: 'R$ 349,90' }, { q: 15000, price: 'R$ 449,90' }
+        { q: 150, price: 'R$ 11,90' }, { q: 300, price: 'R$ 19,90' }, { q: 500, price: 'R$ 34,90' },
+        { q: 1000, price: 'R$ 48,90' }, { q: 2000, price: 'R$ 73,90' }, { q: 3000, price: 'R$ 97,90' },
+        { q: 4000, price: 'R$ 122,90' }, { q: 5000, price: 'R$ 157,90' }, { q: 7500, price: 'R$ 195,90' },
+        { q: 10000, price: 'R$ 244,90' }, { q: 15000, price: 'R$ 314,90' }
       ]
     };
     const key = getLikesPromoVariantKey();
@@ -1201,7 +1201,8 @@ document.addEventListener('DOMContentLoaded', function() {
                   
                   // Fill Profile Data
                   document.getElementById('checkoutProfileUsername').textContent = data.username.replace(/^@+/, '');
-                  document.getElementById('checkoutProfileImage').src = data.profilePicUrl || '/img/default-avatar.png';
+                  var _eu = String(data.username || '').trim().replace(/^@+/, '');
+                  document.getElementById('checkoutProfileImage').src = _eu ? ('/avatar/instagram/' + encodeURIComponent(_eu)) : (data.profilePicUrl || '/img/default-avatar.png');
                   document.getElementById('checkoutFollowersCount').textContent = data.followers || '-';
                   document.getElementById('checkoutFollowingCount').textContent = data.following || '-';
                   document.getElementById('checkoutPostsCount').textContent = data.postsCount || '-';

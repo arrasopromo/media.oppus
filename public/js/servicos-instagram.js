@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('/api/validate-coupon', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: pre, instagram_username })
+          body: JSON.stringify({ code: pre, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
         })
         .then(function(res){ return res.json(); })
         .then(function(data){
@@ -164,7 +164,7 @@ document.addEventListener('DOMContentLoaded', function() {
           fetch('/api/validate-coupon', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ code, instagram_username })
+              body: JSON.stringify({ code, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
           })
           .then(res => res.json())
           .then(data => {
@@ -309,17 +309,17 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 15000, p: 'R$ 199,90' },
     ],
     organicos: [
-      { q: 150, p: 'R$ 16,90' },
-      { q: 300, p: 'R$ 28,90' },
-      { q: 500, p: 'R$ 49,90' },
-      { q: 1000, p: 'R$ 69,90' },
-      { q: 2000, p: 'R$ 104,90' },
-      { q: 3000, p: 'R$ 139,90' },
-      { q: 4000, p: 'R$ 174,90' },
-      { q: 5000, p: 'R$ 224,90' },
-      { q: 7500, p: 'R$ 279,90' },
-      { q: 10000, p: 'R$ 349,90' },
-      { q: 15000, p: 'R$ 449,90' },
+      { q: 150, p: 'R$ 11,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 34,90' },
+      { q: 1000, p: 'R$ 48,90' },
+      { q: 2000, p: 'R$ 73,90' },
+      { q: 3000, p: 'R$ 97,90' },
+      { q: 4000, p: 'R$ 122,90' },
+      { q: 5000, p: 'R$ 157,90' },
+      { q: 7500, p: 'R$ 195,90' },
+      { q: 10000, p: 'R$ 244,90' },
+      { q: 15000, p: 'R$ 314,90' },
     ],
   };
 
@@ -4747,7 +4747,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const res = await fetch('/api/validate-coupon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ code, instagram_username })
+        body: JSON.stringify({ code, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
       });
       const data = await res.json().catch(() => null);
       if (data && data.valid) {

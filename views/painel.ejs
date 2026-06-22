@@ -3344,6 +3344,20 @@
             <input type="datetime-local" id="couponValidFromInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
             <input type="datetime-local" id="couponValidToInput" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
           </div>
+          <div class="coupon-row" style="grid-template-columns:1fr;">
+            <label style="display:block; font-size:0.82rem; color:#374151; margin-bottom:4px;">Restringir serviços <span style="color:#999; font-weight:400;">(marque os que NÃO poderão usar o cupom — vazio = vale para todos)</span></label>
+            <select id="couponAllowedServicesInput" multiple size="8" style="padding:6px; border:1px solid #ccc; border-radius:4px; width:100%;">
+              <option value="seguidores_mistos">Seguidores Mistos</option>
+              <option value="seguidores_brasileiros">Seguidores Brasileiros</option>
+              <option value="seguidores_organicos">Seguidores Reais (Orgânicos)</option>
+              <option value="curtidas_mistos">Curtidas Mistas</option>
+              <option value="curtidas_brasileiras">Curtidas Brasileiras</option>
+              <option value="curtidas_organicas">Curtidas Reais</option>
+              <option value="visualizacoes_reels">Visualizações (Reels)</option>
+              <option value="comentarios">Comentários</option>
+            </select>
+            <div style="font-size:0.75rem; color:#999; margin-top:2px;">Os serviços marcados ficam <strong>bloqueados</strong> para este cupom. Segure Ctrl (Cmd no Mac) para marcar mais de um. Vazio = vale em qualquer serviço.</div>
+          </div>
           <label style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="couponIsActiveInput" checked>
             <span>Ativo</span>
@@ -3407,7 +3421,25 @@
             const maxUsesPerProfile = maxUsesPerProfileRaw ? (Number(maxUsesPerProfileRaw) || null) : null;
             const validFrom = validFromRaw ? new Date(validFromRaw).toISOString() : null;
             const validTo = validToRaw ? new Date(validToRaw).toISOString() : null;
-            return { id, code, discountPercentage, maxUsesTotal, maxUsesPerProfile, validFrom, validTo, isActive };
+            const blockedServices = [];
+            const selEl = document.getElementById('couponAllowedServicesInput');
+            if (selEl && selEl.options) { for (let i = 0; i < selEl.options.length; i++) { if (selEl.options[i].selected) blockedServices.push(selEl.options[i].value); } }
+            return { id, code, discountPercentage, maxUsesTotal, maxUsesPerProfile, validFrom, validTo, isActive, blockedServices };
+          }
+
+          var COUPON_SERVICE_LABELS = {
+            seguidores_mistos: 'Seguidores Mistos', seguidores_brasileiros: 'Seguidores Brasileiros', seguidores_organicos: 'Seguidores Reais',
+            curtidas_mistos: 'Curtidas Mistas', curtidas_brasileiras: 'Curtidas Brasileiras', curtidas_organicas: 'Curtidas Reais',
+            visualizacoes_reels: 'Visualizações', comentarios: 'Comentários'
+          };
+          // Serviços bloqueados de um cupom (compat: antigos com allowedServices = todos − permitidos).
+          function couponBlockedServices(c) {
+            if (c && Array.isArray(c.blockedServices)) return c.blockedServices.filter(Boolean);
+            if (c && Array.isArray(c.allowedServices) && c.allowedServices.length) {
+              const allowed = c.allowedServices.map(String);
+              return Object.keys(COUPON_SERVICE_LABELS).filter(function(k){ return allowed.indexOf(k) < 0; });
+            }
+            return [];
           }
 
           function clearCouponForm() {
@@ -3419,6 +3451,8 @@
             document.getElementById('couponValidFromInput').value = '';
             document.getElementById('couponValidToInput').value = '';
             document.getElementById('couponIsActiveInput').checked = true;
+            const selEl = document.getElementById('couponAllowedServicesInput');
+            if (selEl && selEl.options) { for (let i = 0; i < selEl.options.length; i++) selEl.options[i].selected = false; }
           }
 
           function fillCouponForm(c) {
@@ -3430,6 +3464,11 @@
             document.getElementById('couponValidFromInput').value = toLocalDateTimeInputValue(c && c.validFrom ? c.validFrom : '');
             document.getElementById('couponValidToInput').value = toLocalDateTimeInputValue(c && c.validTo ? c.validTo : '');
             document.getElementById('couponIsActiveInput').checked = !(c && c.isActive === false);
+            try {
+              const selEl = document.getElementById('couponAllowedServicesInput');
+              const blocked = couponBlockedServices(c).map(String);
+              if (selEl && selEl.options) { for (let i = 0; i < selEl.options.length; i++) { selEl.options[i].selected = blocked.indexOf(selEl.options[i].value) >= 0; } }
+            } catch (_) {}
             try { document.getElementById('couponCodeInput').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
           }
 
@@ -3476,8 +3515,11 @@
               const maxPer = (c.maxUsesPerProfile != null) ? String(c.maxUsesPerProfile) : '-';
               const usedProfiles = (typeof c.usedProfiles === 'number') ? c.usedProfiles : 0;
               const isActive = !(c && c.isActive === false);
+              let restr = '';
+              const blockedC = couponBlockedServices(c);
+              if (blockedC.length) restr = 'Não vale para: ' + blockedC.map(function(k){ return COUPON_SERVICE_LABELS[k] || k; }).join(', ');
               tr.innerHTML = `
-                <td style="padding:8px; border-bottom:1px solid #f2f2f2;"><strong>${String(c.code || '')}</strong></td>
+                <td style="padding:8px; border-bottom:1px solid #f2f2f2;"><strong>${String(c.code || '')}</strong>${restr ? ('<div style="font-size:0.72rem; color:#6d28d9; margin-top:2px;">' + restr + '</div>') : ''}</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:right;">${String(c.discountPercentage || 0)}%</td>
                 <td style="padding:8px; border-bottom:1px solid #f2f2f2; text-align:center;">
                   <input type="checkbox" data-role="active" ${isActive ? 'checked' : ''} />
@@ -3643,9 +3685,9 @@
             </a>
           </div>
         </div>
-        <% var _us = (typeof upsellStats !== 'undefined' && upsellStats) ? upsellStats : { revenueBRL:'R$ 0,00', conversionPct:0, paidCount:0, avgTicketBRL:'R$ 0,00', eligibleParents:0 }; %>
+        <% var _us = (typeof upsellStats !== 'undefined' && upsellStats) ? upsellStats : { revenueBRL:'R$ 0,00', conversionPct:0, paidCount:0, avgTicketBRL:'R$ 0,00', eligibleParents:0, costBRL:'R$ 0,00', costPct:0, netBRL:'R$ 0,00' }; %>
         <div class="summary-card">
-          <div class="summary-label">Vendas de Upsell (período)</div>
+          <div class="summary-label">Valor total pago de Upsell (período)</div>
           <div class="summary-value"><%= _us.revenueBRL %></div>
           <div class="summary-sub" style="margin-top:6px;"><%= _us.paidCount %> upsell(s) pago(s) · ticket médio <%= _us.avgTicketBRL %></div>
         </div>

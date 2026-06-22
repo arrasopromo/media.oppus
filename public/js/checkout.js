@@ -826,17 +826,17 @@
       { q: 15000, p: 'R$ 89,90' },
     ],
     curtidas_organicos: [
-      { q: 150, p: 'R$ 16,90' },
-      { q: 300, p: 'R$ 28,90' },
-      { q: 500, p: 'R$ 49,90' },
-      { q: 1000, p: 'R$ 69,90' },
-      { q: 2000, p: 'R$ 104,90' },
-      { q: 3000, p: 'R$ 139,90' },
-      { q: 4000, p: 'R$ 174,90' },
-      { q: 5000, p: 'R$ 224,90' },
-      { q: 7500, p: 'R$ 279,90' },
-      { q: 10000, p: 'R$ 349,90' },
-      { q: 15000, p: 'R$ 449,90' },
+      { q: 150, p: 'R$ 11,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 34,90' },
+      { q: 1000, p: 'R$ 48,90' },
+      { q: 2000, p: 'R$ 73,90' },
+      { q: 3000, p: 'R$ 97,90' },
+      { q: 4000, p: 'R$ 122,90' },
+      { q: 5000, p: 'R$ 157,90' },
+      { q: 7500, p: 'R$ 195,90' },
+      { q: 10000, p: 'R$ 244,90' },
+      { q: 15000, p: 'R$ 314,90' },
     ],
     visualizacoes_reels: [
       { q: 1000, p: 'R$ 4,90' },
@@ -2263,17 +2263,17 @@
       { q: 15000, price: 'R$ 199,90' }
     ],
     organicos: [
-      { q: 150, price: 'R$ 16,90' },
-      { q: 300, price: 'R$ 28,90' },
-      { q: 500, price: 'R$ 49,90' },
-      { q: 1000, price: 'R$ 69,90' },
-      { q: 2000, price: 'R$ 104,90' },
-      { q: 3000, price: 'R$ 139,90' },
-      { q: 4000, price: 'R$ 174,90' },
-      { q: 5000, price: 'R$ 224,90' },
-      { q: 7500, price: 'R$ 279,90' },
-      { q: 10000, price: 'R$ 349,90' },
-      { q: 15000, price: 'R$ 449,90' }
+      { q: 150, price: 'R$ 11,90' },
+      { q: 300, price: 'R$ 19,90' },
+      { q: 500, price: 'R$ 34,90' },
+      { q: 1000, price: 'R$ 48,90' },
+      { q: 2000, price: 'R$ 73,90' },
+      { q: 3000, price: 'R$ 97,90' },
+      { q: 4000, price: 'R$ 122,90' },
+      { q: 5000, price: 'R$ 157,90' },
+      { q: 7500, price: 'R$ 195,90' },
+      { q: 10000, price: 'R$ 244,90' },
+      { q: 15000, price: 'R$ 314,90' }
     ]
   };
   const likesQtyEl = document.getElementById('likesQty');
@@ -2734,8 +2734,12 @@
       hideLoadingCheckout();
       if (data.success) {
         const profile = data.profile || {};
-        if (checkoutProfileImage && profile.profilePicUrl) {
-          checkoutProfileImage.src = profile.profilePicUrl;
+        if (checkoutProfileImage) {
+          // Usa a rota /avatar (fallback cinza embutido) em vez da URL proxied crua, que ficava
+          // branca quando o CDN do Instagram falhava (403/expirado).
+          var _u = String(profile.username || username || '').trim().replace(/^@/, '');
+          if (_u) checkoutProfileImage.src = '/avatar/instagram/' + encodeURIComponent(_u);
+          else if (profile.profilePicUrl) checkoutProfileImage.src = profile.profilePicUrl;
         }
         if (checkoutProfileUsername) {
           checkoutProfileUsername.textContent = profile.username || username;
@@ -2832,7 +2836,11 @@
         const isPrivate = (data.code === 'INSTAUSER_PRIVATE') || /perfil\s+é\s+privad|privado/i.test(msg);
         if (isAlreadyTested || isPrivate) {
           const profile = Object.assign({}, data.profile || { username }, { alreadyTested: false });
-          if (checkoutProfileImage) checkoutProfileImage.src = profile.profilePicUrl || profile.driveImageUrl || '';
+          if (checkoutProfileImage) {
+            var _u2 = String(profile.username || username || '').trim().replace(/^@/, '');
+            if (_u2) checkoutProfileImage.src = '/avatar/instagram/' + encodeURIComponent(_u2);
+            else checkoutProfileImage.src = profile.profilePicUrl || profile.driveImageUrl || '';
+          }
           if (checkoutProfileUsername) checkoutProfileUsername.textContent = (profile.username || username);
           if (typeof profile.followersCount === 'number' && checkoutFollowersCount) {
             checkoutFollowersCount.textContent = String(profile.followersCount);

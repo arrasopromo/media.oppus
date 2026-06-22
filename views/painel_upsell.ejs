@@ -120,6 +120,31 @@
       </div>
     </div>
 
+    <!-- Financeiro do Upsell -->
+    <% var _f = (typeof financial !== 'undefined' && financial) ? financial : { revenueBRL:'R$ 0,00', costBRL:'R$ 0,00', costPct:0, netBRL:'R$ 0,00', paidCount:0, avgTicketBRL:'R$ 0,00', conversionPct:0, eligibleParents:0 }; %>
+    <div class="stats-grid">
+      <div class="stat-card stat-card--green">
+        <div class="stat-label">Valor Total Pago de Upsell</div>
+        <div class="stat-value"><%= _f.revenueBRL %></div>
+        <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;"><%= _f.paidCount %> pago(s) · ticket médio <%= _f.avgTicketBRL %></div>
+      </div>
+      <div class="stat-card stat-card--purple">
+        <div class="stat-label">Conversão de Upsell</div>
+        <div class="stat-value"><%= Number(_f.conversionPct || 0).toFixed(1).replace('.', ',') %>%</div>
+        <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;">dos <%= _f.eligibleParents %> pedidos pagos pegaram upsell</div>
+      </div>
+      <div class="stat-card stat-card--yellow">
+        <div class="stat-label">Custo do Upsell</div>
+        <div class="stat-value"><%= _f.costBRL %></div>
+        <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;"><%= Number(_f.costPct || 0).toFixed(1).replace('.', ',') %>% das vendas de upsell</div>
+      </div>
+      <div class="stat-card stat-card--green">
+        <div class="stat-label">Lucro Líquido do Upsell</div>
+        <div class="stat-value" style="color:#16a34a;"><%= _f.netBRL %></div>
+        <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;">vendas de upsell − custo</div>
+      </div>
+    </div>
+
     <!-- Filters -->
     <form action="/painel/upsell" method="GET" class="filterbar">
       <div>

@@ -4114,6 +4114,10 @@ app.get('/image-proxy', async (req, res) => {
     }
 
     const contentType = response.headers['content-type'] || 'image/jpeg';
+    // Não repassa HTML/erro do CDN como se fosse imagem (renderizava foto branca/quebrada).
+    if (/^\s*text\//i.test(contentType)) {
+      return res.status(502).send('Failed to fetch image');
+    }
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.send(response.data);
@@ -4807,8 +4811,12 @@ async function fetchAndCacheInstagramAvatar({ username, userAgent, forceRefresh 
             if (resp2 && resp2.status === 200 && resp2.data) {
                 const contentType = String(resp2.headers && resp2.headers['content-type'] ? resp2.headers['content-type'] : 'image/jpeg');
                 const buf = Buffer.isBuffer(resp2.data) ? resp2.data : Buffer.from(resp2.data);
-                cache.set(uname, { buf, contentType, expiresAt: Date.now() + (6 * 60 * 60 * 1000) });
-                return true;
+                // Só cacheia se for IMAGEM de verdade — evita guardar HTML de erro / pixel branco
+                // do CDN (causava foto de perfil branca por 6h). Se não for, cai no fallback cinza.
+                if (/^image\//i.test(contentType) && buf.length > 512) {
+                    cache.set(uname, { buf, contentType, expiresAt: Date.now() + (6 * 60 * 60 * 1000) });
+                    return true;
+                }
             }
         } catch (_) {}
         return false;
@@ -4893,8 +4901,10 @@ async function fetchAndCacheInstagramAvatar({ username, userAgent, forceRefresh 
             if (resp && resp.status === 200 && resp.data) {
                 const contentType = String(resp.headers && resp.headers['content-type'] ? resp.headers['content-type'] : 'image/jpeg');
                 const buf = Buffer.isBuffer(resp.data) ? resp.data : Buffer.from(resp.data);
-                cache.set(uname, { buf, contentType, expiresAt: Date.now() + (6 * 60 * 60 * 1000) });
-                return { ok: true, rateLimited };
+                if (/^image\//i.test(contentType) && buf.length > 512) {
+                    cache.set(uname, { buf, contentType, expiresAt: Date.now() + (6 * 60 * 60 * 1000) });
+                    return { ok: true, rateLimited };
+                }
             }
         } catch (_) {}
     }
@@ -6381,6 +6391,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
   let whatsappHref = '';
   let lastRefilOrderId = '';
   let lastRefilUsername = '';
+  let refilProfiles = []; // perfis de SEGUIDORES do mesmo email (avatar + seletor), ordenados por gasto
   let refilLinkRec = null;
   let refilBaseOrderDoc = null;
   const extractOrderBumpsStr = (o) => {
@@ -6873,6 +6884,78 @@ const refilPageHandler = (fromPath) => async (req, res) => {
       }
     }
     if (username) lastRefilUsername = String(username || '').trim();
+
+    // ── Perfis do MESMO email (avatar + seletor) ──
+    // A reposição é por @ e independente; aqui só montamos a lista de perfis de SEGUIDORES
+    // que o mesmo email comprou, ordenada por quanto gastou (NÃO exibimos o valor no site),
+    // com avatar/foto, para pré-preencher e permitir alternar entre perfis.
+    try {
+      const srcDoc = lastDoc || refilBaseOrderDoc || null;
+      let refilEmail = '';
+      if (srcDoc) {
+        refilEmail = String(
+          (srcDoc.customer && srcDoc.customer.email) ||
+          srcDoc.email ||
+          (Array.isArray(srcDoc.emails) && srcDoc.emails.length ? srcDoc.emails[0] : '') ||
+          ''
+        ).trim().toLowerCase();
+      }
+      if (refilEmail && /.+@.+\..+/.test(refilEmail)) {
+        const paidOr = [
+          { status: 'pago' }, { 'woovi.status': 'pago' },
+          { paidAt: { $exists: true, $nin: [null, ''] } },
+          { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
+          { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }
+        ];
+        const emailOr = [{ 'customer.email': refilEmail }, { email: refilEmail }, { emails: refilEmail }];
+        const docs = await col.find(
+          { $and: [{ $or: paidOr }, { $or: emailOr }] },
+          { projection: { instagramUsername: 1, instauser: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, additionalInfo: 1, additionalInfoPaid: 1, valueCents: 1, expectedValueCents: 1, categoria: 1, tipo: 1, tipoServico: 1 } }
+        ).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(300).toArray();
+        const infoVal = (d, key) => {
+          try {
+            const mp = d.additionalInfoMapPaid || {}; if (typeof mp[key] !== 'undefined') return String(mp[key] || '');
+            const m = d.additionalInfoMap || {}; if (typeof m[key] !== 'undefined') return String(m[key] || '');
+            const ap = Array.isArray(d.additionalInfoPaid) ? d.additionalInfoPaid : [];
+            const a = Array.isArray(d.additionalInfo) ? d.additionalInfo : [];
+            const f = ap.concat(a).find(x => x && String(x.key || '').trim() === key);
+            return (f && typeof f.value !== 'undefined') ? String(f.value || '') : '';
+          } catch (_) { return ''; }
+        };
+        const spendByUser = new Map();
+        for (const d of docs) {
+          const cat = String(infoVal(d, 'categoria_servico') || d.categoria || '').toLowerCase();
+          const tp = String(infoVal(d, 'tipo_servico') || d.tipoServico || d.tipo || '').toLowerCase();
+          const isSeguidores = cat ? /seguidor/.test(cat) : (/(mistos|brasileiros|organicos)/.test(tp) && !/curtida|visualiz|view|reel|coment/.test(tp));
+          if (!isSeguidores) continue;
+          const u = String(d.instagramUsername || d.instauser || '').trim().replace(/^@+/, '').toLowerCase();
+          if (!u) continue;
+          const val = Number(d.valueCents || d.expectedValueCents || 0) || 0;
+          spendByUser.set(u, (spendByUser.get(u) || 0) + Math.max(0, val));
+        }
+        const users = Array.from(spendByUser.keys());
+        if (users.length) {
+          let vmap = new Map();
+          try {
+            const vu = await getCollection('validated_insta_users');
+            const vdocs = await vu.find({ username: { $in: users } }, { projection: { username: 1, profilePicUrl: 1, followersCount: 1, nomeUsuario: 1 } }).toArray();
+            vmap = new Map(vdocs.map(v => [String(v.username || '').toLowerCase(), v]));
+          } catch (_) {}
+          refilProfiles = users.map(u => {
+            const v = vmap.get(u) || {};
+            return {
+              username: u,
+              profilePicUrl: String(v.profilePicUrl || ''),
+              fullName: String(v.nomeUsuario || ''),
+              followersCount: (typeof v.followersCount === 'number' ? v.followersCount : null),
+              spendCents: spendByUser.get(u) || 0
+            };
+          }).sort((a, b) => (b.spendCents - a.spendCents));
+          // pré-preenche o perfil que mais gastou (sem expor o valor no site)
+          if (refilProfiles.length) lastRefilUsername = refilProfiles[0].username;
+        }
+      }
+    } catch (_) {}
   } catch (_) {}
 
   let refilOrderMongoId = (refilLinkRec && (refilLinkRec.orderId || (refilLinkRec.order && refilLinkRec.order._id))) ? String(refilLinkRec.orderId || (refilLinkRec.order && refilLinkRec.order._id) || '').trim() : '';
@@ -6892,7 +6975,14 @@ const refilPageHandler = (fromPath) => async (req, res) => {
       ? String(req.session.linkSlug || '').trim().replace(/[^0-9a-z]/gi, '')
       : (token ? String(token || '').trim() : '')
   );
-  res.render('refil', { refilDaysLeft, refilIsLifetime, whatsappHref, lastRefilOrderId, lastRefilUsername, refilOrderMongoId, refilToken }, (err, html) => {
+  // Lista pública (sem expor o gasto): já vem ordenada por quem mais gastou.
+  const refilProfilesPublic = (Array.isArray(refilProfiles) ? refilProfiles : []).map(p => ({
+    username: p.username,
+    profilePicUrl: p.profilePicUrl || '',
+    fullName: p.fullName || '',
+    followersCount: (typeof p.followersCount === 'number' ? p.followersCount : null)
+  }));
+  res.render('refil', { refilDaysLeft, refilIsLifetime, whatsappHref, lastRefilOrderId, lastRefilUsername, refilOrderMongoId, refilToken, refilProfiles: refilProfilesPublic }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar refil:', err.message);
       return res.status(500).send('Erro ao carregar página de refil');
@@ -6984,7 +7074,8 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 const couponCode = normalizeCouponCode(couponCodeRaw);
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -7392,7 +7483,8 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
                 const couponCode = normalizeCouponCode(couponCodeRaw);
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -8935,7 +9027,8 @@ app.post('/api/woovi/charge', async (req, res) => {
                 const couponCode = normalizeCouponCode(couponCodeRaw);
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-                    const eligibility = await getCouponEligibility(couponCode, profileKey);
+                    const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -18400,6 +18493,73 @@ app.post('/api/refil/backfill', async (req, res) => {
 // Refil simples (/refil1): dispara a reposição direto no fama24h (action=refill&order=<orderId>)
 // e responde "Reposição solicitada" quando o fornecedor retorna um número.
 // Apenas para seguidores MISTOS e BRASILEIROS (simples).
+// Busca AO VIVO a quantidade atual de seguidores de um @ (instagram_proxy → verifyInstagramProfile → RocketAPI),
+// a mesma lógica do botão "Verificar" do Gerenciamento de Refil. Usada pelo refil1 (/api/refil/simple) para
+// gravar a contagem REAL no momento da solicitação, em vez de exibir um valor armazenado/stale no painel.
+async function fetchCurrentFollowersLive(username) {
+  const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+  if (!uname) return { ok: false, error: 'missing_username' };
+  const toInt = (v) => {
+    try {
+      if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+      const s = String(v == null ? '' : v).replace(/[^\d]/g, '');
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? Math.trunc(n) : null;
+    } catch (_) { return null; }
+  };
+  // 1) profile_api dedicada (mesma fonte primária do fluxo do refil2) — mais confiável p/ contagem atual
+  try {
+    const base = String(process.env.PROFILE_API_URL || 'http://187.124.91.24:8080').replace(/\/+$/, '');
+    const url = `${base}/api/profile?user=${encodeURIComponent(uname)}`;
+    const resp = await axios.get(url, { timeout: 25000, validateStatus: () => true });
+    const root = Array.isArray(resp && resp.data) ? resp.data[0] : (resp && resp.data);
+    const pick = (o, depth) => {
+      if (!o || typeof o !== 'object' || depth > 4) return null;
+      const direct = [o.followers, o.followerCount, o.follower_count, o.followers_count, o.followed_by, (o.edge_followed_by && o.edge_followed_by.count)];
+      for (const c of direct) { const n = toInt(c); if (n != null && n > 0) return n; }
+      for (const sub of ['data', 'user', 'profile', 'result', 'account', 'graphql']) {
+        if (o[sub] && typeof o[sub] === 'object') { const n = pick(o[sub], depth + 1); if (n != null) return n; }
+      }
+      return null;
+    };
+    const fc = pick(root, 0);
+    if (fc != null && fc > 0) return { ok: true, currentFollowers: fc, source: 'profile_api' };
+  } catch (_) {}
+  // 2) instagram_proxy (refilfama) — igual ao "Verificar"
+  try {
+    const profileUrlCandidates = [`https://www.instagram.com/${uname}/`, `https://instagram.com/${uname}`];
+    const paramCandidates = ['name_url', 'url', 'link'];
+    for (const paramName of paramCandidates) {
+      for (const profileUrl of profileUrlCandidates) {
+        const url = `https://www.refilfama24h.com/instagram_proxy.php?${paramName}=${encodeURIComponent(profileUrl)}`;
+        let resp = null;
+        try { resp = await axios.get(url, { timeout: 25000, validateStatus: () => true, family: 4 }); }
+        catch (_) { try { resp = await axios.get(url.replace(/^https:/i, 'http:'), { timeout: 25000, validateStatus: () => true, family: 4 }); } catch (e) { resp = null; } }
+        const status = Number(resp && resp.status ? resp.status : 0) || 0;
+        const data = resp ? resp.data : null;
+        const first = Array.isArray(data) ? data[0] : data;
+        const fc = toInt((first && (first.followerCount ?? first.follower_count ?? first.followers)) ?? (first && first.data && (first.data.followerCount ?? first.data.followers)));
+        if (status >= 200 && status < 300 && fc != null && fc > 0) return { ok: true, currentFollowers: fc, source: 'instagram_proxy' };
+      }
+    }
+  } catch (_) {}
+  // 2) verifyInstagramProfile (múltiplos proxies + Apify + RocketAPI)
+  try {
+    const mockReq = { session: {}, query: {}, body: {} };
+    const v = await verifyInstagramProfile(uname, 'RefilAutoVerify', '127.0.0.1', mockReq, null, false, { purpose: 'refil', skipPosts: true });
+    const fc = toInt(v && v.profile ? v.profile.followersCount : null);
+    if (fc != null && fc > 0) return { ok: true, currentFollowers: fc, source: 'verify_profile' };
+  } catch (_) {}
+  // 3) RocketAPI direto
+  try {
+    const rocket = await fetchInstagramFollowersInfoRocketApi(uname);
+    const fc = toInt(rocket && rocket.profile ? rocket.profile.followersCount : null);
+    if (fc != null && fc > 0) return { ok: true, currentFollowers: fc, source: 'rocketapi' };
+  } catch (_) {}
+  return { ok: false, error: 'lookup_failed' };
+}
+
 app.post('/api/refil/simple', async (req, res) => {
   try {
     const usernameRaw = String((req.body && (req.body.username || req.body.user || req.body.instagram_username || req.body.instauser)) || '').trim();
@@ -18420,6 +18580,8 @@ app.post('/api/refil/simple', async (req, res) => {
     // (auto via painel e manual via /refil1). Antes só o /api/refil/preview gravava lá, então
     // depois que o refil1/bulk passaram a usar este endpoint, as reposições sumiam do gerenciamento.
     let __refilLogOrderId = '';
+    let __refilLogInitial = null; // initialFollowersCount do pedido (seguidores na compra)
+    let __refilLogQty = null;     // quantidade comprada (fama24h)
     {
       const __origResJson = res.json.bind(res);
       let __refilLogged = false;
@@ -18447,7 +18609,35 @@ app.post('/api/refil/simple', async (req, res) => {
             if (b.automationBatchId) doc.automationBatchId = String(b.automationBatchId).trim();
             if (__refilLogOrderId) doc.pedido = { id: __refilLogOrderId, link: 'https://instagram.com/' + username };
             if (ok && body && body.refill) doc.forceRefil = { orderId: String(body.refill), provider: 'fama24h', finishedAt: new Date() };
-            (async () => { try { const c = await getCollection('refil2_requests'); if (c && typeof c.insertOne === 'function') await c.insertOne(doc); } catch (_) {} })();
+            (async () => {
+              try {
+                // Busca AO VIVO a quantidade atual de seguidores e grava no doc, para o Gerenciamento de
+                // Refil mostrar o "Atual" REAL (não um valor armazenado/stale). Só faz a request quando há
+                // um pedido de verdade (__refilLogOrderId), evitando lookups inúteis em erros sem pedido.
+                if (__refilLogOrderId) {
+                  try {
+                    const live = await fetchCurrentFollowersLive(username);
+                    if (live && live.ok && typeof live.currentFollowers === 'number' && live.currentFollowers > 0) {
+                      const cur = Math.trunc(live.currentFollowers);
+                      doc.audit = Object.assign({}, doc.audit, { currentFollowers: cur, checkedAt: new Date(), source: live.source || 'live' });
+                      const summary = { current: cur };
+                      const initial = (__refilLogInitial != null && __refilLogQty != null) ? (__refilLogInitial + __refilLogQty) : null;
+                      if (initial != null) {
+                        summary.initial = initial;
+                        let drop = initial - cur;
+                        if (drop < 0) drop = 0;
+                        if (__refilLogQty != null && drop > __refilLogQty) drop = __refilLogQty;
+                        summary.drop = drop;
+                        summary.final = cur + drop;
+                      }
+                      doc.summary = summary;
+                    }
+                  } catch (_) {}
+                }
+                const c = await getCollection('refil2_requests');
+                if (c && typeof c.insertOne === 'function') await c.insertOne(doc);
+              } catch (_) {}
+            })();
           }
         } catch (_) {}
         return __origResJson(body);
@@ -18500,7 +18690,12 @@ app.post('/api/refil/simple', async (req, res) => {
       const tipo = getTipo(o);
       const isSimple = (tipo === 'mistos' || tipo === 'brasileiros');
       const oid = String(o?.fama24h?.orderId || '').trim();
-      if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) { order = o; famaOrderId = oid; __refilLogOrderId = oid; break; }
+      if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) {
+        order = o; famaOrderId = oid; __refilLogOrderId = oid;
+        __refilLogInitial = (typeof o.initialFollowersCount === 'number' && Number.isFinite(o.initialFollowersCount)) ? Math.trunc(o.initialFollowersCount) : null;
+        __refilLogQty = (o && o.fama24h && o.fama24h.requestPayload && Number.isFinite(Number(o.fama24h.requestPayload.quantity))) ? Math.trunc(Number(o.fama24h.requestPayload.quantity)) : null;
+        break;
+      }
     }
     if (!order) {
       const anySimple = paidArr.some(o => { const t = getTipo(o); return (t === 'mistos' || t === 'brasileiros') && isSeguidoresOrder(o); });
@@ -30889,6 +31084,23 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const n = Number(s);
         return Number.isFinite(n) ? n : 0;
       };
+      // Total (R$) da parte de ORDER BUMP do pedido — para EXCLUIR do LTV (LTV conta só o serviço principal).
+      const resolveOrderBumpsTotal = (o) => {
+        try {
+          const mapPaid = (o && o.additionalInfoMapPaid) ? o.additionalInfoMapPaid : null;
+          const map = (o && o.additionalInfoMap) ? o.additionalInfoMap : null;
+          let raw = '';
+          if (mapPaid && typeof mapPaid.order_bumps_total !== 'undefined') raw = String(mapPaid.order_bumps_total || '');
+          else if (map && typeof map.order_bumps_total !== 'undefined') raw = String(map.order_bumps_total || '');
+          else {
+            const ap = pickInfoFromArray(o && o.additionalInfoPaid, 'order_bumps_total');
+            if (ap) raw = String(ap || '');
+            else { const a = pickInfoFromArray(o && o.additionalInfo, 'order_bumps_total'); if (a) raw = String(a || ''); }
+          }
+          const v = toMoney(raw);
+          return (Number.isFinite(v) && v > 0) ? v : 0;
+        } catch (_) { return 0; }
+      };
 
       const cursor = col.find(paidQuery, {
         projection: {
@@ -30979,7 +31191,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
           cur.orders += 1;
           if (!cur.username && username) cur.username = username;
 
-          cur.spend += totalPaid;
+          // LTV conta só o SERVIÇO PRINCIPAL — exclui a parte de order bump do pedido.
+          cur.spend += Math.max(0, totalPaid - resolveOrderBumpsTotal(o));
           customerAgg.set(customerKey, cur);
         }
 
@@ -32797,7 +33010,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       if (k) {
         const cur = customerAgg.get(k) || { orders: 0, spend: 0, label: String(r.customerLabel || k) };
         cur.orders += 1;
-        cur.spend += Number(r.totalPaid || 0);
+        // LTV conta só o SERVIÇO PRINCIPAL — r.revenue já é o total SEM a parte de order bump.
+        cur.spend += Number(r.revenue || 0);
         customerAgg.set(k, cur);
       }
       const t = String(r && r.type ? r.type : '').trim();
@@ -33486,6 +33700,55 @@ app.get('/painel', requireAdmin, async (req, res) => {
             }
           }
         } catch (_) {}
+
+        // Enriquecimento p/ linhas do REFIL1 que JÁ foram consultadas ao vivo (têm audit.currentFollowers,
+        // gravado na solicitação ou pelo botão "Verificar") mas ainda não têm `summary`. Monta Atual/Repor/Final
+        // usando a contagem REAL auditada + os dados do pedido (initialFollowersCount + quantidade comprada).
+        // IMPORTANTE: NÃO usa mais valores armazenados stale (snapshot/validated) como "Atual" — o número atual
+        // vem SEMPRE de uma consulta ao vivo. Linhas antigas sem auditoria ficam "-" (até serem verificadas).
+        // Não toca em linhas que já têm summary/computed (refil2 e refil1 novos). 1 query em lote (sem N+1).
+        try {
+          const { getCollection } = require('./mongodbClient');
+          const needRows = refil2Requests.filter(r =>
+            r && !r.summary && !r.computed && !r.data && r.pedido && r.pedido.id &&
+            r.audit && typeof r.audit.currentFollowers === 'number' && Number.isFinite(r.audit.currentFollowers)
+          );
+          if (needRows.length) {
+            const famaIds = Array.from(new Set(needRows.map(r => String(r.pedido.id || '').trim()).filter(Boolean)));
+            const ordersCol = await getCollection('checkout_orders');
+            const orderDocs = famaIds.length ? await ordersCol.find(
+              { $or: [{ 'fama24h.orderId': { $in: famaIds } }, { 'fama24h_multi.orders.orderId': { $in: famaIds } }] },
+              { projection: { _id: 0, initialFollowersCount: 1, 'fama24h.orderId': 1, 'fama24h.requestPayload.quantity': 1, 'fama24h_multi.orders.orderId': 1, 'fama24h_multi.orders.quantity': 1 } }
+            ).toArray() : [];
+            const byFamaId = new Map();
+            for (const o of orderDocs) {
+              const initial = (typeof o.initialFollowersCount === 'number' && Number.isFinite(o.initialFollowersCount)) ? Math.trunc(o.initialFollowersCount) : null;
+              const fid = (o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId).trim() : '';
+              if (fid) byFamaId.set(fid, { initial, quantity: (o.fama24h && o.fama24h.requestPayload && Number(o.fama24h.requestPayload.quantity)) || null });
+              const multi = (o.fama24h_multi && Array.isArray(o.fama24h_multi.orders)) ? o.fama24h_multi.orders : [];
+              for (const m of multi) {
+                const mid = (m && m.orderId) ? String(m.orderId).trim() : '';
+                if (mid) byFamaId.set(mid, { initial, quantity: (m && Number(m.quantity)) || null });
+              }
+            }
+            for (const r of needRows) {
+              const info = byFamaId.get(String(r.pedido.id || '').trim());
+              const current = Math.trunc(r.audit.currentFollowers); // SEMPRE a contagem ao vivo/auditada
+              const qty = (info && info.quantity != null && Number.isFinite(Number(info.quantity))) ? Math.trunc(Number(info.quantity)) : null;
+              const initialTarget = (info && info.initial != null && qty != null) ? (info.initial + qty) : null;
+              const summary = { current };
+              if (initialTarget != null) {
+                summary.initial = initialTarget;
+                let drop = initialTarget - current;
+                if (drop < 0) drop = 0;
+                if (qty != null && drop > qty) drop = qty;
+                summary.drop = drop;
+                summary.final = current + drop;
+              }
+              r.summary = summary;
+            }
+          }
+        } catch (_) {}
       } catch (_) {
         refil2Requests = [];
       }
@@ -33585,7 +33848,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
 
     // ── UPSELL: métricas para o card (dashboard E vendas — o card aparece nas duas views) ──
-    let upsellStats = { paidCount: 0, revenueCents: 0, revenueBRL: 'R$ 0,00', avgTicketBRL: 'R$ 0,00', conversionPct: 0, eligibleParents: 0 };
+    let upsellStats = { paidCount: 0, revenueCents: 0, revenueBRL: 'R$ 0,00', avgTicketBRL: 'R$ 0,00', conversionPct: 0, eligibleParents: 0, costCents: 0, costBRL: 'R$ 0,00', costPct: 0, netCents: 0, netBRL: 'R$ 0,00' };
     if (view === 'dashboard' || view === 'vendas') {
       try {
         const isPaidForStats = (o) => {
@@ -33608,12 +33871,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }
         // Upsells pagos: query dedicada — não sofre o limite/sort enviesado (woovi.paidAt) do fetch
         // principal, que excluía os upsells PagHiper do dashboard. Mesmo predicado de período.
-        let upsellPaid = 0, upsellRev = 0;
+        let upsellPaid = 0, upsellRev = 0, upsellCost = 0;
         try {
           const upsellArr = await col.find(
             { $and: [paidQuery, { 'upsell.isUpsell': true }] },
-            { projection: { valueCents: 1, expectedValueCents: 1, 'upsell.offerCents': 1, status: 1, paidAt: 1, criado: 1, createdAt: 1, 'woovi.status': 1, 'woovi.paidAt': 1, 'paghiper.status': 1, 'paghiper.paidAt': 1, 'expay.status': 1 } }
+            { projection: { valueCents: 1, expectedValueCents: 1, 'upsell.offerCents': 1, status: 1, paidAt: 1, criado: 1, createdAt: 1, 'woovi.status': 1, 'woovi.paidAt': 1, 'paghiper.status': 1, 'paghiper.paidAt': 1, 'expay.status': 1, tipo: 1, tipoServico: 1, categoria: 1, quantidade: 1, qtd: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'fama24h.requestPayload.quantity': 1 } }
           ).limit(5000).toArray();
+          // Custo do item de upsell — usa o helper compartilhado (mesma lógica do custo principal).
+          const upsellItemCostCents = (o) => computeUpsellCostCents(o, costSettings);
           for (const o of (upsellArr || [])) {
             if (!isPaidForStats(o)) continue;
             const dateStr = resolvePaidAtIsoForPanel(o);
@@ -33622,19 +33887,26 @@ app.get('/painel', requireAdmin, async (req, res) => {
             upsellPaid += 1;
             const v = Number(o.valueCents || o.expectedValueCents || (o.upsell && o.upsell.offerCents) || 0) || 0;
             upsellRev += Math.max(0, v);
+            upsellCost += upsellItemCostCents(o);
           }
         } catch (eU) {
           try { console.error('⚠️ [dashboard] consulta de upsell falhou:', eU?.message || eU); } catch (_) {}
         }
+        const upsellNet = upsellRev - upsellCost;
         upsellStats = {
           paidCount: upsellPaid,
           revenueCents: upsellRev,
           revenueBRL: toBRL(upsellRev),
           avgTicketBRL: toBRL(upsellPaid > 0 ? Math.round(upsellRev / upsellPaid) : 0),
           conversionPct: eligibleParents > 0 ? Math.round((upsellPaid / eligibleParents) * 1000) / 10 : 0,
-          eligibleParents
+          eligibleParents,
+          costCents: upsellCost,
+          costBRL: toBRL(upsellCost),
+          costPct: upsellRev > 0 ? Math.round((upsellCost / upsellRev) * 1000) / 10 : 0,
+          netCents: upsellNet,
+          netBRL: toBRL(upsellNet)
         };
-        try { console.log(`📊 [dashboard] upsellStats period=${period} paid=${upsellPaid} rev=${upsellRev} eligibleParents=${eligibleParents}`); } catch (_) {}
+        try { console.log(`📊 [dashboard] upsellStats period=${period} paid=${upsellPaid} rev=${upsellRev} cost=${upsellCost} net=${upsellNet} eligibleParents=${eligibleParents}`); } catch (_) {}
       } catch (e) {
         try { console.error('⚠️ [dashboard] upsellStats erro:', e?.message || e); } catch (_) {}
       }
@@ -36438,7 +36710,68 @@ function parseOptionalDate(value) {
   return d;
 }
 
-async function getCouponEligibility(code, profileKey) {
+// Catálogo de serviços para RESTRIÇÃO de cupom (chave canônica + rótulo exibido).
+const COUPON_SERVICES = [
+  { key: 'seguidores_mistos', label: 'Seguidores Mistos' },
+  { key: 'seguidores_brasileiros', label: 'Seguidores Brasileiros' },
+  { key: 'seguidores_organicos', label: 'Seguidores Reais (Orgânicos)' },
+  { key: 'curtidas_mistos', label: 'Curtidas Mistas' },
+  { key: 'curtidas_brasileiras', label: 'Curtidas Brasileiras' },
+  { key: 'curtidas_organicas', label: 'Curtidas Reais' },
+  { key: 'visualizacoes_reels', label: 'Visualizações (Reels)' },
+  { key: 'comentarios', label: 'Comentários' }
+];
+const COUPON_SERVICE_KEYS = COUPON_SERVICES.map(s => s.key);
+const COUPON_SERVICE_LABELS = COUPON_SERVICES.reduce((acc, s) => { acc[s.key] = s.label; return acc; }, {});
+// Mapeia (categoria, tipo) para a chave canônica de serviço usada na restrição de cupom.
+function resolveCouponServiceKey(categoria, tipo) {
+  const cat = String(categoria || '').toLowerCase().trim();
+  const t = String(tipo || '').toLowerCase().trim();
+  if (cat.indexOf('visualiz') >= 0 || t.indexOf('visualiz') >= 0 || t.indexOf('reel') >= 0) return 'visualizacoes_reels';
+  if (cat.indexOf('coment') >= 0 || t.indexOf('coment') >= 0) return 'comentarios';
+  const isCurtidas = (cat.indexOf('curtida') >= 0) || (t.indexOf('curtida') >= 0);
+  const variant = /organic|reais|real/.test(t) ? 'organicos' : (/brasileir/.test(t) ? 'brasileiros' : (/misto/.test(t) ? 'mistos' : ''));
+  if (isCurtidas) {
+    if (variant === 'organicos') return 'curtidas_organicas';
+    if (variant === 'brasileiros') return 'curtidas_brasileiras';
+    if (variant === 'mistos') return 'curtidas_mistos';
+    return '';
+  }
+  if (cat.indexOf('seguidor') >= 0 || variant) {
+    if (variant === 'organicos') return 'seguidores_organicos';
+    if (variant === 'brasileiros') return 'seguidores_brasileiros';
+    if (variant === 'mistos') return 'seguidores_mistos';
+  }
+  return '';
+}
+// Sanitiza a lista de serviços permitidos (aceita array ou string separada por vírgula).
+function normalizeAllowedServices(raw) {
+  try {
+    let arr = raw;
+    if (typeof raw === 'string') arr = raw.split(',');
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const x of arr) {
+      const k = String(x || '').trim();
+      if (COUPON_SERVICE_KEYS.indexOf(k) >= 0 && out.indexOf(k) < 0) out.push(k);
+    }
+    return out;
+  } catch (_) { return []; }
+}
+// Serviços BLOQUEADOS de um cupom (selecionados = não podem usar). Compat: cupons antigos com
+// `allowedServices` (selecionados = permitidos) viram bloqueados = todos os serviços − permitidos.
+function getCouponBlockedServices(coupon) {
+  try {
+    if (coupon && Array.isArray(coupon.blockedServices)) return coupon.blockedServices.filter(Boolean);
+    if (coupon && Array.isArray(coupon.allowedServices) && coupon.allowedServices.length) {
+      const allowed = coupon.allowedServices.filter(Boolean);
+      return COUPON_SERVICE_KEYS.filter(k => allowed.indexOf(k) < 0);
+    }
+  } catch (_) {}
+  return [];
+}
+
+async function getCouponEligibility(code, profileKey, serviceKey) {
   const { getCollection } = require('./mongodbClient');
   const couponsCol = await getCollection('coupons');
   const coupon = await couponsCol.findOne({ code: normalizeCouponCode(code) });
@@ -36462,6 +36795,16 @@ async function getCouponEligibility(code, profileKey) {
     const usesCol = await getCollection('coupon_uses');
     const count = await usesCol.countDocuments({ couponId: coupon._id, profileKey, status: 'consumed' });
     if (count >= maxUsesPerProfile) return { ok: false, error: 'Cupom já usado neste perfil' };
+  }
+
+  // Restrição por serviço (selecionados = BLOQUEADOS). Só valida quando um serviço é informado.
+  const blockedServices = getCouponBlockedServices(coupon);
+  if (blockedServices.length && typeof serviceKey !== 'undefined') {
+    const sk = String(serviceKey || '').trim();
+    if (sk && blockedServices.indexOf(sk) >= 0) {
+      const labels = blockedServices.map(k => COUPON_SERVICE_LABELS[k] || k).join(', ');
+      return { ok: false, error: `Este cupom não é válido para: ${labels}` };
+    }
   }
 
   return { ok: true, coupon };
@@ -36579,6 +36922,7 @@ app.post('/api/admin/coupons', requireAdmin, async (req, res) => {
             discountPercentage,
             maxUsesTotal: (maxUsesTotal && maxUsesTotal > 0) ? Math.floor(maxUsesTotal) : null,
             maxUsesPerProfile: (maxUsesPerProfile && maxUsesPerProfile > 0) ? Math.floor(maxUsesPerProfile) : null,
+            blockedServices: normalizeAllowedServices(req.body?.blockedServices),
             validFrom: validFrom || null,
             validTo: validTo || null,
             usedCount: 0,
@@ -36606,6 +36950,7 @@ app.put('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
     if (req.body?.maxUsesPerProfile !== undefined) update.maxUsesPerProfile = (req.body.maxUsesPerProfile == null || String(req.body.maxUsesPerProfile).trim() === '') ? null : Math.floor(Number(req.body.maxUsesPerProfile) || 0);
     if (req.body?.validFrom !== undefined) update.validFrom = parseOptionalDate(req.body.validFrom);
     if (req.body?.validTo !== undefined) update.validTo = parseOptionalDate(req.body.validTo);
+    if (req.body?.blockedServices !== undefined) { update.blockedServices = normalizeAllowedServices(req.body.blockedServices); update.allowedServices = []; }
     if (req.body?.isActive !== undefined) update.isActive = !(req.body.isActive === false || req.body.isActive === 'false');
 
     if (!Object.keys(update).length) return res.status(400).json({ success: false, error: 'Nenhum campo para atualizar' });
@@ -36651,7 +36996,13 @@ app.post('/api/validate-coupon', async (req, res) => {
         const profileKey = normalizeProfileKey(req.body?.instagram_username || '');
         if (!code) return res.status(400).json({ valid: false, error: 'Código não fornecido' });
 
-        const eligibility = await getCouponEligibility(code, profileKey);
+        // Serviço selecionado (para a restrição de serviço do cupom): aceita `service` direto
+        // ou deriva de categoria+tipo enviados pelo front.
+        const serviceKey = (req.body?.service && COUPON_SERVICE_KEYS.indexOf(String(req.body.service).trim()) >= 0)
+          ? String(req.body.service).trim()
+          : resolveCouponServiceKey(req.body?.categoria, req.body?.tipo);
+
+        const eligibility = await getCouponEligibility(code, profileKey, serviceKey);
         if (!eligibility.ok) {
           return res.json({ valid: false, error: eligibility.error || 'Cupom inválido' });
         }
@@ -37276,6 +37627,36 @@ app.post('/api/cliente/create-from-order', async (req, res) => {
 //  PAINEL — GESTÃO DE UPSELL
 // ═══════════════════════════════════════════════════════════════════
 
+// Custo (em centavos) de um item de upsell — espelha o cálculo principal de custo do painel
+// (typeForCost + custo_por_1000 de cost_settings). Upsell é item simples (sem order bumps).
+function computeUpsellCostCents(o, costSettings) {
+  try {
+    const cs = costSettings || {};
+    const m = (o && (o.additionalInfoMapPaid || o.additionalInfoMap)) || {};
+    const type = String((o && (o.tipoServico || o.tipo)) || m.tipo_servico || '').toLowerCase().trim();
+    const category = String((o && o.categoria) || m.categoria_servico || '').toLowerCase().trim();
+    const qtyU = Math.max(0, Number((o && (o.quantidade || o.qtd)) || m.quantidade || (o && o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.quantity) || 0) || 0);
+    const categoryForCost = (category === 'curtidas_brasileiras') ? 'curtidas' : category;
+    let typeForCost = type;
+    if (categoryForCost === 'curtidas' && type === 'mistos') typeForCost = 'curtidas_mistos';
+    else if (categoryForCost === 'curtidas' && (type === 'brasileiros' || type === 'curtidas_brasileiras' || /brasileir/.test(type))) typeForCost = 'curtidas_brasileiras';
+    else if (categoryForCost === 'curtidas' && type === 'organicos') typeForCost = 'curtidas_organicas';
+    else if (category === 'seguidores' && type === 'mistos') typeForCost = 'seguidores_mistos';
+    else if (category === 'seguidores' && type === 'brasileiros') typeForCost = 'seguidores_brasileiros';
+    let costPer1000 = 0;
+    if (typeForCost.includes('curtidas') && typeForCost.includes('mistos')) costPer1000 = cs.curtidas_mistos;
+    else if (typeForCost === 'curtidas_brasileiras') costPer1000 = (typeof cs.curtidas_brasileiras !== 'undefined' ? Number(cs.curtidas_brasileiras || 0) : Number(cs.curtidas || 0));
+    else if (categoryForCost === 'curtidas' && typeForCost.includes('organicos')) costPer1000 = (typeof cs.curtidas_organicas !== 'undefined' ? cs.curtidas_organicas : cs.curtidas);
+    else if (typeForCost.includes('mistos')) costPer1000 = cs.seguidores_mistos;
+    else if (typeForCost.includes('brasileiros') && !typeForCost.includes('curtidas') && !typeForCost.includes('comentarios') && !typeForCost.includes('visualiza')) costPer1000 = cs.seguidores_brasileiros;
+    else if (typeForCost.includes('organicos')) costPer1000 = cs.seguidores_organicos;
+    else if (typeForCost.includes('curtidas')) costPer1000 = cs.curtidas;
+    else if (typeForCost.includes('comentarios')) costPer1000 = cs.comentarios;
+    else if (typeForCost.includes('visualiza') || typeForCost.includes('views')) costPer1000 = cs.visualizacoes;
+    return Math.round(Math.max(0, (qtyU / 1000) * Number(costPer1000 || 0)) * 100);
+  } catch (_) { return 0; }
+}
+
 app.get('/painel/upsell', requireAdmin, async (req, res) => {
   try {
     const col = await getCollection('checkout_orders');
@@ -37326,7 +37707,47 @@ app.get('/painel/upsell', requireAdmin, async (req, res) => {
     const totalWaiting    = await col.countDocuments({ 'upsell.isUpsell': true, status: { $in: ['pago', 'paid'] }, 'upsell.dispatchStatus': 'waiting_parent' });
     const totalDispatched = await col.countDocuments({ 'upsell.isUpsell': true, 'upsell.dispatchStatus': { $in: ['dispatching', 'dispatched'] } });
 
-    return res.render('painel_upsell', { upsells, parentMap, total, page, perPage, filterStatus, filterSearch, filterTipo, stats: { totalAll, totalPaid, totalWaiting, totalDispatched } });
+    // Financeiro: valor total pago, custo, líquido e conversão (sobre TODOS os upsells pagos).
+    const toBRL = (c) => `R$ ${(Number(c || 0) / 100).toFixed(2).replace('.', ',')}`;
+    const paidOr = [
+      { status: { $in: ['pago', 'paid'] } },
+      { 'woovi.status': { $in: ['pago', 'paid'] } },
+      { 'paghiper.status': { $regex: 'pago|paid|completed', $options: 'i' } },
+      { paidAt: { $exists: true, $nin: [null, ''] } },
+      { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } },
+      { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }
+    ];
+    let revenueCents = 0, costCents = 0, paidCount = 0, eligibleParents = 0;
+    try {
+      const settingsCol = await getCollection('settings');
+      const csDoc = await settingsCol.findOne({ _id: 'cost_settings' });
+      const csRaw = (csDoc && csDoc.values && typeof csDoc.values === 'object') ? csDoc.values : {};
+      const cs = Object.assign({}, DEFAULT_COST_SETTINGS, (csRaw && csRaw._custom === true) ? csRaw : {});
+      const paidUpsells = await col.find(
+        { $and: [{ 'upsell.isUpsell': true }, { $or: paidOr }] },
+        { projection: { valueCents: 1, expectedValueCents: 1, 'upsell.offerCents': 1, tipo: 1, tipoServico: 1, categoria: 1, quantidade: 1, qtd: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'fama24h.requestPayload.quantity': 1 } }
+      ).limit(20000).toArray();
+      for (const o of paidUpsells) {
+        paidCount += 1;
+        const v = Number(o.valueCents || o.expectedValueCents || (o.upsell && o.upsell.offerCents) || 0) || 0;
+        revenueCents += Math.max(0, v);
+        costCents += computeUpsellCostCents(o, cs);
+      }
+      eligibleParents = await col.countDocuments({ $and: [{ 'upsell.isUpsell': { $ne: true } }, { $or: paidOr }] });
+    } catch (eF) { try { console.error('[Painel Upsell] financeiro erro:', eF?.message); } catch (_) {} }
+    const netCents = revenueCents - costCents;
+    const financial = {
+      revenueBRL: toBRL(revenueCents),
+      costBRL: toBRL(costCents),
+      costPct: revenueCents > 0 ? Math.round((costCents / revenueCents) * 1000) / 10 : 0,
+      netBRL: toBRL(netCents),
+      paidCount,
+      avgTicketBRL: toBRL(paidCount > 0 ? Math.round(revenueCents / paidCount) : 0),
+      conversionPct: eligibleParents > 0 ? Math.round((paidCount / eligibleParents) * 1000) / 10 : 0,
+      eligibleParents
+    };
+
+    return res.render('painel_upsell', { upsells, parentMap, total, page, perPage, filterStatus, filterSearch, filterTipo, stats: { totalAll, totalPaid, totalWaiting, totalDispatched }, financial });
   } catch (e) {
     console.error('[Painel Upsell] Erro:', e?.message);
     return res.status(500).send('Erro ao carregar painel de upsell');
