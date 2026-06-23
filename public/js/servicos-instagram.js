@@ -3345,16 +3345,17 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
     };
 
-    const useCache = !!cachedPosts && cachedPostsUser === user;
+    // views = reels (get_clips no servidor); não reusa o cache do feed (likes) p/ não misturar.
+    const useCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views';
     if (useCache) {
       renderFrom(cachedPosts);
     } else {
-      const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '');
       refs.postModalGrid.innerHTML = spinnerHTML();
       fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
         .then(r=>r.json()).then(d=>{
           const arr = Array.isArray(d.posts) ? d.posts : [];
-          cachedPosts = arr; cachedPostsUser = user;
+          if (kind !== 'views') { cachedPosts = arr; cachedPostsUser = user; }
           renderFrom(arr);
         }).catch(function(){
           renderFrom([]);

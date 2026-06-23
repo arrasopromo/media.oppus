@@ -17214,77 +17214,113 @@ app.get('/posts', async (req, res) => {
   }
 });
 
-// Busca posts via RocketAPI (rápido, ~2-5s): get_info → (se não vier edges) get_media.
-async function fetchInstagramPostsRocketApi(username) {
+// Busca posts via RocketAPI. RÁPIDO: se já temos o ID do IG salvo, vai DIRETO no get_media
+// (pula get_info/search). Senão resolve por get_info (timeout curto) → search e SALVA o ID p/ as próximas.
+async function fetchInstagramPostsRocketApi(username, opts) {
+  const reels = !!(opts && opts.reels); // modo reels (visualizações) → usa get_clips
   const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
   if (!uname) return { success: false, error: 'missing_username' };
   if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'no_token' };
-  // Importante: NÃO pula por global.rocketApiDisabledUntil aqui — com cookies (407) e Apify (402)
-  // fora do ar, a RocketAPI é o único caminho de posts; sempre tentamos.
-  const auth = { headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` }, timeout: 9000, validateStatus: () => true };
+  const auth = { headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` }, validateStatus: () => true };
+
+  const mapMediaItems = (items) => (Array.isArray(items) ? items : []).map(item => ({
+    shortcode: item.code,
+    takenAt: item.taken_at,
+    isVideo: item.media_type === 2 || !!item.video_versions,
+    displayUrl: (item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates[0]) ? item.image_versions2.candidates[0].url : null,
+    videoUrl: (item.video_versions && item.video_versions[0]) ? item.video_versions[0].url : null,
+    typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
+  })).filter(p => p.shortcode).slice(0, 12);
+  const getMediaById = async (id) => {
+    try {
+      const media = await axios.post('https://v1.rocketapi.io/instagram/user/get_media', { id: String(id), count: 12 }, Object.assign({}, auth, { timeout: 7000 }));
+      if (media.status !== 200) return [];
+      const items = (media.data && media.data.response && media.data.response.body && media.data.response.body.items) ? media.data.response.body.items : [];
+      return mapMediaItems(items);
+    } catch (_) { return []; }
+  };
+  // REELS (visualizações): get_clips — cada item vem como { media: {...} }.
+  const getClipsById = async (id) => {
+    try {
+      const r = await axios.post('https://v1.rocketapi.io/instagram/user/get_clips', { id: String(id), count: 12 }, Object.assign({}, auth, { timeout: 8000 }));
+      if (r.status !== 200) return [];
+      const items = (r.data && r.data.response && r.data.response.body && r.data.response.body.items) ? r.data.response.body.items : [];
+      return (Array.isArray(items) ? items : []).map(w => {
+        const m = (w && w.media) ? w.media : w;
+        if (!m || !m.code) return null;
+        return {
+          shortcode: m.code,
+          takenAt: m.taken_at,
+          isVideo: true,
+          displayUrl: (m.image_versions2 && m.image_versions2.candidates && m.image_versions2.candidates[0]) ? m.image_versions2.candidates[0].url : null,
+          videoUrl: (m.video_versions && m.video_versions[0]) ? m.video_versions[0].url : null,
+          typename: 'GraphVideo'
+        };
+      }).filter(Boolean).slice(0, 12);
+    } catch (_) { return []; }
+  };
+  const getMedia = reels ? getClipsById : getMediaById;
+  const persistId = async (id) => {
+    try { const vu = await getCollection('validated_insta_users'); await vu.updateOne({ username: uname }, { $set: { igUserId: String(id) } }); } catch (_) {}
+  };
+
+  // 0) ID já salvo → get_media DIRETO (pula get_info/search) = caminho rápido.
   try {
-    const info = await axios.post('https://v1.rocketapi.io/instagram/user/get_info', { username: uname }, auth);
-    if (info.status !== 200) {
-      return { success: false, error: `rocket_http_${info.status}` };
+    const vu0 = await getCollection('validated_insta_users');
+    const d0 = await vu0.findOne({ username: uname }, { projection: { igUserId: 1 } });
+    const sid = (d0 && d0.igUserId) ? String(d0.igUserId) : '';
+    if (sid) {
+      const posts = await getMedia(sid);
+      if (posts.length) return { success: true, username: uname, posts, via: 'stored_id' };
     }
-    const rData = info.data;
-    const rUser = (rData && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) ? rData.response.body.data.user : null;
-    global.rocketApiDisabledUntil = 0;
+  } catch (_) {}
 
-    const mapMediaItems = (items) => (Array.isArray(items) ? items : []).map(item => ({
-      shortcode: item.code,
-      takenAt: item.taken_at,
-      isVideo: item.media_type === 2 || !!item.video_versions,
-      displayUrl: (item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates[0]) ? item.image_versions2.candidates[0].url : null,
-      videoUrl: (item.video_versions && item.video_versions[0]) ? item.video_versions[0].url : null,
-      typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
-    })).filter(p => p.shortcode).slice(0, 12);
-    const getMediaById = async (id) => {
-      try {
-        const media = await axios.post('https://v1.rocketapi.io/instagram/user/get_media', { id: String(id), count: 12 }, Object.assign({}, auth, { timeout: 8000 }));
-        if (media.status !== 200) return [];
-        const items = (media.data && media.data.response && media.data.response.body && media.data.response.body.items) ? media.data.response.body.items : [];
-        return mapMediaItems(items);
-      } catch (_) { return []; }
-    };
+  let posts = [];
+  let userId = null;
+  let isPrivate = false;
+  let resolvedUsername = uname;
 
-    let posts = [];
-    let userId = rUser && rUser.id ? rUser.id : null;
-    let isPrivate = rUser ? !!rUser.is_private : false;
-
-    // posts já embutidos no get_info (edges)
-    const edges = (rUser && rUser.edge_owner_to_timeline_media && Array.isArray(rUser.edge_owner_to_timeline_media.edges)) ? rUser.edge_owner_to_timeline_media.edges : [];
-    if (edges.length) {
-      posts = edges.map(e => (e && e.node) ? ({
-        shortcode: e.node.shortcode,
-        takenAt: e.node.taken_at_timestamp,
-        isVideo: !!e.node.is_video,
-        displayUrl: e.node.display_url || e.node.thumbnail_src || null,
-        videoUrl: e.node.video_url || null,
-        typename: e.node.__typename || ''
-      }) : null).filter(Boolean).slice(0, 12);
+  // 1) get_info (timeout curto — é o gargalo e muitas contas voltam vazias). Pode já trazer edges.
+  try {
+    const info = await axios.post('https://v1.rocketapi.io/instagram/user/get_info', { username: uname }, Object.assign({}, auth, { timeout: 5000 }));
+    if (info.status === 200) {
+      global.rocketApiDisabledUntil = 0;
+      const rUser = (info.data && info.data.response && info.data.response.body && info.data.response.body.data && info.data.response.body.data.user) ? info.data.response.body.data.user : null;
+      if (rUser) {
+        userId = rUser.id || null;
+        isPrivate = !!rUser.is_private;
+        resolvedUsername = rUser.username || uname;
+        const edges = (rUser.edge_owner_to_timeline_media && Array.isArray(rUser.edge_owner_to_timeline_media.edges)) ? rUser.edge_owner_to_timeline_media.edges : [];
+        if (!reels && edges.length) {
+          posts = edges.map(e => (e && e.node) ? ({
+            shortcode: e.node.shortcode, takenAt: e.node.taken_at_timestamp, isVideo: !!e.node.is_video,
+            displayUrl: e.node.display_url || e.node.thumbnail_src || null, videoUrl: e.node.video_url || null, typename: e.node.__typename || ''
+          }) : null).filter(Boolean).slice(0, 12);
+        }
+      }
     }
+  } catch (_) {}
 
-    // get_info veio vazio (IG bloqueou aquela chamada) → acha o ID pelo SEARCH (match EXATO do @)
-    if (!userId) {
-      try {
-        const s = await axios.post('https://v1.rocketapi.io/instagram/search', { query: uname }, Object.assign({}, auth, { timeout: 9000 }));
-        const body = s.data && s.data.response && s.data.response.body;
-        const users = (body && (body.users || (body.data && body.data.users))) || [];
-        const exact = (Array.isArray(users) ? users : []).map(x => (x && x.user) ? x.user : x).find(u => u && String(u.username || '').toLowerCase() === uname);
-        if (exact) { userId = exact.pk || exact.id || null; isPrivate = !!exact.is_private; }
-      } catch (_) {}
-    }
-
-    if (!posts.length && userId && !isPrivate) {
-      posts = await getMediaById(userId);
-    }
-
-    if (posts.length) return { success: true, username: (rUser && rUser.username) || uname, posts };
-    return { success: false, error: userId ? 'rocket_no_posts' : 'rocket_user_not_found', isPrivate: !!isPrivate };
-  } catch (e) {
-    return { success: false, error: (e && e.message) ? e.message : 'rocket_error' };
+  // 2) get_info vazio → SEARCH (match EXATO do @) p/ achar o ID.
+  if (!userId) {
+    try {
+      const s = await axios.post('https://v1.rocketapi.io/instagram/search', { query: uname }, Object.assign({}, auth, { timeout: 7000 }));
+      const body = s.data && s.data.response && s.data.response.body;
+      const users = (body && (body.users || (body.data && body.data.users))) || [];
+      const exact = (Array.isArray(users) ? users : []).map(x => (x && x.user) ? x.user : x).find(u => u && String(u.username || '').toLowerCase() === uname);
+      if (exact) { userId = exact.pk || exact.id || null; isPrivate = !!exact.is_private; }
+    } catch (_) {}
   }
+
+  // 3) get_media/get_clips pelo ID resolvido.
+  if (!posts.length && userId && !isPrivate) {
+    posts = await getMedia(userId);
+  }
+
+  if (userId) { await persistId(userId); } // salva p/ deixar as próximas buscas rápidas
+
+  if (posts.length) return { success: true, username: resolvedUsername, posts };
+  return { success: false, error: userId ? 'rocket_no_posts' : 'rocket_user_not_found', isPrivate: !!isPrivate };
 }
 
 app.get('/api/instagram/posts', async (req, res) => {
@@ -17305,6 +17341,50 @@ app.get('/api/instagram/posts', async (req, res) => {
     if (!username) return res.json({ success: false, error: 'missing_username', posts: [] });
     const debugInsert = String(req.query.debug || '').trim() === '1';
     let debugInfo = null;
+
+    // ── Modo REELS (visualizações): busca os reels do perfil (get_clips), não o feed ──
+    const wantReels = String(req.query.reels || req.query.type || '').trim().toLowerCase() === '1' || String(req.query.reels || req.query.type || '').trim().toLowerCase() === 'reels';
+    if (wantReels) {
+      // 1) cache de reels (<1h)
+      try {
+        const vu = await getCollection('validated_insta_users');
+        const cd = await vu.findOne({ username }, { projection: { latestReels: 1, reelsCheckedAt: 1 } });
+        if (cd && Array.isArray(cd.latestReels) && cd.latestReels.length) {
+          const fresh = cd.reelsCheckedAt && (Date.now() - new Date(cd.reelsCheckedAt).getTime() < 3600000);
+          if (fresh) { console.log('[API] Retornando REELS do cache'); return res.json({ success: true, username, posts: cd.latestReels, source: 'cache_reels' }); }
+        }
+      } catch (_) {}
+      // 2) RocketAPI get_clips
+      try {
+        console.log('[API] tentando RocketAPI (reels/get_clips)');
+        const rk = await fetchInstagramPostsRocketApi(username, { reels: true });
+        if (rk && rk.success && Array.isArray(rk.posts) && rk.posts.length) {
+          console.log(`✅ RocketAPI trouxe ${rk.posts.length} reels para @${username}`);
+          try { const vu = await getCollection('validated_insta_users'); await vu.updateOne({ username }, { $set: { latestReels: rk.posts, reelsCheckedAt: new Date().toISOString() } }); } catch (_) {}
+          return res.json({ success: true, username, posts: rk.posts, source: 'rocketapi_clips' });
+        }
+        console.log('[API] RocketAPI reels sem resultado:', (rk && rk.error) || 'desconhecido');
+      } catch (e) { console.log('[API] RocketAPI reels erro:', e && e.message); }
+      // 3) cookies (feed) filtrando só vídeos
+      try {
+        const result = await fetchInstagramRecentPosts(username);
+        if (result && result.success && Array.isArray(result.posts)) {
+          const vids = result.posts.filter(p => p && (p.isVideo || p.videoUrl));
+          if (vids.length) {
+            try { const vu = await getCollection('validated_insta_users'); await vu.updateOne({ username }, { $set: { latestReels: vids, reelsCheckedAt: new Date().toISOString() } }); } catch (_) {}
+            return res.json({ success: true, username, posts: vids, source: 'cookies_reels' });
+          }
+        }
+      } catch (_) {}
+      // 4) último recurso: reels salvos (mesmo velhos) → embed renderiza pelo shortcode
+      try {
+        const vu = await getCollection('validated_insta_users');
+        const cd = await vu.findOne({ username }, { projection: { latestReels: 1 } });
+        if (cd && Array.isArray(cd.latestReels) && cd.latestReels.length) return res.json({ success: true, username, posts: cd.latestReels, stale: true });
+      } catch (_) {}
+      return res.json({ success: true, username, posts: [] });
+    }
+
     try {
       const vu = await getCollection('validated_insta_users');
       // Tentar buscar do banco primeiro se tiver posts recentes (ex: < 1h)
@@ -17329,7 +17409,26 @@ app.get('/api/instagram/posts', async (req, res) => {
       try { console.log('🗃️ Posts route: upsert ok', debugInfo); } catch(_) {}
     } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: upsert error', err?.message || String(err)); } catch(_) {} }
     
-    // RÁPIDO: RocketAPI primeiro (~2-5s). É bem mais rápido e não usa o proxy dos cookies (407).
+    // 1) Cookies via web_profile_info (rápido ~1-2s e confiável p/ qualquer conta existente).
+    //    O fetch já tenta DIRETO (sem proxy) quando o proxy falha com 407. É mais rápido que a
+    //    RocketAPI nas contas de cliente (onde o get_info dela volta vazio e precisa de search).
+    try {
+      console.log('[API] tentando web_profile_info com cookies');
+      const result = await fetchInstagramRecentPosts(username);
+      if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
+        try {
+          const vu2 = await getCollection('validated_insta_users');
+          await vu2.updateOne(
+            { username },
+            { $set: { latestPosts: result.posts, lastPostsAt: new Date().toISOString() } }
+          );
+        } catch (_) {}
+        if (debugInsert) return res.json(Object.assign({}, result, { debugInsert: debugInfo }));
+        return res.json(result);
+      }
+    } catch (e) { /* fallback abaixo */ }
+
+    // 2) RocketAPI (reserva). Usa ID salvo p/ get_media direto quando possível.
     try {
       console.log('[API] tentando RocketAPI (posts)');
       const rk = await fetchInstagramPostsRocketApi(username);
@@ -17344,25 +17443,6 @@ app.get('/api/instagram/posts', async (req, res) => {
       }
       console.log('[API] RocketAPI sem posts:', (rk && rk.error) || 'desconhecido', (rk && rk.isPrivate) ? '(privado)' : '');
     } catch (e) { console.log('[API] RocketAPI erro:', e && e.message); }
-
-    // Otimização: Se cookies estão falhando muito, pular direto pro Apify/Fallback
-    // Mas vamos manter a tentativa rápida (timeout reduzido)
-    try {
-      console.log('[API] tentando web_profile_info com cookies');
-      // Reduzir timeout implícito na chamada se possível ou assumir que fetchInstagramRecentPosts foi otimizado
-      const result = await fetchInstagramRecentPosts(username);
-      if (result && result.success && Array.isArray(result.posts) && result.posts.length) {
-        try {
-          const vu2 = await getCollection('validated_insta_users');
-          await vu2.updateOne(
-            { username },
-            { $set: { latestPosts: result.posts, lastPostsAt: new Date().toISOString() } }
-          );
-        } catch (_) {}
-        if (debugInsert) return res.json(Object.assign({}, result, { debugInsert: debugInfo }));
-        return res.json(result);
-      }
-    } catch (e) { /* fallback abaixo */ }
 
     // Fallback: Tentar Apify (via verifyInstagramProfile que agora retorna posts)
     try {
