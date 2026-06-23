@@ -547,7 +547,13 @@
           </div>
           <button type="button" id="followersUseMongoInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Usar inicial do Mongo (marcados)</button>
           <button type="button" id="followersFixCheckedGlobalBtn" style="padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados (global)</button>
-          <button type="button" id="followersExtendRefilExpiredBtn" style="padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px; cursor: pointer;">Estender reposição expirada (+30d)</button>
+          <div style="position:relative; display:flex; align-items:center;">
+            <button type="button" id="followersExtendRefilExpiredBtn" style="padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Estender reposição expirada (+30d)</button>
+            <button type="button" id="followersExtendRefilMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #16a34a; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
+            <div id="followersExtendRefilMenu" style="display:none; position:absolute; top: calc(100% + 6px); left:0; z-index:1000; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; padding:10px; min-width:240px; box-shadow: 0 10px 22px rgba(0,0,0,0.10);">
+              <button type="button" id="followersExtendRefilSelectedBtn" style="width:100%; padding: 8px 10px; background: #15803d; color: white; border: none; border-radius: 8px; cursor: pointer;">Estender reposição dos marcados (+30d)</button>
+            </div>
+          </div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Auto:</span>
@@ -1426,6 +1432,67 @@
                 alert('Falha ao estender reposição: ' + em);
               } finally {
                 try { extendRefilBtn.disabled = false; } catch (_) {}
+              }
+            });
+          }
+
+          // Menu (dropdown) do botão de estender + opção "marcados"
+          var extendRefilMenuBtn = el('followersExtendRefilMenuBtn');
+          var extendRefilMenu = el('followersExtendRefilMenu');
+          if (extendRefilMenuBtn && extendRefilMenu) {
+            extendRefilMenuBtn.addEventListener('click', function(ev){
+              ev.stopPropagation();
+              var open = extendRefilMenu.style.display !== 'none';
+              extendRefilMenu.style.display = open ? 'none' : 'block';
+              extendRefilMenuBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+            });
+            document.addEventListener('click', function(ev){
+              try { if (extendRefilMenu.style.display !== 'none' && !extendRefilMenu.contains(ev.target) && ev.target !== extendRefilMenuBtn) { extendRefilMenu.style.display = 'none'; extendRefilMenuBtn.setAttribute('aria-expanded', 'false'); } } catch (_) {}
+            });
+          }
+          var extendRefilSelectedBtn = el('followersExtendRefilSelectedBtn');
+          if (extendRefilSelectedBtn) {
+            extendRefilSelectedBtn.addEventListener('click', async function(){
+              var rows = (typeof getCheckedRows === 'function') ? getCheckedRows() : [];
+              if (!rows || !rows.length) { alert('Selecione pelo menos 1 pedido (marque os checkboxes).'); return; }
+              var orderIds = [], usernames = [];
+              for (var i = 0; i < rows.length; i++) {
+                var oid = String(rows[i].getAttribute('data-orderid') || '').trim();
+                var u = String(rows[i].getAttribute('data-username') || '').trim().replace(/^@+/, '');
+                if (oid) orderIds.push(oid);
+                if (u) usernames.push(u);
+              }
+              if (!confirm('Estender em +30 dias a reposição expirada dos ' + rows.length + ' pedido(s) marcado(s)?')) return;
+              try { extendRefilSelectedBtn.disabled = true; } catch (_) {}
+              try { if (extendRefilMenu) extendRefilMenu.style.display = 'none'; } catch (_) {}
+              setStatus('Estendendo reposição dos marcados (+30d)…');
+              try {
+                var out = await fetch('/api/painel/gerenciamento-seguidores/extend-refil-expired', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                  body: JSON.stringify({ days: 30, orderIds: orderIds, usernames: usernames }),
+                  credentials: 'same-origin'
+                }).then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; }); });
+                var data = out && out.json ? out.json : null;
+                if (!data || data.ok !== true) {
+                  var err = (data && (data.error || data.message)) ? String(data.error || data.message) : ('HTTP ' + String(out ? out.status : ''));
+                  setStatus('Falha ao estender reposição: ' + err);
+                  return alert('Falha ao estender reposição: ' + err);
+                }
+                alert('OK.\n' +
+                  'Marcados: ' + rows.length + '\n' +
+                  'Pedidos casados: ' + String(data.ordersMatched || 0) + '\n' +
+                  'Expirados (calculado): ' + String(data.ordersExpiredCandidates || 0) + '\n' +
+                  'Links atualizados: ' + String(data.updated || 0) + '\n' +
+                  'Links criados (faltantes): ' + String(data.createdMissingLinks || 0) + '\n' +
+                  'Pedidos vinculados (refilLinkId): ' + String(data.updatedOrders || 0));
+                window.location.reload();
+              } catch (e) {
+                var em = e && e.message ? e.message : String(e);
+                setStatus('Falha ao estender reposição: ' + em);
+                alert('Falha ao estender reposição: ' + em);
+              } finally {
+                try { extendRefilSelectedBtn.disabled = false; } catch (_) {}
               }
             });
           }
@@ -3630,6 +3697,12 @@
           <div class="summary-label">Total de Vendas</div>
           <div class="summary-value">R$ <%= (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)).toFixed(2).replace('.', ',') %></div>
         </div>
+        <% var _totVendas = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _ltvRev = (typeof ltvRevenue !== 'undefined' ? Number(ltvRevenue || 0) : 0); var _ltvPct = _totVendas > 0 ? (_ltvRev / _totVendas * 100) : 0; %>
+        <div class="summary-card">
+          <div class="summary-label">Faturamento LTV (recompra)</div>
+          <div class="summary-value" style="color:#7c3aed;">R$ <%= _ltvRev.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= (typeof ltvCustomers !== 'undefined' ? ltvCustomers : 0) %> cliente(s) recorrente(s)</div>
+        </div>
         <div class="summary-card">
           <div class="summary-label">Ticket Médio</div>
           <div class="summary-value">R$ <%= (typeof avgTicket !== 'undefined' ? Number(avgTicket || 0) : 0).toFixed(2).replace('.', ',') %></div>
@@ -3640,10 +3713,88 @@
         </div>
         <% var _vendasOper = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _lucroOper = _vendasOper - Number(totalCost || 0); %>
         <div class="summary-card">
-          <div class="summary-label">Lucro Operacional (período)</div>
-          <div class="summary-value" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
-          <div class="summary-sub" style="margin-top:6px;">Total de Vendas − Custo Total</div>
+          <div class="summary-label">Lucro Líquido (período)</div>
+          <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
+          <div id="dashLucroMargem" style="margin-top:4px; font-size:0.85rem; font-weight:700; color:#6b7280;"></div>
+          <div class="summary-sub" id="dashLucroOperSub" style="margin-top:6px;">Total de Vendas − Custo Total</div>
+          <button type="button" id="dashMetaTaxToggle" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">c/ imposto Meta (13,8%)</button>
         </div>
+        <% var _fbOk = (typeof fbSpendOk !== 'undefined' && fbSpendOk); var _fb = _fbOk ? Number(fbSpend || 0) : 0; var _fbTax = _fb * 0.138; var _fbTotal = _fb + _fbTax; var _brl = function(n){ return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ','); }; %>
+        <div class="summary-card">
+          <div class="summary-label">Gasto Facebook (período)</div>
+          <div class="summary-value" style="color:#dc2626;"><%= _fbOk ? _brl(_fb) : '—' %></div>
+          <% if (_fbOk) { %>
+          <div class="summary-sub" style="margin-top:8px; line-height:1.6;">
+            Imposto (13,8%): <strong style="color:#b91c1c;"><%= _brl(_fbTax) %></strong><br>
+            Total (gasto + imposto): <strong style="color:#111827;"><%= _brl(_fbTotal) %></strong>
+          </div>
+          <% } else { %>
+          <div class="summary-sub" style="margin-top:6px;">Não configurado / sem dados</div>
+          <% } %>
+        </div>
+        <div class="summary-card" id="dashImpostoCard" data-vendas="<%= _vendasOper.toFixed(2) %>" data-lucrobruto="<%= _lucroOper.toFixed(2) %>" data-ads-base="<%= _fb.toFixed(2) %>" data-ads-tax="<%= _fbTax.toFixed(2) %>">
+          <div class="summary-label">Imposto (período)</div>
+          <div class="summary-value" id="dashImpostoValue" style="color:#dc2626;">R$ 0,00</div>
+          <div class="summary-sub" style="margin-top:8px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <input type="range" id="dashImpostoRate" min="6" max="13" step="0.1" value="6" style="flex:1; accent-color:#7c3aed; cursor:pointer;">
+              <strong id="dashImpostoRateLabel" style="min-width:48px; text-align:right; color:#111827;">6%</strong>
+            </div>
+            <div style="margin-top:4px;">Alíquota sobre o faturamento (debitada do lucro)</div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var card = document.getElementById('dashImpostoCard');
+            var slider = document.getElementById('dashImpostoRate');
+            if (!card || !slider) return;
+            var rateLabel = document.getElementById('dashImpostoRateLabel');
+            var impostoEl = document.getElementById('dashImpostoValue');
+            var lucroEl = document.getElementById('dashLucroOperValue');
+            var lucroSub = document.getElementById('dashLucroOperSub');
+            var margemEl = document.getElementById('dashLucroMargem');
+            var vendas = Number(card.getAttribute('data-vendas') || 0) || 0;
+            var lucroBruto = Number(card.getAttribute('data-lucrobruto') || 0) || 0;
+            var adsBase = Number(card.getAttribute('data-ads-base') || 0) || 0;  // gasto Facebook
+            var adsTax = Number(card.getAttribute('data-ads-tax') || 0) || 0;    // imposto Meta (13,8%)
+            var metaBtn = document.getElementById('dashMetaTaxToggle');
+            var KEY = 'oppus_imposto_aliquota';
+            var KEY_META = 'oppus_lucro_meta_tax'; // '1' = considera imposto Meta, '0' = não
+            var includeMeta = true;
+            try { includeMeta = (localStorage.getItem(KEY_META) !== '0'); } catch(_){}
+            function fmt(n){ return 'R$ ' + (Number(n) || 0).toFixed(2).replace('.', ','); }
+            function apply(){
+              var rate = Number(slider.value); if (!(rate >= 6 && rate <= 13)) rate = 6;
+              var rateStr = (Math.round(rate * 10) / 10).toString().replace('.', ',');
+              if (rateLabel) rateLabel.textContent = rateStr + '%';
+              var imposto = vendas * (rate / 100);
+              var ads = adsBase + (includeMeta ? adsTax : 0);
+              var lucro = lucroBruto - imposto - ads;
+              if (impostoEl) impostoEl.textContent = '− ' + fmt(imposto);
+              if (lucroEl) { lucroEl.textContent = fmt(lucro); lucroEl.style.color = lucro >= 0 ? '#16a34a' : '#dc2626'; }
+              if (margemEl) {
+                var margem = vendas > 0 ? (lucro / vendas * 100) : 0;
+                margemEl.textContent = margem.toFixed(1).replace('.', ',') + '% das vendas';
+                margemEl.style.color = margem >= 0 ? '#16a34a' : '#dc2626';
+              }
+              if (lucroSub) {
+                var adsTxt = adsBase > 0 ? (' − Anúncios' + (includeMeta && adsTax > 0 ? ' (c/ imposto Meta)' : '')) : '';
+                lucroSub.textContent = 'Vendas − Custo' + adsTxt + ' − Imposto (' + rateStr + '%)';
+              }
+              if (metaBtn) {
+                metaBtn.textContent = includeMeta ? 'c/ imposto Meta (13,8%)' : 's/ imposto Meta';
+                metaBtn.style.background = includeMeta ? '#f5f3ff' : '#fff';
+                metaBtn.style.borderColor = includeMeta ? '#c4b5fd' : '#e0e0ea';
+                metaBtn.style.color = includeMeta ? '#6d28d9' : '#374151';
+              }
+              try { localStorage.setItem(KEY, String(rate)); } catch(_){}
+            }
+            try { var saved = parseFloat(localStorage.getItem(KEY)); if (saved >= 6 && saved <= 13) slider.value = String(saved); } catch(_){}
+            slider.addEventListener('input', apply);
+            if (metaBtn) metaBtn.addEventListener('click', function(){ includeMeta = !includeMeta; try { localStorage.setItem(KEY_META, includeMeta ? '1' : '0'); } catch(_){} apply(); });
+            apply();
+          })();
+        </script>
         <div class="summary-card">
           <div class="summary-label">% custo / vendas (período)</div>
           <div class="summary-value"><%= (typeof costOverRevenuePct !== 'undefined' ? Number(costOverRevenuePct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>

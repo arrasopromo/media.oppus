@@ -1,4 +1,27 @@
 
+// Fallback de miniatura de post: se a imagem (via /image-proxy) falhar — URL do CDN do
+// Instagram expirada/403 —, troca pelo embed oficial do post, que carrega pelo navegador.
+(function(){
+  if (window.__igPostFallbackInstalled) return;
+  window.__igPostFallbackInstalled = true;
+  document.addEventListener('error', function(ev){
+    var t = ev && ev.target;
+    if (!t || t.tagName !== 'IMG') return;
+    var sc = t.getAttribute && t.getAttribute('data-igpost');
+    if (!sc || t.__igFb) return;
+    t.__igFb = true;
+    try {
+      var f = document.createElement('iframe');
+      f.src = 'https://www.instagram.com/p/' + encodeURIComponent(sc) + '/embed';
+      f.setAttribute('scrolling', 'no');
+      f.setAttribute('allow', 'encrypted-media; picture-in-picture');
+      f.setAttribute('loading', 'lazy');
+      f.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;';
+      t.replaceWith(f);
+    } catch (_) {}
+  }, true);
+})();
+
 document.addEventListener('DOMContentLoaded', function() {
   const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
   const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
@@ -3130,7 +3153,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const isVid = p.isVideo || (p.media_type === 2);
         
         const media = (dsrc)
-          ? ('<div class="media-frame"><img src="'+dsrc+'" loading="lazy" decoding="async"/></div>')
+          ? ('<div class="media-frame"><img src="'+dsrc+'" data-igpost="'+p.shortcode+'" loading="lazy" decoding="async"/></div>')
           : (isVid && vsrc
             ? ('<div class="media-frame"><video data-src="'+vsrc+'" muted playsinline preload="none"></video></div>')
             : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
@@ -3407,7 +3430,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
         const media = dsrc
-          ? '<img src="'+dsrc+'" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>'
+          ? '<img src="'+dsrc+'" data-igpost="'+p.shortcode+'" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>'
           : '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
         const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+media+'</div>';
         const dateText = fmtPostDateBR(p.takenAt);

@@ -17214,6 +17214,79 @@ app.get('/posts', async (req, res) => {
   }
 });
 
+// Busca posts via RocketAPI (rápido, ~2-5s): get_info → (se não vier edges) get_media.
+async function fetchInstagramPostsRocketApi(username) {
+  const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+  if (!uname) return { success: false, error: 'missing_username' };
+  if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'no_token' };
+  // Importante: NÃO pula por global.rocketApiDisabledUntil aqui — com cookies (407) e Apify (402)
+  // fora do ar, a RocketAPI é o único caminho de posts; sempre tentamos.
+  const auth = { headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` }, timeout: 9000, validateStatus: () => true };
+  try {
+    const info = await axios.post('https://v1.rocketapi.io/instagram/user/get_info', { username: uname }, auth);
+    if (info.status !== 200) {
+      return { success: false, error: `rocket_http_${info.status}` };
+    }
+    const rData = info.data;
+    const rUser = (rData && rData.response && rData.response.body && rData.response.body.data && rData.response.body.data.user) ? rData.response.body.data.user : null;
+    global.rocketApiDisabledUntil = 0;
+
+    const mapMediaItems = (items) => (Array.isArray(items) ? items : []).map(item => ({
+      shortcode: item.code,
+      takenAt: item.taken_at,
+      isVideo: item.media_type === 2 || !!item.video_versions,
+      displayUrl: (item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates[0]) ? item.image_versions2.candidates[0].url : null,
+      videoUrl: (item.video_versions && item.video_versions[0]) ? item.video_versions[0].url : null,
+      typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage'
+    })).filter(p => p.shortcode).slice(0, 12);
+    const getMediaById = async (id) => {
+      try {
+        const media = await axios.post('https://v1.rocketapi.io/instagram/user/get_media', { id: String(id), count: 12 }, Object.assign({}, auth, { timeout: 8000 }));
+        if (media.status !== 200) return [];
+        const items = (media.data && media.data.response && media.data.response.body && media.data.response.body.items) ? media.data.response.body.items : [];
+        return mapMediaItems(items);
+      } catch (_) { return []; }
+    };
+
+    let posts = [];
+    let userId = rUser && rUser.id ? rUser.id : null;
+    let isPrivate = rUser ? !!rUser.is_private : false;
+
+    // posts já embutidos no get_info (edges)
+    const edges = (rUser && rUser.edge_owner_to_timeline_media && Array.isArray(rUser.edge_owner_to_timeline_media.edges)) ? rUser.edge_owner_to_timeline_media.edges : [];
+    if (edges.length) {
+      posts = edges.map(e => (e && e.node) ? ({
+        shortcode: e.node.shortcode,
+        takenAt: e.node.taken_at_timestamp,
+        isVideo: !!e.node.is_video,
+        displayUrl: e.node.display_url || e.node.thumbnail_src || null,
+        videoUrl: e.node.video_url || null,
+        typename: e.node.__typename || ''
+      }) : null).filter(Boolean).slice(0, 12);
+    }
+
+    // get_info veio vazio (IG bloqueou aquela chamada) → acha o ID pelo SEARCH (match EXATO do @)
+    if (!userId) {
+      try {
+        const s = await axios.post('https://v1.rocketapi.io/instagram/search', { query: uname }, Object.assign({}, auth, { timeout: 9000 }));
+        const body = s.data && s.data.response && s.data.response.body;
+        const users = (body && (body.users || (body.data && body.data.users))) || [];
+        const exact = (Array.isArray(users) ? users : []).map(x => (x && x.user) ? x.user : x).find(u => u && String(u.username || '').toLowerCase() === uname);
+        if (exact) { userId = exact.pk || exact.id || null; isPrivate = !!exact.is_private; }
+      } catch (_) {}
+    }
+
+    if (!posts.length && userId && !isPrivate) {
+      posts = await getMediaById(userId);
+    }
+
+    if (posts.length) return { success: true, username: (rUser && rUser.username) || uname, posts };
+    return { success: false, error: userId ? 'rocket_no_posts' : 'rocket_user_not_found', isPrivate: !!isPrivate };
+  } catch (e) {
+    return { success: false, error: (e && e.message) ? e.message : 'rocket_error' };
+  }
+}
+
 app.get('/api/instagram/posts', async (req, res) => {
   try {
     try { res.set('Cache-Control', 'no-store'); } catch (_) {}
@@ -17243,7 +17316,7 @@ app.get('/api/instagram/posts', async (req, res) => {
           const lastCheck = cachedDoc.checkedAt || cachedDoc.lastPostsAt;
           const isFresh = lastCheck && (Date.now() - new Date(lastCheck).getTime() < 3600000); // 1h
           
-          if (isFresh && cachedDoc.latestPosts.length >= 12) {
+          if (isFresh && cachedDoc.latestPosts.length >= 1) {
                console.log('[API] Retornando posts do banco (validated_insta_users)');
                return res.json({ success: true, username, posts: cachedDoc.latestPosts });
           }
@@ -17256,6 +17329,22 @@ app.get('/api/instagram/posts', async (req, res) => {
       try { console.log('🗃️ Posts route: upsert ok', debugInfo); } catch(_) {}
     } catch (err) { debugInfo = { ok: false, error: err?.message || String(err) }; try { console.error('❌ Posts route: upsert error', err?.message || String(err)); } catch(_) {} }
     
+    // RÁPIDO: RocketAPI primeiro (~2-5s). É bem mais rápido e não usa o proxy dos cookies (407).
+    try {
+      console.log('[API] tentando RocketAPI (posts)');
+      const rk = await fetchInstagramPostsRocketApi(username);
+      if (rk && rk.success && Array.isArray(rk.posts) && rk.posts.length) {
+        console.log(`✅ RocketAPI trouxe ${rk.posts.length} posts para @${username}`);
+        try {
+          const vuR = await getCollection('validated_insta_users');
+          await vuR.updateOne({ username }, { $set: { latestPosts: rk.posts, lastPostsAt: new Date().toISOString() } });
+        } catch (_) {}
+        if (debugInsert) return res.json({ success: true, username, posts: rk.posts, source: 'rocketapi', debugInsert: debugInfo });
+        return res.json({ success: true, username, posts: rk.posts, source: 'rocketapi' });
+      }
+      console.log('[API] RocketAPI sem posts:', (rk && rk.error) || 'desconhecido', (rk && rk.isPrivate) ? '(privado)' : '');
+    } catch (e) { console.log('[API] RocketAPI erro:', e && e.message); }
+
     // Otimização: Se cookies estão falhando muito, pular direto pro Apify/Fallback
     // Mas vamos manter a tentativa rápida (timeout reduzido)
     try {
@@ -17343,6 +17432,18 @@ app.get('/api/instagram/posts', async (req, res) => {
         return res.json({ success: true, username, posts, debugInsert: debugInsert ? debugInfo : undefined });
       }
     } catch (e2) { /* sem fallback */ }
+
+    // Último recurso: se já temos posts salvos (mesmo "velhos"), devolve eles. O front
+    // renderiza pelo shortcode (embed do Instagram) mesmo se a URL da imagem tiver expirado,
+    // então a grade nunca fica vazia quando já buscamos posts deste perfil antes.
+    try {
+      const vuLast = await getCollection('validated_insta_users');
+      const old = await vuLast.findOne({ username }, { projection: { latestPosts: 1 } });
+      if (old && Array.isArray(old.latestPosts) && old.latestPosts.length) {
+        return res.json({ success: true, username, posts: old.latestPosts, stale: true, debugInsert: debugInsert ? debugInfo : undefined });
+      }
+    } catch (_) {}
+
     return res.json({ success: true, username, posts: [], debugInsert: debugInsert ? debugInfo : undefined });
   } catch (e) {
     return res.status(500).json({ success: false, error: e?.message || String(e) });
@@ -25164,7 +25265,29 @@ app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdm
         { tipoServico: { $regex: 'seguidores', $options: 'i' } }
       ]
     };
-    const query = { $and: [paidQuery, seguidoresQuery, { 'recoveryNotify.email.history': { $elemMatch: { status: 'sent' } } }] };
+    // Modo "marcados": estende a reposição expirada apenas dos pedidos selecionados (orderIds e/ou
+    // usernames vindos das linhas marcadas). Sem seleção → comportamento antigo (quem recebeu email).
+    const { ObjectId } = require('mongodb');
+    const selOrderIds = Array.isArray(body.orderIds) ? Array.from(new Set(body.orderIds.map(x => String(x || '').trim()).filter(s => /^[0-9a-fA-F]{24}$/.test(s)))).slice(0, 5000) : [];
+    const selUsernames = Array.isArray(body.usernames) ? Array.from(new Set(body.usernames.map(x => String(x || '').trim().replace(/^@+/, '').toLowerCase()).filter(Boolean))).slice(0, 5000) : [];
+    const markedMode = (selOrderIds.length > 0 || selUsernames.length > 0);
+
+    let query;
+    if (markedMode) {
+      const idObjs = selOrderIds.map(s => { try { return new ObjectId(s); } catch (_) { return null; } }).filter(Boolean);
+      const markedOr = [];
+      if (idObjs.length) markedOr.push({ _id: { $in: idObjs } });
+      if (selUsernames.length) {
+        const rxs = selUsernames.map(u => new RegExp('^@?' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'));
+        markedOr.push({ instauser: { $in: rxs } });
+        markedOr.push({ instagramUsername: { $in: rxs } });
+        markedOr.push({ 'additionalInfoMapPaid.instagram_username': { $in: rxs } });
+        markedOr.push({ 'additionalInfoMap.instagram_username': { $in: rxs } });
+      }
+      query = { $and: [paidQuery, seguidoresQuery, { $or: markedOr }] };
+    } else {
+      query = { $and: [paidQuery, seguidoresQuery, { 'recoveryNotify.email.history': { $elemMatch: { status: 'sent' } } }] };
+    }
 
     const extractInfoAny = (o, key) => {
       try {
@@ -30509,6 +30632,42 @@ function __painelTriggerRefresh(cacheKey, req) {
   } catch (_) { try { __painelRefreshing.delete(cacheKey); } catch (e) {} }
 }
 
+// Busca o GASTO de anúncios da conta do Facebook (Marketing API / Insights, campo `spend`).
+// Cache curto em memória por faixa de datas (evita bater na Graph API a cada load do painel).
+const __fbSpendCache = new Map(); // chave -> { value, exp }
+async function fetchFacebookSpend({ since, until, datePreset } = {}) {
+  const token = String(process.env.FB_ADS_TOKEN || '').trim();
+  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
+  if (!token || !act) return { ok: false, error: 'not_configured' };
+  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
+  let params;
+  let cacheKey;
+  if (datePreset) {
+    params = { fields: 'spend', date_preset: datePreset, access_token: token };
+    cacheKey = 'preset:' + datePreset;
+  } else {
+    const s = String(since || '').trim(), u = String(until || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
+    params = { fields: 'spend', time_range: JSON.stringify({ since: s, until: u }), access_token: token };
+    cacheKey = s + '|' + u;
+  }
+  const now = Date.now();
+  const hit = __fbSpendCache.get(cacheKey);
+  if (hit && hit.exp > now) return { ok: true, spend: hit.value, cached: true };
+  try {
+    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 20000, validateStatus: () => true });
+    if (resp.status !== 200) {
+      return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
+    }
+    const row = (resp.data && Array.isArray(resp.data.data) && resp.data.data[0]) ? resp.data.data[0] : null;
+    const spend = row ? (Number(row.spend) || 0) : 0;
+    __fbSpendCache.set(cacheKey, { value: spend, exp: now + 5 * 60 * 1000 });
+    return { ok: true, spend };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'fetch_failed' };
+  }
+}
+
 app.get('/painel', requireAdmin, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
@@ -32969,8 +33128,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }
       }
 
-      const customerKey = igUser ? (`ig:${igUser.toLowerCase()}`) : (phone ? (`ph:${String(phone).replace(/\D/g, '')}`) : '');
-      const customerLabel = igUser ? (`@${igUser}`) : (phone || '-');
+      let email = '';
+      try { email = String((o && o.customer && o.customer.email) ? o.customer.email : '').trim().toLowerCase(); } catch (_) { email = ''; }
+      if (!email) { try { email = String(extractInfo('email') || '').trim().toLowerCase(); } catch (_) { email = ''; } }
+
+      // Cliente identificado por usuário > telefone > email (p/ recompra/LTV).
+      const customerKey = igUser ? (`ig:${igUser.toLowerCase()}`) : (phone ? (`ph:${String(phone).replace(/\D/g, '')}`) : (email ? (`em:${email}`) : ''));
+      const customerLabel = igUser ? (`@${igUser}`) : (phone || email || '-');
       const totalPaid = Number.isFinite(Number(basePaid)) ? Number(basePaid) : 0;
       const bumpRevenue = Math.max(0, Math.min(Number.isFinite(Number(bumpRevenueRaw)) ? Number(bumpRevenueRaw) : 0, totalPaid));
       totalBumpRevenue += bumpRevenue;
@@ -33024,6 +33188,27 @@ app.get('/painel', requireAdmin, async (req, res) => {
       if (v && v.orders > 1) repeatCustomers += 1;
     }
     const repeatCustomerPct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+
+    // Faturamento de RECOMPRA (LTV): valor das compras a partir da 2ª de cada cliente
+    // (cliente = usuário/telefone/email). A 1ª compra é aquisição; o resto é LTV.
+    let ltvRevenue = 0, ltvCustomers = 0;
+    try {
+      const byCustomer = new Map();
+      for (const r of paidReport) {
+        const k = String(r && r.customerKey ? r.customerKey : '').trim();
+        if (!k) continue;
+        const t = (r && r.createdAt) ? new Date(r.createdAt).getTime() : 0;
+        const arr = byCustomer.get(k) || [];
+        arr.push({ dateMs: Number.isFinite(t) ? t : 0, val: Number(r && r.totalPaid ? r.totalPaid : 0) || 0 });
+        byCustomer.set(k, arr);
+      }
+      for (const arr of byCustomer.values()) {
+        if (!arr || arr.length < 2) continue;
+        arr.sort((a, b) => (a.dateMs - b.dateMs));
+        ltvCustomers += 1;
+        for (let i = 1; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val);
+      }
+    } catch (_) {}
 
     const topUsersByOrders = Array.from(customerAgg.values())
       .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend))
@@ -33912,7 +34097,39 @@ app.get('/painel', requireAdmin, async (req, res) => {
       }
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats };
+    // Gasto de anúncios do Facebook — acompanha o período do painel (só dashboard/vendas).
+    let fbSpend = null, fbSpendOk = false;
+    if (view === 'dashboard' || view === 'vendas') {
+      try {
+        const pad = (n) => String(n).padStart(2, '0');
+        const ymdBrt = (dUtc) => { const sp = toSP(dUtc); return `${sp.getUTCFullYear()}-${pad(sp.getUTCMonth() + 1)}-${pad(sp.getUTCDate())}`; };
+        const todayY = ymdBrt(nowUTC);
+        const dayBack = (n) => { const d = new Date(startOfTodayUtc); d.setUTCDate(d.getUTCDate() - n); return ymdBrt(d); };
+        const spNow = toSP(nowUTC);
+        let fbArgs;
+        if (period === 'today') fbArgs = { since: todayY, until: todayY };
+        else if (period === 'last3days') fbArgs = { since: dayBack(2), until: todayY };
+        else if (period === 'last7days') fbArgs = { since: dayBack(6), until: todayY };
+        else if (period === 'thismonth') fbArgs = { since: `${spNow.getUTCFullYear()}-${pad(spNow.getUTCMonth() + 1)}-01`, until: todayY };
+        else if (period === 'lastmonth') {
+          const y = spNow.getUTCMonth() === 0 ? spNow.getUTCFullYear() - 1 : spNow.getUTCFullYear();
+          const m = spNow.getUTCMonth() === 0 ? 12 : spNow.getUTCMonth();
+          const last = new Date(Date.UTC(y, m, 0));
+          fbArgs = { since: `${y}-${pad(m)}-01`, until: `${y}-${pad(m)}-${pad(last.getUTCDate())}` };
+        } else if (period === 'custom' || period === 'max') {
+          const s = String(req.query.startDate || '').trim(), e = String(req.query.endDate || '').trim();
+          fbArgs = { since: /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : dayBack(29), until: /^\d{4}-\d{2}-\d{2}$/.test(e) ? e : todayY };
+        } else {
+          // 'all' (padrão do dashboard) → gasto de todo o período da conta (FB: até ~37 meses)
+          fbArgs = { datePreset: 'maximum' };
+        }
+        const r = await fetchFacebookSpend(fbArgs);
+        if (r && r.ok) { fbSpend = Number(r.spend) || 0; fbSpendOk = true; }
+        else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
+      } catch (_) {}
+    }
+
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -39734,7 +39951,7 @@ async function fetchInstagramRecentPosts(username) {
   const USAGE_INTERVAL_MS = 5000;
   const MAX_ERRORS_PER_PROFILE = 5;
   const DISABLE_TIME_MS = 60 * 1000;
-  const REQUEST_TIMEOUT = 3000; // REDUZIDO DE 5000 PARA 3000 PARA FALHAR MAIS RÁPIDO
+  const REQUEST_TIMEOUT = 8000; // 8s — 3s era curto demais e fazia a busca de posts falhar/voltar vazia
 
   // Selecionar candidatos
   const available = cookieProfiles.filter(p => p.disabledUntil <= now && !isCookieLocked(p.ds_user_id))
@@ -39768,12 +39985,21 @@ async function fetchInstagramRecentPosts(username) {
         "X-Requested-With": "XMLHttpRequest"
       };
 
-      const resp = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, { 
-        headers, 
+      const igUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+      let resp = await axios.get(igUrl, {
+        headers,
         httpsAgent: proxyAgent || undefined,
         timeout: REQUEST_TIMEOUT,
         validateStatus: () => true
       });
+
+      // 407 = proxy exigindo auth (credencial do proxy quebrada). Os cookies são válidos —
+      // tenta DIRETO (sem proxy) antes de desistir. Reativa o caminho de cookies quando o proxy cai.
+      if (resp.status === 407 && proxyAgent) {
+        try {
+          resp = await axios.get(igUrl, { headers, timeout: REQUEST_TIMEOUT, validateStatus: () => true });
+        } catch (_) {}
+      }
 
       if (resp.status === 429 || resp.status === 403) {
         igMarkLastProxyFail(profile, 10 * 60 * 1000);

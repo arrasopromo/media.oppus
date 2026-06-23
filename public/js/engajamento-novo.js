@@ -1,4 +1,27 @@
 
+// Fallback de miniatura de post: se a imagem (via /image-proxy) falhar (URL do CDN expirada/403),
+// troca pelo embed oficial do post, que carrega pelo navegador do cliente.
+(function(){
+  if (window.__igPostFallbackInstalled) return;
+  window.__igPostFallbackInstalled = true;
+  document.addEventListener('error', function(ev){
+    var t = ev && ev.target;
+    if (!t || t.tagName !== 'IMG') return;
+    var sc = t.getAttribute && t.getAttribute('data-igpost');
+    if (!sc || t.__igFb) return;
+    t.__igFb = true;
+    try {
+      var f = document.createElement('iframe');
+      f.src = 'https://www.instagram.com/p/' + encodeURIComponent(sc) + '/embed';
+      f.setAttribute('scrolling', 'no');
+      f.setAttribute('allow', 'encrypted-media; picture-in-picture');
+      f.setAttribute('loading', 'lazy');
+      f.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;';
+      t.replaceWith(f);
+    } catch (_) {}
+  }, true);
+})();
+
 document.addEventListener('DOMContentLoaded', function() {
   // --- Estado Global ---
   window.currentService = 'followers'; // followers, likes, views
@@ -989,7 +1012,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (p.displayUrl) {
                // Use image proxy if needed, or direct URL
                const imgUrl = '/image-proxy?url=' + encodeURIComponent(p.displayUrl);
-               mediaHtml = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">`;
+               mediaHtml = `<img src="${imgUrl}" data-igpost="${p.shortcode || ''}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">`;
           } else {
                mediaHtml = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#888;font-size:0.8rem;">Sem Preview</div>`;
           }
