@@ -3061,11 +3061,13 @@ document.addEventListener('DOMContentLoaded', function() {
       return targetQtd > q ? (targetQtd - q) : 0;
     }
     
-    if (isCurtidasContext && (/brasileir/i.test(String(tipo || '')) || String(tipo || '') === 'curtidas_brasileiras')) {
-      const map = { 150: 150, 500: 200, 1000: 1000 };
-      return map[q] || 0;
+    if (isCurtidasContext) {
+      // Mistas, brasileiras e orgânicas: alvos genéricos (igual ao que é cobrado e despachado).
+      const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+      const targetQtd = targets[q] || 0;
+      return targetQtd > q ? (targetQtd - q) : 0;
     }
-    
+
     return 0;
   }
   

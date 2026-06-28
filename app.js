@@ -247,8 +247,9 @@ app.use(session({
   secret: "agencia-oppus-secret-key",
   resave: false,
   saveUninitialized: false,
+  rolling: true, // renova o cookie de sessão a cada resposta (sliding) → não expira no meio do uso
   store: sessionStore,
-  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+  cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 }
 }));
 
 // Middleware para parsing de JSON e URL encoded
@@ -364,9 +365,9 @@ const ensureClientIdCookie = (req, res) => {
     if (!id) id = `cid_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     try {
       if (res && typeof res.cookie === 'function') {
-        res.cookie(OPPUS_CLIENT_ID_COOKIE, id, { maxAge: 365 * 24 * 60 * 60 * 1000, httpOnly: false, sameSite: 'Lax', path: '/' });
+        res.cookie(OPPUS_CLIENT_ID_COOKIE, id, { maxAge: 365 * 24 * 60 * 60 * 1000, httpOnly: false, path: '/' });
       } else if (res && typeof res.setHeader === 'function') {
-        const cookie = `${OPPUS_CLIENT_ID_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${365 * 24 * 60 * 60}; SameSite=Lax`;
+        const cookie = `${OPPUS_CLIENT_ID_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${365 * 24 * 60 * 60}`;
         res.setHeader('Set-Cookie', cookie);
       }
     } catch (_) {}
@@ -433,11 +434,19 @@ const verifyAdminAuth = (token) => {
     return null;
   }
 };
+// Prazo do login do admin (sliding). Configurável via ADMIN_AUTH_TTL_DAYS, padrão 30 dias.
+const ADMIN_AUTH_TTL_MS = (() => {
+  const d = parseInt(String(process.env.ADMIN_AUTH_TTL_DAYS || ''), 10);
+  return (Number.isFinite(d) && d > 0 ? d : 30) * 24 * 60 * 60 * 1000;
+})();
 const setAdminAuthCookie = (res, adminUser) => {
   try {
-    const exp = Date.now() + (24 * 60 * 60 * 1000);
+    const exp = Date.now() + ADMIN_AUTH_TTL_MS;
     const token = signAdminAuth({ username: String(adminUser.username || ''), role: String(adminUser.role || ''), exp });
-    res.cookie(ADMIN_AUTH_COOKIE, token, { httpOnly: true, sameSite: 'Lax', secure: false, path: '/', maxAge: 24 * 60 * 60 * 1000 });
+    // SEM sameSite de propósito: igual ao connect.sid (que comprovadamente sobrevive no navegador
+    // do usuário). Cookies marcados SameSite=Lax estavam sendo descartados (extensão/AV/config),
+    // derrubando o login. Sem o atributo, o cookie de admin persiste e re-autentica sozinho.
+    res.cookie(ADMIN_AUTH_COOKIE, token, { httpOnly: true, secure: false, path: '/', maxAge: ADMIN_AUTH_TTL_MS });
   } catch (_) {}
 };
 const clearAdminAuthCookie = (res) => {
@@ -471,18 +480,70 @@ const verifyRecoveryToken = (token) => {
   }
 };
 
+// DIAGNÓSTICO de login: grava num arquivo (auth-debug.log) p/ inspeção posterior, já que o
+// terminal do usuário não é visível. Volume baixo (só rotas admin). Remover depois de resolver.
+const __authDbgFile = path.join(__dirname, 'auth-debug.log');
+function __authDbg(line) {
+  try { fs.appendFileSync(__authDbgFile, '[' + new Date().toISOString() + '] ' + line + '\n'); } catch (_) {}
+}
+function __cookieSnapshot(req) {
+  const raw = String((req && req.headers && req.headers.cookie) || '');
+  const hasSid = /(?:^|;\s*)connect\.sid=/.test(raw);
+  const hasAdmin = new RegExp('(?:^|;\\s*)' + ADMIN_AUTH_COOKIE + '=').test(raw);
+  const host = String((req && req.headers && req.headers.host) || '');
+  const ref = String((req && req.headers && req.headers.referer) || '');
+  let refHost = '';
+  try { refHost = ref ? new URL(ref).host : ''; } catch (_) {}
+  return 'cookieSid=' + hasSid + ' cookieAdmin=' + hasAdmin + ' cookieLen=' + raw.length + ' HOST=' + host + (refHost && refHost !== host ? (' REF=' + refHost) : '');
+}
+
 // Middleware de autenticação Admin
 const requireAdmin = (req, res, next) => {
-    if (req.session && req.session.adminUser) return next();
+    const __isNav = !!(req.headers.accept && req.headers.accept.indexOf('html') > -1); // navegação (não XHR/poller)
+    if (req.session && req.session.adminUser) {
+      try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {} // renova janela (sliding) → usuário ativo não desloga
+      if (__isNav) __authDbg('PASS(session) ' + req.method + ' ' + (req.originalUrl || req.url) + ' user=' + (req.session.adminUser.username || '?') + ' ' + __cookieSnapshot(req));
+      return next();
+    }
     try {
       const cookies = parseCookieHeader(req);
       const token = cookies[ADMIN_AUTH_COOKIE] || '';
       const data = verifyAdminAuth(token);
       if (data && data.username) {
         req.session.adminUser = { username: data.username, role: data.role || '' };
+        try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {} // reemite o cookie c/ prazo novo
+        if (__isNav) __authDbg('PASS(cookie) ' + req.method + ' ' + (req.originalUrl || req.url) + ' user=' + data.username + ' ' + __cookieSnapshot(req));
         try { req.session.save(() => next()); } catch (_) { return next(); }
         return;
       }
+    } catch (_) {}
+    // DIAGNÓSTICO (logout em ~2min relatado): loga EXATAMENTE por que caiu no /login.
+    try {
+      const ck = parseCookieHeader(req);
+      const tok = ck[ADMIN_AUTH_COOKIE] || '';
+      let why = tok ? 'unknown' : 'sem_cookie_admin';
+      if (tok) {
+        const idx = tok.lastIndexOf('.');
+        if (idx < 1) why = 'token_malformado';
+        else {
+          try {
+            const payload = tok.slice(0, idx);
+            const expected = base64UrlEnc(crypto.createHmac('sha256', adminAuthSecret()).update(payload).digest());
+            if (expected !== tok.slice(idx + 1)) why = 'assinatura_invalida(secret_mudou?)';
+            else {
+              const obj = JSON.parse(base64UrlDec(payload).toString('utf8'));
+              if (obj && obj.exp && Date.now() > Number(obj.exp)) why = 'expirado_ha_' + Math.round((Date.now() - Number(obj.exp)) / 1000) + 's';
+              else if (!obj || !obj.username) why = 'sem_username_no_token';
+              else why = 'verificou_ok_mas_caiu(?)';
+            }
+          } catch (e) { why = 'erro_decode'; }
+        }
+      }
+      const msg = '🚪 FAIL -> /login | ' + req.method + ' ' + (req.originalUrl || req.url) +
+        ' | sessao=' + (!!req.session) + ' adminUser=' + (!!(req.session && req.session.adminUser)) +
+        ' ' + __cookieSnapshot(req) + ' motivo=' + why;
+      console.warn(msg);
+      __authDbg(msg);
     } catch (_) {}
     if (req.xhr || (req.headers.accept && req.headers.accept.indexOf('json') > -1)) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -2246,8 +2307,9 @@ app.post('/login', async (req, res) => {
                     if (regenErr) return res.status(500).json({ success: false, error: 'Erro interno' });
                     req.session.adminUser = { username: user.username, role: user.role };
                     req.session.save((saveErr) => {
-                        if (saveErr) return res.status(500).json({ success: false, error: 'Erro interno' });
+                        if (saveErr) { try { __authDbg('LOGIN saveErr user=' + user.username); } catch(_){} return res.status(500).json({ success: false, error: 'Erro interno' }); }
                         try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {}
+                        try { __authDbg('LOGIN OK user=' + user.username + ' sid=' + String(req.sessionID || '').slice(0,8) + ' ' + __cookieSnapshot(req)); } catch(_){}
                         return res.json({ success: true });
                     });
                 } catch (e) {
@@ -2264,6 +2326,7 @@ app.post('/login', async (req, res) => {
 
 app.get('/logout', (req, res) => {
     try {
+        try { __authDbg('LOGOUT chamado ' + (req.originalUrl || '') + ' ' + __cookieSnapshot(req)); } catch(_){}
         try { clearAdminAuthCookie(res); } catch (_) {}
         req.session.destroy(() => {
             res.redirect('/login');
@@ -15103,6 +15166,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
           const isVisualizacoes = /(visualizacoes|views|reels)/i.test(tipo);
           const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && ( /brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo) );
           const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
+          const isCurtidasMistosUpgradeEligible = isCurtidasBase && /^(mistos|curtidas_mistos)$/i.test(String(tipo || '').trim());
           let upgradeAdd = 0;
           if (hasUpgrade) {
             if (isFollowersUpgradeEligible) {
@@ -15127,9 +15191,14 @@ app.post('/api/openpix/webhook', async (req, res) => {
                };
                upgradeAdd = map[qtdBase] || 0;
             } else if (isCurtidasBrasileirasUpgradeEligible) {
-               const map = { 150: 150, 500: 200, 1000: 1000 };
-               upgradeAdd = map[qtdBase] || 0;
+               const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+               const targetQtd = targets[qtdBase] || 0;
+               upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
             } else if (isCurtidasOrganicosUpgradeEligible) {
+               const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+               const targetQtd = targets[qtdBase] || 0;
+               upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+            } else if (isCurtidasMistosUpgradeEligible) {
                const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
                const targetQtd = targets[qtdBase] || 0;
                upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
@@ -16053,13 +16122,19 @@ app.post('/api/services/dispatch', async (req, res) => {
   const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
   const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && /^curtidas_brasileiras$/i.test(tipo);
   const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
+  const isCurtidasMistosUpgradeEligible = isCurtidasBase && /^(mistos|curtidas_mistos)$/i.test(String(tipo || '').trim());
   const hasUpgrade = /(^|;)upgrade:\d+/i.test(String(bumpsStr0));
   let upgradeAdd = 0;
   if (hasUpgrade) {
     if (isCurtidasBrasileirasUpgradeEligible) {
-      const map = { 150: 150, 500: 200, 1000: 1000 };
-      upgradeAdd = map[qtdBase] || 0;
+      const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+      const targetQtd = targets[qtdBase] || 0;
+      upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
     } else if (isCurtidasOrganicosUpgradeEligible) {
+      const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+      const targetQtd = targets[qtdBase] || 0;
+      upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+    } else if (isCurtidasMistosUpgradeEligible) {
       const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
       const targetQtd = targets[qtdBase] || 0;
       upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
@@ -17391,9 +17466,11 @@ app.get('/api/instagram/posts', async (req, res) => {
       // Se acabou de validar o perfil, os posts estarão lá
       const cachedDoc = await vu.findOne({ username });
       if (cachedDoc && cachedDoc.latestPosts && Array.isArray(cachedDoc.latestPosts) && cachedDoc.latestPosts.length > 0) {
-          // Verificar idade do cache (opcional, mas bom pra não retornar post velho)
-          // Mas se o usuário acabou de validar, é novo.
-          const lastCheck = cachedDoc.checkedAt || cachedDoc.lastPostsAt;
+          // Frescor dos POSTS = quando os posts foram REALMENTE capturados (lastPostsAt).
+          // NÃO usar checkedAt: o check de privacidade (check_privacy_rocketapi) bumpa o checkedAt
+          // sem atualizar latestPosts, o que fazia uma lista de posts velha parecer fresca e
+          // esconder posts novos (ex.: perfil com 2 posts mostrando só 1).
+          const lastCheck = cachedDoc.lastPostsAt;
           const isFresh = lastCheck && (Date.now() - new Date(lastCheck).getTime() < 3600000); // 1h
           
           if (isFresh && cachedDoc.latestPosts.length >= 1) {
@@ -17402,7 +17479,9 @@ app.get('/api/instagram/posts', async (req, res) => {
           }
       }
 
-      const doc = { source: 'api.instagram.posts', lastPostsAt: new Date().toISOString() };
+      // NÃO setar lastPostsAt aqui (antes de capturar posts) — senão marca como "fresco" sem ter
+      // posts novos. lastPostsAt só é atualizado quando os posts são de fato buscados (abaixo).
+      const doc = { source: 'api.instagram.posts', lastPostsAttemptAt: new Date().toISOString() };
       // Remove username from $setOnInsert to avoid conflict if it's already in the filter
       await vu.updateOne({ username }, { $setOnInsert: { firstSeenAt: new Date().toISOString() }, $set: doc }, { upsert: true });
       debugInfo = { ok: true, username };
@@ -17834,6 +17913,7 @@ app.post('/session/mark-paid', async (req, res) => {
         const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
         const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && /^curtidas_brasileiras$/i.test(tipo);
         const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
+        const isCurtidasMistosUpgradeEligible = isCurtidasBase && /^(mistos|curtidas_mistos)$/i.test(String(tipo || '').trim());
         const sanitizeIgPostLink = (s) => {
           let v = String(s || '').replace(/[`\s]/g, '').trim();
           if (!v) return '';
@@ -17862,9 +17942,14 @@ app.post('/session/mark-paid', async (req, res) => {
         let upgradeAdd = 0;
         if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
           if (isCurtidasBrasileirasUpgradeEligible) {
-            const map = { 150: 150, 500: 200, 1000: 1000 };
-            upgradeAdd = map[qtdBase] || 0;
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
           } else if (isCurtidasOrganicosUpgradeEligible) {
+            const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+            const targetQtd = targets[qtdBase] || 0;
+            upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
+          } else if (isCurtidasMistosUpgradeEligible) {
             const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
             const targetQtd = targets[qtdBase] || 0;
             upgradeAdd = targetQtd > qtdBase ? (targetQtd - qtdBase) : 0;
@@ -18835,9 +18920,19 @@ app.post('/api/refil/simple', async (req, res) => {
       { additionalInfoPaid: { $elemMatch: { key: 'instagram_username', value: re } } },
       { additionalInfo: { $elemMatch: { key: 'instagram_username', value: re } } }
     ];
-    const arr = await col.find({ $or: usernameOr }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(20).toArray();
+    const arr = await col.find({ $or: usernameOr }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray();
     const paidArr = (arr || []).filter(pickPaid);
     if (!paidArr.length) return res.status(404).json({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para esse @.' });
+    // Reordena pela recência REAL. Vendas via WhatsApp (manuais) têm `paidAt`/`createdAt` mas NÃO
+    // têm `woovi.paidAt`; o sort do Mongo (que prioriza woovi.paidAt) jogava elas pro fim, fazendo
+    // o refil pegar um Pix antigo em vez da compra de WhatsApp mais recente. Aqui usamos a MAIOR data.
+    const orderRecencyMs = (o) => {
+      let best = 0;
+      const cands = [o && o.woovi && o.woovi.paidAt, o && o.paghiper && o.paghiper.paidAt, o && o.paidAt, o && o.createdAt];
+      for (const c of cands) { const t = c ? new Date(String(c)).getTime() : 0; if (Number.isFinite(t) && t > best) best = t; }
+      return best;
+    };
+    paidArr.sort((a, b) => orderRecencyMs(b) - orderRecencyMs(a));
 
     const getTipo = (o) => {
       const m = o.additionalInfoMapPaid || o.additionalInfoMap || {};
@@ -32764,6 +32859,75 @@ app.get('/painel', requireAdmin, async (req, res) => {
       validatedProfilesPeriod = 0;
     }
 
+    // Lista dos perfis validados no período (para o modal clicável), com flag "comprou".
+    let validatedProfilesList = [];
+    try {
+      const { start, endExclusive } = getPeriodRange();
+      const vu = await getCollection('validated_insta_users');
+      const startIso = start ? start.toISOString() : null;
+      const endIso = endExclusive ? endExclusive.toISOString() : null;
+      const sr = {}; if (startIso) sr.$gte = startIso; if (endIso) sr.$lt = endIso;
+      const dr = {}; if (start) dr.$gte = start; if (endExclusive) dr.$lt = endExclusive;
+      const rangeOr = (start || endExclusive)
+        ? [
+            { checkedAt: Object.assign({ $type: 'string' }, sr) },
+            { checkedAt: Object.assign({ $type: 'date' }, dr) },
+            { lastTrackAt: Object.assign({ $type: 'string' }, sr) },
+            { lastTrackAt: Object.assign({ $type: 'date' }, dr) }
+          ]
+        : [ { checkedAt: { $exists: true, $ne: null } }, { lastTrackAt: { $exists: true, $ne: null } } ];
+      const docs = await vu.find(
+        { $or: rangeOr },
+        { projection: { _id: 0, username: 1, checkedAt: 1, lastTrackAt: 1, followersCount: 1, isPrivate: 1 } }
+      ).sort({ checkedAt: -1, lastTrackAt: -1, _id: -1 }).limit(3000).toArray();
+
+      const norm = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+      const vusers = Array.from(new Set(docs.map(d => norm(d.username)).filter(Boolean)));
+      const buyers = new Set();
+      if (vusers.length) {
+        try {
+          // "comprou" = pagou DENTRO do período (alinha com "pedidos pagos no período").
+          // Período "todos" (sem start/end) → qualquer época.
+          const periodPaidAnd = [];
+          if (start || endExclusive) {
+            const sIso = start ? start.toISOString() : null;
+            const eIso = endExclusive ? endExclusive.toISOString() : null;
+            const sr = {}; if (sIso) sr.$gte = sIso; if (eIso) sr.$lt = eIso;
+            const dr = {}; if (start) dr.$gte = start; if (endExclusive) dr.$lt = endExclusive;
+            const conds = [];
+            for (const f of ['paidAt', 'woovi.paidAt', 'paghiper.paidAt', 'createdAt']) {
+              conds.push({ [f]: Object.assign({ $type: 'string' }, sr) });
+              conds.push({ [f]: Object.assign({ $type: 'date' }, dr) });
+            }
+            periodPaidAnd.push({ $or: conds });
+          }
+          const boughtDocs = await col.find(
+            { $and: [ paidQuery, ...periodPaidAnd, { $or: [
+              { instauser: { $in: vusers } },
+              { instagramUsername: { $in: vusers } },
+              { 'additionalInfoMapPaid.instagram_username': { $in: vusers } },
+              { 'additionalInfoMap.instagram_username': { $in: vusers } }
+            ] } ] },
+            { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }
+          ).limit(20000).toArray();
+          for (const b of boughtDocs) {
+            const u = norm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || '');
+            if (u) buyers.add(u);
+          }
+        } catch (_) {}
+      }
+      validatedProfilesList = docs.map(d => {
+        const u = norm(d.username);
+        return {
+          username: u,
+          checkedAt: d.checkedAt || d.lastTrackAt || null,
+          followersCount: (typeof d.followersCount === 'number') ? d.followersCount : null,
+          isPrivate: d.isPrivate === true,
+          bought: u ? buyers.has(u) : false
+        };
+      });
+    } catch (_) { validatedProfilesList = []; }
+
     const paidOverValidatedTodayPct = validatedProfilesToday > 0 ? (paidOrdersToday / validatedProfilesToday) * 100 : 0;
     const paidOrdersPeriod = filteredOrders.length;
     const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (paidOrdersPeriod / validatedProfilesPeriod) * 100 : 0;
@@ -33242,7 +33406,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
         customerKey,
         customerLabel,
         instagramUsername: igUser,
-        phone
+        phone,
+        isUpsell: !!(o && o.upsell && o.upsell.isUpsell === true)
       };
     });
 
@@ -33269,12 +33434,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
     const repeatCustomerPct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
 
-    // Faturamento de RECOMPRA (LTV): valor das compras a partir da 2ª de cada cliente
-    // (cliente = usuário/telefone/email). A 1ª compra é aquisição; o resto é LTV.
+    // Faturamento de RECOMPRA (LTV): conta a compra do período como LTV quando o cliente JÁ
+    // havia comprado antes — inclusive ANTES do início do período. Ex.: comprou dia 20 e de
+    // novo hoje → no período "hoje" a compra de hoje é LTV. 1ª compra de quem nunca comprou = aquisição.
     let ltvRevenue = 0, ltvCustomers = 0;
     try {
       const byCustomer = new Map();
       for (const r of paidReport) {
+        if (r && r.isUpsell) continue; // upsell NÃO entra no faturamento LTV (nem como compra nem como valor)
         const k = String(r && r.customerKey ? r.customerKey : '').trim();
         if (!k) continue;
         const t = (r && r.createdAt) ? new Date(r.createdAt).getTime() : 0;
@@ -33282,11 +33449,48 @@ app.get('/painel', requireAdmin, async (req, res) => {
         arr.push({ dateMs: Number.isFinite(t) ? t : 0, val: Number(r && r.totalPaid ? r.totalPaid : 0) || 0 });
         byCustomer.set(k, arr);
       }
-      for (const arr of byCustomer.values()) {
-        if (!arr || arr.length < 2) continue;
+      // Quem (por @) já comprou ANTES do início do período → recompra mesmo sendo a 1ª compra do período.
+      const boughtBefore = new Set();
+      try {
+        const { start: ltvStart } = getPeriodRange();
+        if (ltvStart) {
+          const igUsers = Array.from(byCustomer.keys()).filter(k => k.indexOf('ig:') === 0).map(k => k.slice(3)).filter(Boolean);
+          if (igUsers.length) {
+            const sIso = ltvStart.toISOString();
+            const beforeConds = [];
+            for (const f of ['paidAt', 'woovi.paidAt', 'paghiper.paidAt']) {
+              beforeConds.push({ [f]: { $type: 'string', $lt: sIso } });
+              beforeConds.push({ [f]: { $type: 'date', $lt: ltvStart } });
+            }
+            const normU = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+            const prior = await col.find(
+              { $and: [ paidQuery, { 'upsell.isUpsell': { $ne: true } }, { $or: beforeConds }, { $or: [
+                { instauser: { $in: igUsers } },
+                { instagramUsername: { $in: igUsers } },
+                { 'additionalInfoMapPaid.instagram_username': { $in: igUsers } },
+                { 'additionalInfoMap.instagram_username': { $in: igUsers } }
+              ] } ] },
+              { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }
+            ).limit(50000).toArray();
+            for (const p of prior) {
+              const u = normU(p.instagramUsername || p.instauser || (p.additionalInfoMapPaid && p.additionalInfoMapPaid.instagram_username) || (p.additionalInfoMap && p.additionalInfoMap.instagram_username) || '');
+              if (u) boughtBefore.add(u);
+            }
+          }
+        }
+      } catch (_) {}
+      for (const [k, arr] of byCustomer.entries()) {
+        if (!arr || !arr.length) continue;
         arr.sort((a, b) => (a.dateMs - b.dateMs));
-        ltvCustomers += 1;
-        for (let i = 1; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val);
+        const uname = (k.indexOf('ig:') === 0) ? k.slice(3) : '';
+        const hadPrior = uname && boughtBefore.has(uname);
+        if (hadPrior) {
+          ltvCustomers += 1;
+          for (let i = 0; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val); // já era cliente → tudo do período é LTV
+        } else if (arr.length >= 2) {
+          ltvCustomers += 1;
+          for (let i = 1; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val); // 1ª = aquisição, 2ª+ = LTV
+        }
       }
     } catch (_) {}
 
@@ -34209,7 +34413,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -37169,11 +37373,59 @@ app.get('/api/admin/coupons', requireAdmin, async (req, res) => {
           }
         } catch (_) {}
 
+        // Movimento de dinheiro por cupom: soma do valor pago dos pedidos que consumiram o cupom.
+        let movedCentsByCouponId = new Map();
+        try {
+          const ids = (Array.isArray(coupons) ? coupons : []).map(c => c && c._id).filter(Boolean);
+          if (ids.length) {
+            const usesCol = await getCollection('coupon_uses');
+            const uses = await usesCol.find(
+              { status: 'consumed', couponId: { $in: ids } },
+              { projection: { couponId: 1, orderMongoId: 1, orderIdentifier: 1 } }
+            ).toArray();
+            const getPaidCents = (order) => {
+              const tryN = (v) => { const n = (typeof v !== 'undefined') ? Number(v) : NaN; return (Number.isFinite(n) && n > 0) ? n : 0; };
+              return tryN(order && order.valueCents)
+                || tryN(order && order.woovi && order.woovi.paymentMethods && order.woovi.paymentMethods.pix && order.woovi.paymentMethods.pix.value)
+                || tryN(order && order.woovi && order.woovi.value)
+                || tryN(order && order.efi && order.efi.total)
+                || tryN(order && order.pagarme && order.pagarme.amount)
+                || 0;
+            };
+            const orderObjIds = [];
+            const orderIdents = [];
+            const couponByMongo = new Map();
+            const couponByIdent = new Map();
+            for (const u of uses) {
+              const cid = String(u.couponId);
+              if (u.orderMongoId) { orderObjIds.push(u.orderMongoId); couponByMongo.set(String(u.orderMongoId), cid); }
+              else if (u.orderIdentifier) { const oi = String(u.orderIdentifier); orderIdents.push(oi); couponByIdent.set(oi, cid); }
+            }
+            const orQ = [];
+            if (orderObjIds.length) orQ.push({ _id: { $in: orderObjIds } });
+            if (orderIdents.length) orQ.push({ identifier: { $in: orderIdents } });
+            if (orQ.length) {
+              const ordersCol = await getCollection('checkout_orders');
+              const ords = await ordersCol.find(
+                { $or: orQ },
+                { projection: { valueCents: 1, 'woovi.paymentMethods.pix.value': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1, identifier: 1 } }
+              ).limit(100000).toArray();
+              for (const o of ords) {
+                let cid = couponByMongo.get(String(o._id));
+                if (!cid && o.identifier) cid = couponByIdent.get(String(o.identifier));
+                if (!cid) continue;
+                movedCentsByCouponId.set(cid, (movedCentsByCouponId.get(cid) || 0) + getPaidCents(o));
+              }
+            }
+          }
+        } catch (_) {}
+
         const enriched = (Array.isArray(coupons) ? coupons : []).map(c => {
           try {
             const k = String(c && c._id ? c._id : '');
             const usedProfiles = usedProfilesCountByCouponId.get(k) || 0;
-            return Object.assign({}, c, { usedProfiles });
+            const movedCents = movedCentsByCouponId.get(k) || 0;
+            return Object.assign({}, c, { usedProfiles, movedCents });
           } catch (_) {
             return c;
           }
@@ -39621,13 +39873,21 @@ app.post('/api/payment/confirm', async (req, res) => {
       const isCurtidasBrasileirasUpgradeEligible = isCurtidasBaseFS && ( /brasileir/i.test(resolvedTipo) || /curtidas[\s_]?brasileiras?/i.test(resolvedTipo) );
       const isOrganicosFollowersFS = /organicos/i.test(resolvedTipo) && !isCurtidasBaseFS && !isViewsBaseFS;
       const isOrganicosCurtidasFS = /(organicos|curtidas_reais|curtidas_organicos)/i.test(resolvedTipo) && isCurtidasBaseFS;
+      const isCurtidasMistosUpgradeEligibleFS = isCurtidasBaseFS && /^(mistos|curtidas_mistos)$/i.test(String(resolvedTipo || '').trim());
       const bumpsStr0 = additionalInfoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '';
       let upgradeAdd = 0;
       if (/(^|;)upgrade:\d+/i.test(String(bumpsStr0))) {
         if (isCurtidasBrasileirasUpgradeEligible) {
-          const map = { 150: 150, 500: 200, 1000: 1000 };
-          upgradeAdd = map[Number(resolvedQtd)] || 0;
+          const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+          const baseBr = Number(resolvedQtd) || 0;
+          const targetQtd = targets[baseBr] || 0;
+          upgradeAdd = targetQtd > baseBr ? (targetQtd - baseBr) : 0;
         } else if (isOrganicosCurtidasFS) {
+          const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+          const base = Number(resolvedQtd) || 0;
+          const targetQtd = targets[base] || 0;
+          upgradeAdd = targetQtd > base ? (targetQtd - base) : 0;
+        } else if (isCurtidasMistosUpgradeEligibleFS) {
           const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
           const base = Number(resolvedQtd) || 0;
           const targetQtd = targets[base] || 0;

@@ -607,25 +607,29 @@
           }
           if (avatarEl) {
             avatarEl.innerHTML = '';
-            if (p.profilePicUrl) {
-              var img = document.createElement('img');
-              img.src = p.profilePicUrl; img.alt = u;
-              img.referrerPolicy = 'no-referrer';
-              img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'cover';
-              img.onerror = function(){ try { avatarEl.innerHTML = ''; avatarEl.textContent = (u.charAt(0) || '?').toUpperCase(); } catch(_){} };
-              avatarEl.appendChild(img);
-            } else {
-              avatarEl.textContent = (u.charAt(0) || '?').toUpperCase();
-            }
+            // Usa a rota de avatar (cache + fallback robusto) em vez da URL crua do cache,
+            // que costuma vir vazia/expirada (CDN do Instagram) e deixava o avatar em branco.
+            var img = document.createElement('img');
+            img.src = '/avatar/instagram/' + encodeURIComponent(u);
+            img.alt = u;
+            img.referrerPolicy = 'no-referrer';
+            img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'cover';
+            img.onerror = function(){ try { avatarEl.innerHTML = ''; avatarEl.textContent = (u.charAt(0) || '?').toUpperCase(); } catch(_){} };
+            avatarEl.appendChild(img);
           }
           if (orderInput) orderInput.value = u;
           try { if (typeof syncTipVisibility === 'function') syncTipVisibility(); } catch(_) {}
           if (triggerHistory) { try { if (typeof loadHistory === 'function') loadHistory(u); } catch(_) {} }
         }
-        if (profiles.length > 1 && nextBtn) {
+        var multi = profiles.length > 1;
+        if (multi && nextBtn) {
           nextBtn.style.display = '';
           nextBtn.addEventListener('click', function(){ idx = (idx + 1) % profiles.length; render(true); });
         }
+        // 1 compra (1 perfil) → perfil já selecionado, não mostra o campo de @ nem o tutorial.
+        // 2+ perfis (compras p/ perfis diferentes) → mostra o campo p/ escolher/editar o @.
+        if (orderInput) orderInput.style.display = multi ? '' : 'none';
+        try { var tip = document.getElementById('tutorialRefilPedidoId'); if (tip && !multi) tip.style.display = 'none'; } catch(_) {}
         bar.style.display = 'flex';
         render(false);
       })();
