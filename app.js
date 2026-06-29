@@ -33698,7 +33698,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     // Faturamento de RECOMPRA (LTV): conta a compra do período como LTV quando o cliente JÁ
     // havia comprado antes — inclusive ANTES do início do período. Ex.: comprou dia 20 e de
     // novo hoje → no período "hoje" a compra de hoje é LTV. 1ª compra de quem nunca comprou = aquisição.
-    let ltvRevenue = 0, ltvCustomers = 0;
+    let ltvRevenue = 0, ltvCustomers = 0, ltvPurchases = [];
     try {
       const byCustomer = new Map();
       for (const r of paidReport) {
@@ -33707,7 +33707,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         if (!k) continue;
         const t = (r && r.createdAt) ? new Date(r.createdAt).getTime() : 0;
         const arr = byCustomer.get(k) || [];
-        arr.push({ dateMs: Number.isFinite(t) ? t : 0, val: Number(r && r.totalPaid ? r.totalPaid : 0) || 0 });
+        arr.push({ dateMs: Number.isFinite(t) ? t : 0, val: Number(r && r.totalPaid ? r.totalPaid : 0) || 0, username: String(r && r.instagramUsername ? r.instagramUsername : ''), label: String(r && r.customerLabel ? r.customerLabel : '') });
         byCustomer.set(k, arr);
       }
       // Quem (por @) já comprou ANTES do início do período → recompra mesmo sendo a 1ª compra do período.
@@ -33745,14 +33745,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
         arr.sort((a, b) => (a.dateMs - b.dateMs));
         const uname = (k.indexOf('ig:') === 0) ? k.slice(3) : '';
         const hadPrior = uname && boughtBefore.has(uname);
+        const pushLtv = (it) => {
+          const v = Math.max(0, Number(it && it.val ? it.val : 0) || 0);
+          ltvRevenue += v;
+          ltvPurchases.push({
+            user: (it && it.username) ? ('@' + String(it.username).replace(/^@+/, '')) : (uname ? ('@' + uname) : (it && it.label ? String(it.label) : (k || '-'))),
+            dateMs: (it && Number.isFinite(it.dateMs)) ? it.dateMs : 0,
+            value: v
+          });
+        };
         if (hadPrior) {
           ltvCustomers += 1;
-          for (let i = 0; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val); // já era cliente → tudo do período é LTV
+          for (let i = 0; i < arr.length; i++) pushLtv(arr[i]); // já era cliente → tudo do período é LTV
         } else if (arr.length >= 2) {
           ltvCustomers += 1;
-          for (let i = 1; i < arr.length; i++) ltvRevenue += Math.max(0, arr[i].val); // 1ª = aquisição, 2ª+ = LTV
+          for (let i = 1; i < arr.length; i++) pushLtv(arr[i]); // 1ª = aquisição, 2ª+ = LTV
         }
       }
+      ltvPurchases.sort((a, b) => (b.dateMs - a.dateMs));
+      if (ltvPurchases.length > 5000) ltvPurchases = ltvPurchases.slice(0, 5000);
     } catch (_) {}
 
     const topUsersByOrders = Array.from(customerAgg.values())
@@ -34680,7 +34691,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {

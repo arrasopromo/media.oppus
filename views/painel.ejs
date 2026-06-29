@@ -3702,11 +3702,65 @@
           <div class="summary-value">R$ <%= (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)).toFixed(2).replace('.', ',') %></div>
         </div>
         <% var _totVendas = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _ltvRev = (typeof ltvRevenue !== 'undefined' ? Number(ltvRevenue || 0) : 0); var _ltvPct = _totVendas > 0 ? (_ltvRev / _totVendas * 100) : 0; %>
-        <div class="summary-card">
-          <div class="summary-label">Faturamento LTV (recompra)</div>
+        <div class="summary-card" id="ltvRecompraCard" style="cursor:pointer;" title="Ver compras de recompra">
+          <div class="summary-label">Faturamento LTV (recompra) <span style="color:#7c3aed; font-size:0.78rem; font-weight:700;">ver ›</span></div>
           <div class="summary-value" style="color:#7c3aed;">R$ <%= _ltvRev.toFixed(2).replace('.', ',') %></div>
           <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= (typeof ltvCustomers !== 'undefined' ? ltvCustomers : 0) %> cliente(s) recorrente(s)</div>
         </div>
+        <script type="application/json" id="ltvPurchasesJson"><%- JSON.stringify(Array.isArray(ltvPurchases) ? ltvPurchases : []).replace(/</g, '\\u003c') %></script>
+        <div id="ltvPurchasesModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:14px;">
+          <div style="background:#fff; border-radius:12px; width:560px; max-width:calc(100vw - 28px); max-height:calc(100vh - 60px); display:flex; flex-direction:column; overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; border-bottom:1px solid #eee;">
+              <strong style="color:#111827;">Recompras (LTV) · <span id="ltvPurchasesCount">0</span></strong>
+              <button type="button" id="ltvPurchasesClose" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer;">Fechar</button>
+            </div>
+            <div style="padding:10px 14px; border-bottom:1px solid #f2f2f2;">
+              <input id="ltvPurchasesSearch" type="text" placeholder="Buscar @usuário" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px;" />
+            </div>
+            <div id="ltvPurchasesBody" style="overflow:auto; padding:4px 8px; -webkit-overflow-scrolling:touch;"></div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var card = document.getElementById('ltvRecompraCard');
+            var modal = document.getElementById('ltvPurchasesModal');
+            var body = document.getElementById('ltvPurchasesBody');
+            var countEl = document.getElementById('ltvPurchasesCount');
+            var searchEl = document.getElementById('ltvPurchasesSearch');
+            var closeBtn = document.getElementById('ltvPurchasesClose');
+            if (!card || !modal) return;
+            var data = [];
+            try { data = JSON.parse((document.getElementById('ltvPurchasesJson') || {}).textContent || '[]') || []; } catch(_) { data = []; }
+            function brl(v){ try { return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); } catch(_) { return 'R$ ' + Number(v||0).toFixed(2); } }
+            function fmtDate(ms){ if (!ms) return '-'; try { return new Date(Number(ms)).toLocaleString('pt-BR'); } catch(_) { return '-'; } }
+            function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+            function render(){
+              var q = String((searchEl && searchEl.value) || '').toLowerCase().replace(/^@+/, '').trim();
+              var rows = data.filter(function(it){ return !q || String(it.user || '').toLowerCase().indexOf(q) >= 0; });
+              if (countEl) countEl.textContent = rows.length + ' de ' + data.length + ' recompra(s)';
+              if (!rows.length) { body.innerHTML = '<div style="padding:16px; text-align:center; color:#777;">Nenhuma recompra no período.</div>'; return; }
+              body.innerHTML = rows.map(function(it){
+                var u = esc(it.user || '-');
+                var link = (String(it.user || '').charAt(0) === '@') ? ('https://instagram.com/' + esc(String(it.user).slice(1))) : '';
+                return '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px; border-bottom:1px solid #f3f3f3;">'
+                  + '<div style="min-width:0;">'
+                  +   (link ? ('<a href="' + link + '" target="_blank" rel="noopener" style="color:#2563eb; font-weight:600; text-decoration:none;">' + u + '</a>') : ('<span style="font-weight:600;">' + u + '</span>'))
+                  +   '<div style="font-size:0.78rem; color:#6b7280;">' + fmtDate(it.dateMs) + '</div>'
+                  + '</div>'
+                  + '<div style="font-weight:700; color:#047857; white-space:nowrap;">' + brl(it.value) + '</div>'
+                  + '</div>';
+              }).join('');
+            }
+            card.addEventListener('click', function(){
+              render();
+              try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch(_) {}
+              modal.style.display = 'flex';
+            });
+            if (closeBtn) closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
+            modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display = 'none'; });
+            if (searchEl) searchEl.addEventListener('input', render);
+          })();
+        </script>
         <div class="summary-card">
           <div class="summary-label">Ticket Médio</div>
           <div class="summary-value">R$ <%= (typeof avgTicket !== 'undefined' ? Number(avgTicket || 0) : 0).toFixed(2).replace('.', ',') %></div>
