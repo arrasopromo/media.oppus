@@ -269,6 +269,43 @@
       var submitBtn = document.getElementById('refilSubmitBtn');
       var statusEl = document.getElementById('refilStatus');
       var resultEl = document.getElementById('refilResult');
+
+      // ── Trava de 24h do refil1 (UX) ──
+      // Quando o fama24h responde POSITIVO, o botão trava por 24h para aquele @ (com contagem
+      // regressiva). O backend já bloqueia 24h por orderId; aqui é o feedback visual e impede o reenvio.
+      window.__refilLockTimer = window.__refilLockTimer || null;
+      window.__refilApplyLock = function (username) {
+        try {
+          var btn = document.getElementById('refilSubmitBtn'); if (!btn) return;
+          var bt = btn.querySelector ? btn.querySelector('.button-text') : null;
+          var u = String(username || '').replace(/^@+/, '').toLowerCase().trim();
+          var until = 0;
+          try { until = parseInt(localStorage.getItem('oppus_refil_lock_' + u) || '0', 10) || 0; } catch (_) {}
+          if (window.__refilLockTimer) { try { clearInterval(window.__refilLockTimer); } catch (_) {} window.__refilLockTimer = null; }
+          function fmt(rem) { var h = Math.floor(rem / 3600000), m = Math.floor((rem % 3600000) / 60000), s = Math.floor((rem % 60000) / 1000); return (h > 0 ? h + 'h ' : '') + ((h > 0 || m > 0) ? m + 'min ' : '') + s + 's'; }
+          function tick() {
+            var rem = until - Date.now();
+            if (!u || !until || rem <= 0) {
+              try { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; } catch (_) {}
+              if (bt) bt.textContent = 'Solicitar Reposição';
+              if (window.__refilLockTimer) { try { clearInterval(window.__refilLockTimer); } catch (_) {} window.__refilLockTimer = null; }
+              return;
+            }
+            try { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; } catch (_) {}
+            if (bt) bt.textContent = 'Disponível em ' + fmt(rem);
+          }
+          tick();
+          if (until && (until - Date.now()) > 0) window.__refilLockTimer = setInterval(tick, 1000);
+        } catch (_) {}
+      };
+      window.__refilSetLock = function (username, untilMs) {
+        try {
+          var u = String(username || '').replace(/^@+/, '').toLowerCase().trim();
+          if (!u || !untilMs) return;
+          try { localStorage.setItem('oppus_refil_lock_' + u, String(untilMs)); } catch (_) {}
+          window.__refilApplyLock(u);
+        } catch (_) {}
+      };
       var tipEl = document.getElementById('tutorialRefilPedidoId');
       var historyCardEl = document.getElementById('refilHistoryCard');
       var historyListEl = document.getElementById('refilHistoryList');
@@ -370,9 +407,16 @@
             try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch(_) {}
             try { if (historyCardEl) historyCardEl.style.display = 'none'; } catch(_) {}
             if (ok && data && data.ok) {
-              setStatus(statusEl, 'Reposição solicitada', 'success');
+              setStatus(statusEl, 'Reposição solicitada ✓ Nova solicitação liberada em 24h.', 'success');
+              try { window.__refilSetLock(username, Date.now() + 24 * 60 * 60 * 1000); } catch (_) {}
             } else {
-              setStatus(statusEl, (data && (data.message || data.error)) || 'Não foi possível solicitar a reposição.', 'error');
+              var emsg = (data && (data.message || data.error)) || 'Não foi possível solicitar a reposição.';
+              setStatus(statusEl, emsg, 'error');
+              // backend recusou por já ter solicitado nas últimas 24h → trava o botão pelo tempo restante
+              if (data && data.error === 'refill_unavailable') {
+                var hrs = 24; try { var mm = String(data.message || '').match(/([\d.,]+)\s*h/i); if (mm) { var p = parseFloat(String(mm[1]).replace(',', '.')); if (isFinite(p) && p > 0) hrs = p; } } catch (_) {}
+                try { window.__refilSetLock(username, Date.now() + hrs * 60 * 60 * 1000); } catch (_) {}
+              }
             }
             try { if (statusEl) statusEl.style.fontWeight = '400'; } catch(_) {}
           });
@@ -559,12 +603,14 @@
         orderInput.oninput = function () {
           syncTipVisibility();
           var v = normalizeUsernameInput(orderInput.value);
+          try { if (window.__refilApplyLock) window.__refilApplyLock(v); } catch(_) {}
           try { if (historyTimer) clearTimeout(historyTimer); } catch(_) {}
           historyTimer = setTimeout(function () { loadHistory(v); }, 650);
         };
         orderInput.onkeyup = orderInput.oninput;
         orderInput.onchange = orderInput.oninput;
         syncTipVisibility();
+        try { if (window.__refilApplyLock) window.__refilApplyLock(normalizeUsernameInput(orderInput.value)); } catch(_) {}
         try { if (normalizeUsernameInput(orderInput.value)) loadHistory(orderInput.value); } catch(_) {}
       }
       if (submitBtn) {
@@ -618,6 +664,7 @@
             avatarEl.appendChild(img);
           }
           if (orderInput) orderInput.value = u;
+          try { if (window.__refilApplyLock) window.__refilApplyLock(u); } catch(_) {}
           try { if (typeof syncTipVisibility === 'function') syncTipVisibility(); } catch(_) {}
           if (triggerHistory) { try { if (typeof loadHistory === 'function') loadHistory(u); } catch(_) {} }
         }

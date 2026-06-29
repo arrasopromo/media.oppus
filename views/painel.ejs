@@ -4255,6 +4255,52 @@
           <a id="refil2LinkGenOpenBtn" href="#" target="_blank" rel="noopener" style="display:none; padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; text-decoration:none; font-size:0.85rem;">Abrir</a>
           <div id="refil2LinkGenStatus" style="font-size:0.85rem; color:#6b7280;"></div>
         </div>
+        <div id="refil2BulkOrderIdWrap" style="margin-top:10px; display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; border-top:1px dashed #e5e7eb; padding-top:10px;">
+          <div style="font-size:0.85rem; color:#374151; padding-top:8px; font-weight:600;">Refil em massa por Order ID:</div>
+          <textarea id="refil2BulkOrderIds" placeholder="Cole os Order IDs do fornecedor (um por linha, ou separados por vírgula/espaço)" style="flex:1 1 320px; min-width:260px; min-height:48px; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:0.85rem; color:#111827; resize:vertical;"></textarea>
+          <button type="button" id="refil2BulkOrderIdBtn" style="padding:8px 12px; border:1px solid #e5e7eb; background:#7c3aed; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; white-space:nowrap;">Solicitar refil em massa</button>
+          <div id="refil2BulkOrderIdStatus" style="font-size:0.85rem; color:#6b7280; flex-basis:100%;"></div>
+          <div id="refil2BulkOrderIdResult" style="font-size:0.8rem; color:#374151; flex-basis:100%; max-height:240px; overflow:auto; display:none; border:1px solid #eee; border-radius:8px; padding:8px; background:#fafafa;"></div>
+        </div>
+        <script>
+          (function(){
+            var btn = document.getElementById('refil2BulkOrderIdBtn');
+            var ta = document.getElementById('refil2BulkOrderIds');
+            var statusEl = document.getElementById('refil2BulkOrderIdStatus');
+            var resEl = document.getElementById('refil2BulkOrderIdResult');
+            if (!btn || !ta) return;
+            btn.addEventListener('click', async function(){
+              var ids = String(ta.value || '').split(/[\s,;]+/).map(function(s){ return String(s||'').replace(/[^0-9]/g,''); }).filter(function(s){ return /^[0-9]+$/.test(s); });
+              ids = Array.from(new Set(ids));
+              if (!ids.length) { if (statusEl) { statusEl.style.color='#b91c1c'; statusEl.textContent='Cole ao menos um Order ID numérico.'; } return; }
+              if (!confirm('Solicitar refil para ' + ids.length + ' Order ID(s)?')) return;
+              btn.disabled = true; var oldTxt = btn.textContent; btn.textContent = 'Enviando...';
+              if (statusEl) { statusEl.style.color='#6b7280'; statusEl.textContent = 'Processando ' + ids.length + ' pedido(s)…'; }
+              if (resEl) { resEl.style.display='none'; resEl.innerHTML=''; }
+              try {
+                var resp = await fetch('/api/painel/refil/bulk-by-orderid', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ orderIds: ids }) });
+                if (resp.status === 401) { window.location.href='/login'; return; }
+                var data = await resp.json().catch(function(){ return null; });
+                if (!data || !data.ok) { if (statusEl){ statusEl.style.color='#b91c1c'; statusEl.textContent = (data && (data.message||data.error)) || 'Falha ao processar.'; } return; }
+                if (statusEl) { statusEl.style.color = data.failed > 0 ? '#b45309' : '#15803d'; statusEl.textContent = 'Concluído: ' + data.success + ' ok, ' + data.failed + ' falha(s) de ' + data.total + '.'; }
+                if (resEl && Array.isArray(data.results)) {
+                  resEl.style.display='block';
+                  resEl.innerHTML = data.results.map(function(r){
+                    var ok = r && r.ok;
+                    return '<div style="padding:2px 0; color:'+(ok?'#15803d':'#b91c1c')+';">'
+                      + (ok?'✓':'✗') + ' ' + String(r.orderId)
+                      + (r.username ? (' (@'+r.username+')') : '')
+                      + ' — ' + (ok ? ('refill #'+r.refill) : (r.error||'falha')) + '</div>';
+                  }).join('');
+                }
+              } catch(e) {
+                if (statusEl) { statusEl.style.color='#b91c1c'; statusEl.textContent = 'Erro: ' + (e && e.message ? e.message : e); }
+              } finally {
+                btn.disabled = false; btn.textContent = oldTxt;
+              }
+            });
+          })();
+        </script>
         <div id="refil2ReportModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:99999; align-items:flex-start; justify-content:center; padding:22px 16px; overflow:auto;">
           <div style="width:960px; max-width:calc(100vw - 32px); max-height:calc(100vh - 44px); overflow:auto; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb; font-family: Arial,Helvetica,sans-serif;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; background:#111827; color:#ffffff;">
@@ -5564,7 +5610,7 @@
                   var idsAll = Array.isArray(idsData.ids) ? idsData.ids : [];
                   if (!idsAll.length) { alert('Nenhum item no filtro.'); return; }
 
-                  var chunkSize = 200;
+                  var chunkSize = 20; // lotes pequenos: cada request termina rápido e não estoura o gateway (504)
                   var total = idsAll.length;
                   var updatedTotal = 0;
                   var failedTotal = 0;

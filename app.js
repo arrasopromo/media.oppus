@@ -558,6 +558,89 @@ const pageViewDedupeTtlMs = 30 * 60 * 1000;
 const geoCache = new Map();
 const geoCacheTtlMs = 12 * 60 * 60 * 1000;
 
+// ── Supressão de e-mail (proteção de reputação SMTP) ──────────────────────────
+// E-mail com formato inválido OU que já deu erro PERMANENTE de envio entra numa lista
+// (coleção `email_suppression`) e nunca mais é tentado — evita bounces que suspendem a conta.
+const __emailSuppressCache = new Map(); // email -> true
+const __EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmailFormat(e) {
+    const s = String(e || '').trim().toLowerCase();
+    return !!s && s.length <= 254 && __EMAIL_RE.test(s) && !/\.\.|@\.|\.@|@-|-@/.test(s);
+}
+function extractPrimaryRecipient(to) {
+    try {
+        const raw = Array.isArray(to) ? to[0] : to;
+        let s = String(raw || '').trim();
+        const m = s.match(/<([^>]+)>/);
+        if (m && m[1]) s = m[1];
+        return String(s || '').split(/[,;]+/)[0].trim().toLowerCase();
+    } catch (_) { return ''; }
+}
+async function isEmailSuppressed(email) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return false;
+    if (__emailSuppressCache.has(e)) return true;
+    try {
+        const col = await getCollection('email_suppression');
+        const doc = await col.findOne({ email: e }, { projection: { _id: 1 } });
+        if (doc) { __emailSuppressCache.set(e, true); return true; }
+    } catch (_) {}
+    return false;
+}
+async function suppressEmail(email, reason) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return;
+    __emailSuppressCache.set(e, true);
+    try {
+        const col = await getCollection('email_suppression');
+        await col.updateOne(
+            { email: e },
+            { $set: { email: e, lastReason: String(reason || '').slice(0, 300), lastAt: new Date() }, $setOnInsert: { firstAt: new Date() }, $inc: { count: 1 } },
+            { upsert: true }
+        );
+        try { console.warn(`📭 [email-suppress] ${e} | motivo: ${String(reason || '').slice(0, 120)}`); } catch (_) {}
+    } catch (_) {}
+}
+// Só suprime em falha PERMANENTE (recipiente inválido/5xx) — erro transitório (4xx/timeout) NÃO suprime.
+function isPermanentSendError(err) {
+    try {
+        const code = Number(err && err.responseCode);
+        if (Number.isFinite(code) && code >= 500 && code < 600) return true;
+        const msg = String((err && (err.response || err.message)) || '').toLowerCase();
+        return /no such user|does not exist|user unknown|invalid (recipient|address|mailbox|user)|mailbox (unavailable|not found|does not exist)|recipient (rejected|not found|address rejected)|address rejected|5\.1\.1|\b55[034]\b/.test(msg);
+    } catch (_) { return false; }
+}
+function wrapTransporterWithSuppression(transporter) {
+    if (!transporter || transporter.__suppressWrapped) return transporter;
+    const orig = transporter.sendMail.bind(transporter);
+    transporter.sendMail = async function (mail, cb) {
+        const primary = extractPrimaryRecipient(mail && mail.to);
+        try {
+            if (primary) {
+                if (!isValidEmailFormat(primary)) {
+                    await suppressEmail(primary, 'invalid_format');
+                    const r = { skipped: true, suppressed: true, reason: 'invalid_format' };
+                    return cb ? cb(null, r) : r; // não lança: só não envia
+                }
+                if (await isEmailSuppressed(primary)) {
+                    const r = { skipped: true, suppressed: true, reason: 'suppressed' };
+                    return cb ? cb(null, r) : r;
+                }
+            }
+        } catch (_) {}
+        try {
+            const result = await orig(mail);
+            return cb ? cb(null, result) : result;
+        } catch (err) {
+            try { if (primary && isPermanentSendError(err)) await suppressEmail(primary, (err && err.message) || 'send_error'); } catch (_) {}
+            if (cb) return cb(err);
+            throw err;
+        }
+    };
+    transporter.__suppressWrapped = true;
+    return transporter;
+}
+
 let smtpTransporter = null;
 const getSmtpTransporter = () => {
     const host = String(process.env.SMTP_HOST || 'smtp.hostinger.com').trim();
@@ -574,6 +657,7 @@ const getSmtpTransporter = () => {
         secure,
         auth: { user, pass }
     });
+    wrapTransporterWithSuppression(smtpTransporter);
     return smtpTransporter;
 };
 
@@ -604,6 +688,7 @@ const getRecoverySmtpTransporter = () => {
         secure,
         auth: { user, pass }
     });
+    wrapTransporterWithSuppression(smtpRecoveryTransporter);
     return smtpRecoveryTransporter;
 };
 
@@ -5249,13 +5334,34 @@ app.post('/api/cliente/first-access', async (req, res) => {
 });
 
 // Setup de senha a partir da tela de criação (fluxo pós-venda sem conta)
+// Critérios mínimos de segurança de senha (rejeita 123456, sequências, repetições, senhas comuns).
+function validatePasswordStrength(pw) {
+    const s = String(pw || '');
+    if (s.length < 8) return { ok: false, message: 'A senha deve ter pelo menos 8 caracteres.' };
+    if (s.length > 100) return { ok: false, message: 'Senha muito longa (máx. 100 caracteres).' };
+    const lower = s.toLowerCase();
+    const common = ['123456', '1234567', '12345678', '123456789', '1234567890', '123123', '112233', 'password', 'senha', 'qwerty', 'abc123', '111111', '000000', '12345', 'iloveyou', 'admin', 'senha123', '123mudar', 'mudar123', 'aa123456'];
+    if (common.includes(lower)) return { ok: false, message: 'Senha muito comum/fraca. Escolha uma senha mais difícil de adivinhar.' };
+    if (/^(.)\1+$/.test(s)) return { ok: false, message: 'A senha não pode ser um único caractere repetido.' };
+    if (/^\d+$/.test(s)) {
+        const asc = '01234567890123456789', desc = '09876543210987654321';
+        if (asc.includes(s) || desc.includes(s)) return { ok: false, message: 'A senha não pode ser apenas números em sequência.' };
+    }
+    let classes = 0;
+    if (/[a-zA-Z]/.test(s)) classes++;
+    if (/\d/.test(s)) classes++;
+    if (/[^a-zA-Z0-9]/.test(s)) classes++;
+    if (classes < 2) return { ok: false, message: 'Use uma combinação de letras e números (ou símbolos).' };
+    return { ok: true, message: '' };
+}
+
 app.post('/cliente/setup-password', async (req, res) => {
     try {
         const emailRaw = String(req.body?.email || '').trim().toLowerCase();
         const password = String(req.body?.password || '').trim();
         const email = normalizeEmail(emailRaw);
         if (!email) return res.status(400).json({ ok: false, message: 'E-mail inválido.' });
-        if (!password || password.length < 8) return res.status(400).json({ ok: false, message: 'A senha deve ter pelo menos 8 caracteres.' });
+        { const pv = validatePasswordStrength(password); if (!pv.ok) return res.status(400).json({ ok: false, message: pv.message }); }
 
         const accCol = await getCollection('client_accounts');
         const existing = await accCol.findOne({ email }, { projection: { email: 1, passwordHash: 1 } });
@@ -5295,7 +5401,7 @@ app.post('/cliente/change-password', async (req, res) => {
         const currentPassword = String(req.body && req.body.currentPassword || '');
         const newPassword = String(req.body && req.body.newPassword || '');
         if (!currentPassword || !newPassword) return res.status(400).json({ ok: false, error: 'missing_fields' });
-        if (newPassword.length < 8) return res.status(400).json({ ok: false, error: 'weak_password' });
+        { const pv = validatePasswordStrength(newPassword); if (!pv.ok) return res.status(400).json({ ok: false, error: 'weak_password', message: pv.message }); }
         const col = await getCollection('client_accounts');
         const acc = await col.findOne({ email }, { projection: { email: 1, passwordHash: 1, mustChangePassword: 1 } });
         if (!acc || !acc.passwordHash) return res.status(401).json({ ok: false, error: 'invalid_credentials' });
@@ -5383,7 +5489,7 @@ app.post('/cliente/reset', async (req, res) => {
         const token = String(req.body && req.body.token || '').trim();
         const newPassword = String(req.body && req.body.newPassword || '');
         if (!email || !token || !newPassword) return res.status(400).json({ ok: false, error: 'missing_fields' });
-        if (newPassword.length < 8) return res.status(400).json({ ok: false, error: 'weak_password' });
+        { const pv = validatePasswordStrength(newPassword); if (!pv.ok) return res.status(400).json({ ok: false, error: 'weak_password', message: pv.message }); }
         const col = await getCollection('client_accounts');
         const acc = await col.findOne({ email }, { projection: { email: 1, reset: 1 } });
         const ok = !!(acc && acc.reset && acc.reset.tokenHash && acc.reset.expiresAt && !acc.reset.usedAt && String(acc.reset.tokenHash) === sha256Hex(token) && Date.now() < new Date(String(acc.reset.expiresAt)).getTime());
@@ -7657,6 +7763,49 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
             return res.status(400).json({ error: 'missing_card_token', message: 'Token do cartão é obrigatório.' });
         }
 
+        // ── ANTIFRAUDE (cartão) ──────────────────────────────────────────────
+        // Limita tentativas/cartões/endereço por usuário. Defaults generosos p/ não barrar
+        // cliente legítimo; ajuste por env. FRAUD_ENABLED=0 desliga. Nunca bloqueia por erro interno.
+        let __fraudAddrHash = '';
+        if (String(process.env.FRAUD_ENABLED || '1') !== '0') {
+            try {
+                const cryptoFraud = require('crypto');
+                const addrStr = [billingAddress.line_1, billingAddress.zip_code, billingAddress.city, billingAddress.state]
+                    .map(x => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim()).join('|');
+                __fraudAddrHash = cryptoFraud.createHash('sha1').update(addrStr).digest('hex');
+                const intEnv = (k, d) => { const n = parseInt(String(process.env[k] || ''), 10); return (Number.isFinite(n) && n > 0) ? n : d; };
+                const MAX_ATTEMPTS_CPF_DAY = intEnv('FRAUD_MAX_ATTEMPTS_CPF_DAY', 8);
+                const MAX_ATTEMPTS_IP_DAY  = intEnv('FRAUD_MAX_ATTEMPTS_IP_DAY', 15);
+                const MAX_CARDS_PER_CPF    = intEnv('FRAUD_MAX_CARDS_PER_CPF', 5);
+                const MAX_SAME_ADDR_HOUR   = intEnv('FRAUD_MAX_SAME_ADDRESS_HOUR', 3);
+                const fraudCol = await getCollection('card_fraud_log');
+                try { await fraudCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 60 }); } catch (_) {}
+                const ipKey = String(req.realIP || req.ip || req.connection?.remoteAddress || '').trim();
+                const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                const since1h  = new Date(Date.now() - 60 * 60 * 1000);
+                const blockFraud = (msg) => res.status(429).json({ error: 'fraud_blocked', message: msg });
+
+                // 1) tentativas de compra por CPF nas últimas 24h
+                const attemptsCpf = await fraudCol.countDocuments({ cpf: cpfDigits, createdAt: { $gte: since24h } });
+                if (attemptsCpf >= MAX_ATTEMPTS_CPF_DAY) return blockFraud('Muitas tentativas de pagamento com este CPF hoje. Tente novamente mais tarde ou fale com o suporte.');
+
+                // 2) tentativas por IP nas últimas 24h
+                if (ipKey && ipKey !== 'unknown') {
+                    const attemptsIp = await fraudCol.countDocuments({ ip: ipKey, createdAt: { $gte: since24h } });
+                    if (attemptsIp >= MAX_ATTEMPTS_IP_DAY) return blockFraud('Muitas tentativas a partir desta conexão. Tente novamente mais tarde.');
+                }
+
+                // 3) nº de cartões DIFERENTES já usados por este CPF
+                const distinctCards = await fraudCol.distinct('fingerprint', { cpf: cpfDigits, fingerprint: { $nin: [null, ''] } });
+                if (distinctCards.length >= MAX_CARDS_PER_CPF) return blockFraud('Limite de cartões diferentes atingido para este CPF. Fale com o suporte.');
+
+                // 4) mesmo endereço de cobrança na última hora
+                const sameAddr = await fraudCol.countDocuments({ addrHash: __fraudAddrHash, createdAt: { $gte: since1h } });
+                if (sameAddr >= MAX_SAME_ADDR_HOUR) return blockFraud('Muitas compras com o mesmo endereço na última hora. Tente novamente mais tarde.');
+            } catch (_) { /* falha do antifraude não bloqueia o pagamento */ }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         let utms = {};
         try {
             if (reqUtms && Object.keys(reqUtms).length > 0) {
@@ -7849,6 +7998,30 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         const chargeStatus = String(charge?.status || '').toLowerCase();
         const lastTxStatus = String(charge?.last_transaction?.status || '').toLowerCase();
         const lastTx = (charge && charge.last_transaction && typeof charge.last_transaction === 'object') ? charge.last_transaction : {};
+
+        // ANTIFRAUDE: registra a tentativa (sucesso ou recusa) com o fingerprint do cartão,
+        // alimentando os limites de cartões-diferentes / tentativas / endereço.
+        try {
+            if (String(process.env.FRAUD_ENABLED || '1') !== '0') {
+                const cardObj = (lastTx && lastTx.card && typeof lastTx.card === 'object') ? lastTx.card : {};
+                const brand = String(cardObj.brand || '').toLowerCase().trim();
+                const last4 = String(cardObj.last_four_digits || cardObj.last4 || '').trim();
+                const first6 = String(cardObj.first_six_digits || '').trim();
+                const fingerprint = (brand && last4) ? `${brand}:${first6}:${last4}` : '';
+                const fraudCol = await getCollection('card_fraud_log');
+                await fraudCol.insertOne({
+                    cpf: cpfDigits,
+                    email: customerEmail,
+                    phone: phoneDigits,
+                    ip: String(req.realIP || req.ip || req.connection?.remoteAddress || '').trim(),
+                    addrHash: __fraudAddrHash || '',
+                    fingerprint, brand, last4,
+                    status: String(lastTx?.status || charge?.status || order?.status || '').toLowerCase().trim(),
+                    correlationID: correlationIDSafe,
+                    createdAt: new Date()
+                });
+            }
+        } catch (_) {}
 
         const normalizedTxStatus = (function () {
             const s = String(lastTxStatus || chargeStatus || orderStatus || '').toLowerCase().trim();
@@ -18848,6 +19021,7 @@ app.post('/api/refil/simple', async (req, res) => {
     let __refilLogOrderId = '';
     let __refilLogInitial = null; // initialFollowersCount do pedido (seguidores na compra)
     let __refilLogQty = null;     // quantidade comprada (fama24h)
+    let __refilLogTipo = '';      // tipo do pedido (mistos/brasileiros) p/ mostrar no Gerenciamento de Refil
     {
       const __origResJson = res.json.bind(res);
       let __refilLogged = false;
@@ -18873,6 +19047,7 @@ app.post('/api/refil/simple', async (req, res) => {
             };
             if (automated) doc.automated = true;
             if (b.automationBatchId) doc.automationBatchId = String(b.automationBatchId).trim();
+            if (__refilLogTipo) doc.tipo = __refilLogTipo;
             if (__refilLogOrderId) doc.pedido = { id: __refilLogOrderId, link: 'https://instagram.com/' + username };
             if (ok && body && body.refill) doc.forceRefil = { orderId: String(body.refill), provider: 'fama24h', finishedAt: new Date() };
             (async () => {
@@ -18967,7 +19142,7 @@ app.post('/api/refil/simple', async (req, res) => {
       const isSimple = (tipo === 'mistos' || tipo === 'brasileiros');
       const oid = String(o?.fama24h?.orderId || '').trim();
       if (isSimple && isSeguidoresOrder(o) && /^[0-9]+$/.test(oid)) {
-        order = o; famaOrderId = oid; __refilLogOrderId = oid;
+        order = o; famaOrderId = oid; __refilLogOrderId = oid; __refilLogTipo = tipo;
         __refilLogInitial = (typeof o.initialFollowersCount === 'number' && Number.isFinite(o.initialFollowersCount)) ? Math.trunc(o.initialFollowersCount) : null;
         __refilLogQty = (o && o.fama24h && o.fama24h.requestPayload && Number.isFinite(Number(o.fama24h.requestPayload.quantity))) ? Math.trunc(Number(o.fama24h.requestPayload.quantity)) : null;
         break;
@@ -19048,6 +19223,92 @@ app.post('/api/refil/simple', async (req, res) => {
     return res.json({ ok: true, refill: refillId, message: 'Reposição solicitada' });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'server_error', message: 'Erro ao solicitar reposição.' });
+  }
+});
+
+// ── Refil em MASSA por Order ID (Gerenciamento de Refil) ──
+// Reusa a MESMA chamada de refill do refil1 (fama24h action=refill&order=<id>), mas direto pelo
+// orderId do fornecedor — sem precisar do @. Recebe uma lista de orderIds e dispara um a um.
+app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => {
+  try {
+    const raw = (req.body && (req.body.orderIds || req.body.ids || req.body.orderId || req.body.text)) || '';
+    let ids = Array.isArray(raw) ? raw.map(x => String(x || '')) : String(raw || '').split(/[\s,;]+/);
+    ids = ids.map(s => String(s || '').replace(/[^0-9]/g, '')).filter(s => /^[0-9]+$/.test(s));
+    ids = Array.from(new Set(ids)); // dedup preservando ordem
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Informe ao menos um Order ID numérico.' });
+    if (ids.length > 300) return res.status(400).json({ ok: false, error: 'too_many', message: 'Máximo de 300 Order IDs por vez.' });
+
+    const providerKey = String(process.env.FAMA24H_API_KEY || '').trim();
+    const apiUrl = String(process.env.FAMA24H_API_URL || 'https://fama24h.net/api/v2').trim();
+    if (!providerKey) return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' });
+
+    const col = await getCollection('checkout_orders');
+    let refil2Col = null; try { refil2Col = await getCollection('refil2_requests'); } catch (_) {}
+
+    const doOne = async (orderId) => {
+      const out = { orderId, ok: false };
+      // tenta achar o pedido para registrar @usuario e tipo (mistos/brasileiros) no log
+      let username = '';
+      let tipo = '';
+      try {
+        const o = await col.findOne(
+          { $or: [{ 'fama24h.orderId': orderId }, { 'fama24h.orderId': Number(orderId) }] },
+          { projection: { instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, tipo: 1, tipoServico: 1, 'additionalInfoMapPaid.tipo_servico': 1, 'additionalInfoMap.tipo_servico': 1 } }
+        );
+        if (o) {
+          username = String(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').toLowerCase();
+          const rt = String(o.tipo || o.tipoServico || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.tipo_servico) || (o.additionalInfoMap && o.additionalInfoMap.tipo_servico) || '').toLowerCase().trim();
+          tipo = (rt === 'mistos' || rt.includes('misto')) ? 'mistos' : (rt.includes('brasileir') ? 'brasileiros' : '');
+        }
+      } catch (_) {}
+      try {
+        const params = new URLSearchParams();
+        params.append('key', providerKey);
+        params.append('action', 'refill');
+        params.append('order', orderId);
+        const resp = await postFormWithRetry(apiUrl, params.toString(), 30000, 2, { validateStatus: () => true });
+        const data = normalizeProviderResponseData(resp.data) || {};
+        const refillId = (function () {
+          const cands = [data.refill, data.refill_id, data.refillId, data.id];
+          for (const c of cands) {
+            if (typeof c === 'number' && Number.isFinite(c)) return String(c);
+            if (typeof c === 'string' && /^\d+$/.test(c.trim())) return c.trim();
+          }
+          return null;
+        })();
+        if (refillId) { out.ok = true; out.refill = refillId; }
+        else { out.error = String((data && (data.error || data.message || data.msg)) || 'sem retorno de refill'); }
+      } catch (e) { out.error = (e && e.message) || 'erro de conexão'; }
+      out.username = username;
+      // Loga no Gerenciamento de Refil (refil2_requests), igual ao refil1
+      try {
+        if (refil2Col && typeof refil2Col.insertOne === 'function') {
+          await refil2Col.insertOne(Object.assign({
+            requestedAt: new Date(),
+            source: 'refil1_bulk_orderid',
+            username: username || null,
+            ...(tipo ? { tipo } : {}),
+            ip: String(req.realIP || req.ip || '').trim(),
+            execStatus: out.ok ? 'success' : 'error',
+            decisionStatus: out.ok ? 'initiated' : 'error',
+            decisionReason: out.ok ? 'add_reorder_ok' : (out.error || 'error'),
+            pedido: { id: String(orderId), link: username ? ('https://instagram.com/' + username) : '' }
+          }, out.ok ? { forceRefil: { orderId: String(out.refill), provider: 'fama24h', finishedAt: new Date() } } : {}));
+        }
+      } catch (_) {}
+      return out;
+    };
+
+    // Concorrência limitada (5 por vez) para não estourar o fornecedor nem o tempo de resposta.
+    const results = new Array(ids.length);
+    let cursor = 0;
+    const worker = async () => { while (cursor < ids.length) { const idx = cursor++; results[idx] = await doOne(ids[idx]); } };
+    await Promise.all(Array.from({ length: Math.min(5, ids.length) }, () => worker()));
+
+    const success = results.filter(r => r && r.ok).length;
+    return res.json({ ok: true, total: ids.length, success, failed: ids.length - success, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'server_error', message: 'Erro no refil em massa.' });
   }
 });
 
@@ -33985,6 +34246,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
             const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }];
             const followersOr = [
               { additionalInfoPaid: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
+              { additionalInfo: { $elemMatch: { key: 'categoria_servico', value: new RegExp('^seguidores$', 'i') } } },
               { 'additionalInfoMapPaid.categoria_servico': new RegExp('^seguidores$', 'i') },
               { 'additionalInfoMap.categoria_servico': new RegExp('^seguidores$', 'i') },
               { 'fama24h.requestPayload.service': { $in: [663, 23, 312] } },
@@ -34099,12 +34361,17 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
             for (const r of refil2Requests) {
               const u = String(r && r.username ? r.username : '').trim().replace(/^@+/, '').toLowerCase();
-              if (!u) continue;
-              const t = lastTipoByUser.get(u);
+              // Tipo: cruzamento por @ OU fallback ao tipo gravado no próprio doc do refil (r.tipo).
+              let t = u ? lastTipoByUser.get(u) : null;
+              if (!t && r && r.tipo) {
+                const rt = String(r.tipo).toLowerCase().trim();
+                t = (rt === 'mistos' || rt.includes('misto')) ? 'mistos' : (rt.includes('brasileir') ? 'brasileiros' : (rt || null));
+              }
               if (t) {
                 r.lastFollowersTipo = t;
                 r.lastFollowersTipoLabel = (t === 'mistos') ? 'Mistos' : (t === 'brasileiros' ? 'Brasileiros' : t);
               }
+              if (!u) continue;
               if (r.purchaseAtLabel || r.purchaseAt) continue;
               const p = purchaseByUser.get(u);
               if (!p) continue;
@@ -34690,10 +34957,10 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
     const fetchFollowers = async (username) => {
       const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
       if (!uname) return { ok: false, error: 'missing_username' };
+      // 1 só variante de URL (as 3 antigas eram equivalentes p/ o proxy) — evita 9 tentativas por
+      // perfil morto. Os fallbacks (verifyInstagramProfile + RocketAPI) cobrem se essa falhar.
       const profileUrlCandidates = [
-        `https://www.instagram.com/${uname}/`,
-        `https://instagram.com/${uname}`,
-        `https://www.instagram.com/${uname}`
+        `https://www.instagram.com/${uname}/`
       ];
       const profileParamCandidates = ['name_url', 'url', 'link'];
       let followerCount = null;
@@ -34717,17 +34984,17 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
         };
         const safeUrl = clean(url);
         try {
-          return await axios.get(safeUrl, { timeout: 25000, validateStatus: () => true });
+          return await axios.get(safeUrl, { timeout: 8000, validateStatus: () => true });
         } catch (e) {
           if (isTlsError(e)) {
             try {
               const httpUrl = String(safeUrl || '').replace(/^https:/i, 'http:');
               if (httpUrl && httpUrl !== safeUrl) {
-                return await axios.get(httpUrl, { timeout: 25000, validateStatus: () => true });
+                return await axios.get(httpUrl, { timeout: 8000, validateStatus: () => true });
               }
             } catch (_) {}
             try {
-              return await axios.get(safeUrl, { timeout: 25000, validateStatus: () => true, httpsAgent: insecureAgent });
+              return await axios.get(safeUrl, { timeout: 8000, validateStatus: () => true, httpsAgent: insecureAgent });
             } catch (_) {}
           }
           throw e;
@@ -34782,7 +35049,7 @@ app.post('/api/painel/refil2/audit-verify-current', requireAdmin, async (req, re
       return { ok: true, currentFollowers: followerCount, source: used || 'instagram_proxy' };
     };
 
-    const q = new PQueue({ concurrency: 4 });
+    const q = new PQueue({ concurrency: 8 });
     const results = [];
     for (const id of ids) {
       const doc = byId.get(id);
