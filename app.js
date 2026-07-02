@@ -19473,6 +19473,25 @@ async function famaRefillOrder(orderId) {
     return { ok: false, error: String((data && (data.error || data.message || data.msg)) || 'sem retorno de refill') };
   } catch (e) { return { ok: false, error: (e && e.message) || 'erro de conexão' }; }
 }
+// Dispara o refil usando a MESMA estrutura do refil1 (/api/refil/simple): resolve o pedido de
+// seguidores mais recente do @ (com fama orderId) e repõe — em vez de usar um orderId fixo/errado.
+function refil1RefillByUsername(username) {
+  return new Promise((resolve) => {
+    try {
+      const http = require('http');
+      const bodyStr = JSON.stringify({ username: String(username || ''), via: 'special_auto', automated: true });
+      const r = http.request({ host: '127.0.0.1', port: port, path: '/api/refil/simple', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr), 'Accept': 'application/json' } }, (resp) => {
+        let d = '';
+        resp.on('data', (c) => { d += c; });
+        resp.on('end', () => { try { resolve(JSON.parse(d)); } catch (_) { resolve(null); } });
+        resp.on('error', () => resolve(null));
+      });
+      r.on('error', () => resolve(null));
+      r.setTimeout(120000, () => { try { r.destroy(); } catch (_) {} resolve(null); });
+      r.write(bodyStr); r.end();
+    } catch (_) { resolve(null); }
+  });
+}
 async function auditSpecialProfile(doc) {
   const out = { id: String(doc._id), username: doc.username, action: 'none' };
   const col = await getCollection('special_profiles');
@@ -19499,13 +19518,24 @@ async function auditSpecialProfile(doc) {
     const drop = baseline - current; out.drop = drop;
     const lastRefilMs = doc.lastRefilAt ? new Date(doc.lastRefilAt).getTime() : 0;
     const throttleOk = !lastRefilMs || (Date.now() - lastRefilMs) >= 24 * 60 * 60 * 1000;
-    if (drop >= minDrop && doc.orderId && throttleOk) {
-      const rf = await famaRefillOrder(doc.orderId);
-      if (rf.ok) {
-        set.lastRefilAt = now; set.lastRefilId = rf.refill; set.refilCount = (Number(doc.refilCount) || 0) + 1; set.lastRefilError = '';
-        out.action = 'refilled'; out.refill = rf.refill;
-        try { const r2 = await getCollection('refil2_requests'); await r2.insertOne({ requestedAt: now, source: 'special_auto', username: doc.username, tipo: doc.tipo || null, execStatus: 'success', decisionStatus: 'initiated', decisionReason: 'special_drop_refill', pedido: { id: String(doc.orderId), link: 'https://instagram.com/' + doc.username }, forceRefil: { orderId: String(rf.refill), provider: 'fama24h', finishedAt: now }, summary: { current, initial: baseline, drop } }); } catch (_) {}
-      } else { set.lastRefilError = rf.error || 'falha'; out.action = 'refill_failed'; out.error = rf.error; }
+    if (drop >= minDrop && throttleOk) {
+      // 1º) estrutura do refil1: resolve o pedido certo pelo @ e repõe (e já loga no Gerenciamento de Refil).
+      let refillId = '', errMsg = '', logged = false;
+      const rf1 = await refil1RefillByUsername(doc.username);
+      if (rf1 && rf1.ok && rf1.refill) { refillId = String(rf1.refill); logged = true; }
+      else { errMsg = (rf1 && (rf1.message || rf1.error)) || ''; }
+      // 2º) fallback: se o refil1 não resolveu (ex.: pedido não está no nosso banco) e há orderId manual, tenta direto.
+      if (!refillId && doc.orderId) {
+        const rf2 = await famaRefillOrder(doc.orderId);
+        if (rf2.ok) { refillId = String(rf2.refill); logged = false; }
+        else if (!errMsg) { errMsg = rf2.error || 'falha'; }
+      }
+      if (refillId) {
+        set.lastRefilAt = now; set.lastRefilId = refillId; set.refilCount = (Number(doc.refilCount) || 0) + 1; set.lastRefilError = '';
+        out.action = 'refilled'; out.refill = refillId;
+        // Se veio do fallback (famaRefillOrder), loga aqui; se veio do refil1, ele já logou.
+        if (!logged) { try { const r2 = await getCollection('refil2_requests'); await r2.insertOne({ requestedAt: now, source: 'special_auto', username: doc.username, tipo: doc.tipo || null, execStatus: 'success', decisionStatus: 'initiated', decisionReason: 'special_drop_refill', pedido: { id: String(doc.orderId), link: 'https://instagram.com/' + doc.username }, forceRefil: { orderId: refillId, provider: 'fama24h', finishedAt: now }, summary: { current, initial: baseline, drop } }); } catch (_) {} }
+      } else { set.lastRefilError = errMsg || 'falha ao solicitar refil'; out.action = 'refill_failed'; out.error = set.lastRefilError; }
     } else { out.action = (drop >= minDrop && !throttleOk) ? 'throttled' : 'ok'; }
   } catch (e) { set.lastError = (e && e.message) || 'erro'; out.action = 'error'; out.error = set.lastError; }
   await col.updateOne({ _id: doc._id }, { $set: set });
@@ -33522,9 +33552,33 @@ app.get('/painel', requireAdmin, async (req, res) => {
       });
     } catch (_) { validatedProfilesList = []; }
 
-    const paidOverValidatedTodayPct = validatedProfilesToday > 0 ? (paidOrdersToday / validatedProfilesToday) * 100 : 0;
+    // CONVERSÃO real (validado → comprou): dos perfis validados no período, quantos têm pedido pago.
+    // Substitui o antigo "pago/validado" (pedidos ÷ perfis), que passava de 100% e oscilava.
+    const validatedProfilesConverted = (Array.isArray(validatedProfilesList) ? validatedProfilesList.filter(p => p && p.bought).length : 0);
+    // Conversão de HOJE (validados hoje que compraram hoje) — cálculo dedicado (o list é do período).
+    let validatedTodayConverted = 0;
+    try {
+      const vu = await getCollection('validated_insta_users');
+      const sIso = startOfTodayUtc.toISOString(), eIso = startOfTomorrowUtc.toISOString();
+      const sr = { $gte: sIso, $lt: eIso }, dr = { $gte: startOfTodayUtc, $lt: startOfTomorrowUtc };
+      const rOr = [];
+      for (const f of ['checkedAt', 'lastTrackAt']) { rOr.push({ [f]: Object.assign({ $type: 'string' }, sr) }); rOr.push({ [f]: Object.assign({ $type: 'date' }, dr) }); }
+      const tnorm = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+      const tdocs = await vu.find(withRealValidation({ $or: rOr }), { projection: { _id: 0, username: 1 } }).limit(20000).toArray();
+      const tusers = Array.from(new Set(tdocs.map(d => tnorm(d.username)).filter(Boolean)));
+      if (tusers.length) {
+        const paidTodayOr = [];
+        for (const f of ['paidAt', 'woovi.paidAt', 'paghiper.paidAt', 'createdAt']) { paidTodayOr.push({ [f]: Object.assign({ $type: 'string' }, sr) }); paidTodayOr.push({ [f]: Object.assign({ $type: 'date' }, dr) }); }
+        const bt = await col.find({ $and: [paidQuery, { $or: paidTodayOr }, { $or: [{ instauser: { $in: tusers } }, { instagramUsername: { $in: tusers } }, { 'additionalInfoMapPaid.instagram_username': { $in: tusers } }, { 'additionalInfoMap.instagram_username': { $in: tusers } }] }] }, { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }).limit(20000).toArray();
+        const bset = new Set();
+        for (const b of bt) { const u = tnorm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || ''); if (u) bset.add(u); }
+        validatedTodayConverted = tusers.filter(u => bset.has(u)).length;
+      }
+    } catch (_) { validatedTodayConverted = 0; }
+
+    const paidOverValidatedTodayPct = validatedProfilesToday > 0 ? (validatedTodayConverted / validatedProfilesToday) * 100 : 0;
     const paidOrdersPeriod = filteredOrders.length;
-    const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (paidOrdersPeriod / validatedProfilesPeriod) * 100 : 0;
+    const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (validatedProfilesConverted / validatedProfilesPeriod) * 100 : 0;
 
     let paidValidatedSeries = { labels: [], dailyPct: [], dailyPaid: [], dailyValidated: [] };
     try {
@@ -35024,7 +35078,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {

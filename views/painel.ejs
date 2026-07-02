@@ -3946,12 +3946,14 @@
           <div class="summary-value"><%= totalTransactions %></div>
         </div>
         <div class="summary-card">
-          <div class="summary-label">% pagos/validados (hoje)</div>
+          <div class="summary-label">Conversão validado→pago (hoje)</div>
           <div class="summary-value"><%= (typeof paidOverValidatedTodayPct !== 'undefined' ? Number(paidOverValidatedTodayPct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (typeof validatedTodayConverted !== 'undefined' ? Number(validatedTodayConverted || 0) : 0) %> de <%= (typeof validatedProfilesToday !== 'undefined' ? Number(validatedProfilesToday || 0) : 0) %> validados compraram</div>
         </div>
         <div class="summary-card">
-          <div class="summary-label">% pagos/validados (período)</div>
+          <div class="summary-label">Conversão validado→pago (período)</div>
           <div class="summary-value"><%= (typeof paidOverValidatedPeriodPct !== 'undefined' ? Number(paidOverValidatedPeriodPct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (typeof validatedProfilesConverted !== 'undefined' ? Number(validatedProfilesConverted || 0) : 0) %> de <%= (typeof validatedProfilesPeriod !== 'undefined' ? Number(validatedProfilesPeriod || 0) : 0) %> validados compraram</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">Vendas sem orderbump</div>
