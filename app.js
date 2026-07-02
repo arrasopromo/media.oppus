@@ -19431,6 +19431,31 @@ async function getFamaOrderIdFromMongo(username) {
     return pick ? { orderId: oid(pick), tipo: String((pick.tipo || pick.tipoServico) || '').toLowerCase() } : null;
   } catch (_) { return null; }
 }
+// Alvo final do perfil = seguidores iniciais (na compra) + qtd comprada, do pedido (por orderId ou @).
+async function getOrderInitialAndQty(orderId, username) {
+  try {
+    const col = await getCollection('checkout_orders');
+    let o = null;
+    const oid = String(orderId || '').replace(/[^0-9]/g, '');
+    if (oid) o = await col.findOne({ $or: [{ 'fama24h.orderId': oid }, { 'fama24h.orderId': Number(oid) }] }, { projection: { initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1 } });
+    if (!o && username) {
+      const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('^@?' + esc(String(username).replace(/^@+/, '')) + '$', 'i');
+      const arr = await col.find(
+        { $and: [{ 'fama24h.orderId': { $exists: true, $nin: [null, ''] } }, { $or: [{ instauser: re }, { instagramUsername: re }, { 'additionalInfoMapPaid.instagram_username': re }, { 'additionalInfoMap.instagram_username': re }] }] },
+        { projection: { initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1, paidAt: 1, createdAt: 1, woovi: 1 } }
+      ).limit(20).toArray();
+      const recency = (x) => { let b = 0; for (const c of [x && x.woovi && x.woovi.paidAt, x && x.paidAt, x && x.createdAt]) { const t = c ? new Date(String(c)).getTime() : 0; if (t > b) b = t; } return b; };
+      arr.sort((a, b) => recency(b) - recency(a));
+      o = arr.find(x => typeof x.initialFollowersCount === 'number') || arr[0] || null;
+    }
+    if (!o) return null;
+    const initial = (typeof o.initialFollowersCount === 'number') ? Math.trunc(o.initialFollowersCount) : null;
+    const qty = Number((o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.quantity) || o.qtd || 0) || 0;
+    if (initial == null || !qty) return null;
+    return { initial, qty, target: initial + qty };
+  } catch (_) { return null; }
+}
 async function famaRefillOrder(orderId) {
   const providerKey = String(process.env.FAMA24H_API_KEY || '').trim();
   const apiUrl = String(process.env.FAMA24H_API_URL || 'https://fama24h.net/api/v2').trim();
@@ -19456,17 +19481,21 @@ async function auditSpecialProfile(doc) {
   const minDrop = (Number(doc.minDrop) >= 1) ? Number(doc.minDrop) : 1;
   const set = { lastCheckAt: now, nextCheckAt: new Date(now.getTime() + intervalH * 60 * 60 * 1000) };
   try {
-    const live = await fetchCurrentFollowersLive(doc.username);
-    if (!live || !live.ok || typeof live.currentFollowers !== 'number') {
-      set.lastError = (live && live.error) || 'lookup_failed';
+    // Busca o atual: RocketAPI primeiro (rápido/confiável), depois o fetch completo como fallback.
+    let current = null;
+    try { const rk = await fetchInstagramFollowersInfoRocketApi(doc.username); const fc = rk && rk.profile ? Number(rk.profile.followersCount) : NaN; if (Number.isFinite(fc) && fc > 0) current = Math.trunc(fc); } catch (_) {}
+    if (current == null) { const live = await fetchCurrentFollowersLive(doc.username); if (live && live.ok && typeof live.currentFollowers === 'number') current = Math.trunc(live.currentFollowers); }
+    if (current == null) {
+      set.lastError = 'lookup_failed';
       await col.updateOne({ _id: doc._id }, { $set: set });
       out.action = 'check_failed'; out.error = set.lastError; return out;
     }
-    const current = Math.trunc(live.currentFollowers);
     set.lastFollowers = current; set.lastError = '';
-    const baseline = (Number(doc.baselineFollowers) > 0) ? Number(doc.baselineFollowers) : current;
+    const hadBaseline = Number(doc.baselineFollowers) > 0;
+    const baseline = hadBaseline ? Number(doc.baselineFollowers) : current;
     out.current = current; out.baseline = baseline;
-    if (current > baseline) set.baselineFollowers = current; // marca d'água acompanha o crescimento
+    if (!hadBaseline) set.baselineFollowers = current;             // inicializa baseline se estava vazio
+    else if (current > baseline) set.baselineFollowers = current;  // marca d'água acompanha o crescimento
     const drop = baseline - current; out.drop = drop;
     const lastRefilMs = doc.lastRefilAt ? new Date(doc.lastRefilAt).getTime() : 0;
     const throttleOk = !lastRefilMs || (Date.now() - lastRefilMs) >= 24 * 60 * 60 * 1000;
@@ -19520,15 +19549,20 @@ app.post('/api/painel/refil/special/add', requireAdmin, async (req, res) => {
       const fromMongo = await getFamaOrderIdFromMongo(username);
       if (fromMongo && fromMongo.orderId) { orderId = fromMongo.orderId; tipo = fromMongo.tipo || ''; orderIdAuto = true; orderIdSource = 'mongodb'; }
     }
-    // Baseline com timeout curto (9s) — se a busca ao vivo demorar, o 1º audit em background preenche.
+    // Baseline = ALVO FINAL (seguidores iniciais + qtd comprada) do pedido. É o "valor que tem que ter":
+    // se já caiu abaixo dele, a reposição dispara. Não depende de busca ao vivo (resolve o timeout).
     let baseline = null;
+    try { const tb = await getOrderInitialAndQty(orderId, username); if (tb && tb.target > 0) baseline = tb.target; } catch (_) {}
+    // Atual (ao vivo) com timeout curto — só pra já mostrar; se falhar, o 1º audit preenche.
+    let currentNow = null;
     try {
       const live = await Promise.race([ fetchCurrentFollowersLive(username), new Promise(r => setTimeout(() => r(null), 9000)) ]);
-      if (live && live.ok && typeof live.currentFollowers === 'number') baseline = Math.trunc(live.currentFollowers);
+      if (live && live.ok && typeof live.currentFollowers === 'number') currentNow = Math.trunc(live.currentFollowers);
     } catch (_) {}
+    if (baseline == null && currentNow != null) baseline = currentNow; // sem pedido vinculado → usa o atual como alvo
     const now = new Date();
-    const ins = await col.insertOne({ username, orderId: orderId || '', tipo: tipo || '', active: true, intervalHours, minDrop, baselineFollowers: baseline, lastFollowers: baseline, addedAt: now, addedBy: (req.session && req.session.adminUser && req.session.adminUser.username) || '', lastCheckAt: null, nextCheckAt: new Date(now.getTime() + intervalHours * 3600000), refilCount: 0 });
-    return res.json({ ok: true, id: String(ins.insertedId), orderId: orderId || '', orderIdAuto, orderIdSource, baselineFollowers: baseline });
+    const ins = await col.insertOne({ username, orderId: orderId || '', tipo: tipo || '', active: true, intervalHours, minDrop, baselineFollowers: baseline, lastFollowers: currentNow, addedAt: now, addedBy: (req.session && req.session.adminUser && req.session.adminUser.username) || '', lastCheckAt: currentNow != null ? now : null, nextCheckAt: new Date(now.getTime() + intervalHours * 3600000), refilCount: 0 });
+    return res.json({ ok: true, id: String(ins.insertedId), orderId: orderId || '', orderIdAuto, orderIdSource, baselineFollowers: baseline, currentFollowers: currentNow });
   } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
 });
 app.post('/api/painel/refil/special/update', requireAdmin, async (req, res) => {
@@ -33286,6 +33320,20 @@ app.get('/painel', requireAdmin, async (req, res) => {
       return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
     }).length;
 
+    // Só validações REAIS (feitas pelo usuário: verifyInstagramProfile etc.). Exclui as gravações de
+    // FUNDO que também bumpam checkedAt/lastTrackAt e inflavam o "validados": fetch de posts
+    // (api.instagram.*), checagem de privacidade (*privacy*) e refresh de avatar (avatar.*).
+    // Configurável: VALIDATED_EXCLUDE_BG=0 volta a contar tudo (comportamento antigo).
+    const excludeBgValidations = String(process.env.VALIDATED_EXCLUDE_BG || '1') !== '0';
+    const realValidationSourceCond = excludeBgValidations ? {
+      $nor: [
+        { source: { $regex: '^api\\.instagram', $options: 'i' } },
+        { source: { $regex: 'privacy', $options: 'i' } },
+        { source: { $regex: '^avatar', $options: 'i' } }
+      ]
+    } : null;
+    const withRealValidation = (q) => realValidationSourceCond ? { $and: [q, realValidationSourceCond] } : q;
+
     const countValidatedUsersInRange = async (vu, start, endExclusive) => {
       const hasStart = !!start;
       const hasEnd = !!endExclusive;
@@ -33303,7 +33351,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         { lastTrackAt: Object.assign({ $type: 'string' }, stringRange) },
         { lastTrackAt: Object.assign({ $type: 'date' }, dateRange) }
       ];
-      return vu.countDocuments({ $or: or });
+      return vu.countDocuments(withRealValidation({ $or: or }));
     };
 
     let validatedProfilesToday = 0;
@@ -33368,12 +33416,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const { start, endExclusive } = getPeriodRange();
       const vu = await getCollection('validated_insta_users');
       if (!start && !endExclusive) {
-        validatedProfilesPeriod = await vu.countDocuments({
+        validatedProfilesPeriod = await vu.countDocuments(withRealValidation({
           $or: [
             { checkedAt: { $exists: true, $ne: null } },
             { lastTrackAt: { $exists: true, $ne: null } }
           ]
-        });
+        }));
       } else {
         validatedProfilesPeriod = await countValidatedUsersInRange(vu, start, endExclusive);
       }
@@ -33423,7 +33471,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           ]
         : [ { checkedAt: { $exists: true, $ne: null } }, { lastTrackAt: { $exists: true, $ne: null } } ];
       const docs = await vu.find(
-        { $or: rangeOr },
+        withRealValidation({ $or: rangeOr }),
         { projection: { _id: 0, username: 1, checkedAt: 1, lastTrackAt: 1, followersCount: 1, isPrivate: 1 } }
       ).sort({ checkedAt: -1, lastTrackAt: -1, _id: -1 }).limit(3000).toArray();
 
