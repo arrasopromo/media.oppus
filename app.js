@@ -601,6 +601,47 @@ async function suppressEmail(email, reason) {
         try { console.warn(`📭 [email-suppress] ${e} | motivo: ${String(reason || '').slice(0, 120)}`); } catch (_) {}
     } catch (_) {}
 }
+// Verifica se o DOMÍNIO do e-mail tem servidor de correio (MX, ou A como fallback). Cacheado por domínio.
+// Só considera INVÁLIDO quando o DNS responde "não existe/sem registro" (NXDOMAIN/ENODATA);
+// timeout/erro de rede NÃO bloqueia (evita falso positivo que barraria e-mail bom).
+const __mxCache = new Map(); // domínio -> { ok, exp }
+async function domainHasMailServer(domain) {
+    const d = String(domain || '').trim().toLowerCase();
+    if (!d || d.indexOf('.') < 0) return false;
+    const now = Date.now();
+    const hit = __mxCache.get(d);
+    if (hit && hit.exp > now) return hit.ok;
+    // DNS-over-HTTPS (Google + Cloudflare). Usa HTTPS — funciona mesmo com UDP/53 (c-ares) bloqueado.
+    // Default em qualquer erro/indisponibilidade: NÃO bloqueia (evita falso positivo barrando e-mail bom).
+    const doh = async (name, type) => {
+        try {
+            const r = await axios.get('https://dns.google/resolve', { params: { name, type }, timeout: 4000, validateStatus: () => true });
+            if (r && r.status === 200 && r.data && typeof r.data.Status === 'number') return r.data;
+        } catch (_) {}
+        try {
+            const r2 = await axios.get('https://cloudflare-dns.com/dns-query', { params: { name, type }, headers: { Accept: 'application/dns-json' }, timeout: 4000, validateStatus: () => true });
+            if (r2 && r2.status === 200 && r2.data && typeof r2.data.Status === 'number') return r2.data;
+        } catch (_) {}
+        return null;
+    };
+    const hasAns = (resp, types) => !!(resp && Array.isArray(resp.Answer) && resp.Answer.some(a => a && types.indexOf(a.type) >= 0 && String(a.data || '').trim()));
+    let ok = true; // default: não bloqueia
+    try {
+        const mx = await doh(d, 'MX');
+        if (!mx) { ok = true; } // DoH indisponível → não bloqueia
+        else if (hasAns(mx, [15])) { ok = true; } // tem MX
+        else {
+            // sem MX → confere se o domínio existe (A/AAAA = recebe na raiz). NXDOMAIN (Status 3) = não existe.
+            const a = await doh(d, 'A');
+            if (mx.Status === 3 && (!a || a.Status === 3)) ok = false;
+            else if (a) ok = hasAns(a, [1, 28]) || a.Status !== 3;
+            else ok = true;
+        }
+    } catch (_) { ok = true; }
+    __mxCache.set(d, { ok, exp: now + (ok ? 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000) });
+    return ok;
+}
+
 // Só suprime em falha PERMANENTE (recipiente inválido/5xx) — erro transitório (4xx/timeout) NÃO suprime.
 function isPermanentSendError(err) {
     try {
@@ -624,6 +665,13 @@ function wrapTransporterWithSuppression(transporter) {
                 }
                 if (await isEmailSuppressed(primary)) {
                     const r = { skipped: true, suppressed: true, reason: 'suppressed' };
+                    return cb ? cb(null, r) : r;
+                }
+                // Domínio inexistente / sem servidor de e-mail (ex.: gmail.con) → suprime antes de enviar
+                const __dom = primary.split('@')[1] || '';
+                if (__dom && !(await domainHasMailServer(__dom))) {
+                    await suppressEmail(primary, 'invalid_domain_no_mx');
+                    const r = { skipped: true, suppressed: true, reason: 'invalid_domain' };
                     return cb ? cb(null, r) : r;
                 }
             }
@@ -19250,15 +19298,18 @@ app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => 
       // tenta achar o pedido para registrar @usuario e tipo (mistos/brasileiros) no log
       let username = '';
       let tipo = '';
+      let initialFc = null, qty = 0;
       try {
         const o = await col.findOne(
           { $or: [{ 'fama24h.orderId': orderId }, { 'fama24h.orderId': Number(orderId) }] },
-          { projection: { instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, tipo: 1, tipoServico: 1, 'additionalInfoMapPaid.tipo_servico': 1, 'additionalInfoMap.tipo_servico': 1 } }
+          { projection: { instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, tipo: 1, tipoServico: 1, 'additionalInfoMapPaid.tipo_servico': 1, 'additionalInfoMap.tipo_servico': 1, initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1 } }
         );
         if (o) {
           username = String(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').toLowerCase();
           const rt = String(o.tipo || o.tipoServico || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.tipo_servico) || (o.additionalInfoMap && o.additionalInfoMap.tipo_servico) || '').toLowerCase().trim();
           tipo = (rt === 'mistos' || rt.includes('misto')) ? 'mistos' : (rt.includes('brasileir') ? 'brasileiros' : '');
+          if (typeof o.initialFollowersCount === 'number') initialFc = Math.trunc(o.initialFollowersCount);
+          qty = Number((o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.quantity) || o.qtd || 0) || 0;
         }
       } catch (_) {}
       try {
@@ -19283,7 +19334,7 @@ app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => 
       // Loga no Gerenciamento de Refil (refil2_requests), igual ao refil1
       try {
         if (refil2Col && typeof refil2Col.insertOne === 'function') {
-          await refil2Col.insertOne(Object.assign({
+          const insRes = await refil2Col.insertOne(Object.assign({
             requestedAt: new Date(),
             source: 'refil1_bulk_orderid',
             username: username || null,
@@ -19294,6 +19345,21 @@ app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => 
             decisionReason: out.ok ? 'add_reorder_ok' : (out.error || 'error'),
             pedido: { id: String(orderId), link: username ? ('https://instagram.com/' + username) : '' }
           }, out.ok ? { forceRefil: { orderId: String(out.refill), provider: 'fama24h', finishedAt: new Date() } } : {}));
+          // Preenche atual/inicial/final no Gerenciamento de Refil (async — não trava o bulk).
+          if (out.ok && insRes && insRes.insertedId && username && initialFc != null && qty > 0) {
+            const _sid = insRes.insertedId;
+            (async () => {
+              try {
+                const live = await fetchCurrentFollowersLive(username);
+                if (live && live.ok && typeof live.currentFollowers === 'number') {
+                  const cur = Math.trunc(live.currentFollowers);
+                  const initial = initialFc + qty;
+                  let drop = initial - cur; if (drop < 0) drop = 0; if (drop > qty) drop = qty;
+                  await refil2Col.updateOne({ _id: _sid }, { $set: { summary: { current: cur, initial, drop, final: cur + drop }, audit: { currentFollowers: cur, checkedAt: new Date(), source: live.source || 'live' } } });
+                }
+              } catch (_) {}
+            })();
+          }
         }
       } catch (_) {}
       return out;
@@ -19310,6 +19376,198 @@ app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => 
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'server_error', message: 'Erro no refil em massa.' });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PERFIS ESPECIAIS — watchlist com auto-auditoria + auto-reposição na queda.
+// Coleção `special_profiles`. Um loop audita perfis vencidos (nextCheckAt<=agora)
+// e dispara refill no fama (action=refill&order=<orderId>) quando detecta queda.
+// ══════════════════════════════════════════════════════════════════════════
+async function getLatestFamaOrderIdByUsername(username) {
+  const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._]/g, '');
+  if (!uname) return { ok: false, error: 'missing_username', orders: [] };
+  const base = String(process.env.REFILFAMA_BASE_URL || process.env.REFILFAMA_BASE || 'https://www.refilfama24h.com').replace(/\/+$/, '');
+  const url = `${base}/api_proxy.php?link=${encodeURIComponent('https://instagram.com/' + uname)}`;
+  const get = async (u) => {
+    try { return await axios.get(u, { family: 4, timeout: 30000, validateStatus: () => true }); }
+    catch (e) { if (/^https:/i.test(u)) return await axios.get(u.replace(/^https:/i, 'http:'), { family: 4, timeout: 30000, validateStatus: () => true }); throw e; }
+  };
+  try {
+    const r = await get(url);
+    const json = r && r.data;
+    const first = Array.isArray(json) ? json[0] : json;
+    const listRaw = (first && first.data && Array.isArray(first.data.list)) ? first.data.list : [];
+    const orders = listRaw.map(p => ({
+      orderId: String((p && p.id) || '').trim(),
+      service_id: String((p && p.service_id) || '').trim(),
+      quantity: (p && p.quantity != null) ? Number(p.quantity) : null,
+      start_count: (p && p.start_count != null) ? Number(p.start_count) : null,
+      status: String((p && p.status) || '').trim(),
+      created_at: String((p && (p.created_at || p.created)) || '').trim()
+    })).filter(o => /^[0-9]+$/.test(o.orderId));
+    orders.sort((a, b) => { const ta = Date.parse(a.created_at) || 0, tb = Date.parse(b.created_at) || 0; if (tb !== ta) return tb - ta; return (Number(b.orderId) || 0) - (Number(a.orderId) || 0); });
+    return { ok: true, orders, latest: orders[0] || null, httpStatus: r && r.status };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'lookup_failed', orders: [] }; }
+}
+// Pega o orderId do fama a partir do NOSSO MongoDB (checkout_orders) — pedido de seguidores mais
+// recente do @ que já tenha fama24h.orderId. É a fonte preferida (refilfama é só fallback).
+async function getFamaOrderIdFromMongo(username) {
+  const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+  if (!uname) return null;
+  try {
+    const col = await getCollection('checkout_orders');
+    const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('^@?' + esc(uname) + '$', 'i');
+    const arr = await col.find(
+      { $and: [ { 'fama24h.orderId': { $exists: true, $nin: [null, ''] } }, { $or: [ { instauser: re }, { instagramUsername: re }, { 'additionalInfoMapPaid.instagram_username': re }, { 'additionalInfoMap.instagram_username': re } ] } ] },
+      { projection: { fama24h: 1, tipo: 1, tipoServico: 1, paidAt: 1, createdAt: 1, woovi: 1, paghiper: 1 } }
+    ).limit(30).toArray();
+    const recency = (o) => { let b = 0; for (const c of [o && o.woovi && o.woovi.paidAt, o && o.paghiper && o.paghiper.paidAt, o && o.paidAt, o && o.createdAt]) { const t = c ? new Date(String(c)).getTime() : 0; if (t > b) b = t; } return b; };
+    arr.sort((a, b) => recency(b) - recency(a));
+    const oid = (o) => String((o && o.fama24h && o.fama24h.orderId) || '').trim();
+    const isSeg = (o) => { const t = String((o && (o.tipo || o.tipoServico)) || '').toLowerCase(); return t === 'mistos' || t === 'brasileiros' || t.indexOf('seguidor') >= 0; };
+    let pick = arr.find(o => isSeg(o) && /^[0-9]+$/.test(oid(o)));
+    if (!pick) pick = arr.find(o => /^[0-9]+$/.test(oid(o)));
+    return pick ? { orderId: oid(pick), tipo: String((pick.tipo || pick.tipoServico) || '').toLowerCase() } : null;
+  } catch (_) { return null; }
+}
+async function famaRefillOrder(orderId) {
+  const providerKey = String(process.env.FAMA24H_API_KEY || '').trim();
+  const apiUrl = String(process.env.FAMA24H_API_URL || 'https://fama24h.net/api/v2').trim();
+  if (!providerKey) return { ok: false, error: 'missing_key' };
+  try {
+    const params = new URLSearchParams();
+    params.append('key', providerKey); params.append('action', 'refill'); params.append('order', String(orderId));
+    const resp = await postFormWithRetry(apiUrl, params.toString(), 30000, 2, { validateStatus: () => true });
+    const data = normalizeProviderResponseData(resp.data) || {};
+    const cands = [data.refill, data.refill_id, data.refillId, data.id];
+    for (const c of cands) {
+      if (typeof c === 'number' && Number.isFinite(c)) return { ok: true, refill: String(c) };
+      if (typeof c === 'string' && /^\d+$/.test(c.trim())) return { ok: true, refill: c.trim() };
+    }
+    return { ok: false, error: String((data && (data.error || data.message || data.msg)) || 'sem retorno de refill') };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'erro de conexão' }; }
+}
+async function auditSpecialProfile(doc) {
+  const out = { id: String(doc._id), username: doc.username, action: 'none' };
+  const col = await getCollection('special_profiles');
+  const now = new Date();
+  const intervalH = (Number(doc.intervalHours) > 0) ? Number(doc.intervalHours) : 48;
+  const minDrop = (Number(doc.minDrop) >= 1) ? Number(doc.minDrop) : 1;
+  const set = { lastCheckAt: now, nextCheckAt: new Date(now.getTime() + intervalH * 60 * 60 * 1000) };
+  try {
+    const live = await fetchCurrentFollowersLive(doc.username);
+    if (!live || !live.ok || typeof live.currentFollowers !== 'number') {
+      set.lastError = (live && live.error) || 'lookup_failed';
+      await col.updateOne({ _id: doc._id }, { $set: set });
+      out.action = 'check_failed'; out.error = set.lastError; return out;
+    }
+    const current = Math.trunc(live.currentFollowers);
+    set.lastFollowers = current; set.lastError = '';
+    const baseline = (Number(doc.baselineFollowers) > 0) ? Number(doc.baselineFollowers) : current;
+    out.current = current; out.baseline = baseline;
+    if (current > baseline) set.baselineFollowers = current; // marca d'água acompanha o crescimento
+    const drop = baseline - current; out.drop = drop;
+    const lastRefilMs = doc.lastRefilAt ? new Date(doc.lastRefilAt).getTime() : 0;
+    const throttleOk = !lastRefilMs || (Date.now() - lastRefilMs) >= 24 * 60 * 60 * 1000;
+    if (drop >= minDrop && doc.orderId && throttleOk) {
+      const rf = await famaRefillOrder(doc.orderId);
+      if (rf.ok) {
+        set.lastRefilAt = now; set.lastRefilId = rf.refill; set.refilCount = (Number(doc.refilCount) || 0) + 1; set.lastRefilError = '';
+        out.action = 'refilled'; out.refill = rf.refill;
+        try { const r2 = await getCollection('refil2_requests'); await r2.insertOne({ requestedAt: now, source: 'special_auto', username: doc.username, tipo: doc.tipo || null, execStatus: 'success', decisionStatus: 'initiated', decisionReason: 'special_drop_refill', pedido: { id: String(doc.orderId), link: 'https://instagram.com/' + doc.username }, forceRefil: { orderId: String(rf.refill), provider: 'fama24h', finishedAt: now }, summary: { current, initial: baseline, drop } }); } catch (_) {}
+      } else { set.lastRefilError = rf.error || 'falha'; out.action = 'refill_failed'; out.error = rf.error; }
+    } else { out.action = (drop >= minDrop && !throttleOk) ? 'throttled' : 'ok'; }
+  } catch (e) { set.lastError = (e && e.message) || 'erro'; out.action = 'error'; out.error = set.lastError; }
+  await col.updateOne({ _id: doc._id }, { $set: set });
+  return out;
+}
+
+app.get('/api/painel/refil/special/list', requireAdmin, async (req, res) => {
+  try {
+    const col = await getCollection('special_profiles');
+    const rows = await col.find({}).sort({ active: -1, nextCheckAt: 1, _id: -1 }).limit(2000).toArray();
+    return res.json({ ok: true, profiles: rows.map(r => ({
+      id: String(r._id), username: r.username, orderId: r.orderId || '', tipo: r.tipo || '',
+      active: r.active !== false, intervalHours: Number(r.intervalHours) || 48, minDrop: (Number(r.minDrop) >= 1 ? Number(r.minDrop) : 1),
+      baselineFollowers: (r.baselineFollowers != null ? r.baselineFollowers : null), lastFollowers: (r.lastFollowers != null ? r.lastFollowers : null),
+      lastCheckAt: r.lastCheckAt || null, nextCheckAt: r.nextCheckAt || null, lastRefilAt: r.lastRefilAt || null, refilCount: Number(r.refilCount) || 0,
+      lastRefilId: r.lastRefilId || '', lastError: r.lastError || '', lastRefilError: r.lastRefilError || '', addedAt: r.addedAt || null
+    })) });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get('/api/painel/refil/special/lookup', requireAdmin, async (req, res) => {
+  try {
+    const username = String(req.query.username || '').trim().replace(/^@+/, '');
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
+    return res.json(await getLatestFamaOrderIdByUsername(username));
+  } catch (e) { return res.status(502).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/refil/special/add', requireAdmin, async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._]/g, '');
+    if (!username) return res.status(400).json({ ok: false, error: 'missing_username', message: 'Informe o @ do perfil.' });
+    let orderId = String((req.body && req.body.orderId) || '').replace(/[^0-9]/g, '');
+    const intervalHours = Math.max(1, Math.min(168, parseInt((req.body && req.body.intervalHours), 10) || 48));
+    const minDrop = Math.max(1, parseInt((req.body && req.body.minDrop), 10) || 1);
+    const col = await getCollection('special_profiles');
+    if (await col.findOne({ username })) return res.status(400).json({ ok: false, error: 'already_exists', message: 'Esse perfil já está na lista.' });
+    let orderIdAuto = false, orderIdSource = '';
+    let tipo = '';
+    if (!orderId) {
+      // OrderId vem do NOSSO MongoDB (rápido). Removido o refilfama síncrono — era o que travava o
+      // cadastro. Se o @ não tiver orderId no banco, o campo fica vazio e você edita inline.
+      const fromMongo = await getFamaOrderIdFromMongo(username);
+      if (fromMongo && fromMongo.orderId) { orderId = fromMongo.orderId; tipo = fromMongo.tipo || ''; orderIdAuto = true; orderIdSource = 'mongodb'; }
+    }
+    // Baseline com timeout curto (9s) — se a busca ao vivo demorar, o 1º audit em background preenche.
+    let baseline = null;
+    try {
+      const live = await Promise.race([ fetchCurrentFollowersLive(username), new Promise(r => setTimeout(() => r(null), 9000)) ]);
+      if (live && live.ok && typeof live.currentFollowers === 'number') baseline = Math.trunc(live.currentFollowers);
+    } catch (_) {}
+    const now = new Date();
+    const ins = await col.insertOne({ username, orderId: orderId || '', tipo: tipo || '', active: true, intervalHours, minDrop, baselineFollowers: baseline, lastFollowers: baseline, addedAt: now, addedBy: (req.session && req.session.adminUser && req.session.adminUser.username) || '', lastCheckAt: null, nextCheckAt: new Date(now.getTime() + intervalHours * 3600000), refilCount: 0 });
+    return res.json({ ok: true, id: String(ins.insertedId), orderId: orderId || '', orderIdAuto, orderIdSource, baselineFollowers: baseline });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/refil/special/update', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'bad_id' });
+    const b = req.body || {}; const set = {};
+    if (typeof b.orderId !== 'undefined') set.orderId = String(b.orderId || '').replace(/[^0-9]/g, '');
+    if (typeof b.active !== 'undefined') set.active = !(b.active === false || b.active === 'false');
+    if (typeof b.intervalHours !== 'undefined') set.intervalHours = Math.max(1, Math.min(168, parseInt(b.intervalHours, 10) || 48));
+    if (typeof b.minDrop !== 'undefined') set.minDrop = Math.max(1, parseInt(b.minDrop, 10) || 1);
+    if (typeof b.baselineFollowers !== 'undefined') { const v = parseInt(b.baselineFollowers, 10); if (Number.isFinite(v) && v > 0) set.baselineFollowers = v; }
+    if (!Object.keys(set).length) return res.status(400).json({ ok: false, error: 'nothing_to_update' });
+    const col = await getCollection('special_profiles');
+    await col.updateOne({ _id: new ObjectId(id) }, { $set: set });
+    return res.json({ ok: true });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/refil/special/remove', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'bad_id' });
+    const col = await getCollection('special_profiles');
+    await col.deleteOne({ _id: new ObjectId(id) });
+    return res.json({ ok: true });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/refil/special/check', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'bad_id' });
+    const col = await getCollection('special_profiles');
+    const doc = await col.findOne({ _id: new ObjectId(id) });
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+    return res.json({ ok: true, result: await auditSpecialProfile(doc) });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/api/refil/create', async (req, res) => {
@@ -32239,7 +32497,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
     };
     const orders = [];
     if (!scanLowerBound) {
-      const maxAll = view === 'unknown_orderid' ? 5000 : 2000;
+      // Período "todos": antes limitava a 2000 pagos (cap de performance), o que fazia o dashboard
+      // subestimar MUITO os pagos/vendas/conversão (ex.: mostrava 2000 de 12k+ pagos reais).
+      // Agora usa o mesmo teto alto dos períodos por mês (a projeção enxuta + cache SWR seguram a carga).
+      const maxAll = view === 'unknown_orderid' ? 5000 : (parseInt(String(process.env.PANEL_MAX_ALL_ORDERS || '150000'), 10) || 150000);
       const arr = await col.find(query, { projection: panelProjection }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(maxAll).toArray();
       orders.push(...arr);
     } else {
@@ -33119,6 +33380,30 @@ app.get('/painel', requireAdmin, async (req, res) => {
     } catch (_) {
       validatedProfilesPeriod = 0;
     }
+
+    // Total de pedidos GERADOS no período (criados — pagos ou não): VALOR + quantidade.
+    let totalOrdersGenerated = 0, totalOrdersGeneratedValue = 0;
+    try {
+      const { start, endExclusive } = getPeriodRange();
+      let match = {};
+      if (start || endExclusive) {
+        const sIso = start ? start.toISOString() : null;
+        const eIso = endExclusive ? endExclusive.toISOString() : null;
+        const sr = {}; if (sIso) sr.$gte = sIso; if (eIso) sr.$lt = eIso;
+        const dr = {}; if (start) dr.$gte = start; if (endExclusive) dr.$lt = endExclusive;
+        const conds = [];
+        for (const f of ['createdAt', 'criado']) {
+          conds.push({ [f]: Object.assign({ $type: 'string' }, sr) });
+          conds.push({ [f]: Object.assign({ $type: 'date' }, dr) });
+        }
+        match = { $or: conds };
+      }
+      const agg = await col.aggregate([
+        { $match: match },
+        { $group: { _id: null, n: { $sum: 1 }, val: { $sum: { $ifNull: ['$valueCents', { $ifNull: ['$expectedValueCents', 0] }] } } } }
+      ]).toArray();
+      if (agg && agg[0]) { totalOrdersGenerated = Number(agg[0].n) || 0; totalOrdersGeneratedValue = (Number(agg[0].val) || 0) / 100; }
+    } catch (_) { totalOrdersGenerated = 0; totalOrdersGeneratedValue = 0; }
 
     // Lista dos perfis validados no período (para o modal clicável), com flag "comprou".
     let validatedProfilesList = [];
@@ -34691,7 +34976,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -39935,6 +40220,28 @@ const server = app.listen(port, () => {
     setInterval(() => { tick().catch(() => {}); }, intervalMs);
   })();
 });
+
+// ── Loop de PERFIS ESPECIAIS: audita perfis vencidos e repõe na queda ──
+(function startSpecialProfilesLoop() {
+  if (String(process.env.SPECIAL_PROFILES_ENABLED || '1') === '0') return;
+  const loopMs = Math.max(60000, parseInt(String(process.env.SPECIAL_PROFILES_LOOP_MS || '600000'), 10) || 600000); // 10 min
+  let running = false;
+  const tick = async () => {
+    if (running) return; running = true;
+    try {
+      const col = await getCollection('special_profiles');
+      const now = new Date();
+      const due = await col.find({ active: { $ne: false }, $or: [{ nextCheckAt: { $lte: now } }, { nextCheckAt: { $exists: false } }, { nextCheckAt: null }] }).limit(50).toArray();
+      for (const doc of due) {
+        try { const r = await auditSpecialProfile(doc); if (r && r.action === 'refilled') { try { console.log(`✨ [special] refil @${doc.username} drop=${r.drop} refill=${r.refill}`); } catch (_) {} } }
+        catch (_) {}
+      }
+    } catch (_) {} finally { running = false; }
+  };
+  try { console.log('🔁 [special-profiles-loop] enabled loopMs=' + loopMs); } catch (_) {}
+  setTimeout(() => { tick().catch(() => {}); }, 15000);
+  setInterval(() => { tick().catch(() => {}); }, loopMs);
+})();
 
 (async () => {
   async function consolidateByUsername(colName) {

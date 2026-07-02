@@ -3698,6 +3698,11 @@
     <% } else if (!isLtvView && !isWhatsappSalesView && !isFollowersMgmtView && !isRefil2View) { %>
       <div class="summary-grid summary-grid-dashboard">
         <div class="summary-card">
+          <div class="summary-label">Total de pedidos gerados</div>
+          <div class="summary-value">R$ <%= (typeof totalOrdersGeneratedValue !== 'undefined' ? Number(totalOrdersGeneratedValue || 0) : 0).toFixed(2).replace('.', ',') %></div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (typeof totalOrdersGenerated !== 'undefined' ? Number(totalOrdersGenerated || 0) : 0).toLocaleString('pt-BR') %> pedido(s)</div>
+        </div>
+        <div class="summary-card">
           <div class="summary-label">Total de Vendas</div>
           <div class="summary-value">R$ <%= (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)).toFixed(2).replace('.', ',') %></div>
         </div>
@@ -4279,6 +4284,7 @@
             <button type="button" id="refil2AuditFetchBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar selecionados</button>
             <button type="button" id="refil2AuditVerifyFilteredBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar filtro</button>
             <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
+            <button type="button" id="refil2SpecialBtn" style="padding:6px 10px; border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">⭐ Perfis especiais</button>
             <div id="refil2ExportWrap" style="position:relative; display:inline-flex; align-items:center;">
               <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
               <button type="button" id="refil2ExportMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding:6px 10px; border:1px solid #e5e7eb; border-left:0; background:#fff; color:#111827; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.85rem;">▾</button>
@@ -4352,6 +4358,143 @@
               } finally {
                 btn.disabled = false; btn.textContent = oldTxt;
               }
+            });
+          })();
+        </script>
+        <div id="refil2SpecialModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:99999; align-items:flex-start; justify-content:center; padding:22px 16px; overflow:auto;">
+          <div style="width:1040px; max-width:calc(100vw - 32px); max-height:calc(100vh - 44px); overflow:auto; background:#fff; border-radius:12px; border:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; background:#7c3aed; color:#fff; border-radius:12px 12px 0 0;">
+              <div style="font-weight:800;">⭐ Perfis especiais — monitoramento + reposição automática</div>
+              <button type="button" id="refil2SpecialClose" style="padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.35); background:transparent; color:#fff; cursor:pointer;">Fechar</button>
+            </div>
+            <div style="padding:14px 16px; color:#111827;">
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+                <div><div style="font-size:0.72rem; color:#6b7280;">@ do perfil</div><input id="spAddUser" type="text" placeholder="usuario" style="padding:7px 10px; border:1px solid #e5e7eb; border-radius:8px; width:200px;" /></div>
+                <div><div style="font-size:0.72rem; color:#6b7280;">orderId (opcional — auto)</div><input id="spAddOrderId" type="text" placeholder="auto" style="padding:7px 10px; border:1px solid #e5e7eb; border-radius:8px; width:140px;" /></div>
+                <div><div style="font-size:0.72rem; color:#6b7280;">auditar a cada (h) · 48 = 2 dias</div><input id="spAddInterval" type="number" min="1" max="168" value="48" style="padding:7px 10px; border:1px solid #e5e7eb; border-radius:8px; width:120px;" /></div>
+                <div><div style="font-size:0.72rem; color:#6b7280;">queda mín. p/ repor</div><input id="spAddMinDrop" type="number" min="1" value="1" style="padding:7px 10px; border:1px solid #e5e7eb; border-radius:8px; width:90px;" /></div>
+                <button type="button" id="spAddBtn" style="padding:8px 14px; border:0; background:#7c3aed; color:#fff; border-radius:8px; cursor:pointer; font-weight:700;">Adicionar</button>
+                <button type="button" id="spReloadBtn" style="padding:8px 12px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer;">Atualizar</button>
+                <div id="spAddStatus" style="font-size:0.82rem; color:#6b7280; flex-basis:100%;"></div>
+              </div>
+              <div class="panel-table-scroll">
+                <table style="width:100%; border-collapse:collapse; font-size:0.85rem; min-width:900px;">
+                  <thead><tr style="text-align:left; color:#374151;">
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">Perfil</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">OrderId</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb; text-align:right;">Atual</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb; text-align:right;">Baseline</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb; text-align:right;">Queda</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb; text-align:right;">Intervalo</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">Última checagem</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb; text-align:right;">Refis</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">Resposta</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">Status</th>
+                    <th style="padding:6px; border-bottom:1px solid #e5e7eb;">Ações</th>
+                  </tr></thead>
+                  <tbody id="spTableBody"><tr><td colspan="11" style="padding:14px; text-align:center; color:#777;">Carregando…</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var openBtn = document.getElementById('refil2SpecialBtn');
+            var modal = document.getElementById('refil2SpecialModal');
+            if (!openBtn || !modal) return;
+            var body = document.getElementById('spTableBody');
+            var addStatus = document.getElementById('spAddStatus');
+            function api(url, method, payload){
+              return fetch(url, { method: method||'GET', headers: { 'Content-Type':'application/json', 'Accept':'application/json' }, credentials:'same-origin', body: payload?JSON.stringify(payload):undefined })
+                .then(function(r){ if (r.status===401){ window.location.href='/login'; throw new Error('401'); } return r.json().catch(function(){return null;}); });
+            }
+            function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
+            function fmtDt(v){ if(!v) return '-'; try { return new Date(v).toLocaleString('pt-BR'); } catch(_){ return '-'; } }
+            function num(v){ return (v==null||v==='')?'-':String(v); }
+            function rowHtml(p){
+              var drop = (p.baselineFollowers!=null && p.lastFollowers!=null) ? Math.max(0, p.baselineFollowers - p.lastFollowers) : null;
+              var st = p.lastRefilError ? ('erro refil: '+esc(p.lastRefilError)) : (p.lastError ? ('erro: '+esc(p.lastError)) : (p.active ? 'monitorando' : 'pausado'));
+              var stColor = p.lastRefilError||p.lastError ? '#b91c1c' : (p.active ? '#16a34a' : '#6b7280');
+              var resp = p.lastRefilId ? ('refill #'+esc(p.lastRefilId)) : (p.lastRefilError ? ('falha') : '-');
+              var respColor = p.lastRefilId ? '#047857' : (p.lastRefilError ? '#b91c1c' : '#6b7280');
+              var respDt = p.lastRefilAt ? (' · '+fmtDt(p.lastRefilAt)) : '';
+              return '<tr data-id="'+esc(p.id)+'" style="border-bottom:1px solid #f3f3f3;">'
+                + '<td style="padding:6px;"><a href="https://instagram.com/'+esc(p.username)+'" target="_blank" rel="noopener" style="color:#2563eb; font-weight:600; text-decoration:none;">@'+esc(p.username)+'</a></td>'
+                + '<td style="padding:6px;"><input type="text" class="sp-orderid" value="'+esc(p.orderId||'')+'" placeholder="sem orderId" title="Editável — sai do campo (ou Enter) pra salvar" style="width:120px; font-family:monospace; padding:4px 6px; border:1px solid '+(p.orderId?'#e5e7eb':'#fecaca')+'; border-radius:6px;" /></td>'
+                + '<td style="padding:6px; text-align:right;">'+num(p.lastFollowers)+'</td>'
+                + '<td style="padding:6px; text-align:right;">'+num(p.baselineFollowers)+'</td>'
+                + '<td style="padding:6px; text-align:right; color:'+(drop>0?'#b91c1c':'#111827')+'; font-weight:'+(drop>0?'700':'400')+';">'+(drop==null?'-':drop)+'</td>'
+                + '<td style="padding:6px; text-align:right;">'+num(p.intervalHours)+'h</td>'
+                + '<td style="padding:6px;">'+fmtDt(p.lastCheckAt)+'</td>'
+                + '<td style="padding:6px; text-align:right;">'+num(p.refilCount)+'</td>'
+                + '<td style="padding:6px; color:'+respColor+'; white-space:nowrap;">'+resp+(p.lastRefilId?('<span style="color:#6b7280;">'+respDt+'</span>'):'')+'</td>'
+                + '<td style="padding:6px; color:'+stColor+';">'+st+'</td>'
+                + '<td style="padding:6px; white-space:nowrap;">'
+                +   '<button type="button" data-act="check" title="Verificar agora" style="padding:4px 7px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:6px; cursor:pointer; margin-right:4px;">🔄</button>'
+                +   '<button type="button" data-act="toggle" title="'+(p.active?'Pausar':'Ativar')+'" style="padding:4px 7px; border:1px solid #e5e7eb; background:#fff; border-radius:6px; cursor:pointer; margin-right:4px;">'+(p.active?'⏸':'▶')+'</button>'
+                +   '<button type="button" data-act="del" title="Remover" style="padding:4px 7px; border:1px solid #fecaca; background:#fff; color:#b91c1c; border-radius:6px; cursor:pointer;">🗑</button>'
+                + '</td>'
+                + '</tr>';
+            }
+            function load(){
+              if (!body) return;
+              body.innerHTML = '<tr><td colspan="11" style="padding:14px; text-align:center; color:#777;">Carregando…</td></tr>';
+              api('/api/painel/refil/special/list').then(function(d){
+                var list = (d && d.profiles) ? d.profiles : [];
+                if (!list.length) { body.innerHTML = '<tr><td colspan="11" style="padding:14px; text-align:center; color:#777;">Nenhum perfil especial. Adicione acima.</td></tr>'; return; }
+                body.innerHTML = list.map(rowHtml).join('');
+              }).catch(function(){ body.innerHTML = '<tr><td colspan="11" style="padding:14px; text-align:center; color:#b91c1c;">Erro ao carregar.</td></tr>'; });
+            }
+            openBtn.addEventListener('click', function(){
+              try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch(_){}
+              modal.style.display = 'flex'; load();
+            });
+            var closeBtn = document.getElementById('refil2SpecialClose');
+            if (closeBtn) closeBtn.addEventListener('click', function(){ modal.style.display='none'; });
+            modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display='none'; });
+            var reloadBtn = document.getElementById('spReloadBtn'); if (reloadBtn) reloadBtn.addEventListener('click', load);
+            var addBtn = document.getElementById('spAddBtn');
+            if (addBtn) addBtn.addEventListener('click', function(){
+              var u = String((document.getElementById('spAddUser')||{}).value||'').trim().replace(/^@+/,'');
+              if (!u) { addStatus.style.color='#b91c1c'; addStatus.textContent='Informe o @.'; return; }
+              var orderId = String((document.getElementById('spAddOrderId')||{}).value||'').replace(/[^0-9]/g,'');
+              var intervalHours = parseInt((document.getElementById('spAddInterval')||{}).value,10)||48;
+              var minDrop = parseInt((document.getElementById('spAddMinDrop')||{}).value,10)||1;
+              addBtn.disabled = true; addStatus.style.color='#6b7280'; addStatus.textContent='Adicionando…';
+              api('/api/painel/refil/special/add','POST',{ username:u, orderId:orderId, intervalHours:intervalHours, minDrop:minDrop }).then(function(d){
+                addBtn.disabled = false;
+                if (!d || !d.ok) { addStatus.style.color='#b91c1c'; addStatus.textContent = (d&&(d.message||d.error))||'Falha ao adicionar.'; return; }
+                addStatus.style.color='#16a34a';
+                var src = d.orderIdSource==='mongodb' ? ' (do nosso banco)' : (d.orderIdSource==='fama' ? ' (do fama)' : (d.orderIdAuto?' (auto)':''));
+                addStatus.textContent = 'Adicionado. orderId: ' + (d.orderId||'(não encontrado — edite no ✏️)') + src + (d.baselineFollowers!=null?(' · baseline '+d.baselineFollowers+' seguidores'):'');
+                try { document.getElementById('spAddUser').value=''; document.getElementById('spAddOrderId').value=''; } catch(_){}
+                load();
+              }).catch(function(){ addBtn.disabled=false; addStatus.style.color='#b91c1c'; addStatus.textContent='Erro de conexão.'; });
+            });
+            if (body) body.addEventListener('click', function(e){
+              var btn = e.target.closest ? e.target.closest('button[data-act]') : null; if (!btn) return;
+              var tr = btn.closest('tr'); var id = tr && tr.getAttribute('data-id'); if (!id) return;
+              var act = btn.getAttribute('data-act');
+              if (act==='check'){ btn.disabled=true; btn.textContent='…'; api('/api/painel/refil/special/check','POST',{id:id}).then(function(d){ var r=d&&d.result; if(r&&r.action==='refilled') alert('Queda detectada — reposição disparada! (drop '+r.drop+', refill #'+r.refill+')'); load(); }).catch(function(){ load(); }); }
+              else if (act==='toggle'){ var isActive = tr.querySelector('button[data-act="toggle"]').textContent.indexOf('⏸')>=0; api('/api/painel/refil/special/update','POST',{id:id, active: !isActive}).then(load); }
+              else if (act==='del'){ if (confirm('Remover este perfil especial do monitoramento?')) api('/api/painel/refil/special/remove','POST',{id:id}).then(load); }
+            });
+            // OrderId editável inline: salva ao sair do campo (change) — mesmo o que veio do MongoDB.
+            if (body) body.addEventListener('change', function(e){
+              var inp = e.target;
+              if (!inp || !inp.classList || !inp.classList.contains('sp-orderid')) return;
+              var tr = inp.closest('tr'); var id = tr && tr.getAttribute('data-id'); if (!id) return;
+              var val = String(inp.value||'').replace(/[^0-9]/g,'');
+              inp.disabled = true; inp.style.borderColor = '#9ca3af';
+              api('/api/painel/refil/special/update','POST',{ id:id, orderId: val }).then(function(d){
+                inp.disabled = false; inp.value = val;
+                inp.style.borderColor = (d && d.ok) ? (val ? '#16a34a' : '#fecaca') : '#b91c1c';
+              }).catch(function(){ inp.disabled=false; inp.style.borderColor='#b91c1c'; });
+            });
+            // Enter salva (dispara o change ao tirar o foco)
+            if (body) body.addEventListener('keydown', function(e){
+              if (e.key === 'Enter' && e.target && e.target.classList && e.target.classList.contains('sp-orderid')) { e.preventDefault(); e.target.blur(); }
             });
           })();
         </script>
