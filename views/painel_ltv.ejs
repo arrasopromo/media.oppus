@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LTV — Reengajamento</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    .ltv{
+      --ink:#0f172a; --muted:#64748b; --faint:#94a3b8; --line:#e8ecf1; --bg:#f6f8fb;
+      --accent:#4f46e5; --accent-soft:#eef2ff; --green:#059669; --green-soft:#ecfdf5;
+      --red:#dc2626; --red-soft:#fef2f2; --amber:#d97706; --amber-soft:#fffbeb;
+      max-width:1160px; margin:0 auto; padding:22px 18px 60px; color:var(--ink);
+      font-family:var(--font-family),'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+    }
+    .ltv *{ box-sizing:border-box; }
+
+    /* Header */
+    .ltv-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+    .ltv-head h1{ margin:0; font-size:1.4rem; font-weight:600; letter-spacing:-0.02em; }
+    .ltv-head .sub{ margin:5px 0 0; color:var(--muted); font-size:0.9rem; max-width:620px; line-height:1.5; }
+    .ltv-winbadge{ display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:10px; font-size:0.82rem; font-weight:600; border:1px solid; }
+    .ltv-winbadge.open{ background:var(--green-soft); color:var(--green); border-color:#bbf7d0; }
+    .ltv-winbadge.closed{ background:var(--amber-soft); color:var(--amber); border-color:#fde68a; }
+    .ltv-winbadge .dot{ width:8px; height:8px; border-radius:50%; background:currentColor; }
+
+    /* Grids */
+    .ltv-kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+    .ltv-fin{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:12px; }
+    @media(max-width:900px){ .ltv-fin{ grid-template-columns:repeat(2,1fr); } }
+    @media(max-width:520px){ .ltv-fin{ grid-template-columns:1fr; } }
+    .ltv-cols{ display:grid; grid-template-columns:1.1fr 1fr; gap:14px; margin-top:20px; }
+    @media(max-width:860px){ .ltv-cols{ grid-template-columns:1fr; } }
+
+    /* Cards */
+    .ltv-card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+    .ltv-k{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:15px 16px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+    .ltv-k .lbl{ display:flex; align-items:center; gap:7px; font-size:0.75rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+    .ltv-k .dot{ width:8px; height:8px; border-radius:50%; }
+    .ltv-k .val{ font-size:1.7rem; font-weight:600; letter-spacing:-0.02em; margin-top:6px; line-height:1; }
+    .ltv-k .sub{ font-size:0.78rem; color:var(--faint); margin-top:5px; }
+    .ltv-k .val.green{ color:var(--green); } .ltv-k .val.red{ color:var(--red); } .ltv-k .val.accent{ color:var(--accent); }
+
+    .ltv-h2{ font-size:0.98rem; font-weight:600; margin:0 0 14px; display:flex; align-items:center; gap:8px; }
+    .ltv-note{ color:var(--muted); font-size:0.86rem; line-height:1.55; margin:0 0 14px; }
+
+    /* Distribuição */
+    .ltv-dist{ display:flex; flex-direction:column; gap:13px; }
+    .ltv-dist .r{ display:grid; grid-template-columns:92px 1fr auto; gap:12px; align-items:center; }
+    .ltv-dist .t{ font-size:0.84rem; color:var(--muted); font-weight:600; }
+    .ltv-dist .bar{ height:9px; border-radius:999px; background:#eef2f7; overflow:hidden; }
+    .ltv-dist .bar>span{ display:block; height:100%; border-radius:999px; background:var(--accent); }
+    .ltv-dist .n{ font-weight:600; font-size:0.95rem; min-width:46px; text-align:right; }
+
+    /* Cupons */
+    .ltv-coupons{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; }
+    .ltv-coupon{ border:1px solid var(--line); border-radius:12px; padding:13px; background:#fcfdfe; }
+    .ltv-coupon .top{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .ltv-coupon .code{ font-weight:600; font-size:0.98rem; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    .ltv-coupon .pct{ font-weight:600; color:#fff; font-size:0.78rem; padding:2px 8px; border-radius:999px; background:var(--accent); }
+    .ltv-coupon .meta{ margin-top:11px; display:grid; grid-template-columns:1fr 1fr; gap:7px 10px; }
+    .ltv-coupon .k{ font-size:0.68rem; color:var(--faint); text-transform:uppercase; letter-spacing:.03em; }
+    .ltv-coupon .v{ font-weight:600; font-size:0.92rem; }
+    .ltv-badge{ display:inline-flex; align-items:center; gap:5px; font-size:0.72rem; font-weight:600; padding:2px 8px; border-radius:999px; }
+    .ltv-badge.ok{ background:var(--green-soft); color:var(--green); border:1px solid #bbf7d0; }
+    .ltv-badge.off{ background:var(--red-soft); color:var(--red); border:1px solid #fecaca; }
+    .ltv-badge.inf{ background:var(--accent-soft); color:var(--accent); border:1px solid #c7d2fe; }
+    .ltv-empty{ grid-column:1/-1; text-align:center; color:var(--faint); padding:24px; border:1px dashed var(--line); border-radius:12px; font-size:0.88rem; }
+
+    /* Envio */
+    .ltv-send{ display:grid; grid-template-columns:1fr 300px; gap:18px; margin-top:20px; }
+    @media(max-width:820px){ .ltv-send{ grid-template-columns:1fr; } }
+    .ltv-config{ display:flex; flex-direction:column; gap:16px; }
+    .ltv-field{ display:flex; flex-direction:column; gap:6px; }
+    .ltv-field > label{ font-size:0.8rem; font-weight:600; color:var(--ink); }
+    .ltv-field .hint{ font-size:0.74rem; color:var(--faint); font-weight:400; }
+    .ltv-input, .ltv-select{ padding:9px 11px; border:1px solid #d5dbe3; border-radius:9px; font-size:0.92rem; font-weight:600; color:var(--ink); background:#fff; }
+    .ltv-input:focus, .ltv-select:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+    .ltv-field-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    @media(max-width:520px){ .ltv-field-row{ grid-template-columns:1fr; } }
+
+    /* Card dinâmico de disponíveis */
+    .ltv-avail{ background:linear-gradient(180deg,#fff,#fafbff); border:1px solid #dfe4ee; border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:14px; }
+    .ltv-avail .big{ text-align:center; }
+    .ltv-avail .big .n{ font-size:3rem; font-weight:600; letter-spacing:-0.03em; color:var(--accent); line-height:1; }
+    .ltv-avail .big .t{ font-size:0.82rem; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
+    .ltv-avail .lines{ border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:8px; }
+    .ltv-avail .line{ display:flex; align-items:center; justify-content:space-between; font-size:0.84rem; }
+    .ltv-avail .line .l{ color:var(--muted); }
+    .ltv-avail .line .v{ font-weight:600; }
+    .ltv-willsend{ text-align:center; font-size:0.86rem; color:var(--muted); padding:10px; background:var(--accent-soft); border-radius:10px; }
+    .ltv-willsend b{ color:var(--accent); font-size:1.05rem; }
+
+    /* Botões */
+    .ltv-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; }
+    .ltv-btn{ border:1px solid #d5dbe3; border-radius:10px; padding:11px 18px; font-weight:600; cursor:pointer; background:#fff; color:var(--ink); font-size:0.9rem; transition:all .12s; }
+    .ltv-btn:hover{ background:#f8fafc; }
+    .ltv-btn:active{ transform:translateY(1px); }
+    .ltv-btn:disabled{ opacity:.5; cursor:not-allowed; }
+    .ltv-btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+    .ltv-btn.primary:hover{ background:#4338ca; }
+    .ltv-btn.full{ width:100%; justify-content:center; }
+    .ltv-msg{ margin-top:12px; font-size:0.88rem; color:var(--muted); } .ltv-msg.err{ color:var(--red); } .ltv-msg.ok{ color:var(--green); }
+    .ltv-prog{ margin-top:12px; padding:12px 15px; background:#f8fafc; border:1px solid var(--line); border-radius:11px; font-size:0.9rem; }
+    .ltv-switch{ display:inline-flex; align-items:center; gap:9px; font-weight:600; cursor:pointer; }
+
+    /* Flag / toggle do envio automático */
+    .ltv-flagcard{ display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+      padding:16px 18px; border:1px solid var(--line); border-radius:12px; background:#fcfdfe; margin-bottom:14px; }
+    .ltv-flagcard .info .title{ font-size:0.95rem; font-weight:600; display:flex; align-items:center; gap:8px; }
+    .ltv-flagcard .info .desc{ font-size:0.82rem; color:var(--muted); margin-top:3px; max-width:520px; line-height:1.5; }
+    .ltv-flagcard .right{ display:flex; align-items:center; gap:12px; }
+    .ltv-statepill{ font-size:0.74rem; font-weight:600; padding:3px 10px; border-radius:999px; letter-spacing:.02em; }
+    .ltv-statepill.on{ background:var(--green-soft); color:var(--green); border:1px solid #bbf7d0; }
+    .ltv-statepill.off{ background:#f1f5f9; color:var(--faint); border:1px solid var(--line); }
+    /* toggle */
+    .ltv-toggle{ position:relative; width:52px; height:30px; flex:none; }
+    .ltv-toggle input{ opacity:0; width:0; height:0; position:absolute; }
+    .ltv-toggle .track{ position:absolute; inset:0; background:#cbd5e1; border-radius:999px; transition:background .18s; cursor:pointer; }
+    .ltv-toggle .track::before{ content:''; position:absolute; height:24px; width:24px; left:3px; top:3px; background:#fff; border-radius:50%; transition:transform .18s; box-shadow:0 1px 3px rgba(0,0,0,.2); }
+    .ltv-toggle input:checked + .track{ background:var(--green); }
+    .ltv-toggle input:checked + .track::before{ transform:translateX(22px); }
+    .ltv-toggle input:disabled + .track{ opacity:.5; cursor:not-allowed; }
+
+    /* Checkboxes de tipo do envio automático */
+    .d2-types{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; }
+    .d2-type{ display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid var(--line); border-radius:9px; background:#fff; cursor:pointer; font-size:0.86rem; user-select:none; }
+    .d2-type:hover{ background:#fafbff; border-color:#c7d2fe; }
+    .d2-type input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+    .d2-type input:checked + span{ font-weight:600; color:var(--accent); }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', {page:'ltv'}) %>
+  <div class="main-content">
+    <div class="ltv">
+      <%
+        const brl = (v) => 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const nf = (v) => (Number(v)||0).toLocaleString('pt-BR');
+        const _rec = Number(recompra)||0;
+        const _pct = (n) => _rec>0 ? Math.max(3, Math.round((Number(n)||0)/_rec*100)) : 0;
+        // CTR sobre o TOTAL de mensagens (automático + manual), não só os contatos registrados.
+        const _totalEnv = (typeof totalEnviadas !== 'undefined') ? Number(totalEnviadas)||0 : 0;
+        const _ctr = _totalEnv>0 ? Math.round((Number(clicaram)||0)/_totalEnv*1000)/10 : 0;
+        const _win = (typeof sendWindow!=='undefined' && sendWindow) ? sendWindow : {start:8,end:21,open:true,current:0};
+        const _cap = (typeof dailyCap!=='undefined') ? Number(dailyCap) : 50;
+      %>
+
+      <!-- Header -->
+      <div class="ltv-head">
+        <div>
+          <h1>LTV — Reengajamento</h1>
+          <p class="sub">Traga de volta quem já comprou seguidores. Gere a base de recompra, configure o envio e acompanhe cliques, faturamento e cupons.</p>
+        </div>
+        <div class="ltv-winbadge <%= _win.open ? 'open' : 'closed' %>">
+          <span class="dot"></span>
+          <span>Janela <%= _win.start %>h–<%= _win.end %>h · <%= _win.open ? 'aberta' : 'fechada agora' %></span>
+        </div>
+      </div>
+
+      <!-- Filtro por período (afeta a página toda) + Atualizar (AJAX, sem reload) -->
+      <%
+        var _curPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all';
+        var _curStart  = (typeof startDate !== 'undefined') ? String(startDate||'') : '';
+        var _curEnd    = (typeof endDate   !== 'undefined') ? String(endDate||'')   : '';
+        var _ltvPeriods = [['all','Tudo'],['today','Hoje'],['last3days','Últimos 3 dias'],['last7days','Últimos 7 dias'],['thismonth','Este mês'],['lastmonth','Mês passado']];
+      %>
+      <div class="ltv-card" style="padding:12px 16px; margin-bottom:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <span style="font-weight:600; font-size:0.82rem; color:var(--muted);">Período:</span>
+        <div id="ltvPeriodBtns" style="display:flex; gap:6px; flex-wrap:wrap;">
+          <% _ltvPeriods.forEach(function(x){ %>
+            <button type="button" class="ltv-btn ltvPeriodBtn <%= _curPeriod===x[0] ? 'primary' : '' %>" data-period="<%= x[0] %>" style="padding:6px 12px; font-size:0.82rem;"><%= x[1] %></button>
+          <% }); %>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; margin-left:6px;">
+          <input type="date" id="ltvStart" value="<%= _curPeriod==='custom' ? _curStart : '' %>" class="ltv-input" style="padding:6px 8px; font-size:0.82rem;">
+          <span style="color:var(--faint); font-size:0.8rem;">até</span>
+          <input type="date" id="ltvEnd" value="<%= _curPeriod==='custom' ? _curEnd : '' %>" class="ltv-input" style="padding:6px 8px; font-size:0.82rem;">
+          <button type="button" id="ltvApplyDates" class="ltv-btn" style="padding:6px 12px; font-size:0.82rem;">Aplicar</button>
+        </div>
+        <button type="button" id="ltvRefreshAll" class="ltv-btn primary" style="margin-left:auto; padding:7px 16px;" title="Atualiza os números sem recarregar — mantém o envio em andamento visível">↻ Atualizar</button>
+        <span id="ltvRefreshMsg" style="font-size:0.78rem; color:var(--faint);"></span>
+      </div>
+
+      <!-- KPIs -->
+      <div class="ltv-kpis">
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Clientes de recompra</div><div class="val" id="kRecompra"><%= nf(recompra) %></div><div class="sub">2+ compras · de <span id="kTotalClientes"><%= nf(totalClientes) %></span> clientes</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#0ea5e9"></span>Disponíveis p/ enviar</div><div class="val" id="kPendentes"><%= nf(pendentes) %></div><div class="sub">recompra ainda sem LTV ativo</div></div>
+        <div class="ltv-k" title="Total real de mensagens LTV = automático (D+2) + manual (enviar por base)"><div class="lbl"><span class="dot" style="background:#059669"></span>Mensagens LTV enviadas</div><div class="val" id="kTotalEnviadas"><%= nf(typeof totalEnviadas !== 'undefined' ? totalEnviadas : 0) %></div><div class="sub">🤖 auto D+2: <b id="kAutoMensagens"><%= nf(typeof autoMensagens !== 'undefined' ? autoMensagens : 0) %></b> · ✋ manual: <b id="kManualMensagens"><%= nf(typeof manualMensagens !== 'undefined' ? manualMensagens : 0) %></b></div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#0891b2"></span>Enviadas nas últimas 24h</div><div class="val" id="kSent24h"><%= nf(typeof sentLast24h !== 'undefined' ? sentLast24h : 0) %></div><div class="sub">automático + manual (janela móvel)</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#d97706"></span>Clicaram no link</div><div class="val" id="kClicaram"><%= nf(clicaram) %></div><div class="sub"><span id="kCliques"><%= nf(cliques) %></span> cliques · <span id="kCtr"><%= _ctr %></span>% de clique</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Descadastraram (opt-out)</div><div class="val" id="kOptout"><%= nf(optout) %></div><div class="sub"><span id="kRejeitando"><%= nf(rejeitando) %></span> rejeitando (&lt;<%= optoutThreshold %>x)</div></div>
+      </div>
+
+      <!-- Financeiro -->
+      <%
+        var _custoServ = (typeof custoServicos !== 'undefined') ? custoServicos : (typeof custo !== 'undefined' ? custo : 0);
+        var _custoMsg  = (typeof custoMensagens !== 'undefined') ? custoMensagens : 0;
+        var _msgUnit   = (typeof msgCostUnitBRL !== 'undefined') ? msgCostUnitBRL : 0;
+        var _totalEnv2 = (typeof totalEnviadas !== 'undefined') ? totalEnviadas : 0;
+      %>
+      <div class="ltv-fin">
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#059669"></span>Faturado LTV</div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub">via cupons do pool LTV</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Custo dos serviços</div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">charge do fornecedor (estimado)</div></div>
+        <div class="ltv-k" title="Custo das mensagens de WhatsApp enviadas (auto + manual) no período × custo por mensagem"><div class="lbl"><span class="dot" style="background:#d97706"></span>Custo das mensagens</div><div class="val red" id="kCustoMensagens"><%= brl(_custoMsg) %></div><div class="sub"><span id="kMsgQty"><%= nf(_totalEnv2) %></span> envios × <span id="kMsgUnit"><%= brl(_msgUnit) %></span>/msg</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Lucro LTV</div><div class="val accent" id="kLucro"><%= brl(lucro) %></div><div class="sub">faturado − serviço − mensagens</div></div>
+      </div>
+
+      <!-- Envios automáticos (D+2) por dia -->
+      <div class="ltv-card" style="margin-top:16px;">
+        <div class="ltv-h2">Envios automáticos por dia
+          <span class="ltv-badge inf" style="margin-left:auto;">D+2 · total no período: <b id="autoTotalPeriod"><%= nf(typeof autoTotalPeriod !== 'undefined' ? autoTotalPeriod : 0) %></b> · sempre: <b id="autoTotalAll"><%= nf(typeof autoTotalAll !== 'undefined' ? autoTotalAll : 0) %></b></span>
+        </div>
+        <p class="ltv-note" style="margin-bottom:10px;">Quantos clientes receberam o LTV <b>automático</b> em cada dia (fonte durável — não some depois de 2 dias). Respeita o filtro de período acima.</p>
+        <div class="ltv-dist" id="autoByDay">
+          <%
+            var _auto = (typeof autoByDay !== 'undefined' && Array.isArray(autoByDay)) ? autoByDay : [];
+            var _autoMax = _auto.reduce(function(m,x){ return Math.max(m, Number(x.count)||0); }, 0) || 1;
+            var _fmtDay = function(d){ try{ var p=String(d).split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }catch(_){ return d; } };
+          %>
+          <% if (!_auto.length) { %>
+            <div class="ltv-empty">Nenhum envio automático no período.</div>
+          <% } %>
+          <% _auto.forEach(function(x){ %>
+            <div class="r"><span class="t"><%= _fmtDay(x.day) %></span><div class="bar"><span style="width:<%= Math.max(3, Math.round((Number(x.count)||0)/_autoMax*100)) %>%"></span></div><span class="n"><%= nf(x.count) %></span></div>
+          <% }); %>
+        </div>
+      </div>
+
+      <!-- Distribuição + Cupons -->
+      <div class="ltv-cols">
+        <div class="ltv-card">
+          <div class="ltv-h2">Distribuição de recompra</div>
+          <div class="ltv-dist">
+            <div class="r"><span class="t">2 compras</span><div class="bar"><span id="barRec2" style="width:<%= _pct(rec2) %>%"></span></div><span class="n" id="kRec2"><%= nf(rec2) %></span></div>
+            <div class="r"><span class="t">3 a 4×</span><div class="bar"><span id="barRec34" style="width:<%= _pct(rec34) %>%"></span></div><span class="n" id="kRec34"><%= nf(rec34) %></span></div>
+            <div class="r"><span class="t">5× ou mais</span><div class="bar"><span id="barRec5" style="width:<%= _pct(rec5) %>%"></span></div><span class="n" id="kRec5"><%= nf(rec5) %></span></div>
+          </div>
+        </div>
+        <div class="ltv-card">
+          <div class="ltv-h2">Cupons de LTV <span class="ltv-badge inf" style="margin-left:auto;">não expiram · 1 uso/perfil</span></div>
+          <div class="ltv-coupons">
+            <% if (!(couponsView||[]).length) { %>
+              <div class="ltv-empty">Nenhum cupom de LTV ainda.<br>Gere uma base — o pool é criado automaticamente.</div>
+            <% } %>
+            <% (couponsView||[]).forEach(c => { %>
+              <div class="ltv-coupon">
+                <div class="top"><span class="code"><%= c.code %></span><span class="pct">−<%= c.pct %>%</span></div>
+                <div style="margin-top:8px;"><% if (c.active) { %><span class="ltv-badge ok">ativo</span><% } else { %><span class="ltv-badge off"><%= c.expired ? 'expirado' : 'inativo' %></span><% } %></div>
+                <div class="meta">
+                  <div><div class="k">Perfis</div><div class="v"><%= nf(c.usedProfiles) %></div></div>
+                  <div><div class="k">Movimento</div><div class="v"><%= brl(c.moved) %></div></div>
+                </div>
+              </div>
+            <% }) %>
+          </div>
+        </div>
+      </div>
+
+      <!-- Envio automático (D+2) — vem PRIMEIRO -->
+      <div class="ltv-card" style="margin-top:20px;">
+        <div class="ltv-h2">Envio automático</div>
+
+        <!-- FLAG principal: liga/desliga o envio automático -->
+        <div class="ltv-flagcard">
+          <div class="info">
+            <div class="title">Disparo automático (D+<span id="d2DaysLabel">2</span>)</div>
+            <div class="desc">Quando <b>ligado</b>, o LTV é enviado sozinho alguns dias após a compra — respeitando a janela de <%= _win.start %>h–<%= _win.end %>h e pulando quem descadastrou. Quando <b>desligado</b>, nada sai automaticamente (só o "Enviar hoje" manual).</div>
+          </div>
+          <div class="right">
+            <span id="d2StatePill" class="ltv-statepill off">desligado</span>
+            <label class="ltv-toggle" title="Ligar/desligar o envio automático">
+              <input type="checkbox" id="d2Enabled">
+              <span class="track"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Tipos de serviço que recebem o LTV automático -->
+        <div style="margin:14px 0 4px;">
+          <div style="font-size:0.82rem; font-weight:600; color:var(--ink); margin-bottom:8px;">Enviar LTV para quais serviços</div>
+          <div class="d2-types">
+            <% var _d2types = [
+                 ['seguidores_mistos','Seguidores Mistos'],
+                 ['seguidores_brasileiros','Seguidores Brasileiros'],
+                 ['seguidores_organicos','Seguidores Brasileiros Reais'],
+                 ['curtidas_mistos','Curtidas Mistas'],
+                 ['curtidas_brasileiras','Curtidas Brasileiras'],
+                 ['curtidas_organicos','Curtidas Orgânicas'],
+                 ['visualizacoes','Visualizações']
+               ]; %>
+            <% _d2types.forEach(function(t){ %>
+              <label class="d2-type"><input type="checkbox" class="d2TypeChk" value="<%= t[0] %>"><span><%= t[1] %></span></label>
+            <% }); %>
+          </div>
+          <div class="hint" style="font-size:0.74rem; color:var(--faint); margin-top:6px;">Só os marcados recebem LTV automático. Os desmarcados não geram LTV para os pedidos.</div>
+        </div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+          <span class="ltv-field" style="flex-direction:row; align-items:center; gap:8px; font-size:0.86rem;">Enviar após <input type="number" id="d2Days" value="2" min="1" max="30" class="ltv-input" style="width:64px;"> dias da compra</span>
+          <button class="ltv-btn primary" id="d2Save">Salvar</button>
+          <button class="ltv-btn" id="d2Preview">Prévia (não envia)</button>
+        </div>
+        <div id="d2Msg" class="ltv-msg"></div>
+      </div>
+
+      <!-- ENVIO MANUAL -->
+      <div class="ltv-card" style="margin-top:16px;">
+        <div class="ltv-h2">Enviar por base</div>
+        <p class="ltv-note">Escolha quantos enviar hoje, a ordem e o tipo — o link de cada cliente é <b>gerado na hora</b> (válido 2 dias, depois é excluído). Não precisa gerar base antes. Quem clicou "Não tenho interesse" é pulado. Envio só entre <%= _win.start %>h e <%= _win.end %>h.</p>
+
+        <div class="ltv-send">
+          <!-- Config -->
+          <div class="ltv-config">
+            <div class="ltv-field-row">
+              <div class="ltv-field">
+                <label>Quantos enviar hoje</label>
+                <input type="number" id="sendQty" class="ltv-input" min="1" max="100000" value="50">
+                <span class="hint">limitado pelo teto diário (<%= _cap %>)</span>
+              </div>
+              <div class="ltv-field">
+                <label>Ordenar por</label>
+                <select id="sendSort" class="ltv-select">
+                  <option value="oldest">Mais antigos primeiro</option>
+                  <option value="newest">Mais recentes primeiro</option>
+                </select>
+                <span class="hint">ordem de disparo da fila</span>
+              </div>
+            </div>
+            <div class="ltv-field">
+              <label>Tipo de seguidores (última compra)</label>
+              <select id="sendTipo" class="ltv-select">
+                <option value="all">Todos os tipos</option>
+                <option value="mistos">Mistos</option>
+                <option value="brasileiros">Brasileiros</option>
+                <option value="organicos">Brasileiros Reais (orgânicos)</option>
+              </select>
+              <span class="hint">filtra pela última compra de seguidores</span>
+            </div>
+
+            <div class="ltv-actions">
+              <button class="ltv-btn" id="btnPreview">Prévia (não envia)</button>
+              <button class="ltv-btn primary" id="btnEnviar">Enviar hoje</button>
+              <button class="ltv-btn" id="btnRefreshAvail" title="Recalcula os disponíveis com o período/tipo atuais">↻ Atualizar disponíveis</button>
+            </div>
+            <div class="hint" style="font-size:0.74rem; color:var(--faint);">Considera o filtro de <b>período</b> selecionado no topo (pela data da última compra do cliente).</div>
+            <div id="dispMsg" class="ltv-msg"></div>
+            <div id="dispProg" class="ltv-prog" style="display:none;"></div>
+          </div>
+
+          <!-- Card dinâmico -->
+          <div class="ltv-avail">
+            <div class="big">
+              <div class="n" id="availNum">—</div>
+              <div class="t">leads disponíveis</div>
+            </div>
+            <div class="lines">
+              <div class="line"><span class="l">Total pendente</span><span class="v" id="availTotal">—</span></div>
+              <div class="line"><span class="l">Teto diário restante</span><span class="v" id="availCap">—</span></div>
+              <div class="line"><span class="l">Enviados nas 24h</span><span class="v" id="availSent">—</span></div>
+              <div class="line"><span class="l">Janela de envio</span><span class="v" id="availWin">—</span></div>
+            </div>
+            <div class="ltv-willsend">Vai enviar agora: <b id="willSend">—</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      var $ = function(id){ return document.getElementById(id); };
+      async function api(path, body, method){
+        var opt = { method: method || (body ? 'POST' : 'GET'), headers: { 'Accept':'application/json' }, credentials:'same-origin' };
+        if (body){ opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+        var r = await fetch(path, opt); return r.json().catch(function(){ return { ok:false }; });
+      }
+      function msg(t, cls){ var e=$('dispMsg'); if(e){ e.innerHTML=t; e.className='ltv-msg '+(cls||''); } }
+      var lastAvail = { available:0, remainingToday:0 };
+
+      // ── Período (afeta a página toda). AJAX, sem reload → nunca perde o job em andamento. ──
+      var currentPeriod = <%- JSON.stringify(_curPeriod) %>;
+      var currentStart  = <%- JSON.stringify(_curStart) %>;
+      var currentEnd    = <%- JSON.stringify(_curEnd) %>;
+      function periodQS(){
+        var p = 'period=' + encodeURIComponent(currentPeriod);
+        if (currentPeriod === 'custom' && currentStart && currentEnd) p += '&startDate=' + encodeURIComponent(currentStart) + '&endDate=' + encodeURIComponent(currentEnd);
+        return p;
+      }
+      var nfFmt  = function(v){ return (Number(v)||0).toLocaleString('pt-BR'); };
+      var brlFmt = function(v){ return 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+      function setTxt(id, val){ var e=$(id); if(e) e.textContent = val; }
+      function fmtDayBR(d){ try{ var p=String(d).split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }catch(_){ return d; } }
+
+      function paintStats(s){
+        if (!s) return;
+        setTxt('kRecompra', nfFmt(s.recompra)); setTxt('kTotalClientes', nfFmt(s.totalClientes));
+        setTxt('kPendentes', nfFmt(s.pendentes));
+        setTxt('kTotalEnviadas', nfFmt(s.totalEnviadas)); setTxt('kAutoMensagens', nfFmt(s.autoMensagens)); setTxt('kManualMensagens', nfFmt(s.manualMensagens));
+        setTxt('kSent24h', nfFmt(s.sentLast24h));
+        var ctr = (Number(s.totalEnviadas)>0) ? Math.round((Number(s.clicaram)||0)/Number(s.totalEnviadas)*1000)/10 : 0;
+        setTxt('kClicaram', nfFmt(s.clicaram)); setTxt('kCtr', ctr); setTxt('kCliques', nfFmt(s.cliques));
+        setTxt('kOptout', nfFmt(s.optout)); setTxt('kRejeitando', nfFmt(s.rejeitando));
+        setTxt('kFaturado', brlFmt(s.faturado));
+        setTxt('kCustoServicos', brlFmt(typeof s.custoServicos !== 'undefined' ? s.custoServicos : s.custo));
+        setTxt('kCustoMensagens', brlFmt(s.custoMensagens));
+        setTxt('kMsgQty', nfFmt(s.totalEnviadas)); setTxt('kMsgUnit', brlFmt(s.msgCostUnitBRL));
+        setTxt('kLucro', brlFmt(s.lucro));
+        var rec = Number(s.recompra)||0;
+        var pct = function(n){ return rec>0 ? Math.max(3, Math.round((Number(n)||0)/rec*100)) : 0; };
+        setTxt('kRec2', nfFmt(s.rec2)); setTxt('kRec34', nfFmt(s.rec34)); setTxt('kRec5', nfFmt(s.rec5));
+        if($('barRec2'))  $('barRec2').style.width  = pct(s.rec2)+'%';
+        if($('barRec34')) $('barRec34').style.width = pct(s.rec34)+'%';
+        if($('barRec5'))  $('barRec5').style.width  = pct(s.rec5)+'%';
+        setTxt('autoTotalPeriod', nfFmt(s.autoTotalPeriod)); setTxt('autoTotalAll', nfFmt(s.autoTotalAll));
+        var box = $('autoByDay');
+        if (box) {
+          var arr = Array.isArray(s.autoByDay) ? s.autoByDay : [];
+          if (!arr.length) { box.innerHTML = '<div class="ltv-empty">Nenhum envio automático no período.</div>'; }
+          else {
+            var mx = arr.reduce(function(m,x){ return Math.max(m, Number(x.count)||0); }, 0) || 1;
+            box.innerHTML = arr.map(function(x){
+              var w = Math.max(3, Math.round((Number(x.count)||0)/mx*100));
+              return '<div class="r"><span class="t">'+fmtDayBR(x.day)+'</span><div class="bar"><span style="width:'+w+'%"></span></div><span class="n">'+nfFmt(x.count)+'</span></div>';
+            }).join('');
+          }
+        }
+        var cbox = document.querySelector('.ltv-coupons');
+        if (cbox && Array.isArray(s.couponsView)) {
+          if (!s.couponsView.length) { cbox.innerHTML = '<div class="ltv-empty">Nenhum cupom de LTV ainda.<br>Gere uma base — o pool é criado automaticamente.</div>'; }
+          else {
+            cbox.innerHTML = s.couponsView.map(function(c){
+              var badge = c.active ? '<span class="ltv-badge ok">ativo</span>' : '<span class="ltv-badge off">'+(c.expired?'expirado':'inativo')+'</span>';
+              return '<div class="ltv-coupon"><div class="top"><span class="code">'+c.code+'</span><span class="pct">-'+(c.pct||0)+'%</span></div>'+
+                '<div style="margin-top:8px;">'+badge+'</div>'+
+                '<div class="meta"><div><div class="k">Perfis</div><div class="v">'+nfFmt(c.usedProfiles)+'</div></div>'+
+                '<div><div class="k">Movimento</div><div class="v">'+brlFmt(c.moved)+'</div></div></div></div>';
+            }).join('');
+          }
+        }
+      }
+
+      async function refreshStats(){
+        var m = $('ltvRefreshMsg'); if(m) m.textContent = 'atualizando…';
+        try {
+          var d = await api('/api/painel/ltv/stats?'+periodQS());
+          if (d && d.ok && d.stats) { paintStats(d.stats); if(m){ m.textContent = 'atualizado ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); } }
+          else if(m){ m.textContent = 'falha ao atualizar'; }
+        } catch(_){ if(m) m.textContent = 'falha ao atualizar'; }
+      }
+      function setActivePeriodBtn(){
+        document.querySelectorAll('.ltvPeriodBtn').forEach(function(b){
+          if (b.getAttribute('data-period') === currentPeriod) b.classList.add('primary'); else b.classList.remove('primary');
+        });
+      }
+      document.querySelectorAll('.ltvPeriodBtn').forEach(function(b){
+        b.addEventListener('click', function(){
+          currentPeriod = b.getAttribute('data-period') || 'all';
+          if (currentPeriod !== 'custom') { currentStart=''; currentEnd=''; if($('ltvStart'))$('ltvStart').value=''; if($('ltvEnd'))$('ltvEnd').value=''; }
+          setActivePeriodBtn(); refreshStats(); refreshAvailable();
+        });
+      });
+      if ($('ltvApplyDates')) $('ltvApplyDates').addEventListener('click', function(){
+        var s = ($('ltvStart')||{}).value || '', e = ($('ltvEnd')||{}).value || '';
+        if (!s || !e) { alert('Escolha as duas datas.'); return; }
+        currentPeriod='custom'; currentStart=s; currentEnd=e;
+        setActivePeriodBtn(); refreshStats(); refreshAvailable();
+      });
+      if ($('ltvRefreshAll'))   $('ltvRefreshAll').addEventListener('click', function(){ refreshStats(); refreshAvailable(); });
+      if ($('btnRefreshAvail')) $('btnRefreshAvail').addEventListener('click', function(){ refreshAvailable(); });
+
+      // ── Card dinâmico ──
+      async function refreshAvailable(){
+        var tipo = $('sendTipo') ? $('sendTipo').value : 'all';
+        var d = await api('/api/painel/ltv/available?tipo='+encodeURIComponent(tipo)+'&'+periodQS());
+        if (!d || !d.ok) return;
+        lastAvail = d;
+        $('availNum').textContent = (d.available||0).toLocaleString('pt-BR');
+        $('availTotal').textContent = (d.totalPending||0).toLocaleString('pt-BR');
+        $('availCap').textContent = (d.remainingToday||0).toLocaleString('pt-BR') + ' / ' + (d.dailyCap||0);
+        $('availSent').textContent = (d.sentLast24h||0).toLocaleString('pt-BR');
+        var w = d.window||{};
+        $('availWin').innerHTML = w.open
+          ? '<span style="color:#059669;font-weight:600;">aberta</span> ('+w.start+'h–'+w.end+'h)'
+          : '<span style="color:#d97706;font-weight:600;">fechada</span> (abre '+w.start+'h)';
+        recomputeWillSend();
+      }
+      function recomputeWillSend(){
+        var qty = Math.max(0, parseInt(($('sendQty')&&$('sendQty').value)||'0',10) || 0);
+        var willSend = Math.min(qty, lastAvail.available||0, lastAvail.remainingToday||0);
+        $('willSend').textContent = willSend.toLocaleString('pt-BR');
+        return willSend;
+      }
+      if ($('sendTipo')) $('sendTipo').addEventListener('change', refreshAvailable);
+      if ($('sendQty')) $('sendQty').addEventListener('input', recomputeWillSend);
+
+      // ── Prévia ──
+      $('btnPreview').addEventListener('click', async function(){
+        msg('Consultando prévia…');
+        var body = { sort: $('sendSort').value, tipo: $('sendTipo').value, limit: Math.max(1, parseInt($('sendQty').value||'1',10)||1), period: currentPeriod, startDate: currentPeriod==='custom'?currentStart:'', endDate: currentPeriod==='custom'?currentEnd:'' };
+        var d = await api('/api/painel/ltv/dispatch', body);
+        if (!d.ok){ msg('Erro: '+(d.message||d.error||'falhou'), 'err'); return; }
+        var ex = (d.sample&&d.sample.length) ? (' · ex: '+d.sample.slice(0,4).map(function(s){ return s.nome+(s.tipo?(' ('+s.tipo+')'):''); }).join(', ')) : '';
+        msg('Prévia: enviaria <b>'+d.willSendNow+'</b> de '+d.totalPending+' disponíveis — nada enviado'+ex, 'ok');
+      });
+
+      // ── Enviar hoje ──
+      var poll = null;
+      async function watch(){
+        var d = await api('/api/painel/ltv/dispatch/status'); var j=d&&d.job; if(!j) return;
+        var el=$('dispProg'); if(el){
+          el.style.display='block';
+          el.innerHTML=(j.running?'⏳ enviando… ':'✅ concluído — ')+'<b>'+j.sent+'</b>/'+j.total+' enviados'+
+            (j.failed?(' · <span style="color:#dc2626">'+j.failed+' falhas</span>'):'')+
+            (j.skippedOptout?(' · '+j.skippedOptout+' opt-out pulados'):'');
+        }
+        if(!j.running){ clearInterval(poll); poll=null; setTimeout(function(){ refreshStats(); refreshAvailable(); }, 1500); }
+      }
+      $('btnEnviar').addEventListener('click', async function(){
+        var willSend = recomputeWillSend();
+        if (willSend <= 0){ msg('Nada a enviar: 0 leads disponíveis com os filtros atuais (ou teto diário atingido).', 'err'); return; }
+        var tipoLbl = $('sendTipo').options[$('sendTipo').selectedIndex].text;
+        if (!confirm('Enviar LTV para '+willSend+' leads agora?\n\nTipo: '+tipoLbl+'\nOrdem: '+$('sendSort').options[$('sendSort').selectedIndex].text+'\n\nSão mensagens cobradas pelo Meta. Confirma?')) return;
+        this.disabled = true; msg('Iniciando envio…');
+        var body = { authorize:true, sort:$('sendSort').value, tipo:$('sendTipo').value, limit: Math.max(1, parseInt($('sendQty').value||'1',10)||1), period: currentPeriod, startDate: currentPeriod==='custom'?currentStart:'', endDate: currentPeriod==='custom'?currentEnd:'' };
+        var d = await api('/api/painel/ltv/dispatch', body);
+        this.disabled = false;
+        if (!d.ok){ msg('Erro: '+(d.message||d.error||'falhou'), 'err'); return; }
+        msg('Envio iniciado ('+d.pending+' na fila).', 'ok');
+        if (poll) clearInterval(poll); poll=setInterval(watch,1500); watch();
+      });
+
+      // ── Envio automático (flag D+2) ──
+      function d2paint(enabled, days){
+        if ($('d2Enabled')) $('d2Enabled').checked = !!enabled;
+        if ($('d2Days') && days) $('d2Days').value = days;
+        if ($('d2DaysLabel') && days) $('d2DaysLabel').textContent = days;
+        var pill=$('d2StatePill');
+        if (pill){ pill.textContent = enabled ? 'ligado' : 'desligado'; pill.className = 'ltv-statepill ' + (enabled ? 'on' : 'off'); }
+      }
+      function d2GetTypes(){
+        var out=[]; document.querySelectorAll('.d2TypeChk').forEach(function(c){ if(c.checked) out.push(c.value); }); return out;
+      }
+      function d2SetTypes(types){
+        var set={}; (Array.isArray(types)?types:[]).forEach(function(t){ set[String(t)]=true; });
+        document.querySelectorAll('.d2TypeChk').forEach(function(c){ c.checked=!!set[c.value]; });
+      }
+      async function loadD2(){
+        var d = await api('/api/painel/ltv/d2/config'); var c=(d&&d.config)||{};
+        d2paint(!!c.enabled, c.days||2);
+        d2SetTypes(c.types||[]);
+      }
+      function d2msg(t, cls){ var m=$('d2Msg'); if(m){ m.innerHTML=t||''; m.className='ltv-msg '+(cls||''); } }
+
+      // Salva a flag na hora ao ligar/desligar o toggle
+      async function d2SetEnabled(enabled){
+        var days=Number($('d2Days').value||2);
+        var types=d2GetTypes();
+        if (enabled && !types.length){ d2paint(false, days); d2msg('Selecione ao menos um tipo de serviço antes de ligar.', 'err'); return; }
+        if (enabled && !confirm('Ligar o envio automático?\n\nQuem comprou há '+days+' dias os serviços selecionados ('+types.length+') vai receber o LTV sozinho (dentro da janela de horário).')){
+          d2paint(false, days); return;
+        }
+        var tog=$('d2Enabled'); if(tog) tog.disabled=true;
+        var d=await api('/api/painel/ltv/d2/config', { enabled:enabled, days:days, types:types });
+        if(tog) tog.disabled=false;
+        if (d.ok){ d2paint(d.config.enabled, d.config.days); d2SetTypes(d.config.types); d2msg('Envio automático <b>'+(d.config.enabled?'LIGADO':'desligado')+'</b> · '+(d.config.types||[]).length+' serviço(s).', 'ok'); }
+        else { d2msg('Erro ao salvar a flag', 'err'); loadD2(); }
+      }
+      if ($('d2Enabled')) $('d2Enabled').addEventListener('change', function(){ d2SetEnabled(this.checked); });
+
+      // Botão salvar: grava dias + tipos selecionados (e mantém o estado da flag)
+      if ($('d2Save')) $('d2Save').addEventListener('click', async function(){
+        var types=d2GetTypes();
+        var enabled=$('d2Enabled').checked;
+        if (enabled && !types.length){ d2msg('Selecione ao menos um tipo de serviço (ou desligue o envio automático).', 'err'); return; }
+        var body={ enabled:enabled, days:Number($('d2Days').value||2), types:types };
+        var d=await api('/api/painel/ltv/d2/config', body);
+        if (d.ok){ d2paint(d.config.enabled, d.config.days); d2SetTypes(d.config.types); d2msg('Salvo — <b>'+(d.config.enabled?'LIGADO':'desligado')+'</b>, D+'+d.config.days+', '+(d.config.types||[]).length+' serviço(s).', 'ok'); }
+        else d2msg('Erro ao salvar', 'err');
+      });
+      if ($('d2Preview')) $('d2Preview').addEventListener('click', async function(){
+        d2msg('Consultando prévia…');
+        var d=await api('/api/painel/ltv/d2/preview', {});
+        if(!d.ok){ d2msg('Erro na prévia'); return; }
+        var ex=(d.sample&&d.sample.length)?(' · ex: '+d.sample.slice(0,4).map(function(s){ return s.nome+' ('+s.cupom+', '+s.diasDaCompra+'d)'; }).join(', ')):'';
+        d2msg('<b>'+d.eligible+'</b> pessoas em D+'+d.days+' agora (receberiam se ativado) — nada enviado'+ex);
+      });
+
+      refreshAvailable();
+      loadD2();
+    })();
+  </script>
+</body>
+</html>

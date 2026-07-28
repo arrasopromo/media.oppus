@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM WhatsApp — LTV</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    .crm{ --ink:#0f172a; --muted:#64748b; --faint:#94a3b8; --line:#e5e7eb; --bg:#f6f8fb;
+      --green:#16a34a; --green-soft:#dcf8c6; --accent:#4f46e5; --in:#fff; --out:#dcf8c6;
+      color:var(--ink); font-family:var(--font-family),'Inter',system-ui,-apple-system,'Segoe UI',sans-serif; }
+    .crm *{ box-sizing:border-box; }
+    .crm-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+    .crm-head h1{ margin:0; font-size:1.35rem; font-weight:600; letter-spacing:-0.02em; }
+    .crm-head .sub{ margin:4px 0 0; color:var(--muted); font-size:0.86rem; max-width:640px; line-height:1.5; }
+
+    .crm-grid{ display:grid; grid-template-columns:340px 1fr; gap:14px; height:calc(100vh - 150px); min-height:460px; }
+    @media(max-width:820px){ .crm-grid{ grid-template-columns:1fr; height:auto; } }
+
+    .crm-card{ background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); display:flex; flex-direction:column; overflow:hidden; }
+
+    /* Lista de conversas */
+    .crm-list-tools{ padding:12px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:9px; }
+    .crm-search{ display:flex; gap:8px; }
+    .crm-search input{ flex:1; padding:9px 11px; border:1px solid #d5dbe3; border-radius:9px; font-size:0.9rem; }
+    .crm-search input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px #eef2ff; }
+    .crm-toggle{ display:flex; align-items:center; gap:8px; font-size:0.84rem; color:var(--muted); cursor:pointer; user-select:none; }
+    .crm-toggle input{ width:16px; height:16px; accent-color:var(--accent); }
+    .crm-btn{ border:1px solid #d5dbe3; border-radius:9px; padding:9px 12px; font-weight:600; cursor:pointer; background:#fff; color:var(--ink); font-size:0.86rem; }
+    .crm-btn:hover{ background:#f8fafc; }
+    .crm-btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+
+    .crm-threads{ overflow-y:auto; flex:1; }
+    .crm-thread-item{ padding:11px 13px; border-bottom:1px solid #f1f5f9; cursor:pointer; display:flex; flex-direction:column; gap:3px; }
+    .crm-thread-item:hover{ background:#f8fafc; }
+    .crm-thread-item.active{ background:#eef2ff; }
+    .crm-thread-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .crm-thread-name{ font-weight:600; font-size:0.92rem; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .crm-thread-time{ font-size:0.72rem; color:var(--faint); flex:none; }
+    .crm-thread-last{ font-size:0.82rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .crm-thread-meta{ display:flex; align-items:center; gap:6px; }
+    .crm-pill{ font-size:0.68rem; font-weight:700; padding:1px 7px; border-radius:999px; background:#dbeafe; color:#1e40af; }
+    .crm-pill.reply{ background:var(--green-soft); color:#166534; }
+    .crm-empty{ text-align:center; color:var(--faint); padding:28px 16px; font-size:0.88rem; }
+
+    /* Conversa */
+    .crm-conv{ }
+    .crm-conv-head{ padding:12px 16px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .crm-conv-name{ font-weight:600; font-size:1rem; }
+    .crm-conv-sub{ font-size:0.8rem; color:var(--muted); margin-top:2px; }
+    .crm-badge{ font-size:0.72rem; font-weight:700; padding:2px 9px; border-radius:999px; }
+    .crm-badge.blocked{ background:#fee2e2; color:#991b1b; }
+    .crm-badge.ok{ background:#dcfce7; color:#166534; }
+    .crm-msgs{ flex:1; overflow-y:auto; padding:16px; background:#efeae2; display:flex; flex-direction:column; gap:8px; }
+    .crm-bubble{ max-width:76%; padding:8px 11px; border-radius:10px; font-size:0.9rem; line-height:1.4; box-shadow:0 1px 1px rgba(0,0,0,.08); word-wrap:break-word; white-space:pre-wrap; }
+    .crm-bubble.in{ align-self:flex-start; background:var(--in); border-top-left-radius:2px; }
+    .crm-bubble.out{ align-self:flex-end; background:var(--out); border-top-right-radius:2px; }
+    .crm-bubble .t{ display:block; font-size:0.66rem; color:#667781; text-align:right; margin-top:3px; }
+    .crm-conv-empty{ flex:1; display:flex; align-items:center; justify-content:center; color:var(--faint); font-size:0.92rem; text-align:center; padding:24px; }
+    .crm-note{ padding:9px 16px; font-size:0.76rem; color:var(--faint); border-top:1px solid var(--line); background:#fafbfc; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page:'whatsapp-crm' }) %>
+  <div class="main-content">
+    <div class="crm">
+      <div class="crm-head">
+        <div>
+          <h1>CRM WhatsApp — LTV</h1>
+          <p class="sub">Conversas do número do LTV (WhatsApp oficial). Veja as respostas dos clientes. Somente leitura — o histórico começa a partir de agora (a Meta não devolve mensagens antigas).</p>
+        </div>
+        <button class="crm-btn primary" id="crmRefresh">↻ Atualizar</button>
+      </div>
+
+      <div class="crm-grid">
+        <!-- Lista -->
+        <div class="crm-card">
+          <div class="crm-list-tools">
+            <div class="crm-search">
+              <input type="text" id="crmSearch" placeholder="Buscar por telefone, nome ou @...">
+              <button class="crm-btn" id="crmSearchBtn">Buscar</button>
+            </div>
+            <label class="crm-toggle"><input type="checkbox" id="crmOnlyReply"> Só conversas com resposta do cliente</label>
+          </div>
+          <div class="crm-threads" id="crmThreads">
+            <div class="crm-empty">Carregando…</div>
+          </div>
+        </div>
+
+        <!-- Conversa -->
+        <div class="crm-card crm-conv">
+          <div class="crm-conv-head" id="crmConvHead" style="display:none;">
+            <div>
+              <div class="crm-conv-name" id="crmConvName">—</div>
+              <div class="crm-conv-sub" id="crmConvSub"></div>
+            </div>
+            <span class="crm-badge ok" id="crmConvStatus">ativo</span>
+          </div>
+          <div class="crm-msgs" id="crmMsgs">
+            <div class="crm-conv-empty">Selecione uma conversa à esquerda para ver as mensagens.</div>
+          </div>
+          <div class="crm-note">Somente leitura. Responder pelo painel exige a janela de 24h da Meta — pode ser adicionado depois.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      var $ = function(id){ return document.getElementById(id); };
+      async function api(path){ try { var r = await fetch(path, { headers:{Accept:'application/json'}, credentials:'same-origin' }); return await r.json(); } catch(_){ return { ok:false }; } }
+      var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+      var nf = function(v){ return (Number(v)||0).toLocaleString('pt-BR'); };
+      function fmtTime(iso){
+        try { var d=new Date(iso); if(isNaN(d)) return '';
+          var today=new Date(); var sameDay=d.toDateString()===today.toDateString();
+          return sameDay ? d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})
+                         : d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+        } catch(_){ return ''; }
+      }
+      var current = null; // phoneKey selecionado
+      var threadsCache = [];
+
+      function renderThreads(list){
+        var box = $('crmThreads');
+        if (!list || !list.length){ box.innerHTML = '<div class="crm-empty">Nenhuma conversa'+($('crmOnlyReply').checked?' com resposta':'')+' ainda.</div>'; return; }
+        box.innerHTML = list.map(function(t){
+          var title = t.name ? esc(t.name) : (t.ig ? '@'+esc(t.ig) : esc(t.phoneE164));
+          var reply = (t.inCount||0) > 0;
+          var lastPrefix = (t.lastDirection==='out') ? 'Você: ' : '';
+          return '<div class="crm-thread-item'+(t.phoneKey===current?' active':'')+'" data-key="'+esc(t.phoneKey)+'">'
+            + '<div class="crm-thread-top"><span class="crm-thread-name">'+title+'</span><span class="crm-thread-time">'+fmtTime(t.lastAt)+'</span></div>'
+            + '<div class="crm-thread-last">'+esc(lastPrefix)+esc((t.lastText||'').slice(0,60))+'</div>'
+            + '<div class="crm-thread-meta">'
+              + (reply?'<span class="crm-pill reply">'+nf(t.inCount)+' resp.</span>':'')
+              + '<span class="crm-pill">'+esc(t.phoneE164)+'</span>'
+            + '</div>'
+          + '</div>';
+        }).join('');
+        Array.prototype.forEach.call(box.querySelectorAll('.crm-thread-item'), function(el){
+          el.addEventListener('click', function(){ openThread(el.getAttribute('data-key')); });
+        });
+      }
+
+      async function loadThreads(){
+        var q = ($('crmSearch').value||'').trim();
+        var only = $('crmOnlyReply').checked ? '1' : '0';
+        var d = await api('/api/painel/whatsapp-crm/threads?withReply='+only+'&q='+encodeURIComponent(q));
+        if (d && d.ok){ threadsCache = d.threads||[]; renderThreads(threadsCache); }
+        else { $('crmThreads').innerHTML = '<div class="crm-empty">Falha ao carregar.</div>'; }
+      }
+
+      function renderMessages(data){
+        $('crmConvHead').style.display = 'flex';
+        $('crmConvName').textContent = data.name || (data.ig ? '@'+data.ig : data.phoneE164);
+        var subParts = [];
+        if (data.ig) subParts.push('@'+data.ig);
+        subParts.push(data.phoneE164);
+        $('crmConvSub').textContent = subParts.join(' · ');
+        var st = $('crmConvStatus');
+        if (data.blocked){ st.textContent='opt-out / bloqueado'; st.className='crm-badge blocked'; }
+        else { st.textContent='ativo'; st.className='crm-badge ok'; }
+        var box = $('crmMsgs');
+        var msgs = data.messages||[];
+        if (!msgs.length){ box.innerHTML = '<div class="crm-conv-empty">Sem mensagens registradas para este contato.</div>'; return; }
+        box.innerHTML = msgs.map(function(m){
+          return '<div class="crm-bubble '+(m.direction==='out'?'out':'in')+'">'+esc(m.text||'')+'<span class="t">'+fmtTime(m.at)+'</span></div>';
+        }).join('');
+        box.scrollTop = box.scrollHeight;
+      }
+
+      async function openThread(key){
+        current = key;
+        Array.prototype.forEach.call(document.querySelectorAll('.crm-thread-item'), function(el){
+          el.classList.toggle('active', el.getAttribute('data-key')===key);
+        });
+        $('crmMsgs').innerHTML = '<div class="crm-conv-empty">Carregando…</div>';
+        var d = await api('/api/painel/whatsapp-crm/thread?phone='+encodeURIComponent(key));
+        if (d && d.ok) renderMessages(d);
+        else $('crmMsgs').innerHTML = '<div class="crm-conv-empty">Falha ao carregar a conversa.</div>';
+      }
+
+      $('crmSearchBtn').addEventListener('click', loadThreads);
+      $('crmSearch').addEventListener('keydown', function(e){ if(e.key==='Enter') loadThreads(); });
+      $('crmOnlyReply').addEventListener('change', loadThreads);
+      $('crmRefresh').addEventListener('click', function(){ loadThreads(); if(current) openThread(current); });
+
+      loadThreads();
+      // Atualização automática leve (a cada 20s): recarrega lista e a conversa aberta.
+      setInterval(function(){ loadThreads(); if(current) openThread(current); }, 20000);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# Dependências
+node_modules/
+
+# Arquivos de ambiente
+.env
+.env.local
+.env.production
+
+# Segredos / credenciais vivas (NÃO versionar)
+jar.txt
+google-tokens.json
+*.session
+
+# Dados de clientes / relatórios gerados (PII)
+*.csv
+
+# Config local do Claude
+.claude/settings.local.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Arquivos temporários
+temp_images/
+temp_images/*
+
+# Tokens do Google
+google-tokens.json
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/ app_local_test.log

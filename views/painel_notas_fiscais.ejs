@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel — Notas Fiscais</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    :root { --ink:#1f2937; --muted:#6b7280; --soft:#9ca3af; --line:#edf0f4; --bg:#f6f7f9; }
+    * { box-sizing:border-box; }
+    body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--ink); margin:0; }
+    .main-content { padding:26px 30px 60px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin-bottom:16px; }
+    h1 { margin:0 0 4px; font-size:1.4rem; font-weight:600; }
+    .sub { color:var(--muted); font-size:0.9rem; margin:0 0 16px; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .tab { padding:8px 14px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; color:var(--ink); text-decoration:none; font-size:0.86rem; font-weight:600; }
+    .tab.active { background:#111827; color:#fff; border-color:#111827; }
+    .tab .n { opacity:0.7; font-weight:700; margin-left:4px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:11px 12px; text-align:left; border-bottom:1px solid #f0f2f5; font-size:0.87rem; vertical-align:top; }
+    th { background:#fafbfc; font-weight:600; color:var(--soft); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; }
+    tbody tr:hover { background:#fafbff; }
+    .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.8rem; color:var(--muted); }
+    .badge { display:inline-flex; align-items:center; padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:700; border:1px solid transparent; }
+    .b-held { background:#fef3c7; border-color:#fde68a; color:#92400e; }
+    .b-error { background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .b-enqueued { background:#e0f2fe; border-color:#bae6fd; color:#075985; }
+    .b-authorized { background:#dcfce7; border-color:#bbf7d0; color:#166534; }
+    .b-rejected { background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .b-none { background:#f1f5f9; border-color:#e2e8f0; color:#475569; }
+    .miss { color:#b91c1c; font-weight:700; }
+    .ok { color:#166534; font-weight:700; }
+    .inp { border:1px solid #dfe4ec; border-radius:8px; padding:6px 9px; font-size:0.84rem; width:150px; }
+    .btn { border:1px solid #dfe4ec; border-radius:8px; padding:6px 10px; font-weight:700; cursor:pointer; background:#fff; font-size:0.8rem; }
+    .btn.p { background:#4f46e5; color:#fff; border:0; }
+    .btn.g { background:#0ea5a4; color:#fff; border:0; }
+    .btn:hover { filter:brightness(0.97); }
+    .panel-table-scroll { width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:12px; }
+    .act { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page: 'notas-fiscais' }) %>
+  <div class="main-content">
+    <h1>Notas Fiscais</h1>
+    <p class="sub">Pedidos represados (sem CPF), com erro ou já emitidos. Corrija o CPF dos represados e reemita.</p>
+
+    <div class="tabs">
+      <% var tabs = [['held','Represados','held'],['error','Com erro','error'],['enqueued','Na fila','enqueued'],['authorized','Autorizadas','authorized'],['rejected','Rejeitadas','rejected'],['all','Todas','']]; %>
+      <% tabs.forEach(function(t){ %>
+        <a class="tab <%= state === t[0] ? 'active' : '' %>" href="/painel/notas-fiscais?state=<%= t[0] %>"><%= t[1] %><% if (t[2] && counts[t[2]] != null) { %><span class="n"><%= counts[t[2]] %></span><% } %></a>
+      <% }); %>
+    </div>
+
+    <div class="card">
+      <div class="panel-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th><th>Cliente</th><th>Telefone</th><th>CPF</th><th>End.</th>
+              <th>Valor</th><th>Estado</th><th>Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% rows.forEach(function(r){ %>
+              <tr id="row-<%= r.id %>">
+                <td class="mono"><%= r.date ? new Date(r.date).toLocaleDateString('pt-BR') : '-' %></td>
+                <td><%= r.name %><div class="mono">#<%= r.id.slice(-6) %></div></td>
+                <td class="mono"><%= r.phone || '-' %></td>
+                <td>
+                  <% if (r.cpf) { %><span class="mono ok"><%= r.cpf %></span><% } else { %><span class="miss">sem CPF</span><% } %>
+                </td>
+                <td><% if (r.hasAddress) { %><span class="ok">✓</span><% } else { %><span class="mono" style="color:#94a3b8">padrão</span><% } %></td>
+                <td class="mono">R$ <%= r.valueReais.toFixed(2) %></td>
+                <td>
+                  <span class="badge b-<%= ['held','error','enqueued','authorized','rejected'].indexOf(r.state) >= 0 ? r.state : 'none' %>"><%= r.state %></span>
+                  <% if (r.heldReason) { %><div class="mono" style="color:#92400e"><%= r.heldReason %></div><% } %>
+                  <% if (r.error) { %><div class="mono" style="color:#991b1b" title="<%= r.error %>"><%= String(r.error).slice(0,60) %></div><% } %>
+                  <% if (r.number) { %><div class="mono">nº <%= r.number %></div><% } %>
+                </td>
+                <td>
+                  <div class="act">
+                    <% if (r.state === 'held' || r.state === 'error' || r.state === 'rejected' || !r.cpf) { %>
+                      <input class="inp" id="cpf-<%= r.id %>" placeholder="CPF" value="<%= r.cpf %>" />
+                      <button class="btn p" onclick="salvarReemitir('<%= r.id %>')">Salvar + reemitir</button>
+                      <button class="btn g" onclick="enriquecer('<%= r.id %>')">Buscar por tel.</button>
+                    <% } else { %>
+                      <button class="btn" onclick="reemitir('<%= r.id %>')">Reemitir</button>
+                    <% } %>
+                  </div>
+                </td>
+              </tr>
+            <% }); %>
+            <% if (!rows.length) { %>
+              <tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:26px;">Nenhum pedido neste estado.</td></tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function post(url) {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      return r.json().catch(function(){ return { ok:false, error:'resposta inválida' }; });
+    }
+    async function salvarReemitir(id) {
+      var cpf = (document.getElementById('cpf-' + id).value || '').replace(/\D/g, '');
+      if (cpf.length !== 11 && cpf.length !== 14) { alert('CPF inválido (11 dígitos).'); return; }
+      var j = await fetch('/api/admin/fiscal/set-cpf/' + id + '?reemitir=true', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cpf: cpf })
+      }).then(function(r){ return r.json(); }).catch(function(){ return { ok:false, error:'resposta inválida' }; });
+      if (j.ok) { alert('CPF salvo. Emissão: ' + (j.emit && j.emit.ok ? 'enviada ✓' : (j.emit ? (j.emit.reason || 'pendente') : 'n/a'))); location.reload(); }
+      else alert('Erro: ' + (j.error || 'desconhecido'));
+    }
+    async function reemitir(id) {
+      var j = await post('/api/admin/spedy/emitir/' + id + '?force=true');
+      alert(j.ok ? 'Reemissão enviada ✓' : ('Falha: ' + ((j.result && j.result.reason) || j.error || '')));
+      location.reload();
+    }
+    async function enriquecer(id) {
+      var j = await post('/api/admin/fiscal/enrich/' + id);
+      if (j.ok && j.result && j.result.fiscal && j.result.fiscal.cpf) {
+        document.getElementById('cpf-' + id).value = j.result.fiscal.cpf;
+        alert('CPF encontrado: ' + j.result.fiscal.cpf + '. Confira e clique em Salvar + reemitir.');
+      } else {
+        alert('Não localizou CPF pelo telefone' + (j.result && j.result.reason ? (' (' + j.result.reason + ')') : '') + '.');
+      }
+    }
+  </script>
+</body>
+</html>

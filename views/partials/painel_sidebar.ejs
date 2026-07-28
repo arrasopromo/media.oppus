@@ -1,0 +1,171 @@
+<div class="sidebar">
+    <input type="checkbox" id="sidebarToggle" class="sidebar-toggle" />
+    <div class="sidebar-top">
+        <h2>Painel Admin</h2>
+        <label for="sidebarToggle" class="sidebar-menu-btn" aria-label="Abrir menu">Menu</label>
+    </div>
+    <ul class="sidebar-menu">
+        <li><a href="/painel" class="<%= typeof page !== 'undefined' && page === 'dashboard' ? 'active' : '' %>">Dashboard</a></li>
+        <li><a href="/painel?view=vendas" class="<%= typeof page !== 'undefined' && page === 'vendas' ? 'active' : '' %>">Vendas</a></li>
+        <li><a href="/painel?view=coupons" class="<%= typeof page !== 'undefined' && page === 'coupons' ? 'active' : '' %>">Cupons</a></li>
+        <li><a href="/painel/recuperacao" class="<%= typeof page !== 'undefined' && page === 'recuperacao' ? 'active' : '' %>">Recuperação</a></li>
+        <li><a href="/painel/recuperacao-whatsapp" class="<%= typeof page !== 'undefined' && page === 'recuperacao-whatsapp' ? 'active' : '' %>">Recuperação WhatsApp</a></li>
+        <li><a href="/painel/privados" class="<%= typeof page !== 'undefined' && page === 'privados' ? 'active' : '' %>">Perfis Privados</a></li>
+        <li><a href="/painel/gerenciamento-seguidores" class="<%= typeof page !== 'undefined' && page === 'gerenciamento-seguidores' ? 'active' : '' %>">Gerenciamento de Seguidores</a></li>
+        <li><a href="/painel/whatsapp" class="<%= typeof page !== 'undefined' && page === 'whatsapp' ? 'active' : '' %>">Pedidos WhatsApp</a></li>
+        <li><a href="/painel?view=service_types" class="<%= typeof page !== 'undefined' && page === 'service_types' ? 'active' : '' %>">Gerenciamento Tipos</a></li>
+        <li><a href="/painel/consulta-perfil" class="<%= typeof page !== 'undefined' && page === 'consulta-perfil' ? 'active' : '' %>">Consulta de Perfil</a></li>
+        <li><a href="/painel?view=refil2" class="<%= typeof page !== 'undefined' && page === 'refil2' ? 'active' : '' %>">Gerenciamento Refil</a></li>
+        <li><a href="/painel/aguardando" class="<%= typeof page !== 'undefined' && page === 'aguardando' ? 'active' : '' %>">Aguardando Pedido</a></li>
+        <li><a href="/painel?view=unknown_orderid&period=all" class="<%= typeof page !== 'undefined' && page === 'unknown_orderid' ? 'active' : '' %>">OrderID Unknown</a></li>
+        <li><a href="/painel/upsell" class="<%= typeof page !== 'undefined' && page === 'upsell' ? 'active' : '' %>">Gestão de Upsell</a></li>
+        <li><a href="/painel/ltv" class="<%= typeof page !== 'undefined' && page === 'ltv' ? 'active' : '' %>">LTV (Disparo)</a></li>
+        <li><a href="/painel/whatsapp-crm" class="<%= typeof page !== 'undefined' && page === 'whatsapp-crm' ? 'active' : '' %>">CRM WhatsApp (LTV)</a></li>
+        <li><a href="/painel/controladoria" class="<%= typeof page !== 'undefined' && page === 'controladoria' ? 'active' : '' %>">Controladoria</a></li>
+        <li><a href="/painel/notas-fiscais" class="<%= typeof page !== 'undefined' && page === 'notas-fiscais' ? 'active' : '' %>">Notas Fiscais</a></li>
+        <li><a href="/logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a></li>
+    </ul>
+</div>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+        background: #f0f2f5;
+    }
+    .sidebar {
+        width: 250px;
+        background: #343a40;
+        color: #fff;
+        height: 100vh;
+        position: fixed;
+        left: 0;
+        top: 0;
+        padding: 20px;
+        box-sizing: border-box;
+        z-index: 1000;
+        /* permite rolagem quando os tópicos não cabem na altura da tela
+           (notebooks / telas baixas) — antes os últimos itens ficavam cortados */
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+    /* barra de rolagem discreta na sidebar */
+    .sidebar::-webkit-scrollbar { width: 8px; }
+    .sidebar::-webkit-scrollbar-thumb { background: #495057; border-radius: 8px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar h2 { margin-top: 0; }
+    .sidebar-toggle { display: none; }
+    .sidebar-top { display: block; }
+    .sidebar-menu-btn { display: none; }
+    .sidebar h2 {
+        color: #fff;
+        margin-bottom: 30px;
+        font-size: 1.5rem;
+        text-align: center;
+        border-bottom: 1px solid #495057;
+        padding-bottom: 20px;
+    }
+    .sidebar-menu {
+        list-style: none;
+        padding: 0;
+    }
+    .sidebar-menu li {
+        margin-bottom: 5px;
+    }
+    .sidebar-menu li a {
+        display: block;
+        padding: 12px 15px;
+        color: #adb5bd;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: all 0.2s;
+        font-size: 1rem;
+    }
+    .sidebar-menu li a:hover {
+        background: #495057;
+        color: #fff;
+    }
+    .sidebar-menu li a.active {
+        background: #007bff;
+        color: #fff;
+        font-weight: 600;
+    }
+    
+    /* Main content adjustment */
+    .main-content {
+        margin-left: 250px;
+        padding: 30px;
+        min-height: 100vh;
+        max-width: none;
+        width: auto;
+    }
+    .panel-table-scroll {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .panel-table-scroll table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    @media (max-width: 768px) {
+        .sidebar {
+            width: 100%;
+            height: auto;
+            position: sticky;
+            top: 0;
+            padding: 10px 12px;
+        }
+        .sidebar-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .sidebar h2 {
+            display: block;
+            margin: 0;
+            font-size: 1.05rem;
+            border-bottom: 0;
+            padding-bottom: 0;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .sidebar-menu-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border: 1px solid #495057;
+            border-radius: 8px;
+            background: #495057;
+            color: #fff;
+            font-size: 0.95rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .sidebar-menu {
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px 0 0;
+            margin: 0;
+            max-height: calc(100vh - 54px);
+            overflow: auto;
+        }
+        .sidebar-toggle:checked ~ .sidebar-menu {
+            display: flex;
+        }
+        .main-content {
+            margin-left: 0;
+            padding: 15px;
+            width: 100%;
+        }
+        .sidebar-menu li a {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            background: #495057;
+        }
+    }
+</style>

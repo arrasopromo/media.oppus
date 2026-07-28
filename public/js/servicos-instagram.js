@@ -1,0 +1,5351 @@
+
+// Fallback de miniatura de post: se a imagem (via /image-proxy) falhar — URL do CDN do
+// Instagram expirada/403 —, troca pelo embed oficial do post, que carrega pelo navegador.
+(function(){
+  if (window.__igPostFallbackInstalled) return;
+  window.__igPostFallbackInstalled = true;
+  document.addEventListener('error', function(ev){
+    var t = ev && ev.target;
+    if (!t || t.tagName !== 'IMG') return;
+    var sc = t.getAttribute && t.getAttribute('data-igpost');
+    if (!sc || t.__igFb) return;
+    t.__igFb = true;
+    try {
+      var f = document.createElement('iframe');
+      f.src = 'https://www.instagram.com/p/' + encodeURIComponent(sc) + '/embed';
+      f.setAttribute('scrolling', 'no');
+      f.setAttribute('allow', 'encrypted-media; picture-in-picture');
+      f.setAttribute('loading', 'lazy');
+      f.style.cssText = 'width:100%;height:100%;border:0;border-radius:12px;';
+      t.replaceWith(f);
+    } catch (_) {}
+  }, true);
+})();
+
+document.addEventListener('DOMContentLoaded', function() {
+  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
+  const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
+  const serviceVisibility = (function(){
+    try {
+      const node = document.getElementById('oppusServiceVisibilityJson');
+      if (node) {
+        const raw = String(node.textContent || node.innerText || '').trim();
+        if (raw) return JSON.parse(raw);
+      }
+      const v = window.__oppusServiceVisibility;
+      if (!v || typeof v !== 'object') return { seguidores: [], curtidas: [], visualizacoes: [] };
+      return v;
+    } catch (_) {
+      return { seguidores: [], curtidas: [], visualizacoes: [] };
+    }
+  })();
+  const serviceCategoryKey = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+  // Formata a data de um post de forma robusta: aceita unix em segundos, em ms OU string ISO
+  // (o Apify devolve ISO). Evita o "Invalid Date" que aparecia embaixo dos posts no order bump.
+  function fmtPostDateBR(takenAt) {
+    try {
+      if (takenAt == null || takenAt === '') return '';
+      var ms = null;
+      if (typeof takenAt === 'number' && isFinite(takenAt)) {
+        ms = takenAt > 1e12 ? takenAt : takenAt * 1000;
+      } else {
+        var s = String(takenAt).trim();
+        if (/^\d+$/.test(s)) { var n = Number(s); ms = n > 1e12 ? n : n * 1000; }
+        else { var d0 = new Date(s).getTime(); if (isFinite(d0) && d0 > 0) ms = d0; }
+      }
+      if (ms == null || !isFinite(ms) || ms <= 0) return '';
+      var d = new Date(ms);
+      return isFinite(d.getTime()) ? d.toLocaleString('pt-BR') : '';
+    } catch (_) { return ''; }
+  }
+  const hiddenTipos = (function(){
+    try {
+      const arr = serviceVisibility && Array.isArray(serviceVisibility[serviceCategoryKey]) ? serviceVisibility[serviceCategoryKey] : [];
+      return arr.map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+    } catch (_) {
+      return [];
+    }
+  })();
+
+  function getBrowserSessionId() {
+      let bid = '';
+      try { bid = localStorage.getItem('oppus_browser_id'); } catch(_) {}
+      if (!bid) {
+          bid = 'bid_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+          try { localStorage.setItem('oppus_browser_id', bid); } catch(_) {}
+      }
+      return bid;
+  }
+  try { getBrowserSessionId(); } catch(_) {}
+
+  // Coupon State
+  window.couponCode = '';
+  window.couponDiscount = 0;
+  (function(){
+    function getUrlCoupon(){
+      try {
+        const p = new URLSearchParams(window.location.search);
+        let code = String(p.get('cupom') || p.get('coupon') || '').trim();
+        if (!code) {
+          const m = String(window.location.pathname || '').match(/\/cupom=([^\/]+)/i);
+          if (m && m[1]) code = decodeURIComponent(m[1]);
+        }
+        return String(code || '').trim().toUpperCase();
+      } catch(_) { return ''; }
+    }
+    function getUrlUsername(){
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const raw = String(p.get('instagram_username') || p.get('username') || p.get('perfil') || '').trim();
+        return String(raw || '').trim().replace(/^@+/, '').replace(/\/+$/g, '');
+      } catch(_) { return ''; }
+    }
+    const pre = getUrlCoupon();
+    if (pre) {
+      try { sessionStorage.setItem('oppus_coupon_code', pre); } catch(_) {}
+      const input = document.getElementById('couponInput');
+      const msg = document.getElementById('couponMessage');
+      if (input) input.value = pre;
+      const applyNow = function(){
+        const usernameEl = document.getElementById('usernameCheckoutInput');
+        const instagram_username = usernameEl ? usernameEl.value.trim().replace(/^@+/, '') : '';
+        fetch('/api/validate-coupon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: pre, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
+        })
+        .then(function(res){ return res.json(); })
+        .then(function(data){
+          if (data && data.valid) {
+            window.couponCode = data.code;
+            window.couponDiscount = data.discount || 0;
+            if (msg) {
+              const percent = Math.round((Number(data.discount||0)) * 100);
+              msg.textContent = 'Cupom aplicado! (' + percent + '% OFF)';
+              msg.style.color = '#22c55e';
+              msg.style.display = 'block';
+            }
+            if (input) input.disabled = true;
+            if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          } else {
+            window.couponCode = '';
+            window.couponDiscount = 0;
+            if (msg) {
+              msg.textContent = (data && data.error) ? data.error : 'Cupom inválido.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+            }
+            if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          }
+        }).catch(function(){});
+      };
+      const ue = document.getElementById('usernameCheckoutInput');
+      try {
+        const u = getUrlUsername();
+        if (ue && u && !String(ue.value || '').trim()) {
+          ue.value = u;
+        }
+      } catch(_) {}
+      if (ue && ue.value && ue.value.trim()) {
+        applyNow();
+      } else if (ue) {
+        let done = false;
+        ue.addEventListener('change', function(){
+          if (!done && ue.value && ue.value.trim()) { done = true; applyNow(); }
+        });
+        ue.addEventListener('blur', function(){
+          if (!done && ue.value && ue.value.trim()) { done = true; applyNow(); }
+        });
+      } else {
+        applyNow();
+      }
+    }
+  })();
+
+  const applyCouponBtn = document.getElementById('applyCouponBtn');
+  if (applyCouponBtn) {
+      applyCouponBtn.addEventListener('click', function() {
+          const input = document.getElementById('couponInput');
+          const msg = document.getElementById('couponMessage');
+          if (!input || !msg) return;
+          
+          const code = input.value.trim().toUpperCase();
+          if (!code) {
+              msg.textContent = 'Digite um cupom.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+              return;
+          }
+          
+          // Validation Logic via API
+          this.disabled = true;
+          this.textContent = 'Verificando...';
+          
+          const usernameEl = document.getElementById('usernameCheckoutInput');
+          const instagram_username = usernameEl ? usernameEl.value.trim().replace(/^@+/, '') : '';
+
+          fetch('/api/validate-coupon', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
+          })
+          .then(res => res.json())
+          .then(data => {
+              if (data.valid) {
+                  window.couponCode = data.code;
+                  window.couponDiscount = data.discount; // decimal, e.g. 0.10
+                  
+                  const percent = Math.round(data.discount * 100);
+                  msg.textContent = `Cupom aplicado! (${percent}% OFF)`;
+                  msg.style.color = '#22c55e';
+                  msg.style.display = 'block';
+                  
+                  input.disabled = true;
+                  this.disabled = true;
+                  this.textContent = 'Aplicado';
+              } else {
+                  msg.textContent = data.error || 'Cupom inválido.';
+                  msg.style.color = '#ef4444';
+                  msg.style.display = 'block';
+                  window.couponCode = '';
+                  window.couponDiscount = 0;
+                  
+                  this.disabled = false;
+                  this.textContent = 'Aplicar';
+              }
+              if (typeof updatePromosSummary === 'function') updatePromosSummary();
+          })
+          .catch(err => {
+              console.error('Erro ao validar cupom:', err);
+              msg.textContent = 'Erro ao validar cupom.';
+              msg.style.color = '#ef4444';
+              msg.style.display = 'block';
+              
+              this.disabled = false;
+              this.textContent = 'Aplicar';
+          });
+      });
+  }
+
+  const tabelaSeguidores = {
+    mistos: [
+      { q: 100, p: 'R$ 3,00' }, // pacote teste upsell
+      { q: 150, p: 'R$ 7,90' },
+      { q: 300, p: 'R$ 12,90' },
+      { q: 500, p: 'R$ 16,90' },
+      { q: 700, p: 'R$ 22,90' },
+      { q: 1000, p: 'R$ 29,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 79,90' },
+      { q: 4000, p: 'R$ 99,90' },
+      { q: 5000, p: 'R$ 129,90' },
+      { q: 7500, p: 'R$ 169,90' },
+      { q: 10000, p: 'R$ 229,90' },
+      { q: 15000, p: 'R$ 329,90' },
+    ],
+    brasileiros: [
+      { q: 150, p: 'R$ 12,90' },
+      { q: 300, p: 'R$ 24,90' },
+      { q: 500, p: 'R$ 39,90' },
+      { q: 700, p: 'R$ 49,90' },
+      { q: 1000, p: 'R$ 79,90' },
+      { q: 2000, p: 'R$ 129,90' },
+      { q: 3000, p: 'R$ 179,90' },
+      { q: 4000, p: 'R$ 249,90' },
+      { q: 5000, p: 'R$ 279,90' },
+      { q: 7500, p: 'R$ 399,90' },
+      { q: 10000, p: 'R$ 499,90' },
+      { q: 15000, p: 'R$ 799,90' },
+    ],
+    organicos: [
+      { q: 150, p: 'R$ 39,90' },
+      { q: 300, p: 'R$ 49,90' },
+      { q: 500, p: 'R$ 69,90' },
+      { q: 700, p: 'R$ 89,90' },
+      { q: 1000, p: 'R$ 129,90' },
+      { q: 2000, p: 'R$ 199,90' },
+      { q: 3000, p: 'R$ 249,90' },
+      { q: 4000, p: 'R$ 329,90' },
+      { q: 5000, p: 'R$ 499,90' },
+      { q: 7500, p: 'R$ 599,90' },
+      { q: 10000, p: 'R$ 899,90' },
+      { q: 15000, p: 'R$ 1.299,90' },
+    ],
+  };
+
+  // Upsell: desconto de 25% em seguidores (mundiais, brasileiros, brasileiros reais) a partir de 500
+  let isUpsellFollowers = false;
+  try {
+    const paramsUpsell = new URLSearchParams(window.location.search || '');
+    const u = String(paramsUpsell.get('upsell_followers') || paramsUpsell.get('upsell') || '').toLowerCase();
+    if (u === '1' || u === 'seguidores_25' || u === 'followers_25') {
+      isUpsellFollowers = true;
+    }
+  } catch(_) {}
+  try { window.isUpsellFollowers = isUpsellFollowers; } catch(_) {}
+
+
+  if (isUpsellFollowers && !isCurtidasContext && !isViewsContext) {
+    ['mistos', 'brasileiros', 'organicos'].forEach(function(tipoKey){
+      const arr = tabelaSeguidores[tipoKey] || [];
+      arr.forEach(function(item){
+        if (Number(item.q) >= 500) {
+          const cents = (typeof parsePrecoToCents === 'function') ? parsePrecoToCents(item.p) : 0;
+          if (cents > 0) {
+            const newCents = Math.round(cents * 0.75);
+            if (typeof formatCentsToBRL === 'function') {
+              item.p = formatCentsToBRL(newCents);
+            }
+          }
+        }
+      });
+    });
+  }
+
+  const tabelaCurtidas = {
+    mistos: [
+      { q: 150, p: 'R$ 4,90' },
+      { q: 300, p: 'R$ 7,90' },
+      { q: 500, p: 'R$ 9,90' },
+      { q: 700, p: 'R$ 14,90' },
+      { q: 1000, p: 'R$ 19,90' },
+      { q: 2000, p: 'R$ 24,90' },
+      { q: 3000, p: 'R$ 29,90' },
+      { q: 4000, p: 'R$ 34,90' },
+      { q: 5000, p: 'R$ 39,90' },
+      { q: 7500, p: 'R$ 49,90' },
+      { q: 10000, p: 'R$ 69,90' },
+      { q: 15000, p: 'R$ 89,90' },
+    ],
+    curtidas_brasileiras: [
+      { q: 150, p: 'R$ 5,90' },
+      { q: 300, p: 'R$ 9,90' },
+      { q: 500, p: 'R$ 14,90' },
+      { q: 700, p: 'R$ 29,90' },
+      { q: 1000, p: 'R$ 39,90' },
+      { q: 2000, p: 'R$ 49,90' },
+      { q: 3000, p: 'R$ 59,90' },
+      { q: 4000, p: 'R$ 69,90' },
+      { q: 5000, p: 'R$ 79,90' },
+      { q: 7500, p: 'R$ 109,90' },
+      { q: 10000, p: 'R$ 139,90' },
+      { q: 15000, p: 'R$ 199,90' },
+    ],
+    organicos: [
+      { q: 150, p: 'R$ 11,90' },
+      { q: 300, p: 'R$ 19,90' },
+      { q: 500, p: 'R$ 34,90' },
+      { q: 1000, p: 'R$ 48,90' },
+      { q: 2000, p: 'R$ 73,90' },
+      { q: 3000, p: 'R$ 97,90' },
+      { q: 4000, p: 'R$ 122,90' },
+      { q: 5000, p: 'R$ 157,90' },
+      { q: 7500, p: 'R$ 195,90' },
+      { q: 10000, p: 'R$ 244,90' },
+      { q: 15000, p: 'R$ 314,90' },
+    ],
+  };
+
+  const tabelaVisualizacoes = {
+    visualizacoes_reels: [
+      { q: 1000, p: 'R$ 4,90' },
+      { q: 2500, p: 'R$ 9,90' },
+      { q: 5000, p: 'R$ 14,90' },
+      { q: 10000, p: 'R$ 19,90' },
+      { q: 25000, p: 'R$ 24,90' },
+      { q: 50000, p: 'R$ 34,90' },
+      { q: 100000, p: 'R$ 49,90' },
+      { q: 150000, p: 'R$ 59,90' },
+      { q: 200000, p: 'R$ 69,90' },
+      { q: 250000, p: 'R$ 89,90' },
+      { q: 500000, p: 'R$ 109,90' },
+      { q: 1000000, p: 'R$ 159,90' }
+    ]
+  };
+
+  const tabela = isViewsContext ? tabelaVisualizacoes : (isCurtidasContext ? tabelaCurtidas : tabelaSeguidores);
+
+  const promoPricing = {
+    likes: { old: 'R$ 49,90', price: 'R$ 9,90', discount: 80 },
+    views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
+    comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
+    warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
+  };
+  try { window.promoPricing = promoPricing; } catch(_) {}
+
+  let selectedPlatform = 'instagram';
+  let basePriceCents = 0;
+  let isInstagramVerified = false;
+  let isInstagramPrivate = false;
+  let warrantyMode = '30';
+  try {
+    const initialWarrantyLabel = (document.getElementById('warrantyModeLabel')?.textContent || '').toLowerCase();
+    const initialWarrantyHighlight = (document.getElementById('warrantyHighlight')?.textContent || '').toLowerCase();
+    if (initialWarrantyLabel.includes('vital') || initialWarrantyHighlight.includes('vital')) {
+      warrantyMode = 'life';
+    }
+    window.warrantyMode = warrantyMode;
+  } catch(_) {}
+
+  let paymentPollInterval = null;
+  let paymentEventSource = null;
+  let currentPaymentMethod = 'pix';
+  window.currentPaymentMethod = currentPaymentMethod;
+
+  // --- UTM Tracking Persistence ---
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const utms = {};
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+       const v = p.get(k);
+       if(v) utms[k] = v;
+    });
+    if (Object.keys(utms).length > 0) {
+        sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+    }
+  } catch(_) {}
+
+  // Elementos UI Principais
+  const tipoSelect = document.getElementById('tipoSelect');
+  const qtdSelect = document.getElementById('quantidadeSelect');
+  const tipoCards = document.getElementById('tipoCards');
+  const planCards = document.getElementById('planCards');
+  const perfilCard = document.getElementById('perfilCard');
+  const grupoPedido = document.getElementById('grupoPedido'); // Pode não existir
+  const orderInline = document.getElementById('orderBumpInline');
+  const paymentCard = document.getElementById('paymentCard'); // Pode não existir
+  const resumo = document.getElementById('resumo');
+  const resTipo = document.getElementById('resTipo');
+  const resQtd = document.getElementById('resQtd');
+  const resPreco = document.getElementById('resPreco');
+  const resTotalFinal = document.getElementById('resTotalFinal');
+  const btnPedido = document.getElementById('realizarPedidoBtn');
+
+  // Perfil UI
+  const usernameCheckoutInput = document.getElementById('usernameCheckoutInput');
+  const checkCheckoutButton = document.getElementById('checkCheckoutButton');
+  const statusCheckoutMessage = document.getElementById('statusCheckoutMessage');
+  const loadingCheckoutSpinner = document.getElementById('loadingCheckoutSpinner');
+  const profilePreview = document.getElementById('profilePreview');
+  const checkoutProfileImage = document.getElementById('checkoutProfileImage');
+  const checkoutProfileUsername = document.getElementById('checkoutProfileUsername');
+  const checkoutFollowersCount = document.getElementById('checkoutFollowersCount');
+  const checkoutFollowingCount = document.getElementById('checkoutFollowingCount');
+  const checkoutPostsCount = document.getElementById('checkoutPostsCount');
+
+  // Inputs de contato
+  const contactPhoneInput = document.getElementById('contactPhoneInput');
+  const contactEmailInput = document.getElementById('contactEmailInput');
+  const contactNameInput = document.getElementById('contactNameInput');
+  const phoneErrorMsg = document.getElementById('phoneErrorMsg');
+
+  function isValidEmail(v) {
+    try {
+      const s = String(v || '').trim().toLowerCase();
+      if (!s) return false;
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+    } catch (_) { return false; }
+  }
+
+  function normalizeFullName(v) {
+    try {
+      return String(v || '').replace(/\s+/g, ' ').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function isValidFullName(v) {
+    try {
+      const s0 = normalizeFullName(v);
+      if (!s0) return false;
+      const words0 = s0.split(' ').map(w => w.trim()).filter(Boolean);
+      if (words0.length < 2) return false;
+      const connectors = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+      const significant = words0.filter(w => {
+        const wl = w.toLowerCase();
+        if (connectors.has(wl)) return false;
+        if (w.length < 2) return false;
+        if (/^([A-Za-zÀ-ÖØ-öø-ÿ])\1+$/.test(w)) return false;
+        return true;
+      });
+      if (significant.length < 2) return false;
+      const lettersOnly = significant.join('').replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '');
+      if (lettersOnly.length < 4) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function sendAbandonedLeadOnce() {
+    try {
+      if (!contactEmailInput) return;
+      const email = String(contactEmailInput.value || '').trim().toLowerCase();
+      if (!isValidEmail(email)) return;
+      const igRaw = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+      const fingerprint = getUserFingerprint();
+      const tipo = String(tipoSelect && tipoSelect.value ? tipoSelect.value : '').trim();
+      const qtd = Number(qtdSelect && qtdSelect.value ? qtdSelect.value : 0) || 0;
+      const key = `oppus_abandon_lead_sent:${fingerprint}:${email}:${igRaw}:${tipo}:${qtd}:${window.location && window.location.pathname ? window.location.pathname : ''}`;
+      try {
+        const already = localStorage.getItem(key);
+        if (already) return;
+      } catch (_) {}
+
+      await fetch('/api/checkout/abandoned-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          email,
+          instagram_username: igRaw,
+          fingerprint,
+          page: (window.location && window.location.pathname) ? window.location.pathname : '',
+          tipo_servico: tipo,
+          quantidade: qtd
+        })
+      }).then(r => r.json().catch(() => null)).then(() => null).catch(() => null);
+
+      try { localStorage.setItem(key, String(Date.now())); } catch (_) {}
+    } catch (_) {}
+  }
+
+  try {
+    if (contactEmailInput) {
+      contactEmailInput.addEventListener('blur', () => { sendAbandonedLeadOnce().catch(() => {}); });
+      contactEmailInput.addEventListener('change', () => { sendAbandonedLeadOnce().catch(() => {}); });
+    }
+    if (usernameCheckoutInput) {
+      usernameCheckoutInput.addEventListener('blur', () => { sendAbandonedLeadOnce().catch(() => {}); });
+    }
+  } catch (_) {}
+
+  // --- Helpers ---
+  function parsePrecoToCents(precoStr) {
+    if (!precoStr) return 0;
+    const cleaned = precoStr.replace(/[^\d,]/g, '').replace(',', '.');
+    const value = Math.round(parseFloat(cleaned) * 100);
+    return isNaN(value) ? 0 : value;
+  }
+
+  function formatCentsToBRL(cents) {
+    const valor = Math.max(0, Number(cents) || 0);
+    const reais = Math.floor(valor / 100);
+    const centavos = valor % 100;
+    return `R$ ${reais.toLocaleString('pt-BR')},${String(centavos).padStart(2, '0')}`;
+  }
+
+  function onlyDigits(v) { return String(v || '').replace(/\D+/g, ''); }
+
+  function normalizeBrPhoneDigits(v) {
+    try {
+      let d = onlyDigits(v);
+      if (!d) return '';
+      d = d.replace(/^0+/, '');
+      if (d.startsWith('55') && d.length >= 12) d = d.slice(2);
+      if (d.length > 11) d = d.slice(-11);
+      if (!(d.length === 10 || d.length === 11)) return '';
+      if (/^(\d)\1+$/.test(d)) return '';
+      return d;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function isValidBrPhone(v) {
+    return !!normalizeBrPhoneDigits(v);
+  }
+
+  function generateValidCPF() {
+    const cpf = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+    let sum = 0;
+    for (let i = 0; i < 9; i++) sum += cpf[i] * (10 - i);
+    let firstDigit = 11 - (sum % 11);
+    if (firstDigit >= 10) firstDigit = 0;
+    cpf.push(firstDigit);
+    sum = 0;
+    for (let i = 0; i < 10; i++) sum += cpf[i] * (11 - i);
+    let secondDigit = 11 - (sum % 11);
+    if (secondDigit >= 10) secondDigit = 0;
+    cpf.push(secondDigit);
+    return cpf.join('').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  }
+
+  function getUserFingerprint() {
+    try {
+      const browserId = getBrowserSessionId();
+      const userAgent = navigator.userAgent || '';
+      const screen = `${window.screen.width}x${window.screen.height}`;
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      const telefone = document.getElementById('contactPhoneInput')?.value || '';
+      const email = document.getElementById('contactEmailInput')?.value || '';
+      const ig = document.getElementById('usernameCheckoutInput')?.value || '';
+      const fingerprintData = `${browserId}|${telefone}|${email}|${ig}|${userAgent}|${screen}|${timezone}`;
+      return btoa(fingerprintData).slice(0, 32);
+    } catch (_) {
+      return getBrowserSessionId();
+    }
+  }
+
+  function getCachedCPF() {
+    try {
+      const fingerprint = getUserFingerprint();
+      const cached = localStorage.getItem(`cpf_cache_${fingerprint}`);
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) return data.cpf;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function cacheCPF(cpf) {
+    try {
+      const fingerprint = getUserFingerprint();
+      const data = { cpf: cpf, timestamp: Date.now() };
+      localStorage.setItem(`cpf_cache_${fingerprint}`, JSON.stringify(data));
+    } catch (_) {}
+  }
+
+  function getOrGenerateCPF() {
+    const cachedCPF = getCachedCPF();
+    if (cachedCPF) return cachedCPF;
+    const newCPF = generateValidCPF();
+    cacheCPF(newCPF);
+    return newCPF;
+  }
+
+  function maskBrPhone(v) {
+    const s = onlyDigits(v).slice(0, 11);
+    if (!s) return '';
+    const ddd = s.slice(0, 2);
+    const isMobile = s.length >= 11;
+    const a = isMobile ? s.slice(2, 7) : s.slice(2, 6);
+    const b = isMobile ? s.slice(7, 11) : s.slice(6, 10);
+    let out = '';
+    if (ddd.length < 2) {
+      out = `(${ddd}`;
+    } else {
+      out = `(${ddd})`;
+    }
+    if (a) out += ` ${a}`;
+    if (b) out += `-${b}`;
+    return out;
+  }
+
+  function attachPhoneMask(input) {
+    if (!input) return;
+    input.addEventListener('input', () => { input.value = maskBrPhone(input.value); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        const selStart = input.selectionStart, selEnd = input.selectionEnd;
+        const hasSelection = selStart !== selEnd;
+        if (!hasSelection) {
+          const digits = onlyDigits(input.value);
+          if (digits.length > 0) {
+            e.preventDefault();
+            input.value = maskBrPhone(digits.slice(0, -1));
+          }
+        }
+      }
+    });
+    input.addEventListener('paste', (e) => {
+      const txt = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (txt) { e.preventDefault(); input.value = maskBrPhone(txt); }
+    });
+  }
+
+  function cardSurchargeRate(inst) {
+    const table = {
+      1: 4.97, 2: 6.33, 3: 7.24, 4: 8.14, 5: 9.05, 6: 9.95,
+      7: 11.10, 8: 12.00, 9: 12.91, 10: 13.81, 11: 14.71, 12: 15.62
+    };
+    const keys = Object.keys(table).map(k => parseInt(k, 10)).filter(Number.isFinite).sort((a, b) => a - b);
+    const maxKey = keys[keys.length - 1] || 12;
+    const k = Math.max(1, Math.min(maxKey, Number(inst) || 1));
+    return Number(table[k] || 0);
+  }
+
+  function capInstallmentsBySubtotal(subtotalCents) {
+    const n = Number(subtotalCents) || 0;
+    if (n < 1500) return 1;
+    if (n < 3000) return 2;
+    if (n < 6000) return 6;
+    if (n < 10000) return 8;
+    if (n < 15000) return 10;
+    return 12;
+  }
+
+  function getSelectedInstallments() {
+    try {
+      const el = document.getElementById('cardInstallments');
+      const v = String(el && el.value ? el.value : '').trim();
+      const n = parseInt(v || '1', 10);
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  function calculateSubtotalCents() {
+    let base = Number(basePriceCents || 0);
+    const promos = getSelectedPromos();
+    const promosTotal = calcPromosTotalCents(promos);
+
+    let subtotal = Math.max(0, base + promosTotal);
+    if (window.couponDiscount && window.couponDiscount > 0) {
+      const d = Number(window.couponDiscount || 0);
+      if (Number.isFinite(d) && d > 0 && d < 1) {
+        subtotal = Math.round(subtotal * (1 - d));
+      }
+    }
+    return Math.max(0, Number(subtotal) || 0);
+  }
+
+  function calculateTotalCents() {
+    let total = calculateSubtotalCents();
+    try {
+      const method = String(window.currentPaymentMethod || '').trim();
+      if (method === 'credit_card') {
+        const cap = capInstallmentsBySubtotal(total);
+        const inst = Math.max(1, Math.min(cap, getSelectedInstallments()));
+        const rate = cardSurchargeRate(inst);
+        total = Math.round(total * (1 + Math.max(0, rate) / 100));
+      }
+    } catch(_) {}
+    return Math.max(0, Number(total) || 0);
+  }
+  window.calculateTotalCents = calculateTotalCents;
+
+  function populateInstallments(subtotalCents) {
+    const select = document.getElementById('cardInstallments');
+    if (!select) return;
+
+    select.innerHTML = '';
+
+    const minInstallment = 500;
+    const maxInstallments = Math.min(12, capInstallmentsBySubtotal(subtotalCents));
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = "";
+    defaultOption.disabled = true;
+    defaultOption.selected = true;
+    defaultOption.textContent = "Selecione as parcelas...";
+    select.appendChild(defaultOption);
+
+    if (!subtotalCents || subtotalCents <= 0) return;
+
+    for (let i = 1; i <= maxInstallments; i++) {
+      const rate = cardSurchargeRate(i);
+      const totalForI = Math.round(Number(subtotalCents) * (1 + Math.max(0, rate) / 100));
+      const installmentValue = Math.floor(totalForI / i);
+      if (installmentValue < minInstallment && i > 1) break;
+
+      const option = document.createElement('option');
+      option.value = i;
+      option.textContent = `${i}x de ${formatCentsToBRL(installmentValue)}`;
+      select.appendChild(option);
+    }
+  }
+  window.populateInstallments = populateInstallments;
+
+  let stripeInstance = null;
+  let stripeElements = null;
+  let stripeCardNumberEl = null;
+  let stripeCardExpiryEl = null;
+  let stripeCardCvcEl = null;
+  let stripeMounted = false;
+  let stripeEmbeddedMounted = false;
+  let stripeEmbeddedCheckout = null;
+  let stripeEmbeddedMountedKey = '';
+  let stripeEmbeddedRefreshTimer = null;
+
+  function getStripeEmbeddedCheckoutKey() {
+    try {
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+      const phoneValue = normalizeBrPhoneDigits(contactPhoneInput ? contactPhoneInput.value : '');
+      let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
+      const tipo = tipoSelect ? String(tipoSelect.value || '') : '';
+      const qtdSelectVal = qtdSelect ? String(qtdSelect.value || '0') : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      const totalCents = calculateTotalCents();
+      return [
+        String(instagramUsernameFinal || ''),
+        String(phoneValue || ''),
+        String(emailValue || ''),
+        String(tipo || ''),
+        String(qtd || 0),
+        String(totalCents || 0)
+      ].join('|');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function scheduleStripeEmbeddedCheckoutRefresh() {
+    try { if (stripeEmbeddedRefreshTimer) clearTimeout(stripeEmbeddedRefreshTimer); } catch (_) {}
+    stripeEmbeddedRefreshTimer = setTimeout(() => {
+      try {
+        const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+        const isStripe = provider === 'stripe';
+        const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+        const isStripeCheckout = isStripe && useCheckout;
+        if (!isStripeCheckout) return;
+        if (String(window.currentPaymentMethod || '').trim() !== 'credit_card') return;
+        const key = getStripeEmbeddedCheckoutKey();
+        if (!key) return;
+        if (stripeEmbeddedMounted && stripeEmbeddedCheckout && stripeEmbeddedMountedKey && stripeEmbeddedMountedKey === key) return;
+        try { window.__oppus_stripe_checkout_key = key; } catch (_) {}
+        try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+        if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+          try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+          stripeEmbeddedCheckout = null;
+          stripeEmbeddedMounted = false;
+          stripeEmbeddedMountedKey = '';
+          try {
+            const stripeEmbeddedMount = document.getElementById('stripeEmbeddedCheckout');
+            if (stripeEmbeddedMount) stripeEmbeddedMount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Atualizando valor do checkout da Stripe...</div>';
+          } catch (_) {}
+        }
+        if (!window.__oppus_stripe_auto_inflight && !window.__oppus_stripe_auto_done && !stripeEmbeddedMounted) {
+          window.__oppus_stripe_auto_inflight = true;
+          Promise.resolve()
+            .then(() => handleCardPayment(null, { auto: true }))
+            .catch(() => {})
+            .finally(() => { window.__oppus_stripe_auto_inflight = false; });
+        }
+      } catch (_) {}
+    }, 350);
+  }
+
+  async function ensureStripeMounted() {
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    if (provider !== 'stripe') return false;
+    if (stripeMounted && stripeInstance && stripeElements && stripeCardNumberEl) return true;
+
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    if (!publishableKey) throw new Error('Configuração de pagamento inválida (STRIPE_PUBLISHABLE_KEY ausente).');
+
+    const loadStripe = async () => {
+      try { if (window.Stripe) return true; } catch (_) {}
+      const existing = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+      if (!existing) {
+        await new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = 'https://js.stripe.com/v3/';
+          s.onload = resolve;
+          s.onerror = resolve;
+          document.head.appendChild(s);
+        });
+      } else {
+        await new Promise((resolve) => {
+          if (window.Stripe) return resolve();
+          const done = () => resolve();
+          existing.addEventListener('load', done, { once: true });
+          existing.addEventListener('error', done, { once: true });
+          setTimeout(done, 8000);
+        });
+      }
+      return !!window.Stripe;
+    };
+
+    const ok = await loadStripe();
+    if (!ok) throw new Error('Não foi possível carregar a Stripe. Recarregue a página e tente novamente.');
+
+    stripeInstance = window.Stripe(publishableKey);
+    stripeElements = stripeInstance.elements({ locale: 'pt-BR' });
+    const style = {
+      base: {
+        color: '#111827',
+        fontSize: '16px',
+        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+      },
+      invalid: { color: '#ef4444' }
+    };
+
+    const numberMount = document.getElementById('stripeCardNumber');
+    const expMount = document.getElementById('stripeCardExpiry');
+    const cvcMount = document.getElementById('stripeCardCvc');
+    if (!numberMount || !expMount || !cvcMount) throw new Error('Formulário de cartão da Stripe não encontrado na página.');
+
+    stripeCardNumberEl = stripeElements.create('cardNumber', { style });
+    stripeCardExpiryEl = stripeElements.create('cardExpiry', { style });
+    stripeCardCvcEl = stripeElements.create('cardCvc', { style });
+    stripeCardNumberEl.mount(numberMount);
+    stripeCardExpiryEl.mount(expMount);
+    stripeCardCvcEl.mount(cvcMount);
+
+    stripeMounted = true;
+    return true;
+  }
+
+  async function ensureStripeJsReady() {
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    if (provider !== 'stripe') return false;
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    if (!publishableKey) throw new Error('Configuração de pagamento inválida (STRIPE_PUBLISHABLE_KEY ausente).');
+    try { if (window.Stripe) return true; } catch (_) {}
+    const existing = document.querySelector('script[src="https://js.stripe.com/v3/"]');
+    if (!existing) {
+      await new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = 'https://js.stripe.com/v3/';
+        s.onload = resolve;
+        s.onerror = resolve;
+        document.head.appendChild(s);
+      });
+    } else {
+      await new Promise((resolve) => {
+        if (window.Stripe) return resolve();
+        const done = () => resolve();
+        existing.addEventListener('load', done, { once: true });
+        existing.addEventListener('error', done, { once: true });
+        setTimeout(done, 8000);
+      });
+    }
+    return !!window.Stripe;
+  }
+
+  async function mountStripeEmbeddedCheckout(clientSecret) {
+    const wrapper = document.getElementById('stripeEmbeddedWrapper');
+    const mount = document.getElementById('stripeEmbeddedCheckout');
+    if (!wrapper || !mount) throw new Error('Área do checkout incorporado não encontrada.');
+    wrapper.style.display = 'block';
+    mount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Carregando checkout da Stripe...</div>';
+    const ok = await ensureStripeJsReady();
+    if (!ok) throw new Error('Não foi possível carregar a Stripe. Recarregue a página e tente novamente.');
+    const publishableKey = String(window.STRIPE_PUBLISHABLE_KEY || '').trim();
+    const stripe = window.Stripe(publishableKey);
+    if (!stripe || typeof stripe.initEmbeddedCheckout !== 'function') {
+      throw new Error('Sua integração da Stripe não suporta checkout incorporado.');
+    }
+    if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+      try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+      stripeEmbeddedCheckout = null;
+      stripeEmbeddedMounted = false;
+    }
+    mount.innerHTML = '';
+    const fields = document.getElementById('cardPaymentForm');
+    if (fields) fields.style.display = 'none';
+    stripeEmbeddedCheckout = await stripe.initEmbeddedCheckout({ clientSecret: String(clientSecret || '').trim() });
+    stripeEmbeddedCheckout.mount('#stripeEmbeddedCheckout');
+    stripeEmbeddedMounted = true;
+    try { stripeEmbeddedMountedKey = getStripeEmbeddedCheckoutKey() || ''; } catch(_) { stripeEmbeddedMountedKey = ''; }
+  }
+
+  function selectPaymentMethod(method, opts) {
+    const o = opts || {};
+    if (method === currentPaymentMethod && !o.force) return;
+    currentPaymentMethod = method;
+    window.currentPaymentMethod = method;
+
+    const radioPix = document.querySelector('input[name="paymentMethod"][value="pix"]');
+    const radioCard = document.querySelector('input[name="paymentMethod"][value="credit_card"]');
+    if (radioPix) radioPix.checked = (method === 'pix');
+    if (radioCard) radioCard.checked = (method === 'credit_card');
+
+    const optionPix = document.getElementById('optionPix');
+    const optionCard = document.getElementById('optionCard');
+
+    const resetStyle = (el) => {
+      if (!el) return;
+      el.style.borderColor = '#e5e7eb';
+      el.style.backgroundColor = '#fff';
+      const title = el.querySelector('.pm-title');
+      if (title) title.style.color = '#111827';
+      const subtitle = el.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#6b7280';
+    };
+
+    resetStyle(optionPix);
+    resetStyle(optionCard);
+
+    if (method === 'pix' && optionPix) {
+      optionPix.style.borderColor = '#10b981';
+      optionPix.style.backgroundColor = '#ecfdf5';
+      const title = optionPix.querySelector('.pm-title');
+      if (title) title.style.color = '#065f46';
+      const subtitle = optionPix.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#065f46';
+    } else if (method === 'credit_card' && optionCard) {
+      optionCard.style.borderColor = '#3b82f6';
+      optionCard.style.backgroundColor = '#eff6ff';
+      const title = optionCard.querySelector('.pm-title');
+      if (title) title.style.color = '#1e40af';
+      const subtitle = optionCard.querySelector('.pm-subtitle');
+      if (subtitle) subtitle.style.color = '#1d4ed8';
+
+      try { populateInstallments(calculateSubtotalCents()); } catch(_) {}
+    }
+
+    const cardForm = document.getElementById('cardPaymentContent');
+    const pixBtnContainer = document.getElementById('pixPaymentBtnContainer');
+    const contentPix = document.getElementById('pixContainer');
+    const pagarmeBadgeCard = document.getElementById('pagarmeBadgeCard');
+    const stripeBadgeCard = document.getElementById('stripeBadgeCard');
+    const pagarmeCardFields = document.getElementById('pagarmeCardFields');
+    const stripeCardFields = document.getElementById('stripeCardFields');
+    const pixResultado = document.getElementById('pixResultado');
+
+    if (method === 'credit_card') {
+      try {
+        let pixVisible = false;
+        if (contentPix && window.getComputedStyle) {
+          const cs = window.getComputedStyle(contentPix);
+          pixVisible = cs && cs.display !== 'none' && contentPix.getClientRects && contentPix.getClientRects().length > 0;
+        } else if (pixResultado && window.getComputedStyle) {
+          const cs = window.getComputedStyle(pixResultado);
+          const hasContent = String(pixResultado.innerHTML || '').trim().length > 0 || String(pixResultado.textContent || '').trim().length > 0;
+          pixVisible = hasContent && cs && cs.display !== 'none' && pixResultado.getClientRects && pixResultado.getClientRects().length > 0;
+        }
+        window.__oppus_pix_was_visible = pixVisible;
+      } catch(_) {}
+      if (cardForm) cardForm.style.display = 'block';
+      if (pixBtnContainer) pixBtnContainer.style.display = 'none';
+      if (contentPix) contentPix.style.display = 'none';
+      if (pixResultado) pixResultado.style.display = 'none';
+      const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+      const isStripe = provider === 'stripe';
+      const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+      const isStripeCheckout = isStripe && useCheckout;
+      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = isStripe ? 'none' : 'flex';
+      if (stripeBadgeCard) stripeBadgeCard.style.display = isStripe ? 'flex' : 'none';
+      if (pagarmeCardFields) pagarmeCardFields.style.display = isStripe ? 'none' : 'block';
+      if (stripeCardFields) stripeCardFields.style.display = (isStripe && !isStripeCheckout) ? 'block' : 'none';
+      const stripeEmbeddedWrapper = document.getElementById('stripeEmbeddedWrapper');
+      const stripeEmbeddedMount = document.getElementById('stripeEmbeddedCheckout');
+      if (stripeEmbeddedWrapper) stripeEmbeddedWrapper.style.display = isStripeCheckout ? 'block' : 'none';
+      if (isStripeCheckout && stripeEmbeddedMount && !stripeEmbeddedMounted) {
+        stripeEmbeddedMount.innerHTML = '<div style="padding:14px; text-align:center; color:#6b7280; font-size:0.95rem;">Carregando checkout da Stripe...</div>';
+        try {
+          const key = getStripeEmbeddedCheckoutKey();
+          if (window.__oppus_stripe_checkout_key !== key) {
+            window.__oppus_stripe_checkout_key = key;
+            try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+            if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+              try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+              stripeEmbeddedCheckout = null;
+              stripeEmbeddedMounted = false;
+              stripeEmbeddedMountedKey = '';
+            }
+          }
+          if (!window.__oppus_stripe_auto_inflight && !window.__oppus_stripe_auto_done && !stripeEmbeddedMounted) {
+            window.__oppus_stripe_auto_inflight = true;
+            Promise.resolve()
+              .then(() => handleCardPayment(null, { auto: true }))
+              .catch(() => {})
+              .finally(() => { window.__oppus_stripe_auto_inflight = false; });
+          }
+        } catch (_) {}
+      }
+      try {
+        const ids = ['cardNumber', 'cardExpiry', 'cardCvv'];
+        ids.forEach((id) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.required = !isStripe;
+        });
+      } catch (_) {}
+      try {
+        const holderNameEl = document.getElementById('cardHolderName');
+        const holderCpfEl = document.getElementById('cardHolderCpf');
+        if (holderNameEl) holderNameEl.required = !isStripeCheckout;
+        if (holderCpfEl) holderCpfEl.required = !isStripeCheckout;
+        const instEl = document.getElementById('cardInstallments');
+        if (instEl) {
+          if (isStripeCheckout) {
+            try { instEl.value = '1'; } catch (_) {}
+            const g = instEl.closest('.form-group');
+            if (g) g.style.display = 'none';
+          } else {
+            const g = instEl.closest('.form-group');
+            if (g) g.style.display = '';
+          }
+        }
+        if (holderNameEl) {
+          const g = holderNameEl.closest('.form-group');
+          if (g) g.style.display = isStripeCheckout ? 'none' : '';
+        }
+        if (holderCpfEl) {
+          const g = holderCpfEl.closest('.form-group');
+          if (g) g.style.display = isStripeCheckout ? 'none' : '';
+        }
+      } catch (_) {}
+      if (isStripe && !isStripeCheckout) {
+        try { ensureStripeMounted(); } catch (_) {}
+      }
+    } else {
+      if (stripeEmbeddedMounted && stripeEmbeddedCheckout) {
+        try { stripeEmbeddedCheckout.destroy(); } catch (_) {}
+        stripeEmbeddedCheckout = null;
+        stripeEmbeddedMounted = false;
+      }
+      if (cardForm) cardForm.style.display = 'none';
+      if (pixBtnContainer) pixBtnContainer.style.display = 'flex';
+      try {
+        const shouldRestorePix = (window.__oppus_pix_started === true) && (window.__oppus_pix_was_visible === true);
+        if (shouldRestorePix) {
+          if (contentPix) contentPix.style.display = 'block';
+          if (pixResultado) pixResultado.style.display = 'block';
+        } else {
+          if (contentPix) contentPix.style.display = 'none';
+          if (pixResultado) pixResultado.style.display = 'none';
+        }
+      } catch(_) {}
+      if (pagarmeBadgeCard) pagarmeBadgeCard.style.display = 'none';
+      if (stripeBadgeCard) stripeBadgeCard.style.display = 'none';
+    }
+
+    if (!o.skipSummary) {
+      try { updatePromosSummary(); } catch(_) {}
+    }
+  }
+  window.selectPaymentMethod = selectPaymentMethod;
+
+  function updatePaymentMethodVisibility() {
+    let total = 0;
+    try {
+      const base = Number(basePriceCents || 0);
+      const promos = getSelectedPromos();
+      const promosTotal = calcPromosTotalCents(promos);
+      total = Math.max(0, base + promosTotal);
+      if (window.couponDiscount && window.couponDiscount > 0) {
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          total = Math.round(total * (1 - d));
+        }
+      }
+      total = Math.max(0, Number(total) || 0);
+    } catch(_) { total = 0; }
+    const selector = document.getElementById('paymentMethodSelector');
+
+    const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+    const publicKey = provider === 'stripe'
+      ? String(window.STRIPE_PUBLISHABLE_KEY || '').trim()
+      : String(window.PAGARME_PUBLIC_KEY || '').trim();
+    const isPublicKeyValid = publicKey && publicKey !== 'pk_change_me' && publicKey.length > 8 && /^pk_/i.test(publicKey);
+
+    if (selector) {
+      if (total >= 100 && isPublicKeyValid) {
+        if (selector.style.display !== 'flex') selector.style.display = 'flex';
+      } else {
+        selector.style.display = 'none';
+        if (String(window.currentPaymentMethod || '').trim() !== 'pix') {
+          selectPaymentMethod('pix', { skipSummary: true, force: true });
+        }
+      }
+    }
+  }
+  window.updatePaymentMethodVisibility = updatePaymentMethodVisibility;
+
+  function isAmexCardNumber(digits) {
+    const s = String(digits || '').replace(/\D/g, '');
+    return /^3[47]/.test(s);
+  }
+  function maskCardNumber(v) {
+    v = String(v || '').replace(/\D/g, "");
+    v = v.substring(0, 19);
+    if (isAmexCardNumber(v)) {
+      const a = v.substring(0, 4);
+      const b = v.substring(4, 10);
+      const c = v.substring(10, 15);
+      return [a, b, c].filter(Boolean).join(' ').trim();
+    }
+    return v.replace(/(.{4})/g, '$1 ').trim();
+  }
+  function maskExpiry(v) {
+    v = String(v || '').replace(/\D/g, "");
+    if (v.length > 4) v = v.substring(0, 4);
+    if (v.length > 2) return v.substring(0, 2) + '/' + v.substring(2);
+    return v;
+  }
+  function maskCpf(v) {
+    v = String(v || '').replace(/\D/g, "");
+    if (v.length > 11) v = v.substring(0, 11);
+    if (v.length <= 3) return v;
+    if (v.length <= 6) return v.replace(/(\d{3})(\d+)/, "$1.$2");
+    if (v.length <= 9) return v.replace(/(\d{3})(\d{3})(\d+)/, "$1.$2.$3");
+    return v.replace(/(\d{3})(\d{3})(\d{3})(\d+)/, "$1.$2.$3-$4");
+  }
+
+  async function handleCardPayment(e, opts) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const o = opts || {};
+    const isAuto = o.auto === true;
+
+    const payWithCardBtn = document.getElementById('payWithCardBtn');
+    if (!isAuto && payWithCardBtn) {
+      payWithCardBtn.disabled = true;
+      payWithCardBtn.classList.add('loading');
+      const span = payWithCardBtn.querySelector('.button-text');
+      if (span) {
+        if (!span.dataset.original) span.dataset.original = span.textContent;
+        span.textContent = 'Processando...';
+      }
+    }
+
+    try {
+      const provider = String(window.CARD_PROVIDER || 'pagarme').trim().toLowerCase();
+      const isStripe = provider === 'stripe';
+      const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+      const isStripeCheckout = isStripe && useCheckout;
+      if (isStripeCheckout && stripeEmbeddedMounted) {
+        const currentKey = getStripeEmbeddedCheckoutKey();
+        if (currentKey && stripeEmbeddedMountedKey && stripeEmbeddedMountedKey === currentKey) {
+          try {
+            const w = document.getElementById('stripeEmbeddedWrapper');
+            if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (_) {}
+          return;
+        }
+        try { if (stripeEmbeddedCheckout) stripeEmbeddedCheckout.destroy(); } catch (_) {}
+        stripeEmbeddedCheckout = null;
+        stripeEmbeddedMounted = false;
+        stripeEmbeddedMountedKey = '';
+        try { window.__oppus_stripe_auto_done = false; } catch (_) {}
+      }
+
+      const fields = isStripeCheckout
+        ? []
+        : isStripe
+        ? [
+          { id: 'cardHolderName', type: 'text' },
+          { id: 'cardHolderCpf', type: 'text' }
+        ]
+        : [
+          { id: 'cardNumber', type: 'text' },
+          { id: 'cardExpiry', type: 'text' },
+          { id: 'cardCvv', type: 'text' },
+          { id: 'cardHolderName', type: 'text' },
+          { id: 'cardHolderCpf', type: 'text' }
+        ];
+
+      let firstError = null;
+      let values = {};
+
+      fields.forEach(f => {
+        const el = document.getElementById(f.id);
+        if (el) {
+          el.classList.remove('input-error');
+          el.classList.remove('tutorial-highlight');
+          const val = el.value.trim();
+          let isValid = true;
+          if (!val) isValid = false;
+          if (!isValid) {
+            el.classList.add('input-error');
+            el.classList.add('tutorial-highlight');
+            if (!firstError) firstError = el;
+          }
+          values[f.id] = val;
+        }
+      });
+
+      if (firstError) {
+        firstError.focus();
+        try { firstError.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+        throw new Error('Por favor, preencha todos os campos obrigatórios destacados.');
+      }
+
+      const cardHolder = values.cardHolderName;
+      const cardHolderCpf = values.cardHolderCpf;
+
+      let cardNum = '';
+      let cardExpiry = '';
+      let cardCvv = '';
+      let expMonth = '';
+      let expYear = '';
+      let pagarmePublicKey = '';
+      if (!isStripe) {
+        cardNum = String(values.cardNumber || '').replace(/\D/g, '');
+        cardExpiry = String(values.cardExpiry || '').trim();
+        cardCvv = String(values.cardCvv || '').replace(/\D/g, '').trim();
+        pagarmePublicKey = String(window.PAGARME_PUBLIC_KEY || '').trim();
+        if (!pagarmePublicKey) {
+          throw new Error('Configuração de pagamento inválida (PAGARME_PUBLIC_KEY ausente).');
+        }
+
+        if (cardExpiry.includes('/')) {
+          [expMonth, expYear] = cardExpiry.split('/');
+        } else {
+          expMonth = cardExpiry.substring(0, 2);
+          expYear = cardExpiry.substring(2);
+        }
+
+        if (expYear && expYear.length === 2) expYear = '20' + expYear;
+        if (!expMonth || !expYear || Number(expMonth) > 12 || Number(expMonth) < 1) throw new Error('Data de validade inválida');
+        const isAmex = isAmexCardNumber(cardNum);
+        const expectedCvv = isAmex ? 4 : 3;
+        if (!new RegExp(`^\\d{${expectedCvv}}$`).test(cardCvv)) {
+          try {
+            const cvvEl = document.getElementById('cardCvv');
+            if (cvvEl) {
+              cvvEl.classList.add('input-error');
+              cvvEl.classList.add('tutorial-highlight');
+              try { cvvEl.focus(); } catch (_) {}
+              try { cvvEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+          throw new Error(`CVV inválido. Para este cartão use ${expectedCvv} dígitos.`);
+        }
+      } else {
+        if (!isStripeCheckout) await ensureStripeMounted();
+      }
+
+      const normalizeDigits = (v) => String(v || '').replace(/\D/g, '');
+      const cpfDigits = normalizeDigits(cardHolderCpf);
+    if (!isStripeCheckout && cpfDigits.length !== 11) throw new Error('CPF inválido');
+
+      const installmentsEl = document.getElementById('cardInstallments');
+      let installments = String(installmentsEl?.value || '').trim();
+      if (!installments && installmentsEl) {
+        const opts = Array.prototype.slice.call(installmentsEl.querySelectorAll('option'));
+        const firstNumeric = opts.map(o => String(o.value || '').trim()).find(v => /^\d+$/.test(v));
+        installments = firstNumeric || '1';
+        try { installmentsEl.value = installments; } catch (_) {}
+      }
+
+      let correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      let wooviComment = 'Checkout OPPUS Instagram';
+      try {
+        const hn = (window.location && window.location.hostname) ? String(window.location.hostname).toLowerCase() : '';
+        const isLocal = hn === 'localhost' || hn === '127.0.0.1';
+        if (isLocal && Number(totalCents) > 0 && Number(totalCents) <= 100) {
+          correlationID = 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          wooviComment = 'teste pix';
+        }
+      } catch(_) {}
+
+      const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
+      const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
+      let emailValue = contactEmailInput ? contactEmailInput.value.trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
+      const contactNameValue = normalizeFullName(contactNameInput ? contactNameInput.value : '');
+      if (contactNameInput && !isValidFullName(contactNameValue)) throw new Error('Por favor, informe seu nome e sobrenome.');
+
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+      if (!instagramUsernameFinal) {
+        throw new Error('Nome de usuário do Instagram não identificado.');
+      }
+
+      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+
+      const tipo = tipoSelect ? tipoSelect.value : '';
+      const qtdSelectVal = qtdSelect ? qtdSelect.value : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      if (!tipo || !qtd || qtd <= 0) throw new Error('Selecione um pacote antes de pagar.');
+
+      selectPaymentMethod('credit_card');
+      const totalCents = calculateTotalCents();
+      if (!totalCents || totalCents < 100) throw new Error('O valor mínimo para cartão é R$ 1,00.');
+      const totalLabel = formatCentsToBRL(totalCents);
+
+      let cardToken = '';
+      if (!isStripe) {
+        cardToken = await (async () => {
+          const tokenUrl = `https://api.pagar.me/core/v5/tokens?appId=${encodeURIComponent(pagarmePublicKey)}`;
+          const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+          let tokenResp = null;
+          try {
+            tokenResp = await fetch(tokenUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'card',
+                card: {
+                  number: cardNum,
+                  holder_name: cardHolder,
+                  holder_document: cpfDigits,
+                  exp_month: Number(expMonth),
+                  exp_year: Number(expYear),
+                  cvv: cardCvv
+                }
+              }),
+              signal: ctrl ? ctrl.signal : undefined
+            });
+          } catch (_) {
+            throw new Error('Falha ao conectar no Pagar.me. Verifique sua internet e tente novamente.');
+          } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+          }
+          let tokenData = null;
+          try { tokenData = await tokenResp.json(); } catch(_) {}
+          if (!tokenResp.ok) {
+            const msg = (tokenData && (tokenData.message || tokenData.error)) ? String(tokenData.message || tokenData.error) : 'Falha ao tokenizar cartão';
+            throw new Error(msg);
+          }
+          const t = tokenData && tokenData.id ? String(tokenData.id).trim() : '';
+          if (!t) throw new Error('Token do cartão não retornou no Pagar.me.');
+          return t;
+        })();
+      }
+
+      const customerPayload = {};
+      if (cardHolder) customerPayload.name = cardHolder;
+      if (!customerPayload.name && isValidFullName(contactNameValue)) customerPayload.name = contactNameValue;
+      if (cpfDigits && cpfDigits.length === 11) customerPayload.cpf = cpfDigits;
+      if (phoneValue) customerPayload.phone_number = phoneValue;
+      if (emailValue) customerPayload.email = emailValue;
+
+      const buildUtmsFromLocation = function () {
+        try {
+          const sp = new URLSearchParams(window.location.search || '');
+          return {
+            source: sp.get('utm_source') || '',
+            medium: sp.get('utm_medium') || '',
+            campaign: sp.get('utm_campaign') || '',
+            term: sp.get('utm_term') || '',
+            content: sp.get('utm_content') || '',
+            gclid: sp.get('gclid') || '',
+            fbclid: sp.get('fbclid') || '',
+            ref: window.location.href || ''
+          };
+        } catch (_) {
+          return { ref: (window.location && window.location.href) ? String(window.location.href) : '' };
+        }
+      };
+
+      const promos = getSelectedPromos();
+      const promosTotalCents = (function () {
+        try {
+          const cents = (typeof calcPromosTotalCents === 'function') ? calcPromosTotalCents(promos) : 0;
+          return Number.isFinite(Number(cents)) ? Number(cents) : 0;
+        } catch (_) {
+          return 0;
+        }
+      })();
+
+      const payload = {
+        correlationID,
+        installments: Number(installments) || 1,
+        total_cents: totalCents,
+        items: [
+          { title: `${qtd} ${getUnitForTipo(tipo)}`, quantity: 1, price_cents: totalCents }
+        ],
+        customer: customerPayload,
+        additionalInfo: [
+          ...(contactNameValue ? [{ key: 'customer_name', value: contactNameValue }] : []),
+          { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
+          { key: 'quantidade', value: String(qtd) },
+          { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${totalLabel}` },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') },
+          { key: 'cupom', value: window.couponCode || '' },
+          { key: 'payment_method', value: 'credit_card' }
+        ],
+        profile_is_private: !!isInstagramPrivate,
+        comment: 'Checkout OPPUS Card',
+        utms: buildUtmsFromLocation()
+      };
+      if (!isStripe) payload.card_token = cardToken;
+
+      try {
+        const cc = String(window.couponCode || '').trim();
+        if (cc) {
+          for (let i = payload.additionalInfo.length - 1; i >= 0; i--) {
+            if (payload.additionalInfo[i] && payload.additionalInfo[i].key === 'cupom') payload.additionalInfo.splice(i, 1);
+          }
+          payload.additionalInfo.push({ key: 'cupom', value: cc.toUpperCase() });
+        }
+      } catch (_) {}
+
+      try {
+        const m = document.cookie.match(/(?:^|;\s*)tc_code=([^;]+)/);
+        const tc = m && m[1] ? m[1] : '';
+        if (tc) payload.additionalInfo.push({ key: 'tc_code', value: tc });
+      } catch(_) {}
+
+      try {
+        let sckValue = '';
+        try {
+          const params = new URLSearchParams(window.location.search || '');
+          sckValue = params.get('sck') || '';
+        } catch (_) {}
+        if (!sckValue) {
+          try {
+            const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+            sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+          } catch (_) {}
+        }
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
+      } catch(_) {}
+
+      let splitErrMsg = '';
+      try {
+        let sfor = {};
+        const normalizeIgShortcode = function (sc) {
+          const v = String(sc || '').trim();
+          if (!v) return '';
+          const m = v.match(/^[A-Za-z0-9_-]+/);
+          const code = m ? String(m[0] || '') : '';
+          if (!code) return '';
+          return code.length > 15 ? code.slice(0, 11) : code;
+        };
+        const buildIgMediaLink = function (k, sc) {
+          const code = normalizeIgShortcode(sc);
+          if (!code) return '';
+          const kindPath = (k === 'views') ? 'reel' : 'p';
+          return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+        };
+        try {
+          const selResp = await fetch('/api/instagram/selected-for');
+          if (selResp && selResp.ok) {
+            const selData = await selResp.json();
+            sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+          }
+        } catch (_) {}
+        const mapKindList = function (k) {
+          const obj = (sfor && sfor[k]) ? sfor[k] : {};
+          const list = Array.isArray(obj.shortcodes) ? obj.shortcodes : (obj.shortcode ? [obj.shortcode] : []);
+          return list.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+        };
+        const getLinksForKind = function (k) {
+          const localList = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[k]))
+            ? window.__oppusSelectedPostsByKind[k]
+            : [];
+          const linksFromLocal = localList.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+          const linksFromServer = mapKindList(k);
+          return linksFromLocal.length ? linksFromLocal : linksFromServer;
+        };
+        const getFirstLinkForKind = function (k) {
+          const list = getLinksForKind(k);
+          return list.length ? list[0] : '';
+        };
+
+        const likesLink = getFirstLinkForKind('likes');
+        const viewsLink = getFirstLinkForKind('views');
+        const commentsLink = getFirstLinkForKind('comments');
+        const anyLink = viewsLink || likesLink || commentsLink;
+
+        const hasLikes = promos.some(p => p.key === 'likes');
+        const hasViews = promos.some(p => p.key === 'views');
+        const hasComments = promos.some(p => p.key === 'comments');
+        const kinds = [];
+        if (hasLikes) kinds.push('likes');
+        if (hasViews) kinds.push('views');
+        if (hasComments) kinds.push('comments');
+
+        if (kinds.length === 1) {
+          const onlyKind = kinds[0];
+          let link = getFirstLinkForKind(onlyKind);
+          if (!link && instagramUsernameFinal) {
+            try {
+              const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+              let pr = null;
+              if (window.AbortController) {
+                const controller = new AbortController();
+                const to = setTimeout(() => {
+                  try { controller.abort(); } catch (_) {}
+                }, 650);
+                try {
+                  pr = await fetch(url, { signal: controller.signal });
+                } finally {
+                  clearTimeout(to);
+                }
+              } else {
+                pr = await fetch(url);
+              }
+              if (!pr || !pr.ok) throw new Error('posts_fetch_failed');
+              const pd = await pr.json();
+              const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+              const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+              const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+              const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+              if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
+            } catch (_) {}
+          }
+          if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+        } else {
+          if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+          if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+          if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+        }
+
+        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+          const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+          const links = getLinksForKind(baseKind);
+          if (links.length) {
+            payload.additionalInfo.push({ key: 'post_link', value: links[0] });
+            payload.additionalInfo.push({ key: 'post_links', value: links.join(',') });
+            payload.additionalInfo.push({ key: 'post_split_count', value: String(links.length) });
+            const maxCount = getSplitMaxForQtd(qtd);
+            if (links.length > maxCount) {
+              splitErrMsg = 'Quantidade de posts acima do limite do pacote.';
+            }
+            const qtdForSplit = getEffectiveQtdForSplit(tipo, qtd);
+            const perPost = links.length ? Math.ceil(qtdForSplit / links.length) : qtdForSplit;
+            const totalSent = links.length ? (perPost * links.length) : qtdForSplit;
+            const extra = Math.max(0, totalSent - qtdForSplit);
+            payload.additionalInfo.push({ key: 'post_split_each', value: String(perPost) });
+            if (extra > 0) payload.additionalInfo.push({ key: 'post_split_extra', value: String(extra) });
+          } else {
+            splitErrMsg = 'Selecione pelo menos 1 post.';
+          }
+        }
+      } catch(_) {}
+      if (splitErrMsg) throw new Error(splitErrMsg);
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      if (isStripe) {
+        const stripePayload = Object.assign({}, payload);
+        try { delete stripePayload.card_token; } catch (_) {}
+        const useCheckout = window.STRIPE_USE_CHECKOUT === true || String(window.STRIPE_USE_CHECKOUT || '').toLowerCase() === 'true';
+
+        if (useCheckout) {
+          stripePayload.checkoutUiMode = 'embedded';
+          const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+          let checkoutResp = null;
+          try {
+            checkoutResp = await fetch('/api/stripe/create-checkout-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(stripePayload),
+              signal: ctrl ? ctrl.signal : undefined
+            });
+          } catch (_) {
+            throw new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.');
+          } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+          }
+
+          let checkoutData = null;
+          try { checkoutData = await checkoutResp.json(); } catch (_) { checkoutData = {}; }
+          if (!checkoutResp.ok) {
+            const errCode = String(checkoutData?.error || '').trim().toLowerCase();
+            if (errCode === 'invalid_cpf') {
+              try {
+                const cpfEl = document.getElementById('cardHolderCpf');
+                if (cpfEl) {
+                  cpfEl.classList.add('input-error');
+                  cpfEl.classList.add('tutorial-highlight');
+                  try { cpfEl.focus(); } catch (_) {}
+                  try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+                }
+              } catch (_) {}
+            }
+            if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+              try {
+                if (contactPhoneInput) {
+                  contactPhoneInput.classList.add('input-error');
+                  contactPhoneInput.classList.add('tutorial-highlight');
+                  try { contactPhoneInput.focus(); } catch (_) {}
+                  try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+                }
+              } catch (_) {}
+            }
+            const baseMsg = checkoutData?.message || checkoutData?.error || 'Falha ao iniciar checkout';
+            throw new Error(String(baseMsg).trim() || 'Falha ao iniciar checkout.');
+          }
+
+          const clientSecret = String(checkoutData?.clientSecret || checkoutData?.client_secret || '').trim();
+          if (!clientSecret) throw new Error('Checkout incorporado não retornou os dados necessários.');
+          await mountStripeEmbeddedCheckout(clientSecret);
+          try { window.__oppus_stripe_auto_done = true; } catch (_) {}
+          try {
+            const w = document.getElementById('stripeEmbeddedWrapper');
+            if (w && w.scrollIntoView) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (_) {}
+          return;
+        }
+
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        let createResp = null;
+        try {
+          createResp = await fetch('/api/stripe/create-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(stripePayload),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+        } catch (_) {
+          throw new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.');
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+
+        let createData = null;
+        try { createData = await createResp.json(); } catch (_) { createData = {}; }
+        if (!createResp.ok) {
+          const errCode = String(createData?.error || '').trim().toLowerCase();
+          if (errCode === 'invalid_cpf') {
+            try {
+              const cpfEl = document.getElementById('cardHolderCpf');
+              if (cpfEl) {
+                cpfEl.classList.add('input-error');
+                cpfEl.classList.add('tutorial-highlight');
+                try { cpfEl.focus(); } catch (_) {}
+                try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+              }
+            } catch (_) {}
+          }
+          if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+            try {
+              if (contactPhoneInput) {
+                contactPhoneInput.classList.add('input-error');
+                contactPhoneInput.classList.add('tutorial-highlight');
+                try { contactPhoneInput.focus(); } catch (_) {}
+                try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+              }
+            } catch (_) {}
+          }
+          const baseMsg = createData?.message || createData?.error || 'Falha ao iniciar pagamento';
+          throw new Error(String(baseMsg).trim() || 'Falha ao iniciar pagamento.');
+        }
+
+        const clientSecret = String(createData?.clientSecret || '').trim();
+        const identifierServer = String(createData?.identifier || createData?.paymentIntentId || '').trim();
+        const correlationIDServer = String(createData?.correlationID || correlationID || '').trim();
+        if (!clientSecret) throw new Error('Pagamento não iniciou corretamente (clientSecret ausente).');
+
+        await ensureStripeMounted();
+        const confirmResult = await stripeInstance.confirmCardPayment(clientSecret, {
+          payment_method: {
+            card: stripeCardNumberEl,
+            billing_details: { name: String(cardHolder || '').trim(), phone: String(phoneValue || '').trim() }
+          }
+        });
+
+        if (confirmResult && confirmResult.error) {
+          const m = String(confirmResult.error.message || '').trim();
+          throw new Error(m || 'Pagamento não aprovado.');
+        }
+        const pi = confirmResult && confirmResult.paymentIntent ? confirmResult.paymentIntent : null;
+        const piId = String(pi?.id || identifierServer || '').trim();
+        const piStatus = String(pi?.status || '').trim().toLowerCase();
+        if (!piId) throw new Error('Pagamento não retornou identificador.');
+
+        let finalizeResp = null;
+        try {
+          finalizeResp = await fetch('/api/stripe/confirm-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_intent_id: piId, identifier: identifierServer, correlationID: correlationIDServer })
+          });
+        } catch (_) {
+          finalizeResp = null;
+        }
+        let finalizeData = null;
+        try { if (finalizeResp) finalizeData = await finalizeResp.json(); } catch (_) { finalizeData = {}; }
+
+        const paid = finalizeData?.paid === true || piStatus === 'succeeded';
+        if (!paid && piStatus && piStatus !== 'succeeded') {
+          alert('Pagamento em processamento. Vamos te levar para o seu pedido.');
+        } else {
+          alert('Pagamento realizado com sucesso!');
+        }
+
+        if (typeof navigateToPedidoOrFallback === 'function') {
+          await navigateToPedidoOrFallback(String(finalizeData?.identifier || piId || identifierServer || ''), String(finalizeData?.correlationID || correlationIDServer || correlationID || ''));
+        } else {
+          window.location.href = '/pedido';
+        }
+        return;
+      }
+
+      let resp = null;
+      let lastNetErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutId = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 45000) : null;
+        try {
+          resp = await fetch('/api/pagarme/card-charge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: ctrl ? ctrl.signal : undefined
+          });
+          lastNetErr = null;
+          break;
+        } catch (e) {
+          lastNetErr = e;
+          if (attempt >= 2) break;
+          await sleep(800 * (attempt + 1));
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      }
+      if (!resp) throw (lastNetErr || new Error('Falha ao conectar no servidor. Recarregue a página e tente novamente.'));
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        const errCode = String(data?.error || '').trim().toLowerCase();
+        if (errCode === 'invalid_cpf') {
+          try {
+            const cpfEl = document.getElementById('cardHolderCpf');
+            if (cpfEl) {
+              cpfEl.classList.add('input-error');
+              cpfEl.classList.add('tutorial-highlight');
+              try { cpfEl.focus(); } catch (_) {}
+              try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        if (errCode === 'missing_phone' || errCode === 'invalid_phone') {
+          try {
+            if (contactPhoneInput) {
+              contactPhoneInput.classList.add('input-error');
+              contactPhoneInput.classList.add('tutorial-highlight');
+              try { contactPhoneInput.focus(); } catch (_) {}
+              try { contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+            }
+          } catch (_) {}
+        }
+        const baseMsg = data?.message || data?.error || 'Falha ao processar pagamento';
+        const pf = data && data.pagarme_failure ? data.pagarme_failure : null;
+        const extra = (pf && (pf.acquirer_message || pf.gateway_message || pf.acquirer_return_code || pf.refusal_reason))
+          ? ` Motivo: ${String(pf.acquirer_message || pf.gateway_message || pf.refusal_reason || '').trim()}${(pf.acquirer_return_code || pf.gateway_response_code) ? ` (código: ${String(pf.acquirer_return_code || pf.gateway_response_code).trim()})` : ''}`
+          : '';
+        const identifierErr = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+        const idPart = identifierErr ? ` Pedido: ${identifierErr}.` : '';
+        throw new Error(`${String(baseMsg)}${extra}${idPart}`);
+      }
+
+      const paid = data?.paid === true || data?.success === true;
+      const identifierServer = String(data?.identifier || data?.pagarme?.order_id || data?.order?.id || '').trim();
+      const correlationIDServer = String(data?.correlationID || correlationID || '').trim();
+
+      if (!paid) {
+        const txStatus = String(data?.pagarme?.transaction_status || data?.pagarme?.charge_status || data?.pagarme?.order_status || '').trim();
+        const idLabel = identifierServer ? ` Pedido: ${identifierServer}.` : '';
+        throw new Error((data?.message && String(data.message).trim()) || (`Pagamento não confirmado no Pagar.me${txStatus ? ` (${txStatus})` : ''}.${idLabel}`));
+      }
+
+      alert('Pagamento realizado com sucesso!');
+      if (typeof navigateToPedidoOrFallback === 'function') {
+        await navigateToPedidoOrFallback(identifierServer || '', correlationIDServer);
+      } else {
+        window.location.href = '/pedido';
+      }
+    } catch (err) {
+      if (isAuto) {
+        try {
+          const wrapper = document.getElementById('stripeEmbeddedWrapper');
+          const mount = document.getElementById('stripeEmbeddedCheckout');
+          if (wrapper) wrapper.style.display = 'block';
+          if (mount) {
+            mount.innerHTML = '';
+            const div = document.createElement('div');
+            div.style.padding = '14px';
+            div.style.textAlign = 'center';
+            div.style.color = '#b91c1c';
+            div.style.fontSize = '0.95rem';
+            div.textContent = 'Não foi possível iniciar o checkout. Revise os dados da etapa 2 e tente novamente.';
+            mount.appendChild(div);
+          }
+        } catch (_) {}
+        return;
+      }
+      alert('Erro ao processar pagamento: ' + (err?.message || err));
+    } finally {
+      if (!isAuto && payWithCardBtn) {
+        payWithCardBtn.disabled = false;
+        payWithCardBtn.classList.remove('loading');
+        const span = payWithCardBtn.querySelector('.button-text');
+        if (span && span.dataset.original) span.textContent = span.dataset.original;
+      }
+    }
+  }
+
+  function normalizeInstagramUsername(input) {
+    let username = input.trim();
+    if (username.includes('instagram.com/')) {
+      const parts = username.split('instagram.com/');
+      if (parts[1]) {
+        username = parts[1].split(/[/?#]/)[0];
+      }
+    }
+    username = username.replace(/^@/, '');
+    username = username.replace(/[^a-zA-Z0-9_.]/g, '');
+    return username;
+  }
+
+  function isValidInstagramUsername(username) {
+    const regex = /^[a-zA-Z0-9._]{1,30}$/;
+    return regex.test(username) && !username.startsWith('.') && !username.endsWith('.');
+  }
+
+  function getLabelForTipo(tipo) {
+    if (isViewsContext) {
+      const mapViews = {
+        visualizacoes_reels: 'Visualizações Reels'
+      };
+      return mapViews[tipo] || tipo;
+    }
+    if (isCurtidasContext) {
+        const map = {
+          'mistos': 'Curtidas Mistas',
+          'curtidas_brasileiras': 'Curtidas Brasileiras',
+          'organicos': 'Curtidas Reais'
+        };
+        return map[tipo] || tipo;
+    }
+    const map = {
+      'mistos': 'Seguidores Mistos',
+      'brasileiros': 'Seguidores Brasileiros',
+      'organicos': 'Seguidores Brasileiros Reais'
+    };
+    return map[tipo] || tipo;
+  }
+
+  function getUnitForTipo(tipo) {
+    if (isViewsContext || tipo === 'visualizacoes_reels') return 'visualizações';
+    return isCurtidasContext ? 'curtidas' : 'seguidores';
+  }
+
+  function isFollowersTipo(tipo) {
+    return ['mistos', 'brasileiros', 'organicos'].includes(tipo);
+  }
+
+  function findPrice(tipo, qtd) {
+    const arr = tabela[tipo] || [];
+    const item = arr.find(i => Number(i.q) === Number(qtd));
+    return item ? item.p : null;
+  }
+
+  // --- Stepper Logic (Checkout Reference) ---
+  function isRecoveryFlowActive() {
+    try {
+      if (window.__oppusRecoveryApplied) return true;
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      const identifier = String(p.get('identifier') || '').trim();
+      const correlationID = String(p.get('correlationID') || '').trim();
+      return !!rt || !!identifier || !!correlationID;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  window.goToStep = function(step) {
+    if (step === 2) {
+      const activePlan = planCards ? planCards.querySelector('.service-card[data-role="plano"].active') : null;
+      if (!activePlan) {
+        alert('Por favor, selecione um pacote antes de prosseguir.');
+        return;
+      }
+    }
+    
+    if (step === 3) {
+      if (!isInstagramVerified) {
+        alert('Por favor, verifique o perfil na etapa 2 antes de prosseguir.');
+        if (window.goToStep) window.goToStep(2);
+        return;
+      }
+
+      const email = contactEmailInput ? contactEmailInput.value.trim() : '';
+      const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
+      const emailErrorMsg = document.getElementById('emailErrorMsg');
+
+      if (!email || !email.includes('@')) {
+        if (emailErrorMsg) emailErrorMsg.style.display = 'block';
+        else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+        if (window.goToStep) window.goToStep(2);
+
+        setTimeout(() => {
+             if (contactEmailInput) {
+                 contactEmailInput.focus();
+                 contactEmailInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             }
+        }, 300);
+        return;
+      } else {
+        if (emailErrorMsg) emailErrorMsg.style.display = 'none';
+      }
+
+      if (!isValidBrPhone(phone)) {
+        showPhoneError('Por favor, informe um telefone válido.');
+        if (window.goToStep) window.goToStep(2);
+
+        setTimeout(() => {
+             if (contactPhoneInput) {
+                 contactPhoneInput.focus();
+                 contactPhoneInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+             }
+        }, 300);
+        return;
+      } else {
+        hidePhoneError();
+      }
+
+      if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+        const kind = isCurtidasContext ? 'likes' : 'views';
+        const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+          ? window.__oppusSelectedPostsByKind[kind]
+          : [];
+        if (!list.length) {
+          openPostModal(kind, { append: false });
+          return;
+        }
+      }
+    }
+
+    // UI Elements
+    const step1Container = document.getElementById('step1Container');
+    const step2Container = document.getElementById('perfilCard');
+    const step3Container = document.getElementById('step3Container');
+
+    // Stepper Indicators
+    document.querySelectorAll('.step').forEach((el, idx) => {
+        if (idx + 1 === step) el.classList.add('active');
+        else if (idx + 1 < step) el.classList.add('completed');
+        else el.classList.remove('active', 'completed');
+    });
+
+    // Visibility
+    if (step === 1) {
+        if (step1Container) step1Container.style.display = 'grid'; // or block/flex depending on css
+        if (step2Container) step2Container.style.display = 'none';
+        if (step3Container) step3Container.style.display = 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        
+        // Remove hash when leaving checkout step
+         if (window.location.hash === '#checkout') {
+              const cleanUrl = window.location.pathname + window.location.search;
+              history.replaceState(null, null, cleanUrl);
+              // Dispatch events for GTM
+              try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+              try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+         }
+
+    } else if (step === 2) {
+        if (step1Container) step1Container.style.display = 'none';
+        if (step2Container) step2Container.style.display = 'block';
+        if (step3Container) step3Container.style.display = 'none';
+        
+        // Focus on username input
+        if (usernameCheckoutInput && !usernameCheckoutInput.value) {
+            setTimeout(() => usernameCheckoutInput.focus(), 100);
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        // Remove hash when leaving checkout step
+        if (window.location.hash === '#checkout') {
+             const cleanUrl = window.location.pathname + window.location.search;
+             history.replaceState(null, null, cleanUrl);
+             // Dispatch events for GTM
+             try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+             try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+        }
+
+    } else if (step === 3) {
+        if (step1Container) step1Container.style.display = 'none';
+        if (step2Container) step2Container.style.display = 'none';
+        if (step3Container) step3Container.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        try { updatePromosSummary(); } catch(_) {}
+        try { updatePaymentMethodVisibility(); } catch(_) {}
+        try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
+
+        if (isCurtidasContext || isViewsContext) {
+          const srcContainer = document.getElementById('selectedPostPreview');
+          const srcContent = document.getElementById('selectedPostPreviewContent');
+          const dst = document.getElementById('step3PostPreview');
+          const dstContent = document.getElementById('step3PostPreviewContent');
+          const hasPreview = srcContainer && srcContent && srcContainer.style.display !== 'none' && srcContent.innerHTML.trim();
+          if (dst && dstContent) {
+            if (hasPreview && !isInstagramPrivate) {
+              dst.style.display = 'block';
+              dstContent.innerHTML = srcContent.innerHTML;
+            } else {
+              dst.style.display = 'none';
+              dstContent.innerHTML = '';
+            }
+          }
+        }
+
+        // URL hash removed per request
+        /*
+        if (window.location.hash !== '#checkout') {
+             history.pushState(null, null, '#checkout');
+             // Dispatch explicit event for GTM as backup
+             try { window.dispatchEvent(new Event('hashchange')); } catch(e){}
+             try { window.dispatchEvent(new Event('popstate')); } catch(e){}
+        }
+        */
+    }
+  };
+
+  // --- Renderização dos Cards ---
+
+  function renderTipoCards() {
+    if (!tipoCards) return;
+    tipoCards.innerHTML = '';
+    // Garantir visibilidade (pois vem oculto do HTML)
+    tipoCards.style.display = 'grid';
+    
+    try {
+      if (tipoSelect) {
+        const cur = String(tipoSelect.value || '').trim();
+        if (cur && hiddenTipos.indexOf(cur) >= 0) {
+          tipoSelect.value = '';
+          tipoSelect.dispatchEvent(new Event('change'));
+        }
+      }
+    } catch (_) {}
+
+    const tipos = Object.keys(tabela).filter(t => {
+      if (t === 'seguidores_tiktok') return false;
+      if (hiddenTipos.indexOf(t) >= 0) return false;
+      return true;
+    });
+
+    // Fallback de segurança: garantir que organicos esteja presente se disponível na tabela
+    if (!isCurtidasContext && !isViewsContext && !tipos.includes('organicos') && tabela.organicos) {
+       tipos.push('organicos');
+    }
+    
+    tipos.forEach(tipo => {
+      const card = document.createElement('div');
+      card.className = 'service-card option-card';
+      card.setAttribute('data-role', 'tipo'); // Alinhado com checkout
+      card.setAttribute('data-tipo', tipo);
+      
+      const label = getLabelForTipo(tipo);
+      // Layout idêntico ao checkout.js (centralizado)
+      card.innerHTML = `<div class="card-content"><div class="card-title" style="text-align:center;">${label}</div></div>`;
+      
+      card.addEventListener('click', () => {
+        // Atualizar select oculto
+        if (tipoSelect) {
+          window.__oppusTipoChangeUserInitiated = true;
+          tipoSelect.value = tipo;
+          tipoSelect.dispatchEvent(new Event('change'));
+        }
+        // Atualizar UI visual
+        const all = tipoCards.querySelectorAll('.option-card');
+        all.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+      });
+      
+      tipoCards.appendChild(card);
+    });
+  }
+
+  function getAllowedQuantities(tipo) {
+    const base = [50, 150, 300, 500, 700, 1000, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
+      if (isCurtidasContext) {
+        if (tipo === 'curtidas_brasileiras') return [50, 150, 500, 1000, 3000, 5000, 10000];
+        if (tipo === 'organicos') return [20, 100].concat(base.filter(function(q){ return q >= 150 && q !== 700; }));
+        return [50].concat(base.filter(function(q){ return q >= 150; }));
+      }
+      return base;
+    }
+    return base;
+  }
+
+  const quantityBadges = {
+    50: 'PACOTE TESTE',
+    20: 'PACOTE TESTE',
+    100: 'PACOTE TESTE',
+    150: 'PACOTE INICIAL',
+    500: 'PACOTE BÁSICO',
+    1000: 'MAIS PEDIDO',
+    3000: 'EXCLUSIVO',
+    5000: 'VIP',
+    10000: 'ELITE'
+  };
+
+  function renderPlanCards(tipo) {
+    if (!planCards) return;
+    planCards.innerHTML = '';
+    // Garantir visibilidade
+    planCards.style.display = '';
+
+    let arr = tabela[tipo] || [];
+    const unit = getUnitForTipo(tipo);
+    
+    if (isFollowersTipo(tipo)) {
+      const allowed = getAllowedQuantities(tipo);
+      if (isCurtidasContext) {
+        arr = arr
+          .filter(x => allowed.includes(Number(x.q)))
+          .filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
+      } else {
+        arr = arr
+          .filter(x => allowed.includes(Number(x.q)))
+          .filter(x => quantityBadges.hasOwnProperty(Number(x.q)));
+      }
+    }
+
+    if (isViewsContext && tipo === 'visualizacoes_reels') {
+      const allowedViews = [1000, 5000, 25000, 100000, 200000, 500000];
+      arr = arr.filter(x => allowedViews.includes(Number(x.q)));
+    }
+
+    if (isCurtidasContext && (tipo === 'mistos' || tipo === 'curtidas_brasileiras' || tipo === 'organicos')) {
+      if (tipo === 'curtidas_brasileiras') {
+        const allowed = [50, 150, 500, 1000, 3000, 5000, 10000];
+        arr = arr.filter(x => allowed.includes(Number(x.q)));
+      } else {
+        arr = arr.slice(0, 6);
+      }
+    }
+    
+    arr.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'service-card plan-card';
+      card.setAttribute('data-role', 'plano');
+      card.setAttribute('data-qtd', item.q);
+      card.setAttribute('data-preco', item.p);
+      
+      // Cálculo de preço "antigo" (estética checkout)
+      const baseText = String(item.p);
+      const baseStr = baseText.replace(/[^0-9,\.]/g, '');
+      let base = 0;
+      try { base = parseFloat(baseStr.replace('.', '').replace(',', '.')); } catch(_) {}
+      const inc = base * 1.15;
+      const ceilInt = Math.ceil(inc);
+      const increasedRounded = (ceilInt - 0.10);
+      const increasedText = `R$ ${increasedRounded.toFixed(2).replace('.', ',')}`;
+
+      const qNum = Number(item.q);
+      let badgeHtml = '';
+      let badgeText = '';
+
+      if (!isCurtidasContext) {
+        if (tipo === 'mistos') {
+          if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+          if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'brasileiros') {
+          if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'organicos') {
+          if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+        } else if (tipo === 'visualizacoes_reels') {
+          if (qNum === 1000) badgeText = 'PACOTE INICIAL';
+          if (qNum === 5000) badgeText = 'PACOTE BÁSICO';
+          if (qNum === 25000) badgeText = 'MELHOR PREÇO';
+          if (qNum === 100000) { badgeText = 'MAIS PEDIDO'; card.classList.add('gold-card'); }
+          if (qNum === 200000) badgeText = 'VIP';
+          if (qNum === 500000) badgeText = 'ELITE';
+        }
+      } else if (tipo === 'mistos' || tipo === 'curtidas_brasileiras' || tipo === 'organicos') {
+        if (quantityBadges[qNum]) badgeText = quantityBadges[qNum];
+        if (badgeText === 'MAIS PEDIDO') card.classList.add('gold-card');
+      }
+
+      if (!isCurtidasContext && !badgeText && isFollowersTipo(tipo) && quantityBadges[qNum]) {
+        badgeText = quantityBadges[qNum];
+      }
+
+      if (badgeText) {
+        badgeHtml = `<div class="plan-badge">${badgeText}</div>`;
+      }
+
+      const qtyFormatted = qNum.toLocaleString('pt-BR');
+      card.innerHTML = `${badgeHtml}<div class="card-content"><div class="card-title">${qtyFormatted} ${unit}</div><div class="card-desc"><span class="price-old">${increasedText}</span> <span class="price-new">${baseText}</span></div></div>`;
+      
+      card.addEventListener('click', () => {
+        // Atualizar estado
+        const baseText = item.p;
+        
+        // Atualizar select oculto
+        const opt = Array.from(qtdSelect.options).find(o => o.value === String(item.q));
+        if (opt) opt.selected = true;
+        
+        // Atualizar resumo
+        if (resTipo) resTipo.textContent = getLabelForTipo(tipo);
+        if (resQtd) resQtd.textContent = `${item.q} ${unit}`;
+        if (resPreco) resPreco.textContent = baseText;
+        try { basePriceCents = parsePrecoToCents(baseText); } catch(_) { basePriceCents = 0; }
+        
+        // Update Order Bump e Promos
+        updateOrderBump(tipo, Number(item.q));
+        updatePromosSummary();
+        try { updatePaymentMethodVisibility(); } catch(_) {}
+        try {
+          if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+            const kind = isCurtidasContext ? 'likes' : 'views';
+            renderSelectedPostsPreview(kind);
+          }
+        } catch(_) {}
+        try { updatePedidoButtonState(); } catch(_) {}
+        
+        // Marcar ativo
+        const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
+        cards.forEach(c => c.classList.toggle('active', c === card));
+        
+        // Ir para Step 2
+        if (window.goToStep) window.goToStep(2);
+      });
+      planCards.appendChild(card);
+    });
+  }
+
+  function getTipoDescription(tipo) {
+    let html = '';
+    switch (tipo) {
+      case 'visualizacoes_reels':
+        html = `
+          <p>Visualizações com entrega rápida e estável para seus Reels e vídeos.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🎬 Visualizações para dar força inicial aos seus Reels e vídeos.</li>
+            <li>📈 Ideal para reforçar a prova social dos seus conteúdos.</li>
+          </ul>
+        `;
+        break;
+      case 'mistos':
+        html = isCurtidasContext ? `
+          <p>Curtidas com entrega rápida e estável para impulsionar suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🌍 Curtidas de perfis internacionais para melhorar a prova social do post.</li>
+            <li>📈 Ideal para dar força inicial em conteúdos estratégicos.</li>
+          </ul>
+        ` : `
+          <p>Perfis variados com entrega rápida e estável, com seguidores de outros países.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🌍 Seguidores de vários países para crescer sua base.</li>
+            <li>🛠 Ferramenta de reposição de seguidores inclusa.</li>
+          </ul>
+        `;
+        break;
+      case 'brasileiros':
+      case 'curtidas_brasileiras':
+        html = isCurtidasContext ? `
+          <p>Curtidas de perfis brasileiros para impulsionar suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🇧🇷 Perfis brasileiros para reforçar prova social.</li>
+            <li>📈 Ideal para posts que você quer destacar.</li>
+          </ul>
+        ` : `
+          <p>Base nacional com nomes locais e seguidores brasileiros.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>🇧🇷 Foco total no público brasileiro e mais credibilidade.</li>
+            <li>🛠 Ferramenta de reposição de seguidores inclusa.</li>
+          </ul>
+        `;
+        break;
+      case 'organicos':
+        html = isCurtidasContext ? `
+          <p>Curtidas orgânicas com alguns perfis brasileiros, para máxima qualidade e credibilidade nas suas publicações.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>👤 Curtidas orgânicas para reforçar autoridade.</li>
+            <li>📈 Ideal para posts que você quer destacar com mais autoridade.</li>
+          </ul>
+        ` : `
+          <p>Brasileiros e reais: perfis selecionados, com maior credibilidade.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>✨ Perfis mais qualificados para reforçar autoridade do perfil.</li>
+            <li>📉 Serviço com baixa queda de seguidores.</li>
+          </ul>
+        `;
+        break;
+      default:
+        return '';
+    }
+
+    if (isCurtidasContext) { return html.replace(/seguidores/g, 'curtidas').replace(/Seguidores/g, 'Curtidas'); }
+    return html;
+  }
+
+  function renderTipoDescription(tipo) {
+    const descCard = document.getElementById('tipoDescCard');
+    const titleEl = document.getElementById('tipoDescTitle');
+    const contentEl = document.getElementById('tipoDescContent');
+    if (!descCard || !titleEl || !contentEl) return;
+
+    titleEl.textContent = 'Descrição do serviço';
+    contentEl.innerHTML = getTipoDescription(tipo);
+    descCard.style.display = 'block';
+  }
+
+  // --- Lógica de Promoções (Checkout Reference) ---
+
+  function renderPromoPrices() {
+    const blocks = document.querySelectorAll('.promo-prices');
+    blocks.forEach(b => {
+      const key = b.getAttribute('data-promo');
+      if (key === 'likes' || key === 'views' || key === 'comments' || key === 'warranty60') return;
+      const conf = promoPricing[key];
+      if (!conf) return;
+      const oldEl = b.querySelector('.old-price');
+      const newEl = b.querySelector('.new-price');
+      const discEl = b.querySelector('.discount-badge');
+      if (oldEl) oldEl.textContent = conf.old;
+      if (newEl) newEl.textContent = conf.price;
+      if (discEl) discEl.textContent = `${conf.discount}% OFF`;
+    });
+  }
+
+  function applyWarrantyMode() {
+    const isLife = true;
+    const wLabel = document.getElementById('warrantyModeLabel');
+    const wHighlight = document.getElementById('warrantyHighlight');
+    const wOld = document.getElementById('warrantyOldPrice');
+    const wNew = document.getElementById('warrantyNewPrice');
+    const wDisc = document.getElementById('warrantyDiscount');
+
+    if (wLabel) wLabel.textContent = '6 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
+    if (wOld) wOld.textContent = 'R$ 39,90';
+    if (wNew) wNew.textContent = 'R$ 9,90';
+    if (wDisc) wDisc.textContent = '75% OFF';
+    updatePromosSummary();
+  }
+
+  function stepWarranty(delta) {
+    const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
+    if (next !== warrantyMode) { applyWarrantyMode(); }
+  }
+
+  const wDec = document.getElementById('warrantyModeDec');
+  const wInc = document.getElementById('warrantyModeInc');
+  if (wDec) wDec.addEventListener('click', () => stepWarranty(-1));
+  if (wInc) wInc.addEventListener('click', () => stepWarranty(1));
+
+  function updateWarrantyVisibility(tipo) {
+    const warrantyItem = document.querySelector('.promo-item.warranty60');
+    if (!warrantyItem) return;
+    
+    // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
+    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') {
+        warrantyItem.style.display = '';
+    } else {
+        warrantyItem.style.display = 'none';
+        const cb = document.getElementById('promoWarranty60');
+        if (cb && cb.checked) {
+             cb.checked = false;
+             updatePromosSummary();
+        }
+    }
+  }
+
+  function updateOrderBump(tipo, baseQtd) {
+    updateWarrantyVisibility(tipo);
+    if (!orderInline) return;
+    const unit = getUnitForTipo(tipo);
+    const labelSpan = document.getElementById('orderBumpText');
+    const checkbox = document.getElementById('orderBumpCheckboxInline');
+    const upgradePrices = document.querySelector('.promo-prices[data-promo="upgrade"]');
+    const upOld = upgradePrices ? upgradePrices.querySelector('.old-price') : null;
+    const upNew = upgradePrices ? upgradePrices.querySelector('.new-price') : null;
+    const upDisc = upgradePrices ? upgradePrices.querySelector('.discount-badge') : null;
+    const upHighlight = document.getElementById('orderBumpHighlight');
+    const curtidasSeal = isCurtidasContext ? (quantityBadges[Number(baseQtd)] || '') : '';
+
+    // Upgrades específicos para visualizações de Reels
+    if (tipo === 'visualizacoes_reels' && baseQtd) {
+      orderInline.style.display = 'block';
+      if (checkbox) checkbox.checked = false;
+
+      const upsellViewsTargets = {
+        1000: 2500,
+        5000: 10000,
+        25000: 50000,
+        100000: 150000,
+        200000: 250000,
+        500000: 1000000
+      };
+
+      const targetQtdViews = upsellViewsTargets[Number(baseQtd)];
+      if (!targetQtdViews) {
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const basePriceViews = findPrice(tipo, baseQtd);
+      const targetPriceViews = findPrice(tipo, targetQtdViews);
+
+      if (!basePriceViews || !targetPriceViews) {
+        if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+        if (upOld) upOld.textContent = '—';
+        if (upNew) upNew.textContent = '—';
+        if (upDisc) upDisc.textContent = 'OFERTA';
+        return;
+      }
+
+      const diffCentsViews = parsePrecoToCents(targetPriceViews) - parsePrecoToCents(basePriceViews);
+      const addQtdViews = targetQtdViews - baseQtd;
+      const diffStrViews = formatCentsToBRL(diffCentsViews);
+
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStrViews}, adicione ${addQtdViews} ${unit} e atualize para ${targetQtdViews}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${addQtdViews} ${unit}`;
+      if (upOld) upOld.textContent = targetPriceViews || '—';
+      if (upNew) upNew.textContent = diffStrViews;
+      if (upDisc) {
+        const targetCentsViews = parsePrecoToCents(targetPriceViews);
+        const pctViews = targetCentsViews ? Math.round(((targetCentsViews - diffCentsViews) / targetCentsViews) * 100) : 0;
+        upDisc.textContent = `${pctViews}% OFF`;
+      }
+      return;
+    }
+
+    const isUpgradeEligible = isFollowersTipo(tipo) || (isCurtidasContext && tipo === 'curtidas_brasileiras');
+    if (!isUpgradeEligible || !baseQtd) { orderInline.style.display = 'none'; return; }
+    orderInline.style.display = 'block';
+    if (checkbox) checkbox.checked = false;
+
+    // Promos específicas: 1000 -> 2000 com extras para brasileiros/organicos
+    if ((tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos') && Number(baseQtd) === 1000) {
+      const targetQtd = 2000;
+      const basePrice = findPrice(tipo, 1000);
+      const targetPrice = findPrice(tipo, 2000);
+      const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
+      const diffStr = formatCentsToBRL(diffCents);
+      if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, atualize para ${targetQtd} ${unit}.`;
+      if (upHighlight) upHighlight.textContent = `+ ${targetQtd - 1000} ${unit}${curtidasSeal ? ` • ${curtidasSeal}` : ''}`;
+      if (upOld) upOld.textContent = targetPrice || '—';
+      if (upNew) upNew.textContent = diffStr;
+      if (upDisc) {
+        const targetCents = parsePrecoToCents(targetPrice);
+        const pct = targetCents ? Math.round(((targetCents - diffCents) / targetCents) * 100) : 0;
+        upDisc.textContent = `${pct}% OFF`;
+      }
+      return;
+    }
+
+    // Upgrade genérico para demais pacotes
+    const upsellTargets = { 
+      150: 300, 300: 500, 500: 700, 700: 1000, 
+      1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 
+      5000: 7500, 7500: 10000, 10000: 15000 
+    };
+    const targetQtd = upsellTargets[Number(baseQtd)];
+    if (!targetQtd) {
+      if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+      if (upOld) upOld.textContent = '—';
+      if (upNew) upNew.textContent = '—';
+      if (upDisc) upDisc.textContent = 'OFERTA';
+      return;
+    }
+    const basePrice = findPrice(tipo, baseQtd);
+    const targetPrice = findPrice(tipo, targetQtd);
+    const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
+    const addQtd = targetQtd - baseQtd;
+    const diffStr = formatCentsToBRL(diffCents);
+    if (labelSpan) labelSpan.textContent = `Por mais ${diffStr}, adicione ${addQtd} ${unit} e atualize para ${targetQtd}.`;
+    if (upHighlight) upHighlight.textContent = `+ ${addQtd} ${unit}${curtidasSeal ? ` • ${curtidasSeal}` : ''}`;
+    if (upOld) upOld.textContent = targetPrice || '—';
+    if (upNew) upNew.textContent = diffStr;
+    if (upDisc) {
+      const targetCents = parsePrecoToCents(targetPrice);
+      const pct = targetCents ? Math.round(((targetCents - diffCents) / targetCents) * 100) : 0;
+      upDisc.textContent = `${pct}% OFF`;
+    }
+    try { applySmartBumpPresets(tipo, baseQtd); } catch (_) {}
+  }
+
+  let likesTable = [];
+  const likesQtyEl = document.getElementById('likesQty');
+  const likesDec = document.getElementById('likesDec');
+  const likesInc = document.getElementById('likesInc');
+  const likesPrices = document.querySelector('.promo-prices[data-promo="likes"]');
+  function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
+  function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
+  function getLikesVariantKey() {
+    const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    if (tipo === 'organicos') return 'organicos';
+    if (tipo === 'curtidas_brasileiras') return 'curtidas_brasileiras';
+    return 'mistos';
+  }
+  function refreshLikesTable() {
+    try {
+      const key = getLikesVariantKey();
+      const src = (tabelaCurtidas && tabelaCurtidas[key]) ? tabelaCurtidas[key] : null;
+      likesTable = Array.isArray(src) ? src.map(x => ({ q: Number(x.q), price: String(x.p || '') })).filter(x => !!x.q && !!x.price) : [];
+    } catch (_) {
+      likesTable = [];
+    }
+    if (!Array.isArray(likesTable) || likesTable.length === 0) {
+      likesTable = [
+        { q: 150, price: 'R$ 4,90' },
+        { q: 300, price: 'R$ 9,90' },
+        { q: 500, price: 'R$ 14,90' },
+        { q: 700, price: 'R$ 19,90' },
+        { q: 1000, price: 'R$ 24,90' },
+        { q: 2000, price: 'R$ 34,90' },
+        { q: 3000, price: 'R$ 49,90' },
+        { q: 4000, price: 'R$ 59,90' },
+        { q: 5000, price: 'R$ 69,90' },
+        { q: 7500, price: 'R$ 89,90' },
+        { q: 10000, price: 'R$ 109,90' },
+        { q: 15000, price: 'R$ 159,90' }
+      ];
+    }
+    try {
+      const current = Number(likesQtyEl?.textContent || 150);
+      const exists = likesTable.some(e => Number(e.q) === current);
+      if (!exists && likesQtyEl && likesTable[0]) likesQtyEl.textContent = String(likesTable[0].q);
+    } catch (_) {}
+  }
+  function applyLikesPromoVariant() {
+    const titleEl = document.querySelector('.promo-item.likes .promo-title');
+    const descEl = document.querySelector('.promo-item.likes .promo-desc');
+    if (!titleEl && !descEl) return;
+    const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    const variant = (function(t){
+      if (t === 'organicos') return { title: 'Curtidas reais promocionais', desc: 'Adicionar curtidas orgânicas ao post.' };
+      if (t === 'brasileiros' || t === 'curtidas_brasileiras') return { title: 'Curtidas brasileiras promocionais', desc: 'Adicionar curtidas brasileiras ao post.' };
+      if (t === 'mistos') return { title: 'Curtidas mistas promocionais', desc: 'Adicionar curtidas mistas ao post.' };
+      return { title: 'Curtidas promocionais', desc: 'Adicionar curtidas ao post.' };
+    })(tipo);
+    if (titleEl) titleEl.textContent = variant.title;
+    if (descEl) descEl.textContent = variant.desc;
+  }
+  function updateLikesPrice(q) {
+    const entry = likesTable.find(e => e.q === q);
+    const newEl = likesPrices ? likesPrices.querySelector('.new-price') : null;
+    const oldEl = likesPrices ? likesPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
+    const hl = document.querySelector('.promo-item.likes .promo-highlight');
+    if (hl) {
+      const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+      if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS REAIS`;
+      else if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') hl.textContent = `+ ${q} CURTIDAS BRASILEIRAS`;
+      else if (tipo === 'mistos') hl.textContent = `+ ${q} CURTIDAS MISTAS`;
+      else hl.textContent = `+ ${q} CURTIDAS`;
+    }
+    try { applyLikesPromoVariant(); } catch(_) {}
+  }
+  function stepLikes(dir) {
+    const current = Number(likesQtyEl?.textContent || 150);
+    const idx = likesTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= likesTable.length) nextIdx = likesTable.length - 1;
+    const next = likesTable[nextIdx].q;
+    if (likesQtyEl) likesQtyEl.textContent = String(next);
+    updateLikesPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  if (likesDec) likesDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(-1); });
+  if (likesInc) likesInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepLikes(1); });
+  try { refreshLikesTable(); } catch(_) {}
+  if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
+
+  const viewsTable = [
+    { q: 1000, price: 'R$ 4,90' },
+    { q: 2500, price: 'R$ 9,90' },
+    { q: 5000, price: 'R$ 14,90' },
+    { q: 10000, price: 'R$ 19,90' },
+    { q: 25000, price: 'R$ 24,90' },
+    { q: 50000, price: 'R$ 34,90' },
+    { q: 100000, price: 'R$ 49,90' },
+    { q: 150000, price: 'R$ 59,90' },
+    { q: 200000, price: 'R$ 69,90' },
+    { q: 250000, price: 'R$ 89,90' },
+    { q: 500000, price: 'R$ 109,90' },
+    { q: 1000000, price: 'R$ 159,90' }
+  ];
+  const viewsQtyEl = document.getElementById('viewsQty');
+  const viewsDec = document.getElementById('viewsDec');
+  const viewsInc = document.getElementById('viewsInc');
+  const viewsPrices = document.querySelector('.promo-prices[data-promo="views"]');
+  function updateViewsPrice(q) {
+    const entry = viewsTable.find(e => e.q === q);
+    const newEl = viewsPrices ? viewsPrices.querySelector('.new-price') : null;
+    const oldEl = viewsPrices ? viewsPrices.querySelector('.old-price') : null;
+    if (newEl && entry) newEl.textContent = entry.price;
+    if (oldEl && entry) {
+      const newVal = parseCurrencyBR(entry.price);
+      const oldVal = newVal / 0.7;
+      oldEl.textContent = formatCurrencyBR(oldVal);
+    }
+    const hl = document.querySelector('.promo-item.views .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} VISUALIZAÇÕES`;
+  }
+  function stepViews(dir) {
+    const current = Number(viewsQtyEl?.textContent || 1000);
+    const idx = viewsTable.findIndex(e => e.q === current);
+    let nextIdx = idx >= 0 ? idx + dir : 0;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= viewsTable.length) nextIdx = viewsTable.length - 1;
+    const next = viewsTable[nextIdx].q;
+    if (viewsQtyEl) viewsQtyEl.textContent = String(next);
+    updateViewsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+  if (viewsDec) viewsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(-1); });
+  if (viewsInc) viewsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepViews(1); });
+  if (viewsQtyEl) updateViewsPrice(Number(viewsQtyEl.textContent || 1000));
+
+  const commentsQtyEl = document.getElementById('commentsQty');
+  const commentsDec = document.getElementById('commentsDec');
+  const commentsInc = document.getElementById('commentsInc');
+  const commentsPrices = document.querySelector('.promo-prices[data-promo="comments"]');
+
+  function updateCommentsPrice(q) {
+    const newEl = commentsPrices ? commentsPrices.querySelector('.new-price') : null;
+    const oldEl = commentsPrices ? commentsPrices.querySelector('.old-price') : null;
+    
+    // Formatação BRL direta com toFixed(2)
+    const format = (cents) => {
+        const val = cents / 100;
+        return `R$ ${val.toFixed(2).replace('.', ',')}`;
+    };
+
+    if (newEl) newEl.textContent = format(q * 150); // q * 1.50 * 100
+    if (oldEl) { const oldCents = (q * 150) * 1.7; oldEl.textContent = format(oldCents); }
+    const hl = document.querySelector('.promo-item.comments .promo-highlight');
+    if (hl) hl.textContent = `+ ${q} COMENTÁRIOS`;
+  }
+
+  function stepComments(dir) {
+    const current = Number(commentsQtyEl?.textContent || 1);
+    let next = current + dir;
+    if (next < 1) next = 1;
+    if (next > 100) next = 100;
+    if (commentsQtyEl) commentsQtyEl.textContent = String(next);
+    updateCommentsPrice(next);
+    try { updatePromosSummary(); } catch(_) {}
+  }
+
+  if (commentsDec) commentsDec.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(-1); });
+  if (commentsInc) commentsInc.addEventListener('click', (e) => { if (e && typeof e.stopPropagation==='function') e.stopPropagation(); stepComments(1); });
+  if (commentsQtyEl) updateCommentsPrice(Number(commentsQtyEl.textContent || 1));
+
+  let lastSmartBumpPresetSig = '';
+  function pickPresetKey(keysAsc, base) {
+    try {
+      if (!Array.isArray(keysAsc) || keysAsc.length === 0) return null;
+      const b = Number(base || 0);
+      if (!Number.isFinite(b) || b <= 0) return keysAsc[0];
+      let chosen = keysAsc[0];
+      for (let i = 0; i < keysAsc.length; i++) {
+        const k = Number(keysAsc[i] || 0);
+        if (!Number.isFinite(k)) continue;
+        if (k <= b) chosen = k;
+        else break;
+      }
+      return chosen;
+    } catch (_) {
+      return null;
+    }
+  }
+  function pickNearestQtyFromTable(table, desired) {
+    const d = Number(desired || 0);
+    if (!Number.isFinite(d) || d <= 0) return null;
+    const arr = Array.isArray(table) ? table : [];
+    if (!arr.length) return null;
+    let best = Number(arr[0]?.q || 0);
+    let bestDist = Math.abs(best - d);
+    for (let i = 0; i < arr.length; i++) {
+      const q = Number(arr[i]?.q || 0);
+      if (!Number.isFinite(q) || q <= 0) continue;
+      const dist = Math.abs(q - d);
+      if (dist < bestDist) { bestDist = dist; best = q; }
+    }
+    return best || null;
+  }
+  function applySmartBumpPresets(tipo, baseQtd) {
+    try {
+      const t = String(tipo || '').toLowerCase().trim();
+      const base = Number(baseQtd || 0);
+      if (!Number.isFinite(base) || base <= 0) return;
+      if (!isFollowersTipo(t)) return;
+      const sig = `${t}:${base}`;
+      if (sig === lastSmartBumpPresetSig) return;
+      lastSmartBumpPresetSig = sig;
+
+      const presetsByBase = {
+        150: { likes: 150, views: 1000, comments: 1 },
+        300: { likes: 150, views: 2500, comments: 2 },
+        500: { likes: 300, views: 5000, comments: 3 },
+        700: { likes: 300, views: 10000, comments: 4 },
+        1000: { likes: 500, views: 25000, comments: 5 },
+        2000: { likes: 500, views: 50000, comments: 6 },
+        3000: { likes: 700, views: 50000, comments: 7 },
+        4000: { likes: 700, views: 100000, comments: 8 },
+        5000: { likes: 1000, views: 100000, comments: 10 },
+        7500: { likes: 1000, views: 100000, comments: 10 },
+        10000: { likes: 500, views: 100000, comments: 10 },
+        15000: { likes: 700, views: 150000, comments: 15 }
+      };
+      const keysAsc = Object.keys(presetsByBase).map(k => Number(k)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+      const chosenKey = pickPresetKey(keysAsc, base);
+      const p = chosenKey != null ? presetsByBase[String(chosenKey)] : null;
+      if (!p) return;
+
+      try { refreshLikesTable(); } catch (_) {}
+      const likesQ = pickNearestQtyFromTable(likesTable, p.likes);
+      if (likesQ != null && likesQtyEl) {
+        likesQtyEl.textContent = String(likesQ);
+        updateLikesPrice(likesQ);
+      }
+      const viewsQ = pickNearestQtyFromTable(viewsTable, p.views);
+      if (viewsQ != null && viewsQtyEl) {
+        viewsQtyEl.textContent = String(viewsQ);
+        updateViewsPrice(viewsQ);
+      }
+      const commQ = Math.max(1, Math.min(100, Math.trunc(Number(p.comments || 1)) || 1));
+      if (commentsQtyEl) {
+        commentsQtyEl.textContent = String(commQ);
+        updateCommentsPrice(commQ);
+      }
+      try { updatePromosSummary(); } catch (_) {}
+    } catch (_) {}
+  }
+
+  function getSelectedPromos() {
+    const promos = [];
+    try {
+      const likesChecked = !!document.getElementById('promoLikes')?.checked;
+      const viewsChecked = !!document.getElementById('promoViews')?.checked;
+      const commentsChecked = !!document.getElementById('promoComments')?.checked;
+      const warrantyChecked = !!document.getElementById('promoWarranty60')?.checked;
+      const upgradeChecked = !!document.getElementById('orderBumpCheckboxInline')?.checked;
+      
+      if (likesChecked) {
+        const qty = Number(document.getElementById('likesQty')?.textContent || 150);
+        let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.likes?.price || '';
+        const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+        const label = (function(t){
+          if (t === 'organicos') return `Curtidas Reais (${qty})`;
+          if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
+          if (t === 'mistos') return `Curtidas mistas (${qty})`;
+          return `Curtidas (${qty})`;
+        })(tipo);
+        promos.push({ key: 'likes', qty, label, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (viewsChecked) {
+        const qty = Number(document.getElementById('viewsQty')?.textContent || 1000);
+        let priceStr = document.querySelector('.promo-prices[data-promo="views"] .new-price')?.textContent || '';
+        if (!priceStr) priceStr = promoPricing.views?.price || '';
+        promos.push({ key: 'views', qty, label: `Visualizações Reels (${qty})`, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (commentsChecked) {
+        const qty = Number(document.getElementById('commentsQty')?.textContent || 1);
+        const priceCents = qty * 150; // R$ 1,50 (150 cents)
+        promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
+      }
+      if (warrantyChecked) {
+        const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
+        let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
+        if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 9,90';
+        const label = 'Reposição por 6 meses';
+        promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+      }
+      if (upgradeChecked) {
+        let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
+        const highlight = document.getElementById('orderBumpHighlight')?.textContent || '';
+        promos.push({ key: 'upgrade', qty: 1, label: `Upgrade de pacote ${highlight ? `(${highlight})` : ''}`.trim(), priceCents: parsePrecoToCents(priceStr) });
+      }
+    } catch (_) {}
+    return promos;
+  }
+
+  function calcPromosTotalCents(promos) {
+    try { return (Array.isArray(promos) ? promos : []).reduce((acc, p) => acc + (Number(p.priceCents) || 0), 0); } catch (_) { return 0; }
+  }
+
+  function updatePromosSummary() {
+    showResumoIfAllowed();
+    
+    // Atualiza header de quantidade (Bug fix)
+    const headerQty = document.getElementById('headerSelectedQty');
+    if (headerQty && resQtd && resQtd.textContent) {
+      headerQty.textContent = resQtd.textContent;
+    }
+    
+    try { updateReviewMath(); } catch(_) {}
+
+    let baseCents = basePriceCents || 0;
+    
+    // Calcula preço base original (com margem para dar desconto)
+    // No renderPlanCards usamos base * 1.15. Vamos recalcular.
+    const baseVal = baseCents / 100;
+    const inc = baseVal * 1.15;
+    const ceilInt = Math.ceil(inc);
+    const increasedRounded = (ceilInt - 0.10);
+    let baseOriginalCents = Math.round(increasedRounded * 100);
+
+    const promos = getSelectedPromos();
+    
+    // Renderiza lista de order bumps
+    const resPromosContainer = document.getElementById('resPromosContainer');
+    const resPromos = document.getElementById('resPromos');
+    if (resPromos && resPromosContainer) {
+        if (promos.length > 0) {
+            resPromosContainer.style.display = 'block';
+            
+            // Header "Promoções selecionadas:"
+            let html = '<div style="font-weight:600; margin-bottom:-4px; padding-bottom:0; color:var(--text-primary); line-height:1.2; margin-top:0.5rem;">Promoções selecionadas:</div>';
+            
+            html += promos.map((p, index) => {
+                // Tenta achar preço original do promo
+                let oldPriceCents = 0;
+                if (p.key === 'upgrade') {
+                    // Tenta pegar do DOM
+                    const upOld = document.querySelector('.promo-prices[data-promo="upgrade"] .old-price');
+                    if (upOld) oldPriceCents = parsePrecoToCents(upOld.textContent);
+                    else oldPriceCents = p.priceCents * 1.5; 
+                } else if (p.key === 'comments') {
+                   // Comments old = current * 1.7
+                   oldPriceCents = p.priceCents * 1.7;
+                } else {
+                   // Likes, Views, Warranty
+                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : (p.key === 'warranty_6m' ? 'warranty' : p.key))];
+                   if (conf) oldPriceCents = parsePrecoToCents(conf.old);
+                   else if (p.key === 'warranty_lifetime') oldPriceCents = 12990; // R$ 129,90
+                   else if (p.key === 'warranty_6m') oldPriceCents = 12990; // R$ 129,90
+                   else if (p.key === 'warranty30') oldPriceCents = 3990; // R$ 39,90
+                }
+                // Adiciona ao total original
+                baseOriginalCents += (oldPriceCents || p.priceCents);
+                
+                const marginTop = index === 0 ? '0' : '0.1rem';
+                return `
+                <div class="resumo-row" style="margin-top:${marginTop}; margin-bottom:0.1rem; line-height:1.4; display: flex; justify-content: space-between; align-items: center;">
+                    <span>• ${p.label}</span>
+                    <span>${formatCentsToBRL(p.priceCents)}</span>
+                </div>`;
+            }).join('');
+            
+            resPromos.innerHTML = html;
+        } else {
+            resPromosContainer.style.display = 'none';
+            resPromos.innerHTML = '';
+        }
+    }
+
+    const promosTotal = calcPromosTotalCents(promos);
+    let totalCents = Math.max(0, Number(baseCents) + promosTotal);
+
+    // Apply Coupon (Display)
+    if (window.couponDiscount && window.couponDiscount > 0) {
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          totalCents = Math.round(totalCents * (1 - d));
+        }
+    }
+
+    try {
+      const method = String(window.currentPaymentMethod || '').trim();
+      if (method === 'credit_card') {
+        try { populateInstallments(totalCents); } catch(_) {}
+        const cap = capInstallmentsBySubtotal(totalCents);
+        const inst = Math.max(1, Math.min(cap, getSelectedInstallments()));
+        const rate = cardSurchargeRate(inst);
+        totalCents = Math.round(totalCents * (1 + Math.max(0, rate) / 100));
+      }
+    } catch(_) {}
+    
+    // Atualiza Total Final com Desconto
+    if (resTotalFinal) {
+        const totalOriginal = baseOriginalCents; // Soma de todos os originais
+        const totalCurrent = totalCents;
+        
+        let discountPct = 0;
+        if (totalOriginal > totalCurrent) {
+            discountPct = Math.round(((totalOriginal - totalCurrent) / totalOriginal) * 100);
+        }
+        
+        // HTML Rico
+        const isMobile = window.innerWidth <= 640;
+        const totalOriginalBrl = formatCentsToBRL(totalOriginal);
+        const totalCurrentBrl = formatCentsToBRL(totalCurrent);
+        
+        if (isMobile) {
+            // Mobile: Alinhado à esquerda, em duas linhas
+            resTotalFinal.innerHTML = `
+                <div class="promo-prices" style="flex-direction: column; align-items: flex-start; gap: 0;">
+                    <div style="display:flex; gap: 0.5rem; align-items: center;">
+                        <span class="old-price" style="text-decoration: line-through; color: #9ca3af;">${totalOriginalBrl}</span>
+                        <span class="discount-badge">${discountPct}% OFF</span>
+                    </div>
+                    <span class="new-price">${totalCurrentBrl}</span>
+                </div>
+            `;
+        } else {
+            // Desktop: Layout original (uma linha, flex-end)
+            resTotalFinal.innerHTML = `
+                <div class="promo-prices" style="justify-content: flex-end; display: flex; align-items: center; gap: 0.5rem;">
+                    <span class="old-price">${totalOriginalBrl}</span>
+                    <span class="discount-badge">${discountPct}% OFF</span>
+                    <span class="new-price">${totalCurrentBrl}</span>
+                </div>
+            `;
+        }
+    }
+
+    try {
+      if (String(window.currentPaymentMethod || '').trim() === 'credit_card') {
+        populateInstallments(calculateSubtotalCents());
+      }
+    } catch(_) {}
+    try { scheduleStripeEmbeddedCheckoutRefresh(); } catch(_) {}
+  }
+
+  // --- Funções de Post Select Modal ---
+
+  function getPostModalRefs() {
+    return {
+      postModal: document.getElementById('postSelectModal'),
+      postModalGrid: document.getElementById('postModalGrid'),
+      postModalTitle: document.getElementById('postModalTitle'),
+      postModalClose: document.getElementById('postModalClose'),
+    };
+  }
+
+  function ensureSpinnerCSS() {
+    if (document.getElementById('oppusSpinnerStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'oppusSpinnerStyles';
+    style.textContent = "@keyframes oppusSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} .oppus-spinner{width:32px;height:32px;border:4px solid rgba(255,255,255,0.25);border-top-color:#7c3aed;border-radius:50%;animation:oppusSpin 1s linear infinite} .oppus-spinner-wrap{grid-column:1/-1;display:flex;justify-content:center;align-items:center;gap:8px;padding:24px;color:var(--text-secondary)}";
+    document.head.appendChild(style);
+  }
+
+  function spinnerHTML() { ensureSpinnerCSS(); return '<div class="oppus-spinner-wrap"><div class="oppus-spinner"></div><span>Carregando...</span></div>'; }
+
+  let cachedPosts = null;
+  let cachedPostsUser = '';
+  let postModalOpenLock = false;
+  let suppressOpenPostModalOnce = false;
+  let postModalAppendMode = false;
+
+  function getSplitMaxForQtd(qtd) {
+    const n0 = Number(qtd) || 0;
+    if (isViewsContext) {
+      let n = n0;
+      try {
+        const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+        if (tipoNow === 'visualizacoes_reels') {
+          n = getEffectiveQtdForSplit(tipoNow, n0);
+        }
+      } catch(_) {}
+      // Split de visualizações: mínimo 2.500 views por post, máximo 5 posts.
+      // A partir de 5k divide. Ex.: 5k→2, 10k→4, 25k→5, 100k→5.
+      if (n < 5000) return 1;
+      return Math.max(1, Math.min(5, Math.floor(n / 2500)));
+    }
+    if (n0 >= 5000) return 10;
+    if (n0 === 1000) return 4;
+    if (n0 === 500) return 2;
+    return 1;
+  }
+  
+  function isMultiPostSplitEnabled(kind) {
+    if (isInstagramPrivate) return false;
+    if (isCurtidasContext && kind === 'likes') return true;
+    if (isViewsContext && kind === 'views') return true;
+    return false;
+  }
+  
+  function getUpgradeAddForSplit(tipo, baseQtd) {
+    const cb = document.getElementById('orderBumpCheckboxInline');
+    if (!cb || !cb.checked) return 0;
+    const q = Number(baseQtd) || 0;
+    if (!q) return 0;
+    
+    if (isViewsContext && String(tipo || '') === 'visualizacoes_reels') {
+      const targets = { 1000: 2500, 5000: 10000, 25000: 50000, 100000: 150000, 200000: 250000, 500000: 1000000 };
+      const targetQtd = targets[q] || 0;
+      return targetQtd > q ? (targetQtd - q) : 0;
+    }
+    
+    if (isCurtidasContext) {
+      // Mistas, brasileiras e orgânicas: alvos genéricos (igual ao que é cobrado e despachado).
+      const targets = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+      const targetQtd = targets[q] || 0;
+      return targetQtd > q ? (targetQtd - q) : 0;
+    }
+
+    return 0;
+  }
+  
+  function getEffectiveQtdForSplit(tipo, baseQtd) {
+    return Math.max(0, Number(baseQtd) + Number(getUpgradeAddForSplit(tipo, baseQtd)));
+  }
+
+  function getAllowedSplitCounts(qtd, maxCount) {
+    const n = Number(qtd) || 0;
+    const maxN = Math.max(1, Number(maxCount) || 1);
+    const out = [];
+    const upper = n > 0 ? Math.min(maxN, n) : maxN;
+    for (let i = 1; i <= upper; i++) out.push(i);
+    return out.length ? out : [1];
+  }
+
+  function openPostModal(kind, opts) {
+    if (postModalOpenLock) return;
+    if (isInstagramPrivate && ((isCurtidasContext && kind === 'likes') || (isViewsContext && kind === 'views'))) return;
+    postModalOpenLock = true;
+    setTimeout(function(){ postModalOpenLock = false; }, 600);
+    const refs = getPostModalRefs();
+    if (!refs.postModal || !refs.postModalGrid) return;
+    postModalAppendMode = !!(opts && opts.append) && isMultiPostSplitEnabled(kind);
+    
+    const user = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+    if (!user) {
+        showStatusMessageCheckout('Valide seu perfil primeiro.', 'error');
+        return;
+    }
+    
+    if (postModalAppendMode) {
+      const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+      const maxCount = getSplitMaxForQtd(qtd);
+      const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
+      if (curList.length >= maxCount) {
+        showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+        return;
+      }
+    }
+
+    if (refs.postModalTitle) refs.postModalTitle.textContent = kind === 'views' ? 'Selecionar reels' : 'Selecionar post';
+    try {
+      if (refs.postModal.parentNode !== document.body) {
+        document.body.appendChild(refs.postModal);
+      }
+    } catch(_) {}
+    try { document.body.style.overflow = 'hidden'; } catch(_) {}
+    refs.postModal.style.display = 'flex';
+    try {
+      const dlg = refs.postModal.querySelector('.modal-dialog');
+      if (dlg && typeof dlg.scrollIntoView === 'function') { dlg.scrollIntoView({ block: 'center', inline: 'center' }); }
+    } catch(_) {}
+
+    refs.postModalGrid.innerHTML = spinnerHTML();
+
+    const renderFrom = function(arr) {
+      const selectedNow = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
+      const items = (Array.isArray(arr) ? arr : []).filter(p => {
+        // Relax filter for views to allow any video-like content
+        if (kind === 'views') {
+             const isVid = !!p.isVideo || (String(p.typename||'').toLowerCase().includes('video') || String(p.typename||'').toLowerCase().includes('clip'));
+             // Fallback: se não tiver isVideo mas tiver media_type == 2 (GraphVideo)
+             const isMediaTypeVideo = (p.media_type === 2);
+             return isVid || isMediaTypeVideo;
+        }
+        return true;
+      }).slice(0, 12);
+
+      let headerHtml = '';
+      if (isCurtidasContext && kind === 'likes') {
+        headerHtml = '<div style="grid-column:1/-1; text-align:center; padding:0.5rem 0 1rem; font-weight:600; color:var(--text-primary);">Selecione o post que deseja receber as curtidas</div>';
+      } else if (isViewsContext && kind === 'views') {
+        headerHtml = '<div style="grid-column:1/-1; text-align:center; padding:0.5rem 0 1rem; font-weight:600; color:var(--text-primary);">Selecione o Reels que deseja receber as visualizações</div>';
+      }
+
+      const html = items.map(function(p){
+        const alreadySelected = selectedNow.includes(p.shortcode);
+        const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+        const vsrc = p.videoUrl ? ('/image-proxy?url=' + encodeURIComponent(p.videoUrl)) : null;
+        const isVid = p.isVideo || (p.media_type === 2);
+        
+        const media = (dsrc)
+          ? ('<div class="media-frame"><img src="'+dsrc+'" data-igpost="'+p.shortcode+'" loading="lazy" decoding="async"/></div>')
+          : (isVid && vsrc
+            ? ('<div class="media-frame"><video data-src="'+vsrc+'" muted playsinline preload="none"></video></div>')
+            : ('<div class="media-frame"><iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" loading="lazy" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no"></iframe></div>'));
+        const pickedClass = alreadySelected ? ' selected-mark' : '';
+        const btnText = alreadySelected ? 'Selecionado' : 'Selecionar';
+        const btnStyle = alreadySelected ? 'width:100%; text-align:center; opacity:0.65; cursor:not-allowed;' : 'width:100%; text-align:center;';
+        const btnDisabled = alreadySelected ? ' disabled' : '';
+        return '<div class="service-card"><div class="card-content pick-post-card'+pickedClass+'" data-kind="'+kind+'" data-shortcode="'+p.shortcode+'">'+media+'<div class="inline-msg" style="margin-top:6px">'+(fmtPostDateBR(p.takenAt) || '-')+'</div><div style="margin-top:8px;display:flex;justify-content:center;align-items:center;"><button type="button" class="continue-button select-post-btn" style="'+btnStyle+'" data-shortcode="'+p.shortcode+'" data-kind="'+kind+'"'+btnDisabled+'>'+btnText+'</button></div></div></div>';
+      }).join('');
+      
+      if (!html) {
+          const manualHtml = `
+            <div style="grid-column:1/-1; text-align:center; padding: 1rem;">
+                <p style="margin-bottom:0.5rem; color:var(--text-secondary);">Não encontramos posts recentes compatíveis automaticamente.</p>
+                <div style="display:flex; gap:0.5rem; max-width:400px; margin:0 auto;">
+                    <input type="text" id="manualPostLinkInput" placeholder="${kind === 'views' ? 'Cole o link do Reels/Vídeo aqui...' : 'Cole o link do post aqui...'}" style="flex:1; padding:0.6rem; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-primary); color:var(--text-primary);" />
+                    <button type="button" id="manualPostLinkBtn" class="continue-button" style="padding:0.6rem 1rem;">Usar Link</button>
+                </div>
+                <div id="manualLinkMsg" style="margin-top:0.5rem; font-size:0.9rem;"></div>
+            </div>
+          `;
+          refs.postModalGrid.innerHTML = headerHtml + manualHtml;
+          setTimeout(() => {
+              const btn = document.getElementById('manualPostLinkBtn');
+              const inp = document.getElementById('manualPostLinkInput');
+              const msg = document.getElementById('manualLinkMsg');
+              if(btn && inp) {
+                  btn.addEventListener('click', () => {
+                      const val = inp.value.trim();
+                      if(!val || !val.includes('instagram.com/')) {
+                          if(msg) { msg.textContent = 'Link inválido'; msg.style.color = '#ff4444'; }
+                          return;
+                      }
+                      let sc = '';
+                      const m = val.match(/\/(?:p|reel)\/([A-Za-z0-9_-]+)/);
+                      if(m) sc = m[1];
+                      if(!sc) {
+                           if(msg) { msg.textContent = 'Link inválido (não foi possível extrair ID)'; msg.style.color = '#ff4444'; }
+                           return;
+                      }
+                      try {
+                        if (postModalAppendMode) {
+                          const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+                          const maxCount = getSplitMaxForQtd(qtd);
+                          const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+                          if (!curList.includes(sc) && curList.length >= maxCount) {
+                            if (msg) { msg.textContent = 'Limite de posts atingido para este pacote.'; msg.style.color = '#ff4444'; }
+                            showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                            return;
+                          }
+                        }
+                      } catch(_) {}
+                      const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+                      fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind, mode: (postModalAppendMode ? 'append' : 'replace') }) })
+                        .then(r=>r.json())
+                        .then(function(){ 
+                            if (typeof updateSelectedPostPreview === 'function') {
+                                try { updateSelectedPostPreview(kind, sc, { append: postModalAppendMode }); } catch(_) {}
+                            }
+                            if(msg) { msg.textContent = 'Link selecionado!'; msg.style.color = '#44ff44'; }
+                            setTimeout(() => {
+                                const refs = getPostModalRefs(); 
+                                if(refs.postModal) refs.postModal.style.display='none';
+                                try { document.body.style.overflow=''; } catch(_) {}
+                            }, 500);
+                        });
+                  });
+              }
+          }, 100);
+      } else {
+          refs.postModalGrid.innerHTML = headerHtml + html;
+      }
+
+      const highlightSelectedMany = function(kind, list) {
+        try {
+          const cards = Array.from(refs.postModalGrid.querySelectorAll('.card-content'));
+          cards.forEach(function(c){ c.classList.remove('selected-mark'); });
+          (Array.isArray(list) ? list : []).forEach(function(sc){
+            const target = refs.postModalGrid.querySelector('.card-content[data-shortcode="'+sc+'"]');
+            if (target) target.classList.add('selected-mark');
+          });
+        } catch(_) {}
+      };
+      
+      Array.from(refs.postModalGrid.querySelectorAll('.select-post-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(e){
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          try {
+            if (postModalAppendMode) {
+              const curList0 = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (curList0.includes(sc)) {
+                showStatusMessageCheckout('Este post já foi selecionado. Escolha outro.', 'error');
+                return;
+              }
+            }
+            if (postModalAppendMode) {
+              const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+              const maxCount = getSplitMaxForQtd(qtd);
+              const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (!curList.includes(sc) && curList.length >= maxCount) {
+                showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                return;
+              }
+            }
+          } catch(_) {}
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: (postModalAppendMode ? 'append' : 'replace') }) })
+            .then(r=>r.json())
+            .then(function(){ 
+              try {
+                if (typeof window.__oppusSelectedPostsByKind === 'object' && window.__oppusSelectedPostsByKind) {
+                  const prev = Array.isArray(window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+                  window.__oppusSelectedPostsByKind[k] = postModalAppendMode ? (prev.includes(sc) ? prev : prev.concat([sc])) : [sc];
+                }
+              } catch(_) {}
+              highlightSelectedMany(k, (window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) || [sc]);
+              if (typeof updateSelectedPostPreview === 'function') {
+                  try { updateSelectedPostPreview(k, sc, { append: postModalAppendMode }); } catch(_) {}
+                  try { 
+                      const refs2 = getPostModalRefs();
+                      if (refs2.postModal) refs2.postModal.style.display = 'none';
+                      document.body.style.overflow = '';
+                  } catch(_) {}
+              }
+            });
+        });
+      });
+      
+      Array.from(refs.postModalGrid.querySelectorAll('.pick-post-card')).forEach(function(card){
+        card.addEventListener('click', function(){
+          const sc = this.getAttribute('data-shortcode');
+          const k = this.getAttribute('data-kind');
+          try {
+            if (postModalAppendMode) {
+              const curList0 = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (curList0.includes(sc)) {
+                showStatusMessageCheckout('Este post já foi selecionado. Escolha outro.', 'error');
+                return;
+              }
+            }
+            if (postModalAppendMode) {
+              const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+              const maxCount = getSplitMaxForQtd(qtd);
+              const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              if (!curList.includes(sc) && curList.length >= maxCount) {
+                showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+                return;
+              }
+            }
+          } catch(_) {}
+          const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+          fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: (postModalAppendMode ? 'append' : 'replace') }) })
+            .then(r=>r.json())
+            .then(function(){ 
+              try {
+                if (typeof window.__oppusSelectedPostsByKind === 'object' && window.__oppusSelectedPostsByKind) {
+                  const prev = Array.isArray(window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+                  window.__oppusSelectedPostsByKind[k] = postModalAppendMode ? (prev.includes(sc) ? prev : prev.concat([sc])) : [sc];
+                }
+              } catch(_) {}
+              highlightSelectedMany(k, (window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) || [sc]);
+              if (typeof updateSelectedPostPreview === 'function') {
+                  try { updateSelectedPostPreview(k, sc, { append: postModalAppendMode }); } catch(_) {}
+                  try { 
+                      const refs2 = getPostModalRefs();
+                      if (refs2.postModal) refs2.postModal.style.display = 'none';
+                      document.body.style.overflow = '';
+                  } catch(_) {}
+              }
+            });
+        });
+      });
+      
+      try {
+        fetch('/api/instagram/selected-for')
+          .then(r=>r.json())
+          .then(function(d){
+            const obj = d && d.selectedFor ? d.selectedFor : {};
+            const cur = obj[kind] || {};
+            const list = Array.isArray(cur.shortcodes) ? cur.shortcodes : (cur.shortcode ? [cur.shortcode] : []);
+            try {
+              window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
+              window.__oppusSelectedPostsByKind[kind] = list;
+            } catch(_) {}
+            highlightSelectedMany(kind, list);
+          });
+      } catch(_) {}
+    };
+
+    // views = reels (get_clips no servidor); não reusa o cache do feed (likes) p/ não misturar.
+    const useCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views';
+    if (useCache) {
+      renderFrom(cachedPosts);
+    } else {
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '');
+      refs.postModalGrid.innerHTML = spinnerHTML();
+      fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
+        .then(r=>r.json()).then(d=>{
+          const arr = Array.isArray(d.posts) ? d.posts : [];
+          if (kind !== 'views') { cachedPosts = arr; cachedPostsUser = user; }
+          renderFrom(arr);
+        }).catch(function(){
+          renderFrom([]);
+        });
+    }
+  }
+
+  // --- Inicialização de Listeners de Promos e Modal ---
+
+  function initPromoListeners() {
+    const promoLikes = document.getElementById('promoLikes');
+    const promoViews = document.getElementById('promoViews');
+    const promoComments = document.getElementById('promoComments');
+    
+    if (promoLikes) promoLikes.addEventListener('change', function() { if (this.checked) openPostModal('likes'); updatePromosSummary(); });
+    if (promoViews) promoViews.addEventListener('change', function() { if (this.checked) openPostModal('views'); updatePromosSummary(); });
+    if (promoComments) promoComments.addEventListener('change', function() { if (this.checked) openPostModal('comments'); updatePromosSummary(); });
+
+    // Step Controls - REMOVIDO PARA EVITAR CONFLITO COM LISTENERS DE TABELA
+    // Os listeners de stepLikes, stepViews e stepComments já foram definidos anteriormente
+    
+    // Modal Close
+    const refs = getPostModalRefs();
+    if (refs.postModalClose) refs.postModalClose.addEventListener('click', () => { if(refs.postModal) refs.postModal.style.display = 'none'; });
+    if (document.getElementById('postModalClose2')) document.getElementById('postModalClose2').addEventListener('click', () => { if(refs.postModal) refs.postModal.style.display = 'none'; });
+    
+    // Checkbox Order Bump
+    const obCheck = document.getElementById('orderBumpCheckboxInline');
+    if (obCheck) obCheck.addEventListener('change', updatePromosSummary);
+    
+    // Checkbox Warranty
+    const wCheck = document.getElementById('promoWarranty60');
+    if (wCheck) wCheck.addEventListener('change', updatePromosSummary);
+  }
+
+  // --- Lógica de Verificação de Perfil ---
+
+  // --- Post Modal & Preview Logic ---
+
+  window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
+
+  function renderSelectedPostsPreview(kind) {
+      const container = document.getElementById('selectedPostPreview');
+      const slot = document.getElementById('selectedPostPreviewContent');
+      if (!container || !slot) return;
+
+      const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+      const splitEnabled = isMultiPostSplitEnabled(kind);
+      const maxCount = splitEnabled ? getSplitMaxForQtd(qtd) : 1;
+      const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+      const qtdEffective = splitEnabled ? getEffectiveQtdForSplit(tipoNow, qtd) : qtd;
+      const list = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind])
+        ? window.__oppusSelectedPostsByKind[kind]
+        : [];
+
+      if (!list.length) {
+        container.style.display = 'none';
+        slot.innerHTML = '';
+        return;
+      }
+
+      const arr = Array.isArray(cachedPosts) ? cachedPosts : [];
+      const fixedH = 320;
+      const cardsHtml = list.map(function(code){
+        const p = arr.find(x => x && x.shortcode === code);
+        const removeBtn = splitEnabled
+          ? ('<button type="button" class="removeSelectedPostBtn" data-kind="'+kind+'" data-shortcode="'+code+'" style="position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:999px;border:1px solid rgba(0,0,0,0.08);background:rgba(255,255,255,0.92);display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(6px);font-size:18px;line-height:0;color:#111;">×</button>')
+          : '';
+        if (!p) {
+          const iframe = '<iframe src="https://www.instagram.com/p/'+code+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
+          const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+iframe+'</div>';
+          return '<div style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:var(--bg-secondary);border-radius:12px;padding:0.6rem;"><div style="position:relative;">'+frame+removeBtn+'</div></div>';
+        }
+        const dsrc = p.displayUrl ? ('/image-proxy?url=' + encodeURIComponent(p.displayUrl)) : null;
+        const media = dsrc
+          ? '<img src="'+dsrc+'" data-igpost="'+p.shortcode+'" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" loading="lazy" decoding="async"/>'
+          : '<iframe src="https://www.instagram.com/p/'+p.shortcode+'/embed" allowtransparency="true" allow="encrypted-media; picture-in-picture" scrolling="no" style="width:100%;height:100%;border-radius:12px;"></iframe>';
+        const frame = '<div style="width:100%;height:'+fixedH+'px;overflow:hidden;border-radius:12px;background:var(--bg-primary);">'+media+'</div>';
+        const dateText = fmtPostDateBR(p.takenAt);
+        const extra = dateText ? '<div style="font-size:0.8rem;color:var(--text-secondary);text-align:center;margin-top:6px;">'+dateText+'</div>' : '';
+        return '<div style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:var(--bg-secondary);border-radius:12px;padding:0.6rem;"><div style="position:relative;">'+frame+removeBtn+'</div>'+extra+'</div>';
+      }).join('');
+
+      const canAddMore = splitEnabled && (list.length < maxCount);
+      const addBtn = canAddMore
+        ? '<button type="button" id="addMorePostsBtn" style="scroll-snap-align:start;flex:0 0 240px;max-width:240px;background:rgba(124,58,237,0.10);border:2px dashed rgba(124,58,237,0.5);border-radius:12px;padding:0.6rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text-primary);cursor:pointer;">'
+          + '<div style="width:42px;height:42px;border-radius:999px;background:rgba(124,58,237,0.15);display:flex;align-items:center;justify-content:center;font-size:26px;line-height:0;">+</div>'
+          + '<div style="font-weight:600;">Adicionar mais um post</div>'
+          + '</button>'
+        : '';
+
+      let infoHtml = '';
+      if (splitEnabled) {
+        const countsAllowed = getAllowedSplitCounts(qtdEffective, maxCount);
+        const ok = qtdEffective > 0 && list.length > 0 && list.length <= maxCount && list.length <= qtdEffective;
+        const each = ok ? Math.ceil(qtdEffective / list.length) : 0;
+        const totalSent = ok ? (each * list.length) : 0;
+        const extra = ok ? (totalSent - qtdEffective) : 0;
+        const infoText = ok
+          ? ('Divisão: ' + each.toLocaleString('pt-BR') + ' por post (' + list.length + ' posts)' + (extra > 0 ? (' — enviaremos +' + extra.toLocaleString('pt-BR') + ' pra fechar a divisão') : ''))
+          : ('Divisão inválida. Para ' + qtdEffective.toLocaleString('pt-BR') + ', escolha: ' + countsAllowed.join(', ') + ' post(s).');
+        const infoColor = ok ? 'var(--text-secondary)' : '#ef4444';
+        infoHtml = '<div id="splitInfoLine" style="margin-top:8px;font-size:0.9rem;color:'+infoColor+';text-align:center;">'+infoText+'</div>';
+      }
+
+      slot.innerHTML =
+        '<div style="display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:6px;">'
+        + cardsHtml
+        + addBtn
+        + '</div>'
+        + infoHtml;
+      container.style.display = 'block';
+      try { updatePedidoButtonState(); } catch(_) {}
+
+      setTimeout(function(){
+        const btn = document.getElementById('addMorePostsBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function(){
+          const q = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+          const maxN = getSplitMaxForQtd(q);
+          const curList = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+          if (curList.length >= maxN) {
+            showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+            return;
+          }
+          openPostModal(kind, { append: true });
+        });
+      }, 0);
+      
+      setTimeout(function(){
+        Array.from(document.querySelectorAll('.removeSelectedPostBtn')).forEach(function(btn){
+          btn.addEventListener('click', function(e){
+            try { if (e && typeof e.preventDefault === 'function') e.preventDefault(); } catch(_) {}
+            try { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); } catch(_) {}
+            const sc = String(this.getAttribute('data-shortcode') || '').trim();
+            const k = String(this.getAttribute('data-kind') || '').trim();
+            if (!sc || !k) return;
+            try {
+              const prev = Array.isArray(window.__oppusSelectedPostsByKind && window.__oppusSelectedPostsByKind[k]) ? window.__oppusSelectedPostsByKind[k] : [];
+              window.__oppusSelectedPostsByKind[k] = prev.filter(x => x !== sc);
+            } catch(_) {}
+            try {
+              const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+              fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: k, mode: 'remove' }) }).catch(function(){});
+            } catch(_) {}
+            renderSelectedPostsPreview(k);
+            try { updatePedidoButtonState(); } catch(_) {}
+          });
+        });
+      }, 0);
+  }
+
+  function updateSelectedPostPreview(kind, sc, opts) {
+      const container = document.getElementById('selectedPostPreview');
+      const slot = document.getElementById('selectedPostPreviewContent');
+      if (!container || !slot) return;
+      const splitEnabled = isMultiPostSplitEnabled(kind);
+      const append = splitEnabled && !!(opts && opts.append);
+      try {
+        window.__oppusSelectedPostsByKind = window.__oppusSelectedPostsByKind || { likes: [], views: [], comments: [] };
+        const prev = Array.isArray(window.__oppusSelectedPostsByKind[kind]) ? window.__oppusSelectedPostsByKind[kind] : [];
+        if (!sc) {
+          window.__oppusSelectedPostsByKind[kind] = [];
+        } else {
+          if (append) {
+            const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+            const maxCount = getSplitMaxForQtd(qtd);
+            if (!prev.includes(sc) && prev.length >= maxCount) {
+              showStatusMessageCheckout('Limite de posts atingido para este pacote.', 'error');
+              return;
+            }
+            window.__oppusSelectedPostsByKind[kind] = prev.includes(sc) ? prev : prev.concat([sc]);
+          } else {
+            window.__oppusSelectedPostsByKind[kind] = [sc];
+          }
+        }
+      } catch(_) {}
+      renderSelectedPostsPreview(kind);
+  }
+
+  async function checkInstagramProfileCheckout(opts) {
+    const silent = !!(opts && opts.silent);
+    const noModal = !!(opts && opts.noModal);
+    const noScroll = !!(opts && opts.noScroll);
+    const includePosts = (typeof (opts && opts.includePosts) === 'boolean')
+      ? !!opts.includePosts
+      : (isCurtidasContext || isViewsContext);
+    if (!usernameCheckoutInput) return;
+    const rawInput = usernameCheckoutInput.value.trim();
+    if (!rawInput) {
+      if (!silent) showStatusMessageCheckout('Digite o usuário ou URL do Instagram.', 'error');
+      return false;
+    }
+    
+    const username = normalizeInstagramUsername(rawInput);
+    if (!isValidInstagramUsername(username)) {
+      if (!silent) showStatusMessageCheckout('Nome de usuário inválido.', 'error');
+      return false;
+    }
+    if (username !== rawInput) usernameCheckoutInput.value = username;
+    
+    if (!silent) {
+      hideStatusMessageCheckout();
+      const helpLink = document.getElementById('howToGetLinkContainer');
+      if (helpLink) helpLink.style.display = 'none';
+      clearProfilePreview();
+      showLoadingCheckout();
+    }
+    
+    try {
+      const params = new URLSearchParams(window.location.search);
+      let utms = {
+          source: params.get('utm_source') || '',
+          medium: params.get('utm_medium') || '',
+          campaign: params.get('utm_campaign') || '',
+          term: params.get('utm_term') || '',
+          content: params.get('utm_content') || ''
+      };
+      
+      // Merge with sessionStorage if empty (Persistence fix)
+      try {
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (!utms.source && parsed.utm_source) utms.source = parsed.utm_source;
+            if (!utms.medium && parsed.utm_medium) utms.medium = parsed.utm_medium;
+            if (!utms.campaign && parsed.utm_campaign) utms.campaign = parsed.utm_campaign;
+            if (!utms.term && parsed.utm_term) utms.term = parsed.utm_term;
+            if (!utms.content && parsed.utm_content) utms.content = parsed.utm_content;
+        }
+      } catch(_) {}
+
+      // Merge with sessionStorage if empty
+      try {
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (!utms.source && parsed.utm_source) utms.source = parsed.utm_source;
+            if (!utms.medium && parsed.utm_medium) utms.medium = parsed.utm_medium;
+            if (!utms.campaign && parsed.utm_campaign) utms.campaign = parsed.utm_campaign;
+            if (!utms.term && parsed.utm_term) utms.term = parsed.utm_term;
+            if (!utms.content && parsed.utm_content) utms.content = parsed.utm_content;
+        }
+      } catch(_) {}
+      
+      const resp = await fetch('/api/check-instagram-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') },
+        body: JSON.stringify({ username, utms, includePosts: false, skipPosts: true, tk: (window.OPPUS_API_TK || '') })
+      });
+      const data = await resp.json();
+      if (!silent) hideLoadingCheckout();
+      
+      if (data.success) {
+        const profile = data.profile || {};
+
+        if (checkoutProfileImage) {
+          var _uname = String(profile.username || username || '').trim().replace(/^@/, '');
+          if (_uname) {
+            checkoutProfileImage.src = '/avatar/instagram/' + encodeURIComponent(_uname);
+          } else if (profile.profilePicUrl) {
+            var _pic = String(profile.profilePicUrl || '');
+            checkoutProfileImage.src = _pic.startsWith('/image-proxy') ? _pic : ('/image-proxy?url=' + encodeURIComponent(_pic));
+          }
+        }
+        if (checkoutProfileUsername) checkoutProfileUsername.textContent = profile.username || username;
+        // 0 real é raro para seguindo/posts — mostra '-' quando 0 pois provavelmente é dado ausente
+        var _fmt = function(n, allowZero){ var v = Number(n); return (n != null && n !== '' && Number.isFinite(v) && (allowZero || v > 0)) ? v.toLocaleString('pt-BR') : '-'; };
+        if (checkoutFollowersCount) checkoutFollowersCount.textContent = _fmt(profile.followersCount, true);
+        if (checkoutFollowingCount) checkoutFollowingCount.textContent = _fmt(profile.followingCount, false);
+        if (checkoutPostsCount) checkoutPostsCount.textContent = _fmt(profile.postsCount, false);
+        
+        if (profilePreview) profilePreview.style.display = 'block';
+        
+        // Show contact fields
+        const contactArea = document.getElementById('contactFieldsArea');
+        if (contactArea) {
+            contactArea.style.display = 'block';
+            // Âncora um pouco mais para cima: mostra o PERFIL validado (foto/stats) e a
+            // mensagem "Por que pedimos esses dados?", em vez de parar direto nos campos.
+            if (!silent && !noScroll) {
+                setTimeout(() => {
+                    const anchorEl = profilePreview || contactArea;
+                    if (!anchorEl) return;
+                    try {
+                        const curY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                        const top = anchorEl.getBoundingClientRect().top + curY - 100; // respiro p/ o menu fixo
+                        const targetY = Math.max(0, top);
+                        if (typeof smoothScrollToY === 'function') smoothScrollToY(targetY, 700);
+                        else window.scrollTo({ top: targetY, behavior: 'smooth' });
+                    } catch (_) {
+                        try { anchorEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+                    }
+                }, 300);
+            }
+        }
+        
+        const revImg = document.getElementById('reviewProfileImage');
+        const revUser = document.getElementById('reviewProfileUsername');
+        const revFoll = document.getElementById('reviewProfileFollowers');
+        if (revImg) {
+          var _revUname = String(profile.username || username || '').trim().replace(/^@/, '');
+          if (_revUname) {
+            revImg.src = '/avatar/instagram/' + encodeURIComponent(_revUname);
+          } else if (profile.profilePicUrl) {
+            var _revPic = String(profile.profilePicUrl || '');
+            revImg.src = _revPic.startsWith('/image-proxy') ? _revPic : ('/image-proxy?url=' + encodeURIComponent(_revPic));
+          }
+        }
+        if (revUser) revUser.textContent = profile.username || username;
+        if (revFoll) revFoll.textContent = String(profile.followersCount || '-');
+        
+        isInstagramVerified = true;
+        try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
+        
+        // Pré-carregar posts se vierem na verificação ou buscar em background
+        if (profile.latestPosts && Array.isArray(profile.latestPosts) && profile.latestPosts.length > 0) {
+            cachedPosts = profile.latestPosts;
+            cachedPostsUser = profile.username || username;
+        } else {
+             // Tentar buscar em background para agilizar o modal
+             try {
+                // Verificar se já não estamos buscando para este usuário
+                if (cachedPostsUser !== (profile.username || username)) {
+                    const url = '/api/instagram/posts?username=' + encodeURIComponent(profile.username || username);
+                    fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
+                      .then(r=>r.json()).then(d=>{
+                        if(d.posts && Array.isArray(d.posts)) {
+                            cachedPosts = d.posts;
+                            cachedPostsUser = (profile.username || username);
+                        }
+                    }).catch(function(){});
+                }
+             } catch(_) {}
+        }
+
+        // Após validar perfil, abrir o modal de seleção de post:
+        // - Curtidas  -> seleção de post (likes)
+        // - Visualizações -> seleção de Reels (views)
+        if (!silent && !noModal && (isCurtidasContext || isViewsContext)) {
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+            ? window.__oppusSelectedPostsByKind[kind]
+            : [];
+          if (!list.length) openPostModal(kind);
+        }
+        
+        updatePedidoButtonState();
+        showResumoIfAllowed();
+        updatePromosSummary();
+        applyCheckoutFlow();
+        if (!silent) showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
+        
+        try {
+          const bid = getBrowserSessionId();
+          fetch('/api/instagram/validet-track', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: profile.username || username, browserId: bid })
+          }).catch(() => {});
+        } catch (_) {}
+        return true;
+        
+      } else {
+        const msg = (data && data.error) ? String(data.error) : '';
+        if (!silent) {
+          if (/não\s+localizad|não\s+encontrad|inexist|username_invalid|user_not_found/i.test(msg)) {
+            showStatusMessageCheckout('Usuário não encontrado. configra o nome digitado e tente novamente.', 'error');
+          } else if (/erro\s+na\s+verifica[cç][aã]o\s+do\s+perfil/i.test(msg)) {
+            showStatusMessageCheckout('Erro de usuário. configra o nome digitado e tente novamente.', 'error');
+          } else {
+            showStatusMessageCheckout(msg || 'Falha ao verificar perfil.', 'error');
+          }
+          const helpLink = document.getElementById('howToGetLinkContainer');
+          if (helpLink) helpLink.style.display = 'block';
+        }
+        return false;
+      }
+    } catch (e) {
+      if (!silent) {
+        hideLoadingCheckout();
+        showStatusMessageCheckout('Erro ao conectar com o servidor.', 'error');
+        const helpLink = document.getElementById('howToGetLinkContainer');
+        if (helpLink) helpLink.style.display = 'block';
+      }
+      return false;
+    }
+  }
+
+  // --- Funções Auxiliares UI ---
+
+  function showPhoneError(msg) {
+    const text = msg || 'Por favor, informe um telefone válido.';
+    if (phoneErrorMsg) {
+      phoneErrorMsg.textContent = text;
+      phoneErrorMsg.style.display = 'block';
+      try { hideStatusMessageCheckout(); } catch (_) {}
+      return;
+    }
+    showStatusMessageCheckout(text, 'error');
+  }
+
+  function hidePhoneError() {
+    if (phoneErrorMsg) phoneErrorMsg.style.display = 'none';
+  }
+
+  function showStatusMessageCheckout(msg, type) {
+    if (!statusCheckoutMessage) return;
+    statusCheckoutMessage.textContent = msg;
+    statusCheckoutMessage.className = 'status-message ' + (type === 'error' ? 'error' : 'success');
+    statusCheckoutMessage.style.display = 'block';
+  }
+
+  function hideStatusMessageCheckout() {
+    if (!statusCheckoutMessage) return;
+    statusCheckoutMessage.style.display = 'none';
+  }
+
+  function showLoadingCheckout() {
+    if (loadingCheckoutSpinner) loadingCheckoutSpinner.style.display = 'block';
+  }
+
+  function hideLoadingCheckout() {
+    if (loadingCheckoutSpinner) loadingCheckoutSpinner.style.display = 'none';
+  }
+
+  function clearProfilePreview() {
+    if (profilePreview) profilePreview.style.display = 'none';
+    isInstagramVerified = false;
+  }
+
+  function updatePedidoButtonState() {
+    if (!btnPedido) return;
+    let disabled = !!(btnPedido.classList && btnPedido.classList.contains('loading'));
+    try {
+      if ((isCurtidasContext || isViewsContext) && !isInstagramPrivate) {
+        const kind = isCurtidasContext ? 'likes' : 'views';
+        const qtd = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+        const tipoNow = (tipoSelect && tipoSelect.value) ? String(tipoSelect.value) : '';
+        const qtdEffective = getEffectiveQtdForSplit(tipoNow, qtd);
+        const maxCount = getSplitMaxForQtd(qtd);
+        const list = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[kind]))
+          ? window.__oppusSelectedPostsByKind[kind]
+          : [];
+        if (!list.length) disabled = true;
+        else if (list.length > maxCount) disabled = true;
+        else if (qtdEffective <= 0) disabled = true;
+      }
+    } catch(_) {}
+    btnPedido.disabled = disabled;
+  }
+
+  function showResumoIfAllowed() {
+    const isFollowers = isFollowersTipo(tipoSelect.value);
+    const allow = (!isFollowers) || !!isInstagramVerified;
+    if (resumo) {
+        resumo.hidden = !allow;
+        resumo.style.display = allow ? 'block' : 'none';
+    }
+  }
+
+  function updatePerfilVisibility() {
+    // Controlled by goToStep
+  }
+  
+  function updateWarrantyVisibility() {
+    const tipo = tipoSelect.value;
+    const inp = document.getElementById('promoWarranty60');
+    if (!inp) return;
+    const item = inp.closest('.promo-item');
+    const show = (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras');
+    if (item) item.style.display = show ? '' : 'none';
+    if (!show && inp.checked) inp.checked = false;
+    try { updatePromosSummary(); } catch(_) {}
+  }
+
+  function applyCheckoutFlow() {
+    const tipo = tipoSelect.value;
+    const isFollowers = isFollowersTipo(tipo);
+    const verified = !!isInstagramVerified;
+    
+    // Controlled by goToStep. We only manage internal visibility of Step 3 elements here if needed.
+    if (verified || !isFollowers) {
+        if (orderInline) orderInline.style.display = 'block';
+        if (grupoPedido) grupoPedido.style.display = 'block';
+        if (paymentCard) paymentCard.style.display = 'block';
+        
+        const headerQty = document.getElementById('headerSelectedQty');
+        if (headerQty && qtdSelect.value) {
+            const unit = getUnitForTipo(tipo);
+            headerQty.textContent = `+ ${qtdSelect.value} ${unit}`;
+        }
+        
+        if (!isCurtidasContext && !isViewsContext) {
+            updateReviewMath();
+        }
+    } else {
+        if (orderInline) orderInline.style.display = 'none';
+        if (grupoPedido) grupoPedido.style.display = 'none';
+        if (paymentCard) paymentCard.style.display = 'none';
+    }
+  }
+
+  function updateReviewMath() {
+      const reviewSelectedQty = document.getElementById('reviewSelectedQty');
+      const reviewTotalFollowers = document.getElementById('reviewTotalFollowers');
+      const reviewProfileFollowers = document.getElementById('reviewProfileFollowers');
+      const qtdSelect = document.getElementById('quantidadeSelect');
+      
+      try {
+          // Get current followers
+          const currentText = reviewProfileFollowers ? reviewProfileFollowers.textContent : '0';
+          const current = (currentText === '-' || !currentText) ? 0 : parseInt(currentText.replace(/\D/g, '') || '0', 10);
+          
+          // Get selected quantity
+          let selected = 0;
+          if (qtdSelect && qtdSelect.value) {
+             selected = parseInt(qtdSelect.value.replace(/\D/g, '') || '0', 10);
+          }
+          
+          const total = current + selected;
+          
+          // Format numbers
+          const fmt = (n) => n.toLocaleString('pt-BR');
+
+          if (reviewSelectedQty) reviewSelectedQty.textContent = `+${fmt(selected)}`;
+          if (reviewTotalFollowers) reviewTotalFollowers.textContent = fmt(total);
+          
+          // Ensure current is formatted too if it's a number
+          if (reviewProfileFollowers && current > 0 && reviewProfileFollowers.textContent !== fmt(current)) {
+              reviewProfileFollowers.textContent = fmt(current);
+          }
+      } catch (e) {
+          console.error('Error updating review math:', e);
+      }
+  }
+
+  // --- Funções de Pagamento (PIX) ---
+
+  function markPaymentConfirmed() {
+    const pixResultado = document.getElementById('pixResultado');
+    try {
+      if (pixResultado) {
+        pixResultado.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;color:#22C55E;font-weight:700;font-size:1rem;"><span class="price-new">Pagamento confirmado</span></div>';
+      }
+    } catch(_) {}
+    try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
+    try { showResumoIfAllowed(); } catch(_) {}
+  }
+
+  async function navigateToPedidoOrFallback(identifier, correlationID, chargeId) {
+    try {
+      try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
+      const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}&id=${encodeURIComponent(chargeId||'')}`;
+      const extractProviderOid = function(orderObj){
+        if (!orderObj || typeof orderObj !== 'object') return '';
+        var o = orderObj;
+        var oidF = (o && o.fama24h && o.fama24h.orderId) ? String(o.fama24h.orderId) : '';
+        var oidFS = (o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '';
+        return oidF || oidFS || '';
+      };
+      let data = null;
+      try {
+        const resp = await fetch(apiUrl);
+        data = await resp.json();
+      } catch(_) {}
+      let providerOid = data && data.order ? extractProviderOid(data.order) : '';
+      if (!data || !data.order || !providerOid) {
+        showStatusMessageCheckout('Pagamento recebido! Processando pedido...', 'success');
+        let attempts = 0;
+        const maxAttempts = 10;
+        while (attempts < maxAttempts && !providerOid) {
+          attempts++;
+          try {
+            const respLoop = await fetch(apiUrl);
+            const dataLoop = await respLoop.json();
+            if (dataLoop && dataLoop.order) {
+              providerOid = extractProviderOid(dataLoop.order);
+              if (providerOid) {
+                try { localStorage.setItem('oppus_selected_oid', String(providerOid)); } catch(_) {}
+                break;
+              }
+            }
+          } catch(_) {}
+          await new Promise(function(resolve){ setTimeout(resolve, 1500); });
+        }
+      }
+      const finalOid = providerOid || (chargeId ? String(chargeId) : '');
+      // obg=1 marca que esta é a tela de obrigado PÓS-PAGAMENTO (redirect do checkout).
+      // Consulta do pedido (email/área do cliente/painel) NUNCA tem esse marcador.
+      window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(finalOid||'')}&obg=1`;
+    } catch(_) {
+        showStatusMessageCheckout('Pagamento confirmado! Verifique seu email.', 'success');
+    }
+  }
+
+  async function criarPixPaghiper() {
+    try { window.__oppus_pix_started = true; } catch(_) {}
+    if (btnPedido) {
+        btnPedido.disabled = true;
+        btnPedido.classList.add('loading');
+    }
+    
+    // Ocultar elementos estáticos do PIX se existirem, para usar o render dinâmico
+    const staticPixElements = ['pixQrcode', 'pixLoader', 'pixCopiaCola', 'copyPixBtn'];
+    staticPixElements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.parentElement.style.display = 'none'; // Oculta o container pai desses elementos
+    });
+    // Garantir que pixResultado esteja visível e limpo
+    const pixResultado = document.getElementById('pixResultado');
+    if (pixResultado) {
+        pixResultado.innerHTML = '';
+        pixResultado.style.display = 'block';
+        // Se o pai estava oculto (caso dos elementos estáticos estarem no mesmo container), reexibir o container principal
+        const pixContainer = document.getElementById('pixContainer');
+        if (pixContainer) {
+            pixContainer.style.display = 'block'; // Ensure container is visible
+            // Reexibir apenas o necessário
+            Array.from(pixContainer.children).forEach(c => {
+                if (c.id === 'pixResultado' || c.tagName === 'H4' || c.tagName === 'P') c.style.display = 'block';
+                else if (staticPixElements.includes(c.id) || c.querySelector('#pixQrcode')) c.style.display = 'none';
+            });
+        }
+    }
+
+    try {
+      const tipo = tipoSelect ? tipoSelect.value : 'mistos';
+      const qtdSelectVal = qtdSelect ? qtdSelect.value : '0';
+      const qtd = parseInt(qtdSelectVal, 10);
+      // Guard (igual ao caminho do cartão): sem pacote válido não deixa pagar.
+      // Evita o "NaN seguidores" quando o cliente chega pelo link do LTV e não
+      // seleciona pacote, mas adiciona um order bump e paga no Pix.
+      if (!tipo || !qtd || qtd <= 0) throw new Error('Selecione um pacote antes de pagar.');
+      const precoText = resPreco ? resPreco.textContent : '';
+      const precoStr = precoText;
+      
+      let baseCents = basePriceCents || 0;
+      const promos = getSelectedPromos();
+      const promosTotalCents = calcPromosTotalCents(promos);
+      let totalCents = Math.max(0, Number(baseCents) + promosTotalCents);
+
+      if (window.couponDiscount && window.couponDiscount > 0) {
+        const d = Number(window.couponDiscount || 0);
+        if (Number.isFinite(d) && d > 0 && d < 1) {
+          totalCents = Math.round(totalCents * (1 - d));
+        }
+      }
+
+      const valueBRL = totalCents / 100;
+      let sckValue = '';
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        sckValue = params.get('sck') || '';
+      } catch (_) {}
+      if (!sckValue) {
+        try {
+          const m2 = document.cookie.match(/(?:^|;\s*)index=([^;]+)/);
+          sckValue = m2 && m2[1] ? decodeURIComponent(m2[1]) : '';
+        } catch (_) {}
+      }
+      
+      // Quantidade efetiva (considerando upgrade)
+      const upgradeItem = promos.find(p => p.key === 'upgrade');
+      // Se tiver upgrade, a quantidade base já foi dobrada visualmente? 
+      // Não, no servicos-instagram.js o updateOrderBump apenas mostra o texto.
+      // A lógica de quantidade real deve ser ajustada aqui.
+      // Se houver upgrade, a quantidade entregue é maior, mas para o checkout (registro)
+      // usamos a quantidade base + info de upgrade.
+      const qtdEffective = qtd; 
+
+      let correlationID = 'InstagramService_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      let paymentComment = 'Checkout OPPUS Instagram';
+      try {
+        const hn = (window.location && window.location.hostname) ? String(window.location.hostname).toLowerCase() : '';
+        const isLocal = hn === 'localhost' || hn === '127.0.0.1';
+        if (isLocal && Number(totalCents) > 0 && Number(totalCents) <= 100) {
+          correlationID = 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+          paymentComment = 'teste pix';
+        }
+      } catch(_) {}
+      
+      // Phone
+      const phoneInput = contactPhoneInput || document.getElementById('checkoutPhoneInput');
+      const phoneValue = normalizeBrPhoneDigits(phoneInput ? phoneInput.value : '');
+      if (!phoneValue) throw new Error('Por favor, informe um telefone válido.');
+
+      const nameValue = normalizeFullName(contactNameInput ? contactNameInput.value : '');
+      if (!isValidFullName(nameValue)) throw new Error('Por favor, informe seu nome e sobrenome.');
+
+      let emailValue = contactEmailInput ? String(contactEmailInput.value || '').trim() : '';
+      if (emailValue && !emailValue.includes('@')) emailValue = '';
+      if (!emailValue) throw new Error('Por favor, informe um e-mail válido.');
+
+      const cpfFromContact = document.getElementById('contactCpfInput');
+      const cpfFromCard = document.getElementById('cardHolderCpf');
+      const cpfRaw = String((cpfFromContact && cpfFromContact.value) ? cpfFromContact.value : (cpfFromCard && cpfFromCard.value) ? cpfFromCard.value : '').trim();
+      let cpfDigits = onlyDigits(cpfRaw);
+      if (cpfDigits.length !== 11) cpfDigits = onlyDigits(getOrGenerateCPF());
+      
+      // Username
+      const usernamePreview = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
+      const usernameInputRaw = (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || '';
+      const usernameInputNorm = normalizeInstagramUsername(usernameInputRaw);
+      const instagramUsernameFinal = usernamePreview || usernameInputNorm || '';
+
+      if (!instagramUsernameFinal) {
+        throw new Error('Nome de usuário do Instagram não identificado.');
+      }
+
+      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+
+      const payload = {
+        correlationID,
+        value: totalCents,
+        comment: paymentComment,
+        customer: {
+          name: nameValue,
+          phone: phoneValue,
+          email: emailValue,
+          cpf: cpfDigits
+        },
+        additionalInfo: [
+          { key: 'customer_name', value: nameValue },
+          { key: 'tipo_servico', value: tipo },
+          { key: 'categoria_servico', value: serviceCategory },
+          { key: 'quantidade', value: String(qtdEffective) },
+          { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
+          { key: 'phone', value: phoneValue },
+          { key: 'instagram_username', value: instagramUsernameFinal },
+          { key: 'order_bumps_total', value: formatCentsToBRL(promosTotalCents) },
+          { key: 'order_bumps', value: promos.map(p => `${p.key}:${p.qty ?? 1}`).join(';') },
+          { key: 'cupom', value: window.couponCode || '' }
+        ],
+        profile_is_private: isInstagramPrivate
+      };
+      try {
+        if (sckValue) payload.additionalInfo.push({ key: 'sck', value: sckValue });
+      } catch (_) {}
+
+      // Tentar pegar posts selecionados (simulado ou via cache/session se tivesse implementado full)
+      // Aqui vamos apenas verificar se tem promos que precisam de posts
+      // No código anterior do modal, não salvamos no backend. 
+      // Se for necessário, deveríamos ter salvo. 
+      // Assumindo que o modal apenas seleciona visualmente por enquanto ou falta implementar a persistência.
+      // Vou manter simplificado como no checkout.js que busca de /api/instagram/selected-for
+      
+      let splitErrMsg = '';
+      try {
+        let sfor = {};
+        const normalizeIgShortcode = function (sc) {
+          const v = String(sc || '').trim();
+          if (!v) return '';
+          const m = v.match(/^[A-Za-z0-9_-]+/);
+          const code = m ? String(m[0] || '') : '';
+          if (!code) return '';
+          return code.length > 15 ? code.slice(0, 11) : code;
+        };
+        const buildIgMediaLink = function (k, sc) {
+          const code = normalizeIgShortcode(sc);
+          if (!code) return '';
+          const kindPath = (k === 'views') ? 'reel' : 'p';
+          return `https://www.instagram.com/${kindPath}/${encodeURIComponent(code)}/`;
+        };
+        try {
+          const selResp = await fetch('/api/instagram/selected-for');
+          if (selResp && selResp.ok) {
+            const selData = await selResp.json();
+            sfor = selData && selData.selectedFor ? selData.selectedFor : {};
+          }
+        } catch (_) {}
+        const mapKindList = function (k) {
+          const obj = (sfor && sfor[k]) ? sfor[k] : {};
+          const list = Array.isArray(obj.shortcodes) ? obj.shortcodes : (obj.shortcode ? [obj.shortcode] : []);
+          return list.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+        };
+        const getLinksForKind = function (k) {
+          const localList = (window.__oppusSelectedPostsByKind && Array.isArray(window.__oppusSelectedPostsByKind[k]))
+            ? window.__oppusSelectedPostsByKind[k]
+            : [];
+          const linksFromLocal = localList.map(sc => buildIgMediaLink(k, sc)).filter(Boolean);
+          const linksFromServer = mapKindList(k);
+          return linksFromLocal.length ? linksFromLocal : linksFromServer;
+        };
+        const getFirstLinkForKind = function (k) {
+          const list = getLinksForKind(k);
+          return list.length ? list[0] : '';
+        };
+
+        const likesLink = getFirstLinkForKind('likes');
+        const viewsLink = getFirstLinkForKind('views');
+        const commentsLink = getFirstLinkForKind('comments');
+          const anyLink = viewsLink || likesLink || commentsLink;
+
+          const hasLikes = promos.some(p => p.key === 'likes');
+          const hasViews = promos.some(p => p.key === 'views');
+          const hasComments = promos.some(p => p.key === 'comments');
+          const kinds = [];
+          if (hasLikes) kinds.push('likes');
+          if (hasViews) kinds.push('views');
+          if (hasComments) kinds.push('comments');
+
+          if (kinds.length === 1) {
+            const onlyKind = kinds[0];
+            let link = getFirstLinkForKind(onlyKind);
+            if (!link && instagramUsernameFinal) {
+              try {
+                const url = '/api/instagram/posts?username=' + encodeURIComponent(instagramUsernameFinal);
+                let pr = null;
+                if (window.AbortController) {
+                  const controller = new AbortController();
+                  const to = setTimeout(() => {
+                    try { controller.abort(); } catch (_) {}
+                  }, 650);
+                  try {
+                    pr = await fetch(url, { signal: controller.signal });
+                  } finally {
+                    clearTimeout(to);
+                  }
+                } else {
+                  pr = await fetch(url);
+                }
+                if (!pr || !pr.ok) throw new Error('posts_fetch_failed');
+                const pd = await pr.json();
+                const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
+                const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
+                const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
+                const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+                if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
+              } catch (_) {}
+            }
+            if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
+          } else {
+            if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
+            if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+            if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
+          }
+
+          if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
+            const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+            const links = getLinksForKind(baseKind);
+            if (links.length) {
+              payload.additionalInfo.push({ key: 'post_link', value: links[0] });
+              payload.additionalInfo.push({ key: 'post_links', value: links.join(',') });
+              payload.additionalInfo.push({ key: 'post_split_count', value: String(links.length) });
+              const maxCount = getSplitMaxForQtd(qtd);
+              if (links.length > maxCount) {
+                splitErrMsg = 'Quantidade de posts acima do limite do pacote.';
+              }
+              const qtdForSplit = getEffectiveQtdForSplit(tipo, qtd);
+              const perPost = links.length ? Math.ceil(qtdForSplit / links.length) : qtdForSplit;
+              const totalSent = links.length ? (perPost * links.length) : qtdForSplit;
+              const extra = Math.max(0, totalSent - qtdForSplit);
+              payload.additionalInfo.push({ key: 'post_split_each', value: String(perPost) });
+              if (extra > 0) payload.additionalInfo.push({ key: 'post_split_extra', value: String(extra) });
+            } else {
+              splitErrMsg = 'Selecione pelo menos 1 post.';
+            }
+          }
+      } catch(_) {}
+      if (splitErrMsg) throw new Error(splitErrMsg);
+
+      const resp = await fetch('/api/paghiper/charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        const errMsg = (data && (data.message || (data.details && data.details.message) || data.error)) || 'Falha ao criar cobrança';
+        const err = new Error(errMsg);
+        err.code = data && data.error ? String(data.error) : '';
+        throw err;
+      }
+
+      // Renderização do PIX
+      const charge = data?.charge || data || {};
+      const pix = charge?.paymentMethods?.pix || charge?.pix || {};
+      const brCode = pix?.brCode || charge?.brCode || data?.brCode || '';
+      const qrImage = pix?.qrCodeImage || charge?.qrCodeImage || data?.qrCodeImage || '';
+
+      const copyButtonId = 'copyPixBtnDynamic';
+      const inputId = 'pixBrCodeInputDynamic';
+
+      const imgHtml = qrImage
+        ? `<img src="${qrImage}" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />`
+        : '';
+
+      const codeFieldHtml = brCode
+        ? `<div style="margin-bottom: 0.5rem; text-align: center;">
+             <input id="${inputId}" type="text" readonly value="${brCode}" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" />
+           </div>`
+        : '<div style="color:#fff;">Não foi possível exibir o código Pix.</div>';
+
+      const copyBtnHtml = brCode
+        ? `<div class="button-container" style="margin-bottom: 0.5rem;">
+             <button id="${copyButtonId}" class="continue-button">
+               <span class="button-text">Copiar código Pix</span>
+             </button>
+           </div>`
+        : '';
+
+      const textColor = (document.body.classList.contains('theme-light') || true) ? '#000' : '#fff'; // Forçando escuro se necessário ou detectando tema
+      
+      const waitingHtml = `
+        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
+          <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
+              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <span>Aguardando pagamento...</span>
+        </div>`;
+
+      if (pixResultado) {
+          pixResultado.innerHTML = `${imgHtml}${codeFieldHtml}${copyBtnHtml}${waitingHtml}`;
+          pixResultado.style.display = 'block';
+      }
+
+      // Scroll para o PIX
+      try {
+        const isMobile = window.innerWidth <= 640;
+        if (isMobile && pixResultado) {
+            const rect = pixResultado.getBoundingClientRect();
+            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
+            window.scrollTo({ top, behavior: 'smooth' });
+        }
+      } catch(_) {}
+
+      // Listener do botão copiar e verificar
+      setTimeout(() => {
+          const copyBtn = document.getElementById(copyButtonId);
+          if (copyBtn && brCode) {
+            copyBtn.addEventListener('click', async () => {
+              try {
+                if (navigator.clipboard?.writeText) {
+                  await navigator.clipboard.writeText(brCode);
+                } else {
+                  const input = document.getElementById(inputId);
+                  input?.select();
+                  document.execCommand('copy');
+                }
+                const span = copyBtn.querySelector('.button-text');
+                const prev = span ? span.textContent : '';
+                if (span) span.textContent = 'Pix copiado';
+                try { showStatusMessageCheckout('Código Pix copiado', 'success'); } catch(_) {}
+                copyBtn.disabled = true;
+                setTimeout(() => {
+                  copyBtn.disabled = false;
+                  if (span) span.textContent = prev || 'Copiar código Pix';
+                }, 1200);
+              } catch (e) {
+                alert('Não foi possível copiar o código Pix.');
+              }
+            });
+          }
+      }, 100);
+
+      // Polling de Status (Lógica idêntica ao checkout.js)
+      const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
+      const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
+      const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
+      
+      if (paymentPollInterval) {
+        clearInterval(paymentPollInterval);
+        paymentPollInterval = null;
+      }
+      
+      const doCheckDb = async () => {
+         try {
+           const dbUrl = `/api/checkout/payment-state?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+           const dbResp = await fetch(dbUrl);
+           const dbData = await dbResp.json();
+           if (dbData?.paid === true) {
+             clearInterval(paymentPollInterval);
+             paymentPollInterval = null;
+             try { markPaymentConfirmed(); } catch(_) {}
+             await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+             return true;
+           }
+         } catch(e) { console.error('DB Check error:', e); }
+         return false;
+      };
+
+      if (chargeId || identifier || serverCorrelationID) {
+        const checkPaid = async () => {
+          if (!chargeId) { await doCheckDb(); return; }
+          try {
+            const stResp = await fetch(`/api/paghiper/charge-status?id=${encodeURIComponent(chargeId)}&identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`);
+            const stData = await stResp.json();
+            const status = stData?.charge?.status || stData?.status || '';
+            const paidFlag = stData?.charge?.paid || stData?.paid || false;
+            const isPaid = paidFlag === true || /paid/i.test(String(status)) || /completed/i.test(String(status));
+            
+            if (isPaid) {
+              clearInterval(paymentPollInterval);
+              paymentPollInterval = null;
+              try { markPaymentConfirmed(); } catch(_) {}
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+            } else {
+               // Fallback imediato ao DB
+               await doCheckDb();
+            }
+          } catch (e) {
+            // Se falhar Woovi, tenta DB
+            await doCheckDb();
+          }
+        };
+
+        // Fallback Polling (DB Check)
+         const checkPaidDb = async () => {
+           await doCheckDb();
+         };
+ 
+         // Inicia polling primário
+         if (chargeId) checkPaid();
+         else checkPaidDb();
+
+         paymentPollInterval = setInterval(checkPaidDb, 2000); 
+         
+         // SSE Listener (Real-time)
+         try {
+             if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+             const sseUrl = `/api/payment/subscribe?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(serverCorrelationID || correlationID)}`;
+             window.paymentEventSource = new EventSource(sseUrl);
+             window.paymentEventSource.addEventListener('paid', async (ev) => {
+               try {
+                 if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+                 if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+                 try { markPaymentConfirmed(); } catch(_) {}
+                 await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+               } catch(_) {}
+             });
+         } catch(_) {}
+         
+         // Polling Woovi a cada 15s como backup (apenas se tiver chargeId)
+         if (chargeId) {
+             const checkPaidWoovi = async () => {
+                await checkPaid();
+             };
+             setInterval(checkPaidWoovi, 15000);
+         }
+       }
+
+    } catch (err) {
+      try {
+        const code = String(err && err.code ? err.code : '').trim();
+        if (code === 'invalid_cpf' || code === 'missing_cpf') {
+          const cpfEl = document.getElementById('contactCpfInput') || document.getElementById('cardHolderCpf');
+          if (cpfEl) {
+            try { cpfEl.classList.add('input-error'); } catch (_) {}
+            try { cpfEl.classList.add('tutorial-highlight'); } catch (_) {}
+            try { cpfEl.focus(); } catch (_) {}
+            try { cpfEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+          }
+        }
+      } catch (_) {}
+      alert('Erro ao criar PIX: ' + (err?.message || err));
+    } finally {
+      if (btnPedido) {
+        btnPedido.classList.remove('loading');
+      }
+      try { updatePedidoButtonState(); } catch(_) {}
+    }
+  }
+
+  // --- Inicialização ---
+
+  function smoothScrollToY(targetY, durationMs) {
+    const dur = Math.max(200, Number(durationMs) || 1100);
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        window.scrollTo(0, targetY);
+        return;
+      }
+    } catch (_) {}
+    const startY = window.scrollY || window.pageYOffset || 0;
+    const delta = targetY - startY;
+    if (!delta) return;
+    const startT = (window.performance && performance.now) ? performance.now() : Date.now();
+    const ease = function(t) { return t < 0.5 ? (2 * t * t) : (1 - Math.pow(-2 * t + 2, 2) / 2); };
+    const step = function(now) {
+      const tNow = (window.performance && performance.now) ? now : Date.now();
+      const p = Math.min(1, Math.max(0, (tNow - startT) / dur));
+      window.scrollTo(0, startY + (delta * ease(p)));
+      if (p < 1) window.requestAnimationFrame(step);
+    };
+    window.requestAnimationFrame(step);
+  }
+
+  let scrollToCardsTimer = null;
+  let hasInitialCardsAutoScrollDone = false;
+  function scrollToCardsMobile() {
+    try {
+      const delayMs = arguments.length > 0 ? Number(arguments[0]) : 2000;
+      const shouldScroll = arguments.length > 1 ? (arguments[1] === true) : false;
+      const isMobile = window.innerWidth <= 640;
+      if (scrollToCardsTimer) {
+        try { clearTimeout(scrollToCardsTimer); } catch (_) {}
+        scrollToCardsTimer = null;
+      }
+      if (!isMobile || !shouldScroll) return;
+      scrollToCardsTimer = setTimeout(() => {
+        const pCards = document.getElementById('planCards');
+        if (pCards && pCards.style.display !== 'none') {
+          const rect = pCards.getBoundingClientRect();
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          // Deixa uma beirada da descrição (aprox 120px acima do topo dos cards)
+          const targetTop = (rect.top + scrollTop) - 120;
+          smoothScrollToY(targetTop, 1100);
+        }
+      }, Number.isFinite(delayMs) ? delayMs : 2000);
+    } catch (_) {}
+  }
+
+  if (tipoSelect) {
+    tipoSelect.addEventListener('change', () => {
+      const userInitiated = window.__oppusTipoChangeUserInitiated === true;
+      const tipo = tipoSelect.value;
+      popularQuantidades(tipo);
+      renderPlanCards(tipo);
+      renderTipoDescription(tipo);
+      updatePerfilVisibility();
+      updateWarrantyVisibility();
+      try {
+        refreshLikesTable();
+        applyLikesPromoVariant();
+        if (likesQtyEl) updateLikesPrice(Number(likesQtyEl.textContent || 150));
+      } catch(_) {}
+      
+      // Update visual active state of type cards
+      if (tipoCards) {
+        const all = tipoCards.querySelectorAll('.option-card');
+        all.forEach(c => {
+          if (c.getAttribute('data-tipo') === tipo) {
+            c.classList.add('active');
+          } else {
+            c.classList.remove('active');
+          }
+        });
+      }
+
+      // Scroll Mobile para os cards:
+      // - primeira carga da página: 3000ms
+      // - troca manual de tipo: 3000ms
+      window.__oppusTipoChangeUserInitiated = false;
+      if (userInitiated) {
+        scrollToCardsMobile(4000, true);
+      } else if (!hasInitialCardsAutoScrollDone) {
+        hasInitialCardsAutoScrollDone = true;
+        scrollToCardsMobile(4000, true);
+      }
+    });
+  }
+
+  function popularQuantidades(tipo) {
+    if (!qtdSelect) return;
+    qtdSelect.innerHTML = '';
+    const arr = tabela[tipo] || [];
+    arr.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.q;
+      opt.textContent = `${item.q} - ${item.p}`;
+      qtdSelect.appendChild(opt);
+    });
+    qtdSelect.disabled = false;
+  }
+
+  if (checkCheckoutButton) {
+    checkCheckoutButton.addEventListener('click', checkInstagramProfileCheckout);
+  }
+
+  if (btnPedido) {
+    btnPedido.addEventListener('click', criarPixPaghiper);
+  }
+
+  const optionPixToggle = document.getElementById('optionPix');
+  const optionCardToggle = document.getElementById('optionCard');
+  if (optionPixToggle) optionPixToggle.addEventListener('click', () => selectPaymentMethod('pix'));
+  if (optionCardToggle) optionCardToggle.addEventListener('click', () => selectPaymentMethod('credit_card'));
+
+  const radioInputs = document.querySelectorAll('input[name="paymentMethod"]');
+  radioInputs.forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      selectPaymentMethod(e.target.value);
+    });
+  });
+
+  try {
+    const cardNumberEl = document.getElementById('cardNumber');
+    const cardCvvEl = document.getElementById('cardCvv');
+    const syncCvvLengthFromCardNumber = () => {
+      try {
+        if (!cardCvvEl) return;
+        const digits = String(cardNumberEl && cardNumberEl.value ? cardNumberEl.value : '').replace(/\D/g, '');
+        const isAmex = isAmexCardNumber(digits);
+        const desiredMax = isAmex ? 4 : 3;
+        cardCvvEl.maxLength = desiredMax;
+        cardCvvEl.placeholder = isAmex ? '1234' : '123';
+        const curDigits = String(cardCvvEl.value || '').replace(/\D/g, '').slice(0, desiredMax);
+        if (cardCvvEl.value !== curDigits) cardCvvEl.value = curDigits;
+      } catch (_) {}
+    };
+    if (cardNumberEl) cardNumberEl.addEventListener('input', () => { cardNumberEl.value = maskCardNumber(cardNumberEl.value); syncCvvLengthFromCardNumber(); });
+    if (cardCvvEl) cardCvvEl.addEventListener('input', () => {
+      const maxLen = Number(cardCvvEl.maxLength || 0) || 4;
+      cardCvvEl.value = String(cardCvvEl.value || '').replace(/\D/g, '').slice(0, maxLen);
+    });
+    try { syncCvvLengthFromCardNumber(); } catch (_) {}
+    const cardExpiryEl = document.getElementById('cardExpiry');
+    if (cardExpiryEl) cardExpiryEl.addEventListener('input', () => { cardExpiryEl.value = maskExpiry(cardExpiryEl.value); });
+    const cardCpfEl = document.getElementById('cardHolderCpf');
+    if (cardCpfEl) cardCpfEl.addEventListener('input', () => { cardCpfEl.value = maskCpf(cardCpfEl.value); });
+  } catch(_) {}
+
+  const payWithCardBtn = document.getElementById('payWithCardBtn');
+  if (payWithCardBtn) payWithCardBtn.addEventListener('click', handleCardPayment);
+  const cardPaymentForm = document.getElementById('cardPaymentForm');
+  if (cardPaymentForm) cardPaymentForm.addEventListener('submit', handleCardPayment);
+  
+  if (usernameCheckoutInput) {
+    usernameCheckoutInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            checkInstagramProfileCheckout();
+        }
+    });
+
+    // Hide tutorial balloon — apenas quando o usuário realmente interagir (digitar ou clicar no balão)
+    const hideBalloon = () => {
+      const balloon = document.getElementById('tutorial3Usuario');
+      if (balloon) {
+        balloon.style.display = 'none';
+        balloon.classList.add('hide');
+      }
+    };
+    
+    // Esconder somente quando começar a digitar ou colar
+    usernameCheckoutInput.addEventListener('input', hideBalloon);
+    usernameCheckoutInput.addEventListener('paste', hideBalloon);
+
+    // Listener no próprio balão: permitir fechar com um toque/clique
+    const balloonElement = document.getElementById('tutorial3Usuario');
+    if (balloonElement) {
+        balloonElement.addEventListener('click', hideBalloon);
+    }
+    
+    // Removido: esconder em cliques/focus globais para evitar sumir imediatamente ao carregar
+  }
+
+  if (contactPhoneInput) attachPhoneMask(contactPhoneInput);
+  if (document.getElementById('checkoutPhoneInput')) attachPhoneMask(document.getElementById('checkoutPhoneInput'));
+  try {
+    if (contactPhoneInput) {
+      contactPhoneInput.addEventListener('input', function(){
+        try {
+          const v = String(contactPhoneInput.value || '').trim();
+          if (isValidBrPhone(v)) hidePhoneError();
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
+  try {
+    const cpfContactEl = document.getElementById('contactCpfInput');
+    if (cpfContactEl) cpfContactEl.addEventListener('input', () => { cpfContactEl.value = maskCpf(cpfContactEl.value); });
+  } catch (_) {}
+
+  // --- Step Navigation Listeners ---
+  const backToStep1Btn = document.getElementById('backToStep1Btn');
+  if (backToStep1Btn) {
+      backToStep1Btn.addEventListener('click', () => {
+          if (window.goToStep) window.goToStep(1);
+      });
+  }
+
+  const confirmContactDataBtn = document.getElementById('btnActionProceed');
+  if (confirmContactDataBtn) {
+      confirmContactDataBtn.addEventListener('click', (e) => {
+          if (e) e.preventDefault(); // Prevent link navigation
+          const name = contactNameInput ? String(contactNameInput.value || '').trim() : '';
+          const email = contactEmailInput ? contactEmailInput.value.trim() : '';
+          const phone = contactPhoneInput ? contactPhoneInput.value.trim() : '';
+          
+          const nameErrorMsg = document.getElementById('nameErrorMsg');
+          const emailErrorMsg = document.getElementById('emailErrorMsg');
+          
+          if (!isValidFullName(name)) {
+              if (nameErrorMsg) nameErrorMsg.style.display = 'block';
+              else showStatusMessageCheckout('Por favor, informe seu nome e sobrenome.', 'error');
+              if (contactNameInput) contactNameInput.focus();
+              return;
+          } else {
+              if (nameErrorMsg) nameErrorMsg.style.display = 'none';
+          }
+
+          if (!email || !email.includes('@')) {
+              if (emailErrorMsg) emailErrorMsg.style.display = 'block';
+              else showStatusMessageCheckout('Por favor, informe um email válido.', 'error');
+              
+              if (contactEmailInput) contactEmailInput.focus();
+              return;
+          } else {
+              if (emailErrorMsg) emailErrorMsg.style.display = 'none';
+          }
+          
+          if (!isValidBrPhone(phone)) {
+              showPhoneError('Por favor, informe um telefone válido.');
+              if (contactPhoneInput) contactPhoneInput.focus();
+              return;
+          } else {
+              hidePhoneError();
+          }
+          
+          if (window.goToStep) window.goToStep(3);
+      });
+  }
+
+  // Init
+  renderPromoPrices();
+  applyWarrantyMode();
+  renderTipoCards();
+  initPromoListeners();
+  if (qtdSelect) {
+    qtdSelect.addEventListener('change', function(){
+      try {
+        const tipo = tipoSelect ? tipoSelect.value : '';
+        const unit = getUnitForTipo(tipo);
+        const q = parseInt(String(qtdSelect && qtdSelect.value ? qtdSelect.value : '0'), 10) || 0;
+        if (planCards) {
+          const card = planCards.querySelector(`.service-card[data-role="plano"][data-qtd="${q}"]`);
+          const priceText = card ? card.getAttribute('data-preco') : findPrice(tipo, q);
+          if (resTipo) resTipo.textContent = getLabelForTipo(tipo);
+          if (resQtd) resQtd.textContent = `${q} ${unit}`;
+          if (resPreco && priceText) resPreco.textContent = priceText;
+          try { basePriceCents = parsePrecoToCents(priceText || ''); } catch(_) { basePriceCents = 0; }
+          if (planCards) {
+            const cards = planCards.querySelectorAll('.service-card[data-role="plano"]');
+            cards.forEach(c => c.classList.toggle('active', c === card));
+          }
+          updateOrderBump(tipo, q);
+          updatePromosSummary();
+          try { updatePaymentMethodVisibility(); } catch(_) {}
+        }
+      } catch(_) {}
+      try {
+        if (!isInstagramPrivate && (isCurtidasContext || isViewsContext)) {
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          renderSelectedPostsPreview(kind);
+        }
+      } catch(_) {}
+      try { updatePedidoButtonState(); } catch(_) {}
+    });
+  }
+  try { updatePaymentMethodVisibility(); } catch(_) {}
+  try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch(_) {}
+  
+  const hasRecoveryToken = (function(){
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      const identifier = String(p.get('identifier') || '').trim();
+      const correlationID = String(p.get('correlationID') || '').trim();
+      return !!rt || !!identifier || !!correlationID;
+    } catch (_) {
+      return false;
+    }
+  })();
+
+  function extractShortcodeFromIgLink(rawUrl) {
+    try {
+      const u = String(rawUrl || '').trim();
+      if (!u) return '';
+      const m = u.match(/instagram\.com\/(?:p|reel|tv)\/([^\/?#]+)/i);
+      return (m && m[1]) ? String(m[1]).trim() : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function extractIdsFromRecoveryToken(rtRaw) {
+    try {
+      const t = String(rtRaw || '').trim();
+      const idx = t.lastIndexOf('.');
+      if (idx < 1) return { identifier: '', correlationID: '' };
+      const payload = t.slice(0, idx);
+      const s = payload.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+      const json = atob(s + pad);
+      const obj = JSON.parse(json);
+      return {
+        identifier: String(obj && obj.identifier ? obj.identifier : '').trim(),
+        correlationID: String(obj && obj.correlationID ? obj.correlationID : '').trim()
+      };
+    } catch (_) {
+      return { identifier: '', correlationID: '' };
+    }
+  }
+
+  async function safeParseJson(resp) {
+    try {
+      const ct = String(resp && resp.headers && resp.headers.get ? resp.headers.get('content-type') : '').toLowerCase();
+      if (ct && ct.indexOf('application/json') === -1) return null;
+      return await resp.json().catch(() => null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function applyCouponFromCode(codeRaw) {
+    try {
+      const code = String(codeRaw || '').trim().toUpperCase();
+      if (!code) return false;
+      const input = document.getElementById('couponInput');
+      const msg = document.getElementById('couponMessage');
+      if (input) input.value = code;
+      const usernameEl = document.getElementById('usernameCheckoutInput');
+      const instagram_username = usernameEl ? String(usernameEl.value || '').trim().replace(/^@+/, '') : '';
+      const res = await fetch('/api/validate-coupon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ code, instagram_username, categoria: serviceCategoryKey, tipo: (document.getElementById('tipoSelect') || {}).value || '' })
+      });
+      const data = await res.json().catch(() => null);
+      if (data && data.valid) {
+        window.couponCode = data.code;
+        window.couponDiscount = data.discount || 0;
+        if (msg) {
+          const percent = Math.round((Number(data.discount || 0)) * 100);
+          msg.textContent = 'Cupom aplicado! (' + percent + '% OFF)';
+          msg.style.color = '#22c55e';
+          msg.style.display = 'block';
+        }
+        if (input) input.disabled = true;
+        const applyBtn = document.getElementById('applyCouponBtn');
+        if (applyBtn) {
+          applyBtn.disabled = true;
+          applyBtn.textContent = 'Aplicado';
+        }
+        try { updatePromosSummary(); } catch (_) {}
+        return true;
+      }
+      window.couponCode = '';
+      window.couponDiscount = 0;
+      if (msg) {
+        msg.textContent = (data && data.error) ? data.error : 'Cupom inválido.';
+        msg.style.color = '#ef4444';
+        msg.style.display = 'block';
+      }
+      try { updatePromosSummary(); } catch (_) {}
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Preenche os campos de contato (nome/email/telefone) a partir dos dados do pedido.
+  // Só preenche campo VAZIO (não atropela o que o cliente digitou). Reutilizável para
+  // RE-APLICAR após a validação do perfil / troca de tipo (que re-renderizam a área).
+  function applyRecoveryCustomerFields(customer) {
+    try {
+      customer = customer || {};
+      if (contactEmailInput && customer.email && !String(contactEmailInput.value || '').trim()) {
+        contactEmailInput.value = String(customer.email || '').trim();
+        try { contactEmailInput.dispatchEvent(new Event('input')); } catch (_) {}
+      }
+      const n0 = String(customer.name || customer.nome || '').trim();
+      const n1 = normalizeFullName(n0);
+      const isGeneric = !n1 || /^cliente instagram$/i.test(n1) || /^cliente$/i.test(n1);
+      if (contactNameInput && !String(contactNameInput.value || '').trim() && !isGeneric && isValidFullName(n1)) {
+        contactNameInput.value = n1;
+        try { contactNameInput.dispatchEvent(new Event('input')); } catch (_) {}
+      }
+      if (contactPhoneInput && customer.phone && !String(contactPhoneInput.value || '').trim()) {
+        contactPhoneInput.value = String(customer.phone || '').trim();
+        try { contactPhoneInput.dispatchEvent(new Event('input')); } catch (_) {}
+        try { contactPhoneInput.dispatchEvent(new Event('change')); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  function applyRecoveryContext(ctx) {
+    try {
+      const customer = (ctx && ctx.customer && typeof ctx.customer === 'object') ? ctx.customer : {};
+      const tipoRaw = String(ctx && (ctx.tipo_servico || ctx.tipo) || '').trim();
+      const qtdRaw = String(ctx && (ctx.quantidade || ctx.qtd) || '').trim();
+      const usernameRaw = String(ctx && (ctx.instagram_username || ctx.username) || '').trim();
+      const couponRaw = String(ctx && ctx.coupon || '').trim();
+      const postShortcode = String(ctx && (ctx.post_shortcode || (ctx.selected && ctx.selected.post_shortcode)) || '').trim();
+      // No remarketing (link do WhatsApp, src=waba_remarketing) NÃO re-marcamos os order bumps do pedido
+      // antigo: deixa só o serviço principal (tipo/qtd) marcado e o cliente decide os bumps. No fluxo de
+      // recuperação de Pix (retomar o MESMO pedido abandonado) mantemos os bumps que ele tinha escolhido.
+      const __isRemarketing = (function () { try { return /(?:^|[?&])src=waba_remarketing\b/.test(String(window.location.search || '')); } catch (_) { return false; } })();
+      const bumpsRaw = __isRemarketing ? '' : String(ctx && (ctx.order_bumps || ctx.orderBumps) || '').trim();
+
+      try { window.__oppusRecoveryApplied = true; } catch (_) {}
+
+      if (usernameCheckoutInput && usernameRaw) {
+        usernameCheckoutInput.value = usernameRaw;
+      }
+      if (tipoSelect) {
+        const normalizedTipo = normalizeTipoForContext(tipoRaw);
+        if (normalizedTipo) tipoSelect.value = normalizedTipo;
+        setTimeout(() => { try { tipoSelect.dispatchEvent(new Event('change')); } catch(_) {} }, 50);
+      }
+      const qtdNum = parseInt(qtdRaw, 10);
+      if (qtdSelect && Number.isFinite(qtdNum) && qtdNum > 0) {
+        setTimeout(() => {
+          try {
+            const tipo = tipoSelect ? String(tipoSelect.value || '').trim() : '';
+            const chosen = pickClosestQtd(tipo, qtdNum);
+            if (chosen) {
+              qtdSelect.value = String(chosen);
+              qtdSelect.dispatchEvent(new Event('change'));
+            }
+          } catch (_) {}
+        }, 180);
+      }
+
+      try {
+        const fromInput = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+        const ig0 = String(usernameRaw || fromInput || '').trim();
+        const uname = normalizeInstagramUsername(ig0);
+        const ig = String(uname || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+        if (usernameCheckoutInput && ig) usernameCheckoutInput.value = ig;
+        if (checkoutProfileUsername && ig) checkoutProfileUsername.textContent = ig;
+        if (checkoutProfileImage && !checkoutProfileImage.src) checkoutProfileImage.src = 'https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg';
+        if (profilePreview) profilePreview.style.display = 'block';
+        const contactArea = document.getElementById('contactFieldsArea');
+        if (contactArea) contactArea.style.display = 'block';
+        isInstagramVerified = false;
+        if (ig) {
+          try {
+            const priv = !!(ctx && (ctx.isPrivate === true || ctx.is_private === true));
+            isInstagramPrivate = priv;
+          } catch (_) { isInstagramPrivate = false; }
+        }
+      } catch (_) {}
+
+      // Preenche nome/email/telefone AGORA e re-aplica em vários instantes — a validação do
+      // perfil e a troca de tipo/qtd re-renderizam a área de contato e apagariam o preenchimento
+      // se fosse só uma vez. Guarda os dados num global pra re-aplicar sem depender do ctx.
+      try {
+        window.__oppusRecoveryCustomer = customer || {};
+        applyRecoveryCustomerFields(customer);
+        [400, 1200, 2500, 4500].forEach((ms) => setTimeout(() => {
+          try { applyRecoveryCustomerFields(window.__oppusRecoveryCustomer); } catch (_) {}
+        }, ms));
+      } catch (_) {}
+
+      try {
+        if (bumpsRaw) {
+          const parts = bumpsRaw.split(';').map(s => String(s || '').trim()).filter(Boolean);
+          const map = {};
+          parts.forEach(p => {
+            const [k0, q0] = p.split(':');
+            const k = String(k0 || '').trim();
+            const q = parseInt(String(q0 || '1'), 10);
+            if (!k) return;
+            map[k] = Number.isFinite(q) && q > 0 ? q : 1;
+          });
+
+          const ob = document.getElementById('orderBumpCheckboxInline');
+          if (ob && map.upgrade) ob.checked = true;
+
+          const likesCb = document.getElementById('promoLikes');
+          if (likesCb && map.likes) {
+            likesCb.checked = true;
+            const qEl = document.getElementById('likesQty');
+            const qty = map.likes;
+            if (qEl) qEl.textContent = String(qty);
+            try { updateLikesPrice(qty); } catch (_) {}
+          }
+
+          const viewsCb = document.getElementById('promoViews');
+          if (viewsCb && map.views) {
+            viewsCb.checked = true;
+            const qEl = document.getElementById('viewsQty');
+            const qty = map.views;
+            if (qEl) qEl.textContent = String(qty);
+            try { updateViewsPrice(qty); } catch (_) {}
+          }
+
+          const commCb = document.getElementById('promoComments');
+          if (commCb && map.comments) {
+            commCb.checked = true;
+            const qEl = document.getElementById('commentsQty');
+            const qty = Math.max(1, Math.min(100, map.comments));
+            if (qEl) qEl.textContent = String(qty);
+            try { updateCommentsPrice(qty); } catch (_) {}
+          }
+
+          const warCb = document.getElementById('promoWarranty60');
+          if (warCb && map.warranty_6m) warCb.checked = true;
+
+          try { updatePromosSummary(); } catch (_) {}
+          try { updatePedidoButtonState(); } catch (_) {}
+        }
+      } catch (_) {}
+
+      try {
+        if ((isCurtidasContext || isViewsContext) && postShortcode) {
+          if (!window.__oppusSelectedPostsByKind) window.__oppusSelectedPostsByKind = {};
+          const kind = isCurtidasContext ? 'likes' : 'views';
+          window.__oppusSelectedPostsByKind[kind] = [postShortcode];
+          setTimeout(() => { try { renderSelectedPostsPreview(kind); } catch (_) {} }, 260);
+        }
+      } catch (_) {}
+
+      if (hasRecoveryToken) {
+        const wantsPixAnchor = (function () {
+          try {
+            const h = String(window.location && window.location.hash ? window.location.hash : '').toLowerCase().trim();
+            if (h === '#pix' || h === '#pixcopy' || h === '#pix-copia' || h === '#pix-copiar') return true;
+          } catch (_) {}
+          try {
+            const p = new URLSearchParams(window.location.search || '');
+            const a = String(p.get('anchor') || p.get('scroll') || '').toLowerCase().trim();
+            if (a === 'pix' || a === 'pixcopy' || a === 'pix_copiar') return true;
+          } catch (_) {}
+          return false;
+        })();
+        const scrollToPixCopy = async () => {
+          if (!wantsPixAnchor) return;
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+          for (let i = 0; i < 20; i++) {
+            const btn = document.getElementById('copyPixBtnDynamic') || document.getElementById('copyPixBtn') || document.getElementById('copyBtn') || null;
+            const code = document.getElementById('pixBrCodeInputDynamic') || document.getElementById('pixCopiaCola') || null;
+            const target = btn || code || document.getElementById('pixResultado') || document.getElementById('pixContainer') || null;
+            if (target && typeof target.scrollIntoView === 'function') {
+              try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) { try { target.scrollIntoView(true); } catch (_) {} }
+              return;
+            }
+            await sleep(150);
+          }
+        };
+
+        const wantsAutoPix = (function(){
+          try {
+            const p = new URLSearchParams(window.location.search || '');
+            const v = String(p.get('autopix') || p.get('autopay') || '').trim();
+            return v === '1' || v.toLowerCase() === 'true';
+          } catch (_) {
+            return false;
+          }
+        })();
+
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+
+        const runAuto = async () => {
+          try {
+            const rawU = String(usernameCheckoutInput && usernameCheckoutInput.value ? usernameCheckoutInput.value : '').trim();
+            const u = normalizeInstagramUsername(rawU);
+            if (usernameCheckoutInput && u) usernameCheckoutInput.value = u;
+          } catch (_) {}
+
+          try {
+            for (let i = 0; i < 12; i++) {
+              const tipoOk = !!(tipoSelect && String(tipoSelect.value || '').trim());
+              const qtdOk = !!(qtdSelect && !qtdSelect.disabled && String(qtdSelect.value || '').trim());
+              if (tipoOk && qtdOk) break;
+              await sleep(90);
+            }
+          } catch (_) {}
+
+          let verifiedOk = false;
+          try {
+            verifiedOk = await checkInstagramProfileCheckout({ silent: true, noModal: true, noScroll: true, includePosts: false });
+          } catch (_) { verifiedOk = false; }
+          if (!verifiedOk) {
+            try { showStatusMessageCheckout('Não foi possível validar o perfil automaticamente. Clique em "Buscar" para continuar.', 'error'); } catch (_) {}
+            return;
+          }
+
+          try {
+            if (couponRaw) await applyCouponFromCode(couponRaw);
+          } catch (_) {}
+
+          try { updatePromosSummary(); } catch (_) {}
+          try { updatePedidoButtonState(); } catch (_) {}
+
+          try { if (window.goToStep) window.goToStep(3); } catch (_) {}
+
+          if (wantsAutoPix) {
+            await sleep(300);
+            try { selectPaymentMethod('pix'); } catch (_) {}
+            try { await criarPixPaghiper(); } catch (_) {}
+            try { await scrollToPixCopy(); } catch (_) {}
+          }
+        };
+
+        setTimeout(function(){ runAuto().catch(function(){}); }, 220);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function applyRecoveryContextFromOrderQuery() {
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      let identifier = String(p.get('identifier') || '').trim();
+      let correlationID = String(p.get('correlationID') || '').trim();
+      if (!identifier && !correlationID) {
+        const rt = String(p.get('rt') || '').trim();
+        const ids = extractIdsFromRecoveryToken(rt);
+        identifier = String(ids.identifier || '').trim();
+        correlationID = String(ids.correlationID || '').trim();
+      }
+      if (!identifier && !correlationID) return false;
+      const qs = new URLSearchParams();
+      if (identifier) qs.set('identifier', identifier);
+      if (correlationID) qs.set('correlationID', correlationID);
+      const resp = await fetch('/api/order?' + qs.toString(), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+      const data = await safeParseJson(resp);
+      if (!data || !data.ok || !data.order) return false;
+      const order = data.order || {};
+      const mapPaid = (order.additionalInfoMapPaid && typeof order.additionalInfoMapPaid === 'object') ? order.additionalInfoMapPaid : {};
+      const map = (order.additionalInfoMap && typeof order.additionalInfoMap === 'object') ? order.additionalInfoMap : {};
+      const arrPaid = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : [];
+      const arr = Array.isArray(order.additionalInfo) ? order.additionalInfo : [];
+      const pickFromArray = (arr0, key) => {
+        const list = Array.isArray(arr0) ? arr0 : [];
+        const it = list.find(x => x && String(x.key || '').trim() === String(key || '').trim());
+        return it && typeof it.value !== 'undefined' ? it.value : undefined;
+      };
+      const getAdd = (key) => {
+        if (typeof mapPaid[key] !== 'undefined') return mapPaid[key];
+        if (typeof map[key] !== 'undefined') return map[key];
+        const v1 = pickFromArray(arrPaid, key);
+        if (typeof v1 !== 'undefined') return v1;
+        return pickFromArray(arr, key);
+      };
+      const customer = (order.customer && typeof order.customer === 'object') ? order.customer : {};
+      const postLink = String(getAdd('post_link') || getAdd('link') || getAdd('orderbump_post_likes') || getAdd('orderbump_post_views') || '').trim();
+      const post_shortcode = extractShortcodeFromIgLink(postLink);
+      const couponFromUrl = String(p.get('cupom') || p.get('coupon') || '').trim();
+      const nameAny = String(
+        getAdd('customer_name') ||
+        getAdd('nome') ||
+        getAdd('name') ||
+        customer.name ||
+        customer.nome ||
+        ''
+      ).trim();
+      const phoneAny = String(
+        getAdd('phone') ||
+        getAdd('telefone') ||
+        getAdd('whatsapp') ||
+        customer.phone ||
+        customer.telefone ||
+        customer.whatsapp ||
+        order.phone ||
+        order.telefone ||
+        order.whatsapp ||
+        ''
+      ).trim();
+      const ctx = {
+        tipo_servico: String(getAdd('tipo_servico') || getAdd('tipoServico') || getAdd('tipo') || order.tipoServico || order.tipo || '').trim(),
+        quantidade: String(getAdd('quantidade') || getAdd('qtd') || order.quantidade || order.qtd || '').trim(),
+        instagram_username: String(getAdd('instagram_username') || getAdd('instagramUsername') || order.instagramUsername || order.instauser || '').trim(),
+        coupon: couponFromUrl,
+        customer: { email: String(customer.email || '').trim(), phone: phoneAny, name: nameAny },
+        post_shortcode,
+        order_bumps: String(getAdd('order_bumps') || '').trim()
+      };
+      return applyRecoveryContext(ctx);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function applyRecoveryContextFromTokenOrOrderQuery() {
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const rt = String(p.get('rt') || '').trim();
+      if (rt) {
+        const resp = await fetch('/api/recovery/context?rt=' + encodeURIComponent(rt), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+        const data = await safeParseJson(resp);
+        if (data && data.ok && data.context) {
+          try { applyRecoveryContext(data.context); } catch (_) {}
+          try { await applyRecoveryContextFromOrderQuery(); } catch (_) {}
+          return true;
+        }
+      }
+    } catch (_) {}
+    return applyRecoveryContextFromOrderQuery();
+  }
+
+  try { applyRecoveryContextFromTokenOrOrderQuery().catch(() => {}); } catch (_) {}
+
+  // Default selection (Mistos)
+  const urlPrefill = (function(){
+    try {
+      const p = new URLSearchParams(window.location.search || '');
+      const tipoRaw = String(p.get('tipo') || p.get('tipo_servico') || p.get('plan') || '').trim();
+      const qtdRaw = String(p.get('qtd') || p.get('quantidade') || p.get('quantity') || '').trim();
+      const stepRaw = String(p.get('step') || p.get('etapa') || p.get('autostep') || '').trim();
+      const usernameRaw = String(p.get('instagram_username') || p.get('username') || p.get('perfil') || '').trim();
+      const stepNum = parseInt(stepRaw, 10);
+      const qtdNum = parseInt(qtdRaw, 10);
+      return {
+        tipo: tipoRaw,
+        qtd: Number.isFinite(qtdNum) && qtdNum > 0 ? qtdNum : null,
+        step: Number.isFinite(stepNum) && stepNum > 0 ? stepNum : null,
+        username: usernameRaw ? usernameRaw.replace(/^@+/, '').replace(/\/+$/g, '') : ''
+      };
+    } catch (_) {
+      return { tipo: '', qtd: null, step: null, username: '' };
+    }
+  })();
+
+  function normalizeTipoForContext(raw) {
+    const t0 = String(raw || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/-+/g, '_');
+    if (isViewsContext) return 'visualizacoes_reels';
+    if (isCurtidasContext) {
+      if (!t0) return '';
+      if (t0 === 'curtidas_brasileiras' || t0 === 'brasileiros' || t0 === 'brasileiras') return 'curtidas_brasileiras';
+      if (t0 === 'organicos' || t0 === 'reais' || t0.includes('organ') || t0.includes('real')) return 'organicos';
+      if (t0 === 'mistos' || t0.includes('mist')) return 'mistos';
+      if (t0.includes('brasil')) return 'curtidas_brasileiras';
+      return t0;
+    }
+    if (!t0) return '';
+    if (t0 === 'organicos' || t0 === 'reais' || t0.includes('organ') || t0.includes('real')) return 'organicos';
+    if (t0 === 'brasileiros' || t0.includes('brasil')) return 'brasileiros';
+    if (t0 === 'mistos' || t0.includes('mist')) return 'mistos';
+    return t0;
+  }
+
+  function pickClosestQtd(tipo, desiredQtd) {
+    try {
+      const arr = (tabela && tabela[tipo]) ? tabela[tipo] : [];
+      const target = Number(desiredQtd) || 0;
+      if (!arr.length || !(target > 0)) return null;
+      let best = arr[0]?.q || null;
+      let bestDiff = Number.isFinite(best) ? Math.abs(best - target) : Number.POSITIVE_INFINITY;
+      for (const it of arr) {
+        const q = Number(it && it.q);
+        if (!Number.isFinite(q)) continue;
+        const diff = Math.abs(q - target);
+        if (diff < bestDiff) { best = q; bestDiff = diff; }
+        if (diff === 0) break;
+      }
+      return Number.isFinite(best) && best > 0 ? best : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  try {
+    if (usernameCheckoutInput && urlPrefill.username && !String(usernameCheckoutInput.value || '').trim()) {
+      usernameCheckoutInput.value = urlPrefill.username;
+    }
+  } catch (_) {}
+
+  if (tipoSelect) {
+    const preTipo = normalizeTipoForContext(urlPrefill.tipo);
+    if (preTipo) {
+      tipoSelect.value = preTipo;
+    } else if (!tipoSelect.value) {
+      tipoSelect.value = 'mistos';
+    }
+    // Always dispatch change to ensure cards are rendered and scroll logic runs
+    setTimeout(() => {
+        tipoSelect.dispatchEvent(new Event('change'));
+    }, 100);
+  }
+
+  // Apply quantity after type options exist
+  try {
+    if (qtdSelect && urlPrefill.qtd) {
+      setTimeout(() => {
+        try {
+          const tipo = tipoSelect ? String(tipoSelect.value || '').trim() : '';
+          const chosen = pickClosestQtd(tipo, urlPrefill.qtd);
+          if (chosen) {
+            qtdSelect.value = String(chosen);
+            qtdSelect.dispatchEvent(new Event('change'));
+          }
+        } catch (_) {}
+      }, 180);
+    }
+  } catch (_) {}
+ 
+  // Initial Step (prefill can open directly on Step 3)
+  const initialStep = (function(){
+    const s = Number(urlPrefill.step || 0);
+    if (s === 2 || s === 3) return s;
+    return 1;
+  })();
+  if (window.goToStep) {
+    if (hasRecoveryToken) {
+      window.goToStep(1);
+    } else if (initialStep === 1) {
+      window.goToStep(1);
+    } else {
+      setTimeout(() => {
+        try { window.goToStep(initialStep); } catch (_) {}
+      }, 260);
+    }
+  }
+  
+  // Expor função para o EJS se necessário (mas tentamos evitar scripts inline)
+  window.checkInstagramProfileCheckout = checkInstagramProfileCheckout;
+
+  // --- Modals Logic (Warranty, Comments, Tools) ---
+  const warrantyModal = document.getElementById('warranty60Modal');
+  const warrantyInfoBtn = document.getElementById('warranty60InfoBtn');
+  const warrantyInfoBtn30 = document.getElementById('warranty30InfoBtn');
+  const warrantyInfoBtnLifetime = document.getElementById('warrantyLifetimeInfoBtn');
+  const warrantyCloseBtn = document.getElementById('warranty60CloseBtn');
+  if (warrantyInfoBtn && warrantyModal) {
+    warrantyInfoBtn.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtn30 && warrantyModal) {
+    warrantyInfoBtn30.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyInfoBtnLifetime && warrantyModal) {
+    warrantyInfoBtnLifetime.addEventListener('click', function(){
+      try {
+        if (warrantyModal.parentNode !== document.body) {
+          document.body.appendChild(warrantyModal);
+        }
+      } catch(_) {}
+      warrantyModal.style.display = 'flex';
+    });
+  }
+  if (warrantyCloseBtn && warrantyModal) {
+    warrantyCloseBtn.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  const warrantyCloseBtn2 = document.getElementById('warranty60CloseBtn2');
+  if (warrantyCloseBtn2 && warrantyModal) {
+    warrantyCloseBtn2.addEventListener('click', function(){ warrantyModal.style.display = 'none'; });
+  }
+  if (warrantyModal) {
+    warrantyModal.addEventListener('click', function(e){ if (e.target === warrantyModal) { warrantyModal.style.display = 'none'; } });
+  }
+
+  const commentsModal = document.getElementById('commentsExampleModal');
+  const commentsBtn = document.getElementById('commentsExampleBtn');
+  const commentsCloseBtn = document.getElementById('commentsExampleCloseBtn');
+  const commentsCloseBtn2 = document.getElementById('commentsExampleCloseBtn2');
+  const commentsVideo = document.getElementById('commentsVideoPlayer');
+
+  if (commentsBtn && commentsModal) {
+    commentsBtn.addEventListener('click', function(e){
+      try { e.stopPropagation(); } catch(_) {}
+      suppressOpenPostModalOnce = true;
+      setTimeout(function(){ suppressOpenPostModalOnce = false; }, 500);
+      try {
+        if (commentsModal.parentNode !== document.body) {
+          document.body.appendChild(commentsModal);
+        }
+      } catch(_) {}
+      commentsModal.style.display = 'flex';
+      if (commentsVideo) {
+        commentsVideo.currentTime = 0;
+        try { commentsVideo.play(); } catch(e) { console.log('Video play failed', e); }
+      }
+    });
+  }
+  function closeCommentsModal() {
+    if (commentsModal) commentsModal.style.display = 'none';
+    if (commentsVideo) commentsVideo.pause();
+  }
+  if (commentsCloseBtn && commentsModal) {
+    commentsCloseBtn.addEventListener('click', closeCommentsModal);
+  }
+  if (commentsCloseBtn2 && commentsModal) {
+    commentsCloseBtn2.addEventListener('click', closeCommentsModal);
+  }
+  if (commentsModal) {
+    commentsModal.addEventListener('click', function(e){ if (e.target === commentsModal) { closeCommentsModal(); } });
+  }
+});
