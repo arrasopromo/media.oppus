@@ -3269,6 +3269,83 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                 }
             }
 
+            // ── Fallback RocketAPI por ID (contas COMERCIAIS/business) ─────────────────
+            // O get_info acima falha para conta comercial (campo ig_business_category_subvertical
+            // removido pelo IG). Mas `search → get_info_by_id` usa outra rota que FUNCIONA. Isso
+            // evita depender do Apify (que pode estar sem cota). Traz seguidores/privado/avatar;
+            // posts via get_media pelo id.
+            if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
+              try {
+                const _TK = process.env.ROCKETAPI_TOKEN;
+                const _rp = (u, p) => axios.post(u, p, { headers: { Authorization: `Token ${_TK}` }, timeout: 12000, validateStatus: () => true });
+                const _body = (rd) => { let b = rd && rd.response ? rd.response.body : null; if (typeof b === 'string') { try { b = JSON.parse(b); } catch (_) { b = null; } } return b; };
+                let _pk = null;
+                try {
+                  const s = await _rp('https://v1.rocketapi.io/instagram/user/search', { query: username });
+                  if (s.status === 200) {
+                    const sb = _body(s.data);
+                    const arr = sb && (sb.users || (sb.data && sb.data.users));
+                    const want = String(username || '').toLowerCase().replace(/^@+/, '');
+                    for (const w of (Array.isArray(arr) ? arr : [])) { const usr = (w && w.user) ? w.user : w; if (usr && String(usr.username || '').toLowerCase() === want) { _pk = usr.pk || usr.pk_id || usr.id; break; } }
+                  }
+                } catch (_) {}
+                let _bUser = null;
+                if (_pk) { try { const idr = await _rp('https://v1.rocketapi.io/instagram/user/get_info_by_id', { id: String(_pk) }); if (idr.status === 200) { const bb = _body(idr.data); _bUser = (bb && bb.data && bb.data.user) ? bb.data.user : (bb && bb.user ? bb.user : null); } } catch (_) {} }
+                if (_bUser && (_bUser.username || _bUser.follower_count != null || _bUser.edge_followed_by)) {
+                  global.rocketApiDisabledUntil = 0;
+                  const _bId = _bUser.pk || _bUser.id || _pk;
+                  let _bPosts = [];
+                  if (!skipPosts && _bId && !_bUser.is_private) {
+                    try {
+                      const mediaResp = await _rp('https://v1.rocketapi.io/instagram/user/get_media', { id: String(_bId), count: 12 });
+                      const mItems = (mediaResp.status === 200 && mediaResp.data && mediaResp.data.response && mediaResp.data.response.body && mediaResp.data.response.body.items) ? mediaResp.data.response.body.items : [];
+                      _bPosts = (mItems || []).map(item => ({ shortcode: item.code, takenAt: item.taken_at, isVideo: item.media_type === 2 || !!item.video_versions, displayUrl: (item.image_versions2 && item.image_versions2.candidates && item.image_versions2.candidates[0]) ? item.image_versions2.candidates[0].url : null, videoUrl: (item.video_versions && item.video_versions[0]) ? item.video_versions[0].url : null, typename: item.media_type === 2 ? 'GraphVideo' : 'GraphImage' })).slice(0, 12);
+                    } catch (_) {}
+                  }
+                  const _fc = (_bUser.edge_followed_by ? _bUser.edge_followed_by.count : null) ?? _bUser.follower_count ?? _bUser.followers_count ?? 0;
+                  const _bPic = (_bUser.hd_profile_pic_url_info && _bUser.hd_profile_pic_url_info.url) || _bUser.profile_pic_url_hd || _bUser.profile_pic_url || '';
+                  const _bProfile = {
+                    username: _bUser.username || username,
+                    fullName: _bUser.full_name || '',
+                    profilePicUrl: _bPic || 'https://upload.wikimedia.org/wikipedia/commons/a/ac/Default_pfp.jpg',
+                    originalProfilePicUrl: _bPic,
+                    driveImageUrl: null,
+                    followersCount: _fc,
+                    followingCount: (_bUser.edge_follow ? _bUser.edge_follow.count : null) ?? _bUser.following_count ?? 0,
+                    postsCount: (_bUser.edge_owner_to_timeline_media ? _bUser.edge_owner_to_timeline_media.count : null) ?? _bUser.media_count ?? 0,
+                    isPrivate: !!_bUser.is_private,
+                    isVerified: !!_bUser.is_verified,
+                    alreadyTested: false,
+                    latestPosts: _bPosts
+                  };
+                  try { _bProfile.alreadyTested = await checkInstauserExists(username); } catch (_) {}
+                  try {
+                    const vu = await getCollection('validated_insta_users');
+                    const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
+                    const checkedAtIso = new Date().toISOString();
+                    const doc = { username: String(_bProfile.username).toLowerCase(), fullName: _bProfile.fullName, profilePicUrl: _bProfile.profilePicUrl, isVerified: _bProfile.isVerified, isPrivate: _bProfile.isPrivate, followersCount: _bProfile.followersCount, followingCount: _bProfile.followingCount, postsCount: _bProfile.postsCount, checkedAt: checkedAtIso, linkId: linkId || null, ip: String(ip || ''), userAgent: String(userAgent || ''), source: (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_rocketapi_byid_' + purpose) : 'verifyInstagramProfile_ROCKETAPI_BYID', latestPosts: _bPosts };
+                    const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
+                    await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() }, $push: { checks: { $each: [snapshot], $slice: -60 } } }, { upsert: true });
+                    if (!skipPosts && _bPosts.length) { try { await vu.updateOne({ username: doc.username }, { $set: { lastPostsAt: checkedAtIso } }); } catch (_) {} }
+                  } catch (_) {}
+                  if (typeof isAllowedImageHost === 'function' && _bProfile.profilePicUrl && isAllowedImageHost(_bProfile.profilePicUrl)) { _bProfile.profilePicUrl = `/image-proxy?url=${encodeURIComponent(_bProfile.profilePicUrl)}`; }
+                  const resultByid = { success: true, status: 200, profile: _bProfile };
+                  setCache(username, resultByid, CACHE_TTL_MS);
+                  console.log(`✅ RocketAPI by-id (business) ok @${username} followers=${_fc}`);
+                  return resultByid;
+                }
+              } catch (eByid) { try { console.warn('⚠️ RocketAPI by-id fallback falhou:', eByid && eByid.message); } catch (_) {} }
+            }
+
+            // Apify sem cota (limite mensal estourado) → não adianta tentar. Se marcado como
+            // fora, pula direto e devolve "perfil não encontrado" (o RocketAPI já falhou acima).
+            if (global.apifyDisabledUntil && Date.now() < global.apifyDisabledUntil) {
+                console.warn(`⏭️ Apify pulado (cota estourada) — @${username}`);
+                const r404 = { success: false, status: 404, error: 'Perfil não encontrado. Confira o @ digitado e tente novamente.' };
+                setCache(username, r404, NEGATIVE_CACHE_TTL_MS);
+                return r404;
+            }
+
             const apifyToken = process.env.APIFY_TOKEN;
             if (!apifyToken) {
                 console.error("❌ Erro: APIFY_TOKEN não configurado");
@@ -3397,7 +3474,17 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
             if (error.response) {
                 console.error('❌ Detalhes Erro Apify:', error.response.status, error.response.data);
             }
-            const errorResult = { success: false, status: 500, error: "Erro de usuário. configra o nome digitado e tente novamente." };
+            // Cota do Apify estourada (403 "hard limit") → desativa por 6h para não gastar
+            // request/timeout à toa. O RocketAPI (get_info + by-id) cobre pessoal/criador/business.
+            try {
+                const st = error && error.response ? error.response.status : null;
+                const em = (error && error.response && error.response.data && error.response.data.error && error.response.data.error.message) ? String(error.response.data.error.message) : String((error && error.message) || '');
+                if (st === 403 || /hard limit|usage.*limit|feature-disabled|monthly/i.test(em)) {
+                    global.apifyDisabledUntil = Date.now() + 6 * 60 * 60 * 1000;
+                    console.warn('⛔ Apify desativado por 6h (cota mensal estourada).');
+                }
+            } catch (_) {}
+            const errorResult = { success: false, status: 404, error: "Perfil não encontrado. Confira o @ digitado e tente novamente." };
             setCache(username, errorResult, NEGATIVE_CACHE_TTL_MS);
             return errorResult;
         }
