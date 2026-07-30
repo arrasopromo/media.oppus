@@ -7700,7 +7700,20 @@ async function computeLtvStats(opts = {}) {
 
   // ── Envios AUTOMÁTICOS (D+2) por dia — fonte DURÁVEL: checkout_orders.ltvD2SentAt
   //    (nunca é apagada, ao contrário dos links efêmeros). Respeita o período. ──
-  const autoDocs = await col.find({ ltvD2SentAt: { $exists: true, $nin: [null, ''] } }, { projection: { ltvD2SentAt: 1 } }).limit(200000).toArray().catch(() => []);
+  //    IMPORTANTE: 1 mensagem D+2 marca ltvD2SentAt em TODOS os pedidos do cliente (dedup
+  //    contra reenvio). Portanto, para CONTAR MENSAGENS, deduplicamos por TELEFONE — senão
+  //    um cliente com N pedidos contaria como N mensagens (inflava o total e o custo).
+  const autoDocsRaw = await col.find({ ltvD2SentAt: { $exists: true, $nin: [null, ''] } }, { projection: { ltvD2SentAt: 1, customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } }).limit(200000).toArray().catch(() => []);
+  const __autoSeenPhone = new Set();
+  const autoDocs = [];
+  for (const d of autoDocsRaw) {
+    let ph = '';
+    try { const gA = buildOrderFieldGetter(d); const cu = (d.customer && typeof d.customer === 'object') ? d.customer : {}; ph = normalizePhoneBR(gA('phone') || gA('telefone') || gA('whatsapp') || cu.phone || cu.telefone || cu.whatsapp || '') || ''; } catch (_) {}
+    const key = ph || ('id:' + String(d._id || '')); // sem telefone → não deduplica (mantém o pedido)
+    if (__autoSeenPhone.has(key)) continue;
+    __autoSeenPhone.add(key);
+    autoDocs.push(d);
+  }
   const autoTotalAll = autoDocs.length;
   const dayMap = new Map();
   let autoTotalPeriod = 0;
@@ -35263,6 +35276,70 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
   }
 });
 
+// ── Aprovar manualmente um pedido "gerado e não pago": marca como PAGO e despacha ao
+// fornecedor, como se tivesse sido pago de verdade. Só para pedidos aprovados manualmente
+// pelo admin (fica registrado em manualApproval + manualSale.source). ──
+app.post('/api/painel/pedidos/aprovar-manual', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const id = String(body.id || body.orderId || '').trim();
+    if (!/^[a-fA-F0-9]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id', message: 'ID do pedido inválido.' });
+    const { getCollection } = require('./mongodbClient');
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+    const order = await col.findOne({ _id: new ObjectId(id) });
+    if (!order) return res.status(404).json({ ok: false, error: 'not_found', message: 'Pedido não encontrado.' });
+
+    const isPaid = (function () {
+      const st = String(order.status || '').toLowerCase();
+      const wst = String(order && order.woovi && order.woovi.status || '').toLowerCase();
+      if (st === 'pago' || st === 'paid') return true;
+      if (wst === 'pago' || wst === 'paid') return true;
+      if (order.paidAt || (order.woovi && order.woovi.paidAt) || (order.paghiper && order.paghiper.paidAt)) return true;
+      return false;
+    })();
+    if (isPaid) return res.status(409).json({ ok: false, error: 'already_paid', message: 'Este pedido já consta como pago.' });
+
+    const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    const nowIso = new Date().toISOString();
+
+    const setObj = {
+      status: 'pago',
+      paidAt: nowIso,
+      manualApproval: { by: admin, at: nowIso },
+      manualSale: Object.assign({}, (order.manualSale && typeof order.manualSale === 'object') ? order.manualSale : {}, { source: (order.manualSale && order.manualSale.source) || 'manual_approval', approvedBy: admin, approvedAt: nowIso })
+    };
+    // Copia additionalInfo → additionalInfoPaid (como um pagamento real) p/ o pedido aparecer
+    // certinho nos relatórios/consulta.
+    if (!(Array.isArray(order.additionalInfoPaid) && order.additionalInfoPaid.length) && Array.isArray(order.additionalInfo) && order.additionalInfo.length) {
+      setObj.additionalInfoPaid = order.additionalInfo;
+    }
+    if (!(order.additionalInfoMapPaid && Object.keys(order.additionalInfoMapPaid).length) && order.additionalInfoMap && Object.keys(order.additionalInfoMap).length) {
+      setObj.additionalInfoMapPaid = order.additionalInfoMap;
+    }
+    // Garante valueCents (para não bloquear no fulfillment por valor faltando).
+    if ((order.valueCents == null || Number(order.valueCents) <= 0) && order.expectedValueCents != null) {
+      setObj.valueCents = Number(order.expectedValueCents) || 0;
+    }
+    await col.updateOne({ _id: order._id }, { $set: setObj });
+
+    // Despacha ao fornecedor em BACKGROUND (igual à venda manual do WhatsApp) — não trava a resposta.
+    try {
+      Promise.resolve().then(async () => {
+        const fresh = await col.findOne({ _id: order._id });
+        if (fresh) await processOrderFulfillment(fresh, col, req);
+      }).catch((e) => { try { console.warn('[aprovar-manual] dispatch falhou:', e && e.message); } catch (_) {} });
+    } catch (_) {}
+    // Link de refil (best-effort).
+    try { const identifier = String(order.identifier || ''); const correlationID = String(order.correlationID || ''); if (identifier || correlationID) ensureRefilLink(identifier, correlationID, req).catch(() => {}); } catch (_) {}
+
+    try { console.log(`✅ [aprovar-manual] pedido ${id} aprovado por ${admin} — despacho em andamento.`); } catch (_) {}
+    return res.json({ ok: true, id, message: 'Pedido aprovado como pago. Despacho ao fornecedor em andamento.' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'internal_error', message: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/vendas/delete', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -37594,7 +37671,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const match = (start || endExclusive) ? createdInRangeCond(start, endExclusive) : {};
       const notPaidQuery = { $and: [match, { $nor: [paidQuery] }] };
       const projection = {
-        _id: 0, instauser: 1, instagramUsername: 1, additionalInfo: 1, additionalInfoPaid: 1,
+        instauser: 1, instagramUsername: 1, additionalInfo: 1, additionalInfoPaid: 1,
         additionalInfoMap: 1, additionalInfoMapPaid: 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1,
         valueCents: 1, expectedValueCents: 1, createdAt: 1, criado: 1
       };
@@ -37611,7 +37688,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const qty = Number(getAdd('quantidade') || getAdd('qtd') || o.quantidade || o.qtd || 0) || 0;
         const valueCents = Number((o.valueCents != null) ? o.valueCents : ((o.expectedValueCents != null) ? o.expectedValueCents : 0)) || 0;
         const label = (categoria && tipo) ? (capFirst(categoria) + ' · ' + tipo) : (capFirst(categoria) || tipo || '-');
-        return { username: ig, type: label, qty, value: valueCents / 100, createdAt: o.createdAt || o.criado || null };
+        return { id: String(o._id || ''), username: ig, type: label, qty, value: valueCents / 100, createdAt: o.createdAt || o.criado || null };
       });
       // "já comprou alguma vez" = tem QUALQUER pedido pago (qualquer época).
       const buyers = new Set();

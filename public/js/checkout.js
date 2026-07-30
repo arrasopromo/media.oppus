@@ -773,6 +773,7 @@
   // carrossel removido
   let isInstagramVerified = false;
   let isInstagramPrivate = false;
+  let __lastValidatedUser = ''; // último @ validado; ao trocar, reseta os bumps que dependem de post
   // Captura phone da URL: /checkout?phone=... (default 11111111)
   let phoneFromUrl = new URLSearchParams(window.location.search).get('phone') || '';
 
@@ -2774,6 +2775,20 @@
     try { applyCheckoutPrefill(); } catch (_) {}
   }
 
+  // Ao trocar de perfil, desmarca os order bumps que dependem de post (curtidas/views/
+  // comentários) e limpa a seleção — os posts eram do @ anterior.
+  function resetPostBumpsOnProfileChange() {
+    try {
+      ['promoLikes', 'promoViews', 'promoComments'].forEach(function (id) {
+        var cb = document.getElementById(id);
+        if (cb && cb.checked) { cb.checked = false; }
+      });
+    } catch (_) {}
+    try { window.__oppusSelectedPostsByKind = { likes: [], views: [], comments: [] }; } catch (_) {}
+    try { updatePromosSummary(); } catch (_) {}
+    try { updatePedidoButtonState(); } catch (_) {}
+  }
+
   async function checkInstagramProfileCheckout() {
     if (!usernameCheckoutInput) return;
     const rawInput = usernameCheckoutInput.value.trim();
@@ -2795,6 +2810,14 @@
     if (username !== rawInput) {
       usernameCheckoutInput.value = username;
     }
+    // Trocou de perfil? Posts selecionados (curtidas/views/comentários) eram do @ anterior →
+    // desmarca esses order bumps e limpa a seleção.
+    try {
+      var __uNow = String(username || '').replace(/^@+/, '').toLowerCase();
+      if (__lastValidatedUser && __uNow && __uNow !== __lastValidatedUser) {
+        try { resetPostBumpsOnProfileChange(); } catch (_) {}
+      }
+    } catch (_) {}
     hideStatusMessageCheckout();
     clearProfilePreview();
     showLoadingCheckout();
@@ -2874,6 +2897,7 @@
         if (step3Following && typeof profile.followingCount === 'number') step3Following.textContent = String(profile.followingCount);
         try { sessionStorage.setItem('oppus_instagram_username', profile.username || username); } catch(e) {}
         isInstagramVerified = true;
+        try { __lastValidatedUser = String(profile.username || username || '').replace(/^@+/, '').toLowerCase(); } catch (_) { __lastValidatedUser = username; }
         try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
         updatePedidoButtonState();
         showResumoIfAllowed();
@@ -2962,6 +2986,7 @@
           if (step3Following && typeof profile.followingCount === 'number') step3Following.textContent = String(profile.followingCount);
           
           isInstagramVerified = true;
+          try { __lastValidatedUser = String(profile.username || username || '').replace(/^@+/, '').toLowerCase(); } catch (_) { __lastValidatedUser = username; }
           isInstagramPrivate = !!isPrivate;
           updatePedidoButtonState();
           showResumoIfAllowed();

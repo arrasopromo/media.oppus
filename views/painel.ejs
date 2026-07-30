@@ -4133,24 +4133,50 @@
               });
               var boughtCount = list.filter(function(p){ return p.boughtEver; }).length;
               if (countEl) countEl.textContent = rows.length + ' de ' + list.length + ' · ' + boughtCount + ' já compraram antes';
-              var head = '<div style="position:sticky; top:0; background:#f9fafb; display:grid; grid-template-columns: 1.4fr 1fr 1.3fr 0.7fr 0.9fr 0.9fr; gap:8px; padding:8px 12px; font-size:0.72rem; font-weight:700; color:#6b7280; border-bottom:1px solid #eef0f4;">'
-                + '<div>Data/hora</div><div>Usuário</div><div>Tipo</div><div>Qtd</div><div>Valor</div><div>Já comprou?</div></div>';
+              var GNP_COLS = '1.2fr 0.9fr 1.05fr 0.5fr 0.75fr 0.65fr 0.95fr';
+              var head = '<div style="position:sticky; top:0; background:#f9fafb; display:grid; grid-template-columns: ' + GNP_COLS + '; gap:8px; padding:8px 12px; font-size:0.72rem; font-weight:700; color:#6b7280; border-bottom:1px solid #eef0f4;">'
+                + '<div>Data/hora</div><div>Usuário</div><div>Tipo</div><div>Qtd</div><div>Valor</div><div>Já comprou?</div><div>Ação</div></div>';
               var rowsHtml = rows.map(function(p){
                 var u = String(p.username || '');
                 var badge = p.boughtEver
                   ? '<span style="background:#dcfce7; color:#166534; font-weight:700; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">✓ sim</span>'
                   : '<span style="background:#f3f4f6; color:#9ca3af; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">não</span>';
                 var uHtml = u ? ('<a href="https://www.instagram.com/' + encodeURIComponent(u) + '/" target="_blank" rel="noopener" style="color:#111827; font-weight:600; text-decoration:none;">@' + esc(u) + '</a>') : '<span style="color:#9ca3af;">-</span>';
-                return '<div style="display:grid; grid-template-columns: 1.4fr 1fr 1.3fr 0.7fr 0.9fr 0.9fr; gap:8px; padding:9px 12px; border-bottom:1px solid #f3f4f6; font-size:0.82rem; align-items:center;">'
+                var approveBtn = p.id
+                  ? '<button class="gnp-approve" data-id="' + esc(p.id) + '" title="Marca como PAGO e despacha ao fornecedor" style="padding:4px 9px; border:1px solid #16a34a; background:#16a34a; color:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; white-space:nowrap;">Aprovar</button>'
+                  : '<span style="color:#9ca3af; font-size:0.72rem;">—</span>';
+                return '<div style="display:grid; grid-template-columns: ' + GNP_COLS + '; gap:8px; padding:9px 12px; border-bottom:1px solid #f3f4f6; font-size:0.82rem; align-items:center;">'
                   + '<div style="color:#374151;">' + fmtDate(p.createdAt) + '</div>'
                   + '<div style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + uHtml + '</div>'
                   + '<div style="color:#374151;">' + esc(p.type || '-') + '</div>'
                   + '<div style="color:#374151;">' + fmtNum(Number(p.qty||0)) + '</div>'
                   + '<div style="color:#111827; font-weight:600;">' + brl(p.value) + '</div>'
-                  + '<div>' + badge + '</div></div>';
+                  + '<div>' + badge + '</div>'
+                  + '<div>' + approveBtn + '</div></div>';
               }).join('');
               body.innerHTML = head + (rowsHtml || '<div style="padding:20px; text-align:center; color:#6b7280;">Nenhum pedido.</div>');
             }
+
+            // Aprovar pedido manualmente (marca como pago + despacha), com confirmação.
+            if (body) body.addEventListener('click', async function(ev){
+              var btn = (ev.target && ev.target.closest) ? ev.target.closest('.gnp-approve') : null;
+              if (!btn) return;
+              var oid = btn.getAttribute('data-id');
+              if (!oid) return;
+              if (!confirm('Aprovar este pedido como PAGO e despachar ao fornecedor?\n\nIsso conta como uma venda paga (entrega os seguidores). Use só para pedidos que você aprovou manualmente.')) return;
+              btn.disabled = true; var prev = btn.textContent; btn.textContent = 'Aprovando…';
+              try {
+                var r = await fetch('/api/painel/pedidos/aprovar-manual', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: oid }) });
+                var d = await r.json().catch(function(){ return { ok:false }; });
+                if (d && d.ok) {
+                  list = list.filter(function(p){ return String(p.id) !== String(oid); });
+                  render();
+                } else {
+                  alert('Falha ao aprovar: ' + ((d && d.message) || (d && d.error) || 'erro'));
+                  btn.disabled = false; btn.textContent = prev;
+                }
+              } catch (e) { alert('Erro de rede ao aprovar.'); btn.disabled = false; btn.textContent = prev; }
+            });
             card.addEventListener('click', function(){
               render();
               try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch (_) {}

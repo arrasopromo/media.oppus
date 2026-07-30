@@ -377,6 +377,7 @@ document.addEventListener('DOMContentLoaded', function() {
   let selectedPlatform = 'instagram';
   let basePriceCents = 0;
   let isInstagramVerified = false;
+  let __lastValidatedUser = ''; // último @ validado; ao trocar, reseta os bumps que dependem de post
   let isInstagramPrivate = false;
   let warrantyMode = '30';
   try {
@@ -3615,6 +3616,21 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!opts || opts.apply !== false) { try { applyCheckoutPrefill(); } catch (_) {} }
   }
 
+  // Ao trocar de perfil, desmarca os order bumps que dependem de post (curtidas/views/
+  // comentários) e limpa a seleção — os posts eram do @ anterior.
+  function resetPostBumpsOnProfileChange() {
+    try {
+      ['promoLikes', 'promoViews', 'promoComments'].forEach(function (id) {
+        var cb = document.getElementById(id);
+        if (cb && cb.checked) { cb.checked = false; try { cb.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {} }
+      });
+    } catch (_) {}
+    try { window.__oppusSelectedPostsByKind = { likes: [], views: [], comments: [] }; } catch (_) {}
+    try { ['likes', 'views', 'comments'].forEach(function (k) { try { if (typeof renderSelectedPostsPreview === 'function') renderSelectedPostsPreview(k); } catch (_) {} }); } catch (_) {}
+    try { updatePromosSummary(); } catch (_) {}
+    try { updatePedidoButtonState(); } catch (_) {}
+  }
+
   async function checkInstagramProfileCheckout(opts) {
     const silent = !!(opts && opts.silent);
     const noModal = !!(opts && opts.noModal);
@@ -3635,7 +3651,16 @@ document.addEventListener('DOMContentLoaded', function() {
       return false;
     }
     if (username !== rawInput) usernameCheckoutInput.value = username;
-    
+
+    // Trocou de perfil? Os posts selecionados (curtidas/views/comentários) eram do @ ANTERIOR
+    // e não valem para este novo perfil → desmarca esses order bumps e limpa a seleção.
+    try {
+      var __uNow = String(username || '').replace(/^@+/, '').toLowerCase();
+      if (__lastValidatedUser && __uNow && __uNow !== __lastValidatedUser) {
+        try { resetPostBumpsOnProfileChange(); } catch (_) {}
+      }
+    } catch (_) {}
+
     if (!silent) {
       hideStatusMessageCheckout();
       const helpLink = document.getElementById('howToGetLinkContainer');
@@ -3748,8 +3773,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (revFoll) revFoll.textContent = String(profile.followersCount || '-');
         
         isInstagramVerified = true;
+        try { __lastValidatedUser = String(profile.username || username || '').replace(/^@+/, '').toLowerCase(); } catch (_) { __lastValidatedUser = username; }
         try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
-        
+
         // Pré-carregar posts se vierem na verificação ou buscar em background
         if (profile.latestPosts && Array.isArray(profile.latestPosts) && profile.latestPosts.length > 0) {
             cachedPosts = profile.latestPosts;
