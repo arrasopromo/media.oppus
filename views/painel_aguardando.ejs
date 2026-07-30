@@ -139,9 +139,6 @@
               %>
                 <% if (h.ref.providerOrderIds && h.ref.providerOrderIds.length) { %>
                   <div class="cell-main mono"><%= refProvLabel %> #<%= h.ref.providerOrderIds.join(', #') %></div>
-                  <% if (h.ref.fallbackOrder) { %>
-                    <div class="cell-sub" style="color:#b45309;">↳ o de referência não despachou — mostrando o último pedido real do perfil</div>
-                  <% } %>
                 <% } else { %>
                   <div class="cell-main" style="color:#b45309;">não despachado</div>
                 <% } %>

@@ -15,7 +15,19 @@
     .crm-head .sub{ margin:4px 0 0; color:var(--muted); font-size:0.86rem; max-width:640px; line-height:1.5; }
 
     .crm-grid{ display:grid; grid-template-columns:340px 1fr; gap:14px; height:calc(100vh - 150px); min-height:460px; }
-    @media(max-width:820px){ .crm-grid{ grid-template-columns:1fr; height:auto; } }
+    .crm-back-btn{ display:none; border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 10px; font-weight:600; cursor:pointer; margin-right:8px; font-size:0.85rem; flex:none; }
+    /* ── Mobile: alterna entre LISTA e CONVERSA (estilo WhatsApp) ── */
+    @media(max-width:820px){
+      .crm-grid{ grid-template-columns:1fr; height:auto; min-height:0; }
+      .crm-grid > .crm-card{ height:auto; }
+      .crm-threads{ max-height:none; }
+      .crm-msgs{ height:calc(100vh - 240px); min-height:360px; }
+      /* sem conversa aberta → mostra a lista; com conversa → esconde a lista e mostra a conversa */
+      .crm.mobile-conv .crm-grid > .crm-card:first-child{ display:none; }
+      .crm:not(.mobile-conv) .crm-conv{ display:none; }
+      .crm.mobile-conv .crm-back-btn{ display:inline-flex; align-items:center; }
+      .crm-bubble{ max-width:88%; }
+    }
 
     .crm-card{ background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); display:flex; flex-direction:column; overflow:hidden; }
 
@@ -56,8 +68,22 @@
     .crm-bubble.in{ align-self:flex-start; background:var(--in); border-top-left-radius:2px; }
     .crm-bubble.out{ align-self:flex-end; background:var(--out); border-top-right-radius:2px; }
     .crm-bubble .t{ display:block; font-size:0.66rem; color:#667781; text-align:right; margin-top:3px; }
+    .crm-bubble.media{ padding:5px 5px 6px; }
+    .crm-media-img{ max-width:230px; max-height:280px; border-radius:8px; display:block; cursor:pointer; }
+    .crm-media-vid{ max-width:240px; max-height:300px; border-radius:8px; display:block; background:#000; }
+    .crm-media-aud{ width:220px; display:block; }
+    .crm-media-cap{ font-size:0.88rem; margin-top:4px; padding:0 5px; white-space:pre-wrap; }
+    .crm-media-file{ color:#2563eb; text-decoration:none; font-size:0.9rem; padding:4px 6px; display:inline-block; }
+    .crm-composer .crm-attach{ font-size:1.15rem; line-height:1; padding:6px 10px; background:#fff; border:1px solid #d5dbe3; border-radius:10px; cursor:pointer; }
+    .crm-composer .crm-attach:hover{ background:#f1f5f9; }
     .crm-conv-empty{ flex:1; display:flex; align-items:center; justify-content:center; color:var(--faint); font-size:0.92rem; text-align:center; padding:24px; }
     .crm-note{ padding:9px 16px; font-size:0.76rem; color:var(--faint); border-top:1px solid var(--line); background:#fafbfc; }
+    .crm-composer{ display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line); background:#fff; }
+    .crm-composer textarea{ flex:1; resize:none; padding:9px 11px; border:1px solid #d5dbe3; border-radius:10px; font-size:0.92rem; font-family:inherit; max-height:120px; line-height:1.4; }
+    .crm-composer textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px #eef2ff; }
+    .crm-composer button{ flex:none; }
+    .crm-composer.disabled{ opacity:0.5; }
+    .crm-composer.disabled textarea, .crm-composer.disabled button{ pointer-events:none; background:#f1f5f9; }
   </style>
 </head>
 <body class="painel-page">
@@ -90,16 +116,25 @@
         <!-- Conversa -->
         <div class="crm-card crm-conv">
           <div class="crm-conv-head" id="crmConvHead" style="display:none;">
-            <div>
-              <div class="crm-conv-name" id="crmConvName">—</div>
-              <div class="crm-conv-sub" id="crmConvSub"></div>
+            <div style="display:flex; align-items:center; min-width:0;">
+              <button type="button" class="crm-back-btn" id="crmBack">← Conversas</button>
+              <div style="min-width:0;">
+                <div class="crm-conv-name" id="crmConvName">—</div>
+                <div class="crm-conv-sub" id="crmConvSub"></div>
+              </div>
             </div>
             <span class="crm-badge ok" id="crmConvStatus">ativo</span>
           </div>
           <div class="crm-msgs" id="crmMsgs">
             <div class="crm-conv-empty">Selecione uma conversa à esquerda para ver as mensagens.</div>
           </div>
-          <div class="crm-note">Somente leitura. Responder pelo painel exige a janela de 24h da Meta — pode ser adicionado depois.</div>
+          <div class="crm-composer disabled" id="crmComposer">
+            <button class="crm-btn crm-attach" id="crmAttachBtn" type="button" title="Enviar imagem, vídeo ou áudio">📎</button>
+            <input type="file" id="crmFileInput" accept="image/*,video/*,audio/*" style="display:none">
+            <textarea id="crmReplyText" placeholder="Escreva uma resposta…" rows="1"></textarea>
+            <button class="crm-btn primary" id="crmSendBtn">Enviar</button>
+          </div>
+          <div class="crm-note" id="crmComposerNote">Selecione uma conversa para responder.</div>
         </div>
       </div>
     </div>
@@ -118,6 +153,8 @@
                          : d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
         } catch(_){ return ''; }
       }
+      // Remove o rótulo [imagem]/[áudio]/[vídeo]/[documento] do texto p/ exibir só a legenda.
+      function captionOf(t){ return String(t||'').replace(/^\[(imagem|áudio|audio|vídeo|video|documento|figurinha)\]\s*/i,'').trim(); }
       var current = null; // phoneKey selecionado
       var threadsCache = [];
 
@@ -160,17 +197,89 @@
         var st = $('crmConvStatus');
         if (data.blocked){ st.textContent='opt-out / bloqueado'; st.className='crm-badge blocked'; }
         else { st.textContent='ativo'; st.className='crm-badge ok'; }
+        paintComposer(data);
         var box = $('crmMsgs');
         var msgs = data.messages||[];
         if (!msgs.length){ box.innerHTML = '<div class="crm-conv-empty">Sem mensagens registradas para este contato.</div>'; return; }
         box.innerHTML = msgs.map(function(m){
-          return '<div class="crm-bubble '+(m.direction==='out'?'out':'in')+'">'+esc(m.text||'')+'<span class="t">'+fmtTime(m.at)+'</span></div>';
+          var body;
+          if (m.hasMedia && m.mediaUrl){
+            var url = m.mediaUrl;
+            var media;
+            if (m.mediaKind==='image') media = '<a href="'+url+'" target="_blank" rel="noopener"><img class="crm-media-img" src="'+url+'" loading="lazy" alt="imagem"></a>';
+            else if (m.mediaKind==='video') media = '<video class="crm-media-vid" controls preload="metadata" src="'+url+'"></video>';
+            else if (m.mediaKind==='audio') media = '<audio class="crm-media-aud" controls preload="none" src="'+url+'"></audio>';
+            else media = '<a class="crm-media-file" href="'+url+'" target="_blank" rel="noopener">📎 baixar arquivo</a>';
+            var cap = captionOf(m.text);
+            body = media + (cap ? '<div class="crm-media-cap">'+esc(cap)+'</div>' : '');
+          } else {
+            body = esc(m.text||'');
+          }
+          return '<div class="crm-bubble '+(m.direction==='out'?'out':'in')+(m.hasMedia?' media':'')+'">'+body+'<span class="t">'+fmtTime(m.at)+'</span></div>';
         }).join('');
         box.scrollTop = box.scrollHeight;
       }
 
+      // ── Responder (texto livre, só na janela de 24h da Meta) ──
+      var canReplyNow = false;
+      function paintComposer(data){
+        var comp = $('crmComposer'), note = $('crmComposerNote');
+        canReplyNow = !!(data && data.canReply);
+        if (!comp || !note) return;
+        if (canReplyNow){
+          comp.classList.remove('disabled');
+          note.textContent = 'Janela de resposta aberta' + (data.hoursLeft ? (' · ' + data.hoursLeft + 'h restantes') : '') + '. A Meta cobra por conversa de atendimento.';
+          note.style.color = '#059669';
+        } else {
+          comp.classList.add('disabled');
+          if (data && data.blocked) { note.textContent = 'Cliente descadastrou (opt-out) — não dá pra enviar.'; }
+          else { note.textContent = 'Fora da janela de 24h da Meta — o cliente precisa mandar uma mensagem primeiro (ou usar template). Só respondo texto livre até 24h após a última mensagem dele.'; }
+          note.style.color = 'var(--faint)';
+        }
+      }
+      async function sendReply(){
+        if (!canReplyNow || !current) return;
+        var ta = $('crmReplyText'); var text = (ta && ta.value || '').trim();
+        if (!text) return;
+        var btn = $('crmSendBtn'); if (btn) btn.disabled = true;
+        try {
+          var r = await fetch('/api/painel/whatsapp-crm/send', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ phone: current, text: text }) });
+          var d = await r.json().catch(function(){ return {ok:false}; });
+          if (d && d.ok){ if (ta) ta.value=''; await openThread(current); }
+          else { alert('Falha ao enviar: ' + ((d && d.message) || (d && d.error) || 'erro')); }
+        } catch(_){ alert('Erro de rede ao enviar.'); }
+        finally { if (btn) btn.disabled = false; }
+      }
+      if ($('crmSendBtn')) $('crmSendBtn').addEventListener('click', sendReply);
+      if ($('crmReplyText')) $('crmReplyText').addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendReply(); } });
+
+      // ── Enviar MÍDIA (imagem/vídeo/áudio) — só na janela de 24h ──
+      if ($('crmAttachBtn')) $('crmAttachBtn').addEventListener('click', function(){ if(!canReplyNow) return; var fi=$('crmFileInput'); if(fi){ fi.value=''; fi.click(); } });
+      if ($('crmFileInput')) $('crmFileInput').addEventListener('change', async function(){
+        var fi = this; var file = fi.files && fi.files[0];
+        if (!file || !canReplyNow || !current){ fi.value=''; return; }
+        if (file.size > 16*1024*1024){ alert('Arquivo grande demais (máx 16MB).'); fi.value=''; return; }
+        var ta = $('crmReplyText'); var caption = (ta && ta.value || '').trim();
+        var btn = $('crmSendBtn'), att = $('crmAttachBtn'), note = $('crmComposerNote');
+        var prevNote = note ? note.textContent : '', prevColor = note ? note.style.color : '';
+        if (btn) btn.disabled = true; if (att) att.disabled = true;
+        if (note){ note.textContent = 'Enviando mídia…'; note.style.color = '#059669'; }
+        try {
+          var fd = new FormData(); fd.append('file', file); fd.append('phone', current); if (caption) fd.append('caption', caption);
+          var r = await fetch('/api/painel/whatsapp-crm/send-media', { method:'POST', credentials:'same-origin', body: fd });
+          var d = await r.json().catch(function(){ return {ok:false}; });
+          if (d && d.ok){ if (ta) ta.value=''; await openThread(current); }
+          else { alert('Falha ao enviar: ' + ((d && d.message) || (d && d.error) || 'erro')); }
+        } catch(_){ alert('Erro de rede ao enviar mídia.'); }
+        finally { if (btn) btn.disabled=false; if (att) att.disabled=false; if (note){ note.textContent=prevNote; note.style.color=prevColor; } fi.value=''; }
+      });
+
+      // Mobile: ao abrir uma conversa, mostra a conversa (esconde a lista). Botão "voltar".
+      var crmRoot = document.querySelector('.crm');
+      if ($('crmBack')) $('crmBack').addEventListener('click', function(){ if (crmRoot) crmRoot.classList.remove('mobile-conv'); });
       async function openThread(key){
         current = key;
+        if (crmRoot) crmRoot.classList.add('mobile-conv');
         Array.prototype.forEach.call(document.querySelectorAll('.crm-thread-item'), function(el){
           el.classList.toggle('active', el.getAttribute('data-key')===key);
         });

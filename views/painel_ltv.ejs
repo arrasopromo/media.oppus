@@ -364,8 +364,44 @@
           </div>
         </div>
       </div>
+
+      <!-- BLACKLIST DE LTV -->
+      <div class="ltv-card" style="margin-top:16px;">
+        <div class="ltv-h2">Blacklist de LTV</div>
+        <p class="ltv-note">Números aqui <b>nunca recebem LTV</b> (nem o automático D+2 nem o envio manual da base). Digite o telefone e clique em <b>Verificar</b> — o painel busca o <b>@ do cliente</b> pelo telefone para você confirmar que é o número certo antes de bloquear.</p>
+
+        <div class="ltv-field-row" style="align-items:flex-end;">
+          <div class="ltv-field">
+            <label>Telefone (com DDD)</label>
+            <input type="text" id="blPhone" class="ltv-input" placeholder="Ex.: 11 91234-5678" style="min-width:200px;">
+            <span class="hint">com ou sem +55</span>
+          </div>
+          <div class="ltv-actions" style="margin:0;">
+            <button class="ltv-btn" id="blLookupBtn">Verificar</button>
+            <button class="ltv-btn primary" id="blAddBtn" disabled>Bloquear no LTV</button>
+          </div>
+        </div>
+        <div id="blLookup" class="ltv-msg" style="margin-top:8px;"></div>
+
+        <div style="margin-top:16px;">
+          <div class="ltv-h2" style="font-size:0.95rem; display:flex; align-items:center; gap:8px;">Números bloqueados <span id="blCount" class="hint">—</span>
+            <button class="ltv-btn" id="blRefreshBtn" title="Recarregar lista" style="margin-left:auto; padding:2px 10px;">↻</button>
+          </div>
+          <div id="blList" class="ltv-bllist" style="margin-top:8px;"></div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <style>
+    .ltv-bllist{display:flex;flex-direction:column;gap:6px;}
+    .ltv-bl-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border,#2a2a2a);border-radius:8px;font-size:0.86rem;flex-wrap:wrap;}
+    .ltv-bl-row .ph{font-weight:700;}
+    .ltv-bl-row .ig{color:var(--faint,#8a8a8a);}
+    .ltv-bl-row .rm{margin-left:auto;background:transparent;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:2px 10px;cursor:pointer;font-size:0.8rem;}
+    .ltv-bl-row .rm:hover{background:#dc2626;color:#fff;}
+    .ltv-bl-empty{color:var(--faint,#8a8a8a);font-size:0.85rem;}
+  </style>
 
   <script>
     (function(){
@@ -586,8 +622,70 @@
         d2msg('<b>'+d.eligible+'</b> pessoas em D+'+d.days+' agora (receberiam se ativado) — nada enviado'+ex);
       });
 
+      // ── Blacklist de LTV ──────────────────────────────────────────────────
+      var blValidated = null; // { phoneKey, phoneE164, username, name }
+      function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+      function blMsg(t, cls){ var e=$('blLookup'); if(e){ e.innerHTML=t; e.className='ltv-msg '+(cls||''); } }
+      function setBlAdd(enabled){ var b=$('blAddBtn'); if(b) b.disabled=!enabled; }
+
+      async function blLookup(){
+        var phone = String(($('blPhone')&&$('blPhone').value)||'').trim();
+        blValidated = null; setBlAdd(false);
+        if(!phone){ blMsg('Informe um telefone.', 'err'); return; }
+        blMsg('Buscando…');
+        var d = await api('/api/painel/ltv/blacklist/lookup', { phone: phone });
+        if(!d || !d.ok){ blMsg('Erro: '+((d&&d.error)||'falha'), 'err'); return; }
+        if(d.alreadyBlacklisted){
+          blMsg('⛔ Este número já está na blacklist'+(d.username?(' (@'+esc(d.username)+')'):'')+'.', 'err');
+          setBlAdd(false); blValidated=null; return;
+        }
+        blValidated = { phoneKey:d.phoneKey, phoneE164:d.phoneE164, username:d.username||'', name:d.name||'' };
+        var who = d.username ? ('<b>@'+esc(d.username)+'</b>'+(d.name?(' — '+esc(d.name)):'')) : (d.name?('<b>'+esc(d.name)+'</b>'):'<b>nenhum cliente encontrado</b> para este número');
+        blMsg('Telefone <b>'+esc(d.phoneE164||d.phoneKey)+'</b> → '+who+'. Confirme e clique em <b>Bloquear no LTV</b>.', d.found?'ok':'');
+        setBlAdd(true);
+      }
+      async function blAdd(){
+        if(!blValidated){ blMsg('Verifique o número antes de bloquear.', 'err'); return; }
+        setBlAdd(false);
+        var d = await api('/api/painel/ltv/blacklist/add', { phone: blValidated.phoneE164||blValidated.phoneKey, username: blValidated.username, name: blValidated.name });
+        if(!d || !d.ok){ blMsg('Erro ao bloquear: '+((d&&d.error)||'falha'), 'err'); setBlAdd(true); return; }
+        blMsg('✅ Bloqueado no LTV: <b>'+esc(d.phoneE164||d.phoneKey)+'</b>'+(d.username?(' (@'+esc(d.username)+')'):'')+'.', 'ok');
+        if($('blPhone')) $('blPhone').value='';
+        blValidated=null;
+        blLoadList();
+      }
+      async function blRemove(phoneKey){
+        if(!phoneKey) return;
+        if(!confirm('Remover este número da blacklist? Ele voltará a poder receber LTV.')) return;
+        var d = await api('/api/painel/ltv/blacklist/remove', { phoneKey: phoneKey });
+        if(!d || !d.ok){ alert('Erro ao remover: '+((d&&d.error)||'falha')); return; }
+        blLoadList();
+      }
+      async function blLoadList(){
+        var box=$('blList'); if(box) box.innerHTML='<span class="ltv-bl-empty">Carregando…</span>';
+        var d = await api('/api/painel/ltv/blacklist/list');
+        if(!d || !d.ok){ if(box) box.innerHTML='<span class="ltv-bl-empty">Erro ao carregar.</span>'; return; }
+        if($('blCount')) $('blCount').textContent='('+(d.count||0)+')';
+        var items = (d.items||[]);
+        if(!items.length){ if(box) box.innerHTML='<span class="ltv-bl-empty">Nenhum número bloqueado.</span>'; return; }
+        if(box) box.innerHTML = items.map(function(it){
+          var ph = esc(it.phoneE164||it.phoneKey||'');
+          var ig = it.username ? ('@'+esc(it.username)) : '';
+          var nm = it.name ? esc(it.name) : '';
+          var meta = [ig, nm].filter(Boolean).join(' · ');
+          return '<div class="ltv-bl-row"><span class="ph">'+ph+'</span>'+(meta?('<span class="ig">'+meta+'</span>'):'')+'<button class="rm" data-key="'+esc(it.phoneKey||'')+'">Remover</button></div>';
+        }).join('');
+      }
+      if($('blLookupBtn')) $('blLookupBtn').addEventListener('click', blLookup);
+      if($('blAddBtn')) $('blAddBtn').addEventListener('click', blAdd);
+      if($('blRefreshBtn')) $('blRefreshBtn').addEventListener('click', blLoadList);
+      if($('blPhone')) $('blPhone').addEventListener('input', function(){ blValidated=null; setBlAdd(false); });
+      if($('blPhone')) $('blPhone').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); blLookup(); } });
+      if($('blList')) $('blList').addEventListener('click', function(e){ var b=e.target&&e.target.closest?e.target.closest('.rm'):null; if(b){ blRemove(b.getAttribute('data-key')); } });
+
       refreshAvailable();
       loadD2();
+      blLoadList();
     })();
   </script>
 </body>

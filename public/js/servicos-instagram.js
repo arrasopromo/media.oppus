@@ -3538,6 +3538,77 @@ document.addEventListener('DOMContentLoaded', function() {
       renderSelectedPostsPreview(kind);
   }
 
+  // ── Cache de preenchimento do checkout (no PRÓPRIO navegador) ────────────────
+  // Lembra o último @ validado + dados da etapa 2 (email/telefone/nome) para
+  // pré-preencher numa próxima visita — sem login e sem servidor. Só dados do
+  // próprio usuário; expira em 90 dias. NÃO guarda pagamento/CPF. O fluxo de
+  // recuperação (token do LTV) tem prioridade sobre isto.
+  var OPPUS_PREFILL_KEY = 'oppus_checkout_prefill';
+  var OPPUS_PREFILL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  function loadCheckoutPrefill() {
+    try {
+      var raw = localStorage.getItem(OPPUS_PREFILL_KEY);
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (!rec || !rec.savedAt) return null;
+      if ((Date.now() - Number(rec.savedAt)) > OPPUS_PREFILL_TTL_MS) { try { localStorage.removeItem(OPPUS_PREFILL_KEY); } catch (_) {} return null; }
+      return rec;
+    } catch (_) { return null; }
+  }
+  function saveCheckoutPrefill(extra) {
+    try {
+      var prev = loadCheckoutPrefill() || {};
+      var uname = '';
+      try {
+        uname = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim())
+          || (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || prev.username || '';
+      } catch (_) {}
+      uname = String(uname || '').replace(/^@+/, '').trim();
+      var val = function (el, fb) { try { return (el && el.value && el.value.trim()) ? el.value.trim() : (fb || ''); } catch (_) { return fb || ''; } };
+      var rec = {
+        v: 1,
+        username: uname,
+        email: val(contactEmailInput, prev.email),
+        phone: val(contactPhoneInput, prev.phone),
+        name: val(contactNameInput, prev.name),
+        profile: (extra && extra.profile) ? extra.profile : (prev.profile || null),
+        savedAt: Date.now()
+      };
+      if (!rec.username && !rec.email && !rec.phone) return; // não grava vazio
+      localStorage.setItem(OPPUS_PREFILL_KEY, JSON.stringify(rec));
+    } catch (_) {}
+  }
+  function applyCheckoutPrefill() {
+    try {
+      var isRec = false;
+      try { isRec = !!hasRecoveryToken; } catch (_) {}
+      if (isRec) return; // recuperação/token tem prioridade
+      try { if (typeof isRecoveryFlowActive === 'function' && isRecoveryFlowActive()) return; } catch (_) {}
+      var rec = loadCheckoutPrefill();
+      if (!rec) return;
+      var setIfEmpty = function (el, v) { try { if (el && !String(el.value || '').trim() && v) el.value = String(v); } catch (_) {} };
+      setIfEmpty(usernameCheckoutInput, rec.username);
+      setIfEmpty(contactEmailInput, rec.email);
+      setIfEmpty(contactPhoneInput, rec.phone);
+      setIfEmpty(contactNameInput, rec.name);
+      try { if (contactPhoneInput && contactPhoneInput.value) contactPhoneInput.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+      // "Engatilha": revalida o @ em silêncio (usa o cache do servidor) para já liberar a etapa 3.
+      if (rec.username && usernameCheckoutInput && usernameCheckoutInput.value && typeof checkInstagramProfileCheckout === 'function') {
+        setTimeout(function () { try { checkInstagramProfileCheckout({ silent: true, noScroll: true, noModal: true }); } catch (_) {} }, 450);
+      }
+    } catch (_) {}
+  }
+  function setupCheckoutPrefill(opts) {
+    try {
+      [contactEmailInput, contactPhoneInput, contactNameInput, usernameCheckoutInput].forEach(function (el) {
+        if (!el) return;
+        el.addEventListener('change', function () { try { saveCheckoutPrefill(); } catch (_) {} });
+        el.addEventListener('blur', function () { try { saveCheckoutPrefill(); } catch (_) {} });
+      });
+    } catch (_) {}
+    if (!opts || opts.apply !== false) { try { applyCheckoutPrefill(); } catch (_) {} }
+  }
+
   async function checkInstagramProfileCheckout(opts) {
     const silent = !!(opts && opts.silent);
     const noModal = !!(opts && opts.noModal);
@@ -3709,6 +3780,7 @@ document.addEventListener('DOMContentLoaded', function() {
         showResumoIfAllowed();
         updatePromosSummary();
         applyCheckoutFlow();
+        try { saveCheckoutPrefill({ profile: { followers: (typeof profile.followersCount === 'number' ? profile.followersCount : null), isPrivate: !!(profile.isPrivate || profile.is_private), fullName: String(profile.fullName || '') } }); } catch (_) {}
         if (!silent) showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         
         try {
@@ -3910,6 +3982,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function navigateToPedidoOrFallback(identifier, correlationID, chargeId) {
     try {
+      try { clearPixSession(); } catch (_) {}
+      try { saveCheckoutPrefill(); } catch (_) {}
       try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
       const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}&id=${encodeURIComponent(chargeId||'')}`;
       const extractProviderOid = function(orderObj){
@@ -3951,6 +4025,194 @@ document.addEventListener('DOMContentLoaded', function() {
       window.location.href = `/pedido?t=${encodeURIComponent(identifier)}&ref=${encodeURIComponent(correlationID||'')}&oid=${encodeURIComponent(finalOid||'')}&obg=1`;
     } catch(_) {
         showStatusMessageCheckout('Pagamento confirmado! Verifique seu email.', 'success');
+    }
+  }
+
+  // ==== Persistência da sessão Pix (restaurar etapa 3 no reload) ====
+  // Se o cliente já gerou o Pix (etapa 3) e recarrega a página, ele volta
+  // direto para o Pix gerado, em vez de reiniciar todo o checkout.
+  function _pixSessionKey() {
+    try {
+      var cat = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+      return 'oppus_pix_session_' + cat;
+    } catch (_) { return 'oppus_pix_session'; }
+  }
+  var PIX_SESSION_TTL_MS = 30 * 60 * 1000; // 30 min
+  function savePixSession(p) {
+    try {
+      if (!p || (!p.brCode && !p.chargeId)) return;
+      var rec = {
+        brCode: p.brCode || '', qrImage: p.qrImage || '',
+        chargeId: p.chargeId || '', identifier: p.identifier || '',
+        serverCorrelationID: p.serverCorrelationID || '', correlationID: p.correlationID || '',
+        savedAt: Date.now()
+      };
+      sessionStorage.setItem(_pixSessionKey(), JSON.stringify(rec));
+    } catch (_) {}
+  }
+  function clearPixSession() {
+    try { sessionStorage.removeItem(_pixSessionKey()); } catch (_) {}
+  }
+  function loadPixSession() {
+    try {
+      var raw = sessionStorage.getItem(_pixSessionKey());
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (!rec || !rec.savedAt) return null;
+      if ((Date.now() - Number(rec.savedAt)) > PIX_SESSION_TTL_MS) { clearPixSession(); return null; }
+      if (!rec.brCode && !rec.chargeId) return null;
+      return rec;
+    } catch (_) { return null; }
+  }
+
+  function _ensurePixContainerVisible() {
+    var staticPixElements = ['pixQrcode', 'pixLoader', 'pixCopiaCola', 'copyPixBtn'];
+    staticPixElements.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.parentElement) el.parentElement.style.display = 'none';
+    });
+    var pixResultado = document.getElementById('pixResultado');
+    if (pixResultado) {
+      pixResultado.style.display = 'block';
+      var pixContainer = document.getElementById('pixContainer');
+      if (pixContainer) {
+        pixContainer.style.display = 'block';
+        Array.prototype.forEach.call(pixContainer.children, function (c) {
+          if (c.id === 'pixResultado' || c.tagName === 'H4' || c.tagName === 'P') c.style.display = 'block';
+          else if (staticPixElements.indexOf(c.id) >= 0 || c.querySelector('#pixQrcode')) c.style.display = 'none';
+        });
+      }
+    }
+  }
+
+  function showStep3Raw() {
+    var step1Container = document.getElementById('step1Container');
+    var step2Container = document.getElementById('perfilCard');
+    var step3Container = document.getElementById('step3Container');
+    document.querySelectorAll('.step').forEach(function (el, idx) {
+      if (idx + 1 === 3) el.classList.add('active');
+      else if (idx + 1 < 3) el.classList.add('completed');
+      else el.classList.remove('active', 'completed');
+    });
+    if (step1Container) step1Container.style.display = 'none';
+    if (step2Container) step2Container.style.display = 'none';
+    if (step3Container) step3Container.style.display = 'block';
+    try { updatePromosSummary(); } catch (_) {}
+    try { updatePaymentMethodVisibility(); } catch (_) {}
+    try { selectPaymentMethod(String(window.currentPaymentMethod || 'pix')); } catch (_) {}
+  }
+
+  function restorePixSession(rec) {
+    if (!rec) return;
+    var brCode = rec.brCode || '';
+    var qrImage = rec.qrImage || '';
+    var chargeId = rec.chargeId || '';
+    var identifier = rec.identifier || '';
+    var serverCorrelationID = rec.serverCorrelationID || '';
+    var correlationID = rec.correlationID || serverCorrelationID || '';
+
+    showStep3Raw();
+    _ensurePixContainerVisible();
+
+    var pixResultado = document.getElementById('pixResultado');
+    var copyButtonId = 'copyPixBtnDynamic';
+    var inputId = 'pixBrCodeInputDynamic';
+
+    var imgHtml = qrImage
+      ? '<img src="' + qrImage + '" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />'
+      : '';
+    var codeFieldHtml = brCode
+      ? '<div style="margin-bottom: 0.5rem; text-align: center;"><input id="' + inputId + '" type="text" readonly value="' + brCode + '" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" /></div>'
+      : '<div style="color:#fff;">Não foi possível exibir o código Pix.</div>';
+    var copyBtnHtml = brCode
+      ? '<div class="button-container" style="margin-bottom: 0.5rem;"><button id="' + copyButtonId + '" class="continue-button"><span class="button-text">Copiar código Pix</span></button></div>'
+      : '';
+    var textColor = '#ffffff'; // branco: a área do Pix fica sobre superfície escura/colorida (tema claro e escuro)
+    var waitingHtml = '<div style="text-align:center; margin-top:6px;"><span style="display:inline-flex; align-items:center; justify-content:center; gap:0.5rem; color:' + textColor + '; background:rgba(17,24,39,0.55); padding:7px 16px; border-radius:999px; font-weight:600;"><svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg"><circle cx="25" cy="25" r="20" stroke="' + textColor + '" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" /></circle></svg><span>Aguardando pagamento...</span></span></div>';
+
+    if (pixResultado) {
+      pixResultado.innerHTML = imgHtml + codeFieldHtml + copyBtnHtml + waitingHtml;
+      pixResultado.style.display = 'block';
+    }
+
+    setTimeout(function () {
+      var copyBtn = document.getElementById(copyButtonId);
+      if (copyBtn && brCode) {
+        copyBtn.addEventListener('click', async function () {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(brCode);
+            } else {
+              var input = document.getElementById(inputId);
+              if (input) { input.select(); document.execCommand('copy'); }
+            }
+            var span = copyBtn.querySelector('.button-text');
+            var prev = span ? span.textContent : '';
+            if (span) span.textContent = 'Pix copiado';
+            try { showStatusMessageCheckout('Código Pix copiado', 'success'); } catch (_) {}
+            copyBtn.disabled = true;
+            setTimeout(function () {
+              copyBtn.disabled = false;
+              if (span) span.textContent = prev || 'Copiar código Pix';
+            }, 1200);
+          } catch (e) { alert('Não foi possível copiar o código Pix.'); }
+        });
+      }
+    }, 100);
+
+    if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+
+    var doCheckDb = async function () {
+      try {
+        var dbUrl = '/api/checkout/payment-state?id=' + encodeURIComponent(chargeId) + '&identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID);
+        var dbResp = await fetch(dbUrl);
+        var dbData = await dbResp.json();
+        if (dbData && dbData.paid === true) {
+          if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+          clearPixSession();
+          try { markPaymentConfirmed(); } catch (_) {}
+          await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+
+    var checkPaid = async function () {
+      if (!chargeId) { await doCheckDb(); return; }
+      try {
+        var stResp = await fetch('/api/paghiper/charge-status?id=' + encodeURIComponent(chargeId) + '&identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID));
+        var stData = await stResp.json();
+        var status = (stData && stData.charge && stData.charge.status) || (stData && stData.status) || '';
+        var paidFlag = (stData && stData.charge && stData.charge.paid) || (stData && stData.paid) || false;
+        var isPaid = paidFlag === true || /paid/i.test(String(status)) || /completed/i.test(String(status));
+        if (isPaid) {
+          if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+          clearPixSession();
+          try { markPaymentConfirmed(); } catch (_) {}
+          await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+        } else { await doCheckDb(); }
+      } catch (e) { await doCheckDb(); }
+    };
+
+    if (chargeId || identifier || serverCorrelationID) {
+      if (chargeId) checkPaid(); else doCheckDb();
+      paymentPollInterval = setInterval(function () { doCheckDb(); }, 2000);
+      try {
+        if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+        var sseUrl = '/api/payment/subscribe?identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID);
+        window.paymentEventSource = new EventSource(sseUrl);
+        window.paymentEventSource.addEventListener('paid', async function () {
+          try {
+            if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+            if (window.paymentEventSource) { window.paymentEventSource.close(); window.paymentEventSource = null; }
+            clearPixSession();
+            try { markPaymentConfirmed(); } catch (_) {}
+            await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+          } catch (_) {}
+        });
+      } catch (_) {}
+      if (chargeId) { setInterval(function () { checkPaid(); }, 15000); }
     }
   }
 
@@ -4261,16 +4523,18 @@ document.addEventListener('DOMContentLoaded', function() {
            </div>`
         : '';
 
-      const textColor = (document.body.classList.contains('theme-light') || true) ? '#000' : '#fff'; // Forçando escuro se necessário ou detectando tema
+      const textColor = '#ffffff'; // branco: a área do Pix fica sobre superfície escura/colorida (melhor contraste no tema claro e escuro)
       
       const waitingHtml = `
-        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor};">
-          <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
-              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
-            </circle>
-          </svg>
-          <span>Aguardando pagamento...</span>
+        <div style="text-align:center; margin-top:6px;">
+          <span style="display:inline-flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor}; background:rgba(17,24,39,0.55); padding:7px 16px; border-radius:999px; font-weight:600;">
+            <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
+                <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
+              </circle>
+            </svg>
+            <span>Aguardando pagamento...</span>
+          </span>
         </div>`;
 
       if (pixResultado) {
@@ -4321,7 +4585,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const chargeId = charge?.id || charge?.chargeId || data?.chargeId || '';
       const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
       const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
-      
+
+      // Persiste a sessão do Pix: se o cliente recarregar a página, volta direto
+      // para a etapa 3 com o mesmo Pix, sem reiniciar o checkout.
+      try { savePixSession({ brCode, qrImage, chargeId, identifier, serverCorrelationID, correlationID }); } catch (_) {}
+
       if (paymentPollInterval) {
         clearInterval(paymentPollInterval);
         paymentPollInterval = null;
@@ -5250,7 +5518,16 @@ document.addEventListener('DOMContentLoaded', function() {
     if (s === 2 || s === 3) return s;
     return 1;
   })();
-  if (window.goToStep) {
+  var __pixToRestore = null;
+  try { if (!hasRecoveryToken) __pixToRestore = loadPixSession(); } catch (_) { __pixToRestore = null; }
+  if (__pixToRestore) {
+    // Cliente recarregou a página com um Pix já gerado na etapa 3:
+    // restaura direto o Pix, sem voltar ao início do checkout.
+    setTimeout(function () {
+      try { restorePixSession(__pixToRestore); }
+      catch (_) { if (window.goToStep) window.goToStep(1); }
+    }, 120);
+  } else if (window.goToStep) {
     if (hasRecoveryToken) {
       window.goToStep(1);
     } else if (initialStep === 1) {
@@ -5261,7 +5538,11 @@ document.addEventListener('DOMContentLoaded', function() {
       }, 260);
     }
   }
-  
+
+  // Cache de preenchimento (device): anexa listeners e, se NÃO estiver restaurando um
+  // Pix já gerado, pré-preenche a etapa 2 com o último @/dados salvos neste navegador.
+  try { setupCheckoutPrefill({ apply: !__pixToRestore }); } catch (_) {}
+
   // Expor função para o EJS se necessário (mas tentamos evitar scripts inline)
   window.checkInstagramProfileCheckout = checkInstagramProfileCheckout;
 

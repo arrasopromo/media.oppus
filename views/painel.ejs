@@ -540,6 +540,8 @@
               <button type="button" id="followersBulkRefil2SelectedBtn" style="width:100%; padding: 8px 10px; background: #0ea5e9; color: white; border: none; border-radius: 8px; cursor: pointer;">Solicitar Refil2 (marcados)</button>
             </div>
           </div>
+          <button type="button" id="followersRefilCostBtn" title="Soma o custo no Fama24h para repor a queda de todos os pedidos do filtro (mistos/brasileiros)" style="padding: 6px 12px; background: #7c3aed; color: white; border: none; border-radius: 4px; cursor: pointer;">Calcular gasto reposição (filtro)</button>
+          <span id="followersRefilCostResult" style="font-size:0.85rem; color:#111827;"></span>
           <div style="position:relative; display:flex; align-items:center;">
             <button type="button" id="followersFixInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Corrigir inicial (marcados)</button>
             <button type="button" id="followersFixInitialMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #111827; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
@@ -714,10 +716,11 @@
                 <option value="90" <%= (bucket === '90') ? 'selected' : '' %>>90–99%</option>
                 <option value="100plus" <%= (bucket === '100plus') ? 'selected' : '' %>>≥ 100%</option>
               </select>
-              <span id="followersPctCustomWrap" style="display:<%= (bucket === 'custom') ? 'inline-flex' : 'none' %>; align-items:center; gap:4px;">
-                <input id="followersPctMin" type="number" min="0" step="0.1" value="<%= (bucket === 'custom' && fpMin != null) ? String(fpMin) : '' %>" placeholder="início" title="Queda mínima (%)" style="width:74px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+              <span id="followersPctCustomWrap" style="display:inline-flex; align-items:center; gap:4px;">
+                <span style="color:#6b7280; font-size:0.85rem;">ou entre</span>
+                <input id="followersPctMin" type="number" min="0" step="0.1" value="<%= (bucket === 'custom' && fpMin != null) ? String(fpMin) : '' %>" placeholder="mín %" title="Queda mínima (%)" style="width:74px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
                 <span style="color:#6b7280;">a</span>
-                <input id="followersPctMax" type="number" min="0" step="0.1" value="<%= (bucket === 'custom' && fpMax != null) ? String(fpMax) : '' %>" placeholder="fim" title="Queda máxima (%)" style="width:74px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
+                <input id="followersPctMax" type="number" min="0" step="0.1" value="<%= (bucket === 'custom' && fpMax != null) ? String(fpMax) : '' %>" placeholder="máx %" title="Queda máxima (%)" style="width:74px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
               </span>
             </label>
             <button type="button" id="followersApplyFilterBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
@@ -2422,6 +2425,39 @@
               return [];
             }
           }
+
+          // ── Calcular gasto de reposição (filtro): soma o custo Fama24h p/ repor a queda ──
+          (function(){
+            var btn = el('followersRefilCostBtn');
+            var out = el('followersRefilCostResult');
+            if (!btn) return;
+            var brl = function(v){ try { return Number(v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' }); } catch(_){ return 'R$ ' + Number(v||0).toFixed(2); } };
+            var nf = function(v){ return Number(v||0).toLocaleString('pt-BR'); };
+            btn.addEventListener('click', async function(){
+              try {
+                var targets = loadFollowersFilteredTargets();
+                var items = (targets || []).map(function(t){ return { tipo: String((t && t.tipo) || ''), diffAbs: Number((t && t.diffAbs) || 0) }; })
+                  .filter(function(x){ return x.diffAbs > 0; });
+                if (!items.length) { if (out) { out.style.color = '#dc2626'; out.textContent = 'Nenhum pedido com queda no filtro atual.'; } return; }
+                btn.disabled = true; var prev = btn.textContent; btn.textContent = 'Calculando…';
+                if (out) { out.style.color = '#64748b'; out.textContent = 'Consultando preços do Fama24h…'; }
+                var r = await fetch('/api/painel/gerenciamento-seguidores/refil-cost-estimate', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ items: items }) });
+                var d = await r.json().catch(function(){ return null; });
+                btn.disabled = false; btn.textContent = prev;
+                if (!d || !d.ok) { if (out) { out.style.color = '#dc2626'; out.textContent = 'Erro: ' + ((d && (d.message || d.error)) || 'falhou'); } return; }
+                var m = (d.byTipo && d.byTipo.mistos) ? d.byTipo.mistos : { count:0, cost:0 };
+                var b = (d.byTipo && d.byTipo.brasileiros) ? d.byTipo.brasileiros : { count:0, cost:0 };
+                var msg = 'Gasto de reposição: <b style="color:#7c3aed;">' + brl(d.totalBRL) + '</b> · ' + nf(d.count) + ' pedidos · ' + nf(d.qtyTotal) + ' seguidores'
+                  + ' <span style="color:#64748b;">(mistos ' + nf(m.count) + ' = ' + brl(m.cost) + ' · brasileiros ' + nf(b.count) + ' = ' + brl(b.cost) + ')</span>';
+                if (d.skipped && d.skipped.organic) msg += ' <span style="color:#9ca3af;">· ' + nf(d.skipped.organic) + ' orgânicos ignorados</span>';
+                if (d.skipped && d.skipped.missingRate) msg += ' <span style="color:#dc2626;">· ' + nf(d.skipped.missingRate) + ' sem preço</span>';
+                if (out) { out.style.color = '#111827'; out.innerHTML = msg; }
+              } catch (e) {
+                btn.disabled = false; try { btn.textContent = 'Calcular gasto reposição (filtro)'; } catch(_){}
+                if (out) { out.style.color = '#dc2626'; out.textContent = 'Erro de rede ao calcular.'; }
+              }
+            });
+          })();
           async function pollBulkRefil2Status() {
             try {
               var resp = await fetch('/api/painel/gerenciamento-seguidores/refil2/bulk-status', { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
@@ -2921,19 +2957,20 @@
                 if (warrantyV === 'expired') urlParams.set('refilExpired', '1'); else { urlParams.delete('refilExpired'); urlParams.delete('refil_expired'); }
                 if (refil2AutoV && refil2AutoV !== 'all') urlParams.set('refil2Auto', refil2AutoV); else urlParams.delete('refil2Auto');
                 if (minDiffV) urlParams.set('minDiffAbs', minDiffV); else { urlParams.delete('minDiffAbs'); urlParams.delete('minDiff'); urlParams.delete('minDropAbs'); }
-                if (pctBucketV === '') {
-                  urlParams.delete('minPct');
-                  urlParams.delete('maxPct');
-                } else if (pctBucketV === 'custom') {
-                  // Intervalo personalizado: início (min) e fim (max)
-                  var pctMinEl = el('followersPctMin');
-                  var pctMaxEl = el('followersPctMax');
-                  var pMin = pctMinEl ? String(pctMinEl.value || '').trim() : '';
-                  var pMax = pctMaxEl ? String(pctMaxEl.value || '').trim() : '';
+                // Intervalo personalizado (mín a máx) — sempre visível — tem PRIORIDADE
+                // sobre o dropdown de faixas. Se estiver vazio, usa a faixa do dropdown.
+                var pctMinEl = el('followersPctMin');
+                var pctMaxEl = el('followersPctMax');
+                var pMin = pctMinEl ? String(pctMinEl.value || '').trim() : '';
+                var pMax = pctMaxEl ? String(pctMaxEl.value || '').trim() : '';
+                if (pMin !== '' || pMax !== '') {
                   // Se início > fim, troca (evita filtro vazio por engano)
                   if (pMin !== '' && pMax !== '' && parseFloat(pMin) > parseFloat(pMax)) { var _t = pMin; pMin = pMax; pMax = _t; }
                   if (pMin !== '') urlParams.set('minPct', pMin); else urlParams.delete('minPct');
                   if (pMax !== '') urlParams.set('maxPct', pMax); else urlParams.delete('maxPct');
+                } else if (pctBucketV === '' || pctBucketV === 'custom') {
+                  urlParams.delete('minPct');
+                  urlParams.delete('maxPct');
                 } else if (pctBucketV === '100plus') {
                   urlParams.set('minPct', '100');
                   urlParams.delete('maxPct');
@@ -3027,21 +3064,28 @@
           if (pctBucketEl2 && applyBtn) {
             pctBucketEl2.addEventListener('change', function(){
               try {
-                var customWrap = el('followersPctCustomWrap');
-                if (String(pctBucketEl2.value || '') === 'custom') {
-                  // Mostra os campos de início/fim e espera o usuário digitar + Aplicar
-                  if (customWrap) customWrap.style.display = 'inline-flex';
-                  var mn = el('followersPctMin'); if (mn) { try { mn.focus(); } catch (_) {} }
-                  return;
-                }
-                if (customWrap) customWrap.style.display = 'none';
+                var v = String(pctBucketEl2.value || '');
+                var mn = el('followersPctMin'), mx = el('followersPctMax');
+                if (v === 'custom') { if (mn) { try { mn.focus(); } catch (_) {} } return; }
+                // Escolher uma faixa (ou "Todos") limpa o intervalo custom para não
+                // conflitar — o intervalo tem prioridade quando preenchido.
+                if (mn) mn.value = '';
+                if (mx) mx.value = '';
                 applyBtn.click();
               } catch (_) {}
             });
-            // Enter nos campos de intervalo aplica o filtro
+            // Digitar no intervalo marca "Personalizado" no dropdown (feedback visual)
+            // e Enter aplica o filtro.
             ['followersPctMin', 'followersPctMax'].forEach(function(id){
               var inp = el(id);
-              if (inp) inp.addEventListener('keydown', function(ev){ if (ev && ev.key === 'Enter') { try { applyBtn.click(); } catch (_) {} } });
+              if (!inp) return;
+              inp.addEventListener('input', function(){
+                try {
+                  var v = String(inp.value || '').trim();
+                  if (v !== '' && pctBucketEl2) pctBucketEl2.value = 'custom';
+                } catch (_) {}
+              });
+              inp.addEventListener('keydown', function(ev){ if (ev && ev.key === 'Enter') { try { applyBtn.click(); } catch (_) {} } });
             });
           }
           if (clearBtn) {
@@ -4043,11 +4087,81 @@
           <div class="summary-value"><%= (typeof generatedToPaidPct !== 'undefined' ? Number(generatedToPaidPct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
           <div class="summary-sub" style="margin-top:6px;"><%= (typeof totalOrdersGeneratedPaid !== 'undefined' ? Number(totalOrdersGeneratedPaid || 0) : 0) %> de <%= (typeof totalOrdersGenerated !== 'undefined' ? Number(totalOrdersGenerated || 0) : 0) %> pedidos gerados pagaram</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" id="generatedNotPaidCard" style="cursor:pointer;" title="Clique para ver os pedidos gerados que não pagaram">
           <div class="summary-label">Gerou e não pagou (período)</div>
-          <div class="summary-value" style="color:#b45309;"><%= (typeof generatedNotPaid !== 'undefined' ? Number(generatedNotPaid || 0) : 0).toLocaleString('pt-BR') %></div>
+          <div class="summary-value" style="color:#b45309;"><%= (typeof generatedNotPaid !== 'undefined' ? Number(generatedNotPaid || 0) : 0).toLocaleString('pt-BR') %> <span style="font-size:0.7rem; color:#b45309; font-weight:700; vertical-align:middle;">ver ›</span></div>
           <div class="summary-sub" style="margin-top:6px;">pedidos gerados que não pagaram</div>
         </div>
+        <script type="application/json" id="generatedNotPaidJson"><%- JSON.stringify((typeof generatedNotPaidList !== 'undefined' && generatedNotPaidList) ? generatedNotPaidList : []).replace(/</g, '\\u003c') %></script>
+        <div id="generatedNotPaidModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; align-items:center; justify-content:center; padding:16px;">
+          <div style="width:100%; max-width:860px; max-height:85vh; background:#fff; border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden;">
+            <div style="padding:14px 16px; border-bottom:1px solid #eef0f4; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+              <strong style="color:#111827;">Gerou e não pagou (período)</strong>
+              <button type="button" id="generatedNotPaidClose" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer;">Fechar</button>
+            </div>
+            <div style="padding:12px 16px; border-bottom:1px solid #f3f4f6; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <input id="generatedNotPaidSearch" type="text" placeholder="Buscar @..." style="flex:1 1 220px; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px;">
+              <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;"><input type="checkbox" id="generatedNotPaidBoughtOnly"> só já compraram</label>
+              <span id="generatedNotPaidCount" style="font-size:0.85rem; color:#6b7280;"></span>
+            </div>
+            <div id="generatedNotPaidBody" style="overflow:auto; padding:0; -webkit-overflow-scrolling:touch;"></div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var card = document.getElementById('generatedNotPaidCard');
+            var modal = document.getElementById('generatedNotPaidModal');
+            var body = document.getElementById('generatedNotPaidBody');
+            var closeBtn = document.getElementById('generatedNotPaidClose');
+            var search = document.getElementById('generatedNotPaidSearch');
+            var boughtOnly = document.getElementById('generatedNotPaidBoughtOnly');
+            var countEl = document.getElementById('generatedNotPaidCount');
+            if (!card || !modal || !body) return;
+            var list = [];
+            try { list = JSON.parse((document.getElementById('generatedNotPaidJson') || {}).textContent || '[]') || []; } catch (_) { list = []; }
+            function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+            function fmtDate(v){ try { var d = new Date(v); return isFinite(d.getTime()) ? d.toLocaleString('pt-BR') : '-'; } catch (_) { return '-'; } }
+            function fmtNum(n){ return (typeof n === 'number' && isFinite(n)) ? n.toLocaleString('pt-BR') : '-'; }
+            function brl(v){ try { return Number(v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' }); } catch(_){ return 'R$ ' + Number(v||0).toFixed(2); } }
+            function render(){
+              var q = String(search && search.value || '').trim().replace(/^@+/, '').toLowerCase();
+              var bo = !!(boughtOnly && boughtOnly.checked);
+              var rows = list.filter(function(p){
+                if (bo && !p.boughtEver) return false;
+                if (q && String(p.username || '').indexOf(q) < 0) return false;
+                return true;
+              });
+              var boughtCount = list.filter(function(p){ return p.boughtEver; }).length;
+              if (countEl) countEl.textContent = rows.length + ' de ' + list.length + ' · ' + boughtCount + ' já compraram antes';
+              var head = '<div style="position:sticky; top:0; background:#f9fafb; display:grid; grid-template-columns: 1.4fr 1fr 1.3fr 0.7fr 0.9fr 0.9fr; gap:8px; padding:8px 12px; font-size:0.72rem; font-weight:700; color:#6b7280; border-bottom:1px solid #eef0f4;">'
+                + '<div>Data/hora</div><div>Usuário</div><div>Tipo</div><div>Qtd</div><div>Valor</div><div>Já comprou?</div></div>';
+              var rowsHtml = rows.map(function(p){
+                var u = String(p.username || '');
+                var badge = p.boughtEver
+                  ? '<span style="background:#dcfce7; color:#166534; font-weight:700; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">✓ sim</span>'
+                  : '<span style="background:#f3f4f6; color:#9ca3af; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">não</span>';
+                var uHtml = u ? ('<a href="https://www.instagram.com/' + encodeURIComponent(u) + '/" target="_blank" rel="noopener" style="color:#111827; font-weight:600; text-decoration:none;">@' + esc(u) + '</a>') : '<span style="color:#9ca3af;">-</span>';
+                return '<div style="display:grid; grid-template-columns: 1.4fr 1fr 1.3fr 0.7fr 0.9fr 0.9fr; gap:8px; padding:9px 12px; border-bottom:1px solid #f3f4f6; font-size:0.82rem; align-items:center;">'
+                  + '<div style="color:#374151;">' + fmtDate(p.createdAt) + '</div>'
+                  + '<div style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + uHtml + '</div>'
+                  + '<div style="color:#374151;">' + esc(p.type || '-') + '</div>'
+                  + '<div style="color:#374151;">' + fmtNum(Number(p.qty||0)) + '</div>'
+                  + '<div style="color:#111827; font-weight:600;">' + brl(p.value) + '</div>'
+                  + '<div>' + badge + '</div></div>';
+              }).join('');
+              body.innerHTML = head + (rowsHtml || '<div style="padding:20px; text-align:center; color:#6b7280;">Nenhum pedido.</div>');
+            }
+            card.addEventListener('click', function(){
+              render();
+              try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch (_) {}
+              modal.style.display = 'flex';
+            });
+            if (closeBtn) closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
+            modal.addEventListener('click', function(ev){ if (ev.target === modal) modal.style.display = 'none'; });
+            if (search) search.addEventListener('input', render);
+            if (boughtOnly) boughtOnly.addEventListener('change', render);
+          })();
+        </script>
         <div class="summary-card">
           <div class="summary-label">Vendas sem orderbump</div>
           <div class="summary-value">R$ <%= (typeof revenueWithoutBumps !== 'undefined' ? Number(revenueWithoutBumps || 0) : 0).toFixed(2).replace('.', ',') %></div>
@@ -6990,42 +7104,69 @@
                   <strong style="font-size: 1rem; color:#111827;">Distribuição</strong>
                   <div style="font-size:0.85rem; color:#6b7280;">Base: pedidos pagos (período)</div>
                 </div>
-                <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px 24px; margin-top:12px; align-items:start;">
-                  <div style="display:flex; flex-direction:column;">
+                <style>
+                  #dashboardPaymentWrap .dash-chart-box{ height:170px; }
+                  @media (max-width: 680px){
+                    #dashboardPaymentWrap .dash-distrib-grid{ grid-template-columns:1fr !important; gap:22px !important; }
+                    #dashboardPaymentWrap .dash-chart-box{ height:230px; }
+                  }
+                </style>
+                <div class="dash-distrib-grid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px 24px; margin-top:12px; align-items:start;">
+                  <div style="display:flex; flex-direction:column; min-width:0;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Canal de vendas</div>
-                    <div style="height:160px; position:relative;">
+                    <div class="dash-chart-box" style="position:relative;">
                       <canvas id="dashboardChannelPieChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
+                    <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;">Valor de venda por canal:</div>
+                    <div id="dashboardChannelBreakdown" style="margin-top:4px; font-size:0.84rem; color:#374151;"></div>
                   </div>
-                  <div style="display:flex; flex-direction:column;">
+                  <div style="display:flex; flex-direction:column; min-width:0;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Vendas por método</div>
-                    <div style="height:160px; position:relative;">
+                    <div class="dash-chart-box" style="position:relative;">
                       <canvas id="dashboardPaymentMethodChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
                   </div>
-                  <div style="display:flex; flex-direction:column;">
+                  <div style="display:flex; flex-direction:column; min-width:0;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Pedidos por tipo (pizza)</div>
-                    <div style="height:160px; position:relative;">
+                    <div class="dash-chart-box" style="position:relative;">
                       <canvas id="dashboardServiceTypePieChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
-                    <%
-                      const othersArr3 = Array.isArray(servicePieOthers) ? servicePieOthers : [];
-                      const othersPreview3 = othersArr3.slice(0, 6);
-                      const othersRest3 = Math.max(0, othersArr3.length - othersPreview3.length);
-                      const othersText3 = othersPreview3
-                        .map(function(x){ return String(x && x.label ? x.label : '-') + ' (' + String((x && typeof x.count !== 'undefined') ? x.count : 0) + ')'; })
-                        .join(' · ');
-                    %>
-                    <% if (othersArr3.length) { %>
-                      <div style="margin-top:8px; font-size:0.82rem; color:#6b7280; line-height:1.3;">Outros inclui: <%= othersText3 %><%= othersRest3 > 0 ? (' · +' + othersRest3 + ' tipos') : '' %></div>
-                    <% } %>
                   </div>
-                  <div style="display:flex; flex-direction:column;">
+                  <div style="display:flex; flex-direction:column; min-width:0;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Compras por plataforma</div>
-                    <div style="height:160px; position:relative;">
+                    <div class="dash-chart-box" style="position:relative;">
                       <canvas id="dashboardPlatformPieChart" style="display:block; width:100%; height:100%;"></canvas>
                     </div>
                   </div>
+                </div>
+
+                <!-- Tabela: faturamento, gasto e margem por tipo de produto (fora da legenda) -->
+                <div style="margin-top:18px; overflow-x:auto; -webkit-overflow-scrolling:touch;">
+                  <div style="font-weight:700; margin-bottom:8px; color:#111827;">Faturamento por tipo de produto</div>
+                  <table style="width:100%; border-collapse:collapse; font-size:0.85rem; min-width:540px;">
+                    <thead>
+                      <tr style="background:#f9fafb; color:#6b7280;">
+                        <th style="padding:8px 10px; text-align:left; border-bottom:1px solid #eef0f4;">Tipo</th>
+                        <th style="padding:8px 10px; text-align:right; border-bottom:1px solid #eef0f4;">Pedidos</th>
+                        <th style="padding:8px 10px; text-align:right; border-bottom:1px solid #eef0f4;">Faturamento</th>
+                        <th style="padding:8px 10px; text-align:right; border-bottom:1px solid #eef0f4;">Gasto</th>
+                        <th style="padding:8px 10px; text-align:right; border-bottom:1px solid #eef0f4;">Lucro</th>
+                        <th style="padding:8px 10px; text-align:right; border-bottom:1px solid #eef0f4;">Margem</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dashboardServiceTypeTableBody"></tbody>
+                  </table>
+                  <%
+                    const othersArr3 = Array.isArray(servicePieOthers) ? servicePieOthers : [];
+                    const othersPreview3 = othersArr3.slice(0, 8);
+                    const othersRest3 = Math.max(0, othersArr3.length - othersPreview3.length);
+                    const othersText3 = othersPreview3
+                      .map(function(x){ return String(x && x.label ? x.label : '-') + ' (' + String((x && typeof x.count !== 'undefined') ? x.count : 0) + ')'; })
+                      .join(' · ');
+                  %>
+                  <% if (othersArr3.length) { %>
+                    <div style="margin-top:8px; font-size:0.8rem; color:#6b7280; line-height:1.3;">"Outros" inclui: <%= othersText3 %><%= othersRest3 > 0 ? (' · +' + othersRest3 + ' tipos') : '' %></div>
+                  <% } %>
                 </div>
                 <script type="application/json" id="dashboardPaymentMethodData"><%- JSON.stringify(Array.isArray(paymentPie) ? paymentPie : []) %></script>
                 <script type="application/json" id="dashboardServiceTypePieData"><%- JSON.stringify(Array.isArray(servicePie) ? servicePie : []) %></script>
@@ -7038,6 +7179,60 @@
                       function toNum(v) {
                         var n = Number(v);
                         return isFinite(n) ? n : 0;
+                      }
+                      function brlNum(v){ try { return Number(v||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' }); } catch(_){ return 'R$ ' + Number(v||0).toFixed(2).replace('.', ','); } }
+                      // Mobile: legenda embaixo (não corta na largura estreita).
+                      var legendPos = (typeof window !== 'undefined' && window.innerWidth && window.innerWidth < 680) ? 'bottom' : 'right';
+                      // Tabela de faturamento/gasto/margem por tipo de produto.
+                      function renderServiceTypeTable(items){
+                        var body = document.getElementById('dashboardServiceTypeTableBody');
+                        if (!body) return;
+                        var arr = Array.isArray(items) ? items : [];
+                        var tRev=0, tCost=0, tCnt=0;
+                        var rows = arr.map(function(x){
+                          var lbl = String(x && x.label ? x.label : '-');
+                          var color = String(x && x.color ? x.color : '#cbd5e1');
+                          var cnt = toNum(x && x.count), rev = toNum(x && x.revenue), cost = toNum(x && x.cost);
+                          var profit = rev - cost;
+                          var margin = rev > 0 ? (profit / rev * 100) : 0;
+                          tRev+=rev; tCost+=cost; tCnt+=cnt;
+                          var mc = profit >= 0 ? '#047857' : '#dc2626';
+                          return '<tr style="border-bottom:1px solid #f3f4f6;">'
+                            + '<td style="padding:8px 10px;"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:'+color+';margin-right:6px;vertical-align:middle;"></span>'+lbl+'</td>'
+                            + '<td style="padding:8px 10px; text-align:right; color:#374151;">'+Math.round(cnt).toLocaleString('pt-BR')+'</td>'
+                            + '<td style="padding:8px 10px; text-align:right; color:#111827; font-weight:600;">'+brlNum(rev)+'</td>'
+                            + '<td style="padding:8px 10px; text-align:right; color:#b45309;">'+brlNum(cost)+'</td>'
+                            + '<td style="padding:8px 10px; text-align:right; color:'+mc+'; font-weight:600;">'+brlNum(profit)+'</td>'
+                            + '<td style="padding:8px 10px; text-align:right; color:'+mc+';">'+margin.toFixed(1).replace('.', ',')+'%</td>'
+                            + '</tr>';
+                        }).join('');
+                        var tProfit = tRev - tCost;
+                        var tMargin = tRev > 0 ? (tProfit / tRev * 100) : 0;
+                        var tmc = tProfit >= 0 ? '#047857' : '#dc2626';
+                        var totalRow = '<tr style="border-top:2px solid #e5e7eb; background:#fafafa; font-weight:700;">'
+                          + '<td style="padding:8px 10px;">Total</td>'
+                          + '<td style="padding:8px 10px; text-align:right;">'+Math.round(tCnt).toLocaleString('pt-BR')+'</td>'
+                          + '<td style="padding:8px 10px; text-align:right; color:#111827;">'+brlNum(tRev)+'</td>'
+                          + '<td style="padding:8px 10px; text-align:right; color:#b45309;">'+brlNum(tCost)+'</td>'
+                          + '<td style="padding:8px 10px; text-align:right; color:'+tmc+';">'+brlNum(tProfit)+'</td>'
+                          + '<td style="padding:8px 10px; text-align:right; color:'+tmc+';">'+tMargin.toFixed(1).replace('.', ',')+'%</td>'
+                          + '</tr>';
+                        body.innerHTML = (rows || '') + totalRow;
+                      }
+                      function renderValueBreakdown(boxId, items){
+                        var box = document.getElementById(boxId);
+                        if (!box) return;
+                        var arr = Array.isArray(items) ? items : [];
+                        if (!arr.length){ box.innerHTML = ''; return; }
+                        box.innerHTML = arr.map(function(x){
+                          var color = String(x && x.color ? x.color : '#cbd5e1');
+                          var lbl = String(x && x.label ? x.label : '-');
+                          var cnt = toNum(x && typeof x.count !== 'undefined' ? x.count : 0);
+                          var rev = toNum(x && typeof x.revenue !== 'undefined' ? x.revenue : 0);
+                          return '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:2px 0;">'
+                            + '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:'+color+';margin-right:6px;vertical-align:middle;"></span>'+lbl+' <span style="color:#9ca3af;">('+Math.round(cnt)+')</span></span>'
+                            + '<b style="color:#047857; white-space:nowrap;">'+brlNum(rev)+'</b></div>';
+                        }).join('');
                       }
                       function buildPie(items) {
                         var arr = Array.isArray(items) ? items : [];
@@ -7132,9 +7327,10 @@
                           plugins: [donutLabelsPlugin],
                           type: 'doughnut',
                           data: { labels: c.labels, datasets: [{ data: c.values, backgroundColor: c.colors, borderWidth: 0 }] },
-                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ return String(ctx && ctx.label ? ctx.label : ''); } } } }, cutout: '60%' }
+                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: legendPos, align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ var i = ctx.dataIndex; var base = String(ctx && ctx.label ? ctx.label : ''); var rev = (ch[i] && typeof ch[i].revenue !== 'undefined') ? brlNum(ch[i].revenue) : ''; return rev ? (base + ' · ' + rev) : base; } } } }, cutout: '60%' }
                         });
                       }
+                      renderValueBreakdown('dashboardChannelBreakdown', ch);
                       var platEl = document.getElementById('dashboardPlatformPieData');
                       var platRaw = platEl ? String(platEl.textContent || '').trim() : '[]';
                       var plat = JSON.parse(platRaw || '[]');
@@ -7145,7 +7341,7 @@
                           plugins: [donutLabelsPlugin],
                           type: 'doughnut',
                           data: { labels: pl.labels, datasets: [{ data: pl.values, backgroundColor: pl.colors, borderWidth: 0 }] },
-                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ return String(ctx && ctx.label ? ctx.label : ''); } } } }, cutout: '60%' }
+                          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: legendPos, align: 'center', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: function(ctx){ return String(ctx && ctx.label ? ctx.label : ''); } } } }, cutout: '60%' }
                         });
                       }
                       var payEl = document.getElementById('dashboardPaymentMethodData');
@@ -7170,7 +7366,7 @@
                             maintainAspectRatio: false,
                             plugins: {
                               legend: {
-                                position: 'right',
+                                position: legendPos,
                                 align: 'center',
                                 labels: {
                                   boxWidth: 10,
@@ -7216,7 +7412,7 @@
                             maintainAspectRatio: false,
                             plugins: {
                               legend: {
-                                position: 'right',
+                                position: legendPos,
                                 align: 'center',
                                 labels: {
                                   boxWidth: 10,
@@ -7227,8 +7423,10 @@
                                 callbacks: {
                                   label: function(ctx){
                                     try {
+                                      var i = ctx.dataIndex;
                                       var lbl = String(ctx && ctx.label ? ctx.label : '');
-                                      return lbl;
+                                      var rev = (svc[i] && typeof svc[i].revenue !== 'undefined') ? brlNum(svc[i].revenue) : '';
+                                      return rev ? (lbl + ' · ' + rev) : lbl;
                                     } catch (_) {
                                       return '';
                                     }
@@ -7240,6 +7438,7 @@
                           }
                         });
                       }
+                      renderServiceTypeTable(svc);
                     } catch (_) {}
                   })();
                 </script>

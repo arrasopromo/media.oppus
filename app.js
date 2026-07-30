@@ -823,8 +823,13 @@ function startEmailBounceLoop() {
 const __waOptoutCache = new Set();
 const normOptoutPhone = (p) => { let d = String(p || '').replace(/\D/g, ''); if (d.length > 11 && d.startsWith('55')) d = d.slice(2); return d; };
 // "Bloqueado" (blocked=true) = paramos de enviar. Opt-out DURO (sair/parar/cancelar) bloqueia na hora;
-// "Não tenho interesse" (soft) conta rejeições e só bloqueia ao atingir LTV_OPTOUT_THRESHOLD (padrão 3).
-const LTV_OPTOUT_THRESHOLD = Math.max(1, Math.min(10, Number(process.env.LTV_OPTOUT_THRESHOLD || 3) || 3));
+// "Não tenho interesse" (soft) conta rejeições e só bloqueia ao atingir LTV_OPTOUT_THRESHOLD (padrão 2).
+// 2 "não tenho interesse" já desconsidera o lead (para de enviar).
+const LTV_OPTOUT_THRESHOLD = Math.max(1, Math.min(10, Number(process.env.LTV_OPTOUT_THRESHOLD || 2) || 2));
+// Intervalo MÍNIMO (dias) entre 2 envios de LTV ao MESMO telefone. Default 2.
+// Evita mandar 3-4 mensagens pro mesmo cliente em pouco tempo (cliente com vários pedidos).
+const LTV_MIN_RESEND_DAYS = Math.max(1, Math.min(60, Number(process.env.LTV_MIN_RESEND_DAYS || 2) || 2));
+const LTV_MIN_RESEND_MS = LTV_MIN_RESEND_DAYS * 24 * 60 * 60 * 1000;
 async function isWhatsappOptedOut(phone) {
   const k = normOptoutPhone(phone);
   if (!k) return false;
@@ -875,6 +880,67 @@ const isSoftReject = (t) => {
   return /(n[aã]o tenho interesse|sem interesse|n[aã]o quero(?! mais))/.test(s);
 };
 
+// ── Blacklist de LTV (cadastrada manualmente pelo admin) ─────────────────────
+// Números aqui NUNCA recebem LTV (nem o automático D+2 nem o envio manual da base).
+// Ao cadastrar, o painel busca o @ do cliente pelo telefone para o admin validar
+// que é o número certo. Chave = mesma do opt-out (dígitos sem o 55).
+const __ltvBlacklistCache = new Set();
+let __ltvBlacklistLoaded = false;
+async function loadLtvBlacklistCache() {
+  try {
+    const c = await getCollection('ltv_blacklist');
+    const docs = await c.find({}, { projection: { phoneKey: 1 } }).toArray();
+    __ltvBlacklistCache.clear();
+    for (const d of (docs || [])) { const k = String(d && d.phoneKey || '').trim(); if (k) __ltvBlacklistCache.add(k); }
+    __ltvBlacklistLoaded = true;
+  } catch (_) {}
+}
+async function isLtvBlacklisted(phone) {
+  const k = normOptoutPhone(phone);
+  if (!k) return false;
+  if (__ltvBlacklistCache.has(k)) return true;
+  if (!__ltvBlacklistLoaded) { await loadLtvBlacklistCache(); return __ltvBlacklistCache.has(k); }
+  return false;
+}
+// Acha nome/@ do cliente pelo telefone — usado para validar o cadastro na blacklist.
+async function ltvLookupByPhone(phone) {
+  const e164 = normalizePhoneBR(phone);
+  const key = normOptoutPhone(phone);
+  const out = { phoneE164: e164 || '', phoneKey: key || '', username: '', name: '', found: false };
+  if (!key) return out;
+  try {
+    const contacts = await getCollection('ltv_contacts');
+    const doc = e164 ? await contacts.findOne({ phoneE164: e164 }, { projection: { name: 1, ig: 1 } }) : null;
+    if (doc) { if (!out.name) out.name = String(doc.name || ''); if (!out.username) out.username = String(doc.ig || '').replace(/^@+/, ''); }
+  } catch (_) {}
+  if (!out.username) {
+    try {
+      const links = await getCollection('remarketing_links');
+      const l = e164 ? await links.findOne({ phoneE164: e164 }, { projection: { name: 1, firstName: 1, instagram_username: 1 } }) : null;
+      if (l) { if (!out.name) out.name = String(l.name || l.firstName || ''); if (!out.username) out.username = String(l.instagram_username || '').replace(/^@+/, ''); }
+    } catch (_) {}
+  }
+  if (!out.username) {
+    try {
+      const col = await getCollection('checkout_orders');
+      const projection = { customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, instagramUsername: 1, instauser: 1, paidAt: 1, 'woovi.paidAt': 1, createdAt: 1 };
+      const cursor = col.find({}, { projection }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50000);
+      for await (const order of cursor) {
+        const getAdd = buildOrderFieldGetter(order);
+        const customer = (order.customer && typeof order.customer === 'object') ? order.customer : {};
+        const phoneRaw = getAdd('phone') || getAdd('telefone') || getAdd('whatsapp') || customer.phone || customer.telefone || customer.whatsapp || '';
+        if (normOptoutPhone(phoneRaw) !== key) continue;
+        const ig = String(getAdd('instagram_username') || getAdd('instagramUsername') || getAdd('username') || getAdd('perfil') || getAdd('instagram') || order.instagramUsername || order.instauser || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+        const nm = String(customer.name || customer.nome || getAdd('nome') || getAdd('name') || '').trim();
+        if (nm && !out.name) out.name = nm;
+        if (ig) { out.username = ig; break; }
+      }
+    } catch (_) {}
+  }
+  out.found = !!(out.username || out.name);
+  return out;
+}
+
 // ── CRM de WhatsApp (LTV): registro de mensagens (entrada/saída) ───────────────
 // Grava toda mensagem trocada com o número do LTV numa coleção `wa_messages`, para
 // o inbox somente-leitura do painel. Best-effort: NUNCA lança (não pode quebrar o
@@ -904,6 +970,10 @@ async function logWaMessage(msg) {
       campaign: String(msg && msg.campaign || 'ltv').slice(0, 30),
       name: String(msg && msg.name || '').slice(0, 120),
       ig: String(msg && msg.ig || '').replace(/^@+/, '').slice(0, 80),
+      // Mídia (imagem/áudio/vídeo/documento/figurinha): guarda o media id da Meta e o
+      // mime, para o CRM exibir/tocar via proxy autenticado (a URL da Meta expira e exige token).
+      mediaId: String(msg && msg.mediaId || '').slice(0, 200),
+      mime: String(msg && msg.mime || '').slice(0, 100),
       createdAt: (msg && msg.createdAt instanceof Date) ? msg.createdAt : new Date(),
       ts: (msg && msg.ts) ? Number(msg.ts) : null
     };
@@ -6868,6 +6938,42 @@ const sendWabaTemplate = async (cfg, to, slug, bodyValues) => {
   return axios.post(url, payload, { headers: { Authorization: 'Bearer ' + cfg.token, 'Content-Type': 'application/json' }, timeout: 20000, validateStatus: () => true });
 };
 
+// Envia mensagem de TEXTO LIVRE (só permitido dentro da janela de 24h da Meta —
+// quando o cliente mandou mensagem nas últimas 24h). Usado pela resposta do CRM.
+const sendWhatsappText = async (cfg, to, text) => {
+  const axios = require('axios');
+  const url = `https://graph.facebook.com/${cfg.version}/${cfg.phoneId}/messages`;
+  const payload = { messaging_product: 'whatsapp', to: String(to), type: 'text', text: { preview_url: false, body: String(text || '').slice(0, 4096) } };
+  return axios.post(url, payload, { headers: { Authorization: 'Bearer ' + cfg.token, 'Content-Type': 'application/json' }, timeout: 20000, validateStatus: () => true });
+};
+
+// Faz upload de um arquivo (buffer) para a Meta e devolve o media id. Usado pelo CRM
+// para enviar imagem/vídeo/áudio (o envio por id é o fluxo recomendado da Cloud API).
+const uploadWhatsappMedia = async (cfg, buffer, mime, filename) => {
+  const axios = require('axios');
+  const FormDataLib = require('form-data');
+  const url = `https://graph.facebook.com/${cfg.version}/${cfg.phoneId}/media`;
+  const form = new FormDataLib();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', String(mime || 'application/octet-stream'));
+  form.append('file', buffer, { filename: filename || 'file', contentType: String(mime || 'application/octet-stream') });
+  const resp = await axios.post(url, form, { headers: Object.assign({ Authorization: 'Bearer ' + cfg.token }, form.getHeaders()), maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 60000, validateStatus: () => true });
+  if (resp && resp.status >= 200 && resp.status < 300 && resp.data && resp.data.id) return { ok: true, id: String(resp.data.id) };
+  const em = (resp && resp.data && resp.data.error) ? (resp.data.error.message || JSON.stringify(resp.data.error)) : ('HTTP ' + (resp && resp.status));
+  return { ok: false, message: String(em).slice(0, 300) };
+};
+
+// Envia uma mensagem de MÍDIA (imagem/vídeo/áudio) por media id — só dentro da janela
+// de 24h da Meta. caption só vale para imagem/vídeo.
+const sendWhatsappMedia = async (cfg, to, kind, mediaId, caption) => {
+  const axios = require('axios');
+  const url = `https://graph.facebook.com/${cfg.version}/${cfg.phoneId}/messages`;
+  const media = { id: String(mediaId) };
+  if (caption && (kind === 'image' || kind === 'video')) media.caption = String(caption).slice(0, 1024);
+  const payload = { messaging_product: 'whatsapp', to: String(to), type: kind, [kind]: media };
+  return axios.post(url, payload, { headers: { Authorization: 'Bearer ' + cfg.token, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
+};
+
 // progresso de disparo em memória (por campanha)
 const __wabaSendJobs = new Map();
 
@@ -7267,13 +7373,19 @@ app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
     try { await ensureLtvCouponPool(); } catch (_) {}
     const EXP_DAYS = 2;
 
-    __ltvJob = { running: true, total: batch.length, attempted: 0, sent: 0, failed: 0, skippedOptout: 0, startedAt: new Date().toISOString(), finishedAt: null, errors: [] };
+    __ltvJob = { running: true, total: batch.length, attempted: 0, sent: 0, failed: 0, skippedOptout: 0, skippedBlacklist: 0, skippedCooldown: 0, startedAt: new Date().toISOString(), finishedAt: null, errors: [] };
     (async () => {
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       let idx = 0;
       for (const l of batch) {
         __ltvJob.attempted++;
         if (await isWhatsappOptedOut(l.phoneE164)) { __ltvJob.skippedOptout++; continue; }
+        if (await isLtvBlacklisted(l.phoneE164)) { __ltvJob.skippedBlacklist++; continue; }
+        // COOLDOWN: no mínimo LTV_MIN_RESEND_DAYS entre envios ao MESMO telefone.
+        try {
+          const contact = await contacts.findOne({ phoneE164: l.phoneE164 }, { projection: { lastSentAt: 1 } });
+          if (contact && contact.lastSentAt) { const dt = Date.now() - new Date(contact.lastSentAt).getTime(); if (dt >= 0 && dt < LTV_MIN_RESEND_MS) { __ltvJob.skippedCooldown++; continue; } }
+        } catch (_) {}
         const nome = String(l.firstName || (l.name || '').split(/\s+/)[0] || 'Cliente').trim() || 'Cliente';
         // Gera o LINK NA HORA — cupom do rodízio, validade 2 dias (expira e é excluído depois).
         const pick = await pickLtvCouponForProfile(l.igRaw, idx++); // { code, pct }
@@ -7552,23 +7664,32 @@ async function computeLtvStats(opts = {}) {
       // Sem isto o card mostrava sempre R$ 0,00.
       let ltvCostSettings = Object.assign({}, DEFAULT_COST_SETTINGS);
       try { const sc = await getCollection('settings'); const scd = await sc.findOne({ _id: 'cost_settings' }); if (scd && scd.values && typeof scd.values === 'object') ltvCostSettings = Object.assign({}, DEFAULT_COST_SETTINGS, scd.values); } catch (_) {}
-      const ords = await col.find({ $or: orQ }, { projection: { valueCents: 1, 'woovi.paymentMethods.pix.value': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1, identifier: 1, costs: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, 'fama24h.statusPayload': 1, 'fornecedor_social.statusPayload': 1, 'fama24h_multi.orders': 1, 'fornecedor_social_multi.orders': 1 } }).limit(100000).toArray();
+      const ords = await col.find({ $or: orQ }, { projection: { valueCents: 1, 'woovi.paymentMethods.pix.value': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1, identifier: 1, costs: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1,
+        'fama24h.orderId': 1, 'fama24h.statusPayload': 1, 'fama24h_views.orderId': 1, 'fama24h_views.statusPayload': 1, 'fama24h_likes.orderId': 1, 'fama24h_likes.statusPayload': 1,
+        'fornecedor_social.orderId': 1, 'fornecedor_social.statusPayload': 1, 'fornecedor_social_likes.orderId': 1, 'fornecedor_social_likes.statusPayload': 1,
+        'topfama.orderId': 1, 'topfama.statusPayload': 1, 'worldsmm_comments.orderId': 1, 'worldsmm_comments.statusPayload': 1,
+        'fama24h_multi.orders': 1, 'fornecedor_social_multi.orders': 1 } }).limit(100000).toArray();
       const getPaidCents = (o) => { const tN = (v) => { const n = Number(v); return (Number.isFinite(n) && n > 0) ? n : 0; }; return tN(o.valueCents) || tN(o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && o.woovi.paymentMethods.pix.value) || tN(o.woovi && o.woovi.value) || tN(o.efi && o.efi.total) || tN(o.pagarme && o.pagarme.amount) || 0; };
-      const getCostReais = (o) => {
-        const real = _providerChargeOf(o);
-        if (real != null && real > 0) return real;               // charge real do fornecedor
-        const getAdd = buildOrderFieldGetter(o);
+      // Custo REAL TOTAL = charge do fornecedor (action=status) somando base + TODOS os bumps.
+      // Cacheado em costs.providerChargeTotal. Só cai na estimativa se o pedido nem foi ao fornecedor.
+      const getCostReais = async (o) => {
+        const saved = Number(o && o.costs && o.costs.providerChargeTotal);
+        if (Number.isFinite(saved) && saved > 0) return saved;                 // já calculado (cache)
+        const rc = await computeOrderRealCost(o, { live: true, col });         // real: base + bumps
+        if (rc && rc.total > 0) return rc.total;
+        if (rc && rc.hasProviderOrders) return 0;                              // foi ao fornecedor mas sem charge ainda
+        const getAdd = buildOrderFieldGetter(o);                              // fallback: nunca foi ao fornecedor → estima
         const categoria = String(getAdd('categoria_servico') || '').trim();
         const tipo = String(getAdd('tipo_servico') || o.tipoServico || o.tipo || '').trim();
         let qty = Number(o.quantidade || o.qtd || 0); if (!qty) qty = Number(getAdd('quantidade') || 0);
         if (!(Number.isFinite(qty) && qty > 0)) return 0;
         const per1000 = _costPer1000For(categoria, tipo, ltvCostSettings);
-        return (per1000 > 0) ? (qty / 1000) * per1000 : 0;       // estimativa qtd/1000 × custo/1000
+        return (per1000 > 0) ? (qty / 1000) * per1000 : 0;
       };
       for (const o of ords) {
         if (hasRange && !inRange(orderDateMs(o))) continue;
         let cid = couponByMongo.get(String(o._id)); if (!cid && o.identifier) cid = couponByIdent.get(String(o.identifier)); if (!cid) continue;
-        const cents = getPaidCents(o), costR = getCostReais(o);
+        const cents = getPaidCents(o), costR = await getCostReais(o);
         movedByCid.set(cid, (movedByCid.get(cid) || 0) + cents);
         costByCid.set(cid, (costByCid.get(cid) || 0) + costR);
         faturado += cents / 100; custo += costR;
@@ -7628,6 +7749,66 @@ app.get('/api/painel/ltv/stats', requireAdmin, async (req, res) => {
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
 });
 
+// ── Blacklist de LTV: cadastrar números que NUNCA recebem LTV ────────────────
+// Fluxo: (1) lookup do telefone → devolve o @ do cliente para validar; (2) add
+// grava na coleção ltv_blacklist e no cache (bloqueio imediato).
+app.post('/api/painel/ltv/blacklist/lookup', requireAdmin, async (req, res) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const info = await ltvLookupByPhone(phone);
+    if (!info.phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    const already = await isLtvBlacklisted(info.phoneKey);
+    return res.json({ ok: true, phoneKey: info.phoneKey, phoneE164: info.phoneE164, username: info.username, name: info.name, found: info.found, alreadyBlacklisted: !!already });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+app.post('/api/painel/ltv/blacklist/add', requireAdmin, async (req, res) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '').trim();
+    if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    const phoneKey = normOptoutPhone(phone);
+    const phoneE164 = normalizePhoneBR(phone);
+    if (!phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    // @ enviado pelo painel (validado no lookup); se vier vazio, tenta buscar de novo.
+    let username = String((req.body && req.body.username) || '').replace(/^@+/, '').trim();
+    let name = String((req.body && req.body.name) || '').trim();
+    if (!username) { try { const info = await ltvLookupByPhone(phone); username = info.username || ''; name = name || info.name || ''; } catch (_) {} }
+    const addedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    const c = await getCollection('ltv_blacklist');
+    try { await c.createIndex({ phoneKey: 1 }, { unique: true }); } catch (_) {}
+    await c.updateOne(
+      { phoneKey },
+      { $set: { phoneKey, phoneE164: phoneE164 || phoneKey, username, name, updatedAt: new Date(), addedBy }, $setOnInsert: { addedAt: new Date() } },
+      { upsert: true }
+    );
+    __ltvBlacklistCache.add(phoneKey);
+    try { console.log('⛔ [ltv-blacklist] add', phoneKey, '@' + (username || '?'), 'by', addedBy); } catch (_) {}
+    return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, username, name });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+app.get('/api/painel/ltv/blacklist/list', requireAdmin, async (req, res) => {
+  try {
+    const c = await getCollection('ltv_blacklist');
+    const docs = await c.find({}, { projection: { _id: 0, phoneKey: 1, phoneE164: 1, username: 1, name: 1, addedAt: 1, addedBy: 1 } }).sort({ addedAt: -1 }).limit(5000).toArray();
+    return res.json({ ok: true, count: docs.length, items: docs });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+app.post('/api/painel/ltv/blacklist/remove', requireAdmin, async (req, res) => {
+  try {
+    const phone = String((req.body && (req.body.phone || req.body.phoneKey)) || '').trim();
+    const phoneKey = normOptoutPhone(phone);
+    if (!phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    const c = await getCollection('ltv_blacklist');
+    await c.deleteOne({ phoneKey });
+    __ltvBlacklistCache.delete(phoneKey);
+    try { console.log('⛔ [ltv-blacklist] remove', phoneKey); } catch (_) {}
+    return res.json({ ok: true, phoneKey });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
 // ─── D+2: envia LTV automaticamente ~2 dias após a compra (DESLIGADO por padrão) ───
 const LTV_D2_POOL = [{ code: 'VOLTA20', pct: 20 }, { code: 'VOLTA15', pct: 15 }];
 // Tipos de serviço que o LTV automático pode cobrir. O admin escolhe quais.
@@ -7680,6 +7861,7 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
   const days = cfg.days, cap = capOverride || cfg.cap;
   const col = await getCollection('checkout_orders');
   const links = await getCollection('remarketing_links');
+  const contacts = await getCollection('ltv_contacts');
   const now = Date.now();
   const upperMs = now - days * 86400000;            // paidAt <= now - Ddias (já passou de D+dias)
   const lowerMs = now - (days + 2) * 86400000;      // janela: até 2 dias além (evita backfill antigo)
@@ -7692,7 +7874,24 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
   const wabaCfg = await getWabaConfig();
   const willSend = !dryRun && wabaCfg.configured;
   if (willSend) { try { await ensureLtvCouponPool(); } catch (_) {} }
-  const stats = { scanned: orders.length, eligible: 0, sent: 0, failed: 0, skip_window: 0, skip_already: 0, skip_no_phone: 0, skip_no_ig: 0, skip_optout: 0, skip_dup: 0, skip_not_completed: 0 };
+  const stats = { scanned: orders.length, eligible: 0, sent: 0, failed: 0, skip_window: 0, skip_already: 0, skip_no_phone: 0, skip_no_ig: 0, skip_optout: 0, skip_blacklist: 0, skip_dup: 0, skip_not_completed: 0, skip_cooldown: 0 };
+  // Mapa telefone → pedido MAIS RECENTE do cliente (orders já vem ordenado por paidAt DESC).
+  // A mensagem de LTV referencia o ÚLTIMO pedido, mesmo que o D+2 tenha disparado por um anterior.
+  const latestByPhone = new Map();
+  // TODOS os _ids de pedido por telefone: ao enviar o D+2, marcamos ltvD2SentAt em
+  // TODOS os pedidos do cliente — não só no que disparou + o último. Assim um pedido
+  // "irmão" do mesmo cliente não re-dispara no próximo ciclo (evita 2-3 LTV seguidos).
+  const orderIdsByPhone = new Map();
+  for (const o of orders) {
+    const gA = buildOrderFieldGetter(o);
+    const cu = (o.customer && typeof o.customer === 'object') ? o.customer : {};
+    const ph = normalizePhoneBR(gA('phone') || gA('telefone') || gA('whatsapp') || cu.phone || cu.telefone || cu.whatsapp || '');
+    if (!ph) continue;
+    if (!latestByPhone.has(ph)) latestByPhone.set(ph, o);
+    let arr = orderIdsByPhone.get(ph);
+    if (!arr) { arr = []; orderIdsByPhone.set(ph, arr); }
+    if (o && o._id) arr.push(o._id);
+  }
   const seenPhones = new Set(); const sample = []; let idx = 0;
   for (const order of orders) {
     if (!dryRun && stats.sent >= cap) break;
@@ -7712,37 +7911,49 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
     const phoneE164 = normalizePhoneBR(phoneRaw);
     if (!phoneE164) { stats.skip_no_phone++; continue; }
     if (seenPhones.has(phoneE164)) { stats.skip_dup++; continue; }
-    const igRaw = String(getAdd('instagram_username') || getAdd('instagramUsername') || getAdd('username') || getAdd('perfil') || getAdd('instagram') || order.instagramUsername || order.instauser || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
-    if (!igRaw) { stats.skip_no_ig++; continue; }
-    const identifier = String(order.identifier || (order.woovi && order.woovi.identifier) || (order.expay && order.expay.transactionId) || (order.paghiper && order.paghiper.transactionId) || '').trim();
-    const correlationID = String(order.correlationID || '').trim();
-    if (!identifier && !correlationID) { stats.skip_window++; continue; }
     if (await isWhatsappOptedOut(phoneE164)) { stats.skip_optout++; continue; }
-    // GATE: só envia o LTV automático se o PEDIDO PRINCIPAL do cliente já estiver
-    // CONCLUÍDO (completed) no fornecedor (Fama24h/FornecedorSocial/TopFama). Se ainda
-    // está processando/pendente/não despachado, PULA — volta a ser elegível no próximo
-    // ciclo, quando concluir (ltvD2SentAt não é gravado, então não se perde).
+    if (await isLtvBlacklisted(phoneE164)) { stats.skip_blacklist++; continue; }
+    // COOLDOWN: no mínimo LTV_MIN_RESEND_DAYS (2) entre envios ao MESMO telefone.
+    // Cliente com vários pedidos não recebe 3-4 LTV em pouco tempo. Fonte durável = ltv_contacts.
+    try {
+      const contact = await contacts.findOne({ phoneE164 }, { projection: { lastSentAt: 1 } });
+      if (contact && contact.lastSentAt) { const dt = now - new Date(contact.lastSentAt).getTime(); if (dt >= 0 && dt < LTV_MIN_RESEND_MS) { stats.skip_cooldown++; continue; } }
+    } catch (_) {}
+    // ── Referencia o ÚLTIMO pedido do cliente (não o que disparou o D+2): ig, identifier,
+    //    correlationID e nome vêm da compra MAIS RECENTE, para o link/checkout abrir com o
+    //    serviço e o post do último pedido. ──
+    const refOrder = latestByPhone.get(phoneE164) || order;
+    const refGetAdd = buildOrderFieldGetter(refOrder);
+    const refCustomer = (refOrder.customer && typeof refOrder.customer === 'object') ? refOrder.customer : {};
+    const igRaw = String(refGetAdd('instagram_username') || refGetAdd('instagramUsername') || refGetAdd('username') || refGetAdd('perfil') || refGetAdd('instagram') || refOrder.instagramUsername || refOrder.instauser || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+    if (!igRaw) { stats.skip_no_ig++; continue; }
+    const identifier = String(refOrder.identifier || (refOrder.woovi && refOrder.woovi.identifier) || (refOrder.expay && refOrder.expay.transactionId) || (refOrder.paghiper && refOrder.paghiper.transactionId) || '').trim();
+    const correlationID = String(refOrder.correlationID || '').trim();
+    if (!identifier && !correlationID) { stats.skip_window++; continue; }
+    // GATE: só envia o LTV automático se o ÚLTIMO pedido do cliente já estiver CONCLUÍDO
+    // (completed) no fornecedor. Se ainda está processando/não despachado, PULA — volta a
+    // ser elegível no próximo ciclo, quando concluir.
     {
-      const provs = fqCollectProviderOrders(order);
-      const main = provs[0] || null; // pedido principal no fornecedor
+      const provs = fqCollectProviderOrders(refOrder);
+      const main = provs[0] || null; // pedido principal (do último pedido) no fornecedor
       let mainStatus = '';
       if (main && main.orderId) { try { mainStatus = await fqFetchProviderStatus(main.provider, main.orderId); } catch (_) { mainStatus = ''; } }
       if (mainStatus !== 'completed') { stats.skip_not_completed++; continue; }
     }
     seenPhones.add(phoneE164);
     stats.eligible++;
-    const name = String(customer.name || customer.nome || getAdd('nome') || getAdd('name') || '').trim();
+    const name = String(refCustomer.name || refCustomer.nome || refGetAdd('nome') || refGetAdd('name') || '').trim();
     const firstName = (name.split(/\s+/)[0] || '').trim();
     const pick = await pickLtvCouponForProfile(igRaw, idx); idx++; // cupom que este perfil ainda não usou
     if (sample.length < 8) sample.push({ phone: phoneE164, nome: firstName || 'Cliente', cupom: pick.code, diasDaCompra: Math.round((now - pm) / 86400000 * 10) / 10 });
     if (dryRun) continue;
     let slug = genRemarketingSlug(7);
-    const linkDoc = () => ({ slug, campaign: 'ltv', via: 'd2', token: signRecoveryToken({ identifier, correlationID, exp: now + 7 * 86400000, coupon: pick.code, couponPct: pick.pct }), phone: String(phoneRaw || '').trim(), phoneE164, instagram_username: igRaw, name, firstName, coupon: pick.code, couponPct: pick.pct, identifier, correlationID, orderId: String(order._id || ''), createdAt: new Date(), createdBy: 'd2', expAt: new Date(now + 7 * 86400000), clicks: 0, sent: false });
+    const linkDoc = () => ({ slug, campaign: 'ltv', via: 'd2', token: signRecoveryToken({ identifier, correlationID, exp: now + 7 * 86400000, coupon: pick.code, couponPct: pick.pct }), phone: String(phoneRaw || '').trim(), phoneE164, instagram_username: igRaw, name, firstName, coupon: pick.code, couponPct: pick.pct, identifier, correlationID, orderId: String(refOrder._id || order._id || ''), createdAt: new Date(), createdBy: 'd2', expAt: new Date(now + 7 * 86400000), clicks: 0, sent: false });
     try { await links.insertOne(linkDoc()); } catch (e) { if (e && e.code === 11000) { slug = genRemarketingSlug(7); try { await links.insertOne(linkDoc()); } catch (_) {} } }
     try {
       const resp = await sendLtvTemplate(wabaCfg, phoneE164, { nome: firstName || 'Cliente', cupom: pick.code, slug });
       const ok = resp.status >= 200 && resp.status < 300;
-      if (ok) { stats.sent++; const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : ''; try { await links.updateOne({ slug }, { $set: { sent: true, sentAt: new Date(), wamid }, $inc: { sentCount: 1 }, $push: { sentHistory: { $each: [{ at: new Date(), wamid, via: 'd2', coupon: pick.code || '' }], $slice: -20 } } }); } catch (_) {} try { await col.updateOne({ _id: order._id }, { $set: { ltvD2SentAt: new Date() } }); } catch (_) {} }
+      if (ok) { stats.sent++; const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : ''; try { await links.updateOne({ slug }, { $set: { sent: true, sentAt: new Date(), wamid }, $inc: { sentCount: 1 }, $push: { sentHistory: { $each: [{ at: new Date(), wamid, via: 'd2', coupon: pick.code || '' }], $slice: -20 } } }); } catch (_) {} try { const ids = orderIdsByPhone.get(phoneE164) || [order._id]; if (ids.length) await col.updateMany({ _id: { $in: ids } }, { $set: { ltvD2SentAt: new Date() } }); } catch (_) {} try { await contacts.updateOne({ phoneE164 }, { $set: { phoneE164, ig: igRaw, name, lastSentAt: new Date(), lastCoupon: pick.code }, $setOnInsert: { firstSentAt: new Date() }, $inc: { sentCount: 1 } }, { upsert: true }); } catch (_) {} }
       else { stats.failed++; try { await links.updateOne({ slug }, { $set: { sendError: (resp.data && resp.data.error && resp.data.error.message) || ('HTTP ' + resp.status) } }); } catch (_) {} }
     } catch (_) { stats.failed++; }
     await new Promise(r => setTimeout(r, 130));
@@ -7843,13 +8054,22 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
           else if (mtype === 'contacts') text = '[contato]';
           else if (mtype === 'reaction' && m.reaction) text = (m.reaction.emoji || '') + ' (reação)';
           else text = '[' + mtype + ']';
+          // Mídia recebida: captura o media id + mime da Meta (para tocar/ver no CRM via proxy).
+          let mediaId = '', mime = '';
+          try {
+            const mo = (m && m[mtype] && typeof m[mtype] === 'object') ? m[mtype] : null;
+            if (mo && (mtype === 'image' || mtype === 'audio' || mtype === 'video' || mtype === 'document' || mtype === 'sticker' || mtype === 'voice')) {
+              mediaId = String(mo.id || '').trim();
+              mime = String(mo.mime_type || '').trim();
+            }
+          } catch (_) {}
           if (from) {
             if (isHardOptOut(text)) await markWhatsappOptOut(from, 'hard:' + String(text).slice(0, 60));
             else if (isSoftReject(text)) await registerWhatsappRejection(from, 'soft:' + String(text).slice(0, 60));
             // CRM: salva a resposta recebida (best-effort, nunca quebra o webhook).
             try {
               const ctx = await lookupWaContact(String(from), normOptoutPhone(from));
-              await logWaMessage({ phone: String(from), phoneE164: String(from), direction: 'in', type: mtype, text, wamid: (m && m.id), campaign: 'ltv', name: ctx.name || profileNameByWa[String(from)] || '', ig: ctx.ig, ts: (m && m.timestamp) ? Number(m.timestamp) * 1000 : null });
+              await logWaMessage({ phone: String(from), phoneE164: String(from), direction: 'in', type: mtype, text, mediaId, mime, wamid: (m && m.id), campaign: 'ltv', name: ctx.name || profileNameByWa[String(from)] || '', ig: ctx.ig, ts: (m && m.timestamp) ? Number(m.timestamp) * 1000 : null });
             } catch (_) {}
           }
         }
@@ -7913,13 +8133,133 @@ app.get('/api/painel/whatsapp-crm/thread', requireAdmin, async (req, res) => {
     const phoneKey = normOptoutPhone(String(req.query.phone || req.query.phoneKey || ''));
     if (!phoneKey) return res.status(400).json({ ok: false, error: 'missing_phone' });
     const c = await getCollection('wa_messages');
-    const docs = await c.find({ phoneKey }, { projection: { direction: 1, type: 1, text: 1, createdAt: 1, name: 1, ig: 1, phoneE164: 1 } }).sort({ createdAt: 1 }).limit(1000).toArray().catch(() => []);
+    const docs = await c.find({ phoneKey }, { projection: { direction: 1, type: 1, text: 1, createdAt: 1, name: 1, ig: 1, phoneE164: 1, mediaId: 1, mime: 1, wamid: 1 } }).sort({ createdAt: 1 }).limit(1000).toArray().catch(() => []);
     let name = '', ig = '', phoneE164 = '';
     for (const d of docs) { if (d.name && !name) name = d.name; if (d.ig && !ig) ig = d.ig; if (d.phoneE164 && !phoneE164) phoneE164 = d.phoneE164; }
     const blocked = await isWhatsappOptedOut(phoneKey).catch(() => false);
-    const messages = docs.map(d => ({ direction: d.direction, type: d.type, text: d.text, at: d.createdAt }));
-    return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, name, ig, blocked, messages });
+    const messages = docs.map(d => {
+      const hasMedia = !!(d.mediaId && d.wamid);
+      const mediaKind = hasMedia ? (/^image|sticker/.test(String(d.type)) ? 'image' : (/^video/.test(String(d.type)) ? 'video' : ((/^audio|voice/.test(String(d.type))) ? 'audio' : 'file'))) : '';
+      return { direction: d.direction, type: d.type, text: d.text, at: d.createdAt, hasMedia, mediaKind, mime: d.mime || '', mediaUrl: hasMedia ? ('/api/painel/whatsapp-crm/media?wamid=' + encodeURIComponent(String(d.wamid))) : '' };
+    });
+    // Janela de 24h da Meta: só dá pra responder TEXTO LIVRE se o cliente mandou
+    // mensagem nas últimas 24h. lastInboundAt = última mensagem recebida.
+    let lastInboundMs = 0;
+    for (const d of docs) { if (d.direction === 'in') { const t = d.createdAt ? new Date(d.createdAt).getTime() : 0; if (t > lastInboundMs) lastInboundMs = t; } }
+    const withinWindow = lastInboundMs > 0 && (Date.now() - lastInboundMs) < 24 * 60 * 60 * 1000;
+    const canReply = withinWindow && !blocked;
+    const hoursLeft = withinWindow ? Math.max(0, Math.round((24 * 60 * 60 * 1000 - (Date.now() - lastInboundMs)) / 3600000 * 10) / 10) : 0;
+    return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, name, ig, blocked, messages, lastInboundAt: lastInboundMs ? new Date(lastInboundMs).toISOString() : null, canReply, withinWindow, hoursLeft });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+// ADMIN: RESPONDER pelo CRM (texto livre) — só dentro da janela de 24h da Meta.
+app.post('/api/painel/whatsapp-crm/send', requireAdmin, async (req, res) => {
+  try {
+    const b = (req.body && typeof req.body === 'object') ? req.body : {};
+    const phoneKey = normOptoutPhone(String(b.phone || b.phoneKey || ''));
+    const text = String(b.text || '').trim();
+    if (!phoneKey) return res.status(400).json({ ok: false, error: 'missing_phone' });
+    if (!text) return res.status(400).json({ ok: false, error: 'empty_text' });
+    const cfg = await getWabaConfig();
+    if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured', message: 'Sem credenciais WABA no .env.' });
+    // Janela de 24h: precisa de mensagem recebida do cliente nas últimas 24h.
+    const c = await getCollection('wa_messages');
+    const lastIn = await c.find({ phoneKey, direction: 'in' }, { projection: { createdAt: 1, phoneE164: 1 } }).sort({ createdAt: -1 }).limit(1).toArray().catch(() => []);
+    const lastInMs = (lastIn[0] && lastIn[0].createdAt) ? new Date(lastIn[0].createdAt).getTime() : 0;
+    if (!lastInMs || (Date.now() - lastInMs) >= 24 * 60 * 60 * 1000) {
+      return res.status(409).json({ ok: false, error: 'outside_24h_window', message: 'Fora da janela de 24h da Meta — o cliente não mandou mensagem nas últimas 24h. Só dá pra responder com template.' });
+    }
+    const phoneE164 = String((lastIn[0] && lastIn[0].phoneE164) || phoneKey).trim();
+    const resp = await sendWhatsappText(cfg, phoneE164, text);
+    const ok = resp && resp.status >= 200 && resp.status < 300;
+    if (!ok) {
+      const em = (resp && resp.data && resp.data.error) ? (resp.data.error.message || JSON.stringify(resp.data.error)) : ('HTTP ' + (resp && resp.status));
+      return res.status(502).json({ ok: false, error: 'send_failed', message: String(em).slice(0, 300) });
+    }
+    const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
+    const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: 'text', text, wamid, campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
+    try { const wm = await getCollection('wa_messages'); await wm.updateOne({ wamid }, { $set: { agent: admin, manualReply: true } }); } catch (_) {}
+    return res.json({ ok: true, wamid });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+// ── CRM: PROXY de mídia — busca a mídia na Meta com o token do servidor e devolve o
+// binário (a URL da Meta expira e exige token, não dá pra abrir direto no navegador).
+app.get('/api/painel/whatsapp-crm/media', requireAdmin, async (req, res) => {
+  try {
+    const wamid = String(req.query.wamid || '').trim();
+    if (!wamid) return res.status(400).json({ ok: false, error: 'missing_wamid' });
+    const c = await getCollection('wa_messages');
+    const doc = await c.findOne({ wamid }, { projection: { mediaId: 1, mime: 1 } });
+    if (!doc || !doc.mediaId) return res.status(404).json({ ok: false, error: 'not_found' });
+    const cfg = await getWabaConfig();
+    if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured' });
+    const axios = require('axios');
+    // 1) resolve a URL temporária da mídia
+    const metaResp = await axios.get(`https://graph.facebook.com/${cfg.version}/${encodeURIComponent(String(doc.mediaId))}`, { headers: { Authorization: 'Bearer ' + cfg.token }, timeout: 20000, validateStatus: () => true });
+    const mediaUrl = (metaResp && metaResp.data && metaResp.data.url) ? String(metaResp.data.url) : '';
+    const mime = String((metaResp && metaResp.data && metaResp.data.mime_type) || doc.mime || 'application/octet-stream');
+    if (!mediaUrl) return res.status(502).json({ ok: false, error: 'media_url_unavailable' });
+    // 2) baixa o binário (também exige o token no Authorization)
+    const bin = await axios.get(mediaUrl, { headers: { Authorization: 'Bearer ' + cfg.token }, responseType: 'arraybuffer', timeout: 30000, validateStatus: () => true });
+    if (!bin || bin.status < 200 || bin.status >= 300) return res.status(502).json({ ok: false, error: 'media_fetch_failed' });
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Disposition', 'inline');
+    return res.end(Buffer.from(bin.data));
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+// ── CRM: ENVIAR MÍDIA (imagem/vídeo/áudio) — multipart, só na janela de 24h da Meta.
+const __waCrmUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
+app.post('/api/painel/whatsapp-crm/send-media', requireAdmin, (req, res) => {
+  __waCrmUpload.single('file')(req, res, async (uploadErr) => {
+    try {
+      if (uploadErr) {
+        const tooBig = /LIMIT_FILE_SIZE|File too large/i.test(String(uploadErr && uploadErr.message));
+        return res.status(tooBig ? 413 : 400).json({ ok: false, error: tooBig ? 'file_too_large' : 'upload_error', message: tooBig ? 'Arquivo grande demais (máx 16MB).' : String(uploadErr && uploadErr.message || uploadErr) });
+      }
+      const b = (req.body && typeof req.body === 'object') ? req.body : {};
+      const phoneKey = normOptoutPhone(String(b.phone || b.phoneKey || ''));
+      if (!phoneKey) return res.status(400).json({ ok: false, error: 'missing_phone' });
+      const file = req.file;
+      if (!file || !file.buffer || !file.size) return res.status(400).json({ ok: false, error: 'missing_file' });
+      const mime = String(file.mimetype || '').toLowerCase();
+      let kind = '';
+      if (/^image\//.test(mime)) kind = 'image';
+      else if (/^video\//.test(mime)) kind = 'video';
+      else if (/^audio\//.test(mime)) kind = 'audio';
+      else return res.status(400).json({ ok: false, error: 'unsupported_type', message: 'Só imagem, vídeo ou áudio.' });
+      const caption = String(b.caption || '').slice(0, 1024).trim();
+      const cfg = await getWabaConfig();
+      if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured', message: 'Sem credenciais WABA no .env.' });
+      // Janela de 24h (mesma regra do texto): cliente precisa ter escrito nas últimas 24h.
+      const c = await getCollection('wa_messages');
+      const lastIn = await c.find({ phoneKey, direction: 'in' }, { projection: { createdAt: 1, phoneE164: 1 } }).sort({ createdAt: -1 }).limit(1).toArray().catch(() => []);
+      const lastInMs = (lastIn[0] && lastIn[0].createdAt) ? new Date(lastIn[0].createdAt).getTime() : 0;
+      if (!lastInMs || (Date.now() - lastInMs) >= 24 * 60 * 60 * 1000) {
+        return res.status(409).json({ ok: false, error: 'outside_24h_window', message: 'Fora da janela de 24h da Meta — o cliente não mandou mensagem nas últimas 24h.' });
+      }
+      const phoneE164 = String((lastIn[0] && lastIn[0].phoneE164) || phoneKey).trim();
+      // 1) upload → media id
+      const up = await uploadWhatsappMedia(cfg, file.buffer, mime, file.originalname || (kind + '.bin'));
+      if (!up.ok || !up.id) return res.status(502).json({ ok: false, error: 'upload_failed', message: up.message || 'Falha no upload' });
+      // 2) envia a mídia
+      const resp = await sendWhatsappMedia(cfg, phoneE164, kind, up.id, caption);
+      const ok = resp && resp.status >= 200 && resp.status < 300;
+      if (!ok) {
+        const em = (resp && resp.data && resp.data.error) ? (resp.data.error.message || JSON.stringify(resp.data.error)) : ('HTTP ' + (resp && resp.status));
+        return res.status(502).json({ ok: false, error: 'send_failed', message: String(em).slice(0, 300) });
+      }
+      const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
+      const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+      const label = kind === 'image' ? '[imagem]' : (kind === 'video' ? '[vídeo]' : '[áudio]');
+      try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: kind, text: caption ? (label + ' ' + caption) : label, mediaId: up.id, mime, wamid, campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
+      try { await c.updateOne({ wamid }, { $set: { agent: admin, manualReply: true } }); } catch (_) {}
+      return res.json({ ok: true, wamid });
+    } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+  });
 });
 
 // ADMIN: painel simples da campanha de remarketing WABA
@@ -9126,6 +9466,9 @@ const refilPageHandler = (fromPath) => async (req, res) => {
           const tp = String(infoVal(d, 'tipo_servico') || d.tipoServico || d.tipo || '').toLowerCase();
           const isSeguidores = cat ? /seguidor/.test(cat) : (/(mistos|brasileiros|organicos)/.test(tp) && !/curtida|visualiz|view|reel|coment/.test(tp));
           if (!isSeguidores) continue;
+          // Orgânicos (seguidores reais) NÃO têm reposição/refil — não podem aparecer na ferramenta.
+          const isOrganic = /organico|reais|\breal\b/.test(tp);
+          if (isOrganic) continue;
           const u = String(d.instagramUsername || d.instauser || '').trim().replace(/^@+/, '').toLowerCase();
           if (!u) continue;
           const val = Number(d.valueCents || d.expectedValueCents || 0) || 0;
@@ -12693,6 +13036,23 @@ app.post('/api/paghiper/charge', async (req, res) => {
         } catch (_) {}
 
         const createdIso = new Date().toISOString();
+
+        // Custo ESTIMADO do produto (o que custa pro fornecedor) — gravado já na criação
+        // do pedido para os relatórios (LTV/dash/controladoria) lerem sem recalcular. É
+        // estimativa (qtd/1000 × custo/1000 da tabela cost_settings); o charge REAL é
+        // preenchido depois, no despacho, em costs.providerCharge.
+        let costsObj = null;
+        try {
+            let _cs = Object.assign({}, DEFAULT_COST_SETTINGS);
+            try { const _sc = await getCollection('settings'); const _scd = await _sc.findOne({ _id: 'cost_settings' }); if (_scd && _scd.values && typeof _scd.values === 'object') _cs = Object.assign({}, DEFAULT_COST_SETTINGS, _scd.values); } catch (_) {}
+            const _cat = String(addInfoMap['categoria_servico'] || '').trim();
+            const _per1000 = _costPer1000For(_cat, tipo, _cs);
+            if (_per1000 > 0 && qtd > 0) {
+                const _est = Math.round((qtd / 1000) * _per1000 * 100) / 100;
+                costsObj = { estimatedServiceCost: _est, costPer1000: _per1000, categoria: _cat, tipo: String(tipo || ''), quantidade: qtd, estimatedAt: createdIso, source: 'estimate_at_creation' };
+            }
+        } catch (_) {}
+
         const record = {
             nomeUsuario: null,
             telefone: customerPayload.phone || '',
@@ -12709,6 +13069,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
             geolocation,
             valueCents: validatedPriceCents != null ? validatedPriceCents : vNum,
             expectedValueCents: validatedPriceCents,
+            ...(costsObj ? { costs: costsObj } : {}),
             customer: { name: customerPayload.name || 'Cliente Checkout', phone: customerPayload.phone || '', email },
             additionalInfo: addInfoArr,
             tipoServico: tipo,
@@ -12988,16 +13349,27 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 // cliente (payer_name). O body cru da PagHiper só traz transaction_id/notification_id,
                 // então buscamos o pedido para anexar o nome. Fire-and-forget (não trava o webhook).
                 (async () => {
-                    let payerName = '';
+                    let payerName = ''; let costReais = null; let costSource = '';
                     try {
                         const col0 = await getCollection('checkout_orders');
                         const o0 = await col0.findOne(
                             { $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] },
-                            { projection: { 'customer.name': 1 } }
+                            { projection: { 'customer.name': 1, costs: 1, fama24h: 1, fama24h_views: 1, fama24h_likes: 1, fornecedor_social: 1, fornecedor_social_likes: 1, topfama: 1, worldsmm_comments: 1, fama24h_multi: 1, fornecedor_social_multi: 1 } }
                         );
                         payerName = sanitizeText(String((o0 && o0.customer && o0.customer.name) || '').trim());
+                        if (o0) {
+                            // Custo do pedido: CHARGE REAL (action=status, base + TODOS os bumps) se já
+                            // houver; senão calcula ao vivo; por último a estimativa. (Na hora do
+                            // pagamento o pedido pode ainda não estar despachado → cai na estimativa.)
+                            const cached = Number(o0.costs && o0.costs.providerChargeTotal);
+                            if (Number.isFinite(cached) && cached > 0) { costReais = cached; costSource = 'real_cached'; }
+                            if (costReais == null) { try { const rc = await computeOrderRealCost(o0, { live: true, col: col0 }); if (rc && rc.total > 0) { costReais = rc.total; costSource = 'real_live'; } } catch (_) {} }
+                            if (costReais == null) { const est = Number(o0.costs && o0.costs.estimatedServiceCost); if (Number.isFinite(est) && est > 0) { costReais = est; costSource = 'estimate'; } }
+                        }
                     } catch (_) {}
-                    const tcBody = Object.assign({}, body, payerName ? { payer_name: payerName } : {});
+                    const extra = payerName ? { payer_name: payerName } : {};
+                    if (costReais != null) { extra.product_cost = costReais; extra.cost = costReais; extra.custo = costReais; extra.cost_cents = Math.round(costReais * 100); extra.cost_source = costSource; }
+                    const tcBody = Object.assign({}, body, extra);
                     try {
                         await axios.post(tcUrl, tcBody, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
                     } catch (_) {}
@@ -14686,6 +15058,74 @@ function _providerChargeOf(o) {
   return null;
 }
 
+// Parseia um valor de charge ("7,00" / "7.00" / 7) para número em R$.
+function _parseChargeNum(v) { const s = String(v == null ? '' : v).trim(); if (!s) return null; const n = Number(s.replace(',', '.').replace(/[^\d.-]/g, '')); return Number.isFinite(n) ? n : null; }
+// Todas as ordens no fornecedor de um pedido = serviço-base + TODOS os order bumps
+// (views/curtidas/comentários), single e multi. Cada uma tem seu próprio charge.
+function _collectProviderChargeSources(order) {
+  const out = [];
+  const add = (provider, obj) => { if (!obj) return; const id = String(obj.orderId == null ? '' : obj.orderId).trim(); if (id && /^[0-9]+$/.test(id)) out.push({ provider, orderId: id, statusPayload: obj.statusPayload || null }); };
+  add('fama24h', order?.fama24h);
+  add('fama24h', order?.fama24h_views);
+  add('fama24h', order?.fama24h_likes);
+  add('fornecedor_social', order?.fornecedor_social);
+  add('fornecedor_social', order?.fornecedor_social_likes);
+  add('topfama', order?.topfama);
+  add('worldsmm', order?.worldsmm_comments);
+  (order?.fama24h_multi?.orders || []).forEach(o => add('fama24h', o));
+  (order?.fornecedor_social_multi?.orders || []).forEach(o => add('fornecedor_social', o));
+  return out;
+}
+// Consulta o charge REAL de UMA ordem via action=status (ao vivo). Retorna número ou null.
+async function _fetchProviderChargeLive(provider, orderId) {
+  try {
+    if (!orderId) return null;
+    const M = {
+      fama24h: { url: 'https://fama24h.net/api/v2', key: process.env.FAMA24H_API_KEY },
+      fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', key: process.env.FORNECEDOR_SOCIAL_API_KEY },
+      topfama: { url: 'https://topfama.com/api/v2', key: process.env.TOPFAMA_API_KEY },
+      worldsmm: { url: 'https://worldsmm.com.br/api/v2', key: process.env.WORLDSMM_API_KEY }
+    };
+    const cfg = M[provider]; if (!cfg || !cfg.key) return null;
+    const payload = new URLSearchParams({ key: cfg.key, action: 'status', order: String(orderId) });
+    const resp = await axios.post(cfg.url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000, validateStatus: () => true });
+    const d = (resp && resp.data) || {};
+    return _parseChargeNum(d.charge ?? d.Charge ?? d.cost ?? d.Cost ?? d.price ?? d.Price);
+  } catch (_) { return null; }
+}
+// SÍNCRONO: soma o charge REAL já salvo (statusPayload do action=status) de base + TODOS
+// os bumps. Sem chamadas ao vivo — usado nos relatórios que rodam sobre milhares de pedidos.
+// Prefere costs.providerChargeTotal (cache) quando existir.
+function sumStoredProviderCharges(order) {
+  const cached = _parseChargeNum(order && order.costs && order.costs.providerChargeTotal);
+  const sources = _collectProviderChargeSources(order);
+  if (cached != null && cached > 0) return { total: cached, counted: sources.length, hasProviderOrders: sources.length > 0, cached: true };
+  let total = 0, counted = 0;
+  for (const s of sources) {
+    const ch = s.statusPayload ? _parseChargeNum(s.statusPayload.charge ?? s.statusPayload.Charge ?? s.statusPayload.cost ?? s.statusPayload.Cost) : null;
+    if (ch != null && ch >= 0) { total += ch; counted++; }
+  }
+  return { total: Math.round(total * 100) / 100, counted, hasProviderOrders: sources.length > 0, cached: false };
+}
+// Custo REAL TOTAL do pedido = soma do `charge` (action=status) de base + TODOS os bumps.
+// Usa o charge já salvo no statusPayload; se faltar e live=true, consulta o fornecedor.
+// opts.col + opts._id → salva o resultado em costs.providerChargeTotal (cache).
+async function computeOrderRealCost(order, opts = {}) {
+  const live = opts.live !== false;
+  const sources = _collectProviderChargeSources(order);
+  let total = 0, counted = 0; const breakdown = [];
+  for (const s of sources) {
+    let ch = s.statusPayload ? _parseChargeNum(s.statusPayload.charge ?? s.statusPayload.Charge ?? s.statusPayload.cost ?? s.statusPayload.Cost) : null;
+    if (ch == null && live) ch = await _fetchProviderChargeLive(s.provider, s.orderId);
+    if (ch != null && ch >= 0) { total += ch; counted++; breakdown.push({ provider: s.provider, orderId: s.orderId, charge: ch }); }
+  }
+  total = Math.round(total * 100) / 100;
+  if (opts.col && order && order._id && counted > 0 && total > 0) {
+    try { await opts.col.updateOne({ _id: order._id }, { $set: { 'costs.providerChargeTotal': total, 'costs.providerChargeBreakdown': breakdown, 'costs.providerChargeAt': new Date().toISOString() } }); } catch (_) {}
+  }
+  return { total, counted, breakdown, hasProviderOrders: sources.length > 0 };
+}
+
 // Converte pedidos pagos do Mongo em "entries" para o controladoriaManager.
 async function _buildControladoriaEntries() {
   const col = await getCollection('checkout_orders');
@@ -14739,11 +15179,12 @@ async function _buildControladoriaEntries() {
     const categoria = String(getAdd('categoria_servico') || '').trim();
     const tipo = String(getAdd('tipo_servico') || o.tipoServico || o.tipo || '').trim();
 
-    // Custo operacional: cobrança real do fornecedor, ou estimativa (qtd/1000 × custo/1000).
-    const providerCharge = _providerChargeOf(o);
+    // Custo operacional: CHARGE REAL do fornecedor (action=status) somando base + TODOS os
+    // bumps. Só cai na estimativa (qtd/1000) quando o pedido ainda não tem nenhum charge.
+    const _rcCtrl = sumStoredProviderCharges(o);
     let costReais;
-    if (providerCharge != null && providerCharge > 0) {
-      costReais = providerCharge;
+    if (_rcCtrl.total > 0) {
+      costReais = _rcCtrl.total;
     } else {
       const qty = getQty(o, getAdd);
       const per1000 = _costPer1000For(categoria, tipo, costSettings);
@@ -22570,18 +23011,36 @@ app.post('/api/refil/simple', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'paid_today', message: 'Seu pedido foi pago hoje. A reposição serve para repor a queda de seguidores ao longo do tempo — solicite alguns dias após a entrega.' });
     }
 
-    // Throttle 24h por pedido (regra: aguardar 24h entre reposições)
+    // Throttle 24h por pedido — CLAIM ATÔMICO: reserva o slot de 24h ANTES de chamar o
+    // fornecedor, para 2 cliques rápidos (ou 2 abas/dispositivos) não dispararem 2
+    // reposições. Se a chamada ao Fama24h falhar depois, o slot é LIBERADO (retry ok).
     const throttleKey = `simple|${famaOrderId}`;
+    let __throttleClaimed = false;
     try {
       const throttleCol = await getCollection('refil_throttle');
-      const rec = await throttleCol.findOne({ key: throttleKey }, { projection: { nextAllowedAt: 1 } });
-      const now = Date.now();
-      const nextMs = rec && rec.nextAllowedAt ? new Date(String(rec.nextAllowedAt)).getTime() : 0;
-      if (nextMs && Number.isFinite(nextMs) && now < nextMs) {
-        const h = Math.max(0, (nextMs - now) / (60 * 60 * 1000)).toFixed(1);
+      try { await throttleCol.createIndex({ key: 1 }, { unique: true }); } catch (_) {}
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const nextIso = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
+      let claimed = false;
+      try {
+        const r = await throttleCol.updateOne(
+          { key: throttleKey, $or: [{ nextAllowedAt: { $exists: false } }, { nextAllowedAt: { $lte: nowIso } }] },
+          { $set: { key: throttleKey, order_id: famaOrderId, username, lastRequestedAt: nowIso, nextAllowedAt: nextIso, updatedAt: nowIso }, $setOnInsert: { createdAt: nowIso } },
+          { upsert: true }
+        );
+        claimed = (r.upsertedCount > 0 || r.modifiedCount > 0);
+      } catch (e) { claimed = false; } // duplicate key = já existe bloqueio ativo → não reivindicou
+      if (!claimed) {
+        const rec = await throttleCol.findOne({ key: throttleKey }, { projection: { nextAllowedAt: 1 } });
+        const nextMs = rec && rec.nextAllowedAt ? new Date(String(rec.nextAllowedAt)).getTime() : 0;
+        const h = Math.max(0, (nextMs - nowMs) / (60 * 60 * 1000)).toFixed(1);
         return res.status(400).json({ ok: false, error: 'refill_unavailable', message: `Aguarde ${h}h para solicitar uma nova reposição.` });
       }
+      __throttleClaimed = true;
     } catch (_) {}
+    // Libera o slot reservado (usado quando a reposição falha no fornecedor → permite retry).
+    const __releaseThrottle = async () => { if (!__throttleClaimed) return; try { const tc = await getCollection('refil_throttle'); await tc.updateOne({ key: throttleKey }, { $set: { nextAllowedAt: new Date(0).toISOString(), releasedAt: new Date().toISOString() } }); } catch (_) {} };
 
     // BLOQUEIO: não repõe se o perfil já está com MAIS seguidores do que o final contratado
     // (inicial na compra + quantidade comprada). Reposição repõe QUEDA — se o atual já passou do
@@ -22596,6 +23055,7 @@ app.post('/api/refil/simple', async (req, res) => {
           __refilLiveCurrent = Math.trunc(live.currentFollowers);
           if (__refilLiveCurrent > finalContratado) {
             const fmt = (n) => { try { return Number(n).toLocaleString('pt-BR'); } catch (_) { return String(n); } };
+            await __releaseThrottle();
             return res.status(400).json({ ok: false, error: 'above_contracted', message: `Quantidade atual (${fmt(__refilLiveCurrent)}) é maior que a contratada (${fmt(finalContratado)}). Não é necessária reposição.` });
           }
         }
@@ -22604,7 +23064,7 @@ app.post('/api/refil/simple', async (req, res) => {
 
     const providerKey = String(process.env.FAMA24H_API_KEY || '').trim();
     const apiUrl = String(process.env.FAMA24H_API_URL || 'https://fama24h.net/api/v2').trim();
-    if (!providerKey) return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' });
+    if (!providerKey) { await __releaseThrottle(); return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' }); }
 
     const params = new URLSearchParams();
     params.append('key', providerKey);
@@ -22616,6 +23076,7 @@ app.post('/api/refil/simple', async (req, res) => {
       const resp = await postFormWithRetry(apiUrl, params.toString(), 60000, 3, { validateStatus: () => true });
       refillData = normalizeProviderResponseData(resp.data) || {};
     } catch (e) {
+      await __releaseThrottle();
       return res.status(502).json({ ok: false, error: 'provider_error', message: 'Erro ao solicitar reposição. Tente novamente.' });
     }
 
@@ -22638,6 +23099,9 @@ app.post('/api/refil/simple', async (req, res) => {
       const friendly = jaEmAndamento
         ? 'Você já tem uma reposição em andamento para este pedido. Aguarde ela concluir (pode levar algumas horas) antes de solicitar outra.'
         : (errMsg || 'Não foi possível solicitar a reposição agora.');
+      // Se JÁ tem reposição em andamento no fornecedor, mantém o bloqueio (existe refil
+      // ativo). Se foi erro genuíno, libera o slot para o cliente poder tentar de novo.
+      if (!jaEmAndamento) await __releaseThrottle();
       return res.status(400).json({ ok: false, error: 'refill_failed', providerError: errMsg || null, refillInProgress: jaEmAndamento, message: friendly });
     }
 
@@ -27973,55 +28437,75 @@ const followersMgmtEnqueue = (key, fn) => {
 };
 
 const fetchInstagramFollowersInfoRocketApi = async (username) => {
-  try {
-    if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'rocketapi_token_missing' };
-    if (global.rocketApiDisabledUntil && Date.now() <= global.rocketApiDisabledUntil) return { success: false, error: 'rocketapi_temporarily_disabled' };
+  if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'rocketapi_token_missing' };
+  if (global.rocketApiDisabledUntil && Date.now() <= global.rocketApiDisabledUntil) return { success: false, error: 'rocketapi_temporarily_disabled' };
 
-    const rocketUrl = 'https://v1.rocketapi.io/instagram/user/get_info';
-    const rocketResp = await axios.post(
-      rocketUrl,
-      { username },
-      { headers: { Authorization: `Token ${process.env.ROCKETAPI_TOKEN}` }, timeout: 15000, validateStatus: () => true }
-    );
+  const TOKEN = process.env.ROCKETAPI_TOKEN;
+  const rkPost = (url, payload) => axios.post(url, payload, { headers: { Authorization: `Token ${TOKEN}` }, timeout: 15000, validateStatus: () => true });
+  const rkBody = (rData) => { let b = rData && rData.response ? rData.response.body : null; if (typeof b === 'string') { try { b = JSON.parse(b); } catch (_) { b = null; } } return b; };
+  // get_info/web devolvem em body.data.user; get_info_by_id devolve em body.user.
+  const rkUser = (body) => (body && body.data && body.data.user) ? body.data.user : ((body && body.user) ? body.user : null);
+  const rkProfile = (u) => {
+    const followersCount = (u.edge_followed_by && typeof u.edge_followed_by.count === 'number')
+      ? u.edge_followed_by.count
+      : ((typeof u.follower_count === 'number') ? u.follower_count : null);
+    let profilePicUrl = null; try { profilePicUrl = String(u.profile_pic_url_hd || u.profile_pic_url || '').trim() || null; } catch (_) {}
+    return { username: String(u.username || username), followersCount, profilePicUrl, isPrivate: !!u.is_private, checkedAt: new Date().toISOString(), source: 'rocket_api' };
+  };
 
-    if (rocketResp.status !== 200) return { success: false, error: `rocket_http_${rocketResp.status}` };
-
-    const rData = rocketResp.data;
-    const isRocketOk = rData && (rData.status === 'ok' || rData.status === 'done');
-    const rUser = isRocketOk ? (rData?.response?.body?.data?.user || null) : null;
-    if (!rUser || !rUser.username) {
-      const msg = String(JSON.stringify(rData || {}).slice(0, 400)).toLowerCase();
-      if (msg.includes('expired') || msg.includes('renew') || msg.includes('plan is')) global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
-      return { success: false, error: 'rocket_invalid_data' };
+  // 1) get_info (mobile) e get_web_profile_info (web) — rápidos; funcionam p/ contas PESSOAIS
+  //    e de CRIADOR/PROFISSIONAL. Contas COMERCIAIS (business) devolvem 400 "Asset
+  //    ig_business_category_subvertical has been deleted" (campo que o IG removeu e o RocketAPI
+  //    ainda pede) — nesse caso caímos no passo 2 (search → get_info_by_id, que usa outra rota).
+  let schemaError = false;
+  let lastErr = 'rocket_invalid_data';
+  for (const rocketUrl of ['https://v1.rocketapi.io/instagram/user/get_info', 'https://v1.rocketapi.io/instagram/user/get_web_profile_info']) {
+    try {
+      const r = await rkPost(rocketUrl, { username });
+      if (r.status !== 200) { lastErr = `rocket_http_${r.status}`; continue; }
+      const rData = r.data;
+      const okStatus = rData && (rData.status === 'ok' || rData.status === 'done');
+      const u = okStatus ? rkUser(rkBody(rData)) : null;
+      if (u && u.username) { global.rocketApiDisabledUntil = 0; return { success: true, profile: rkProfile(u) }; }
+      const raw = String(JSON.stringify(rData || {}).slice(0, 500)).toLowerCase();
+      if (raw.includes('expired') || raw.includes('renew') || raw.includes('plan is')) { global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000); return { success: false, error: 'rocketapi_temporarily_disabled' }; }
+      const innerCode = (rData && rData.response && typeof rData.response.status_code === 'number') ? rData.response.status_code : null;
+      if (raw.includes('has been deleted') || raw.includes('cannot use this schema') || raw.includes('ig_business_category_subvertical') || innerCode === 400) {
+        schemaError = true; lastErr = 'rocket_business_schema';
+        break; // o outro endpoint tem o MESMO problema de schema — vai direto pro passo 2
+      }
+      lastErr = 'rocket_invalid_data';
+    } catch (e) {
+      const msg = String(e?.response?.data || e?.message || e || '').toLowerCase();
+      if (msg.includes('expired')) { global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000); return { success: false, error: 'rocketapi_temporarily_disabled' }; }
+      lastErr = e?.message || String(e);
     }
-
-    global.rocketApiDisabledUntil = 0;
-
-    const followersCount = (rUser.edge_followed_by && typeof rUser.edge_followed_by.count === 'number') ? rUser.edge_followed_by.count : null;
-    const profilePicUrl = (function(){
-      try {
-        const u = String(rUser.profile_pic_url_hd || rUser.profile_pic_url || '').trim();
-        return u || null;
-      } catch (_) {
-        return null;
-      }
-    })();
-    return {
-      success: true,
-      profile: {
-        username: String(rUser.username || username),
-        followersCount,
-        profilePicUrl,
-        isPrivate: !!rUser.is_private,
-        checkedAt: new Date().toISOString(),
-        source: 'rocket_api'
-      }
-    };
-  } catch (e) {
-    const msg = String(e?.response?.data || e?.message || e || '').toLowerCase();
-    if (msg.includes('expired')) global.rocketApiDisabledUntil = Date.now() + (10 * 60 * 1000);
-    return { success: false, error: e?.message || String(e) };
   }
+
+  // 2) Contas COMERCIAIS: resolve o id via `search` e busca por `get_info_by_id` (rota que NÃO
+  //    pede o campo removido) — recupera os perfis business que o get_info recusa.
+  try {
+    const s = await rkPost('https://v1.rocketapi.io/instagram/user/search', { query: username });
+    if (s.status === 200) {
+      const sb = rkBody(s.data);
+      const arr = sb && (sb.users || (sb.data && sb.data.users));
+      const want = String(username || '').toLowerCase().replace(/^@+/, '');
+      let pk = null;
+      for (const w of (Array.isArray(arr) ? arr : [])) {
+        const usr = (w && w.user) ? w.user : w;
+        if (usr && String(usr.username || '').toLowerCase() === want) { pk = usr.pk || usr.pk_id || usr.id; break; }
+      }
+      if (pk) {
+        const idr = await rkPost('https://v1.rocketapi.io/instagram/user/get_info_by_id', { id: String(pk) });
+        if (idr.status === 200) {
+          const u = rkUser(rkBody(idr.data));
+          if (u && (u.username || typeof u.follower_count === 'number' || u.edge_followed_by)) { global.rocketApiDisabledUntil = 0; return { success: true, profile: rkProfile(u) }; }
+        }
+      }
+    }
+  } catch (_) {}
+
+  return { success: false, error: schemaError ? 'rocket_business_schema' : lastErr };
 };
 
 const fetchInstagramFollowersInfoInstagramProxy = async (username) => {
@@ -28192,6 +28676,40 @@ const fetchInstagramProfileApiInfo = async (username) => {
   }
 };
 
+// Consulta seguidores/privado via APIFY (actor instagram-profile-scraper) — a MESMA fonte que o
+// check do site usa como fallback do RocketAPI. Funciona para contas BUSINESS (que o RocketAPI
+// hoje recusa por schema do IG). Só seguidores + privado; sem posts (leve).
+const fetchInstagramFollowersInfoApify = async (username) => {
+  try {
+    const apifyToken = process.env.APIFY_TOKEN;
+    if (!apifyToken) return { success: false, error: 'apify_token_missing' };
+    const toMsRaw = Number(String(process.env.FOLLOWERS_MGMT_APIFY_TIMEOUT_MS || '90000').trim());
+    const timeoutMs = (Number.isFinite(toMsRaw) && toMsRaw > 0) ? Math.max(20000, Math.min(180000, Math.trunc(toMsRaw))) : 90000;
+    const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${apifyToken}`;
+    const resp = await axios.post(apifyUrl, { usernames: [username], resultsLimit: 1 }, { headers: { 'Content-Type': 'application/json' }, timeout: timeoutMs, validateStatus: () => true });
+    const items = resp && resp.data;
+    if (!Array.isArray(items) || !items.length || (items[0] && items[0].error)) return { success: false, error: 'apify_no_data' };
+    const item = items[0];
+    const followersCount = (typeof item.followersCount === 'number' && Number.isFinite(item.followersCount)) ? item.followersCount : null;
+    const isPrivateRaw = (typeof item.private !== 'undefined') ? item.private : item.isPrivate;
+    const isPrivate = (typeof isPrivateRaw === 'boolean') ? isPrivateRaw : null;
+    if (followersCount == null && typeof isPrivate !== 'boolean') return { success: false, error: 'apify_invalid_data' };
+    return {
+      success: true,
+      profile: {
+        username: String(item.username || username),
+        followersCount,
+        profilePicUrl: String(item.profilePicUrlHD || item.profilePicUrl || '').trim() || null,
+        isPrivate,
+        checkedAt: new Date().toISOString(),
+        source: 'apify'
+      }
+    };
+  } catch (e) {
+    return { success: false, error: e?.message || String(e) };
+  }
+};
+
 const followersMgmtGetCurrent = async (req, username, force) => {
   const { getCollection } = require('./mongodbClient');
   const monitorCol = await getCollection('followers_monitor');
@@ -28207,6 +28725,10 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         (typeof cached.followersCount === 'number' && Number.isFinite(cached.followersCount) && cached.followersCount > 0) ||
         (typeof cached.isPrivate === 'boolean')
       );
+      // Se a última verificação terminou em ERRO, nunca serve cache-hit: força uma
+      // nova verificação real para tentar resolver o erro (ex.: rocket_invalid_data,
+      // instagram_proxy_down). Sem isso, a linha com erro ficava "pulada" pelo cache.
+      const hadCachedError = !!(cached && String(cached.error || '').trim());
       const diffDaysBrt = (function(){
         try {
           const brtOffsetMs = 3 * 60 * 60 * 1000;
@@ -28224,11 +28746,11 @@ const followersMgmtGetCurrent = async (req, username, force) => {
         }
       })();
       if (diffDaysBrt != null && Number.isFinite(diffDaysBrt) && diffDaysBrt >= 0 && diffDaysBrt < 2) {
-        if (cachedUsable) {
+        if (cachedUsable && !hadCachedError) {
           try { console.log(`🧾 [followers-mgmt:${traceId}] cache-hit @${username} source=${String(cached.source || '')} ms=${Date.now() - startedAtMs}`); } catch (_) {}
           return { code: 200, body: { ok: true, cached: true, username, followersCount: cached.followersCount, isPrivate: cached.isPrivate, checkedAt: cached.checkedAt, source: cached.source || null } };
         }
-        try { console.log(`🧾 [followers-mgmt:${traceId}] cache-bypass-invalid @${username} source=${String(cached.source || '')} fc=${(typeof cached.followersCount === 'number') ? cached.followersCount : ''} private=${typeof cached.isPrivate === 'boolean' ? (cached.isPrivate ? '1' : '0') : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
+        try { console.log(`🧾 [followers-mgmt:${traceId}] cache-bypass-${hadCachedError ? 'error' : 'invalid'} @${username} source=${String(cached.source || '')} err=${hadCachedError ? String(cached.error || '').slice(0, 60) : ''} fc=${(typeof cached.followersCount === 'number') ? cached.followersCount : ''} private=${typeof cached.isPrivate === 'boolean' ? (cached.isPrivate ? '1' : '0') : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {}
       }
     }
 
@@ -28353,6 +28875,36 @@ const followersMgmtGetCurrent = async (req, username, force) => {
           if (!eStr.includes(tag)) error = eStr ? (eStr + ' | ' + tag) : tag;
         }
         try { console.warn(`❌ [followers-mgmt:${traceId}] @${username} rocket_api error:`, e?.message || String(e)); } catch (_) {}
+      }
+    }
+
+    // Fallback FINAL: Apify (a MESMA fonte que o check do site usa quando o RocketAPI falha).
+    // Cobre as contas BUSINESS que o RocketAPI recusa (erro de schema do IG) e o caso do
+    // instagram_proxy estar fora do ar. Sem isto, o painel ficava sem nenhuma fonte.
+    if (!hasFresh) {
+      try {
+        try { console.log(`🚀 [followers-mgmt:${traceId}] @${username} fallback=apify start`); } catch (_) {}
+        const a = await fetchInstagramFollowersInfoApify(username);
+        if (a && a.success && a.profile) {
+          profile = a.profile;
+          source = String(profile.source || 'apify');
+          const apiPriv = (typeof profile.isPrivate === 'boolean') ? profile.isPrivate : null;
+          const apiFc = (typeof profile.followersCount === 'number' && profile.followersCount > 0) ? profile.followersCount : null;
+          if (apiPriv != null) isPrivate = apiPriv;
+          if (apiFc != null) followersCount = apiFc;
+          if (apiFc != null || apiPriv != null) error = null;
+          hasFresh = !!((typeof followersCount === 'number' && followersCount > 0) || typeof isPrivate === 'boolean');
+          if (hasFresh) { try { console.log(`✅ [followers-mgmt:${traceId}] @${username} ok source=apify private=${isPrivate === true ? '1' : (isPrivate === false ? '0' : '')} fc=${typeof followersCount === 'number' ? followersCount : ''} ms=${Date.now() - startedAtMs}`); } catch (_) {} }
+        } else {
+          const aErr = String((a && a.error) || 'unknown');
+          const tag = `apify:${aErr}`;
+          if (!error) error = tag; else { const eStr = String(error || ''); if (!eStr.includes(tag)) error = eStr ? (eStr + ' | ' + tag) : tag; }
+          try { console.warn(`❌ [followers-mgmt:${traceId}] @${username} apify fail error=${aErr}`); } catch (_) {}
+        }
+      } catch (e) {
+        const tag = `apify:${String(e?.message || e)}`;
+        if (!error) error = tag; else { const eStr = String(error || ''); if (!eStr.includes(tag)) error = eStr ? (eStr + ' | ' + tag) : tag; }
+        try { console.warn(`❌ [followers-mgmt:${traceId}] @${username} apify error:`, e?.message || String(e)); } catch (_) {}
       }
     }
 
@@ -30821,13 +31373,16 @@ app.post('/api/painel/gerenciamento-seguidores/validate-general/start', requireA
       const chunks = chunk(candidates, 1000);
       for (const part of chunks) {
         const docs = part.length
-          ? await monitorCol.find({ username: { $in: part } }, { projection: { _id: 0, username: 1, checkedAt: 1 } }).toArray()
+          ? await monitorCol.find({ username: { $in: part } }, { projection: { _id: 0, username: 1, checkedAt: 1, error: 1 } }).toArray()
           : [];
         for (const d of (docs || [])) map.set(String(d.username || '').trim().toLowerCase(), d);
       }
       const dueMs = dueDays * 24 * 60 * 60 * 1000;
       targets = targets.filter(u => {
         const d = map.get(String(u || '').trim().toLowerCase());
+        // Linhas com erro na última verificação SEMPRE re-verificam (não são puladas
+        // pela janela de "checado recentemente"), para tentar resolver o erro.
+        if (d && String(d.error || '').trim()) return true;
         const checkedAt = d && d.checkedAt ? String(d.checkedAt) : '';
         if (!checkedAt) return true;
         const t = new Date(checkedAt).getTime();
@@ -35974,7 +36529,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
     // consulta. As telas de cliente/pedido seguem lendo o documento completo normalmente.
     // Mantém status/paidAt/orderId de cada gateway (necessários p/ detectar pago e datar).
     const panelProjection = {
-      utms: 0, geolocation: 0, emails: 0, fulfillmentCalc: 0, profilePrivacy: 0, mismatchDetails: 0,
+      // NÃO excluir `emails`: getOrderRecoveryInfo lê emails.paymentRecoveryRecoveredAt
+      // para atribuir "recuperado por SMS/e-mail". Excluí-lo zerava os cards de recuperação.
+      // O campo é pequeno (só timestamps/flags), então incluir é barato.
+      utms: 0, geolocation: 0, fulfillmentCalc: 0, profilePrivacy: 0, mismatchDetails: 0,
       'paghiper.statusPayload': 0, 'woovi.statusPayload': 0, 'expay.statusPayload': 0, 'pagarme.statusPayload': 0, 'efi.statusPayload': 0,
       'paghiper.response': 0, 'woovi.response': 0, 'expay.response': 0, 'pagarme.response': 0, 'efi.response': 0,
       'paghiper.qrCodeImage': 0, 'paghiper.pixUrl': 0, 'paghiper.brCode': 0,
@@ -36938,6 +37496,58 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const generatedToPaidTodayPct = generatedToday > 0 ? (paidGeneratedToday / generatedToday) * 100 : 0;
     const generatedNotPaid = Math.max(0, totalOrdersGenerated - totalOrdersGeneratedPaid);
 
+    // Lista dos pedidos GERADOS e NÃO pagos no período (para o modal clicável), com
+    // data/hora, @, tipo, quantidade, valor e flag "já comprou alguma vez".
+    let generatedNotPaidList = [];
+    try {
+      const { start, endExclusive } = getPeriodRange();
+      const match = (start || endExclusive) ? createdInRangeCond(start, endExclusive) : {};
+      const notPaidQuery = { $and: [match, { $nor: [paidQuery] }] };
+      const projection = {
+        _id: 0, instauser: 1, instagramUsername: 1, additionalInfo: 1, additionalInfoPaid: 1,
+        additionalInfoMap: 1, additionalInfoMapPaid: 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1,
+        valueCents: 1, expectedValueCents: 1, createdAt: 1, criado: 1
+      };
+      const docs = await col.find(notPaidQuery, { projection }).sort({ createdAt: -1, _id: -1 }).limit(2000).toArray();
+      const norm = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+      const capFirst = (s) => { const t = String(s || '').trim(); return t ? (t.charAt(0).toUpperCase() + t.slice(1)) : ''; };
+      const usersSet = new Set();
+      const rows = docs.map(o => {
+        const getAdd = buildOrderFieldGetter(o);
+        const ig = norm(getAdd('instagram_username') || getAdd('instagramUsername') || getAdd('username') || getAdd('perfil') || o.instagramUsername || o.instauser || '');
+        if (ig) usersSet.add(ig);
+        const tipo = String(getAdd('tipo_servico') || getAdd('tipoServico') || getAdd('tipo') || o.tipoServico || o.tipo || '').trim();
+        const categoria = String(getAdd('categoria_servico') || '').trim();
+        const qty = Number(getAdd('quantidade') || getAdd('qtd') || o.quantidade || o.qtd || 0) || 0;
+        const valueCents = Number((o.valueCents != null) ? o.valueCents : ((o.expectedValueCents != null) ? o.expectedValueCents : 0)) || 0;
+        const label = (categoria && tipo) ? (capFirst(categoria) + ' · ' + tipo) : (capFirst(categoria) || tipo || '-');
+        return { username: ig, type: label, qty, value: valueCents / 100, createdAt: o.createdAt || o.criado || null };
+      });
+      // "já comprou alguma vez" = tem QUALQUER pedido pago (qualquer época).
+      const buyers = new Set();
+      const arr = Array.from(usersSet);
+      for (let i = 0; i < arr.length; i += 1000) {
+        const part = arr.slice(i, i + 1000);
+        if (!part.length) continue;
+        try {
+          const bd = await col.find(
+            { $and: [paidQuery, { $or: [
+              { instauser: { $in: part } },
+              { instagramUsername: { $in: part } },
+              { 'additionalInfoMapPaid.instagram_username': { $in: part } },
+              { 'additionalInfoMap.instagram_username': { $in: part } }
+            ] }] },
+            { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }
+          ).limit(20000).toArray();
+          for (const b of bd) {
+            const u = norm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || '');
+            if (u) buyers.add(u);
+          }
+        } catch (_) {}
+      }
+      generatedNotPaidList = rows.map(r => Object.assign({}, r, { boughtEver: r.username ? buyers.has(r.username) : false }));
+    } catch (_) { generatedNotPaidList = []; }
+
     // Lista dos perfis validados no período (para o modal clicável), com flag "comprou".
     let validatedProfilesList = [];
     try {
@@ -37445,9 +38055,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
         if (gateway === 'paghiper') paymentFee = 0.99;
         else paymentFee = 0.85;
       } catch (_) {}
-      // Custo do fornecedor: usa o CHARGE REAL (costs.providerChargeTotal, soma do action=status
-      // de todos os sub-pedidos) quando já foi calculado; senão, cai no estimado pela tabela.
-      const realProviderTotal = parseCharge(o && o.costs && o.costs.providerChargeTotal);
+      // Custo do fornecedor: CHARGE REAL (action=status) somando base + TODOS os bumps —
+      // do cache costs.providerChargeTotal OU dos statusPayload já salvos. Só cai no preço
+      // por 1000 quando o pedido ainda não tem NENHUM charge do fornecedor (transitório,
+      // até o recálculo popular). Sem per-1000 para o que já tem charge real.
+      const _rc = sumStoredProviderCharges(o);
+      const realProviderTotal = (_rc.total > 0) ? _rc.total : null;
       const usedRealCost = realProviderTotal != null;
       const totalItemCost = usedRealCost ? (paymentFee + realProviderTotal) : (paymentFee + serviceCost + bumpCost);
       totalCost += totalItemCost;
@@ -37545,6 +38158,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     const customerAgg = new Map();
     const serviceAgg = new Map();
+    const serviceRevenueAgg = new Map(); // valor de VENDA (bruto = totalPaid) por tipo de serviço
+    const serviceCostAgg = new Map();    // GASTO (custo total: taxa + fornecedor + bump) por tipo
     const paidReport = report.filter(r => Number(r && r.totalPaid ? r.totalPaid : 0) > 0);
     for (const r of paidReport) {
       const k = String(r && r.customerKey ? r.customerKey : '').trim();
@@ -37556,7 +38171,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
         customerAgg.set(k, cur);
       }
       const t = String(r && r.type ? r.type : '').trim();
-      if (t) serviceAgg.set(t, (serviceAgg.get(t) || 0) + 1);
+      if (t) {
+        serviceAgg.set(t, (serviceAgg.get(t) || 0) + 1);
+        serviceRevenueAgg.set(t, (serviceRevenueAgg.get(t) || 0) + Number(r.totalPaid || 0));
+        serviceCostAgg.set(t, (serviceCostAgg.get(t) || 0) + Number(r.cost || 0));
+      }
     }
 
     const totalCustomers = customerAgg.size;
@@ -37691,7 +38310,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       return s.charAt(0).toUpperCase() + s.slice(1);
     };
 
-    const serviceEntries = Array.from(serviceAgg.entries()).map(([type, count]) => ({ type, count }));
+    const serviceEntries = Array.from(serviceAgg.entries()).map(([type, count]) => ({ type, count, revenue: Number(serviceRevenueAgg.get(type) || 0), cost: Number(serviceCostAgg.get(type) || 0) }));
     serviceEntries.sort((a, b) => b.count - a.count);
     const topService = serviceEntries.length ? serviceEntries[0] : null;
     const totalOrdersForPie = serviceEntries.reduce((acc, it) => acc + (it.count || 0), 0);
@@ -37700,14 +38319,20 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const pieBase = serviceEntries.slice(0, pieTopN).map((it, idx) => ({
       label: prettyServiceLabel(it.type),
       count: it.count,
+      revenue: Number(it.revenue || 0),
+      cost: Number(it.cost || 0),
       color: colors[idx % colors.length],
       pct: totalOrdersForPie > 0 ? (it.count / totalOrdersForPie) * 100 : 0
     }));
-    const servicePieOthers = serviceEntries.slice(pieTopN).map(it => ({ label: prettyServiceLabel(it.type), count: it.count }));
+    const servicePieOthers = serviceEntries.slice(pieTopN).map(it => ({ label: prettyServiceLabel(it.type), count: it.count, revenue: Number(it.revenue || 0), cost: Number(it.cost || 0) }));
     const otherCount = servicePieOthers.reduce((acc, it) => acc + (it.count || 0), 0);
+    const otherRevenue = servicePieOthers.reduce((acc, it) => acc + (it.revenue || 0), 0);
+    const otherCost = servicePieOthers.reduce((acc, it) => acc + (it.cost || 0), 0);
     const servicePie = otherCount > 0 ? pieBase.concat([{
       label: 'Outros',
       count: otherCount,
+      revenue: otherRevenue,
+      cost: otherCost,
       color: '#9ca3af',
       pct: totalOrdersForPie > 0 ? (otherCount / totalOrdersForPie) * 100 : 0
     }]) : pieBase;
@@ -37876,23 +38501,26 @@ app.get('/painel', requireAdmin, async (req, res) => {
       ];
     }
 
-    // ── Gráfico: Canal de vendas (Site vs WhatsApp) ──────────────────────
+    // ── Gráfico: Canal de vendas (Site vs WhatsApp) — contagem e VALOR de venda ──
     let channelPie = undefined;
     {
-      let siteCount = 0;
-      let whatsCount = 0;
+      // Valor pago por pedido (bruto = totalPaid), do relatório já calculado.
+      const paidById = new Map();
+      for (const r of paidReport) { const id = String((r && r._id) ? r._id : '').trim(); if (id) paidById.set(id, Number(r.totalPaid || 0)); }
+      let siteCount = 0, whatsCount = 0, siteRev = 0, whatsRev = 0;
       for (const o of filteredOrders) {
         const pmArr = Array.isArray(o?.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o?.additionalInfo) ? o.additionalInfo : []);
         const pmMap = (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid === 'object') ? o.additionalInfoMapPaid : (o?.additionalInfoMap || {});
         const pm = String(pmArr.find(x => x?.key === 'payment_method')?.value || pmMap['payment_method'] || o?.paymentMethod || o?.payment_method || '').toLowerCase();
         const src = String(pmArr.find(x => x?.key === 'source')?.value || pmMap['source'] || o?.source || '').toLowerCase();
-        if (pm === 'whatsapp' || src.includes('whatsapp') || src === 'whatsapp') whatsCount++;
-        else siteCount++;
+        const rev = Number(paidById.get(String((o && o._id) ? o._id : '')) || 0);
+        if (pm === 'whatsapp' || src.includes('whatsapp') || src === 'whatsapp') { whatsCount++; whatsRev += rev; }
+        else { siteCount++; siteRev += rev; }
       }
       const chTotal = siteCount + whatsCount;
       channelPie = [
-        { label: 'Site', count: siteCount, color: '#6B46C1', pct: chTotal > 0 ? (siteCount / chTotal) * 100 : 0 },
-        { label: 'WhatsApp', count: whatsCount, color: '#16a34a', pct: chTotal > 0 ? (whatsCount / chTotal) * 100 : 0 },
+        { label: 'Site', count: siteCount, revenue: siteRev, color: '#6B46C1', pct: chTotal > 0 ? (siteCount / chTotal) * 100 : 0 },
+        { label: 'WhatsApp', count: whatsCount, revenue: whatsRev, color: '#16a34a', pct: chTotal > 0 ? (whatsCount / chTotal) * 100 : 0 },
       ];
     }
 
@@ -38592,7 +39220,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -40265,6 +40893,77 @@ app.post('/api/painel/refil2/force-refil-estimate', requireAdmin, async (req, re
   }
 });
 
+// ── Estima o GASTO de reposição (refil) para os pedidos do FILTRO atual do Gerenciamento de
+// Seguidores. Recebe [{tipo, diffAbs}] (a "diferença"/queda de cada pedido) e soma o custo no
+// Fama24h para repor essa quantidade nos serviços respectivos (mistos/brasileiros). Orgânicos
+// e pedidos sem queda são ignorados. ──
+app.post('/api/painel/gerenciamento-seguidores/refil-cost-estimate', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const itemsRaw = Array.isArray(body.items) ? body.items : [];
+    const key = process.env.FAMA24H_API_KEY || '';
+    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
+
+    const axiosLocal = require('axios');
+    const cacheKey = '__MEUAPP_FAMA24H_SERVICES_CACHE';
+    const nowMs = Date.now();
+    const cached = (global && global[cacheKey]) ? global[cacheKey] : null;
+    const ttlMs = 10 * 60 * 1000;
+    let services = (cached && cached.atMs && (nowMs - cached.atMs) < ttlMs && Array.isArray(cached.services)) ? cached.services : null;
+    if (!services) {
+      const payload = new URLSearchParams({ key: String(key), action: 'services' });
+      const resp = await axiosLocal.post('https://fama24h.net/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+      const arr = Array.isArray(resp.data) ? resp.data : (Array.isArray(resp.data && resp.data.services) ? resp.data.services : []);
+      services = Array.isArray(arr) ? arr : [];
+      try { if (global) global[cacheKey] = { atMs: nowMs, services }; } catch (_) {}
+    }
+    const serviceById = new Map();
+    for (const s of (services || [])) { const sid = (s && (s.service || s.id)) ? String(s.service || s.id).trim() : ''; if (sid && !serviceById.has(sid)) serviceById.set(sid, s); }
+    const parseRate = (v) => { try { if (v == null) return null; if (typeof v === 'number' && Number.isFinite(v)) return v; const n = Number(String(v).trim().replace(',', '.')); return Number.isFinite(n) ? n : null; } catch (_) { return null; } };
+    const rateOf = (sid) => { const svc = serviceById.get(String(sid)) || {}; return parseRate(svc.rate != null ? svc.rate : (svc.price != null ? svc.price : svc.cost)); };
+
+    const midMistos = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
+    const midBras = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
+    const rateMistos = rateOf(midMistos);
+    const rateBras = rateOf(midBras);
+
+    const PROVIDER_MIN = 100;
+    const byTipo = { mistos: { count: 0, qty: 0, cost: 0, rate: rateMistos }, brasileiros: { count: 0, qty: 0, cost: 0, rate: rateBras } };
+    let count = 0, qtyTotal = 0, totalBRL = 0;
+    const skipped = { organic: 0, noDrop: 0, otherTipo: 0, missingRate: 0 };
+
+    for (const it of itemsRaw) {
+      const tipo = String((it && it.tipo) || '').toLowerCase().trim();
+      const drop = Math.trunc(Number((it && it.diffAbs) || 0) || 0);
+      if (!drop || drop <= 0) { skipped.noDrop++; continue; }
+      if (/organic|reais|\breal\b/.test(tipo)) { skipped.organic++; continue; } // orgânico não tem reposição
+      let bucket = null, rate = null;
+      if (/misto/.test(tipo)) { bucket = byTipo.mistos; rate = rateMistos; }
+      else if (/brasileir/.test(tipo)) { bucket = byTipo.brasileiros; rate = rateBras; }
+      else { skipped.otherTipo++; continue; }
+      if (rate == null) { skipped.missingRate++; continue; }
+      const qty = Math.max(PROVIDER_MIN, drop);
+      const cost = (qty * rate) / 1000;
+      bucket.count++; bucket.qty += qty; bucket.cost += cost;
+      count++; qtyTotal += qty; totalBRL += cost;
+    }
+    const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+    return res.json({
+      ok: true,
+      totalBRL: r2(totalBRL),
+      count, qtyTotal,
+      byTipo: {
+        mistos: { count: byTipo.mistos.count, qty: byTipo.mistos.qty, cost: r2(byTipo.mistos.cost), rate: rateMistos },
+        brasileiros: { count: byTipo.brasileiros.count, qty: byTipo.brasileiros.qty, cost: r2(byTipo.brasileiros.cost), rate: rateBras }
+      },
+      skipped,
+      providerMinQty: PROVIDER_MIN
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'estimate_failed', message: e?.message || String(e) });
+  }
+});
+
 // ── Aplicar extensão de refil manualmente (para casos onde não foi aplicado automaticamente) ──
 app.post('/api/painel/refil2/apply-extension', requireAdmin, async (req, res) => {
   try {
@@ -41161,7 +41860,7 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
       return { $and: [paidFilter, createdRange] };
     })();
 
-    const docs = await ordersCol.find(filter, { projection: { _id: 1, createdAt: 1, status: 1, woovi: 1, expay: 1, paghiper: 1, efi: 1, pagarme: 1, paidAt: 1, payment: 1, quantidade: 1, qtd: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, fama24h: 1, fama24h_multi: 1, fornecedor_social: 1, fornecedor_social_multi: 1, costs: 1 } })
+    const docs = await ordersCol.find(filter, { projection: { _id: 1, createdAt: 1, status: 1, woovi: 1, expay: 1, paghiper: 1, efi: 1, pagarme: 1, paidAt: 1, payment: 1, quantidade: 1, qtd: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, fama24h: 1, fama24h_multi: 1, fornecedor_social: 1, fornecedor_social_multi: 1, fama24h_views: 1, fama24h_likes: 1, fornecedor_social_likes: 1, topfama: 1, worldsmm_comments: 1, costs: 1 } })
       .sort({ createdAt: -1, _id: -1 })
       .limit(limit)
       .toArray();
@@ -41340,6 +42039,13 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
         sets['costs.providerCharge'] = null;
         sets['costs.providerChargeFrom'] = null;
       }
+
+      // Custo REAL TOTAL = charge (action=status) de BASE + TODOS os bumps (views/curtidas/
+      // comentários). É esta a fonte de custo dos relatórios — sem preço por 1000.
+      try {
+        const rc = await computeOrderRealCost(o, { live: true });
+        if (rc && rc.total > 0) { sets['costs.providerChargeTotal'] = rc.total; sets['costs.providerChargeBreakdown'] = rc.breakdown; sets['costs.providerChargeTotalAt'] = nowIso; }
+      } catch (_) {}
 
       try {
         const r = await ordersCol.updateOne({ _id: o._id }, { $set: sets });

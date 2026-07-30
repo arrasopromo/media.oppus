@@ -2702,6 +2702,73 @@
     return isNaN(value) ? 0 : value;
   }
 
+  // ── Cache de preenchimento do checkout (no PRÓPRIO navegador) ────────────────
+  // Mesma chave/esquema do checkout de seguidores: lembra o último @ + email/telefone/
+  // nome para pré-preencher a etapa 2 numa próxima visita. Sem login/servidor; expira
+  // em 90 dias; NÃO guarda pagamento/CPF. Aqui só preenche os campos (não auto-valida).
+  var OPPUS_PREFILL_KEY = 'oppus_checkout_prefill';
+  var OPPUS_PREFILL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  function _prefEmailEl() { return document.getElementById('contactEmailInput'); }
+  function _prefNameEl() { return document.getElementById('contactNameInput'); }
+  function loadCheckoutPrefill() {
+    try {
+      var raw = localStorage.getItem(OPPUS_PREFILL_KEY);
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (!rec || !rec.savedAt) return null;
+      if ((Date.now() - Number(rec.savedAt)) > OPPUS_PREFILL_TTL_MS) { try { localStorage.removeItem(OPPUS_PREFILL_KEY); } catch (_) {} return null; }
+      return rec;
+    } catch (_) { return null; }
+  }
+  function saveCheckoutPrefill(extra) {
+    try {
+      var prev = loadCheckoutPrefill() || {};
+      var uname = '';
+      try {
+        uname = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim())
+          || (usernameCheckoutInput && usernameCheckoutInput.value && usernameCheckoutInput.value.trim()) || prev.username || '';
+      } catch (_) {}
+      uname = String(uname || '').replace(/^@+/, '').trim();
+      var v = function (el, fb) { try { return (el && el.value && el.value.trim()) ? el.value.trim() : (fb || ''); } catch (_) { return fb || ''; } };
+      var rec = {
+        v: 1,
+        username: uname,
+        email: v(_prefEmailEl(), prev.email),
+        phone: v(checkoutPhoneInput, prev.phone),
+        name: v(_prefNameEl(), prev.name),
+        profile: (extra && extra.profile) ? extra.profile : (prev.profile || null),
+        savedAt: Date.now()
+      };
+      if (!rec.username && !rec.email && !rec.phone) return;
+      localStorage.setItem(OPPUS_PREFILL_KEY, JSON.stringify(rec));
+    } catch (_) {}
+  }
+  function applyCheckoutPrefill() {
+    try {
+      // Não sobrepõe link de recuperação/prefill nem um Pix em restauração.
+      try { var p = new URLSearchParams(location.search || ''); if (p.get('rt') || p.get('identifier') || p.get('correlationID') || p.get('token')) return; } catch (_) {}
+      try { if (typeof loadPixSessionCk === 'function' && loadPixSessionCk()) return; } catch (_) {}
+      var rec = loadCheckoutPrefill();
+      if (!rec) return;
+      var setIfEmpty = function (el, val) { try { if (el && !String(el.value || '').trim() && val) el.value = String(val); } catch (_) {} };
+      setIfEmpty(usernameCheckoutInput, rec.username);
+      setIfEmpty(_prefEmailEl(), rec.email);
+      setIfEmpty(checkoutPhoneInput, rec.phone);
+      setIfEmpty(_prefNameEl(), rec.name);
+      try { if (checkoutPhoneInput && checkoutPhoneInput.value) checkoutPhoneInput.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+    } catch (_) {}
+  }
+  function setupCheckoutPrefill() {
+    try {
+      [_prefEmailEl(), checkoutPhoneInput, _prefNameEl(), usernameCheckoutInput].forEach(function (el) {
+        if (!el) return;
+        el.addEventListener('change', function () { try { saveCheckoutPrefill(); } catch (_) {} });
+        el.addEventListener('blur', function () { try { saveCheckoutPrefill(); } catch (_) {} });
+      });
+    } catch (_) {}
+    try { applyCheckoutPrefill(); } catch (_) {}
+  }
+
   async function checkInstagramProfileCheckout() {
     if (!usernameCheckoutInput) return;
     const rawInput = usernameCheckoutInput.value.trim();
@@ -2807,6 +2874,7 @@
         showResumoIfAllowed();
         try { updatePromosSummary(); } catch(_) {}
         try { applyCheckoutFlow(); } catch(_) {}
+        try { saveCheckoutPrefill({ profile: { followers: (typeof profile.followersCount === 'number' ? profile.followersCount : null), isPrivate: !!(profile.isPrivate || profile.is_private), fullName: String(profile.fullName || '') } }); } catch (_) {}
         showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         try {
           const trackUrl = '/api/instagram/validet-track';
@@ -3569,6 +3637,25 @@
       const chargeId = charge?.id || charge?.chargeId || data?.chargeId || data?.id || data?.transaction_id || data?.transactionId || data?.invoice_id || data?.invoiceId || '';
       const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || data?.identifier || data?.transaction_id || data?.transactionId || '';
       const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || data?.correlationID || data?.correlationId || '';
+
+      // Persiste a sessão do Pix para restaurar a tela de pagamento caso o cliente recarregue.
+      try {
+        var _tipoLabel = (tipo === 'seguidores_tiktok') ? 'Seguidores TikTok'
+          : (tipo === 'curtidas_brasileiras' ? 'Curtidas Brasileiras'
+          : (tipo === 'visualizacoes_reels' ? 'Visualizações Reels' : 'Seguidores Instagram'));
+        var _pImg = '';
+        try { var _pi = document.getElementById('checkoutProfileImage'); if (_pi && _pi.src && _pi.style.display !== 'none') _pImg = _pi.src; } catch (_) {}
+        savePixSessionCk({
+          brCode: brCode, qrImage: qrImage,
+          chargeId: chargeId, identifier: identifier,
+          serverCorrelationID: serverCorrelationID, correlationID: correlationID,
+          gateway: currentPixGateway,
+          totalCents: totalCents, tipoLabel: _tipoLabel,
+          qtdEffective: qtdEffective, username: instagramUsernameFinal, phone: phoneValue,
+          profileImg: _pImg
+        });
+      } catch (_) {}
+
       if (paymentPollInterval) {
         clearInterval(paymentPollInterval);
         paymentPollInterval = null;
@@ -6049,6 +6136,8 @@
 
   async function navigateToPedidoOrFallback(identifier, correlationID) {
     let targetUrl = '';
+    try { clearPixSessionCk(); } catch (_) {}
+    try { saveCheckoutPrefill(); } catch (_) {}
     try {
       try { await fetch('/session/mark-paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, correlationID }) }); } catch(_) {}
       const apiUrl = `/api/order?identifier=${encodeURIComponent(identifier)}&correlationID=${encodeURIComponent(correlationID)}`;
@@ -6095,6 +6184,208 @@
     try { showStatusMessageCheckout('Pagamento confirmado. Exibindo resumo abaixo.', 'success'); } catch(_) {}
     try { showResumoIfAllowed(); } catch(_) {}
   }
+
+  // ==== Persistência da sessão Pix (restaurar tela de pagamento no reload) ====
+  // Se o cliente já gerou o Pix e recarrega a página, ele volta direto para a
+  // tela de pagamento com o mesmo Pix, em vez de reiniciar o checkout.
+  function _pixSessionKeyCk() { return 'oppus_pix_session_engajamento'; }
+  var PIX_SESSION_TTL_MS_CK = 30 * 60 * 1000; // 30 min
+  function savePixSessionCk(p) {
+    try {
+      if (!p || (!p.brCode && !p.chargeId)) return;
+      p.savedAt = Date.now();
+      sessionStorage.setItem(_pixSessionKeyCk(), JSON.stringify(p));
+    } catch (_) {}
+  }
+  function clearPixSessionCk() { try { sessionStorage.removeItem(_pixSessionKeyCk()); } catch (_) {} }
+  function loadPixSessionCk() {
+    try {
+      var raw = sessionStorage.getItem(_pixSessionKeyCk());
+      if (!raw) return null;
+      var rec = JSON.parse(raw);
+      if (!rec || !rec.savedAt) return null;
+      if ((Date.now() - Number(rec.savedAt)) > PIX_SESSION_TTL_MS_CK) { clearPixSessionCk(); return null; }
+      if (!rec.brCode && !rec.chargeId) return null;
+      return rec;
+    } catch (_) { return null; }
+  }
+
+  function _resumePixPollingCk(chargeId, identifier, serverCorrelationID, correlationID) {
+    if (paymentPollInterval) { clearInterval(paymentPollInterval); paymentPollInterval = null; }
+    if (chargeId) {
+      var checkPaid = async function () {
+        try {
+          var statusEndpoint = (currentPixGateway === 'expay')
+            ? '/api/expay/charge-status?id=' + encodeURIComponent(chargeId) + '&identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID)
+            : (currentPixGateway === 'paghiper')
+              ? '/api/paghiper/charge-status?id=' + encodeURIComponent(chargeId) + '&identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID)
+              : '/api/woovi/charge-status?id=' + encodeURIComponent(chargeId);
+          var stResp = await fetch(statusEndpoint);
+          var stData = await stResp.json();
+          var status = (stData && stData.charge && stData.charge.status) || (stData && stData.status) || '';
+          var paidFlag = (stData && stData.charge && stData.charge.paid) || (stData && stData.paid) || false;
+          var isPaid = paidFlag === true || /(paid|approved|aprovado)/i.test(String(status));
+          if (isPaid) {
+            clearInterval(paymentPollInterval); paymentPollInterval = null;
+            clearPixSessionCk();
+            try { markPaymentConfirmed(); } catch (_) {}
+            await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            return;
+          }
+          try {
+            var dbUrl = '/api/checkout/payment-state?id=' + encodeURIComponent(chargeId) + '&identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID);
+            var dbResp = await fetch(dbUrl);
+            var dbData = await dbResp.json();
+            if (dbData && dbData.paid === true) {
+              clearInterval(paymentPollInterval); paymentPollInterval = null;
+              clearPixSessionCk();
+              try { markPaymentConfirmed(); } catch (_) {}
+              await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+            }
+          } catch (_) {}
+        } catch (e) {}
+      };
+      checkPaid();
+      paymentPollInterval = setInterval(checkPaid, 7000);
+    } else {
+      var checkPaidDb = async function () {
+        try {
+          var url = '/api/checkout/payment-state?identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID);
+          var stResp = await fetch(url);
+          var stData = await stResp.json();
+          if (stData && stData.paid === true) {
+            clearInterval(paymentPollInterval); paymentPollInterval = null;
+            if (paymentEventSource) { try { paymentEventSource.close(); } catch (_) {} paymentEventSource = null; }
+            clearPixSessionCk();
+            try { markPaymentConfirmed(); } catch (_) {}
+            await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+          }
+        } catch (e) {}
+      };
+      checkPaidDb();
+      paymentPollInterval = setInterval(checkPaidDb, 3000);
+      try {
+        if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
+        var sseUrl = '/api/payment/subscribe?identifier=' + encodeURIComponent(identifier) + '&correlationID=' + encodeURIComponent(serverCorrelationID || correlationID);
+        paymentEventSource = new EventSource(sseUrl);
+        paymentEventSource.addEventListener('paid', async function () {
+          try {
+            clearInterval(paymentPollInterval); paymentPollInterval = null;
+            if (paymentEventSource) { paymentEventSource.close(); paymentEventSource = null; }
+            clearPixSessionCk();
+            try { markPaymentConfirmed(); } catch (_) {}
+            await navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID);
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }
+  }
+
+  function restorePixSessionCk(rec) {
+    if (!rec) return;
+    try { if (rec.gateway) { currentPixGateway = rec.gateway; window.currentPixGateway = rec.gateway; } } catch (_) {}
+    var brCode = rec.brCode || '';
+    var qrImage = rec.qrImage || '';
+    var totalCents = Number(rec.totalCents || 0);
+    var totalFormatted = '';
+    try { totalFormatted = formatCentsToBRL(totalCents); } catch (_) { totalFormatted = ''; }
+
+    document.querySelectorAll('.section-block').forEach(function (el) { el.style.display = 'none'; });
+    if (document.querySelector('.header')) document.querySelector('.header').style.display = 'none';
+
+    var screen = document.getElementById('paymentSuccessScreen');
+    if (!screen) return;
+    screen.style.display = 'flex';
+
+    try {
+      var selector = document.getElementById('paymentMethodSelector');
+      if (selector) {
+        if (totalCents >= 100) {
+          selector.style.display = 'flex';
+          try { populateInstallments((typeof window.calculateSubtotalCents === 'function') ? window.calculateSubtotalCents() : totalCents); } catch (_) {}
+        } else {
+          selector.style.display = 'none';
+          try { if (currentPaymentMethod !== 'pix') selectPaymentMethod('pix'); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    var qrContainer = document.getElementById('paymentQrImage');
+    if (qrContainer && qrImage) qrContainer.innerHTML = '<img src="' + qrImage + '" alt="QR Code" style="width: 100%; max-width: 200px; display: block; margin: 0 auto;" />';
+
+    var valEl = document.getElementById('paymentValue');
+    if (valEl && totalFormatted) valEl.textContent = totalFormatted;
+
+    var copyArea = document.getElementById('paymentCopyCode');
+    if (copyArea) copyArea.value = brCode;
+
+    var copyBtn = document.getElementById('paymentCopyBtn');
+    if (copyBtn) {
+      copyBtn.replaceWith(copyBtn.cloneNode(true));
+      var newBtn = document.getElementById('paymentCopyBtn');
+      newBtn.addEventListener('click', async function () {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(brCode); }
+          else { copyArea.select(); document.execCommand('copy'); }
+          var span = newBtn.querySelector('.button-text');
+          var prev = span ? span.textContent : '';
+          if (span) span.textContent = 'Pix Copiado!';
+          newBtn.classList.add('success');
+          setTimeout(function () { if (span) span.textContent = prev; newBtn.classList.remove('success'); }, 2000);
+        } catch (e) { alert('Erro ao copiar'); }
+      });
+    }
+
+    var timerEl = document.getElementById('pixTimer');
+    if (timerEl) {
+      var timeLeft = 29 * 60 + 59;
+      var updateTimer = function () {
+        var m = Math.floor(timeLeft / 60);
+        var s = timeLeft % 60;
+        timerEl.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+        if (timeLeft > 0) timeLeft--;
+      };
+      updateTimer();
+      setInterval(updateTimer, 1000);
+    }
+
+    try {
+      var sName = document.getElementById('summaryItemName');
+      if (sName && rec.tipoLabel) sName.textContent = rec.tipoLabel;
+      var sQty = document.getElementById('summaryItemQty');
+      if (sQty && rec.qtdEffective) sQty.textContent = 'Quantidade: ' + rec.qtdEffective;
+      var sImg = document.getElementById('summaryItemImage');
+      if (sImg) { if (rec.profileImg) sImg.innerHTML = '<img src="' + rec.profileImg + '" style="width:100%; height:100%; object-fit:cover;" />'; else sImg.textContent = '📦'; }
+      if (totalFormatted) {
+        ['summaryItemPrice', 'summaryItemTotal', 'summarySubtotal', 'summaryTotal'].forEach(function (id) { var e = document.getElementById(id); if (e) e.textContent = totalFormatted; });
+        var sPayVal = document.getElementById('summaryPaymentValue'); if (sPayVal) sPayVal.textContent = 'Valor: ' + totalFormatted;
+      }
+      var sCustName = document.getElementById('summaryCustomerName');
+      if (sCustName) sCustName.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg> ' + (rec.username || 'Cliente');
+      var sCustPhone = document.getElementById('summaryCustomerPhone');
+      if (sCustPhone && rec.phone) sCustPhone.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg> ' + rec.phone;
+      var sCustEmail = document.getElementById('summaryCustomerEmail'); if (sCustEmail) sCustEmail.style.display = 'none';
+    } catch (_) {}
+
+    try { window.scrollTo({ top: 0, behavior: 'auto' }); } catch (_) {}
+
+    _resumePixPollingCk(rec.chargeId || '', rec.identifier || '', rec.serverCorrelationID || '', rec.correlationID || rec.serverCorrelationID || '');
+  }
+
+  // Restaura o Pix se o cliente recarregar a página na tela de pagamento.
+  try {
+    setTimeout(function () {
+      try {
+        var __recCk = loadPixSessionCk();
+        if (__recCk) restorePixSessionCk(__recCk);
+      } catch (_) {}
+    }, 150);
+  } catch (_) {}
+
+  // Cache de preenchimento (device): anexa listeners e pré-preenche a etapa 2 com o
+  // último @/email/telefone salvos neste navegador (não sobrepõe recuperação/Pix).
+  try { setupCheckoutPrefill(); } catch (_) {}
+
   try {
     const audioBtn = document.getElementById('audioPlayBtn');
     const audioTip = document.getElementById('tutorialAudio');
