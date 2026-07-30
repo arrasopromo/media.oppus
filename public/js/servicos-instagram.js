@@ -3017,6 +3017,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   let cachedPosts = null;
   let cachedPostsUser = '';
+  let __postsRefreshedFor = ''; // @ p/ o qual já buscamos posts FRESCOS nesta sessão (1x por perfil)
   let postModalOpenLock = false;
   let suppressOpenPostModalOnce = false;
   let postModalAppendMode = false;
@@ -3347,16 +3348,21 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
     };
 
+    // Na 1ª abertura do modal para este @ na sessão, busca os posts FRESCOS (refresh=1) —
+    // furando o cache de 1h do servidor. Assim, se o cliente acabou de postar (ou o perfil veio
+    // do pré-preenchimento automático), o post novo aparece. Reaberturas usam o cache.
+    var needFresh = (__postsRefreshedFor !== user);
     // views = reels (get_clips no servidor); não reusa o cache do feed (likes) p/ não misturar.
-    const useCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views';
+    const useCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views' && !needFresh;
     if (useCache) {
       renderFrom(cachedPosts);
     } else {
-      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '');
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '') + (needFresh ? '&refresh=1' : '');
       refs.postModalGrid.innerHTML = spinnerHTML();
       fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
         .then(r=>r.json()).then(d=>{
           const arr = Array.isArray(d.posts) ? d.posts : [];
+          __postsRefreshedFor = user; // já pegamos fresco p/ este @ nesta sessão
           if (kind !== 'views') { cachedPosts = arr; cachedPostsUser = user; }
           renderFrom(arr);
         }).catch(function(){
@@ -3594,7 +3600,7 @@ document.addEventListener('DOMContentLoaded', function() {
       try { if (contactPhoneInput && contactPhoneInput.value) contactPhoneInput.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
       // "Engatilha": revalida o @ em silêncio (usa o cache do servidor) para já liberar a etapa 3.
       if (rec.username && usernameCheckoutInput && usernameCheckoutInput.value && typeof checkInstagramProfileCheckout === 'function') {
-        setTimeout(function () { try { checkInstagramProfileCheckout({ silent: true, noScroll: true, noModal: true }); } catch (_) {} }, 450);
+        setTimeout(function () { try { checkInstagramProfileCheckout({ silent: true, noScroll: true, noModal: true, includePosts: false }); } catch (_) {} }, 450);
       }
     } catch (_) {}
   }
@@ -4045,6 +4051,7 @@ document.addEventListener('DOMContentLoaded', function() {
         brCode: p.brCode || '', qrImage: p.qrImage || '',
         chargeId: p.chargeId || '', identifier: p.identifier || '',
         serverCorrelationID: p.serverCorrelationID || '', correlationID: p.correlationID || '',
+        summary: (p.summary && typeof p.summary === 'object') ? p.summary : null, // @ + tipo + qtd + total (p/ o painel restaurado)
         savedAt: Date.now()
       };
       sessionStorage.setItem(_pixSessionKey(), JSON.stringify(rec));
@@ -4111,29 +4118,66 @@ document.addEventListener('DOMContentLoaded', function() {
     var serverCorrelationID = rec.serverCorrelationID || '';
     var correlationID = rec.correlationID || serverCorrelationID || '';
 
-    showStep3Raw();
-    _ensurePixContainerVisible();
+    // Reconstrói a ETAPA 3 REAL — como se o cliente nunca tivesse saído da tela, só recarregou.
+    var sum = (rec.summary && typeof rec.summary === 'object') ? rec.summary : {};
 
-    var pixResultado = document.getElementById('pixResultado');
+    // 1) Pacote (tipo + quantidade): o change do qtdSelect ativa o plano/preço SEM navegar.
+    try {
+      if (sum.tipo && tipoSelect && String(tipoSelect.value) !== String(sum.tipo)) {
+        window.__oppusTipoChangeUserInitiated = false;
+        tipoSelect.value = String(sum.tipo);
+        tipoSelect.dispatchEvent(new Event('change'));
+      }
+    } catch (_) {}
+    try {
+      if (sum.qty && qtdSelect) {
+        var _hasOpt = Array.prototype.some.call(qtdSelect.options || [], function (o) { return String(o.value) === String(sum.qty); });
+        if (_hasOpt) { qtdSelect.value = String(sum.qty); qtdSelect.dispatchEvent(new Event('change')); }
+      }
+    } catch (_) {}
+
+    // 2) Contato + @ (salvos ao gerar o Pix).
+    try {
+      var _sv = function (el, v) { try { if (el && v) el.value = String(v); } catch (_) {} };
+      _sv(usernameCheckoutInput, sum.username);
+      _sv(contactEmailInput, sum.email);
+      _sv(contactPhoneInput, sum.phone);
+      _sv(contactNameInput, sum.name);
+      try { if (contactPhoneInput && contactPhoneInput.value) contactPhoneInput.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+    } catch (_) {}
+
+    // 3) O pedido já foi validado ao gerar o Pix → marca verificado e popula o review na hora.
+    try { isInstagramVerified = true; } catch (_) {}
+    try { if (sum.isPrivate === true) isInstagramPrivate = true; } catch (_) {}
+    try {
+      var _revU = document.getElementById('reviewProfileUsername'); if (_revU && sum.username) _revU.textContent = sum.username;
+      var _cU = document.getElementById('checkoutProfileUsername'); if (_cU && sum.username) _cU.textContent = sum.username;
+      var _revF = document.getElementById('reviewProfileFollowers'); if (_revF && sum.followers) _revF.textContent = String(sum.followers);
+      if (sum.profileImg) { ['reviewProfileImage', 'checkoutProfileImage'].forEach(function (id) { var im = document.getElementById(id); if (im) { try { im.src = sum.profileImg; im.style.display = ''; } catch (_) {} } }); }
+    } catch (_) {}
+
+    // 4) Mostra a etapa 3 (sem revalidar navegação) e garante o container do Pix visível.
+    try { showStep3Raw(); } catch (_) {}
+    try { _ensurePixContainerVisible(); } catch (_) {}
+    try { updatePromosSummary(); } catch (_) {}
+    try { updatePedidoButtonState(); } catch (_) {}
+
+    // 5) Render do MESMO Pix (idêntico ao gerado) na área de pagamento da etapa 3.
     var copyButtonId = 'copyPixBtnDynamic';
     var inputId = 'pixBrCodeInputDynamic';
+    var imgHtml = qrImage ? '<img src="' + qrImage + '" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />' : '';
+    var codeFieldHtml = brCode ? '<div style="margin-bottom: 0.5rem; text-align: center;"><input id="' + inputId + '" type="text" readonly value="' + brCode + '" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" /></div>' : '<div style="color:var(--text-primary);">Não foi possível exibir o código Pix.</div>';
+    var copyBtnHtml = brCode ? '<div class="button-container" style="margin-bottom: 0.5rem;"><button id="' + copyButtonId + '" class="continue-button"><span class="button-text">Copiar código Pix</span></button></div>' : '';
+    var waitingHtml = '<div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; margin-top:8px; color:var(--text-primary); font-weight:600;"><svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg"><circle cx="25" cy="25" r="20" stroke="currentColor" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" /></circle></svg><span>Aguardando pagamento...</span></div>';
+    var pixResultado = document.getElementById('pixResultado');
+    if (pixResultado) { pixResultado.innerHTML = imgHtml + codeFieldHtml + copyBtnHtml + waitingHtml; pixResultado.style.display = 'block'; }
 
-    var imgHtml = qrImage
-      ? '<img src="' + qrImage + '" alt="QR Code Pix" style="width: 180px; height: 180px; border-radius: 8px; display: block; margin: 0 auto 0.75rem; background: #fff;" />'
-      : '';
-    var codeFieldHtml = brCode
-      ? '<div style="margin-bottom: 0.5rem; text-align: center;"><input id="' + inputId + '" type="text" readonly value="' + brCode + '" style="width: 100%; padding: 0.5rem; font-size: 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.85); color: #111827; text-align: center;" /></div>'
-      : '<div style="color:#fff;">Não foi possível exibir o código Pix.</div>';
-    var copyBtnHtml = brCode
-      ? '<div class="button-container" style="margin-bottom: 0.5rem;"><button id="' + copyButtonId + '" class="continue-button"><span class="button-text">Copiar código Pix</span></button></div>'
-      : '';
-    var textColor = '#ffffff'; // branco: a área do Pix fica sobre superfície escura/colorida (tema claro e escuro)
-    var waitingHtml = '<div style="text-align:center; margin-top:6px;"><span style="display:inline-flex; align-items:center; justify-content:center; gap:0.5rem; color:' + textColor + '; background:rgba(17,24,39,0.55); padding:7px 16px; border-radius:999px; font-weight:600;"><svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg"><circle cx="25" cy="25" r="20" stroke="' + textColor + '" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" /></circle></svg><span>Aguardando pagamento...</span></span></div>';
-
-    if (pixResultado) {
-      pixResultado.innerHTML = imgHtml + codeFieldHtml + copyBtnHtml + waitingHtml;
-      pixResultado.style.display = 'block';
-    }
+    // 6) Revalida o perfil em BACKGROUND (atualiza "seguidores atuais") — não bloqueia a tela.
+    try {
+      if (sum.username && usernameCheckoutInput && usernameCheckoutInput.value && typeof checkInstagramProfileCheckout === 'function') {
+        setTimeout(function () { try { checkInstagramProfileCheckout({ silent: true, noModal: true, noScroll: true, includePosts: false }); } catch (_) {} }, 300);
+      }
+    } catch (_) {}
 
     setTimeout(function () {
       var copyBtn = document.getElementById(copyButtonId);
@@ -4523,18 +4567,15 @@ document.addEventListener('DOMContentLoaded', function() {
            </div>`
         : '';
 
-      const textColor = '#ffffff'; // branco: a área do Pix fica sobre superfície escura/colorida (melhor contraste no tema claro e escuro)
-      
+      // Cor da fonte segue o tema: preta no tema claro, branca no escuro (var --text-primary).
       const waitingHtml = `
-        <div style="text-align:center; margin-top:6px;">
-          <span style="display:inline-flex; align-items:center; justify-content:center; gap:0.5rem; color:${textColor}; background:rgba(17,24,39,0.55); padding:7px 16px; border-radius:999px; font-weight:600;">
-            <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="25" cy="25" r="20" stroke="${textColor}" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
-                <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
-              </circle>
-            </svg>
-            <span>Aguardando pagamento...</span>
-          </span>
+        <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; margin-top:8px; color:var(--text-primary); font-weight:600;">
+          <svg width="18" height="18" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="25" cy="25" r="20" stroke="currentColor" stroke-width="4" fill="none" stroke-dasharray="31.4 31.4">
+              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          <span>Aguardando pagamento...</span>
         </div>`;
 
       if (pixResultado) {
@@ -4542,13 +4583,14 @@ document.addEventListener('DOMContentLoaded', function() {
           pixResultado.style.display = 'block';
       }
 
-      // Scroll para o PIX
+      // Âncora ao gerar o Pix: rola até a seção "Pagamento via PIX" (mobile E desktop).
       try {
-        const isMobile = window.innerWidth <= 640;
-        if (isMobile && pixResultado) {
-            const rect = pixResultado.getBoundingClientRect();
-            const top = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
-            window.scrollTo({ top, behavior: 'smooth' });
+        const anchorEl = document.getElementById('pixContainer') || pixResultado;
+        if (anchorEl && anchorEl.getBoundingClientRect) {
+          const offset = (window.innerWidth <= 640) ? 70 : 90; // respiro para o menu fixo
+          let top = (window.scrollY || window.pageYOffset || 0) + anchorEl.getBoundingClientRect().top - offset;
+          if (top < 0) top = 0;
+          window.scrollTo({ top, behavior: 'smooth' });
         }
       } catch(_) {}
 
@@ -4586,9 +4628,17 @@ document.addEventListener('DOMContentLoaded', function() {
       const identifier = charge?.identifier || (data?.charge && data.charge.identifier) || '';
       const serverCorrelationID = charge?.correlationID || (data?.charge && data.charge.correlationID) || '';
 
-      // Persiste a sessão do Pix: se o cliente recarregar a página, volta direto
-      // para a etapa 3 com o mesmo Pix, sem reiniciar o checkout.
-      try { savePixSession({ brCode, qrImage, chargeId, identifier, serverCorrelationID, correlationID }); } catch (_) {}
+      // Persiste a sessão do Pix (com resumo do pedido): se o cliente RECARREGAR a página,
+      // volta direto para o Pix com as infos do pedido.
+      try {
+        var _tipoLbl = ''; try { _tipoLbl = (typeof getLabelForTipo === 'function') ? getLabelForTipo(tipo) : String(tipo || ''); } catch (_) { _tipoLbl = String(tipo || ''); }
+        var _pimg = ''; try { var _pi = document.getElementById('checkoutProfileImage'); if (_pi && _pi.src) _pimg = String(_pi.src); } catch (_) {}
+        var _emailV = ''; try { _emailV = (typeof emailValue !== 'undefined') ? String(emailValue || '') : (contactEmailInput ? String(contactEmailInput.value || '') : ''); } catch (_) {}
+        var _phoneV = ''; try { _phoneV = (typeof phoneValue !== 'undefined') ? String(phoneValue || '') : (contactPhoneInput ? String(contactPhoneInput.value || '') : ''); } catch (_) {}
+        var _nameV = ''; try { _nameV = (typeof nameValue !== 'undefined') ? String(nameValue || '') : (contactNameInput ? String(contactNameInput.value || '') : ''); } catch (_) {}
+        var _follV = ''; try { var _rf = document.getElementById('reviewProfileFollowers'); if (_rf) _follV = String(_rf.textContent || '').trim(); } catch (_) {}
+        savePixSession({ brCode, qrImage, chargeId, identifier, serverCorrelationID, correlationID, summary: { username: String(instagramUsernameFinal || '').replace(/^@+/, ''), tipo: String(tipo || ''), tipoLabel: _tipoLbl, qty: qtd, totalCents: totalCents, profileImg: _pimg, email: _emailV, phone: _phoneV, name: _nameV, followers: _follV, isPrivate: !!isInstagramPrivate } });
+      } catch (_) {}
 
       if (paymentPollInterval) {
         clearInterval(paymentPollInterval);
@@ -5518,11 +5568,28 @@ document.addEventListener('DOMContentLoaded', function() {
     if (s === 2 || s === 3) return s;
     return 1;
   })();
+  // Só restaura o Pix quando a página foi RECARREGADA (F5) na tela do Pix. Se o cliente
+  // NAVEGOU para cá (veio da home, back/forward, ou abriu de novo), o Pix é descartado —
+  // ele começa um pedido novo, como pediu ("voltou pra home, perde o pix").
+  var __isReload = false;
+  try {
+    var __navEntries = (window.performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+    if (__navEntries && __navEntries[0]) __isReload = (__navEntries[0].type === 'reload');
+    else if (window.performance && performance.navigation) __isReload = (performance.navigation.type === 1);
+  } catch (_) { __isReload = false; }
+
   var __pixToRestore = null;
-  try { if (!hasRecoveryToken) __pixToRestore = loadPixSession(); } catch (_) { __pixToRestore = null; }
+  try {
+    if (!hasRecoveryToken) {
+      if (__isReload) __pixToRestore = loadPixSession();
+      else { try { clearPixSession(); } catch (_) {} } // navegou/reabriu → descarta o Pix (novo pedido)
+    }
+  } catch (_) { __pixToRestore = null; }
   if (__pixToRestore) {
-    // Cliente recarregou a página com um Pix já gerado na etapa 3:
-    // restaura direto o Pix, sem voltar ao início do checkout.
+    // Cliente recarregou a página com um Pix já gerado na etapa 3: reconstrói a etapa 3
+    // com o mesmo Pix. Esconde a etapa 1 na hora para não dar "flash" antes de reconstruir.
+    try { var _s1 = document.getElementById('step1Container'); if (_s1) _s1.style.display = 'none'; } catch (_) {}
+    try { var _s2 = document.getElementById('perfilCard'); if (_s2) _s2.style.display = 'none'; } catch (_) {}
     setTimeout(function () {
       try { restorePixSession(__pixToRestore); }
       catch (_) { if (window.goToStep) window.goToStep(1); }

@@ -2452,6 +2452,7 @@
   let suppressOpenPostModalOnce = false;
   let cachedPosts = null;
   let cachedPostsUser = '';
+  let __postsRefreshedFor = ''; // @ p/ o qual já buscamos posts FRESCOS nesta sessão (1x por perfil)
   function ensureSpinnerCSS(){
     if (document.getElementById('oppusSpinnerStyles')) return;
     const style = document.createElement('style');
@@ -2570,14 +2571,18 @@
       });
       try { fetch('/api/instagram/selected-for').then(r=>r.json()).then(function(d){ const obj = d && d.selectedFor ? d.selectedFor : {}; const cur = obj[kind]; if (cur && cur.shortcode) { highlightSelected(kind, cur.shortcode); } }); } catch(_) {}
     };
-    const useCache = !!cachedPosts && cachedPostsUser === user;
+    // 1ª abertura do modal p/ este @ na sessão → busca posts FRESCOS (refresh=1), furando o
+    // cache de 1h; assim um post recém-criado (ou perfil pré-preenchido) aparece.
+    var needFresh = (__postsRefreshedFor !== user);
+    const useCache = !!cachedPosts && cachedPostsUser === user && !needFresh;
     if (useCache) {
       renderFrom(cachedPosts);
     } else {
-      const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (needFresh ? '&refresh=1' : '');
       refs.postModalGrid.innerHTML = isInstagramPrivate ? ('<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML()) : spinnerHTML();
       fetch(url).then(r=>r.json()).then(d=>{
         const arr = Array.isArray(d.posts) ? d.posts : [];
+        __postsRefreshedFor = user;
         cachedPosts = arr; cachedPostsUser = user;
         renderFrom(arr);
       }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1;color:#ef4444;">'+(isInstagramPrivate?'Deixe o perfil no modo público para selecionar o post':'Erro ao carregar posts.')+'</div>'; });
@@ -6372,14 +6377,25 @@
     _resumePixPollingCk(rec.chargeId || '', rec.identifier || '', rec.serverCorrelationID || '', rec.correlationID || rec.serverCorrelationID || '');
   }
 
-  // Restaura o Pix se o cliente recarregar a página na tela de pagamento.
+  // Restaura o Pix SÓ quando a página foi RECARREGADA (F5) na tela do Pix. Se navegou para
+  // cá (home, back/forward, reabriu), descarta o Pix — começa pedido novo.
   try {
-    setTimeout(function () {
-      try {
-        var __recCk = loadPixSessionCk();
-        if (__recCk) restorePixSessionCk(__recCk);
-      } catch (_) {}
-    }, 150);
+    var __isReloadCk = false;
+    try {
+      var __navCk = (window.performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+      if (__navCk && __navCk[0]) __isReloadCk = (__navCk[0].type === 'reload');
+      else if (window.performance && performance.navigation) __isReloadCk = (performance.navigation.type === 1);
+    } catch (_) { __isReloadCk = false; }
+    if (__isReloadCk) {
+      setTimeout(function () {
+        try {
+          var __recCk = loadPixSessionCk();
+          if (__recCk) restorePixSessionCk(__recCk);
+        } catch (_) {}
+      }, 150);
+    } else {
+      try { clearPixSessionCk(); } catch (_) {}
+    }
   } catch (_) {}
 
   // Cache de preenchimento (device): anexa listeners e pré-preenche a etapa 2 com o

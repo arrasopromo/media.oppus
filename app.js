@@ -21409,6 +21409,9 @@ app.get('/api/instagram/posts', async (req, res) => {
     const username = String(usernameParam || usernameSession || '').trim().toLowerCase();
     if (!username) return res.json({ success: false, error: 'missing_username', posts: [] });
     const debugInsert = String(req.query.debug || '').trim() === '1';
+    // refresh=1 → ignora o cache de 1h e busca os posts NOVOS (ex.: cliente acabou de postar
+    // e voltou pra comprar curtidas). Usado quando o perfil foi pré-preenchido automaticamente.
+    const forceFresh = String(req.query.refresh || req.query.fresh || '').trim() === '1';
     let debugInfo = null;
 
     // ── Modo REELS (visualizações): busca os reels do perfil (get_clips), não o feed ──
@@ -21418,7 +21421,7 @@ app.get('/api/instagram/posts', async (req, res) => {
       try {
         const vu = await getCollection('validated_insta_users');
         const cd = await vu.findOne({ username }, { projection: { latestReels: 1, reelsCheckedAt: 1 } });
-        if (cd && Array.isArray(cd.latestReels) && cd.latestReels.length) {
+        if (!forceFresh && cd && Array.isArray(cd.latestReels) && cd.latestReels.length) {
           const fresh = cd.reelsCheckedAt && (Date.now() - new Date(cd.reelsCheckedAt).getTime() < 3600000);
           if (fresh) { console.log('[API] Retornando REELS do cache'); return res.json({ success: true, username, posts: cd.latestReels, source: 'cache_reels' }); }
         }
@@ -21459,7 +21462,7 @@ app.get('/api/instagram/posts', async (req, res) => {
       // Tentar buscar do banco primeiro se tiver posts recentes (ex: < 1h)
       // Se acabou de validar o perfil, os posts estarão lá
       const cachedDoc = await vu.findOne({ username });
-      if (cachedDoc && cachedDoc.latestPosts && Array.isArray(cachedDoc.latestPosts) && cachedDoc.latestPosts.length > 0) {
+      if (!forceFresh && cachedDoc && cachedDoc.latestPosts && Array.isArray(cachedDoc.latestPosts) && cachedDoc.latestPosts.length > 0) {
           // Frescor dos POSTS = quando os posts foram REALMENTE capturados (lastPostsAt).
           // NÃO usar checkedAt: o check de privacidade (check_privacy_rocketapi) bumpa o checkedAt
           // sem atualizar latestPosts, o que fazia uma lista de posts velha parecer fresca e
