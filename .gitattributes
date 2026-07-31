@@ -1,1 +1,2 @@
 *.mp4 filter=lfs diff=lfs merge=lfs -text
+public/images/comentarios.mp4 -filter -diff -merge -text
