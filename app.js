@@ -5284,31 +5284,18 @@ app.get('/cliente', async (req, res) => {
             }
         } catch (_) {}
 
+        // ── Escada de cupons de fidelidade ──
+        // available → mostra o cupom atual da sequência. waiting → "renovado em X dias".
+        // done → usou todos os cupons do nível (some o card).
         let clientCoupon = null;
         try {
-            const code = normalizeCouponCode(process.env.CLIENT_AREA_COUPON_CODE || 'CLIENTE10');
-            const pct = Math.max(0, Math.min(90, parseInt(String(process.env.CLIENT_AREA_COUPON_PCT || '10'), 10) || 0));
-            if (code && pct > 0) {
-                const couponsCol = await getCollection('coupons');
-                await couponsCol.updateOne(
-                    { code },
-                    {
-                        $setOnInsert: { code, createdAt: new Date(), usedCount: 0 },
-                        $set: { isActive: true, discountPercentage: pct, maxUsesPerProfile: 1 }
-                    },
-                    { upsert: true }
-                );
-                // Verificar se o cupom já foi usado em algum pedido pago deste email
-                const couponUsed = orders.some((o) => {
-                    const st = String(o.status || o?.woovi?.status || o?.paghiper?.status || o?.expay?.status || '').toLowerCase();
-                    if (st !== 'pago' && st !== 'paid') return false;
-                    const m = o.additionalInfoMapPaid || o.additionalInfoMap || {};
-                    const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o.additionalInfo) ? o.additionalInfo : []);
-                    const raw = String(m.cupom || m.coupon || (arr.find(x => x?.key === 'cupom' || x?.key === 'coupon')?.value) || '').trim().toUpperCase();
-                    return raw === String(code || '').toUpperCase();
-                });
-                clientCoupon = { code, pct, used: couponUsed };
+            const st = ladderStateFromOrders(orders);
+            if (st.state === 'available' && st.coupon) {
+                clientCoupon = { code: st.coupon.code, pct: st.coupon.pct, used: false, renewDays: 0 };
+            } else if (st.state === 'waiting' && st.coupon) {
+                clientCoupon = { code: st.coupon.code, pct: st.coupon.pct, used: true, renewDays: st.daysLeft };
             }
+            // st.state === 'done' → clientCoupon fica null (não mostra card).
         } catch (_) {}
 
         // Calcular nível do cliente (baseado em pedidos pagos, sem expor valor ao usuário)
@@ -7752,10 +7739,12 @@ async function computeLtvStats(opts = {}) {
   }
   const movedByCid = new Map(), costByCid = new Map();
   let faturado = 0, custo = 0;
+  // Vendas de LTV separadas por origem (carimbo durável em coupon_uses.ltvVia).
+  const vendaAuto = { n: 0, fat: 0 }, vendaManual = { n: 0, fat: 0 }, vendaSemOrigem = { n: 0, fat: 0 };
   if (couponIds.length) {
-    const uses = await usesCol.find({ status: 'consumed', couponId: { $in: couponIds } }, { projection: { couponId: 1, orderMongoId: 1, orderIdentifier: 1 } }).toArray();
-    const orderObjIds = [], orderIdents = [], couponByMongo = new Map(), couponByIdent = new Map();
-    for (const u of uses) { const cid = String(u.couponId); if (u.orderMongoId) { orderObjIds.push(u.orderMongoId); couponByMongo.set(String(u.orderMongoId), cid); } else if (u.orderIdentifier) { const oi = String(u.orderIdentifier); orderIdents.push(oi); couponByIdent.set(oi, cid); } }
+    const uses = await usesCol.find({ status: 'consumed', couponId: { $in: couponIds } }, { projection: { couponId: 1, orderMongoId: 1, orderIdentifier: 1, ltvVia: 1 } }).toArray();
+    const orderObjIds = [], orderIdents = [], couponByMongo = new Map(), couponByIdent = new Map(), viaByMongo = new Map(), viaByIdent = new Map();
+    for (const u of uses) { const cid = String(u.couponId); const via = String(u.ltvVia || '').trim(); if (u.orderMongoId) { orderObjIds.push(u.orderMongoId); couponByMongo.set(String(u.orderMongoId), cid); viaByMongo.set(String(u.orderMongoId), via); } else if (u.orderIdentifier) { const oi = String(u.orderIdentifier); orderIdents.push(oi); couponByIdent.set(oi, cid); viaByIdent.set(oi, via); } }
     const orQ = []; if (orderObjIds.length) orQ.push({ _id: { $in: orderObjIds } }); if (orderIdents.length) orQ.push({ identifier: { $in: orderIdents } });
     if (orQ.length) {
       // Custo do fornecedor dos pedidos de LTV: os pedidos vêm com costs={} (o charge
@@ -7793,6 +7782,11 @@ async function computeLtvStats(opts = {}) {
         movedByCid.set(cid, (movedByCid.get(cid) || 0) + cents);
         costByCid.set(cid, (costByCid.get(cid) || 0) + costR);
         faturado += cents / 100; custo += costR;
+        // Separa a venda por origem do LTV (auto D+2 × base manual × sem origem carimbada).
+        let via = viaByMongo.get(String(o._id)); if (!via && o.identifier) via = viaByIdent.get(String(o.identifier));
+        if (via === 'auto') { vendaAuto.n++; vendaAuto.fat += cents / 100; }
+        else if (via === 'manual') { vendaManual.n++; vendaManual.fat += cents / 100; }
+        else { vendaSemOrigem.n++; vendaSemOrigem.fat += cents / 100; }
       }
     }
   }
@@ -7829,6 +7823,11 @@ async function computeLtvStats(opts = {}) {
     manualMensagens, autoMensagens, totalEnviadas, sentLast24h,
     autoByDay, autoTotalPeriod, autoTotalAll,
     couponsView, faturado, custo, custoServicos, custoMensagens, custoTotal, msgCostUnitBRL, lucro,
+    ltvVendas: {
+      auto: { n: vendaAuto.n, faturado: Math.round(vendaAuto.fat * 100) / 100 },
+      manual: { n: vendaManual.n, faturado: Math.round(vendaManual.fat * 100) / 100 },
+      semOrigem: { n: vendaSemOrigem.n, faturado: Math.round(vendaSemOrigem.fat * 100) / 100 },
+    },
     sendWindow: { start: _lw.start, end: _lw.end, current: ltvCurrentBrtHour(), open: isWithinLtvSendWindow() },
     dailyCap: Math.max(1, Math.min(100000, Number(process.env.LTV_DAILY_LIMIT || 50) || 50))
   };
@@ -9716,7 +9715,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
                     const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
-                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -10125,7 +10124,7 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
                     const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
-                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -10720,7 +10719,7 @@ app.post('/api/stripe/create-intent', async (req, res) => {
         const couponCode = normalizeCouponCode(couponCodeRaw);
         if (couponCode) {
           const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-          const eligibility = await getCouponEligibility(couponCode, profileKey);
+          const eligibility = await getCouponEligibility(couponCode, profileKey, undefined, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
           if (eligibility && eligibility.ok && eligibility.coupon) {
             const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
             const rate = pct > 0 ? (pct / 100) : 0;
@@ -11153,7 +11152,7 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
         const couponCode = normalizeCouponCode(couponCodeRaw);
         if (couponCode) {
           const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-          const eligibility = await getCouponEligibility(couponCode, profileKey);
+          const eligibility = await getCouponEligibility(couponCode, profileKey, undefined, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
           if (eligibility && eligibility.ok && eligibility.coupon) {
             const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
             const rate = pct > 0 ? (pct / 100) : 0;
@@ -11736,7 +11735,7 @@ app.post('/api/woovi/charge', async (req, res) => {
                 if (couponCode) {
                     const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
                     const couponServiceKey = resolveCouponServiceKey(addInfoMap['categoria_servico'], addInfoMap['tipo_servico'] || addInfoMap['tipo'] || tipoVal);
-                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey);
+                    const eligibility = await getCouponEligibility(couponCode, profileKey, couponServiceKey, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
                     if (eligibility && eligibility.ok && eligibility.coupon) {
                         const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                         const rate = pct > 0 ? (pct / 100) : 0;
@@ -12132,7 +12131,7 @@ app.post('/api/expay/charge', async (req, res) => {
                     const couponCode = normalizeCouponCode(couponCodeRaw);
                     if (couponCode) {
                         const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-                        const eligibility = await getCouponEligibility(couponCode, profileKey);
+                        const eligibility = await getCouponEligibility(couponCode, profileKey, undefined, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
                         if (eligibility && eligibility.ok && eligibility.coupon) {
                             const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                             const rate = pct > 0 ? (pct / 100) : 0;
@@ -12743,7 +12742,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
                     const couponCode = normalizeCouponCode(couponCodeRaw);
                     if (couponCode) {
                         const profileKey = normalizeProfileKey(addInfoMap['instagram_username'] || addInfoMap['perfil'] || '');
-                        const eligibility = await getCouponEligibility(couponCode, profileKey);
+                        const eligibility = await getCouponEligibility(couponCode, profileKey, undefined, { phone: addInfoMap['phone'] || addInfoMap['telefone'] || addInfoMap['whatsapp'] || '', email: addInfoMap['email'] || '' });
                         if (eligibility && eligibility.ok && eligibility.coupon) {
                             const pct = Number(eligibility.coupon.discountPercentage || 0) || 0;
                             const rate = pct > 0 ? (pct / 100) : 0;
@@ -15253,7 +15252,8 @@ async function _buildControladoriaEntries() {
       tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1,
       'fama24h.statusPayload': 1, 'fornecedor_social.statusPayload': 1,
       'fama24h_multi.orders': 1, 'fornecedor_social_multi.orders': 1,
-      'notaFiscal.emissionState': 1, 'notaFiscal.number': 1,
+      'notaFiscal.emissionState': 1, 'notaFiscal.number': 1, 'notaFiscal.ebookAmount': 1,
+      'fiscalData.cpf': 1,
       additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1,
     },
   }).limit(100000).toArray();
@@ -15299,10 +15299,11 @@ async function _buildControladoriaEntries() {
       email: customer.email || '',
       instagram: getAdd('instagram_username') || getAdd('instauser') || o.instauser || o.instagramUsername || '',
       phone: customer.phone_number || customer.phone || customer.telefone || customer.whatsapp || getAdd('phone') || getAdd('telefone') || getAdd('whatsapp') || '',
-      cpf: customer.cpf || customer.federalTaxNumber || '',
+      cpf: customer.cpf || customer.federalTaxNumber || (o.fiscalData && o.fiscalData.cpf) || '',
       categoria,
       tipo,
       nfState: String((o.notaFiscal && o.notaFiscal.emissionState) || ''),
+      ebookAmount: Number((o.notaFiscal && o.notaFiscal.ebookAmount) || 0),
     };
   });
 }
@@ -15322,8 +15323,12 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
     const startMs = parseDay(req.query.start, false) ?? Number.NEGATIVE_INFINITY;
     const endMs = parseDay(req.query.end, true) ?? Number.POSITIVE_INFINITY;
 
+    // Modo de visualização: 'producao' = só dados reais (nota emitida / consulta feita);
+    // 'simulacao' (default) = projeta pela regra. NÃO dispara emissão — é só leitura.
+    const modo = String(req.query.modo || '').toLowerCase() === 'producao' ? 'producao' : 'simulacao';
+
     const entries = await _buildControladoriaEntries();
-    const report = controladoria.buildReport(entries, cfg, { startMs, endMs });
+    const report = controladoria.buildReport(entries, cfg, { startMs, endMs, modo });
     const totals = report.totals;
 
     // ── Ebook: ticket médio e top vendas no período exibido ──
@@ -15367,13 +15372,39 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
     } catch (e) { ads.error = e && e.message; }
     ads.tax = controladoria.round2(ads.cost * (cfg.adsTaxPct || 0));
 
-    // Deduções: custo operacional + ads + imposto ads + impostos de venda (ebook+serviço).
+    // ── Custo losdados (consultas de CPF): SÓ 1ª compra ──
+    // O CPF só é usado na nota do EBOOK, que só sai na 1ª compra do cliente. Então o
+    // custo conta apenas as consultas atreladas a pedidos de 1ª compra exibidos no
+    // período (cache = no máximo 1 cobrança por pedido). Recompra não gera custo aqui.
+    const firstOrderIds = new Set(
+      (Array.isArray(report.rows) ? report.rows : [])
+        .filter((r) => r && r.isFirst)
+        .map((r) => String(r.id || ''))
+        .filter(Boolean)
+    );
+    const losdados = { count: 0, unit: controladoria.round2(cfg.losdadosCostReais || 0), cost: 0, firstOrders: firstOrderIds.size, modo, ok: false, error: null };
+    try {
+      if (modo === 'producao') {
+        // REAL: só consultas que de fato aconteceram (log), atreladas a 1ª compra.
+        const lc = await getCollection('losdados_requests');
+        const consultedIds = await lc.distinct('orderId', { orderId: { $ne: null } });
+        losdados.count = consultedIds.filter((id) => id && firstOrderIds.has(String(id))).length;
+      } else {
+        // SIMULAÇÃO: projeta 1 consulta por 1ª compra (todas precisariam de CPF).
+        losdados.count = firstOrderIds.size;
+      }
+      losdados.cost = controladoria.round2(losdados.count * losdados.unit);
+      losdados.ok = true;
+    } catch (e) { losdados.error = e && e.message; }
+
+    // Deduções: custo operacional + ads + imposto ads + impostos de venda + custo losdados.
     totals.custoOperacional = totals.cost;
     totals.adsCost = ads.cost;
     totals.adsTax = ads.tax;
     totals.impostoVendas = totals.taxTotal; // ebook + serviço
+    totals.losdadosCost = losdados.cost;
     totals.deducoesTotal = controladoria.round2(
-      totals.custoOperacional + ads.cost + ads.tax + totals.impostoVendas
+      totals.custoOperacional + ads.cost + ads.tax + totals.impostoVendas + losdados.cost
     );
     totals.lucro = controladoria.round2(totals.revenue - totals.deducoesTotal);
 
@@ -15389,7 +15420,9 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
       page: 'controladoria',
       cfg,
       emission,
+      modo,
       ads,
+      losdados,
       totals,
       ebookTicketMedio,
       ebookOrdersCount,
@@ -15416,6 +15449,7 @@ app.post('/api/admin/controladoria/config', requireAdmin, async (req, res) => {
       ebookTaxPct: body.ebookTaxPct,
       servicoTaxPct: body.servicoTaxPct,
       adsTaxPct: body.adsTaxPct,
+      losdadosCostReais: body.losdadosCostReais,
       cutoffDate: body.cutoffDate,
     });
     const value = {
@@ -15424,6 +15458,7 @@ app.post('/api/admin/controladoria/config', requireAdmin, async (req, res) => {
       ebookTaxPct: cfg.ebookTaxPct,
       servicoTaxPct: cfg.servicoTaxPct,
       adsTaxPct: cfg.adsTaxPct,
+      losdadosCostReais: cfg.losdadosCostReais,
       cutoffDate: cfg.cutoffDate,
     };
     const s = await getCollection('settings');
@@ -18211,7 +18246,7 @@ app.post("/api/check-instagram-profile", async (req, res) => {
                 const vu = await getCollection('validated_insta_users');
                 const doc = await vu.findOne({ username: uname }, { projection: { _id: 0, username: 1, fullName: 1, profilePicUrl: 1, originalProfilePicUrl: 1, followersCount: 1, followingCount: 1, postsCount: 1, isPrivate: 1, isVerified: 1, checkedAt: 1 } });
                 const checkedMs = doc && doc.checkedAt ? new Date(String(doc.checkedAt)).getTime() : 0;
-                const isFresh = checkedMs && (Date.now() - checkedMs) < (6 * 60 * 60 * 1000);
+                const isFresh = checkedMs && (Date.now() - checkedMs) < (3 * 60 * 60 * 1000);
                 // Exige os 3 contadores no cache: docs antigos/incompletos (ex: gravados por
                 // api.instagram.posts, sem following/posts) forçam verificação fresca, que salva
                 // os 3 — assim posts/seguindo deixam de vir zerados na etapa 2 (self-healing).
@@ -35039,6 +35074,27 @@ app.get('/api/painel/refil2/export', requireAdmin, async (req, res) => {
       }
     };
 
+    // Copiar OrderIds: o ÚLTIMO orderId do FORNECEDOR (pedido.id) de cada usuário filtrado,
+    // considerando SÓ pedidos de seguidores MISTOS/BRASILEIROS (os únicos que têm reposição).
+    // docs vem ordenado por requestedAt DESC → 1ª ocorrência mistos/brasileiros por usuário
+    // = o pedido mais recente. NÃO é o forceRefil.orderId (refil id) — é o orderid do pedido.
+    if (kind === 'orderids') {
+      const seen = new Set();
+      const orderIds = [];
+      for (const it of docs) {
+        const user = String(it && it.username ? it.username : '').replace(/^@+/, '').toLowerCase().trim();
+        if (!user || seen.has(user)) continue;
+        const tipo = String((it && (it.lastFollowersTipoLabel || it.lastFollowersTipo || it.tipo)) || '').toLowerCase();
+        if (!/misto|brasileir/.test(tipo)) continue; // só seguidores mistos/brasileiros
+        const oid = String((it && it.pedido && it.pedido.id != null) ? it.pedido.id : '').trim();
+        if (!oid || !/^[0-9]+$/.test(oid)) continue; // precisa ser orderId numérico do fornecedor
+        seen.add(user);
+        orderIds.push(oid);
+      }
+      const uniq = Array.from(new Set(orderIds));
+      return res.json({ ok: true, count: uniq.length, orderIds: uniq });
+    }
+
     const rows = [];
     if (kind === 'charge') {
       const header = ['Usuário', 'Quantidade antes da reposição', 'Quantidade reposta', 'Refil ID', 'Custo', 'Cobrado OK'];
@@ -37691,7 +37747,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return { id: String(o._id || ''), username: ig, type: label, qty, value: valueCents / 100, createdAt: o.createdAt || o.criado || null };
       });
       // "já comprou alguma vez" = tem QUALQUER pedido pago (qualquer época).
+      // Também guarda a data da ÚLTIMA compra paga de cada @.
       const buyers = new Set();
+      const lastBuyByUser = new Map();
+      const paidMsOf = (o) => { for (const x of [o.paidAt, o.woovi && o.woovi.paidAt, o.paghiper && o.paghiper.paidAt, o.createdAt]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) return t; } return 0; };
       const arr = Array.from(usersSet);
       for (let i = 0; i < arr.length; i += 1000) {
         const part = arr.slice(i, i + 1000);
@@ -37704,15 +37763,21 @@ app.get('/painel', requireAdmin, async (req, res) => {
               { 'additionalInfoMapPaid.instagram_username': { $in: part } },
               { 'additionalInfoMap.instagram_username': { $in: part } }
             ] }] },
-            { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }
+            { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, createdAt: 1 } }
           ).limit(20000).toArray();
           for (const b of bd) {
             const u = norm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || '');
-            if (u) buyers.add(u);
+            if (!u) continue;
+            buyers.add(u);
+            const t = paidMsOf(b);
+            if (t > (lastBuyByUser.get(u) || 0)) lastBuyByUser.set(u, t);
           }
         } catch (_) {}
       }
-      generatedNotPaidList = rows.map(r => Object.assign({}, r, { boughtEver: r.username ? buyers.has(r.username) : false }));
+      generatedNotPaidList = rows.map(r => Object.assign({}, r, {
+        boughtEver: r.username ? buyers.has(r.username) : false,
+        lastPurchaseAtMs: r.username ? (lastBuyByUser.get(r.username) || 0) : 0,
+      }));
     } catch (_) { generatedNotPaidList = []; }
 
     // Lista dos perfis validados no período (para o modal clicável), com flag "comprou".
@@ -42351,7 +42416,131 @@ function getCouponBlockedServices(coupon) {
   return [];
 }
 
-async function getCouponEligibility(code, profileKey, serviceKey) {
+// Cupons que só valem para quem JÁ comprou (cliente recorrente). Além destes,
+// qualquer cupom com requireReturning:true no banco também exige compra anterior.
+const RETURNING_ONLY_COUPONS = new Set(['CLIENTE10', 'CLIENTE15']);
+
+// Cupom da área do cliente "renova" (volta a valer) após N dias, por NÍVEL:
+//   até nível 3 → 3 dias · nível 4-5 → 2 dias · nível 6-7 → 1 dia.
+function couponRenewalDaysForLevel(level) {
+  const l = Number(level) || 1;
+  if (l >= 6) return 1;
+  if (l >= 4) return 2;
+  return 3;
+}
+// Cupons renováveis = os "cliente" (mesma lista dos que exigem recompra).
+function isRenewableClientCoupon(code) {
+  try { return RETURNING_ONLY_COUPONS.has(normalizeCouponCode(code)); } catch (_) { return false; }
+}
+// Nível do cliente a partir da lista de pedidos PAGOS (mesma régua do painel /cliente).
+function computeClientLevelFromPaidOrders(paidOrders) {
+  const paid = Array.isArray(paidOrders) ? paidOrders : [];
+  const paidCount = paid.length;
+  const totalCents = paid.reduce((s, o) => s + (Number((o && (o.valueCents || o.expectedValueCents || o.value_cents)) || 0) || 0), 0);
+  const totalReais = totalCents / 100;
+  let lvl = 1;
+  if (paidCount >= 2) {
+    if (totalReais >= 1500) lvl = 7;
+    else if (totalReais >= 1000) lvl = 6;
+    else if (totalReais >= 750) lvl = 5;
+    else if (totalReais >= 500) lvl = 4;
+    else if (totalReais >= 300) lvl = 3;
+    else if (totalReais >= 100) lvl = 2;
+  }
+  return lvl;
+}
+
+// ── ESCADA DE CUPONS DE FIDELIDADE ─────────────────────────────────────────────
+// Sequência: usa o 1º, espera o ciclo (dias por nível), libera o 2º, e assim por
+// diante. Cada cupom 1 uso. Tamanho da escada por nível: 1-3 → 3 · 4-5 → 5 · 6-7 → 7.
+// Descontos: 1-3 = 15% · 4-5 = 20% · 6-7 = 25%. Acaba ao usar todos do nível (não recicla).
+const CLIENT_COUPON_LADDER = [
+  { code: 'CLIENTE15', order: 1, pct: 15 },
+  { code: 'PROMO15', order: 2, pct: 15 },
+  { code: 'OBRIGADO15', order: 3, pct: 15 },
+  { code: 'VOLTOU20', order: 4, pct: 20 },
+  { code: 'PARCEIRO20', order: 5, pct: 20 },
+  { code: 'VIP25', order: 6, pct: 25 },
+  { code: 'PRESENTE25', order: 7, pct: 25 },
+];
+const CLIENT_LADDER_CODES = new Set(CLIENT_COUPON_LADDER.map((c) => c.code));
+function ladderPoolSizeForLevel(level) { const l = Number(level) || 1; return l >= 6 ? 7 : (l >= 4 ? 5 : 3); }
+
+// Estado da escada para um cliente a partir dos pedidos PAGOS dele.
+// Retorna { state:'available'|'waiting'|'done', coupon:{code,pct}|null, daysLeft, level, poolSize }.
+function ladderStateFromOrders(orders) {
+  const paid = (Array.isArray(orders) ? orders : []).filter((o) => { const st = String(o.status || o?.woovi?.status || o?.paghiper?.status || o?.expay?.status || '').toLowerCase(); return st === 'pago' || st === 'paid'; });
+  const level = computeClientLevelFromPaidOrders(paid);
+  const poolSize = ladderPoolSizeForLevel(level);
+  const cycleDays = couponRenewalDaysForLevel(level);
+  const paidMsOf = (o) => { for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) return t; } return 0; };
+  // Data (paidAt) do uso de cada cupom da escada.
+  const useMs = {};
+  for (const o of paid) {
+    const m = o.additionalInfoMapPaid || o.additionalInfoMap || {};
+    const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o.additionalInfo) ? o.additionalInfo : []);
+    const raw = String(m.cupom || m.coupon || (arr.find((x) => x && (x.key === 'cupom' || x.key === 'coupon')) || {}).value || '').trim().toUpperCase();
+    if (raw && CLIENT_LADDER_CODES.has(raw)) { const t = paidMsOf(o); if (t > (useMs[raw] || 0)) useMs[raw] = t; }
+  }
+  // Maior K consecutivo usado (cupons 1..K todos usados).
+  let K = 0;
+  for (let i = 1; i <= CLIENT_COUPON_LADDER.length; i++) { if (useMs[CLIENT_COUPON_LADDER[i - 1].code]) K = i; else break; }
+  if (K >= poolSize) return { state: 'done', coupon: null, daysLeft: 0, level, poolSize };
+  const target = CLIENT_COUPON_LADDER[K]; // próximo = ordem K+1
+  if (K === 0) return { state: 'available', coupon: { code: target.code, pct: target.pct }, daysLeft: 0, level, poolSize };
+  const availAtMs = (useMs[CLIENT_COUPON_LADDER[K - 1].code] || 0) + cycleDays * 86400000;
+  if (Date.now() >= availAtMs) return { state: 'available', coupon: { code: target.code, pct: target.pct }, daysLeft: 0, level, poolSize };
+  return { state: 'waiting', coupon: { code: target.code, pct: target.pct }, daysLeft: Math.max(1, Math.ceil((availAtMs - Date.now()) / 86400000)), level, poolSize };
+}
+
+// Estado da escada pelo e-mail do cliente (consulta os pedidos). null se sem e-mail/erro.
+async function computeLadderStateByEmail(email) {
+  try {
+    const em = String(email || '').trim().toLowerCase();
+    if (!em || em.indexOf('@') < 1) return null;
+    const col = await getCollection('checkout_orders');
+    const rx = new RegExp('^' + _escRxCoupon(em) + '$', 'i');
+    const orders = await col.find({ $or: [{ 'customer.email': rx }, { 'additionalInfoMapPaid.email': rx }, { 'additionalInfoMap.email': rx }] }, { projection: { status: 1, 'woovi.status': 1, 'paghiper.status': 1, 'expay.status': 1, valueCents: 1, expectedValueCents: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, createdAt: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfo: 1 } }).limit(1000).toArray();
+    return ladderStateFromOrders(orders);
+  } catch (_) { return null; }
+}
+
+function _escRxCoupon(s) { return String(s == null ? '' : s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Retorna true se JÁ existe pedido PAGO batendo por @ OU telefone OU email.
+// false = nunca comprou; null = erro (o chamador faz fail-open, não bloqueia).
+async function hasPriorPaidPurchase(identity = {}) {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('checkout_orders');
+    const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
+    const idOr = [];
+    const ig = String(identity.profileKey || '').replace(/^@+/, '').replace(/\/+$/g, '').trim().toLowerCase();
+    if (ig) {
+      const re = new RegExp('^@?' + _escRxCoupon(ig) + '$', 'i');
+      idOr.push({ instagramUsername: re }, { instauser: re }, { 'additionalInfoMapPaid.instagram_username': re }, { 'additionalInfoMap.instagram_username': re });
+    }
+    const em = String(identity.email || '').trim().toLowerCase();
+    if (em && em.indexOf('@') > 0) {
+      const reEm = new RegExp('^' + _escRxCoupon(em) + '$', 'i');
+      idOr.push({ 'customer.email': reEm }, { 'additionalInfoMapPaid.email': reEm }, { 'additionalInfoMap.email': reEm });
+    }
+    const ph = normalizePhoneBR(identity.phone) || '';
+    const last8 = String(ph).replace(/\D/g, '').slice(-8);
+    if (last8.length >= 8) {
+      const reP = new RegExp(_escRxCoupon(last8) + '$');
+      idOr.push({ 'customer.phone': reP }, { 'customer.phone_number': reP }, { 'customer.telefone': reP }, { 'customer.whatsapp': reP }, { 'additionalInfoMapPaid.phone': reP }, { 'additionalInfoMapPaid.telefone': reP }, { 'additionalInfoMapPaid.whatsapp': reP });
+    }
+    if (!idOr.length) return false;
+    const found = await col.findOne({ $and: [{ $or: paidOr }, { $or: idOr }] }, { projection: { _id: 1 } });
+    return !!found;
+  } catch (e) {
+    console.warn('[coupon] hasPriorPaidPurchase erro:', e && e.message);
+    return null; // fail-open
+  }
+}
+
+async function getCouponEligibility(code, profileKey, serviceKey, identity = {}) {
   const { getCollection } = require('./mongodbClient');
   const couponsCol = await getCollection('coupons');
   const coupon = await couponsCol.findOne({ code: normalizeCouponCode(code) });
@@ -42387,6 +42576,34 @@ async function getCouponEligibility(code, profileKey, serviceKey) {
     }
   }
 
+  // Cupons "cliente": só valem se o cliente JÁ comprou antes (por @ OU telefone OU email).
+  const needsReturning = coupon.requireReturning === true || RETURNING_ONLY_COUPONS.has(normalizeCouponCode(code));
+  if (needsReturning) {
+    const prior = await hasPriorPaidPurchase({
+      profileKey,
+      phone: (identity && identity.phone) || '',
+      email: (identity && identity.email) || '',
+    });
+    // false = nunca comprou → bloqueia. null (erro) = fail-open, não bloqueia.
+    if (prior === false) {
+      return { ok: false, error: 'Cupom exclusivo para quem já é cliente (já fez pelo menos uma compra).' };
+    }
+  }
+
+  // Escada de fidelidade: só o cupom ATUAL da sequência do cliente é aceito (não dá pra
+  // pular etapas). Sem e-mail p/ identificar o cliente, não bloqueia aqui — a criação do
+  // pedido revalida com e-mail, e maxUsesPerProfile/requireReturning já limitam.
+  if (CLIENT_LADDER_CODES.has(normalizeCouponCode(code))) {
+    const lst = await computeLadderStateByEmail((identity && identity.email) || '');
+    if (lst) {
+      if (lst.state === 'done') return { ok: false, error: 'Você já usou todos os seus cupons. Suba de nível para liberar novos.' };
+      if (lst.state === 'waiting') return { ok: false, error: `Seu próximo cupom libera em ${lst.daysLeft} dia(s).` };
+      if (lst.state === 'available' && lst.coupon && normalizeCouponCode(lst.coupon.code) !== normalizeCouponCode(code)) {
+        return { ok: false, error: `Use primeiro o cupom ${lst.coupon.code}.` };
+      }
+    }
+  }
+
   return { ok: true, coupon };
 }
 
@@ -42407,8 +42624,13 @@ async function consumeCouponUsageFromOrder(order, meta = {}) {
     if (!couponCode) return;
 
     const profileKey = normalizeProfileKey(merged.instagram_username || order.instagramUsername || order.instauser || '');
+    const _oc = (order.customer && typeof order.customer === 'object') ? order.customer : {};
+    const _couponIdentity = {
+      phone: merged.phone || merged.telefone || merged.whatsapp || _oc.phone || _oc.phone_number || _oc.telefone || _oc.whatsapp || '',
+      email: merged.email || _oc.email || '',
+    };
 
-    const eligibility = await getCouponEligibility(couponCode, profileKey);
+    const eligibility = await getCouponEligibility(couponCode, profileKey, undefined, _couponIdentity);
     if (!eligibility.ok) return;
 
     const { getCollection } = require('./mongodbClient');
@@ -42421,9 +42643,24 @@ async function consumeCouponUsageFromOrder(order, meta = {}) {
     const dedupeKey = orderMongoId ? String(orderMongoId) : (orderIdentifier || orderCorrelationID);
     if (!dedupeKey) return;
 
+    // Origem do LTV (auto D+2 × base manual): busca o link de remarketing AINDA VIVO
+    // deste telefone+cupom na hora da conversão e carimba durável em coupon_uses.
+    // 'd2' → auto; 'manual'/'remarketing' → manual; sem link → '' (sem origem).
+    let ltvVia = '';
+    try {
+      const phoneE164 = normalizePhoneBR(_couponIdentity.phone);
+      if (phoneE164) {
+        const linksCol = await getCollection('remarketing_links');
+        let link = await linksCol.findOne({ campaign: 'ltv', coupon: couponCode, phoneE164, sent: true }, { projection: { via: 1, createdBy: 1 }, sort: { sentAt: -1 } });
+        if (!link) link = await linksCol.findOne({ campaign: 'ltv', phoneE164, sent: true }, { projection: { via: 1, createdBy: 1 }, sort: { sentAt: -1 } });
+        const rawVia = link ? String(link.via || link.createdBy || '').trim().toLowerCase() : '';
+        ltvVia = (rawVia === 'd2') ? 'auto' : (rawVia ? 'manual' : '');
+      }
+    } catch (_) {}
+
     const up = await usesCol.updateOne(
       { couponId: eligibility.coupon._id, dedupeKey },
-      { $setOnInsert: { couponId: eligibility.coupon._id, couponCode, profileKey, orderMongoId, orderIdentifier, correlationID: orderCorrelationID, status: 'consumed', consumedAt: new Date(), dedupeKey } },
+      { $setOnInsert: { couponId: eligibility.coupon._id, couponCode, profileKey, orderMongoId, orderIdentifier, correlationID: orderCorrelationID, status: 'consumed', consumedAt: new Date(), dedupeKey, ltvVia } },
       { upsert: true }
     );
     if (up.upsertedCount > 0) {
@@ -42630,7 +42867,11 @@ app.post('/api/validate-coupon', async (req, res) => {
           ? String(req.body.service).trim()
           : resolveCouponServiceKey(req.body?.categoria, req.body?.tipo);
 
-        const eligibility = await getCouponEligibility(code, profileKey, serviceKey);
+        const _couponIdentity = {
+          phone: req.body?.phone || req.body?.telefone || req.body?.whatsapp || '',
+          email: req.body?.email || '',
+        };
+        const eligibility = await getCouponEligibility(code, profileKey, serviceKey, _couponIdentity);
         if (!eligibility.ok) {
           return res.json({ valid: false, error: eligibility.error || 'Cupom inválido' });
         }

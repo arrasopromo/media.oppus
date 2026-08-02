@@ -2572,20 +2572,36 @@
       });
       try { fetch('/api/instagram/selected-for').then(r=>r.json()).then(function(d){ const obj = d && d.selectedFor ? d.selectedFor : {}; const cur = obj[kind]; if (cur && cur.shortcode) { highlightSelected(kind, cur.shortcode); } }); } catch(_) {}
     };
-    // 1ª abertura do modal p/ este @ na sessão → busca posts FRESCOS (refresh=1), furando o
-    // cache de 1h; assim um post recém-criado (ou perfil pré-preenchido) aparece.
+    // ── VELOCIDADE: stale-while-revalidate ──
+    // Antes a 1ª abertura travava esperando o refresh=1 (2-7s). Agora mostra na HORA
+    // (cache do cliente/servidor) e busca a versão fresca em segundo plano; post novo
+    // entra sozinho segundos depois, sem travar a galeria.
+    var __sigOf = function(a){ return (Array.isArray(a) ? a : []).map(function(p){ return (p && p.shortcode) || ''; }).join(','); };
+    var backgroundRefresh = function(prevSig){
+      var u2 = '/api/instagram/posts?username=' + encodeURIComponent(user) + '&refresh=1';
+      fetch(u2).then(function(r){ return r.json(); }).then(function(d){
+        __postsRefreshedFor = user;
+        var arr = Array.isArray(d.posts) ? d.posts : [];
+        if (!arr.length) return;
+        cachedPosts = arr; cachedPostsUser = user;
+        if (__sigOf(arr) === prevSig) return; // nada mudou → não re-renderiza
+        var refs2 = getPostModalRefs();
+        if (refs2.postModal && refs2.postModal.style.display !== 'none') renderFrom(arr);
+      }).catch(function(){});
+    };
     var needFresh = (__postsRefreshedFor !== user);
-    const useCache = !!cachedPosts && cachedPostsUser === user && !needFresh;
-    if (useCache) {
-      renderFrom(cachedPosts);
+    var canUseCache = !!cachedPosts && cachedPostsUser === user;
+    if (canUseCache) {
+      renderFrom(cachedPosts);                          // instantâneo
+      if (needFresh) backgroundRefresh(__sigOf(cachedPosts));
     } else {
-      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (needFresh ? '&refresh=1' : '');
+      const url = '/api/instagram/posts?username=' + encodeURIComponent(user);
       refs.postModalGrid.innerHTML = isInstagramPrivate ? ('<div class="inline-msg" style="grid-column:1/-1;color:#ef4444;">Deixe o perfil no modo público para selecionar o post</div>' + spinnerHTML()) : spinnerHTML();
       fetch(url).then(r=>r.json()).then(d=>{
-        const arr = Array.isArray(d.posts) ? d.posts : [];
-        __postsRefreshedFor = user;
+        var arr = Array.isArray(d.posts) ? d.posts : [];
         cachedPosts = arr; cachedPostsUser = user;
         renderFrom(arr);
+        if (needFresh) backgroundRefresh(__sigOf(arr));
       }).catch(function(){ const refs3 = getPostModalRefs(); if(refs3.postModalGrid) refs3.postModalGrid.innerHTML = '<div style="grid-column:1/-1;color:#ef4444;">'+(isInstagramPrivate?'Deixe o perfil no modo público para selecionar o post':'Erro ao carregar posts.')+'</div>'; });
     }
   }

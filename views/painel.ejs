@@ -3650,17 +3650,18 @@
           }
 
           function formatValidity(c) {
-            const from = c && c.validFrom ? new Date(c.validFrom) : null;
             const to = c && c.validTo ? new Date(c.validTo) : null;
             const fmt = (d) => {
               if (!d || Number.isNaN(d.getTime())) return '';
               const pad = (n) => String(n).padStart(2,'0');
               return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
             };
-            const a = fmt(from);
             const b = fmt(to);
-            if (a && b) return `${a} → ${b}`;
-            return a || b || '-';
+            // Sem validTo = NUNCA expira (caso dos cupons de LTV). Antes mostrava o
+            // validFrom aqui, o que parecia uma expiração no passado (enganoso).
+            if (!b) return 'não expira';
+            const expired = to && to.getTime() < Date.now();
+            return (expired ? 'expirou ' : 'até ') + b;
           }
 
           async function loadCoupons() {
@@ -4133,7 +4134,7 @@
               });
               var boughtCount = list.filter(function(p){ return p.boughtEver; }).length;
               if (countEl) countEl.textContent = rows.length + ' de ' + list.length + ' · ' + boughtCount + ' já compraram antes';
-              var GNP_COLS = '1.2fr 0.9fr 1.05fr 0.5fr 0.75fr 0.65fr 0.95fr';
+              var GNP_COLS = '1.05fr 1.35fr 1.0fr 0.5fr 0.75fr 0.7fr 0.9fr';
               var head = '<div style="position:sticky; top:0; background:#f9fafb; display:grid; grid-template-columns: ' + GNP_COLS + '; gap:8px; padding:8px 12px; font-size:0.72rem; font-weight:700; color:#6b7280; border-bottom:1px solid #eef0f4;">'
                 + '<div>Data/hora</div><div>Usuário</div><div>Tipo</div><div>Qtd</div><div>Valor</div><div>Já comprou?</div><div>Ação</div></div>';
               var rowsHtml = rows.map(function(p){
@@ -4141,6 +4142,9 @@
                 var badge = p.boughtEver
                   ? '<span style="background:#dcfce7; color:#166534; font-weight:700; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">✓ sim</span>'
                   : '<span style="background:#f3f4f6; color:#9ca3af; font-size:0.7rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">não</span>';
+                var lastBuyHtml = (p.boughtEver && Number(p.lastPurchaseAtMs) > 0)
+                  ? '<div style="margin-top:3px; font-size:0.68rem; color:#6b7280; white-space:nowrap;">últ.: ' + esc(new Date(Number(p.lastPurchaseAtMs)).toLocaleDateString('pt-BR')) + '</div>'
+                  : '';
                 var uHtml = u ? ('<a href="https://www.instagram.com/' + encodeURIComponent(u) + '/" target="_blank" rel="noopener" style="color:#111827; font-weight:600; text-decoration:none;">@' + esc(u) + '</a>') : '<span style="color:#9ca3af;">-</span>';
                 var approveBtn = p.id
                   ? '<button class="gnp-approve" data-id="' + esc(p.id) + '" title="Marca como PAGO e despacha ao fornecedor" style="padding:4px 9px; border:1px solid #16a34a; background:#16a34a; color:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; white-space:nowrap;">Aprovar</button>'
@@ -4151,10 +4155,13 @@
                   + '<div style="color:#374151;">' + esc(p.type || '-') + '</div>'
                   + '<div style="color:#374151;">' + fmtNum(Number(p.qty||0)) + '</div>'
                   + '<div style="color:#111827; font-weight:600;">' + brl(p.value) + '</div>'
-                  + '<div>' + badge + '</div>'
+                  + '<div>' + badge + lastBuyHtml + '</div>'
                   + '<div>' + approveBtn + '</div></div>';
               }).join('');
-              body.innerHTML = head + (rowsHtml || '<div style="padding:20px; text-align:center; color:#6b7280;">Nenhum pedido.</div>');
+              var innerRows = rowsHtml || '<div style="padding:20px; text-align:center; color:#6b7280;">Nenhum pedido.</div>';
+              // min-width força a tabela a manter larguras legíveis; no mobile o body
+              // (overflow:auto) vira scroll horizontal — arrasta pro lado pra ver @ e Ação.
+              body.innerHTML = '<div style="min-width:720px;">' + head + innerRows + '</div>';
             }
 
             // Aprovar pedido manualmente (marca como pago + despacha), com confirmação.
@@ -4540,6 +4547,8 @@
                 <button type="button" id="refil2ExportChargeBtn" style="display:block; width:100%; text-align:left; padding:10px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.9rem;">Exportar cobrar orderids</button>
               </div>
             </div>
+            <button type="button" id="refil2CopyOrderIdsBtn" title="Copia o último OrderId registrado de cada usuário do filtro atual (todas as páginas)" style="padding:6px 10px; border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Copiar OrderIds (filtro)</button>
+            <span id="refil2CopyOrderIdsStatus" style="font-size:0.85rem; color:#6b7280;"></span>
             <button type="button" id="refil2ReportBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.85rem;">Relatório</button>
             <button type="button" id="refil2ChargeBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#16a34a; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Cobrar</button>
             <button type="button" id="refil2ApplyFiltersBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Aplicar</button>
@@ -5698,6 +5707,58 @@
                   qs.set('scope', 'filtered');
                   window.location.href = '/api/painel/refil2/export?' + qs.toString();
                 } catch (_) {}
+              });
+            }
+          } catch (_) {}
+          try {
+            // Pré-carrega os OrderIds do filtro atual ASSIM QUE A PÁGINA ABRE. Assim a cópia
+            // no clique é SÍNCRONA (dentro do gesto do usuário) — copiar DEPOIS de um fetch
+            // assíncrono é bloqueado pelos navegadores. Ao mudar de filtro a página recarrega
+            // ("Aplicar"), então este prefetch sempre reflete o filtro vigente.
+            var __refil2Oids = null;   // array quando pronto
+            var __refil2OidsErr = '';  // '' | 'empty' | 'net'
+            (function prefetchRefil2Oids(){
+              try {
+                var qs = new URLSearchParams(String((window && window.location && window.location.search) || '').replace(/^\?/, ''));
+                qs.delete('view'); qs.delete('refil2Page');
+                qs.set('kind', 'orderids'); qs.set('scope', 'filtered');
+                fetch('/api/painel/refil2/export?' + qs.toString(), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){ if (d && d.ok === true && Array.isArray(d.orderIds)) { __refil2Oids = d.orderIds; } else { __refil2Oids = []; __refil2OidsErr = 'empty'; } })
+                  .catch(function(){ __refil2OidsErr = 'net'; });
+              } catch (_) { __refil2OidsErr = 'net'; }
+            })();
+
+            var copyOidsBtn = el('refil2CopyOrderIdsBtn');
+            if (copyOidsBtn) {
+              copyOidsBtn.addEventListener('click', function(){
+                var st = el('refil2CopyOrderIdsStatus');
+                function say(m){ try { if (st) st.textContent = m || ''; } catch(_) {} }
+                if (__refil2Oids === null) {
+                  say(__refil2OidsErr === 'net' ? 'Falha ao carregar OrderIds — recarregue a página.' : 'Carregando OrderIds… clique de novo em 1s.');
+                  return;
+                }
+                if (!__refil2Oids.length) { say('Nenhum OrderId nos usuários do filtro.'); return; }
+                var text = __refil2Oids.join(',');
+                // Cópia SÍNCRONA no gesto do clique (sem await) → confiável.
+                var ok = false;
+                try {
+                  var ta = document.createElement('textarea');
+                  ta.value = text; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0'; ta.style.opacity = '0';
+                  document.body.appendChild(ta); ta.focus(); ta.select();
+                  try { ta.setSelectionRange(0, text.length); } catch (_) {}
+                  ok = document.execCommand('copy');
+                  document.body.removeChild(ta);
+                } catch (_) { ok = false; }
+                if (!ok) {
+                  try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); ok = true; } } catch (_) {}
+                }
+                if (ok) {
+                  say(__refil2Oids.length + ' OrderId(s) copiado(s).');
+                } else {
+                  try { var bulk = el('refil2BulkOrderIds'); if (bulk) { bulk.value = text; bulk.focus(); bulk.select(); } } catch (_) {}
+                  say('Coloquei no campo "Refil em massa" — dê Ctrl+C. ' + __refil2Oids.length + ' ids.');
+                }
               });
             }
           } catch (_) {}

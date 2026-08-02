@@ -24,7 +24,8 @@ const DEFAULTS = {
   ebookCapReais: 140,    // teto do valor do ebook (R$)
   ebookTaxPct: 0.05,     // imposto sobre o ebook (5%)
   servicoTaxPct: 0.13,   // imposto sobre o serviço (13%)
-  adsTaxPct: 0,          // imposto sobre o gasto de ads (definido pelo usuário)
+  adsTaxPct: 0.138,      // imposto sobre o gasto de ads (13,8% do custo de ads)
+  losdadosCostReais: 0.05, // custo por request na losdados (R$/consulta de CPF)
   // Sem data de corte padrão: quem define é o usuário no painel.
 };
 
@@ -60,6 +61,16 @@ function normalizeConfig(raw) {
   let cap = Number(v.ebookCapReais);
   if (!Number.isFinite(cap) || cap < 0) cap = DEFAULTS.ebookCapReais;
 
+  // Custo por request na losdados (R$/consulta). Aceita "0,05" ou 0.05.
+  // Ausente/vazio → default (NÃO 0, pois Number('') === 0 mascararia o default).
+  let losdadosCost;
+  if (v.losdadosCostReais == null || String(v.losdadosCostReais).trim() === '') {
+    losdadosCost = DEFAULTS.losdadosCostReais;
+  } else {
+    losdadosCost = Number(String(v.losdadosCostReais).replace(',', '.'));
+    if (!Number.isFinite(losdadosCost) || losdadosCost < 0) losdadosCost = DEFAULTS.losdadosCostReais;
+  }
+
   // Data de corte é OPCIONAL. Vazia = split de ebook ainda não vale (tudo serviço).
   const cutoffRaw = String(v.cutoffDate || '').slice(0, 10);
   const hasCutoff = /^\d{4}-\d{2}-\d{2}$/.test(cutoffRaw);
@@ -70,6 +81,7 @@ function normalizeConfig(raw) {
     ebookTaxPct: normRate(v.ebookTaxPct, DEFAULTS.ebookTaxPct),
     servicoTaxPct: normRate(v.servicoTaxPct, DEFAULTS.servicoTaxPct),
     adsTaxPct: normRate(v.adsTaxPct, DEFAULTS.adsTaxPct),
+    losdadosCostReais: round2(losdadosCost),
     cutoffDate: hasCutoff ? cutoffRaw : '',
     cutoffMs: hasCutoff ? parseCutoffMs(cutoffRaw) : null,
   };
@@ -107,6 +119,10 @@ function buildReport(entries, cfg, range = {}) {
   // em diante — pedidos antes do corte aparecem como 100% serviço.
   const startMs = Number.isFinite(range.startMs) ? range.startMs : Number.NEGATIVE_INFINITY;
   const endMs = Number.isFinite(range.endMs) ? range.endMs : Number.POSITIVE_INFINITY;
+  // Modo de visualização (não altera nada, só o que é contado):
+  //  - 'simulacao' (default): projeta o ebook em toda 1ª compra pela regra.
+  //  - 'producao': só conta ebook de nota REALMENTE emitida (autorizada).
+  const modo = (range.modo === 'producao') ? 'producao' : 'simulacao';
 
   // Processa TODOS os pedidos pagos com valor > 0, em ordem cronológica
   // (necessário para detectar a 1ª compra corretamente).
@@ -171,6 +187,18 @@ function buildReport(entries, cfg, range = {}) {
       if (cpf) seenCpf.add(cpf);
 
       split = splitOrder(e.valueReais, isFirst, cfg);
+      // PRODUÇÃO: ebook só vale se a nota foi REALMENTE emitida (autorizada).
+      // Usa o valor de ebook realmente emitido (notaFiscal.ebookAmount) quando houver.
+      if (modo === 'producao' && split.ebook > 0) {
+        const authorized = String(e.nfState || '').toLowerCase() === 'authorized';
+        if (authorized) {
+          const realEbook = Number(e.ebookAmount);
+          const eb = (Number.isFinite(realEbook) && realEbook > 0) ? round2(realEbook) : split.ebook;
+          split = { ebook: eb, servico: round2(e.valueReais - eb) };
+        } else {
+          split = { ebook: 0, servico: round2(e.valueReais) };
+        }
+      }
     } else {
       // Antes do corte: 100% serviço e NÃO conta para a detecção de 1ª compra.
       split = { ebook: 0, servico: round2(e.valueReais) };
@@ -238,7 +266,7 @@ function buildReport(entries, cfg, range = {}) {
   totals.ebookPctOfFirst = totals.firstRevenue > 0 ? round2((totals.ebook / totals.firstRevenue) * 100) : 0;
   rows.sort((a, b) => b.dateMs - a.dateMs); // mais recentes primeiro na tabela
 
-  return { cfg, totals, rows };
+  return { cfg, totals, rows, modo };
 }
 
 module.exports = {

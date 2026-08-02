@@ -116,6 +116,24 @@ async function _cacheSet(phone, doc) {
   } catch (_) {}
 }
 
+// Registra CADA request REAL à losdados (cache-miss) como evento de cobrança.
+// Serve para a controladoria contar quantas consultas foram feitas no período e
+// multiplicar pelo custo por request (~R$0,05). Append-only; nunca lança.
+async function _logRequest(evt) {
+  try {
+    const col = await getCollection('losdados_requests');
+    await col.insertOne({
+      at: nowIso(),
+      phone: evt.phone || '',
+      orderId: evt.orderId || null,
+      cpf: evt.cpf || '',
+      found: !!evt.found,
+      error: evt.error || null,
+      status: Number.isFinite(evt.status) ? evt.status : null,
+    });
+  } catch (_) {}
+}
+
 /**
  * Enriquece a partir de um telefone. Usa cache se disponível.
  * @param {string} telefone
@@ -135,14 +153,17 @@ async function enriquecerPorTelefone(telefone, opts = {}) {
 
   if (!losdados.isConfigured()) return { ok: false, error: 'losdados_nao_configurado' };
 
+  // Request REAL à losdados (cache-miss) = billable. Registra o evento.
   const resp = await losdados.consultaTelefone(phone);
   if (!resp.ok) {
     await _cacheSet(phone, { lastError: resp.error, lastStatus: resp.status, fetchedAt: nowIso() });
+    await _logRequest({ phone, orderId: opts.orderId, found: false, error: resp.error, status: resp.status });
     return { ok: false, error: resp.error, status: resp.status };
   }
 
   const fiscal = extractFiscalData(resp.data);
   await _cacheSet(phone, { fiscal, raw: resp.data, fetchedAt: nowIso(), lastError: null });
+  await _logRequest({ phone, orderId: opts.orderId, cpf: fiscal.cpf, found: !!(fiscal.cpf || fiscal.endereco), status: resp.status });
   return { ok: !!(fiscal.cpf || fiscal.endereco), fiscal, raw: resp.data };
 }
 
@@ -162,7 +183,7 @@ async function enriquecerPedido(record, col, opts = {}) {
     const telefone = c.phone_number || c.phone || c.telefone || c.whatsapp || record.telefone || '';
     if (!telefone) return { ok: false, skipped: true, reason: 'sem_telefone' };
 
-    const r = await enriquecerPorTelefone(telefone, { force: opts.force });
+    const r = await enriquecerPorTelefone(telefone, { force: opts.force, orderId: String(record._id) });
     if (!r.ok) {
       await col.updateOne({ _id: record._id }, { $set: { 'fiscalData.lastError': r.error || 'sem_dados', 'fiscalData.updatedAt': nowIso() } });
       return { ok: false, reason: r.error };

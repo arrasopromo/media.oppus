@@ -464,6 +464,10 @@
             try {
               var html = '';
               html += '<div style="font-weight:900;color:#111827;margin-bottom:8px;">Pedido solicitado</div>';
+              var orgMsg = 'Pedido solicitado.\n' +
+                'Prazo de finalização de até 48hs, a entrega não é imediata.\n\n' +
+                'Qualquer dúvida, fico à disposição.\n' +
+                'Agradeço a confiança.';
               if (data.refilUrl) {
                 var msgText = 'Pedido solicitado\n\n' +
                   'Caso precise de reposição pode utilizar o link abaixo.\n' +
@@ -472,6 +476,11 @@
                 html += '<div style="margin-top:10px; white-space:pre-wrap; line-height:1.45; color:#111827;">' + esc(msgText) + '</div>';
                 html += '<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">';
                 html += '<button type="button" class="btn btn-secondary" id="waCopyRefilMsg">Copiar mensagem</button>';
+                html += '</div>';
+              } else if (payload.type === 'organicos') {
+                html += '<div style="margin-top:10px; white-space:pre-wrap; line-height:1.45; color:#111827;">' + esc(orgMsg) + '</div>';
+                html += '<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">';
+                html += '<button type="button" class="btn btn-secondary" id="waCopyOrgMsg">Copiar mensagem</button>';
                 html += '</div>';
               } else {
                 html += '<div style="margin-top:10px; color:#b91c1c; font-weight:800;">Link de reposição disponível apenas para Seguidores Mistos ou Brasileiros.</div>';
@@ -486,6 +495,29 @@
                         'Caso precise de reposição pode utilizar o link abaixo.\n' +
                         'Atente-se as regras de reposição.\n\n' +
                         '`' + String(data.refilUrl || '') + '`';
+                      try {
+                        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                          await navigator.clipboard.writeText(text);
+                          return;
+                        }
+                      } catch (_) {}
+                      try {
+                        var ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        document.execCommand('copy');
+                        ta.remove();
+                      } catch (_) {}
+                    } catch (_) {}
+                  });
+                  var b2 = el('waCopyOrgMsg');
+                  if (b2) b2.addEventListener('click', async function(){
+                    try {
+                      var text = orgMsg;
                       try {
                         if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
                           await navigator.clipboard.writeText(text);

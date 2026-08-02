@@ -139,6 +139,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         }).catch(function(){});
       };
+      // Expõe o "aplicar cupom da URL" para ser chamado após a validação do perfil
+      // (o @ pré-preenchido não dispara change/blur, então aplicamos ao validar).
+      try { window.__oppusApplyUrlCoupon = applyNow; } catch(_) {}
       const ue = document.getElementById('usernameCheckoutInput');
       try {
         const u = getUrlUsername();
@@ -3349,26 +3352,44 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch(_) {}
     };
 
-    // Na 1ª abertura do modal para este @ na sessão, busca os posts FRESCOS (refresh=1) —
-    // furando o cache de 1h do servidor. Assim, se o cliente acabou de postar (ou o perfil veio
-    // do pré-preenchimento automático), o post novo aparece. Reaberturas usam o cache.
+    // ── VELOCIDADE: stale-while-revalidate ──
+    // Antes, a 1ª abertura forçava &refresh=1 e TRAVAVA esperando a busca fresca (2-7s).
+    // Agora mostramos os posts na HORA (cache do cliente ou cache do servidor, rápido) e
+    // buscamos a versão FRESCA em segundo plano — se o cliente acabou de postar, o post
+    // novo entra sozinho segundos depois, sem travar a galeria.
+    var __sigOf = function(a){ return (Array.isArray(a) ? a : []).map(function(p){ return (p && p.shortcode) || ''; }).join(','); };
+    var backgroundRefresh = function(prevSig){
+      var u2 = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '') + '&refresh=1';
+      fetch(u2, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
+        .then(function(r){ return r.json(); }).then(function(d){
+          __postsRefreshedFor = user; // já pegamos fresco p/ este @ nesta sessão
+          var arr = Array.isArray(d.posts) ? d.posts : [];
+          if (!arr.length) return;
+          if (kind !== 'views') { cachedPosts = arr; cachedPostsUser = user; }
+          if (__sigOf(arr) === prevSig) return; // nada mudou → não re-renderiza (não atrapalha)
+          var refs2 = getPostModalRefs();
+          if (refs2.postModal && refs2.postModal.style.display !== 'none') renderFrom(arr);
+        }).catch(function(){});
+    };
+
     var needFresh = (__postsRefreshedFor !== user);
     // views = reels (get_clips no servidor); não reusa o cache do feed (likes) p/ não misturar.
-    const useCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views' && !needFresh;
-    if (useCache) {
-      renderFrom(cachedPosts);
+    var canUseCache = !!cachedPosts && cachedPostsUser === user && kind !== 'views';
+    if (canUseCache) {
+      renderFrom(cachedPosts);                          // instantâneo
+      if (needFresh) backgroundRefresh(__sigOf(cachedPosts));
     } else {
-      const url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '') + (needFresh ? '&refresh=1' : '');
+      // 1ª exibição: busca SEM refresh (usa o cache do servidor da validação = rápido),
+      // mostra na hora, e traz a versão fresca em segundo plano.
+      var url = '/api/instagram/posts?username=' + encodeURIComponent(user) + (kind === 'views' ? '&reels=1' : '');
       refs.postModalGrid.innerHTML = spinnerHTML();
       fetch(url, { headers: { 'X-Oppus-Api-Tk': (window.OPPUS_API_TK || '') } })
-        .then(r=>r.json()).then(d=>{
-          const arr = Array.isArray(d.posts) ? d.posts : [];
-          __postsRefreshedFor = user; // já pegamos fresco p/ este @ nesta sessão
+        .then(function(r){ return r.json(); }).then(function(d){
+          var arr = Array.isArray(d.posts) ? d.posts : [];
           if (kind !== 'views') { cachedPosts = arr; cachedPostsUser = user; }
           renderFrom(arr);
-        }).catch(function(){
-          renderFrom([]);
-        });
+          if (needFresh) backgroundRefresh(__sigOf(arr));
+        }).catch(function(){ renderFrom([]); });
     }
   }
 
@@ -3774,6 +3795,9 @@ document.addEventListener('DOMContentLoaded', function() {
         
         isInstagramVerified = true;
         try { __lastValidatedUser = String(profile.username || username || '').replace(/^@+/, '').toLowerCase(); } catch (_) { __lastValidatedUser = username; }
+        // Cupom da URL (ex.: /cliente → "Usar cupom"): aplica agora que o perfil foi
+        // validado — o @ pré-preenchido não dispara change/blur, então aplicamos aqui.
+        try { if (window.__oppusApplyUrlCoupon && !window.couponCode) window.__oppusApplyUrlCoupon(); } catch (_) {}
         try { isInstagramPrivate = !!(profile.isPrivate || profile.is_private); } catch(_) { isInstagramPrivate = false; }
 
         // Pré-carregar posts se vierem na verificação ou buscar em background

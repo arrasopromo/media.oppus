@@ -98,6 +98,20 @@
       <% } %>
     </div>
 
+    <!-- Modo de visualização (só leitura; NÃO dispara emissão) -->
+    <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:900;color:#111827;">Modo de visualização</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
+          <% if (modo === 'producao') { %>Mostrando <b>dados reais</b> — ebook só de nota autorizada e consulta losdados de fato feita. <b>Isto não emite nada</b>, é só leitura.<% } else { %>Projeção pela regra de split (o que <i>aconteceria</i>). Não reflete notas realmente emitidas.<% } %>
+        </div>
+      </div>
+      <span style="margin-left:auto;display:inline-flex;gap:6px;">
+        <button type="button" class="btn chip" style="<%= modo==='simulacao' ? 'background:#111827;color:#fff;border-color:#111827;' : '' %>" onclick="filtroModo('simulacao')">Simulação</button>
+        <button type="button" class="btn chip" style="<%= modo==='producao' ? 'background:#059669;color:#fff;border-color:#059669;' : '' %>" onclick="filtroModo('producao')">Produção</button>
+      </span>
+    </div>
+
     <!-- Período -->
     <div class="card">
       <div class="section">Período
@@ -113,6 +127,7 @@
         <button type="button" class="btn chip" onclick="filtroRapido('maximo')">Máximo</button>
       </div>
       <form class="row" method="get" action="/painel/controladoria">
+        <input type="hidden" name="modo" value="<%= modo %>" />
         <div class="field"><label>De</label><input type="date" name="start" value="<%= filter.start %>" /></div>
         <div class="field"><label>Até</label><input type="date" name="end" value="<%= filter.end %>" /></div>
         <button class="btn" type="submit">Filtrar</button>
@@ -177,7 +192,9 @@
 
     <div class="card">
       <div class="section">Top vendas de ebook <span class="r"><%= _topEbk.length %><% if (_ebkN > _topEbk.length) { %> de <%= _ebkN %><% } %></span></div>
-      <% if (typeof emission === 'undefined' || !emission.ativa) { %>
+      <% if (modo === 'producao') { %>
+        <div class="cap" style="color:#059669;margin:-2px 0 12px;">Modo <b>Produção</b> — só notas realmente autorizadas.</div>
+      <% } else if (typeof emission === 'undefined' || !emission.ativa) { %>
         <div class="cap" style="color:#94a3b8;margin:-2px 0 12px;">Valores <b>simulados</b> pela regra de split (emissão de nota ainda desligada).</div>
       <% } %>
       <div class="panel-table-scroll">
@@ -239,7 +256,10 @@
         </div></div>
         <div class="mini cst"><div class="ml">Imposto ads (<%= Math.round(cfg.adsTaxPct*100*10)/10 %>%)</div><div class="mv">R$ <%= totals.adsTax.toFixed(2) %></div></div>
         <div class="mini cst"><div class="ml">Imposto vendas</div><div class="mv">R$ <%= totals.impostoVendas.toFixed(2) %></div><div class="ms">ebook <%= Math.round(cfg.ebookTaxPct*100*10)/10 %>% + serviço <%= Math.round(cfg.servicoTaxPct*100*10)/10 %>%</div></div>
-        <div class="mini tax"><div class="ml">Deduções total</div><div class="mv">R$ <%= totals.deducoesTotal.toFixed(2) %></div><div class="ms">operacional + ads + imposto ads + imposto vendas</div></div>
+        <div class="mini cst"><div class="ml">Custo losdados</div><div class="mv">R$ <%= (totals.losdadosCost || 0).toFixed(2) %></div><div class="ms">
+          <% if (typeof losdados !== 'undefined' && losdados) { %><%= losdados.count %> consulta<%= losdados.count === 1 ? '' : 's' %> × R$ <%= (losdados.unit || 0).toFixed(2) %> · <%= (losdados.modo === 'producao') ? 'real' : 'projetado' %> · só 1ª compra (CPF do ebook)<% if (losdados.error) { %> <span style="color:#b45309">(<%= losdados.error %>)</span><% } %><% } %>
+        </div></div>
+        <div class="mini tax"><div class="ml">Deduções total</div><div class="mv">R$ <%= totals.deducoesTotal.toFixed(2) %></div><div class="ms">operacional + ads + imposto ads + imposto vendas + losdados</div></div>
       </div>
     </div>
 
@@ -333,6 +353,7 @@
         <div class="field"><label>% Imposto ebook</label><input type="number" step="0.1" min="0" max="100" name="ebookTaxPct" value="<%= Math.round(cfg.ebookTaxPct * 1000)/10 %>" /></div>
         <div class="field"><label>% Imposto serviço</label><input type="number" step="0.1" min="0" max="100" name="servicoTaxPct" value="<%= Math.round(cfg.servicoTaxPct * 1000)/10 %>" /></div>
         <div class="field"><label>% Imposto ads</label><input type="number" step="0.1" min="0" max="100" name="adsTaxPct" value="<%= Math.round(cfg.adsTaxPct * 1000)/10 %>" /></div>
+        <div class="field"><label>Custo losdados (R$/consulta)</label><input type="number" step="0.01" min="0" name="losdadosCostReais" value="<%= (cfg.losdadosCostReais || 0).toFixed(2) %>" /></div>
         <div class="field"><label>Data de corte</label><input type="date" name="cutoffDate" value="<%= cfg.cutoffDate %>" /></div>
         <button class="btn primary" type="submit">Salvar</button>
         <span id="cfgMsg" class="ok" style="display:none;">Salvo</span>
@@ -342,21 +363,29 @@
   </div>
 
   <script>
+    var CURRENT_MODO = '<%= modo %>';
     function ymd(d) {
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    // Troca o modo de visualização preservando o período atual (só leitura).
+    function filtroModo(m) {
+      var p = new URLSearchParams(window.location.search);
+      p.set('modo', m === 'producao' ? 'producao' : 'simulacao');
+      window.location = '/painel/controladoria?' + p.toString();
     }
     function filtroRapido(tipo) {
       const now = new Date();
       let start, end;
+      const m = '&modo=' + encodeURIComponent(CURRENT_MODO);
       if (tipo === 'mesAtual') { start = new Date(now.getFullYear(), now.getMonth(), 1); end = now; }
       else if (tipo === 'mesPassado') { start = new Date(now.getFullYear(), now.getMonth() - 1, 1); end = new Date(now.getFullYear(), now.getMonth(), 0); }
-      else { window.location = '/painel/controladoria'; return; }
-      window.location = '/painel/controladoria?start=' + ymd(start) + '&end=' + ymd(end);
+      else { window.location = '/painel/controladoria?modo=' + encodeURIComponent(CURRENT_MODO); return; }
+      window.location = '/painel/controladoria?start=' + ymd(start) + '&end=' + ymd(end) + m;
     }
     async function salvarCfg(ev) {
       ev.preventDefault();
       const f = document.getElementById('cfgForm');
-      const payload = { ebookPct: Number(f.ebookPct.value), ebookCapReais: Number(f.ebookCapReais.value), ebookTaxPct: Number(f.ebookTaxPct.value), servicoTaxPct: Number(f.servicoTaxPct.value), adsTaxPct: Number(f.adsTaxPct.value), cutoffDate: f.cutoffDate.value };
+      const payload = { ebookPct: Number(f.ebookPct.value), ebookCapReais: Number(f.ebookCapReais.value), ebookTaxPct: Number(f.ebookTaxPct.value), servicoTaxPct: Number(f.servicoTaxPct.value), adsTaxPct: Number(f.adsTaxPct.value), losdadosCostReais: Number(f.losdadosCostReais.value), cutoffDate: f.cutoffDate.value };
       try {
         const r = await fetch('/api/admin/controladoria/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const j = await r.json();

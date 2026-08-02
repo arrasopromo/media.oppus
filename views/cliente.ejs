@@ -448,7 +448,8 @@
                   </div>
                   <div class="client-coupon-sub">
                     <% if (_couponUsed) { %>
-                      Você já usou o cupom <strong><%= esc(pageClientCoupon.code) %></strong> em uma compra anterior.
+                      <% var _rd = Number(pageClientCoupon.renewDays || 0) || 0; %>
+                      Cupom de desconto será renovado em <strong><%= _rd %> <%= (_rd === 1 ? 'dia' : 'dias') %></strong>.
                     <% } else { %>
                       Você ganhou <strong><%= esc(String(pageClientCoupon.pct || '')) %>% OFF</strong> na próxima compra — válido para seguidores, curtidas e views. Use o cupom <strong><%= esc(pageClientCoupon.code) %></strong> no checkout.
                     <% } %>

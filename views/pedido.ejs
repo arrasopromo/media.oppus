@@ -470,7 +470,10 @@
             if (fCat && fCat.value) catServ = String(fCat.value).toLowerCase();
           }
           var isPostCategory = (catServ === 'curtidas' || catServ === 'visualizacoes');
-          var showPrivacyAlert = (order && order.profilePrivacy && order.profilePrivacy.isPrivate);
+          // Aviso de perfil privado SÓ para pedido PAGO (pendente de pagamento não mostra).
+          var _payStatusSrv = String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var _isPaidSrv = (_payStatusSrv === 'pago' || _payStatusSrv === 'paid' || _payStatusSrv === 'completed');
+          var showPrivacyAlert = _isPaidSrv && (order && order.profilePrivacy && order.profilePrivacy.isPrivate);
         %>
         <% if (showPrivacyAlert) { %>
         <div class="service-card" id="privacyAlertCard" style="border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.5); backdrop-filter: blur(8px); margin-bottom: 2rem;">
@@ -2243,7 +2246,12 @@
       isPrivate: orderData.profilePrivacy && orderData.profilePrivacy.isPrivate
   });
 
-  if (orderData && orderData.profilePrivacy && orderData.profilePrivacy.isPrivate) {
+  var _privPayS = String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+  var _privIsPaid = (_privPayS === 'pago' || _privPayS === 'paid' || _privPayS === 'completed');
+  // Modal/checagem de perfil privado SÓ para pedido PAGO. Pendente de pagamento não abre.
+  if (!_privIsPaid) {
+    /* pedido pendente → não abre o modal de perfil privado */
+  } else if (orderData && orderData.profilePrivacy && orderData.profilePrivacy.isPrivate) {
     var modal = document.getElementById('privacyModal');
     if (modal) {
       modal.style.display = 'flex';

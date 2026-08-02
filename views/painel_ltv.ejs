@@ -227,6 +227,24 @@
         </div>
       </div>
 
+      <!-- Vendas de LTV por origem: automático (D+2) × base de recompra -->
+      <div class="ltv-card" style="margin-top:16px;">
+        <div class="ltv-h2">Vendas por origem
+          <span class="ltv-badge inf" style="margin-left:auto;">automático × base de recompra</span>
+        </div>
+        <p class="ltv-note" style="margin-bottom:10px;">Vendas de LTV (cupom do pool) separadas pela origem <b>carimbada na hora da compra</b>. Vale a partir de agora — vendas antigas aparecem como <b>sem origem</b>. Barra = faturamento; ao lado, faturamento · nº de vendas.</p>
+        <%
+          var _lv = (typeof ltvVendas !== 'undefined' && ltvVendas) ? ltvVendas : { auto:{n:0,faturado:0}, manual:{n:0,faturado:0}, semOrigem:{n:0,faturado:0} };
+          var _lvMax = Math.max(Number(_lv.auto.faturado)||0, Number(_lv.manual.faturado)||0, Number(_lv.semOrigem.faturado)||0, 1);
+          var _lvW = function(v){ return Math.max(3, Math.round((Number(v)||0)/_lvMax*100)); };
+        %>
+        <div class="ltv-dist" id="ltvVendasOrigem">
+          <div class="r"><span class="t">Automático (D+2)</span><div class="bar"><span id="barVAuto" style="width:<%= _lvW(_lv.auto.faturado) %>%; background:#059669;"></span></div><span class="n" id="kVAuto"><%= brl(_lv.auto.faturado) %> · <%= nf(_lv.auto.n) %></span></div>
+          <div class="r"><span class="t">Base de recompra</span><div class="bar"><span id="barVManual" style="width:<%= _lvW(_lv.manual.faturado) %>%; background:#4f46e5;"></span></div><span class="n" id="kVManual"><%= brl(_lv.manual.faturado) %> · <%= nf(_lv.manual.n) %></span></div>
+          <div class="r"><span class="t">Sem origem</span><div class="bar"><span id="barVNone" style="width:<%= _lvW(_lv.semOrigem.faturado) %>%; background:#9ca3af;"></span></div><span class="n" id="kVNone"><%= brl(_lv.semOrigem.faturado) %> · <%= nf(_lv.semOrigem.n) %></span></div>
+        </div>
+      </div>
+
       <!-- Distribuição + Cupons -->
       <div class="ltv-cols">
         <div class="ltv-card">
@@ -449,6 +467,17 @@
         if($('barRec34')) $('barRec34').style.width = pct(s.rec34)+'%';
         if($('barRec5'))  $('barRec5').style.width  = pct(s.rec5)+'%';
         setTxt('autoTotalPeriod', nfFmt(s.autoTotalPeriod)); setTxt('autoTotalAll', nfFmt(s.autoTotalAll));
+        if (s.ltvVendas) {
+          var lv = s.ltvVendas, a = lv.auto||{}, mn = lv.manual||{}, so = lv.semOrigem||{};
+          var mx = Math.max(Number(a.faturado)||0, Number(mn.faturado)||0, Number(so.faturado)||0, 1);
+          var wv = function(v){ return Math.max(3, Math.round((Number(v)||0)/mx*100)); };
+          setTxt('kVAuto', brlFmt(a.faturado) + ' · ' + nfFmt(a.n));
+          setTxt('kVManual', brlFmt(mn.faturado) + ' · ' + nfFmt(mn.n));
+          setTxt('kVNone', brlFmt(so.faturado) + ' · ' + nfFmt(so.n));
+          if($('barVAuto'))   $('barVAuto').style.width   = wv(a.faturado)+'%';
+          if($('barVManual')) $('barVManual').style.width = wv(mn.faturado)+'%';
+          if($('barVNone'))   $('barVNone').style.width   = wv(so.faturado)+'%';
+        }
         var box = $('autoByDay');
         if (box) {
           var arr = Array.isArray(s.autoByDay) ? s.autoByDay : [];
