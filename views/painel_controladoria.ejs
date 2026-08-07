@@ -239,11 +239,50 @@
     <!-- Impostos -->
     <div class="card">
       <div class="section">Impostos</div>
+      <%
+        // Fallback defensivo: se o backend ainda não passa `aliquota` (servidor não
+        // reiniciado), monta valores padrão para o card/botão renderizarem mesmo assim.
+        var _aq = (typeof aliquota !== 'undefined' && aliquota) ? aliquota : {
+          effectivePct: Math.round((cfg.servicoTaxPct || 0) * 100),
+          defaultPct: Math.round((cfg.servicoTaxPct || 0) * 100),
+          allLocked: false, partiallyLocked: false, uniformPct: null,
+          periodStart: (typeof filter !== 'undefined' && filter) ? filter.start : '',
+          periodEnd: (typeof filter !== 'undefined' && filter) ? filter.end : '',
+          totalMonths: 0, lockedCount: 0
+        };
+      %>
       <div class="mini-grid">
         <div class="mini"><div class="ml">Imposto ebook (<%= Math.round(cfg.ebookTaxPct*100) %>%)</div><div class="mv" style="color:var(--eb)">R$ <%= totals.ebookTax.toFixed(2) %></div></div>
-        <div class="mini"><div class="ml">Imposto serviço (<%= Math.round(cfg.servicoTaxPct*100) %>%)</div><div class="mv" style="color:var(--sv)">R$ <%= totals.servicoTax.toFixed(2) %></div></div>
+        <div class="mini"><div class="ml">Imposto serviço (<%= _aq.effectivePct %>%<% if (_aq.allLocked) { %> 🔒<% } else if (_aq.partiallyLocked) { %> 🔒 parcial<% } %>)</div><div class="mv" style="color:var(--sv)">R$ <%= totals.servicoTax.toFixed(2) %></div><div class="ms"><% if (_aq.allLocked) { %>travada<% } else { %>padrão <%= _aq.defaultPct %>%<% } %></div></div>
         <div class="mini tax"><div class="ml">Imposto total</div><div class="mv">R$ <%= totals.taxTotal.toFixed(2) %></div><div class="ms">economia de R$ <%= totals.taxSaving.toFixed(2) %> vs 100% serviço</div></div>
       </div>
+      <div style="margin-top:12px; padding-top:12px; border-top:1px solid #eef0f4; display:flex; align-items:center; gap:9px; flex-wrap:wrap; font-size:0.85rem;">
+        <span style="color:#6b7280; font-weight:600;">Travar alíquota serviço:</span>
+        <span><input id="aliqInput" type="number" step="0.1" min="0" max="100" value="<%= (_aq.uniformPct != null ? _aq.uniformPct : _aq.defaultPct) %>" style="width:76px; padding:5px 8px; border:1px solid #ccc; border-radius:6px;" /> %</span>
+        <button type="button" id="aliqLockBtn" style="padding:6px 12px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.83rem;">🔒 Travar</button>
+        <% if (_aq.allLocked || _aq.partiallyLocked) { %>
+          <button type="button" id="aliqUnlockBtn" style="padding:6px 12px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.83rem;">Destravar período</button>
+        <% } %>
+        <span id="aliqMsg" style="color:#6b7280; margin-left:2px;"><% if (_aq.periodStart) { %><%= _aq.periodStart %> → <%= _aq.periodEnd %> · <%= _aq.totalMonths %> mês<%= _aq.totalMonths===1?'':'es' %><% if (_aq.allLocked) { %> · <strong style="color:#166534;">travado<%= _aq.uniformPct != null ? ' em '+_aq.uniformPct+'%' : '' %></strong><% } else if (_aq.partiallyLocked) { %> · <strong style="color:#b45309;"><%= _aq.lockedCount %>/<%= _aq.totalMonths %> travados</strong><% } %><% } else { %>filtre um período (De/Até) para travar<% } %></span>
+      </div>
+      <script>
+        (function(){
+          var per={ start: '<%= _aq.periodStart %>', end: '<%= _aq.periodEnd %>' };
+          function post(unlock){
+            if(!per.start||!per.end){ alert('Filtre um período (De/Até) no topo antes de travar.'); return; }
+            var rate=Number((document.getElementById('aliqInput')||{}).value);
+            if(!unlock && !(rate>=0)){ alert('Informe uma alíquota válida.'); return; }
+            var body={ start: per.start, end: per.end, unlock: !!unlock };
+            if(!unlock) body.rate=rate;
+            fetch('/api/admin/controladoria/lock-aliquota',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)})
+              .then(function(r){return r.json();}).then(function(d){
+                if(d&&d.ok){ location.reload(); } else { alert('Falha: '+((d&&d.message)||(d&&d.error)||'erro')); }
+              }).catch(function(){ alert('Erro de rede.'); });
+          }
+          var lb=document.getElementById('aliqLockBtn'); if(lb) lb.addEventListener('click',function(){post(false);});
+          var ub=document.getElementById('aliqUnlockBtn'); if(ub) ub.addEventListener('click',function(){post(true);});
+        })();
+      </script>
     </div>
 
     <!-- Custos e deduções -->
@@ -258,6 +297,9 @@
         <div class="mini cst"><div class="ml">Imposto vendas</div><div class="mv">R$ <%= totals.impostoVendas.toFixed(2) %></div><div class="ms">ebook <%= Math.round(cfg.ebookTaxPct*100*10)/10 %>% + serviço <%= Math.round(cfg.servicoTaxPct*100*10)/10 %>%</div></div>
         <div class="mini cst"><div class="ml">Custo losdados</div><div class="mv">R$ <%= (totals.losdadosCost || 0).toFixed(2) %></div><div class="ms">
           <% if (typeof losdados !== 'undefined' && losdados) { %><%= losdados.count %> consulta<%= losdados.count === 1 ? '' : 's' %> × R$ <%= (losdados.unit || 0).toFixed(2) %> · <%= (losdados.modo === 'producao') ? 'real' : 'projetado' %> · só 1ª compra (CPF do ebook)<% if (losdados.error) { %> <span style="color:#b45309">(<%= losdados.error %>)</span><% } %><% } %>
+        </div></div>
+        <div class="mini cst"><div class="ml">Custo losdados (todos)</div><div class="mv">R$ <%= ((typeof losdadosAll !== 'undefined' && losdadosAll ? losdadosAll.cost : 0) || 0).toFixed(2) %></div><div class="ms">
+          <% var _la = (typeof losdadosAll !== 'undefined' && losdadosAll) ? losdadosAll : { count: 0, unit: 0 }; %><%= _la.count %> cliente<%= _la.count === 1 ? '' : 's' %> único<%= _la.count === 1 ? '' : 's' %> × R$ <%= (_la.unit || 0).toFixed(2) %> · inclui serviço · 1 request por pessoa (@/email/telefone)
         </div></div>
         <div class="mini tax"><div class="ml">Deduções total</div><div class="mv">R$ <%= totals.deducoesTotal.toFixed(2) %></div><div class="ms">operacional + ads + imposto ads + imposto vendas + losdados</div></div>
       </div>

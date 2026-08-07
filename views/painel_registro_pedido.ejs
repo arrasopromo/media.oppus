@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Registro de Pedido</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    h1 { margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
+    .searchbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .searchbar input { flex: 1 1 320px; min-width: 220px; padding: 11px 14px; border: 1px solid #ccc; border-radius: 10px; font-size: 1rem; }
+    .btn { padding: 11px 18px; border: none; border-radius: 10px; cursor: pointer; font-size: 0.95rem; color: #fff; font-weight: 600; }
+    .btn-primary { background: #6b46c1; }
+    .btn-green { background: #16a34a; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 18px; margin-top: 4px; }
+    .cust { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 6px; }
+    .cust div span { color: #6b7280; font-size: 0.82rem; display: block; }
+    .cust div strong { font-size: 0.98rem; color: #111827; }
+    .order { border: 1px solid #eef0f4; border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+    .order .h { font-weight: 800; color: #6b46c1; margin-bottom: 6px; }
+    .order .row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.88rem; padding: 3px 0; border-bottom: 1px dashed #f3f4f6; }
+    .order .row .l { color: #6b7280; }
+    .order .row .v { color: #111827; font-weight: 600; text-align: right; }
+    .totbar { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 2px solid #eef0f4; }
+    .totbar .t { font-size: 1.15rem; font-weight: 800; color: #111827; }
+    .muted { color: #9ca3af; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #6b46c1; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'registro-pedido' }) %>
+  <div class="main-content">
+    <h1>Registro de Pedido</h1>
+    <div class="sub">Busque por <strong>@usuário</strong>, <strong>e-mail</strong> ou <strong>telefone</strong> e baixe o relatório em PDF de todos os pedidos pagos do cliente.</div>
+
+    <div class="searchbar">
+      <input id="q" type="text" placeholder="@usuario, email@exemplo.com ou 11999999999" autofocus />
+      <button type="button" id="searchBtn" class="btn btn-primary">Processar</button>
+      <button type="button" id="pdfBtn" class="btn btn-green" style="display:none;">⬇ Baixar PDF</button>
+    </div>
+    <div id="status" class="sub" style="min-height:20px;"></div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    (function(){
+      var q = document.getElementById('q'), sBtn = document.getElementById('searchBtn'), pBtn = document.getElementById('pdfBtn');
+      var status = document.getElementById('status'), result = document.getElementById('result');
+      var lastQuery = '';
+      function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+      function brl(n){ return 'R$ ' + Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+      function fmtDate(ms){ if(!ms) return '-'; try { return new Date(ms).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}); } catch(_){ return '-'; } }
+      async function run(){
+        var val = String(q.value||'').trim();
+        if(!val){ status.textContent = 'Digite um @usuário, e-mail ou telefone.'; return; }
+        lastQuery = val; pBtn.style.display = 'none'; result.innerHTML = '';
+        sBtn.disabled = true; status.innerHTML = '<span class="spinner"></span>Processando pedidos do cliente…';
+        try {
+          var r = await fetch('/api/painel/registro-pedido/buscar?q=' + encodeURIComponent(val), { credentials:'same-origin' });
+          var d = await r.json().catch(function(){ return null; });
+          sBtn.disabled = false;
+          if(!d || !d.ok){ status.textContent = 'Falha na busca.'; return; }
+          if(!d.count){ status.textContent = 'Nenhum pedido pago encontrado para "' + val + '".'; return; }
+          status.textContent = d.count + ' pedido(s) pago(s) encontrado(s).';
+          pBtn.style.display = '';
+          render(d);
+        } catch(e){ sBtn.disabled = false; status.textContent = 'Erro de rede.'; }
+      }
+      function render(d){
+        var c = d.customer || {};
+        var html = '<div class="card">';
+        html += '<div class="cust">';
+        if(c.nome) html += '<div><span>Cliente</span><strong>' + esc(c.nome) + '</strong></div>';
+        if(c.perfil) html += '<div><span>Perfil</span><strong>@' + esc(c.perfil) + '</strong></div>';
+        if(c.email) html += '<div><span>E-mail</span><strong>' + esc(c.email) + '</strong></div>';
+        if(c.telefone) html += '<div><span>Telefone</span><strong>' + esc(c.telefone) + '</strong></div>';
+        html += '</div>';
+        (d.orders||[]).forEach(function(o, i){
+          html += '<div class="order"><div class="h">' + (i+1) + '. ' + esc(o.label||'Serviço') + (o.qtd?(' — ' + Number(o.qtd).toLocaleString('pt-BR')):'') + '</div>';
+          function row(l,v){ if(v==null||v==='') return ''; return '<div class="row"><span class="l">' + l + '</span><span class="v">' + esc(v) + '</span></div>'; }
+          html += row('Perfil', o.perfil?('@'+o.perfil):'');
+          html += row('Data pagamento', fmtDate(o.dateMs));
+          html += row('Adicionais', o.bumps);
+          html += row('Valor', brl(o.valueReais));
+          html += row('OrderID', o.orderId);
+          html += row('Status', o.status);
+          html += '</div>';
+        });
+        html += '<div class="totbar"><span class="muted">' + d.count + ' pedido(s)</span><span class="t">Total: ' + brl(d.totalReais) + '</span></div>';
+        html += '</div>';
+        result.innerHTML = html;
+      }
+      sBtn.addEventListener('click', run);
+      q.addEventListener('keydown', function(e){ if(e.key==='Enter') run(); });
+      pBtn.addEventListener('click', function(){ if(lastQuery) window.location.href = '/api/painel/registro-pedido/pdf?q=' + encodeURIComponent(lastQuery); });
+    })();
+  </script>
+</body>
+</html>

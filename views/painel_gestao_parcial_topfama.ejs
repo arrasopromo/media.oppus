@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão Parcial (Topfama)</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    h1 { margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .btn { padding: 8px 14px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9rem; color: #fff; }
+    .btn-primary { background: #2563eb; }
+    .btn-green { background: #16a34a; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef0f4; font-size: 0.85rem; vertical-align: middle; white-space: nowrap; }
+    th { background: #f9fafb; font-weight: 700; color: #6b7280; position: sticky; top: 0; }
+    tr:hover { background: #f8fafc; }
+    .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+    .pill-part { background: #fef3c7; color: #92400e; }
+    .pill-done { background: #dcfce7; color: #166534; }
+    .pill-prog { background: #e0f2fe; color: #075985; }
+    .pill-canc { background: #fee2e2; color: #991b1b; }
+    .pill-none { background: #f3f4f6; color: #6b7280; }
+    .muted { color: #9ca3af; }
+    a.link { color: #2563eb; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+    .reorder-btn { padding: 5px 10px; border: 1px solid #16a34a; background: #16a34a; color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }
+    .verify-btn { padding: 5px 10px; border: 1px solid #2563eb; background: #fff; color: #2563eb; border-radius: 6px; cursor: pointer; font-size: 0.78rem; margin-right: 6px; }
+    .verify-btn:hover { background: #2563eb; color: #fff; }
+    .verify-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'gestao-parcial-topfama' }) %>
+  <div class="main-content">
+    <h1>Gestão Parcial (Topfama)</h1>
+    <div class="sub">Pedidos de <strong>curtidas (TopFama)</strong>, com status e quantidade faltando (via <code>action=status</code>). Atualiza sozinho a cada 6h. <em>"não verificado" = ainda não consultado — clique em Atualizar status.</em></div>
+
+    <form class="toolbar" method="get" action="/painel/gestao-parcial-topfama">
+      <button type="button" id="refreshBtn" class="btn btn-primary">🔄 Atualizar status agora</button>
+      <span id="refreshMsg" class="sub" style="margin:0;"></span>
+      <label class="sub" style="margin:0;">De <input type="date" name="start" value="<%= (typeof filter !== 'undefined' && filter) ? filter.start : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:6px;"></label>
+      <label class="sub" style="margin:0;">Até <input type="date" name="end" value="<%= (typeof filter !== 'undefined' && filter) ? filter.end : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:6px;"></label>
+      <button type="submit" class="btn btn-green">Filtrar</button>
+      <a href="/painel/gestao-parcial-topfama" class="sub" style="margin:0;">limpar</a>
+      <span class="sub" style="margin-left:auto;"><strong><%= (rows || []).length %></strong><% if (typeof totalAll !== 'undefined' && totalAll !== (rows||[]).length) { %> de <%= totalAll %><% } %> pedido(s)</span>
+    </form>
+
+    <div class="card scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Data solicitação</th>
+            <th>OrderID original</th>
+            <th>Nome</th>
+            <th>Usuário</th>
+            <th>Link post</th>
+            <th>Qtd contratada</th>
+            <th>Status</th>
+            <th>Qtd faltando</th>
+            <th>Novo OrderID</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!(rows || []).length) { %>
+            <tr><td colspan="10" style="text-align:center; padding:24px; color:#777;">Nenhum pedido TopFama encontrado.</td></tr>
+          <% } %>
+          <% (rows || []).forEach(function(r){
+               var st = String(r.status || '').toLowerCase();
+               var cls = 'pill-none', label = r.status || '—';
+               if (/partial/.test(st)) { cls = 'pill-part'; }
+               else if (/complet|conclu/.test(st)) { cls = 'pill-done'; }
+               else if (/progress|process|pending|andamento/.test(st)) { cls = 'pill-prog'; }
+               else if (/cancel|refund|error/.test(st)) { cls = 'pill-canc'; }
+               var d = r.dataMs ? new Date(r.dataMs) : null;
+               var dataTxt = d ? (('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)) : '—';
+               var canReorder = (r.remains != null && r.remains > 0 && !r.novoOrderId);
+          %>
+          <tr>
+            <td><%= dataTxt %><% if (r.field === 'topfama_likes') { %> <span class="muted">(likes)</span><% } %></td>
+            <td><%= r.orderIdOriginal || '—' %></td>
+            <td><%= r.nome || '—' %></td>
+            <td><% if (r.usuario) { %><a class="link" href="https://instagram.com/<%= encodeURIComponent(r.usuario) %>" target="_blank" rel="noopener">@<%= r.usuario %></a><% } else { %>—<% } %></td>
+            <td><% if (r.linkPost) { %><a class="link" href="<%= r.linkPost %>" target="_blank" rel="noopener">abrir post</a><% } else { %>—<% } %></td>
+            <td><%= (r.qtdContratada || 0).toLocaleString('pt-BR') %></td>
+            <td><% if (!r.checkedAt && !/complet|conclu/.test(st)) { %><span class="pill pill-none" title="Ainda não consultado via action=status — clique em Verificar">não verificado</span><% } else { %><span class="pill <%= cls %>" title="<%= r.checkedAt ? 'verificado' : 'status do despacho' %>"><%= label || '—' %></span><% } %></td>
+            <td><% if (r.remains == null) { %><span class="muted">—</span><% } else { %><strong style="<%= r.remains > 0 ? 'color:#b45309' : 'color:#166534' %>"><%= r.remains.toLocaleString('pt-BR') %></strong><% } %></td>
+            <td><% if (r.novoOrderId) { %><span style="color:#166534; font-weight:700;"><%= r.novoOrderId %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td>
+              <button type="button" class="verify-btn" data-id="<%= r.id %>" data-field="<%= r.field %>">Verificar</button>
+              <% if (canReorder) { %>
+                <button type="button" class="reorder-btn" data-id="<%= r.id %>" data-field="<%= r.field %>" data-remains="<%= r.remains %>">Gerar novo orderid</button>
+              <% } else if (r.novoOrderId) { %>
+                <span class="muted">reposto</span>
+              <% } %>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      var refreshBtn = document.getElementById('refreshBtn');
+      var refreshMsg = document.getElementById('refreshMsg');
+      function say(m){ try { if (refreshMsg) refreshMsg.textContent = m || ''; } catch(_){} }
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', async function(){
+          refreshBtn.disabled = true; say('Consultando TopFama… (pode levar alguns segundos)');
+          try {
+            var r = await fetch('/api/painel/topfama/refresh', { method:'POST', headers:{'Accept':'application/json'}, credentials:'same-origin' });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { say('Atualizado: ' + (d.result && d.result.checked || 0) + ' checados, ' + (d.result && d.result.updated || 0) + ' atualizados. Recarregando…'); setTimeout(function(){ location.reload(); }, 1200); }
+            else { say('Falha: ' + ((d && d.error) || 'erro')); refreshBtn.disabled = false; }
+          } catch (e) { say('Erro de rede.'); refreshBtn.disabled = false; }
+        });
+      }
+      Array.prototype.slice.call(document.querySelectorAll('.verify-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var id = btn.getAttribute('data-id'), field = btn.getAttribute('data-field');
+          var old = btn.textContent; btn.disabled = true; btn.textContent = 'Verificando…';
+          try {
+            var r = await fetch('/api/painel/topfama/verify', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: id, field: field }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { location.reload(); }
+            else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = old; }
+          } catch (e) { alert('Erro de rede.'); btn.disabled = false; btn.textContent = old; }
+        });
+      });
+      Array.prototype.slice.call(document.querySelectorAll('.reorder-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var id = btn.getAttribute('data-id'), field = btn.getAttribute('data-field'), remains = btn.getAttribute('data-remains');
+          if (!confirm('Gerar novo pedido no TopFama repondo ' + remains + ' unidade(s) que faltam?')) return;
+          btn.disabled = true; btn.textContent = 'Enviando…';
+          try {
+            var r = await fetch('/api/painel/topfama/reorder', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: id, field: field }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { alert('Novo pedido criado! OrderID: ' + d.reorderId + ' (' + d.quantity + ' unidades)'); location.reload(); }
+            else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = 'Gerar novo orderid'; }
+          } catch (e) { alert('Erro de rede.'); btn.disabled = false; btn.textContent = 'Gerar novo orderid'; }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

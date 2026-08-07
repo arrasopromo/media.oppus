@@ -464,6 +464,15 @@ const ADMIN_AUTH_TTL_MS = (() => {
   const d = parseInt(String(process.env.ADMIN_AUTH_TTL_DAYS || ''), 10);
   return (Number.isFinite(d) && d > 0 ? d : 30) * 24 * 60 * 60 * 1000;
 })();
+// secure do cookie de admin: 'true'/'1' = só HTTPS (fecha intercepção via HTTP);
+// 'auto' = seguro quando a conexão é HTTPS (respeita trust proxy); default false p/ não
+// derrubar login em ambientes HTTP. RECOMENDADO: ADMIN_COOKIE_SECURE=true em produção HTTPS.
+const __adminCookieSecure = (function () {
+  const v = String(process.env.ADMIN_COOKIE_SECURE || '').trim().toLowerCase();
+  if (v === 'true' || v === '1') return true;
+  if (v === 'auto') return 'auto';
+  return false;
+})();
 const setAdminAuthCookie = (res, adminUser) => {
   try {
     const exp = Date.now() + ADMIN_AUTH_TTL_MS;
@@ -471,7 +480,7 @@ const setAdminAuthCookie = (res, adminUser) => {
     // SEM sameSite de propósito: igual ao connect.sid (que comprovadamente sobrevive no navegador
     // do usuário). Cookies marcados SameSite=Lax estavam sendo descartados (extensão/AV/config),
     // derrubando o login. Sem o atributo, o cookie de admin persiste e re-autentica sozinho.
-    res.cookie(ADMIN_AUTH_COOKIE, token, { httpOnly: true, secure: false, path: '/', maxAge: ADMIN_AUTH_TTL_MS });
+    res.cookie(ADMIN_AUTH_COOKIE, token, { httpOnly: true, secure: __adminCookieSecure, path: '/', maxAge: ADMIN_AUTH_TTL_MS });
   } catch (_) {}
 };
 const clearAdminAuthCookie = (res) => {
@@ -2726,6 +2735,170 @@ async function dispatchTopfamaLikesBump(col, filter, serviceId, link, quantity) 
     } catch (_) {}
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  GESTÃO PARCIAL (TopFama) — status via action=status a cada 6h + reposição
+// ═══════════════════════════════════════════════════════════════════════════
+const TOPFAMA_FIELDS = ['topfama', 'topfama_likes'];
+const TOPFAMA_DONE = new Set(['completed', 'concluido', 'concluído', 'complete']);
+
+// Consulta status/remains de UM orderId no TopFama. { status, remains, startCount, charge, raw } | { error }.
+async function topfamaFetchStatus(orderId) {
+  try {
+    const key = process.env.TOPFAMA_API_KEY || '';
+    if (!key) return { error: 'missing_key' };
+    if (!orderId) return { error: 'missing_order' };
+    const payload = new URLSearchParams({ key, action: 'status', order: String(orderId) });
+    const resp = await axios.post('https://topfama.com/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true });
+    const d = (resp && resp.data && typeof resp.data === 'object') ? resp.data : {};
+    const num = (v) => { const n = Number(String(v == null ? '' : v).replace(',', '.').replace(/[^\d.-]/g, '')); return Number.isFinite(n) ? n : 0; };
+    const status = String(d.status || d.Status || '').trim();
+    if (!status && (d.error || d.Error)) return { error: String(d.error || d.Error) };
+    return { status, remains: num(d.remains ?? d.Remains), startCount: num(d.start_count ?? d.startCount), charge: (d.charge ?? d.Charge ?? null), raw: d };
+  } catch (e) { return { error: (e && e.message) || 'network_error' }; }
+}
+
+// Varre pedidos que foram ao TopFama (base + bump curtidas) e atualiza status/remains. A cada 6h.
+let __topfamaSweepRunning = false;
+async function runTopfamaPartialSweep() {
+  if (__topfamaSweepRunning) return { skipped: true, reason: 'running' };
+  __topfamaSweepRunning = true;
+  const out = { checked: 0, updated: 0, errors: 0 };
+  try {
+    const col = await getCollection('checkout_orders');
+    const orQ = TOPFAMA_FIELDS.map((f) => ({ [`${f}.orderId`]: { $exists: true, $nin: [null, ''] } }));
+    const orders = await col.find({ $or: orQ }, { projection: { topfama: 1, topfama_likes: 1 } }).limit(5000).toArray();
+    for (const o of orders) {
+      for (const f of TOPFAMA_FIELDS) {
+        const sub = o[f];
+        const oid = sub && sub.orderId ? String(sub.orderId).trim() : '';
+        if (!oid || !/^[0-9]+$/.test(oid)) continue;
+        if (TOPFAMA_DONE.has(String(sub.status || '').toLowerCase().trim())) continue; // já finalizado → pula
+        const r = await topfamaFetchStatus(oid);
+        out.checked++;
+        if (r && !r.error) {
+          try {
+            await col.updateOne({ _id: o._id }, { $set: { [`${f}.status`]: r.status || String(sub.status || ''), [`${f}.remains`]: r.remains, [`${f}.startCount`]: r.startCount, [`${f}.statusPayload`]: r.raw, [`${f}.statusCheckedAt`]: new Date().toISOString() } });
+            out.updated++;
+          } catch (_) { out.errors++; }
+        } else { out.errors++; }
+        await new Promise((res) => setTimeout(res, 200)); // rate-limit gentil
+      }
+    }
+  } catch (e) { out.error = e && e.message; }
+  __topfamaSweepRunning = false;
+  return out;
+}
+
+let __topfamaTimer = null;
+function startTopfamaPartialLoop() {
+  if (__topfamaTimer) return;
+  // Primeiro tick só após 6h (não roda no boot); depois a cada 6h.
+  __topfamaTimer = setInterval(() => {
+    runTopfamaPartialSweep().then((r) => { try { if (r && r.checked) console.log('🔁 [topfama-partial] checados:', r.checked, '| atualizados:', r.updated); } catch (_) {} }).catch(() => {});
+  }, 6 * 60 * 60 * 1000);
+  try { __topfamaTimer.unref && __topfamaTimer.unref(); } catch (_) {}
+}
+
+// Atualiza status agora (botão do painel)
+app.post('/api/painel/topfama/refresh', requireAdmin, async (req, res) => {
+  try { const r = await runTopfamaPartialSweep(); return res.json({ ok: true, result: r }); }
+  catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// Gera NOVO orderid repondo a quantidade que falta (remains) no TopFama.
+app.post('/api/painel/topfama/reorder', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    const field = ((req.body && req.body.field) === 'topfama_likes') ? 'topfama_likes' : 'topfama';
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const col = await getCollection('checkout_orders');
+    const { ObjectId } = require('mongodb');
+    const o = await col.findOne({ _id: new ObjectId(id) });
+    if (!o) return res.status(404).json({ ok: false, error: 'not_found' });
+    const sub = o[field] || {};
+    const remains = Math.floor(Number(sub.remains || 0) || 0);
+    if (remains <= 0) return res.status(400).json({ ok: false, error: 'no_remains', message: 'Sem quantidade faltando para repor.' });
+    const rp = sub.requestPayload || {};
+    const service = rp.service, link = rp.link;
+    if (!service || !link) return res.status(400).json({ ok: false, error: 'missing_payload', message: 'Pedido sem service/link do TopFama.' });
+    const key = process.env.TOPFAMA_API_KEY || '';
+    if (!key) return res.status(400).json({ ok: false, error: 'missing_key' });
+    const payload = new URLSearchParams({ key, action: 'add', service: String(service), link: String(link), quantity: String(remains) });
+    const resp = await axios.post('https://topfama.com/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000, validateStatus: () => true });
+    const d = (resp && resp.data && typeof resp.data === 'object') ? resp.data : {};
+    const newOrderId = d.order || d.orderId || (d.data && d.data.order) || null;
+    if (!newOrderId) return res.status(502).json({ ok: false, error: 'reorder_failed', message: String(d.error || d.Error || 'TopFama não retornou order id').slice(0, 200) });
+    await col.updateOne({ _id: o._id }, { $set: { [`${field}.reorderId`]: String(newOrderId), [`${field}.reorderQty`]: remains, [`${field}.reorderAt`]: new Date().toISOString() } });
+    return res.json({ ok: true, reorderId: String(newOrderId), quantity: remains });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// Verifica UM pedido sob demanda (status + quantidade faltando) — botão por linha.
+app.post('/api/painel/topfama/verify', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    const field = ((req.body && req.body.field) === 'topfama_likes') ? 'topfama_likes' : 'topfama';
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const col = await getCollection('checkout_orders');
+    const { ObjectId } = require('mongodb');
+    const o = await col.findOne({ _id: new ObjectId(id) }, { projection: { [field]: 1 } });
+    if (!o) return res.status(404).json({ ok: false, error: 'not_found' });
+    const sub = o[field] || {};
+    const oid = sub && sub.orderId ? String(sub.orderId).trim() : '';
+    if (!oid || !/^[0-9]+$/.test(oid)) return res.status(400).json({ ok: false, error: 'no_orderid', message: 'Pedido sem orderid do TopFama.' });
+    const r = await topfamaFetchStatus(oid);
+    if (!r || r.error) return res.status(502).json({ ok: false, error: 'status_failed', message: String((r && r.error) || 'falha na consulta').slice(0, 200) });
+    await col.updateOne({ _id: o._id }, { $set: { [`${field}.status`]: r.status || String(sub.status || ''), [`${field}.remains`]: r.remains, [`${field}.startCount`]: r.startCount, [`${field}.statusPayload`]: r.raw, [`${field}.statusCheckedAt`]: new Date().toISOString() } });
+    return res.json({ ok: true, status: r.status, remains: r.remains, startCount: r.startCount });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// Página: Gestão Parcial (TopFama)
+app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
+  try {
+    const col = await getCollection('checkout_orders');
+    const orQ = TOPFAMA_FIELDS.map((f) => ({ [`${f}.orderId`]: { $exists: true, $nin: [null, ''] } }));
+    const orders = await col.find({ $or: orQ }, { projection: { customer: 1, instagramUsername: 1, instauser: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfo: 1, createdAt: 1, criado: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, topfama: 1, topfama_likes: 1 } }).sort({ createdAt: -1, _id: -1 }).limit(3000).toArray();
+    const rows = [];
+    for (const o of orders) {
+      const g = buildOrderFieldGetter(o);
+      const nome = String((o.customer && (o.customer.name || o.customer.nome)) || g('nome') || g('name') || '').trim();
+      const usuario = String(g('instagram_username') || o.instagramUsername || o.instauser || '').replace(/^@+/, '').trim();
+      let dataMs = 0; for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt, o.criado]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) { dataMs = t; break; } }
+      for (const f of TOPFAMA_FIELDS) {
+        const sub = o[f]; if (!sub || !sub.orderId) continue;
+        const rp = sub.requestPayload || {};
+        rows.push({
+          id: String(o._id), field: f, dataMs,
+          orderIdOriginal: String(sub.orderId),
+          nome, usuario,
+          linkPost: String(rp.link || ''),
+          qtdContratada: Number(rp.quantity || 0) || 0,
+          status: String(sub.status || ''),
+          remains: (sub.remains != null && sub.remains !== '') ? Math.floor(Number(sub.remains) || 0) : null,
+          novoOrderId: String(sub.reorderId || ''),
+          checkedAt: sub.statusCheckedAt || null,
+        });
+      }
+    }
+    rows.sort((a, b) => (b.dataMs || 0) - (a.dataMs || 0));
+    // Filtro por data (De/Até), no fuso de Brasília.
+    const parseDay = (s, endOfDay) => { const v = String(s || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null; const t = new Date(v + 'T' + (endOfDay ? '23:59:59' : '00:00:00') + '-03:00').getTime(); return Number.isFinite(t) ? t : null; };
+    const startMs = parseDay(req.query.start, false);
+    const endMs = parseDay(req.query.end, true);
+    const filtered = rows.filter((r) => (startMs == null || r.dataMs >= startMs) && (endMs == null || r.dataMs <= endMs));
+    return res.render('painel_gestao_parcial_topfama', {
+      page: 'gestao-parcial-topfama',
+      rows: filtered,
+      totalAll: rows.length,
+      filter: {
+        start: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.start || '')) ? String(req.query.start).slice(0, 10) : '',
+        end: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || '')) ? String(req.query.end).slice(0, 10) : '',
+      },
+    });
+  } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
+});
+
 // Ensure default admin exists on startup
 async function ensureAdminUser() {
     try {
@@ -2734,14 +2907,15 @@ async function ensureAdminUser() {
         const adminUser = await admins.findOne({ username: 'admin' });
         
         if (!adminUser) {
-            console.log('Creating default admin user...');
-            await admins.insertOne({
-                username: 'admin',
-                password: hashPassword('Rr12415721@'), // Initial password
-                role: 'admin',
-                createdAt: new Date()
-            });
-            console.log('✅ Default admin user created.');
+            // NÃO usa mais senha hardcoded (ficava exposta no código/histórico do git).
+            // Só cria se ADMIN_INITIAL_PASSWORD estiver no .env; senão, avisa p/ criar manual.
+            const init = String(process.env.ADMIN_INITIAL_PASSWORD || '').trim();
+            if (init) {
+                await admins.insertOne({ username: 'admin', password: hashPasswordScrypt(init), role: 'admin', createdAt: new Date() });
+                console.log('✅ Admin criado com a senha do ADMIN_INITIAL_PASSWORD (scrypt).');
+            } else {
+                console.warn('⚠️ Nenhum admin encontrado e ADMIN_INITIAL_PASSWORD não definido — crie o admin manualmente.');
+            }
         }
     } catch (e) {
         console.error('❌ Error ensuring admin user:', e);
@@ -2757,12 +2931,30 @@ app.get('/login', (req, res) => {
 
 app.post('/login', async (req, res) => {
     try {
-        const { username, password } = req.body;
+        // Rate-limit anti brute-force: 8 tentativas / 15 min por IP.
+        const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+        if (hitRateLimit('admin_login_ip:' + ip, 8, 15 * 60 * 1000)) {
+            return res.status(429).json({ success: false, error: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+        }
+        // Valida como STRING (evita NoSQL injection tipo {"$ne":null}).
+        const username = (typeof (req.body && req.body.username) === 'string') ? req.body.username : '';
+        const password = (typeof (req.body && req.body.password) === 'string') ? req.body.password : '';
+        if (!username || !password) return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
+
         const { getCollection } = require('./mongodbClient');
         const admins = await getCollection('admins');
         const user = await admins.findOne({ username });
 
-        if (user && user.password === hashPassword(password)) {
+        // Verifica scrypt (novo) OU sha256 legado. Se legado e correto, re-hash pra scrypt (upgrade).
+        let ok = false, legacy = false;
+        if (user) {
+            const stored = String(user.password || '');
+            if (stored.startsWith('scrypt$')) ok = verifyPasswordScrypt(password, stored);
+            else { ok = (!!stored && stored === hashPassword(password)); legacy = ok; }
+        }
+
+        if (ok) {
+            if (legacy) { try { await admins.updateOne({ _id: user._id }, { $set: { password: hashPasswordScrypt(password) } }); } catch (_) {} }
             return req.session.regenerate((regenErr) => {
                 try {
                     if (regenErr) return res.status(500).json({ success: false, error: 'Erro interno' });
@@ -6575,6 +6767,9 @@ const normalizePhoneBR = (raw) => {
     let d = String(raw || '').replace(/\D+/g, '');
     if (!d) return '';
     d = d.replace(/^0+/, '');
+    // Corrige "+55" DUPLICADO: venda manual do WhatsApp salvava `+55` + número que
+    // já vinha com 55 → "5555DDXXXXXXXX" (14/15 díg). Tira um 55 e volta ao normal.
+    if ((d.length === 14 || d.length === 15) && d.startsWith('5555')) d = d.slice(2);
     if (d.startsWith('55') && (d.length === 12 || d.length === 13)) return d; // já com DDI
     if (d.length === 10 || d.length === 11) return '55' + d;                   // DDD + numero
     if (d.length === 12 || d.length === 13) return d;                          // provável DDI estrangeiro
@@ -7240,10 +7435,11 @@ let __ltvJob = { running: false, total: 0, attempted: 0, sent: 0, failed: 0, sta
 async function computeLtvLeads(minPurchases = 2) {
   const col = await getCollection('checkout_orders');
   const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
-  const projection = { customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, tipo: 1, tipoServico: 1, instagramUsername: 1, instauser: 1, identifier: 1, correlationID: 1, 'woovi.identifier': 1, 'woovi.paidAt': 1, 'paghiper.transactionId': 1, 'paghiper.paidAt': 1, 'expay.transactionId': 1, paidAt: 1, createdAt: 1 };
+  const projection = { customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, tipo: 1, tipoServico: 1, instagramUsername: 1, instauser: 1, identifier: 1, correlationID: 1, 'woovi.identifier': 1, 'woovi.paidAt': 1, 'paghiper.transactionId': 1, 'paghiper.paidAt': 1, 'expay.transactionId': 1, paidAt: 1, createdAt: 1, valueCents: 1, 'woovi.paymentMethods': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1 };
   const orders = await col.find({ $or: paidOr }, { projection }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50000).toArray();
   const isSeguidores = (categoria, tipo) => { const c = String(categoria || '').toLowerCase(); const t = String(tipo || '').toLowerCase(); if (/curtida|like|visualiz|view|reel|coment/.test(c)) return false; if (c === 'seguidores') return true; if (t === 'mistos' || t === 'brasileiros' || t === 'organicos') return true; return false; };
   const orderMs = (o) => { const c = o?.paidAt || o?.woovi?.paidAt || o?.paghiper?.paidAt || o?.createdAt; const t = c ? new Date(c).getTime() : 0; return Number.isFinite(t) ? t : 0; };
+  const paidCentsOf = (o) => { const n = Number(o?.valueCents) || Number(o?.woovi?.paymentMethods?.pix?.value) || Number(o?.woovi?.value) || Number(o?.efi?.total) || Number(o?.pagarme?.amount) || 0; return (Number.isFinite(n) && n > 0) ? n : 0; };
 
   const byPhone = new Map();
   for (const order of orders) {
@@ -7256,8 +7452,9 @@ async function computeLtvLeads(minPurchases = 2) {
     const phoneE164 = normalizePhoneBR(phoneRaw);
     if (!phoneE164) continue;
     let rec = byPhone.get(phoneE164);
-    if (!rec) { rec = { count: 0, order: null, getAdd: null, phoneRaw: '' }; byPhone.set(phoneE164, rec); }
+    if (!rec) { rec = { count: 0, totalCents: 0, order: null, getAdd: null, phoneRaw: '' }; byPhone.set(phoneE164, rec); }
     rec.count++;
+    rec.totalCents += paidCentsOf(order);
     if (!rec.order) { rec.order = order; rec.getAdd = getAdd; rec.phoneRaw = phoneRaw; } // mais recente
   }
 
@@ -7275,7 +7472,7 @@ async function computeLtvLeads(minPurchases = 2) {
     const firstName = (name.split(/\s+/)[0] || '').trim();
     const t = String(getAdd('tipo_servico') || getAdd('tipoServico') || getAdd('tipo') || order.tipoServico || order.tipo || '').trim().toLowerCase();
     const serviceTipo = /organico|reais|real/.test(t) ? 'organicos' : (/brasileir/.test(t) ? 'brasileiros' : (/misto/.test(t) ? 'mistos' : 'outros'));
-    leads.push({ phoneE164, phoneRaw: rec.phoneRaw, igRaw, name, firstName, identifier, correlationID, orderId: String(order._id || ''), purchases: rec.count, serviceTipo, dateMs: orderMs(order) });
+    leads.push({ phoneE164, phoneRaw: rec.phoneRaw, igRaw, name, firstName, identifier, correlationID, orderId: String(order._id || ''), purchases: rec.count, totalReais: Math.round(rec.totalCents) / 100, serviceTipo, dateMs: orderMs(order) });
   }
   return leads;
 }
@@ -7422,8 +7619,8 @@ app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
       return res.status(429).json({ ok: false, error: 'daily_cap_reached', dailyCap: DAILY_CAP, sentToday, message: `Teto diário de ${DAILY_CAP} já atingido (enviados ${sentToday} nas últimas 24h). Tente novamente amanhã ou ajuste LTV_DAILY_LIMIT.` });
     }
 
-    // Ordenação: 'newest' (mais recentes) ou 'oldest' (padrão) pela data do pedido de referência.
-    const sortNewest = String(b.sort || '').toLowerCase() === 'newest';
+    // Ordenação: 'top' (mais compradores), 'newest' (mais recentes) ou 'oldest' (padrão).
+    const sortMode = String(b.sort || '').toLowerCase();
     const tipoFilter = String(b.tipo || '').trim().toLowerCase();
 
     // Base de recompra montada NA HORA (não precisa gerar base antes).
@@ -7435,8 +7632,14 @@ app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
     const activeLinks = await links.find({ campaign: 'ltv', expAt: { $gt: new Date() } }, { projection: { phoneE164: 1 } }).toArray();
     const activeSet = new Set(activeLinks.map(l => String(l.phoneE164 || '')));
     leads = leads.filter(l => !activeSet.has(l.phoneE164));
+    // "Top compradores": só quem tem 2+ compras E gastou no mínimo R$500 (configurável
+    // via LTV_TOP_MIN_REAIS). Abaixo disso não é considerado top comprador.
+    const TOP_MIN_REAIS = Math.max(0, Number(process.env.LTV_TOP_MIN_REAIS || 500) || 500);
+    if (sortMode === 'top') leads = leads.filter(l => (Number(l.totalReais) || 0) >= TOP_MIN_REAIS);
     // Ordena e corta pela quantidade pedida (limitada pelo teto diário).
-    leads.sort((a, b2) => sortNewest ? (b2.dateMs - a.dateMs) : (a.dateMs - b2.dateMs));
+    leads.sort((a, b2) => (sortMode === 'top')
+      ? ((b2.totalReais - a.totalReais) || (b2.purchases - a.purchases))
+      : (sortMode === 'newest' ? (b2.dateMs - a.dateMs) : (a.dateMs - b2.dateMs)));
     const batch = leads.slice(0, Math.max(1, limit));
 
     if (!authorize) {
@@ -7544,6 +7747,133 @@ app.get('/api/painel/ltv/available', requireAdmin, async (req, res) => {
       window: { start, end, current: ltvCurrentBrtHour(), open: isWithinLtvSendWindow() }
     });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  REGISTRO DE PEDIDO — busca cliente (@/email/telefone) → relatório em PDF
+//  de TODOS os pedidos pagos, com organização similar ao "Detalhes do Pedido".
+// ═══════════════════════════════════════════════════════════════════════════
+function _regFmtBumps(bumpsStr) {
+  const s = String(bumpsStr || '').trim(); if (!s) return '';
+  const out = [];
+  for (const part of s.split(/[;,]/)) {
+    const [k0, v0] = part.split(':'); const k = String(k0 || '').trim().toLowerCase(); const q = parseInt(v0, 10) || 0;
+    if (k === 'upgrade') out.push('Upgrade');
+    else if (k === 'likes') out.push('Curtidas +' + q);
+    else if (k === 'views') out.push('Visualizações +' + q);
+    else if (k === 'comments') out.push('Comentários +' + q);
+    else if (/^warranty/.test(k)) out.push('Garantia estendida');
+    else if (k) out.push(k + (q ? ' +' + q : ''));
+  }
+  return out.join(' · ');
+}
+function _regExtract(o) {
+  const g = buildOrderFieldGetter(o);
+  const safe = (v) => String(v == null ? '' : v).trim();
+  const cat = safe(g('categoria_servico'));
+  const tipo = safe(g('tipo_servico') || o.tipoServico || o.tipo);
+  const raw = (cat + ' ' + tipo).toLowerCase();
+  const base = /seguidor/.test(raw) ? 'Seguidores' : /curtida|like/.test(raw) ? 'Curtidas' : /visualiza|view|reel/.test(raw) ? 'Visualizações' : (cat ? cat : 'Serviço');
+  const sub = /organico|reais|real/.test(tipo) ? 'Reais/Orgânicos' : /brasileir/.test(tipo) ? 'Brasileiros' : /misto/.test(tipo) ? 'Mistos' : '';
+  const label = (base + (sub ? ' ' + sub : '')).trim();
+  const qtd = Number(g('quantidade') || o.quantidade || o.qtd || 0) || 0;
+  const perfil = safe(g('instagram_username') || o.instagramUsername || o.instauser).replace(/^@+/, '');
+  let dateMs = 0; for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt, o.criado]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) { dateMs = t; break; } }
+  const tN = (v) => { const n = Number(v); return (Number.isFinite(n) && n > 0) ? n : 0; };
+  const valueCents = tN(o.valueCents) || tN(o?.woovi?.paymentMethods?.pix?.value) || tN(o?.woovi?.value) || tN(o?.efi?.total) || tN(o?.pagarme?.amount) || 0;
+  const orderId = String((o.fornecedor_social && o.fornecedor_social.orderId) || (o.fama24h && o.fama24h.orderId) || (o.topfama && o.topfama.orderId) || o.identifier || o._id || '');
+  return { id: String(o._id), label, qtd, perfil, dateMs, bumps: _regFmtBumps(g('order_bumps')), valueReais: valueCents / 100, status: safe(o.status), orderId };
+}
+async function _regFindPaidOrders(qRaw) {
+  const q = String(qRaw || '').trim();
+  if (!q) return { orders: [], customer: null, query: q };
+  const col = await getCollection('checkout_orders');
+  const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const clean = q.replace(/^@+/, '').trim();
+  const conds = [];
+  const rxUser = new RegExp('^' + esc(clean) + '$', 'i');
+  conds.push({ instagramUsername: rxUser }, { instauser: rxUser }, { 'additionalInfoMap.instagram_username': rxUser }, { 'additionalInfoMapPaid.instagram_username': rxUser }, { additionalInfo: { $elemMatch: { key: 'instagram_username', value: rxUser } } });
+  if (/@/.test(q)) { const rxEm = new RegExp('^' + esc(q.toLowerCase()) + '$', 'i'); conds.push({ 'customer.email': rxEm }, { additionalInfo: { $elemMatch: { key: { $in: ['email', 'e-mail'] }, value: rxEm } } }); }
+  const digits = q.replace(/\D/g, ''); if (digits.length >= 8) { const rxPh = new RegExp(esc(digits.slice(-10)) + '$'); conds.push({ 'customer.phone': rxPh }, { additionalInfo: { $elemMatch: { key: { $in: ['phone', 'telefone', 'whatsapp'] }, value: rxPh } } }); }
+  const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
+  const docs = await col.find({ $and: [{ $or: paidOr }, { $or: conds }] }).sort({ paidAt: -1, createdAt: -1, _id: -1 }).limit(500).toArray();
+  const orders = docs.map(_regExtract).sort((a, b) => (b.dateMs || 0) - (a.dateMs || 0));
+  let customer = null;
+  if (docs.length) {
+    const d0 = docs[0]; const g0 = buildOrderFieldGetter(d0);
+    customer = {
+      nome: String((d0.customer && (d0.customer.name || d0.customer.nome)) || g0('nome') || g0('name') || '').trim(),
+      email: String((d0.customer && d0.customer.email) || g0('email') || '').trim(),
+      telefone: String((d0.customer && d0.customer.phone) || g0('phone') || g0('telefone') || '').trim(),
+      perfil: String(g0('instagram_username') || d0.instagramUsername || d0.instauser || '').replace(/^@+/, '').trim(),
+    };
+  }
+  return { orders, customer, query: q };
+}
+
+// Página: Registro de Pedido (busca + PDF)
+app.get('/painel/registro-pedido', requireAdmin, async (req, res) => {
+  try { return res.render('painel_registro_pedido', { page: 'registro-pedido' }); }
+  catch (e) { return res.status(500).send(String((e && e.message) || e)); }
+});
+
+// Busca (JSON) — prévia antes de baixar o PDF.
+app.get('/api/painel/registro-pedido/buscar', requireAdmin, async (req, res) => {
+  try {
+    const r = await _regFindPaidOrders(req.query.q);
+    const total = r.orders.reduce((s, o) => s + (o.valueReais || 0), 0);
+    return res.json({ ok: true, query: r.query, customer: r.customer, count: r.orders.length, totalReais: Math.round(total * 100) / 100, orders: r.orders });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// PDF — relatório de todos os pedidos pagos do cliente.
+app.get('/api/painel/registro-pedido/pdf', requireAdmin, async (req, res) => {
+  try {
+    const r = await _regFindPaidOrders(req.query.q);
+    if (!r.orders.length) return res.status(404).send('Nenhum pedido pago encontrado para: ' + String(req.query.q || ''));
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ margin: 44, size: 'A4' });
+    const fname = 'relatorio_' + String(r.query || 'cliente').replace(/[^a-zA-Z0-9._@-]/g, '_').slice(0, 40) + '.pdf';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + fname + '"');
+    doc.pipe(res);
+    const PURPLE = '#6b46c1', GRAY = '#6b7280', DARK = '#111827';
+    const fmtBRL = (n) => 'R$ ' + Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtDate = (ms) => { if (!ms) return '-'; try { return new Date(ms).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }); } catch (_) { return '-'; } };
+    // Cabeçalho
+    doc.fillColor(PURPLE).fontSize(20).text('Agência OPPUS', { continued: false });
+    doc.fillColor(DARK).fontSize(14).text('Relatório de Pedidos do Cliente');
+    doc.moveDown(0.5);
+    const c = r.customer || {};
+    doc.fillColor(GRAY).fontSize(10);
+    if (c.nome) doc.text('Cliente: ' + c.nome);
+    if (c.perfil) doc.text('Perfil: @' + c.perfil);
+    if (c.email) doc.text('E-mail: ' + c.email);
+    if (c.telefone) doc.text('Telefone: ' + c.telefone);
+    const total = r.orders.reduce((s, o) => s + (o.valueReais || 0), 0);
+    doc.text('Busca: "' + r.query + '"  ·  ' + r.orders.length + ' pedido(s) pago(s)  ·  Total: ' + fmtBRL(total));
+    doc.moveDown(0.5);
+    doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).stroke();
+    doc.moveDown(0.8);
+    // Pedidos (organização similar ao "Detalhes do Pedido")
+    r.orders.forEach((o, i) => {
+      if (doc.y > doc.page.height - 150) doc.addPage();
+      doc.fillColor(PURPLE).fontSize(12).text((i + 1) + '. ' + (o.label || 'Serviço') + (o.qtd ? ('  —  ' + o.qtd.toLocaleString('pt-BR')) : ''));
+      doc.fillColor(DARK).fontSize(10);
+      const line = (lbl, val) => { if (val == null || val === '') return; doc.fillColor(GRAY).text(lbl + ': ', { continued: true }).fillColor(DARK).text(String(val)); };
+      line('Perfil', o.perfil ? '@' + o.perfil : '');
+      line('Data pagamento', fmtDate(o.dateMs));
+      line('Adicionais', o.bumps);
+      line('Valor', fmtBRL(o.valueReais));
+      line('OrderID', o.orderId);
+      line('Status', o.status);
+      doc.moveDown(0.4);
+      doc.strokeColor('#f3f4f6').lineWidth(1).moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).stroke();
+      doc.moveDown(0.6);
+    });
+    doc.fillColor(DARK).fontSize(12).text('Total pago: ' + fmtBRL(total), { align: 'right' });
+    doc.end();
+  } catch (e) { try { return res.status(500).send('Erro ao gerar PDF: ' + ((e && e.message) || e)); } catch (_) { } }
 });
 
 // ── TELA DE OBRIGADO (pós-pagamento): tracking de visualização ────────────────
@@ -9640,6 +9970,46 @@ app.get(['/refil2', '/refil2/'], (req, res) => {
 
 // Rota antiga de refil removida em favor da nova implementação (ver final do arquivo)
 
+// ── Limite anti-abuso: máx. de seguidores BRASILEIROS REAIS (orgânicos) por perfil ──
+// "Seguidores brasileiros e reais" = tipo 'organicos' (NÃO os 'brasileiros' comuns).
+// Configurável via BR_FOLLOWERS_MAX (.env), padrão 50.000.
+const BR_FOLLOWERS_MAX = Math.max(1000, Number(process.env.BR_FOLLOWERS_MAX || 50000) || 50000);
+// "brasileiros e reais" = tipo organicos DE SEGUIDORES. A categoria às vezes vem vazia
+// (só no map), então reforça com o campo `pacote` (ex.: "5000 seguidores - R$...").
+const _isReaisSeguidores = (categoria, tipo, pacote) => {
+  const c = String(categoria || '').toLowerCase().trim();
+  const t = String(tipo || '').toLowerCase().trim();
+  const p = String(pacote || '').toLowerCase();
+  if (!/organic/.test(t)) return false;                                   // precisa ser organicos
+  if (c === 'curtidas' || c === 'visualizacoes') return false;            // não é seguidores
+  if (/curtida|like|visualiz|view|reel|coment/.test(p)) return false;     // pacote de curtidas/views
+  if (c === 'seguidores') return true;                                    // categoria explícita
+  return /seguidor/.test(p);                                              // categoria vazia → usa o pacote
+};
+async function checkBrRealFollowersLimit(profileRaw, categoria, tipo, newQty, pacote) {
+  try {
+    if (!_isReaisSeguidores(categoria, tipo, pacote)) return { blocked: false }; // só seguidores reais (organicos)
+    const profile = String(profileRaw || '').replace(/^@+/, '').replace(/\/+$/g, '').trim().toLowerCase();
+    if (!profile) return { blocked: false };
+    const qty = Number(newQty) || 0;
+    const col = await getCollection('checkout_orders');
+    const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
+    const rx = new RegExp('^@?' + _escRxCoupon(profile) + '$', 'i');
+    const orders = await col.find({ $and: [{ $or: paidOr }, { $or: [{ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx }] }] }, { projection: { quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfo: 1, tipo: 1, tipoServico: 1 } }).limit(5000).toArray();
+    let existing = 0;
+    for (const o of orders) {
+      const getAdd = buildOrderFieldGetter(o);
+      if (!_isReaisSeguidores(getAdd('categoria_servico'), getAdd('tipo_servico') || o.tipoServico || o.tipo, getAdd('pacote'))) continue;
+      const q = Number(getAdd('quantidade') || o.quantidade || o.qtd || 0) || 0;
+      if (q > 0) existing += q;
+    }
+    if (existing + qty > BR_FOLLOWERS_MAX) {
+      return { blocked: true, existing, limit: BR_FOLLOWERS_MAX, message: `Este perfil já atingiu o limite de ${BR_FOLLOWERS_MAX.toLocaleString('pt-BR')} seguidores brasileiros reais (já são ${existing.toLocaleString('pt-BR')}). Não é possível comprar mais neste perfil.` };
+    }
+    return { blocked: false, existing, limit: BR_FOLLOWERS_MAX };
+  } catch (_) { return { blocked: false }; }
+}
+
 // API: criar cobrança Cartão via Efí
 app.post('/api/efi/card-charge', async (req, res) => {
     let correlationIDSafe = '';
@@ -11721,6 +12091,7 @@ app.post('/api/woovi/charge', async (req, res) => {
         // Tenta validar o preço usando o pricing.js centralizado
         // Agora suporta categoria_servico para desambiguidade (Mistos vs Mistos)
         console.log('DEBUG Woovi Charge:', { value, tipoVal, qtdVal, addInfo: sanitizedAdditionalFiltered });
+        { const _brLim = await checkBrRealFollowersLimit(addInfoMap['instagram_username'] || addInfoMap['perfil'], addInfoMap['categoria_servico'], tipoVal, qtdVal, addInfoMap['pacote']); if (_brLim.blocked) return res.status(400).json({ error: 'br_followers_limit', message: _brLim.message }); }
         const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum);
         console.log('DEBUG Woovi Verification:', verification);
         
@@ -12109,6 +12480,8 @@ app.post('/api/expay/charge', async (req, res) => {
             const n = parseInt(raw.replace(/[^\d]/g, ''), 10);
             return Number.isFinite(n) && n > 0 ? n : 0;
         })();
+        // Limite anti-abuso: máx. de seguidores BRASILEIROS por perfil (acumulado).
+        { const _brLim = await checkBrRealFollowersLimit(addInfoMap['instagram_username'] || addInfoMap['perfil'], addInfoMap['categoria_servico'], tipoVal, qtdVal, addInfoMap['pacote']); if (_brLim.blocked) return res.status(400).json({ error: 'br_followers_limit', message: _brLim.message }); }
 
         let validatedPriceCents = null;
         const vNum = Number(value);
@@ -12717,6 +13090,11 @@ app.post('/api/paghiper/charge', async (req, res) => {
         const isBaseServiceGuard = catValGuard === 'seguidores' || catValGuard === 'curtidas' || catValGuard === 'visualizacoes';
         if (!isRefilExtensao && isBaseServiceGuard && (!String(tipoVal || '').trim() || qtdVal <= 0)) {
             return res.status(400).json({ error: 'invalid_quantity', message: 'Selecione um pacote válido antes de pagar (quantidade do serviço ausente).' });
+        }
+        // Limite anti-abuso: máx. de seguidores BRASILEIROS por perfil (acumulado).
+        {
+            const _brLim = await checkBrRealFollowersLimit(addInfoMap['instagram_username'] || addInfoMap['perfil'], catValGuard, tipoVal, qtdVal, addInfoMap['pacote']);
+            if (_brLim.blocked) return res.status(400).json({ error: 'br_followers_limit', message: _brLim.message });
         }
 
         let validatedPriceCents = null;
@@ -15397,6 +15775,28 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
       losdados.ok = true;
     } catch (e) { losdados.error = e && e.message; }
 
+    // ── Custo losdados (TODOS os clientes, inclui serviço): 1 request por CLIENTE ÚNICO ──
+    // Regra: mesmo @ OU e-mail OU telefone = mesma pessoa → CPF salvo, sem nova consulta.
+    // Simulado sobre os pedidos do período (union-find por @/e-mail/telefone).
+    const losdadosAll = { count: 0, unit: losdados.unit, cost: 0 };
+    try {
+      const rws = Array.isArray(report.rows) ? report.rows : [];
+      const parent = {};
+      const ensure = (x) => { if (!(x in parent)) parent[x] = x; };
+      const findp = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+      const unite = (a, b) => { ensure(a); ensure(b); const ra = findp(a), rb = findp(b); if (ra !== rb) parent[ra] = rb; };
+      rws.forEach((r, i) => {
+        const node = 'r:' + i; ensure(node);
+        if (r.email) unite(node, 'e:' + String(r.email).toLowerCase());
+        if (r.instagram) unite(node, 'u:' + String(r.instagram).toLowerCase());
+        if (r.phone) unite(node, 'p:' + String(r.phone));
+      });
+      const groups = new Set();
+      rws.forEach((r, i) => groups.add(findp('r:' + i)));
+      losdadosAll.count = groups.size;                 // clientes únicos = nº de CPFs (1 request cada)
+      losdadosAll.cost = controladoria.round2(losdadosAll.count * losdadosAll.unit);
+    } catch (_) {}
+
     // Deduções: custo operacional + ads + imposto ads + impostos de venda + custo losdados.
     totals.custoOperacional = totals.cost;
     totals.adsCost = ads.cost;
@@ -15416,6 +15816,34 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
       emission = { ativa: !!scfg.enabled, configurada: notaFiscalManager.isConfigured(), environment: scfg.environment };
     } catch (_) {}
 
+    // ── Estado da TRAVA de alíquota do serviço para o período exibido ──
+    // Período efetivo: usa o filtro; se aberto, usa o intervalo real dos pedidos.
+    const ymd = (ms) => { const d = new Date(ms); const off = d.getTimezoneOffset() * 60000; return new Date(ms - off).toISOString().slice(0, 10); };
+    let lockStartMs = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.start || '')) ? new Date(String(req.query.start).slice(0, 10) + 'T00:00:00-03:00').getTime() : null;
+    let lockEndMs = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || '')) ? new Date(String(req.query.end).slice(0, 10) + 'T23:59:59-03:00').getTime() : null;
+    if (report.rows.length) {
+      const ds = report.rows.map((r) => r.dateMs).filter((n) => Number.isFinite(n));
+      if (lockStartMs == null && ds.length) lockStartMs = Math.min(...ds);
+      if (lockEndMs == null && ds.length) lockEndMs = Math.max(...ds);
+    }
+    const _lockMonths = (lockStartMs != null && lockEndMs != null) ? controladoria.monthsInRange(lockStartMs, lockEndMs) : [];
+    const _cfgLocks = (cfg.servicoTaxLocks && typeof cfg.servicoTaxLocks === 'object') ? cfg.servicoTaxLocks : {};
+    const _lockedRates = _lockMonths.map((m) => _cfgLocks[m]).filter((x) => x != null);
+    const _allLocked = _lockMonths.length > 0 && _lockedRates.length === _lockMonths.length;
+    const _uniform = (_allLocked && new Set(_lockedRates.map((r) => controladoria.round2(r * 100))).size === 1) ? controladoria.round2(_lockedRates[0] * 100) : null;
+    const aliquota = {
+      months: _lockMonths,
+      periodStart: lockStartMs != null ? ymd(lockStartMs) : '',
+      periodEnd: lockEndMs != null ? ymd(lockEndMs) : '',
+      defaultPct: controladoria.round2((cfg.servicoTaxPct || 0) * 100),
+      effectivePct: (typeof totals.servicoTaxEffectivePct === 'number') ? totals.servicoTaxEffectivePct : controladoria.round2((cfg.servicoTaxPct || 0) * 100),
+      allLocked: _allLocked,
+      partiallyLocked: _lockedRates.length > 0 && !_allLocked,
+      uniformPct: _uniform,
+      lockedCount: _lockedRates.length,
+      totalMonths: _lockMonths.length,
+    };
+
     return res.render('painel_controladoria', {
       page: 'controladoria',
       cfg,
@@ -15423,7 +15851,9 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
       modo,
       ads,
       losdados,
+      losdadosAll,
       totals,
+      aliquota,
       ebookTicketMedio,
       ebookOrdersCount,
       topEbookSales,
@@ -15452,6 +15882,10 @@ app.post('/api/admin/controladoria/config', requireAdmin, async (req, res) => {
       losdadosCostReais: body.losdadosCostReais,
       cutoffDate: body.cutoffDate,
     });
+    const s = await getCollection('settings');
+    // Preserva as alíquotas travadas por mês (não vêm neste form).
+    const existing = await s.findOne({ key: 'controladoria' });
+    const existingLocks = (existing && existing.value && existing.value.servicoTaxLocks && typeof existing.value.servicoTaxLocks === 'object') ? existing.value.servicoTaxLocks : {};
     const value = {
       ebookPct: cfg.ebookPct,
       ebookCapReais: cfg.ebookCapReais,
@@ -15460,14 +15894,46 @@ app.post('/api/admin/controladoria/config', requireAdmin, async (req, res) => {
       adsTaxPct: cfg.adsTaxPct,
       losdadosCostReais: cfg.losdadosCostReais,
       cutoffDate: cfg.cutoffDate,
+      servicoTaxLocks: existingLocks,
     };
-    const s = await getCollection('settings');
     await s.updateOne(
       { key: 'controladoria' },
       { $set: { key: 'controladoria', value, updatedAt: new Date().toISOString() } },
       { upsert: true }
     );
     return res.json({ ok: true, cfg: value });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: (e && e.message) || String(e) });
+  }
+});
+
+// Trava/destrava a alíquota de serviço para os meses do período filtrado.
+// body: { start:'YYYY-MM-DD', end:'YYYY-MM-DD', rate:10.8, unlock:false }
+app.post('/api/admin/controladoria/lock-aliquota', requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const parseDay = (str, endOfDay) => { const x = String(str || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(x)) return null; const t = new Date(`${x}T${endOfDay ? '23:59:59' : '00:00:00'}-03:00`).getTime(); return Number.isFinite(t) ? t : null; };
+    const startMs = parseDay(body.start, false);
+    const endMs = parseDay(body.end, true);
+    if (startMs == null || endMs == null || endMs < startMs) return res.status(400).json({ ok: false, error: 'periodo_invalido', message: 'Informe um período válido (De/Até) para travar.' });
+    const months = controladoria.monthsInRange(startMs, endMs);
+    if (!months.length) return res.status(400).json({ ok: false, error: 'sem_meses' });
+    const unlock = !!body.unlock;
+    let rate = null;
+    if (!unlock) {
+      const rr = Number(String(body.rate == null ? '' : body.rate).replace(',', '.'));
+      if (!Number.isFinite(rr)) return res.status(400).json({ ok: false, error: 'aliquota_invalida', message: 'Alíquota inválida.' });
+      rate = rr > 1 ? rr / 100 : rr;
+      rate = Math.max(0, Math.min(1, rate));
+    }
+    const s = await getCollection('settings');
+    const existing = await s.findOne({ key: 'controladoria' });
+    const cur = (existing && existing.value && typeof existing.value === 'object') ? existing.value : {};
+    const locks = (cur.servicoTaxLocks && typeof cur.servicoTaxLocks === 'object') ? { ...cur.servicoTaxLocks } : {};
+    months.forEach((m) => { if (unlock) delete locks[m]; else locks[m] = rate; });
+    const value = { ...cur, servicoTaxLocks: locks };
+    await s.updateOne({ key: 'controladoria' }, { $set: { key: 'controladoria', value, updatedAt: new Date().toISOString() } }, { upsert: true });
+    return res.json({ ok: true, months, locked: !unlock, ratePct: unlock ? null : controladoria.round2(rate * 100) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: (e && e.message) || String(e) });
   }
@@ -15812,6 +16278,57 @@ async function fqFindBlockingOrder(col, record) {
         if (!state.done) return { blocker: cand, state };
     }
     return null;
+}
+
+// Segura (represa) um pedido de SEGUIDORES se houver outro do MESMO perfil ainda
+// rodando na janela. Retorna true se represou (o chamador NÃO deve despachar).
+// Reutilizável: chamado tanto no processOrderFulfillment quanto no webhook de
+// pagamento (que antes despachava direto, pulando a fila).
+async function fqHoldIfBlocked(col, record, req) {
+    try {
+        if (!followersQueueEnabled()) return false;
+        if (!record || !record._id) return false;
+        if (!fqIsFollowersOrder(record)) return false;
+        const username = fqOrderUsername(record);
+        if (!username) return false;
+        // Já foi ao fornecedor? Não faz sentido segurar depois de enviado.
+        if (fqCollectProviderOrders(record).length) return false;
+        const queueForced = !!(req && (req.forceFollowersQueueRelease === true || req.body?.forceFollowersQueueRelease === true))
+            || String(record?.followersQueue?.status || '') === 'released';
+        if (queueForced) return false;
+        const found = await fqFindBlockingOrder(col, record);
+        if (found && found.blocker) {
+            const nowIso = new Date().toISOString();
+            const heldAt = record?.followersQueue?.heldAt || nowIso;
+            const releaseAfterAt = new Date(new Date(heldAt).getTime() + followersQueueMaxWaitMs()).toISOString();
+            await col.updateOne({ _id: record._id }, {
+                $set: {
+                    'followersQueue.status': 'waiting_previous',
+                    'followersQueue.username': username,
+                    'followersQueue.blockedBy': String(found.blocker?.identifier || ''),
+                    'followersQueue.blockedByMongoId': found.blocker?._id,
+                    'followersQueue.blockedByCorrelationID': String(found.blocker?.correlationID || ''),
+                    'followersQueue.blockerReason': found.state?.reason || '',
+                    'followersQueue.blockerStatuses': found.state?.statuses || [],
+                    'followersQueue.heldAt': heldAt,
+                    'followersQueue.releaseAfterAt': releaseAfterAt,
+                    'followersQueue.lastCheckAt': nowIso
+                }
+            });
+            console.log(`⏸️ [FilaSeguidores] ${record.identifier} (@${username}) represado — espera ${found.blocker?.identifier || '?'} terminar (${found.state?.reason})`);
+            try { await ensureRefilLink(record.identifier, record.correlationID, req); } catch (_) {}
+            return true;
+        }
+        // Passou pela fila: se estava esperando, marca liberação.
+        if (String(record?.followersQueue?.status || '') === 'waiting_previous') {
+            await col.updateOne({ _id: record._id }, { $set: { 'followersQueue.status': 'released', 'followersQueue.releasedAt': new Date().toISOString(), 'followersQueue.releaseReason': 'blocker_finished' } });
+        }
+        return false;
+    } catch (e) {
+        // Fila nunca pode impedir uma entrega: se falhar, deixa seguir (fail-open).
+        console.error('⚠️ [FilaSeguidores] fqHoldIfBlocked erro (segue normal):', e?.message || String(e));
+        return false;
+    }
 }
 
 // Função auxiliar para processar o envio de pedidos (Fama24h/FornecedorSocial)
@@ -16295,7 +16812,11 @@ async function processOrderFulfillment(record, col, req) {
             if ((/brasileiros/i.test(tipo) || /organicos/i.test(tipo)) && qtdBase === 1000) {
                 upgradeAdd = 1000;
             } else {
-                const map = { 150: 150, 500: 200, 1000: 1000, 3000: 1000, 5000: 2500, 10000: 5000 };
+                // Mapa COMPLETO alinhado ao pricing.js e aos demais blocos de despacho
+                // (alvos: 150→300, 300→500, 500→700, 700→1000, 1200→2000, 2000→3000,
+                //  4000→5000, 7500→10000, …). Antes faltavam 300/700/1200/2000/4000/7500
+                //  → upgrade cobrado mas +0 enviado.
+                const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
                 upgradeAdd = map[qtdBase] || 0;
             }
         } else if (isCurtidasMistasUpgradeEligible) {
@@ -19175,6 +19696,18 @@ app.post('/api/openpix/webhook', async (req, res) => {
             
             return res.status(200).json({ ok: true, status: 'paid_private_deferred', message: 'Service dispatch blocked because profile is private' });
         }
+
+        // ── FILA DE SEGUIDORES ────────────────────────────────────────────────
+        // Este webhook despachava DIRETO, pulando a fila (que só existia no
+        // processOrderFulfillment). Isso deixava 2 pedidos de seguidores do mesmo
+        // perfil rodarem juntos. Agora represa aqui também; o poller
+        // (runFollowersQueueTick) solta e despacha quando o anterior terminar.
+        try {
+            if (await fqHoldIfBlocked(col, record, req)) {
+                try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch (_) {}
+                return res.status(200).json({ ok: true, status: 'held_followers_queue', message: 'Pedido de seguidores represado — aguardando pedido anterior do mesmo perfil terminar.' });
+            }
+        } catch (_) {}
 
           const alreadySentFama = record?.fama24h?.orderId ? true : false;
           const alreadySentFS = record?.fornecedor_social?.orderId ? true : false;
@@ -33055,6 +33588,18 @@ app.post('/api/admin/update-private-order', requireAdmin, async (req, res) => {
                 updateSet['fama24h_likes.orderId'] = firstOrderId;
                 updateSet['fama24h_likes.status'] = 'created';
                 updateUnset['fama24h_likes.error'] = '';
+            } else if (provider === 'topfama') {
+                // Curtidas reais (orgânicas) — pedido principal no TopFama.
+                updateSet['topfama.orderId'] = firstOrderId;
+                updateSet['topfama.status'] = 'created';
+                updateUnset['topfama.error'] = '';
+                updateUnset['topfama.duplicate'] = '';
+            } else if (provider === 'topfama_likes') {
+                // Bump de curtidas reais no TopFama.
+                updateSet['topfama_likes.orderId'] = firstOrderId;
+                updateSet['topfama_likes.status'] = 'created';
+                updateUnset['topfama_likes.error'] = '';
+                updateUnset['topfama_likes.duplicate'] = '';
             }
         } else if (field === 'archived') {
             const v = !!value;
@@ -35287,7 +35832,8 @@ app.post('/api/painel/whatsapp-orders/create', requireAdmin, async (req, res) =>
       } : {}),
       customer: {
         ...(name ? { name } : {}),
-        phone: `+55${phoneDigits}`,
+        // NÃO duplicar o 55: phoneDigits pode já vir com DDI. Normaliza antes.
+        phone: '+' + (normalizePhoneBR(phoneDigits) || phoneDigits),
         ...(email ? { email } : {})
       },
       additionalInfoPaid,
@@ -35618,6 +36164,128 @@ async function fetchFacebookSpend({ since, until, datePreset } = {}) {
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'fetch_failed' };
   }
+}
+
+// Insights de anúncios POR FORMATO (publisher_platform + platform_position):
+// spend, compras (actions purchase) e faturamento (action_values purchase). Cache 5 min.
+const __fbFormatCache = new Map();
+const __FB_FORMAT_LABELS = {
+  'instagram/instagram_stories': 'Instagram Stories', 'instagram/instagram_reels': 'Instagram Reels',
+  'instagram/feed': 'Instagram Feed', 'instagram/instagram_explore': 'Instagram Explore',
+  'instagram/instagram_explore_grid_home': 'Instagram Explore', 'instagram/instagram_search': 'Instagram Busca',
+  'instagram/instagram_profile_feed': 'Instagram Perfil', 'instagram/instagram_reels_overlay': 'Instagram Reels',
+  'facebook/facebook_reels': 'Facebook Reels', 'facebook/feed': 'Facebook Feed',
+  'facebook/facebook_stories': 'Facebook Stories', 'facebook/instream_video': 'Facebook Vídeo',
+  'facebook/facebook_reels_overlay': 'Facebook Reels', 'facebook/marketplace': 'Facebook Marketplace',
+  'facebook/search': 'Facebook Busca', 'facebook/facebook_profile_feed': 'Facebook Perfil',
+  'facebook/facebook_notification': 'Facebook Notificação', 'facebook/biz_disco_feed': 'Facebook Descobrir',
+  'audience_network/rewarded_video': 'Audience Network', 'audience_network/an_classic': 'Audience Network',
+  'messenger/messenger_home': 'Messenger', 'messenger/story': 'Messenger Stories',
+};
+async function fetchFacebookInsightsByFormat({ since, until, datePreset } = {}) {
+  const token = String(process.env.FB_ADS_TOKEN || '').trim();
+  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
+  if (!token || !act) return { ok: false, error: 'not_configured' };
+  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
+  const base = { fields: 'spend,actions,action_values', breakdowns: 'publisher_platform,platform_position', level: 'account', access_token: token };
+  let params, cacheKey;
+  if (datePreset) { params = { ...base, date_preset: datePreset }; cacheKey = 'fmt:preset:' + datePreset; }
+  else {
+    const s = String(since || '').trim(), u = String(until || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
+    params = { ...base, time_range: JSON.stringify({ since: s, until: u }) }; cacheKey = 'fmt:' + s + '|' + u;
+  }
+  const now = Date.now();
+  const hit = __fbFormatCache.get(cacheKey);
+  if (hit && hit.exp > now) return { ok: true, formats: hit.value, cached: true };
+  try {
+    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
+    if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
+    const rows = (resp.data && Array.isArray(resp.data.data)) ? resp.data.data : [];
+    const purchOf = (acts) => { if (!Array.isArray(acts)) return 0; const p = acts.find((a) => /purchase/.test(a.action_type) && !/value/.test(a.action_type)); return p ? Number(p.value) || 0 : 0; };
+    const revOf = (vals) => { if (!Array.isArray(vals)) return 0; const p = vals.find((a) => /purchase/.test(a.action_type)); return p ? Number(p.value) || 0 : 0; };
+    // Agrupa por label amigável (ex.: reels + reels_overlay = "Instagram Reels").
+    const byLabel = new Map();
+    for (const x of rows) {
+      const pp = String(x.publisher_platform || '?'), pos = String(x.platform_position || '?');
+      const key = pp + '/' + pos;
+      const label = __FB_FORMAT_LABELS[key] || (pp.charAt(0).toUpperCase() + pp.slice(1) + ' ' + pos.replace(/^(facebook|instagram|messenger)_/, '').replace(/_/g, ' '));
+      const cur = byLabel.get(label) || { label, spend: 0, purchases: 0, revenue: 0 };
+      cur.spend += Number(x.spend) || 0; cur.purchases += purchOf(x.actions); cur.revenue += revOf(x.action_values);
+      byLabel.set(label, cur);
+    }
+    const formats = Array.from(byLabel.values())
+      .map((f) => ({ ...f, spend: Math.round(f.spend * 100) / 100, revenue: Math.round(f.revenue * 100) / 100, roas: f.spend > 0 ? Math.round((f.revenue / f.spend) * 100) / 100 : 0 }))
+      .filter((f) => f.purchases > 0) // só formatos que tiveram venda
+      .sort((a, b) => b.purchases - a.purchases);
+    __fbFormatCache.set(cacheKey, { value: formats, exp: now + 5 * 60 * 1000 });
+    return { ok: true, formats };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'fetch_failed' }; }
+}
+
+// Pizza de ORDER BUMPS: quanto cada bump vendeu (receita) e custou, por categoria.
+// Upgrade = 1 categoria (todos os perfis). Curtidas = mistas+brasileiras+reais juntas,
+// mas o CUSTO é por subtipo. Views, Comentários e Garantia idem. Cache 5 min.
+const __bumpPieCache = new Map();
+// Preços dos bumps em CENTAVOS (espelham pricing.js: tabelaCurtidas / tabelaVisualizacoes).
+const _BP_CURTIDAS = {
+  mistos: { 150: 490, 300: 790, 500: 990, 700: 1490, 1000: 1990, 2000: 2490, 3000: 2990, 4000: 3490, 5000: 3990, 7500: 4990, 10000: 6990, 15000: 8990 },
+  curtidas_brasileiras: { 150: 490, 300: 990, 500: 1490, 700: 2990, 1000: 3990, 2000: 4990, 3000: 5990, 4000: 6990, 5000: 7990, 7500: 10990, 10000: 13990, 15000: 19990 },
+  organicos: { 150: 1190, 300: 1990, 500: 3490, 1000: 4890, 2000: 7390, 3000: 9790, 4000: 12290, 5000: 15790, 7500: 19590, 10000: 24490, 15000: 31490 },
+};
+const _BP_VIEWS = { 1000: 490, 2500: 990, 5000: 1490, 10000: 1990, 25000: 2490, 50000: 3490, 100000: 4990, 150000: 5990, 200000: 6990, 250000: 8990, 500000: 10990, 1000000: 15990 };
+const _BP_UPGRADE_ADD = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
+// Custo real por 1000 (derivado do histórico de providerCharge).
+const _BP_COST_CURTIDAS = { mistos: 0.533, curtidas_brasileiras: 2.404, organicos: 7.762 };
+const _BP_COST_VIEWS_PER_K = 0.042;
+const _BP_COST_FOLLOWERS = { organicos: 37.61, brasileiros: 6.92, mistos: 2.36 };
+const _BP_COST_COMMENT_UNIT = 0.08; // estimativa por comentário (WorldSMM)
+async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
+  const key = 'bp:' + (sinceMs || 0) + '|' + (untilMs || 0);
+  const now = Date.now();
+  const hit = __bumpPieCache.get(key);
+  if (hit && hit.exp > now) return hit.value;
+  try {
+    const col = await getCollection('checkout_orders');
+    const paidOr = [{ status: 'pago' }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }, { paidAt: { $exists: true, $nin: [null, ''] } }];
+    const q = { $and: [{ $or: paidOr }, { additionalInfo: { $elemMatch: { key: 'order_bumps', value: /\S/ } } }] };
+    const rows = await col.find(q).project({ additionalInfo: 1, additionalInfoMap: 1, tipo: 1, tipoServico: 1, paidAt: 1, 'paghiper.paidAt': 1, createdAt: 1 }).limit(80000).toArray();
+    const getA = (o, k) => { const m = o.additionalInfoMap || {}; if (m[k] != null) return m[k]; const it = (o.additionalInfo || []).find((x) => x && x.key === k); return it ? it.value : undefined; };
+    const cat = { upgrade: { label: 'Upgrade', count: 0, revenue: 0, cost: 0 }, curtidas: { label: 'Curtidas', count: 0, revenue: 0, cost: 0 }, views: { label: 'Visualizações', count: 0, revenue: 0, cost: 0 }, comentarios: { label: 'Comentários', count: 0, revenue: 0, cost: 0 }, garantia: { label: 'Garantia', count: 0, revenue: 0, cost: 0 } };
+    for (const o of rows) {
+      const dt = new Date(o.paidAt || (o.paghiper && o.paghiper.paidAt) || o.createdAt || 0).getTime();
+      if (sinceMs && (!dt || dt < sinceMs)) continue;
+      if (untilMs && (!dt || dt > untilMs)) continue;
+      const bs = String(getA(o, 'order_bumps') || '').trim(); if (!bs) continue;
+      const baseTipo = String(getA(o, 'tipo_servico') || o.tipo || o.tipoServico || '').toLowerCase().trim();
+      const variant = (/^(organicos|curtidas_organicos|curtidas_reais)$/.test(baseTipo)) ? 'organicos' : (baseTipo === 'curtidas_brasileiras' ? 'curtidas_brasileiras' : 'mistos');
+      const follower = /organico/.test(baseTipo) ? 'organicos' : /brasileir/.test(baseTipo) ? 'brasileiros' : 'mistos';
+      const totalCents = (() => { const s = String(getA(o, 'order_bumps_total') || '').replace(/[^\d.,]/g, ''); if (!s) return 0; const n = Number(s.replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? Math.round(n * 100) : 0; })();
+      let othersCents = 0; let hasUpgrade = false, upgradeBaseQty = 0;
+      for (const part of bs.split(/[;,]/)) {
+        const [k0, v0] = part.split(':'); const k = String(k0 || '').trim().toLowerCase(); const qv = parseInt(v0, 10) || (k === 'upgrade' ? 1 : 0);
+        if (k === 'upgrade') { hasUpgrade = true; upgradeBaseQty = Number(getA(o, 'quantidade')) || 0; }
+        else if (k === 'likes') { const rev = (_BP_CURTIDAS[variant] || _BP_CURTIDAS.mistos)[qv] || 0; othersCents += rev; if (rev || qv) { cat.curtidas.count++; cat.curtidas.revenue += rev / 100; cat.curtidas.cost += (qv / 1000) * (_BP_COST_CURTIDAS[variant] || _BP_COST_CURTIDAS.mistos); } }
+        else if (k === 'views') { const rev = _BP_VIEWS[qv] || 0; othersCents += rev; if (rev || qv) { cat.views.count++; cat.views.revenue += rev / 100; cat.views.cost += (qv / 1000) * _BP_COST_VIEWS_PER_K; } }
+        else if (k === 'comments') { const rev = qv * 150; othersCents += rev; if (qv) { cat.comentarios.count++; cat.comentarios.revenue += rev / 100; cat.comentarios.cost += qv * _BP_COST_COMMENT_UNIT; } }
+        else if (/^warranty/.test(k)) { othersCents += 990; cat.garantia.count++; cat.garantia.revenue += 9.9; }
+      }
+      if (hasUpgrade) {
+        cat.upgrade.count++;
+        const upRev = (totalCents > 0) ? Math.max(0, totalCents - othersCents) : 0;
+        cat.upgrade.revenue += upRev / 100;
+        const add = _BP_UPGRADE_ADD[upgradeBaseQty] || 0;
+        cat.upgrade.cost += (add / 1000) * (_BP_COST_FOLLOWERS[follower] || _BP_COST_FOLLOWERS.mistos);
+      }
+    }
+    const categories = Object.values(cat)
+      .map((c) => ({ label: c.label, count: c.count, revenue: Math.round(c.revenue * 100) / 100, cost: Math.round(c.cost * 100) / 100, profit: Math.round((c.revenue - c.cost) * 100) / 100 }))
+      .filter((c) => c.count > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+    const value = { ok: categories.length > 0, categories };
+    __bumpPieCache.set(key, { value, exp: now + 5 * 60 * 1000 });
+    return value;
+  } catch (e) { return { ok: false, categories: [], error: (e && e.message) || 'fail' }; }
 }
 
 app.get('/painel', requireAdmin, async (req, res) => {
@@ -39422,6 +40090,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     // Gasto de anúncios do Facebook — acompanha o período do painel (só dashboard/vendas).
     let fbSpend = null, fbSpendOk = false;
+    let adFormatPie = { ok: false, formats: [] };
+    let bumpPie = { ok: false, categories: [] };
     if (view === 'dashboard' || view === 'vendas') {
       try {
         const pad = (n) => String(n).padStart(2, '0');
@@ -39449,10 +40119,19 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const r = await fetchFacebookSpend(fbArgs);
         if (r && r.ok) { fbSpend = Number(r.spend) || 0; fbSpendOk = true; }
         else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
+        // Insights por FORMATO (pizza de vendas) + pizza de ORDER BUMPS — só no dashboard.
+        if (view === 'dashboard') {
+          try { const rf = await fetchFacebookInsightsByFormat(fbArgs); if (rf && rf.ok) adFormatPie = { ok: true, formats: rf.formats }; } catch (_) {}
+          try {
+            const _bs = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.since + 'T00:00:00-03:00').getTime() : null;
+            const _bu = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.until + 'T23:59:59-03:00').getTime() : null;
+            bumpPie = await computeOrderBumpPie({ sinceMs: _bs, untilMs: _bu });
+          } catch (_) {}
+        }
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -43851,13 +44530,16 @@ function getUpsellOffer(order) {
     // ── Determinar qty do upsell: próxima entrada acima do qty original ──
     // Preferimos oferecer a mesma quantidade ou a próxima tier
     const discountPct = Number(process.env.UPSELL_DISCOUNT_PCT || 30); // 30% de desconto padrão
-    let offerEntry = table.find(e => e.q > qty) || table[table.length - 1];
-    // Se não há tier acima, oferecer a mesma qty
-    if (!offerEntry) offerEntry = table.find(e => e.q === qty) || table[table.length - 1];
-
-    const basePrice  = offerEntry.p;
-    const offerQty   = offerEntry.q;
-    const offerCents = Math.max(50, Math.round(basePrice * (1 - discountPct / 100))); // mínimo 50 centavos
+    // DOBRAR o pedido: adiciona a MESMA quantidade que o cliente acabou de comprar.
+    let baseEntry = table.find(e => e.q === qty);
+    if (!baseEntry) { // qty fora da tabela: usa o tier <= qty mais próximo (ou o menor)
+      baseEntry = table.filter(e => e.q <= qty).sort((a, b) => b.q - a.q)[0] || table[0];
+    }
+    const basePrice  = baseEntry.p;   // preço cheio da quantidade adicionada
+    const offerQty   = qty;           // dobra: adiciona a mesma quantidade comprada
+    // Mínimo R$ 3,00: a PagHiper REJEITA PIX abaixo disso ("valor abaixo do mínimo
+    // permitido de R$ 3,00"), o que fazia o upsell barato falhar sem registro.
+    const offerCents = Math.max(300, Math.round(basePrice * (1 - discountPct / 100)));
 
     // ── Label legível ────────────────────────────────────────────
     const tipoLabel = (() => {
@@ -44020,7 +44702,7 @@ app.post('/api/upsell/charge', async (req, res) => {
     if (existingUpsell) return res.json({ ok: true, alreadyAccepted: true, identifier: existingUpsell.identifier, correlationID: existingUpsell.correlationID, brCode: existingUpsell?.paghiper?.brCode || '', qrCodeImage: existingUpsell?.paghiper?.qrCodeImage || '' });
 
     const offer = getUpsellOffer(parent);
-    if (!offer || offer.expired) return res.status(400).json({ ok: false, error: offer ? 'offer_expired' : 'no_offer' });
+    if (!offer || offer.expired) { try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: offer ? 'offer_expired' : 'no_offer', parentIdentifier, at: new Date().toISOString() }); } catch (_) {} return res.status(400).json({ ok: false, error: offer ? 'offer_expired' : 'no_offer' }); }
 
     const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
     if (!apiKey) {
@@ -44039,8 +44721,8 @@ app.post('/api/upsell/charge', async (req, res) => {
     let cpfDigits = String(parent?.customer?.cpf || parent?.customer?.cpfCnpj || map['cpf'] || map['cpf_cnpj'] || '').replace(/\D/g, '');
     const envCpf = String(process.env.PAGHIPER_DEFAULT_CPF || '').replace(/\D/g, '').trim();
     if ((!cpfDigits || cpfDigits.length !== 11) && envCpf && envCpf.length === 11) cpfDigits = envCpf;
-    if (!email) return res.status(400).json({ ok: false, error: 'missing_email' });
-    if (!cpfDigits || cpfDigits.length !== 11) return res.status(400).json({ ok: false, error: 'missing_cpf' });
+    if (!email) { try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'missing_email', parentIdentifier, at: new Date().toISOString() }); } catch (_) {} return res.status(400).json({ ok: false, error: 'missing_email' }); }
+    if (!cpfDigits || cpfDigits.length !== 11) { try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'missing_cpf', parentIdentifier, at: new Date().toISOString() }); } catch (_) {} return res.status(400).json({ ok: false, error: 'missing_cpf' }); }
 
     // Gerar IDs únicos para o upsell
     const upsellCorrelationID = `upsell-${parentIdentifier}-${Date.now()}`;
@@ -44114,8 +44796,10 @@ app.post('/api/upsell/charge', async (req, res) => {
     })();
 
     if (!tx || (!brCode && !qrCodeImage)) {
+      const pmsg = String(root?.response_message || data?.message || 'PagHiper retornou resposta inválida.').trim();
       console.error('[Upsell] PagHiper resposta inesperada:', JSON.stringify(data).slice(0, 400));
-      return res.status(502).json({ ok: false, error: 'charge_failed', message: String(root?.response_message || data?.message || 'PagHiper retornou resposta inválida.').trim() });
+      try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'charge_failed', parentIdentifier, offerCents: offer.offerCents, offerQty: offer.offerQty, tipo: offer.tipo, paghiperResult: String(root?.result || data?.result || ''), paghiperMessage: pmsg, at: new Date().toISOString() }); } catch (_) {}
+      return res.status(502).json({ ok: false, error: 'charge_failed', message: pmsg });
     }
 
     const upsellIdentifier = tx;
@@ -44166,6 +44850,7 @@ app.post('/api/upsell/charge', async (req, res) => {
     });
   } catch (e) {
     console.error('[Upsell] /api/upsell/charge err:', e?.message, e?.response?.data);
+    try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'server_error', parentIdentifier: (req.body && req.body.parentIdentifier) || '', message: e?.message || '', paghiperData: e?.response?.data ? JSON.stringify(e.response.data).slice(0, 400) : '', at: new Date().toISOString() }); } catch (_) {}
     return res.status(500).json({ ok: false, error: 'server_error', details: e?.message });
   }
 });
@@ -44289,6 +44974,7 @@ const server = app.listen(port, () => {
   maybeSendPaymentApprovedPreviewEmail(server);
   try { startEmailBounceLoop(); } catch (_) {} // processa bounces (DSN) → supressão automática
   try { startLtvD2Loop(); } catch (_) {} // LTV D+2: só ENVIA se a config (settings.ltv_d2.enabled) estiver ligada — desligado por padrão
+  try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
 
   // ── Garante índices em checkout_orders (idempotente) — evita varredura completa (COLLSCAN) ──

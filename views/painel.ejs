@@ -4495,6 +4495,157 @@
           })();
         </script>
       </div>
+
+      <div id="adFormatWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <strong style="font-size: 1rem; color:#111827;">Vendas por formato de anúncio (Meta)</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Atribuição do pixel · período do painel</div>
+        </div>
+        <% var _af = (typeof adFormatPie !== 'undefined' && adFormatPie) ? adFormatPie : { ok:false, formats:[] }; %>
+        <% if (!_af.ok || !(_af.formats && _af.formats.length)) { %>
+          <div style="color:#6b7280; font-size:0.9rem; margin-top:10px;">Sem dados de anúncios para o período (ou conexão Meta indisponível).</div>
+        <% } else { %>
+          <div style="display:flex; gap:22px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+            <div style="flex:0 0 auto;"><canvas id="adFormatPieChart" width="280" height="280" style="max-width:280px;"></canvas></div>
+            <div style="flex:1 1 340px; min-width:0; overflow-x:auto;">
+              <% var afRow = function(f){ var rc=(f.roas>=2.5?'#166534':(f.roas>=1.5?'#b45309':'#991b1b')); return '<tr><td style="white-space:nowrap;">'+f.label+'</td><td style="text-align:right;font-weight:700;">'+(f.purchases||0).toLocaleString('pt-BR')+'</td><td style="text-align:right;">R$ '+(f.revenue||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td><td style="text-align:right;color:#6b7280;">R$ '+(f.spend||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</td><td style="text-align:right;font-weight:700;color:'+rc+';">'+(f.roas||0).toFixed(2)+'</td></tr>'; }; %>
+              <table class="dashboard-table" style="min-width:0; font-size:0.9rem;">
+                <thead><tr><th>Formato</th><th style="text-align:right;">Vendas</th><th style="text-align:right;">Faturamento</th><th style="text-align:right;">Gasto</th><th style="text-align:right;">ROAS</th></tr></thead>
+                <tbody>
+                  <% _af.formats.slice(0,5).forEach(function(f){ %><%- afRow(f) %><% }); %>
+                </tbody>
+              </table>
+              <% if (_af.formats.length > 5) { %>
+                <button type="button" id="adFormatExpandBtn" style="margin-top:10px; padding:8px 14px; background:#fff; border:1px solid #d1d5db; border-radius:8px; cursor:pointer; font-size:0.85rem; color:#374151; font-weight:600;">Ver todos os <%= _af.formats.length %> formatos ▾</button>
+              <% } %>
+            </div>
+          </div>
+
+          <% if (_af.formats.length > 5) { %>
+          <div id="adFormatModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99999; align-items:center; justify-content:center; padding:16px;">
+            <div style="background:#fff; border-radius:12px; max-width:760px; width:100%; max-height:85vh; overflow:auto; padding:18px; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <strong style="font-size:1.05rem; color:#111827;">Todos os formatos — vendas por anúncio</strong>
+                <button type="button" id="adFormatModalClose" style="background:none; border:none; font-size:24px; cursor:pointer; color:#6b7280; line-height:1;">&times;</button>
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="dashboard-table" style="min-width:0; font-size:0.9rem; width:100%;">
+                  <thead><tr><th>Formato</th><th style="text-align:right;">Vendas</th><th style="text-align:right;">Faturamento</th><th style="text-align:right;">Gasto</th><th style="text-align:right;">ROAS</th></tr></thead>
+                  <tbody>
+                    <% _af.formats.forEach(function(f){ %><%- afRow(f) %><% }); %>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <script>
+            (function(){
+              var b=document.getElementById('adFormatExpandBtn'), m=document.getElementById('adFormatModal'), c=document.getElementById('adFormatModalClose');
+              if(b&&m) b.addEventListener('click', function(){ m.style.display='flex'; });
+              if(c&&m) c.addEventListener('click', function(){ m.style.display='none'; });
+              if(m) m.addEventListener('click', function(e){ if(e.target===m) m.style.display='none'; });
+            })();
+          </script>
+          <% } %>
+          <script type="application/json" id="adFormatPieData"><%- JSON.stringify(_af.formats) %></script>
+          <script>
+            (function(){
+              function draw(){
+                try {
+                  var el = document.getElementById('adFormatPieData');
+                  var data = el ? JSON.parse(el.textContent || '[]') : [];
+                  if (!data.length) return;
+                  data.sort(function(a,b){ return b.purchases - a.purchases; });
+                  var top = data.slice(0,6), rest = data.slice(6);
+                  var labels = top.map(function(f){ return f.label; });
+                  var vals = top.map(function(f){ return f.purchases; });
+                  if (rest.length){ labels.push('Outros'); vals.push(rest.reduce(function(s,f){ return s + (f.purchases||0); }, 0)); }
+                  var colors = ['#7c3aed','#2563eb','#16a34a','#f59e0b','#ec4899','#06b6d4','#9ca3af'];
+                  var ctx = document.getElementById('adFormatPieChart');
+                  if (!ctx || (Chart.getChart && Chart.getChart(ctx))) return;
+                  new Chart(ctx, {
+                    type: 'pie',
+                    data: { labels: labels, datasets: [{ data: vals, backgroundColor: colors, borderColor:'#ffffff', borderWidth:2 }] },
+                    options: { responsive:false, animation:false, plugins: { legend: { position:'bottom', labels:{ font:{size:11}, padding:8, boxWidth:12 } }, tooltip: { callbacks: { label: function(c){ var t=c.dataset.data.reduce(function(s,v){ return s+v; },0); var p=t?Math.round(c.parsed/t*100):0; return c.label+': '+c.parsed+' vendas ('+p+'%)'; } } } } }
+                  });
+                } catch(_){}
+              }
+              // Espera o Chart.js carregar (evita corrida de ordem de scripts).
+              function ready(){
+                if (typeof Chart !== 'undefined') { draw(); return; }
+                var tries = 0; var iv = setInterval(function(){ if (typeof Chart !== 'undefined') { clearInterval(iv); draw(); } else if (++tries > 50) { clearInterval(iv); } }, 100);
+              }
+              if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
+            })();
+          </script>
+        <% } %>
+      </div>
+
+      <div id="bumpPieWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <strong style="font-size: 1rem; color:#111827;">Order bumps — qual vende mais</strong>
+          <div style="font-size:0.85rem; color:#6b7280;">Receita por bump · custo por tipo · período do painel</div>
+        </div>
+        <% var _bp = (typeof bumpPie !== 'undefined' && bumpPie) ? bumpPie : { ok:false, categories:[] }; %>
+        <% if (!_bp.ok || !(_bp.categories && _bp.categories.length)) { %>
+          <div style="color:#6b7280; font-size:0.9rem; margin-top:10px;">Sem order bumps no período.</div>
+        <% } else { %>
+          <div style="display:flex; gap:22px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+            <div style="flex:0 0 auto;"><canvas id="bumpPieChart" width="280" height="280" style="max-width:280px;"></canvas></div>
+            <div style="flex:1 1 340px; min-width:0; overflow-x:auto;">
+              <table class="dashboard-table" style="min-width:0; font-size:0.9rem;">
+                <thead><tr><th>Bump</th><th style="text-align:right;">Qtd pedidos</th><th style="text-align:right;">Receita</th><th style="text-align:right;">Custo</th><th style="text-align:right;">Lucro</th></tr></thead>
+                <tbody>
+                  <% _bp.categories.forEach(function(c){ %>
+                    <tr>
+                      <td style="white-space:nowrap;"><%= c.label %></td>
+                      <td style="text-align:right;"><%= (c.count||0).toLocaleString('pt-BR') %></td>
+                      <td style="text-align:right; font-weight:700;">R$ <%= (c.revenue||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
+                      <td style="text-align:right; color:#6b7280;">R$ <%= (c.cost||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
+                      <td style="text-align:right; font-weight:700; color:<%= (c.profit>=0?'#166534':'#991b1b') %>;">R$ <%= (c.profit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+              <div style="font-size:0.75rem; color:#9ca3af; margin-top:8px;">Curtidas = mistas + brasileiras + reais juntas (custo calculado por subtipo). Custo de comentários é estimativa.</div>
+            </div>
+          </div>
+          <script type="application/json" id="bumpPieData"><%- JSON.stringify(_bp.categories) %></script>
+          <script>
+            (function(){
+              function draw(){
+                try {
+                  var el=document.getElementById('bumpPieData'); var data=el?JSON.parse(el.textContent||'[]'):[];
+                  if(!data.length) return;
+                  var labels=data.map(function(c){ return c.label; }); var vals=data.map(function(c){ return c.revenue; });
+                  var colors=['#7c3aed','#ec4899','#2563eb','#16a34a','#f59e0b','#06b6d4','#9ca3af'];
+                  var ctx=document.getElementById('bumpPieChart'); if(!ctx||(Chart.getChart&&Chart.getChart(ctx))) return;
+                  new Chart(ctx,{ type:'pie', data:{ labels:labels, datasets:[{ data:vals, backgroundColor:colors, borderColor:'#ffffff', borderWidth:2 }] }, options:{ responsive:false, animation:false, plugins:{ legend:{ position:'bottom', labels:{ font:{size:11}, padding:8, boxWidth:12 } }, tooltip:{ callbacks:{ label:function(c){ var t=c.dataset.data.reduce(function(s,v){ return s+v; },0); var p=t?Math.round(c.parsed/t*100):0; return c.label+': R$ '+Number(c.parsed).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+' ('+p+'%)'; } } } } } });
+                } catch(_){}
+              }
+              function ready(){ if(typeof Chart!=='undefined'){ draw(); return; } var t=0; var iv=setInterval(function(){ if(typeof Chart!=='undefined'){ clearInterval(iv); draw(); } else if(++t>50){ clearInterval(iv); } }, 100); }
+              if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ready); else ready();
+            })();
+          </script>
+        <% } %>
+      </div>
+      <script>
+        (function(){
+          // Reordena: Distribuição vem ANTES de "Vendas por formato" e "Order bumps".
+          function reorder(){
+            try {
+              var dist = document.getElementById('dashboardPaymentWrap');
+              if (!dist || !dist.parentNode) return;
+              var anchor = dist.nextSibling;
+              var af = document.getElementById('adFormatWrap');
+              var bp = document.getElementById('bumpPieWrap');
+              if (af) dist.parentNode.insertBefore(af, anchor);
+              if (bp) dist.parentNode.insertBefore(bp, anchor);
+            } catch(_){}
+          }
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', reorder); else reorder();
+        })();
+      </script>
       <% } %>
     <% } %>
 
@@ -4858,13 +5009,16 @@
                   try {
                     const d = (v instanceof Date) ? v : new Date(v || 0);
                     if (!Number.isFinite(d.getTime())) return '-';
-                    try { return d.toLocaleString('pt-BR'); } catch (_) {}
-                    const y = d.getFullYear();
-                    const m = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    const hh = String(d.getHours()).padStart(2, '0');
-                    const mm = String(d.getMinutes()).padStart(2, '0');
-                    const ss = String(d.getSeconds()).padStart(2, '0');
+                    // Sempre no fuso de São Paulo (-3), independente do fuso do servidor.
+                    try { return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }); } catch (_) {}
+                    // Fallback: São Paulo é UTC-3 fixo (sem horário de verão desde 2019).
+                    const sp = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                    const y = sp.getUTCFullYear();
+                    const m = String(sp.getUTCMonth() + 1).padStart(2, '0');
+                    const day = String(sp.getUTCDate()).padStart(2, '0');
+                    const hh = String(sp.getUTCHours()).padStart(2, '0');
+                    const mm = String(sp.getUTCMinutes()).padStart(2, '0');
+                    const ss = String(sp.getUTCSeconds()).padStart(2, '0');
                     return `${day}/${m}/${y} ${hh}:${mm}:${ss}`;
                   } catch (_) { return '-'; }
                 };
@@ -8081,6 +8235,8 @@
           <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
           <option value="fornecedor_social">Fornecedor Social</option>
           <option value="fornecedor_social_likes">Fornecedor Social (Bump Curtidas)</option>
+          <option value="topfama">TopFama (Curtidas reais)</option>
+          <option value="topfama_likes">TopFama (Bump Curtidas reais)</option>
           <option value="worldsmm_comments">WorldSMM (Comentários)</option>
         </select>
       </div>

@@ -49,6 +49,28 @@ function parseCutoffMs(cutoffDate) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** Mês (YYYY-MM) de um timestamp, no fuso de Brasília. */
+function monthKeyOf(dateMs) {
+  const d = new Date(Number(dateMs || 0) - 3 * 60 * 60 * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Lista de meses (YYYY-MM) tocados por um intervalo [startMs, endMs], no fuso de Brasília. */
+function monthsInRange(startMs, endMs) {
+  const out = [];
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return out;
+  const s = new Date(startMs - 3 * 60 * 60 * 1000);
+  let y = s.getUTCFullYear(), m = s.getUTCMonth();
+  const e = new Date(endMs - 3 * 60 * 60 * 1000);
+  const ey = e.getUTCFullYear(), em = e.getUTCMonth();
+  let guard = 0;
+  while ((y < ey || (y === ey && m <= em)) && guard++ < 600) {
+    out.push(`${y}-${String(m + 1).padStart(2, '0')}`);
+    if (++m > 11) { m = 0; y++; }
+  }
+  return out;
+}
+
 /** Normaliza a config vinda do banco/painel, com defaults e clamps. */
 function normalizeConfig(raw) {
   const v = raw && typeof raw === 'object' ? raw : {};
@@ -75,6 +97,19 @@ function normalizeConfig(raw) {
   const cutoffRaw = String(v.cutoffDate || '').slice(0, 10);
   const hasCutoff = /^\d{4}-\d{2}-\d{2}$/.test(cutoffRaw);
 
+  // Alíquotas de serviço TRAVADAS por mês (YYYY-MM → taxa 0..1). Onde travado,
+  // sobrepõe o servicoTaxPct padrão só para aquele mês.
+  const locksRaw = (v.servicoTaxLocks && typeof v.servicoTaxLocks === 'object') ? v.servicoTaxLocks : {};
+  const servicoTaxLocks = {};
+  for (const k of Object.keys(locksRaw)) {
+    if (!/^\d{4}-\d{2}$/.test(k)) continue;
+    const rr = Number(String(locksRaw[k]).replace(',', '.'));
+    if (!Number.isFinite(rr)) continue;
+    let rate = rr > 1 ? rr / 100 : rr;
+    rate = Math.max(0, Math.min(1, rate));
+    servicoTaxLocks[k] = rate;
+  }
+
   return {
     ebookPct: pct,
     ebookCapReais: round2(cap),
@@ -84,6 +119,7 @@ function normalizeConfig(raw) {
     losdadosCostReais: round2(losdadosCost),
     cutoffDate: hasCutoff ? cutoffRaw : '',
     cutoffMs: hasCutoff ? parseCutoffMs(cutoffRaw) : null,
+    servicoTaxLocks,
   };
 }
 
@@ -249,9 +285,21 @@ function buildReport(entries, cfg, range = {}) {
     }
   }
 
-  // Impostos: 5% ebook + 13% serviço (alíquotas configuráveis)
+  // Impostos: 5% ebook + serviço (alíquota configurável, com TRAVA por mês).
   totals.ebookTax = round2(totals.ebook * cfg.ebookTaxPct);
-  totals.servicoTax = round2(totals.servico * cfg.servicoTaxPct);
+  // Serviço: soma por linha usando a alíquota travada do mês (se houver) ou a padrão.
+  const _locks = (cfg.servicoTaxLocks && typeof cfg.servicoTaxLocks === 'object') ? cfg.servicoTaxLocks : {};
+  let _servicoTax = 0;
+  for (const r of rows) {
+    const mk = monthKeyOf(r.dateMs);
+    const rate = (_locks[mk] != null) ? _locks[mk] : cfg.servicoTaxPct;
+    _servicoTax += (Number(r.servico) || 0) * rate;
+  }
+  totals.servicoTax = round2(_servicoTax);
+  // Alíquota efetiva média do período (para exibição no card).
+  totals.servicoTaxEffectivePct = totals.servico > 0
+    ? round2((totals.servicoTax / totals.servico) * 100)
+    : round2(cfg.servicoTaxPct * 100);
   totals.taxTotal = round2(totals.ebookTax + totals.servicoTax);
   // Referência: imposto se tudo fosse serviço (para ver a economia do split)
   totals.taxIfAllService = round2(totals.revenue * cfg.servicoTaxPct);
@@ -273,6 +321,8 @@ module.exports = {
   DEFAULTS,
   normalizeConfig,
   parseCutoffMs,
+  monthKeyOf,
+  monthsInRange,
   splitOrder,
   buildReport,
   round2,
