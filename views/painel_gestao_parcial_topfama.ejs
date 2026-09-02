@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão Parcial (Topfama)</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    h1 { margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .btn { padding: 8px 14px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9rem; color: #fff; }
+    .btn-primary { background: #2563eb; }
+    .btn-green { background: #16a34a; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef0f4; font-size: 0.85rem; vertical-align: middle; white-space: nowrap; }
+    th { background: #f9fafb; font-weight: 700; color: #6b7280; position: sticky; top: 0; }
+    tr:hover { background: #f8fafc; }
+    .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+    .pill-part { background: #fef3c7; color: #92400e; }
+    .pill-done { background: #dcfce7; color: #166534; }
+    .pill-prog { background: #e0f2fe; color: #075985; }
+    .pill-canc { background: #fee2e2; color: #991b1b; }
+    .pill-none { background: #f3f4f6; color: #6b7280; }
+    .muted { color: #9ca3af; }
+    a.link { color: #2563eb; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+    .reorder-btn { padding: 5px 10px; border: 1px solid #16a34a; background: #16a34a; color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.78rem; }
+    .verify-btn { padding: 5px 10px; border: 1px solid #2563eb; background: #fff; color: #2563eb; border-radius: 6px; cursor: pointer; font-size: 0.78rem; margin-right: 6px; }
+    .verify-btn:hover { background: #2563eb; color: #fff; }
+    .verify-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .copy-btn { padding: 3px 8px; border: 1px solid #cbd5e1; background: #fff; color: #475569; border-radius: 6px; cursor: pointer; font-size: 0.72rem; margin-left: 4px; }
+    .copy-btn:hover { background: #f1f5f9; }
+    .audit-btn { padding: 3px 8px; border: 1px solid #7c3aed; background: #fff; color: #7c3aed; border-radius: 6px; cursor: pointer; font-size: 0.72rem; margin-left: 6px; }
+    .audit-btn:hover { background: #7c3aed; color: #fff; }
+    .audit-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .bulkbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; }
+    .rowChk, #selAll { width: 16px; height: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'gestao-parcial-topfama' }) %>
+  <div class="main-content">
+    <h1>Gestão Parcial (Curtidas)</h1>
+    <div class="sub">Pedidos de <strong>curtidas</strong> (TopFama e Fornecedor Social), com status e quantidade faltando (via <code>action=status</code>). Atualiza sozinho a cada 6h. <em>"não verificado" = ainda não consultado — clique em Atualizar status.</em> A coluna <strong>Fornecedor</strong> mostra de qual provedor é cada pedido.</div>
+
+    <form class="toolbar" method="get" action="/painel/gestao-parcial-topfama">
+      <button type="button" id="refreshBtn" class="btn btn-primary">🔄 Atualizar status agora</button>
+      <span id="refreshMsg" class="sub" style="margin:0;"></span>
+      <label class="sub" style="margin:0;">De <input type="date" name="start" value="<%= (typeof filter !== 'undefined' && filter) ? filter.start : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:6px;"></label>
+      <label class="sub" style="margin:0;">Até <input type="date" name="end" value="<%= (typeof filter !== 'undefined' && filter) ? filter.end : '' %>" style="padding:6px; border:1px solid #ccc; border-radius:6px;"></label>
+      <% var _sf = (typeof filter !== 'undefined' && filter) ? (filter.status || '') : ''; %>
+      <label class="sub" style="margin:0;">Status
+        <select name="status" style="padding:6px; border:1px solid #ccc; border-radius:6px;">
+          <option value="" <%= _sf===''?'selected':'' %>>Todos</option>
+          <option value="done" <%= _sf==='done'?'selected':'' %>>Concluído</option>
+          <option value="partial" <%= _sf==='partial'?'selected':'' %>>Parcial</option>
+          <option value="prog" <%= _sf==='prog'?'selected':'' %>>Em andamento</option>
+          <option value="canc" <%= _sf==='canc'?'selected':'' %>>Cancelado/erro</option>
+          <option value="unverified" <%= _sf==='unverified'?'selected':'' %>>Não verificado</option>
+        </select>
+      </label>
+      <% var _rf = (typeof filter !== 'undefined' && filter) ? (filter.result || '') : ''; %>
+      <label class="sub" style="margin:0;">Resultado
+        <select name="result" style="padding:6px; border:1px solid #ccc; border-radius:6px;">
+          <option value="" <%= _rf===''?'selected':'' %>>Todos</option>
+          <option value="ok" <%= _rf==='ok'?'selected':'' %>>OK (entregou ≥ contratado)</option>
+          <option value="nok" <%= _rf==='nok'?'selected':'' %>>NOK (entregou &lt; contratado)</option>
+          <option value="oculto" <%= _rf==='oculto'?'selected':'' %>>Oculto (curtidas escondidas)</option>
+        </select>
+      </label>
+      <% var _ff = (typeof filter !== 'undefined' && filter) ? (filter.fornecedor || '') : ''; var _fornList = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
+         var _fornLabel = function(fn){ return ({ 'topfama':'TopFama', 'fornecedor_social':'Fornecedor Social' })[fn] || fn; }; %>
+      <label class="sub" style="margin:0;">Fornecedor
+        <select name="fornecedor" style="padding:6px; border:1px solid #ccc; border-radius:6px;">
+          <option value="" <%= _ff===''?'selected':'' %>>Todos</option>
+          <% _fornList.forEach(function(fn){ %>
+            <option value="<%= fn %>" <%= _ff===fn?'selected':'' %>><%= _fornLabel(fn) %></option>
+          <% }); %>
+        </select>
+      </label>
+      <button type="submit" class="btn btn-green">Filtrar</button>
+      <a href="/painel/gestao-parcial-topfama" class="sub" style="margin:0;">limpar</a>
+      <span class="sub" style="margin-left:auto;"><strong><%= (rows || []).length %></strong><% if (typeof totalAll !== 'undefined' && totalAll !== (rows||[]).length) { %> de <%= totalAll %><% } %> pedido(s)</span>
+    </form>
+
+    <div class="bulkbar" id="bulkBar">
+      <span><strong id="bulkCount">0</strong> marcado(s)</span>
+      <button type="button" id="bulkVerify" class="btn btn-primary" disabled>✓ Verificar marcados</button>
+      <button type="button" id="bulkAudit" class="btn" style="background:#7c3aed;" disabled>↻ Auditar curtidas marcadas</button>
+      <button type="button" id="bulkCopy" class="btn" style="background:#0ea5e9;" disabled>⧉ Copiar marcados</button>
+      <span id="bulkMsg" class="sub" style="margin:0;"></span>
+    </div>
+
+    <div class="card scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px; text-align:center;"><input type="checkbox" id="selAll" title="Selecionar todos (do filtro atual)"></th>
+            <th>Data solicitação</th>
+            <th>OrderID original</th>
+            <th>Usuário</th>
+            <th>Link post</th>
+            <th>Qtd contratada</th>
+            <th>Status</th>
+            <th>Qtd faltando</th>
+            <th>Curtidas atuais</th>
+            <th>Novo OrderID</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!(rows || []).length) { %>
+            <tr><td colspan="11" style="text-align:center; padding:24px; color:#777;">Nenhum pedido TopFama encontrado.</td></tr>
+          <% } %>
+          <% (rows || []).forEach(function(r){
+               var st = String(r.status || '').toLowerCase();
+               var cls = 'pill-none', label = r.status || '—';
+               if (/partial/.test(st)) { cls = 'pill-part'; }
+               else if (/complet|conclu/.test(st)) { cls = 'pill-done'; }
+               else if (/progress|process|pending|andamento/.test(st)) { cls = 'pill-prog'; }
+               else if (/cancel|refund|error/.test(st)) { cls = 'pill-canc'; }
+               var d = r.dataMs ? new Date(r.dataMs) : null;
+               var dataTxt = d ? (('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)) : '—';
+               var canReorder = (r.remains != null && r.remains > 0 && !r.novoOrderId && (r.statusCat === 'partial' || r.statusCat === 'canc'));
+          %>
+          <tr>
+            <td style="text-align:center;"><input type="checkbox" class="rowChk" data-id="<%= r.id %>" data-field="<%= r.field %>" data-done="<%= r.statusDone ? 1 : 0 %>" data-fornecedor="<%= r.fornecedor || '' %>" data-orderid="<%= r.orderIdOriginal || '' %>" data-usuario="<%= r.usuario || '' %>" data-linkpost="<%= r.linkPost || '' %>" data-inicial="<%= (r.initialLikes != null ? r.initialLikes : '') %>" data-contratada="<%= (r.qtdContratada != null ? r.qtdContratada : '') %>" data-atual="<%= (r.okNok === 'oculto' ? '(oculto)' : (r.auditLikes != null ? r.auditLikes : '')) %>"></td>
+            <td><%= dataTxt %></td>
+            <td><% if (r.fornecedor) { %><span class="muted" style="font-size:0.72rem;">"<%= r.fornecedor %>"</span> <% } %><%= r.orderIdOriginal || '—' %></td>
+            <td><% if (r.usuario) { %><a class="link" href="https://instagram.com/<%= encodeURIComponent(r.usuario) %>" target="_blank" rel="noopener">@<%= r.usuario %></a><% } else { %>—<% } %></td>
+            <td><% if (r.linkPost) { %><a class="link" href="<%= r.linkPost %>" target="_blank" rel="noopener">abrir post</a> <button type="button" class="copy-btn" data-link="<%= r.linkPost %>" title="Copiar link do post">copiar link post</button><% } else { %>—<% } %></td>
+            <td><%= (r.qtdContratada || 0).toLocaleString('pt-BR') %></td>
+            <td><% if (!r.checkedAt && !/complet|conclu/.test(st)) { %><span class="pill pill-none" title="Ainda não consultado via action=status — clique em Verificar">não verificado</span><% } else { %><span class="pill <%= cls %>" title="<%= r.checkedAt ? 'verificado' : 'status do despacho' %>"><%= label || '—' %></span><% } %></td>
+            <td><% if (r.remains == null) { %><span class="muted">—</span><% } else { %><strong style="<%= r.remains > 0 ? 'color:#b45309' : 'color:#166534' %>"><%= r.remains.toLocaleString('pt-BR') %></strong><% } %></td>
+            <td>
+              <% if (!r.statusDone) { %>
+                <span class="muted" title="Auditoria só para pedidos concluídos">—</span>
+              <% } else { %>
+                <span class="audit-val" data-id="<%= r.id %>" data-field="<%= r.field %>">
+                  <% if (r.okNok === 'oculto') { %>
+                    <span style="color:#6b7280;font-weight:700;">🔒 (oculto)</span>
+                    <br><span class="muted" style="font-size:0.68rem;">curtidas ocultadas pela pessoa</span>
+                  <% } else if (r.auditLikes != null) { %>
+                    <strong style="color:#7c3aed;"><%= r.auditLikes.toLocaleString('pt-BR') %></strong>
+                    <% if (r.okNok === 'ok') { %> <span style="color:#166534;font-weight:700;">(ok)</span>
+                    <% } else if (r.okNok === 'nok') { %> <span style="color:#dc2626;font-weight:700;">(nok)</span><% } %>
+                    <% if (r.entregue != null) { %><br><span class="muted" style="font-size:0.68rem;">entregou <%= r.entregue.toLocaleString('pt-BR') %> de <%= (r.qtdContratada||0).toLocaleString('pt-BR') %> · inicial <%= (r.initialLikes!=null?r.initialLikes:0).toLocaleString('pt-BR') %></span><% } %>
+                  <% } else { %><span class="muted">sem auditoria</span><% } %>
+                </span>
+              <% } %>
+            </td>
+            <td><% if (r.novoOrderId) { %><span style="color:#166534; font-weight:700;"><%= r.novoOrderId %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td>
+              <button type="button" class="verify-btn" data-id="<%= r.id %>" data-field="<%= r.field %>">Verificar</button>
+              <% if (canReorder) { %>
+                <button type="button" class="reorder-btn" data-id="<%= r.id %>" data-field="<%= r.field %>" data-remains="<%= r.remains %>">Gerar novo orderid</button>
+              <% } else if (r.novoOrderId) { %>
+                <span class="muted">reposto</span>
+              <% } %>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      var refreshBtn = document.getElementById('refreshBtn');
+      var refreshMsg = document.getElementById('refreshMsg');
+      function say(m){ try { if (refreshMsg) refreshMsg.textContent = m || ''; } catch(_){} }
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', async function(){
+          refreshBtn.disabled = true; say('Consultando TopFama… (pode levar alguns segundos)');
+          try {
+            var r = await fetch('/api/painel/topfama/refresh', { method:'POST', headers:{'Accept':'application/json'}, credentials:'same-origin' });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { say('Atualizado: ' + (d.result && d.result.checked || 0) + ' checados, ' + (d.result && d.result.updated || 0) + ' atualizados. Recarregando…'); setTimeout(function(){ location.reload(); }, 1200); }
+            else { say('Falha: ' + ((d && d.error) || 'erro')); refreshBtn.disabled = false; }
+          } catch (e) { say('Erro de rede.'); refreshBtn.disabled = false; }
+        });
+      }
+      Array.prototype.slice.call(document.querySelectorAll('.verify-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var id = btn.getAttribute('data-id'), field = btn.getAttribute('data-field');
+          var old = btn.textContent; btn.disabled = true; btn.textContent = 'Verificando…';
+          try {
+            var r = await fetch('/api/painel/topfama/verify', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: id, field: field }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { location.reload(); }
+            else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = old; }
+          } catch (e) { alert('Erro de rede.'); btn.disabled = false; btn.textContent = old; }
+        });
+      });
+      // Copiar link do post
+      Array.prototype.slice.call(document.querySelectorAll('.copy-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var link = btn.getAttribute('data-link') || '';
+          if (!link) return;
+          var old = btn.textContent;
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(link); }
+            else { var ta = document.createElement('textarea'); ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+            btn.textContent = '✓ copiado'; setTimeout(function(){ btn.textContent = old; }, 1400);
+          } catch (e) { btn.textContent = 'falhou'; setTimeout(function(){ btn.textContent = old; }, 1400); }
+        });
+      });
+      // Auditar curtidas atuais (Apify → RocketAPI) — só concluídos
+      Array.prototype.slice.call(document.querySelectorAll('.audit-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var id = btn.getAttribute('data-id'), field = btn.getAttribute('data-field');
+          var old = btn.textContent; btn.disabled = true; btn.textContent = 'auditando…';
+          try {
+            var r = await fetch('/api/painel/topfama/audit-likes', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: id, field: field }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { btn.textContent = '✓'; location.reload(); }
+            else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = old; }
+          } catch (e) { alert('Erro de rede.'); btn.disabled = false; btn.textContent = old; }
+        });
+      });
+      Array.prototype.slice.call(document.querySelectorAll('.reorder-btn')).forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var id = btn.getAttribute('data-id'), field = btn.getAttribute('data-field'), remains = btn.getAttribute('data-remains');
+          if (!confirm('Gerar novo pedido no fornecedor repondo ' + remains + ' unidade(s) que faltam?')) return;
+          btn.disabled = true; btn.textContent = 'Enviando…';
+          try {
+            var r = await fetch('/api/painel/topfama/reorder', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ id: id, field: field }) });
+            var d = await r.json().catch(function(){ return null; });
+            if (d && d.ok) { alert('Novo pedido criado! OrderID: ' + d.reorderId + ' (' + d.quantity + ' unidades)'); location.reload(); }
+            else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = 'Gerar novo orderid'; }
+          } catch (e) { alert('Erro de rede.'); btn.disabled = false; btn.textContent = 'Gerar novo orderid'; }
+        });
+      });
+
+      // ── Seleção + ações em massa ──
+      var selAll = document.getElementById('selAll');
+      var bulkCount = document.getElementById('bulkCount');
+      var bulkVerify = document.getElementById('bulkVerify');
+      var bulkAudit = document.getElementById('bulkAudit');
+      var bulkCopy = document.getElementById('bulkCopy');
+      var bulkMsg = document.getElementById('bulkMsg');
+      function checkedRows(){ return Array.prototype.slice.call(document.querySelectorAll('.rowChk')).filter(function(c){ return c.checked; }); }
+      function refreshBulk(){
+        var arr = checkedRows();
+        if (bulkCount) bulkCount.textContent = arr.length;
+        var any = arr.length > 0;
+        if (bulkVerify) bulkVerify.disabled = !any;
+        if (bulkCopy) bulkCopy.disabled = !any;
+        // Auditar só faz sentido para concluídos marcados
+        var anyDone = arr.some(function(c){ return c.getAttribute('data-done') === '1'; });
+        if (bulkAudit) bulkAudit.disabled = !anyDone;
+      }
+
+      // ── Copiar marcados: monta tabela (HTML p/ colar formatado + TSV p/ Excel/Sheets) ──
+      function nfBR(v){ var n = Number(v); return (v === '' || v == null || !isFinite(n)) ? String(v || '') : n.toLocaleString('pt-BR'); }
+      function buildCopyData(rows){
+        var headers = ['OrderID', 'Usuário', 'Link post', 'Qtd inicial', 'Qtd contratada', 'Qtd atual'];
+        var data = rows.map(function(c){
+          var user = c.getAttribute('data-usuario') || '';
+          var forn = c.getAttribute('data-fornecedor') || '';
+          var oid = c.getAttribute('data-orderid') || '';
+          return [
+            (forn ? ('"' + forn + '" ') : '') + oid,   // fornecedor entre aspas na frente do OrderID
+            user ? ('@' + user) : '',
+            c.getAttribute('data-linkpost') || '',
+            c.getAttribute('data-inicial') || '',
+            c.getAttribute('data-contratada') || '',
+            c.getAttribute('data-atual') || ''
+          ];
+        });
+        // TSV: números crus (colam certinho como número no Excel/Sheets)
+        var tsv = [headers.join('\t')].concat(data.map(function(r){ return r.join('\t'); })).join('\n');
+        // HTML: tabela estilizada (cola formatada no Docs/Word/e-mail)
+        var esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+        var th = headers.map(function(h){ return '<th style="border:1px solid #cbd5e1;padding:6px 12px;background:#f1f5f9;text-align:left;font-family:sans-serif;font-size:13px;">' + esc(h) + '</th>'; }).join('');
+        var trs = data.map(function(r){
+          return '<tr>' + r.map(function(v, i){
+            var val;
+            if (i === 2 && v) { val = '<a href="' + esc(v) + '">' + esc(v) + '</a>'; }
+            else if (i >= 3) { val = esc(nfBR(v)); }
+            else { val = esc(v); }
+            var align = (i >= 3) ? 'right' : 'left';
+            return '<td style="border:1px solid #cbd5e1;padding:6px 12px;text-align:' + align + ';font-family:sans-serif;font-size:13px;">' + val + '</td>';
+          }).join('') + '</tr>';
+        }).join('');
+        var html = '<table style="border-collapse:collapse;">' + '<thead><tr>' + th + '</tr></thead><tbody>' + trs + '</tbody></table>';
+        return { tsv: tsv, html: html };
+      }
+      async function copyMarked(){
+        var rows = checkedRows();
+        if (!rows.length) { if (bulkMsg) bulkMsg.textContent = 'Marque ao menos um pedido.'; return; }
+        var out = buildCopyData(rows);
+        try {
+          if (navigator.clipboard && window.ClipboardItem) {
+            var item = new ClipboardItem({ 'text/html': new Blob([out.html], { type: 'text/html' }), 'text/plain': new Blob([out.tsv], { type: 'text/plain' }) });
+            await navigator.clipboard.write([item]);
+          } else if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(out.tsv);
+          } else {
+            var ta = document.createElement('textarea'); ta.value = out.tsv; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+          }
+          if (bulkMsg) bulkMsg.textContent = '✓ ' + rows.length + ' linha(s) copiada(s) — cole no Excel/Sheets/Docs.';
+        } catch (e) {
+          try { await navigator.clipboard.writeText(out.tsv); if (bulkMsg) bulkMsg.textContent = '✓ copiado (texto).'; }
+          catch (_) { if (bulkMsg) bulkMsg.textContent = 'Falha ao copiar.'; }
+        }
+      }
+      if (bulkCopy) bulkCopy.addEventListener('click', copyMarked);
+      if (selAll) selAll.addEventListener('change', function(){
+        Array.prototype.slice.call(document.querySelectorAll('.rowChk')).forEach(function(c){ c.checked = selAll.checked; });
+        refreshBulk();
+      });
+      Array.prototype.slice.call(document.querySelectorAll('.rowChk')).forEach(function(c){ c.addEventListener('change', refreshBulk); });
+
+      async function runBulk(url, items, label){
+        if (!items.length) return;
+        bulkVerify.disabled = true; bulkAudit.disabled = true;
+        if (selAll) selAll.disabled = true;
+        bulkMsg.textContent = label + ' ' + items.length + ' pedido(s)… (pode levar um tempo)';
+        try {
+          var r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ items: items }) });
+          var d = await r.json().catch(function(){ return null; });
+          if (d && d.ok) { bulkMsg.textContent = 'Concluído. Recarregando…'; setTimeout(function(){ location.reload(); }, 900); }
+          else { bulkMsg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); refreshBulk(); if (selAll) selAll.disabled = false; }
+        } catch (e) { bulkMsg.textContent = 'Erro de rede.'; refreshBulk(); if (selAll) selAll.disabled = false; }
+      }
+      if (bulkVerify) bulkVerify.addEventListener('click', function(){
+        var items = checkedRows().map(function(c){ return { id: c.getAttribute('data-id'), field: c.getAttribute('data-field') }; });
+        runBulk('/api/painel/topfama/verify-bulk', items, 'Verificando');
+      });
+      if (bulkAudit) bulkAudit.addEventListener('click', function(){
+        // só concluídos
+        var items = checkedRows().filter(function(c){ return c.getAttribute('data-done') === '1'; }).map(function(c){ return { id: c.getAttribute('data-id'), field: c.getAttribute('data-field') }; });
+        if (!items.length) { bulkMsg.textContent = 'Nenhum concluído marcado (auditoria só para concluídos).'; return; }
+        runBulk('/api/painel/topfama/audit-bulk', items, 'Auditando curtidas de');
+      });
+      refreshBulk();
+    })();
+  </script>
+</body>
+</html>

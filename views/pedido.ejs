@@ -1,0 +1,2544 @@
+<%
+  // Garante que esc está disponível mesmo que não seja passado pelo render
+  if (typeof esc !== 'function') {
+    esc = function(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    };
+  }
+%>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Informações do pedido</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link href="/css/style.css?v=2" rel="stylesheet" />
+  <link href="/css/perfil.css?v=2" rel="stylesheet" />
+  <link href="/css/badges.css" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="/images/logo.png" />
+  <!-- Fonte do card de order bump (mesma vibe do referência) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- TRACK COMBO -->
+  <script>
+    (function() {
+      var script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+      var firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+    })();
+  </script>
+  <!-- End TRACK COMBO -->
+  <style>
+    /* Largura controlada no desktop — evita cards esticados */
+    @media (min-width: 769px) {
+      .container.checkout-page .main-content { max-width: 560px; margin-left: auto; margin-right: auto; }
+      .container.checkout-page .section-block { max-width: 560px; margin-left: auto; margin-right: auto; }
+      #order-content, #upsellModal, #createAccountSection, #privacyAlertCard { max-width: 560px; margin-left: auto; margin-right: auto; }
+      /* Botão do upsell mais compacto no desktop */
+      #upsellAcceptBtn { max-width: 420px; margin-left: auto; margin-right: auto; }
+      #upsellAcceptLabel { font-size: 0.9rem !important; }
+    }
+    /* Dark mode contrast improvements for /pedido */
+    body:not(.theme-light) .service-card#order-content {
+      background-color: #181825 !important; /* Slightly lighter/bluer than base dark */
+      border: 1px solid #4B5563 !important; /* Higher contrast border */
+    }
+    body:not(.theme-light) .info-item > div:first-child,
+    body:not(.theme-light) .info-item > span:first-child {
+       color: #E2E8F0 !important; /* Brighter secondary text */
+    }
+    body:not(.theme-light) .status-box-custom {
+       background: rgba(107, 70, 193, 0.2) !important;
+       border: 1px solid rgba(107, 70, 193, 0.4) !important;
+    }
+    .multi-orders-table .multi-status {
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    body:not(.theme-light) .card-title {
+        color: #F8FAFC !important;
+    }
+    body:not(.theme-light) #orderNumberId,
+    body:not(.theme-light) #orderTipo, 
+    body:not(.theme-light) #orderQtd, 
+    body:not(.theme-light) #paidAtLocal,
+    body:not(.theme-light) #orderBumpsBox {
+        color: #FFFFFF !important;
+    }
+    /* Approved section text */
+    body:not(.theme-light) .approved-payment-section h2 {
+        color: #FFFFFF !important;
+    }
+    body:not(.theme-light) .approved-payment-section p {
+        color: #CBD5E1 !important;
+    }
+    /* Privacy Alert in Dark Mode */
+    body:not(.theme-light) #privacyAlertCard {
+        background: rgba(69, 26, 3, 0.4) !important; /* Darker orange/brown bg */
+        border-color: #92400e !important;
+    }
+    body:not(.theme-light) #privacyAlertCard strong {
+        color: #fbbf24 !important; /* Amber-400 */
+    }
+    body:not(.theme-light) #privacyAlertCard span {
+        color: #fcd34d !important; /* Amber-300 */
+    }
+    body:not(.theme-light) #privacyAlertCard svg {
+        color: #fbbf24 !important;
+    }
+    /* Improve internal borders and buttons in dark mode */
+    body:not(.theme-light) .card-content > div,
+    body:not(.theme-light) .info-item,
+    body:not(.theme-light) #copyOrderBtn,
+    body:not(.theme-light) #backToPrevBtn {
+        border-color: #4B5563 !important;
+    }
+    
+    /* Dark Mode Copy Icon White */
+    body:not(.theme-light) #copyOrderBtn {
+        color: #FFFFFF !important;
+        border-color: rgba(255,255,255,0.3) !important;
+    }
+
+    /* Mobile Optimizations */
+    @media (max-width: 768px) {
+        /* Cards mais largos no mobile: reduz o recuo lateral (container 32px + section-block 10px)
+           para ~12px da borda, mantendo oferta e detalhes no MESMO alinhamento. */
+        .container.checkout-page { padding-left: 12px !important; padding-right: 12px !important; }
+        .container.checkout-page .section-block { padding-left: 0 !important; padding-right: 0 !important; }
+
+        /* Reduce font size for all data values on mobile */
+        #orderTipo,
+        #orderQtd, 
+        #orderInsta, 
+        #paidAtLocal, 
+        #orderTotal, 
+        #orderNumberId, 
+        #famaServicoStatus,
+        #orderBumpsBox {
+            font-size: 1rem !important;
+        }
+
+        /* Stack Total Value label and price */
+        .total-value-row {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 0.25rem !important;
+        }
+        
+        /* Reduce status box padding and font */
+        .status-box-custom {
+            padding: 1rem !important;
+        }
+        .status-box-custom span {
+            font-size: 1rem !important;
+        }
+
+        .multi-orders-table thead {
+            display: none !important;
+        }
+        .multi-orders-table, 
+        .multi-orders-table tbody, 
+        .multi-orders-table tr, 
+        .multi-orders-table td {
+            display: block !important;
+            width: 100% !important;
+        }
+        .multi-orders-table tr {
+            border: 1px solid var(--border-color) !important;
+            border-radius: 12px !important;
+            padding: 0.6rem 0.75rem !important;
+            margin-bottom: 0.75rem !important;
+        }
+        .multi-orders-table td {
+            border-bottom: none !important;
+            padding: 0.35rem 0 !important;
+            text-align: left !important;
+        }
+        .multi-orders-table td::before {
+            content: attr(data-label);
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            margin-bottom: 0.1rem;
+        }
+        .multi-orders-table .multi-order-oid {
+            font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important;
+        }
+        .multi-orders-table td[data-label="Post"] {
+            max-width: none !important;
+        }
+        .multi-orders-table .multi-order-link {
+            display: block !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
+        }
+    }
+    /* Upsell Modal fine-tuning */
+    #upsellFollowersModal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); }
+    #upsellFollowersModal .modal-dialog { background: var(--bg-secondary); overflow: visible; }
+    #upsellFollowersModal .modal-body { padding-top: 0.75rem; }
+    #upsellFollowersModal .plan-cards { gap: 1rem; }
+    #upsellFollowersModal .plan-card { position: relative; overflow: visible !important; padding-top: 0.8rem; margin-top: 0.25rem; }
+    #upsellFollowersModal .plan-badge { top: -6px; z-index: 2; }
+    #upsellExclusiveBanner {
+        background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%);
+        color: #ffffff;
+        padding: 0.6rem 0.8rem;
+        border-radius: 12px;
+        text-align: center;
+        margin-bottom: 0.75rem;
+        box-shadow: var(--shadow-sm);
+    }
+    #upsellExclusiveBanner .exclusive-title { font-weight: 800; letter-spacing: -0.01em; }
+    #upsellExclusiveBanner .exclusive-countdown { font-weight: 700; margin-top: 0.25rem; }
+  </style>
+</head>
+<body class="theme-light has-fixed-menu">
+  <!-- Script de remoção de parâmetros removido para permitir F5 (refresh) -->
+  <%- include('partials/menu') %>
+  <div class="container checkout-page">
+    <!-- clientPage removido para forçar redirecionamento para /cliente -->
+
+    <main class="main-content">
+      <section class="section-block">
+
+      <% if ((function(){ var s=String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase(); return (s==='pago'||s==='paid'); })()) { %>
+        <div class="approved-payment-section" style="text-align: center; margin: 0 0 2rem 0; animation: fadeInUp 0.6s ease-out;">
+            <div style="display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; background-color: #22c55e; margin-bottom: 1rem; box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.3);">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20 6L9 17L4 12" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin: 0 auto 0.5rem; max-width: 16ch; text-wrap: balance;">Agradecemos pela sua compra!</h2>
+            <p style="color: var(--text-secondary); font-size: 0.95rem; margin: 0.25rem 0 0 0; text-align:center;">Acompanhe seu pedido e a ferramenta de reposição na sua conta.</p>
+        </div>
+        <% } %>
+
+        <%
+          var _upsellPayStatus = String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var isPaidLocal = (_upsellPayStatus === 'pago' || _upsellPayStatus === 'paid' || _upsellPayStatus === 'completed');
+          var _fromCliente = (typeof fromCliente !== 'undefined') ? !!fromCliente : false;
+          var showUpsell = false;
+          var upsellOrderIdentifier = String(order.identifier || order.correlationID || '').trim();
+          if (!_fromCliente && isPaidLocal && upsellOrderIdentifier && !(order.upsell && order.upsell.isUpsell)) {
+            var _tServ = String(order.tipo || order.tipoServico || '').toLowerCase();
+            var _mapU  = order.additionalInfoMapPaid || order.additionalInfoMap || {};
+            var _arrU  = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : (Array.isArray(order.additionalInfo) ? order.additionalInfo : []);
+            var _cat   = String(_mapU['categoria_servico'] || (_arrU.find(function(i){ return i && i.key === 'categoria_servico'; }) || {}).value || '').toLowerCase();
+            var _isFollowers = _cat === 'seguidores' || _tServ.includes('seguidores') || _tServ === 'mistos' || _tServ === 'brasileiros' || _tServ === 'organicos';
+            var _isCurtidas  = _cat === 'curtidas' || _tServ.includes('curtida');
+            var _isViews     = _cat === 'visualizacoes' || _tServ.includes('visual') || _tServ === 'visualizacoes_reels';
+            showUpsell = (_isFollowers || _isCurtidas || _isViews) && !!_tServ;
+          }
+        %>
+        <% if (showUpsell) { %>
+        <style>
+          @keyframes upsellPulse{0%,100%{opacity:1}50%{opacity:.35}}
+          @keyframes upsellFadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+          #upsellModal{display:none;margin:0 0 1.5rem 0}
+          #upsellModal.active{display:block}
+          #upsellModalBox{width:100%;background:#ffffff;border-radius:16px;border:1px solid #e6e8ec;box-shadow:0 8px 26px rgba(17,24,39,.08);animation:upsellFadeIn .35s ease;overflow:hidden;--font-family:'Poppins',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+          #upsellModalBox, #upsellModalBox *{font-family:'Poppins',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+          #upsellModalInner{padding:8px 18px 18px}
+          .us-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:#fef3f2;border:1px solid #fbd5cd;color:#c2410c;font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;font-family:var(--font-family,sans-serif)}
+          .us-timer{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
+          .us-close{margin-left:auto;background:none;border:none;color:#94a3b8;font-size:21px;line-height:1;cursor:pointer;padding:0 2px}
+          .us-head{font-size:18px;font-weight:800;color:#0f172a;line-height:1.3;margin:14px 0 7px;letter-spacing:-.01em;font-family:var(--font-family,sans-serif)}
+          .us-accent{color:#6b46c1}
+          .us-sub{color:#64748b;font-size:.85rem;line-height:1.5;margin-bottom:17px;font-family:var(--font-family,sans-serif)}
+          .us-benefits{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
+          .us-benefit{display:flex;align-items:center;gap:11px;font-size:.88rem;color:#334155;font-family:var(--font-family,sans-serif)}
+          .us-bico{flex:none;width:28px;height:28px;border-radius:50%;background:#efeafd;color:#6b46c1;display:flex;align-items:center;justify-content:center}
+          .us-price-row{display:flex;align-items:baseline;gap:10px;margin-bottom:16px}
+          .us-old{font-size:15px;color:#94a3b8;text-decoration:line-through}
+          .us-price{font-size:27px;font-weight:800;color:#0f172a;line-height:1;letter-spacing:-.02em}
+          .us-badge{padding:3px 8px;border-radius:6px;background:#efeafd;color:#5b3aa8;font-size:11px;font-weight:800}
+          .us-cta{width:100%;padding:11px 16px;border-radius:11px;border:none;background:#6b46c1;color:#fff;cursor:pointer;box-shadow:0 5px 14px rgba(107,70,193,.24);display:flex;flex-direction:column;align-items:center;gap:1px;transition:background .15s;font-family:var(--font-family,sans-serif)}
+          .us-cta:hover{background:#5b3aa8}
+          .us-decline{display:block;width:100%;margin-top:10px;padding:6px;border:none;background:none;color:#94a3b8;font-size:.82rem;font-weight:600;cursor:pointer;text-align:center;font-family:var(--font-family,sans-serif)}
+          .us-decline:hover{color:#64748b}
+          body:not(.theme-light) #upsellModalBox{background:#1c1f33;border-color:rgba(255,255,255,.09);box-shadow:0 8px 26px rgba(0,0,0,.35)}
+          body:not(.theme-light) .us-head,body:not(.theme-light) .us-price{color:#f1f5f9}
+          body:not(.theme-light) .us-benefit{color:#cbd5e1}
+          body:not(.theme-light) .us-timer{background:rgba(255,255,255,.07);color:#cbd5e1}
+          body:not(.theme-light) .us-sub{color:#94a3b8}
+        </style>
+        <div id="upsellModal">
+          <div id="upsellModalBox">
+            <div style="display:flex;align-items:center;gap:8px;padding:14px 16px 0">
+              <span class="us-pill">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 4-2 5-2 8a2 2 0 104 0c0-1 0-2 1-3 1 2 2 3 2 5a5 5 0 11-10 0c0-4 3-6 5-10z"/></svg>
+                ÚLTIMA OFERTA
+              </span>
+              <div id="upsellTimer" class="us-timer">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span id="upsellTimerText">--:--</span>
+              </div>
+              <button type="button" class="us-close" aria-label="Fechar" onclick="var m=document.getElementById('upsellModal');if(m)m.classList.remove('active');">&times;</button>
+            </div>
+            <div id="upsellModalInner">
+              <div id="upsellLoading" style="text-align:center;color:var(--text-secondary,#6b7280);font-size:.88rem;padding:20px 0">
+                <div style="display:inline-block;width:16px;height:16px;border:2px solid var(--border-color,#e5e7eb);border-top-color:var(--primary-purple,#6b46c1);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:7px"></div>
+                Verificando oferta...
+              </div>
+              <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+              <div id="upsellOffer" style="display:none">
+                <div class="us-head">Espera &mdash; <span class="us-accent">dobre o seu pedido</span> com <span id="upsellDiscPct" class="us-accent">30%</span> OFF</div>
+                <div id="upsellSubtext" class="us-sub"></div>
+                <div class="us-benefits">
+                  <div class="us-benefit">
+                    <span class="us-bico"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></span>
+                    <span id="upsellBenefitQty">dobro do que voc&ecirc; pediu</span>
+                  </div>
+                  <div class="us-benefit">
+                    <span class="us-bico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    <span>Entregue logo ap&oacute;s o pacote principal</span>
+                  </div>
+                </div>
+                <div class="us-price-row">
+                  <span id="upsellPriceOld" class="us-old"></span>
+                  <span id="upsellPrice" class="us-price">R$ &mdash;</span>
+                  <span id="upsellDiscBadge" class="us-badge"></span>
+                </div>
+                <button id="upsellAcceptBtn" class="us-cta">
+                  <span id="upsellAcceptLabel" style="font-size:.9rem;font-weight:800">Quero aproveitar</span>
+                  <span id="upsellBtnTimer" style="font-size:10.5px;font-weight:600;opacity:.9;font-variant-numeric:tabular-nums">&#9203; carregando...</span>
+                </button>
+                <button type="button" class="us-decline" onclick="var m=document.getElementById('upsellModal');if(m)m.classList.remove('active');">N&atilde;o, obrigado</button>
+              </div>
+              <div id="upsellPix" style="display:none">
+                <div style="text-align:center;margin-bottom:12px">
+                  <div style="font-size:16px;font-weight:900;color:var(--text-primary,#111);margin-bottom:3px">Escaneie o QR Code</div>
+                  <div style="color:var(--text-secondary,#6b7280);font-size:.82rem">Confirmado automaticamente</div>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+                  <img id="upsellQrImg" src="" alt="QR Code PIX" style="width:180px;height:180px;border-radius:12px;border:2px solid rgba(16,185,129,.3);background:#fff"/>
+                  <div style="width:100%;position:relative">
+                    <input id="upsellPixCode" type="text" readonly style="width:100%;padding:10px 76px 10px 12px;border-radius:10px;border:1px solid var(--border-color,#e5e7eb);background:var(--bg-secondary,#f9fafb);color:var(--text-primary,#111);font-family:monospace;font-size:12px;box-sizing:border-box"/>
+                    <button id="upsellCopyBtn" onclick="(function(){try{var el=document.getElementById('upsellPixCode');if(!el)return;navigator.clipboard?navigator.clipboard.writeText(el.value).catch(function(){}):el.select();var b=document.getElementById('upsellCopyBtn');var o=b.textContent;b.textContent='Copiado!';setTimeout(function(){b.textContent=o;},1200);}catch(_){}})();" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:5px 10px;border-radius:7px;border:none;background:var(--primary-purple,#6b46c1);color:#fff;font-size:11px;font-weight:700;cursor:pointer">Copiar</button>
+                  </div>
+                  <div id="upsellPixStatus" style="display:flex;align-items:center;gap:7px;color:var(--text-secondary,#6b7280);font-size:.85rem;font-weight:600">
+                    <div style="width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:upsellPulse 1.2s infinite"></div>
+                    Aguardando pagamento...
+                  </div>
+                </div>
+              </div>
+              <div id="upsellDone" style="display:none;text-align:center;padding:10px 0">
+                <div style="width:50px;height:50px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;margin:0 auto 10px">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                </div>
+                <div style="font-size:17px;font-weight:900;color:var(--text-primary,#111);margin-bottom:4px">Oferta confirmada!</div>
+                <div style="color:var(--text-secondary,#6b7280);font-size:.85rem;line-height:1.5">Pagamento confirmado! Seu pedido ser&aacute; entregue em breve.</div>
+              </div>
+              <div id="upsellExpired" style="display:none;text-align:center;padding:18px;color:var(--text-secondary,#6b7280);font-size:.88rem">
+                &#9203; Esta oferta expirou. Aproveite na sua pr&oacute;xima compra!
+              </div>
+            </div>
+          </div>
+        </div>
+        <script>
+        (function(){
+          var id='<%- JSON.stringify(String(order.identifier||order.correlationID||"")) %>';
+          try{id=JSON.parse(id);}catch(_){id='';}
+          if(!id) return;
+          var modal=document.getElementById('upsellModal'),
+              loading=document.getElementById('upsellLoading'),offerDiv=document.getElementById('upsellOffer'),
+              pixDiv=document.getElementById('upsellPix'),doneDiv=document.getElementById('upsellDone'),
+              expiredDiv=document.getElementById('upsellExpired'),timerEl=document.getElementById('upsellTimerText'),
+              acceptBtn=document.getElementById('upsellAcceptBtn'),
+              qrImg=document.getElementById('upsellQrImg'),pixCodeEl=document.getElementById('upsellPixCode'),
+              btnTimerEl=document.getElementById('upsellBtnTimer');
+          var pendingCharge=null; // PIX de um upsell pendente já gerado (compartilhado entre loader e botão)
+          function openModal(){if(modal)modal.classList.add('active');}
+          function showOnly(el){[loading,offerDiv,pixDiv,doneDiv,expiredDiv].forEach(function(e){if(e)e.style.display='none';});if(el)el.style.display='';}
+          // Marca a oferta como expirada SEM esconder a descrição: só desativa o botão e o timer
+          function setExpired(){
+            var tb=document.getElementById('upsellTimer');
+            if(timerEl) timerEl.textContent='00:00';
+            if(tb){tb.style.background='rgba(107,114,128,.1)';tb.style.borderColor='rgba(107,114,128,.25)';tb.style.color='#6b7280';}
+            if(acceptBtn){acceptBtn.disabled=true;acceptBtn.style.background='#9ca3af';acceptBtn.style.boxShadow='none';acceptBtn.style.opacity='.6';acceptBtn.style.cursor='not-allowed';}
+            var lblE=document.getElementById('upsellAcceptLabel');
+            if(lblE) lblE.textContent='Oferta expirada';
+            if(btnTimerEl) btnTimerEl.textContent='Esta oferta não está mais disponível';
+          }
+          var timerIv=null,pollIv=null;
+          function startTimer(exAt){
+            clearInterval(timerIv);
+            var exp=new Date(exAt).getTime();
+            function tick(){
+              var rem=Math.max(0,exp-Date.now()),m=Math.floor(rem/60000),s=Math.floor((rem%60000)/1000);
+              var ts=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+              if(timerEl) timerEl.textContent=ts;
+              if(btnTimerEl) btnTimerEl.textContent='Expira em '+ts;
+              if(rem<=0){clearInterval(timerIv);setExpired();}
+            }
+            tick(); timerIv=setInterval(tick,1000);
+          }
+          function startPoll(uid){
+            clearInterval(pollIv);
+            pollIv=setInterval(async function(){
+              try{var r=await fetch('/api/upsell/status?identifier='+encodeURIComponent(uid));var d=await r.json();if(d&&d.paid){clearInterval(pollIv);showOnly(doneDiv);openModal();}}catch(_){}
+            },3000);
+          }
+          (async function(){
+            try{
+              var r=await fetch('/api/upsell/offer?identifier='+encodeURIComponent(id));
+              var d=await r.json();
+              if(!d||!d.ok) return;
+              if(d.alreadyAccepted){ if(d.paid||/pago|paid/.test(String(d.upsellStatus||'').toLowerCase())){showOnly(doneDiv);openModal();} return; }
+              var offer=d.offer; if(!offer) return;
+              // Upsell pendente já gerado (não pago): guarda o PIX existente p/ concluir
+              pendingCharge = (d.pending && (d.pending.brCode || d.pending.qrCodeImage)) ? d.pending : null;
+              var fmt=function(c){return 'R$ '+(c/100).toFixed(2).replace('.',',');};
+              var qf=function(n){return n>=1000?(n/1000).toFixed(n%1000?1:0).replace('.',',')+' mil':String(n);};
+              var g=function(eid){return document.getElementById(eid);};
+              var svc=offer.tipoLabel||'seguidores',disc=offer.discountPct||30,full=Math.round(offer.offerCents/(1-disc/100));
+              if(g('upsellBenefitQty')) g('upsellBenefitQty').textContent='+ '+qf(offer.offerQty)+' '+svc+' — dobro do que você pediu';
+              if(g('upsellDiscPct'))  g('upsellDiscPct').textContent=disc+'%';
+              if(g('upsellPrice'))    g('upsellPrice').textContent=fmt(offer.offerCents);
+              if(g('upsellSubtext'))  g('upsellSubtext').textContent='Adicione +'+qf(offer.offerQty)+' '+svc+' ao seu pedido — a mesma quantidade que você acabou de comprar, com '+disc+'% OFF. Preço só desta tela.';
+              if(g('upsellPriceOld')) g('upsellPriceOld').textContent=fmt(full);
+              if(g('upsellDiscBadge'))g('upsellDiscBadge').textContent='-'+disc+'%';
+              var lbl=g('upsellAcceptLabel');
+              if(lbl) lbl.textContent='DOBRAR MEU PEDIDO — '+fmt(offer.offerCents);
+              showOnly(offerDiv); openModal();
+              if(offer.expired){ setExpired(); } else { startTimer(offer.expiredAt); }
+            }catch(e){console.warn('[upsell]',e&&e.message||e);}
+          })();
+          if(acceptBtn) acceptBtn.addEventListener('click',async function(){
+            if(acceptBtn.disabled) return;
+            acceptBtn.disabled=true;
+            var lbl2=document.getElementById('upsellAcceptLabel');if(lbl2) lbl2.textContent='Gerando PIX...';
+            try{
+              // Se já existe um PIX pendente desta oferta, reaproveita sem gerar outro
+              if(pendingCharge){
+                if(qrImg&&pendingCharge.qrCodeImage) qrImg.src=pendingCharge.qrCodeImage;
+                if(pixCodeEl&&pendingCharge.brCode)  pixCodeEl.value=pendingCharge.brCode;
+                clearInterval(timerIv); showOnly(pixDiv);
+                if(pendingCharge.identifier) startPoll(pendingCharge.identifier);
+                return;
+              }
+              var r=await fetch('/api/upsell/charge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({parentIdentifier:id})});
+              var d=await r.json();
+              if(!d||!d.ok){acceptBtn.disabled=false;if(lbl2)lbl2.textContent='DOBRAR MEU PEDIDO';alert('Erro ao gerar cobranca. Tente novamente.');return;}
+              clearInterval(timerIv);
+              // alreadyAccepted COM QR = upsell pendente existente → mostra o PIX; sem QR = já pago
+              if(d.alreadyAccepted && !d.brCode && !d.qrCodeImage){ showOnly(doneDiv); return; }
+              if(qrImg&&d.qrCodeImage) qrImg.src=d.qrCodeImage;
+              if(pixCodeEl&&d.brCode)  pixCodeEl.value=d.brCode;
+              showOnly(pixDiv);if(d.identifier) startPoll(d.identifier);
+            }catch(e){acceptBtn.disabled=false;var lbl3=document.getElementById('upsellAcceptLabel');if(lbl3)lbl3.textContent='DOBRAR MEU PEDIDO';}
+          });
+        })();
+        </script>
+        <% } %>
+
+        <%
+          // Botão "Criar minha conta" — mostrar se pedido pago e tem email
+          var _orderEmail = '';
+          try {
+            var _mapEmail = order.additionalInfoMapPaid || order.additionalInfoMap || {};
+            var _arrEmail = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : (Array.isArray(order.additionalInfo) ? order.additionalInfo : []);
+            _orderEmail = String(order.customer && order.customer.email ? order.customer.email : (_mapEmail['email'] || (_arrEmail.find(function(x){ return x && x.key === 'email'; }) || {}).value || '')).trim().toLowerCase();
+          } catch(_) {}
+          // Não mostrar "Acessar minha conta" se: veio logada do /cliente OU se há upsell sendo
+          // oferecido (não atrapalhar a venda do upsell no pós-venda).
+          var showCreateAccount = isPaidLocal && !!_orderEmail && !_fromCliente && !showUpsell;
+        %>
+        <% if (showCreateAccount) { %>
+        <div id="createAccountSection" style="margin: 0 0 1.5rem 0; border-radius:14px; border:1px solid var(--border-color); background:var(--bg-secondary); padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; box-shadow:var(--shadow-sm);">
+          <div>
+            <div style="font-size:0.9rem; font-weight:700; color:var(--text-primary); font-family:var(--font-family);">Acesse sua conta e acompanhe seus pedidos</div>
+            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:2px; font-family:var(--font-family);">Usando o e-mail <strong><%= _orderEmail.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></strong></div>
+          </div>
+          <button id="createAccountBtn" style="padding:9px 18px; border-radius:999px; border:none; background:var(--purple-gradient); color:#fff; font-size:0.88rem; font-weight:800; cursor:pointer; font-family:var(--font-family); white-space:nowrap; box-shadow:var(--shadow-purple);">
+            Acessar minha conta →
+          </button>
+        </div>
+        <script>
+        (function(){
+          var btn = document.getElementById('createAccountBtn');
+          var section = document.getElementById('createAccountSection');
+          var identifier = '<%- JSON.stringify(String(order.identifier || order.correlationID || "")) %>';
+          try { identifier = JSON.parse(identifier); } catch(_) { identifier = ''; }
+          if(!btn || !identifier) return;
+          btn.addEventListener('click', async function(){
+            btn.disabled = true;
+            btn.textContent = 'Aguarde...';
+            try {
+              var r = await fetch('/api/cliente/login-from-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier: identifier })
+              });
+              var d = await r.json();
+              if(d && d.ok) {
+                section.innerHTML = '<div style="text-align:center;padding:8px;color:#22c55e;font-weight:700;font-size:0.85rem;font-family:var(--font-family);">✓ Redirecionando...</div>';
+                setTimeout(function(){ window.location.href = d.redirectUrl || '/cliente'; }, 900);
+              } else {
+                btn.disabled = false;
+                btn.textContent = 'Acessar minha conta →';
+                alert(d && d.message ? d.message : 'Erro ao acessar conta. Tente novamente.');
+              }
+            } catch(e){
+              btn.disabled = false;
+              btn.textContent = 'Acessar minha conta →';
+            }
+          });
+        })();
+        </script>
+        <% } %>
+
+        <%
+          var catServ = null;
+          if (order && order.additionalInfoMapPaid && order.additionalInfoMapPaid['categoria_servico']) {
+            catServ = String(order.additionalInfoMapPaid['categoria_servico']).toLowerCase();
+          } else if (order && Array.isArray(order.additionalInfoPaid)) {
+            var fCatPaid = order.additionalInfoPaid.find(function(i){ return i && i.key === 'categoria_servico'; });
+            if (fCatPaid && fCatPaid.value) catServ = String(fCatPaid.value).toLowerCase();
+          }
+          if (!catServ && order && Array.isArray(order.additionalInfo)) {
+            var fCat = order.additionalInfo.find(function(i){ return i && i.key === 'categoria_servico'; });
+            if (fCat && fCat.value) catServ = String(fCat.value).toLowerCase();
+          }
+          var isPostCategory = (catServ === 'curtidas' || catServ === 'visualizacoes');
+          // Aviso de perfil privado SÓ para pedido PAGO (pendente de pagamento não mostra).
+          var _payStatusSrv = String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var _isPaidSrv = (_payStatusSrv === 'pago' || _payStatusSrv === 'paid' || _payStatusSrv === 'completed');
+          var showPrivacyAlert = _isPaidSrv && (order && order.profilePrivacy && order.profilePrivacy.isPrivate);
+        %>
+        <% if (showPrivacyAlert) { %>
+        <div class="service-card" id="privacyAlertCard" style="border: 1px solid #f59e0b; background: rgba(254, 252, 232, 0.5); backdrop-filter: blur(8px); margin-bottom: 2rem;">
+          <div class="card-content" style="display: flex; gap: 1rem; align-items: flex-start;">
+            <div style="flex-shrink: 0; color: #d97706;">
+               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 9V11M12 15H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div>
+               <strong style="display: block; color: #92400e; margin-bottom: 0.25rem;">Perfil Privado Detectado</strong>
+               <span style="color: #b45309; font-size: 0.95rem;">Seu perfil do Instagram está privado. Por favor, <strong>altere para público</strong> imediatamente para receber o serviço corretamente e evitar atrasos.</span>
+               <button id="retryPrivacyBtn" style="display: inline-block; margin-top: 0.75rem; background: #d97706; color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem; transition: background 0.2s;">Já deixei público</button>
+            </div>
+          </div>
+        </div>
+        <% } %>
+
+        <%
+          var tServCheck = String(order.tipo || order.tipoServico || '').toLowerCase();
+          var catServCheck = (function(){
+            try {
+              var m = order.additionalInfoMapPaid || {};
+              if (m && typeof m['categoria_servico'] === 'string' && m['categoria_servico']) return String(m['categoria_servico']).toLowerCase();
+              var arr = Array.isArray(order.additionalInfoPaid) ? order.additionalInfoPaid : (Array.isArray(order.additionalInfo) ? order.additionalInfo : []);
+              var it = arr.find(function(x){ return x && x.key === 'categoria_servico' && x.value; });
+              if (it && typeof it.value === 'string') return String(it.value).toLowerCase();
+            } catch(_) {}
+            return '';
+          })();
+          var isOrganicFollowersCheck = catServCheck !== 'curtidas' && catServCheck !== 'visualizacoes' && tServCheck.includes('organico');
+          
+          // Check payment status (must be paid)
+          var paymentStatus = String(order.status || (order.paghiper && order.paghiper.status) || (order.expay && order.expay.status) || (order.woovi && order.woovi.status) || '').toLowerCase();
+          var isPaid = (paymentStatus === 'pago' || paymentStatus === 'paid' || paymentStatus === 'completed');
+
+          var statusRawCheck = '';
+          if (order && order.fama24h && order.fama24h.status) {
+             statusRawCheck = order.fama24h.status;
+          } else if (order && order.fama24h_multi && order.fama24h_multi.status) {
+             statusRawCheck = order.fama24h_multi.status;
+          } else if (order && order.fornecedor_social && order.fornecedor_social.status) {
+             statusRawCheck = order.fornecedor_social.status;
+          }
+          
+          if (!statusRawCheck && order && order.fama24h && order.fama24h.statusPayload) {
+             var fp = order.fama24h.statusPayload;
+             statusRawCheck = (fp.status || fp.Status || fp.status_text || fp.statusText || fp.StatusText || fp.status_normalized) || '';
+          }
+
+          var statusLowerCheck = String(statusRawCheck || '').toLowerCase().trim();
+          var isCompletedStatus = /complete|success|finished|done|conclu/.test(statusLowerCheck);
+        %>
+        <% if (isOrganicFollowersCheck && isPaid && !isCompletedStatus) { %>
+        <div id="organicDelayAlert" style="border: 1px solid #93c5fd; background: #eff6ff; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem;">
+            <div style="color: #2563eb; flex-shrink: 0;">
+               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 9V11M12 15H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div style="color: #1e3a8a; line-height: 1.3;">
+               <strong>Serviço de qualidade superior, por esse motivo:</strong> O prazo para finalização é de até 48h.
+            </div>
+        </div>
+        <% } %>
+
+        <div class="service-card" id="order-content" style="border: 1px solid var(--border-color); background: var(--bg-secondary); box-shadow: var(--shadow-md);">
+          <div class="card-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+                <h3 class="card-title" style="margin: 0; font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15M9 5C9 6.10457 9.89543 7 11 7H13C14.1046 7 15 6.10457 15 5M9 5C9 3.89543 9.89543 3 11 3H13C14.1046 3 15 3.89543 15 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Detalhes do Pedido
+                </h3>
+            </div>
+            
+            <div class="info-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem;">
+                
+                <div class="info-item">
+                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Serviço Contratado</div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary); text-transform: capitalize;" id="orderTipo"><%= (function(){ var mapPaid=order.additionalInfoMapPaid||{}; var mapOrig=order.additionalInfoMap||{}; var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var pick=function(k){ if(mapPaid&&typeof mapPaid[k]!=='undefined'&&String(mapPaid[k]||'').trim()) return mapPaid[k]; if(mapOrig&&typeof mapOrig[k]!=='undefined'&&String(mapOrig[k]||'').trim()) return mapOrig[k]; var fp=arrPaid.find(function(it){return it&&it.key===k&&String(it.value||'').trim();}); if(fp) return fp.value; var f=arr.find(function(it){return it&&it.key===k&&String(it.value||'').trim();}); if(f) return f.value; return ''; }; var t=String(pick('tipo_servico')||order.tipo||order.tipoServico||'-').toLowerCase().trim(); var c=String(pick('categoria_servico')||'').toLowerCase().trim(); if(!c){ if(/curtida/.test(String(pick('pacote')||''))) c='curtidas'; else if(/visualiza/.test(String(pick('pacote')||''))) c='visualizacoes'; } var lbl=t; if(c==='curtidas'){ if(t==='mistos') lbl='Curtidas Mistas'; else if(t==='brasileiros'||t==='curtidas_brasileiras') lbl='Curtidas Brasileiras'; else if(t==='organicos'||t==='curtidas_reais'||t==='curtidas_organicos') lbl='Curtidas Reais'; else lbl='Curtidas'; } else if(c==='visualizacoes'){ if(t==='visualizacoes_reels'||t==='views'||t==='reels') lbl='Visualizações Reels'; else lbl='Visualizações'; } else { if(t==='mistos') lbl='Seguidores Mistos'; else if(t==='brasileiros') lbl='Seguidores Brasileiros'; else if(t==='organicos') lbl='Seguidores brasileiros e reais'; } return lbl; })() %></div>
+                </div>
+
+                <div class="info-item">
+                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Quantidade</div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="orderQtd"><%= Number(order.qtd || order.quantidade || 0) %></div>
+                </div>
+
+                <div class="info-item">
+                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Perfil Instagram</div>
+                    <%
+                      var iuRawPedido = (function(){
+                        var map = order.additionalInfoMapPaid || {};
+                        var v = String(map['instagram_username'] || '').trim();
+                        if (v) return v;
+                        return String(order.instagramUsername || order.instauser || '').trim();
+                      })();
+                      var iuCleanPedido = String(iuRawPedido || '').replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                      var iuHrefPedido = iuCleanPedido ? ('https://instagram.com/' + encodeURIComponent(iuCleanPedido)) : '';
+                    %>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--primary-purple);" id="orderInsta">
+                      <% if (iuCleanPedido) { %>
+                        <span style="display:inline-flex; align-items:center; gap:6px;">
+                          <a href="<%= iuHrefPedido %>" target="_blank" rel="noopener noreferrer" style="color: var(--primary-purple); text-decoration: none;">@<%= iuCleanPedido %></a>
+                          <button type="button" class="copy-iu-btn" data-copy="<%= iuCleanPedido %>" title="Copiar usuário" aria-label="Copiar usuário" style="border:0; background:transparent; padding:2px; cursor:pointer; line-height:0;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
+                        </span>
+                      <% } else { %>
+                        -
+                      <% } %>
+                    </div>
+                </div>
+
+                <div class="info-item">
+                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Data Pagamento</div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="paidAtLocal"><%= (function(){ var raw=(order.paghiper&&order.paghiper.paidAt)||(order.expay&&order.expay.paidAt)||(order.woovi&&order.woovi.paidAt)||order.paidAt||null; var st=String(order.status||(order.paghiper&&order.paghiper.status)||(order.expay&&order.expay.status)||(order.woovi&&order.woovi.status)||'').toLowerCase(); if(!raw && (st==='pago'||st==='paid'||st==='completed')) raw=order.createdAt||null; if(!raw) return '-'; try{ var d=new Date(raw); if(!d || isNaN(d.getTime())) return '-'; try{ var parts=new Intl.DateTimeFormat('pt-BR',{ timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d); var mp={}; parts.forEach(function(p){ mp[p.type]=p.value; }); if(mp.day&&mp.month&&mp.year&&mp.hour&&mp.minute){ return mp.day+'/'+mp.month+'/'+mp.year+' às '+mp.hour+':'+mp.minute; } }catch(_){ } var sp=new Date(d.getTime() - 3*60*60*1000); var dd=String(sp.getUTCDate()).padStart(2,'0'); var mm=String(sp.getUTCMonth()+1).padStart(2,'0'); var yyyy=sp.getUTCFullYear(); var hh=String(sp.getUTCHours()).padStart(2,'0'); var mn=String(sp.getUTCMinutes()).padStart(2,'0'); return dd+'/'+mm+'/'+yyyy+' às '+hh+':'+mn; }catch(_){ return '-'; } })() %></div>
+                </div>
+
+                <div class="info-item" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 1rem;">
+                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Adicionais</div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="orderBumpsBox"><%= (function(){ var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var map=order.additionalInfoMapPaid||{}; var pick=function(k){ var fp=arrPaid.find(function(it){return it&&it.key===k;}); if(fp&&typeof fp.value!=='undefined') return fp.value; var f=arr.find(function(it){return it&&it.key===k;}); if(f&&typeof f.value!=='undefined') return f.value; if(map&&typeof map[k]!=='undefined') return map[k]; return ''; }; var bs=String(pick('order_bumps')||'').trim(); if(!bs) return 'Nenhum adicional selecionado'; var cat=String(pick('categoria_servico')||'').toLowerCase().trim(); var tipo=String(pick('tipo_servico')||order.tipoServico||order.tipo||'').toLowerCase().trim(); var baseQtd=(function(){ var raw=String(pick('quantidade')||order.quantidade||order.qtd||'').trim(); var n=parseInt(raw.replace(/[^\d]/g,''),10); return isFinite(n)&&n>0?n:0; })(); var unit=(function(){ if(cat.indexOf('curt')!==-1) return 'curtidas'; if(cat.indexOf('visual')!==-1) return 'visualizações'; return 'seguidores'; })(); var upgradeAddFor=function(q){ var qb=Number(q)||0; if(!(qb>0)) return 0; if(cat.indexOf('visual')!==-1 || tipo.indexOf('visualizacoes_reels')!==-1 || tipo.indexOf('reels')!==-1){ var targets={1000:2500,5000:10000,25000:50000,100000:150000,200000:250000,500000:1000000}; var t=targets[qb]||0; return t>qb?(t-qb):0; } if(cat.indexOf('curt')!==-1 || tipo.indexOf('curt')!==-1){ var targets2={150:300,300:500,500:700,700:1000,1000:2000,1200:2000,2000:3000,3000:4000,4000:5000,5000:7500,7500:10000,10000:15000}; var t2=targets2[qb]||0; return t2>qb?(t2-qb):0; } if((tipo.indexOf('brasileiros')!==-1 || tipo.indexOf('organicos')!==-1) && qb===1000) return 1000; var map2={50:50,150:150,300:200,500:200,700:300,1000:1000,1200:800,2000:1000,3000:1000,4000:1000,5000:2500,7500:2500,10000:5000}; return map2[qb]||0; }; var parts=bs.split(';').map(function(p){return p.trim();}).filter(Boolean); var labels=parts.map(function(p){ var kv=p.split(':'); var k=String(kv[0]||'').trim().toLowerCase(); var v=String(kv[1]||'').trim(); if(k==='views') return 'Visualizações ('+v+')'; if(k==='likes') return 'Curtidas ('+v+')'; if(k==='comments') return 'Comentários ('+v+')'; if(k==='upgrade'){ var add=upgradeAddFor(baseQtd); var total=baseQtd+(add||0); if(baseQtd>0 && add>0) return (baseQtd+' '+unit+' + upgrade de '+add+' = '+total+' '+unit); return 'Upgrade'; } return k+(v?(' ('+v+')'):''); }); return labels.join(', '); })() %></div>
+                </div>
+
+                <div class="info-item">
+                     <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Valor Total</div>
+                     <div style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);" id="orderTotal"><%= (function(){ var totalCents=0; if(typeof order.valueCents==='number' && order.valueCents>0){ totalCents=order.valueCents; } else { var base=0; try{ var pix=order.woovi&&order.woovi.paymentMethods&&order.woovi.paymentMethods.pix; if(pix&&typeof pix.value==='number') base=pix.value; }catch(_){ } var bt=(function(){ var arrPaid=Array.isArray(order.additionalInfoPaid)?order.additionalInfoPaid:[]; var arr=Array.isArray(order.additionalInfo)?order.additionalInfo:[]; var map=order.additionalInfoMapPaid||{}; var fp=arrPaid.find(function(it){return it&&it.key==='order_bumps_total'}); var s=(fp&&typeof fp.value==='string')?fp.value:''; if(!s){ var f=arr.find(function(it){return it&&it.key==='order_bumps_total'}); s=(f&&typeof f.value==='string')?f.value:''; } if(!s && map && typeof map['order_bumps_total']==='string') s=map['order_bumps_total']; if(!s) return 0; var m=s.match(/(\d+)[,\.]?(\d{0,2})/); if(!m) return 0; var whole=Number(m[1]); var frac=String(m[2]||'').padEnd(2,'0').slice(0,2); return (whole*100)+Number(frac); })(); totalCents=base+bt; } if(totalCents>0){ var reais=Math.floor(totalCents/100); var cents=String(totalCents%100).padStart(2,'0'); return 'R$ '+reais+','+cents; } return '-'; })() %></div>
+                </div>
+                
+                <div class="info-item" style="grid-column: 1 / -1; margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem;">
+                   <%
+                     var providerOidsInfo = (function(){
+                       var list = [];
+                       try {
+                         var multi = order && order.fama24h_multi && Array.isArray(order.fama24h_multi.orders) ? order.fama24h_multi.orders : [];
+                         multi.forEach(function(it){
+                           if (!it) return;
+                           var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : (it.id !== undefined && it.id !== null ? it.id : null);
+                           var s = (v === null || v === undefined) ? '' : String(v).trim();
+                           if (!s) return;
+                           if (list.indexOf(s) === -1) list.push(s);
+                         });
+                       } catch(_) {}
+                       try {
+                         var multiFS = order && order.fornecedor_social_multi && Array.isArray(order.fornecedor_social_multi.orders) ? order.fornecedor_social_multi.orders : [];
+                         multiFS.forEach(function(it){
+                           if (!it) return;
+                           var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : (it.id !== undefined && it.id !== null ? it.id : null);
+                           var s = (v === null || v === undefined) ? '' : String(v).trim();
+                           if (!s) return;
+                           if (list.indexOf(s) === -1) list.push(s);
+                         });
+                       } catch(_) {}
+                       try {
+                         var oidF=(order&&order.fama24h&&order.fama24h.orderId)?String(order.fama24h.orderId).trim():'';
+                         if (oidF && list.indexOf(oidF) === -1) list.push(oidF);
+                       } catch(_) {}
+                       try {
+                         var oidFS=(order&&order.fornecedor_social&&order.fornecedor_social.orderId)?String(order.fornecedor_social.orderId).trim():'';
+                         if (oidFS && list.indexOf(oidFS) === -1) list.push(oidFS);
+                       } catch(_) {}
+                       var text = list.length ? list.join(', ') : '-';
+                       return { list: list, text: text, count: list.length };
+                     })();
+                   %>
+                   <span style="font-size: 0.75rem; color: var(--text-secondary);"><%= providerOidsInfo.count > 1 ? 'IDs do Pedido' : 'ID do Pedido' %></span>
+                   <div style="display: flex; align-items: center; gap: 0.25rem;">
+                       <span style="font-family: monospace; font-size: 1.1rem; font-weight: 700; color: var(--text-primary);" id="orderNumberId"><%= providerOidsInfo.text %></span>
+                       <div style="position: relative; display: flex; align-items: center;">
+                           <button id="copyOrderBtn" class="copy-icon-btn" aria-label="Copiar número do pedido" style="background: transparent; border: none; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; cursor: pointer;">
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" opacity="0.4"/></svg>
+                           </button>
+                           <span id="copyFeedback" style="opacity: 0; pointer-events: none; transition: opacity 0.3s; position: absolute; left: 100%; margin-left: 8px; background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; z-index: 10;">Copiado!</span>
+                       </div>
+                   </div>
+                </div>
+                
+                <% 
+                  var multiOrdersViewFama = (order && order.fama24h_multi && Array.isArray(order.fama24h_multi.orders)) ? order.fama24h_multi.orders : [];
+                  var multiOrdersViewFS = (order && order.fornecedor_social_multi && Array.isArray(order.fornecedor_social_multi.orders)) ? order.fornecedor_social_multi.orders : [];
+                  var multiOrdersView = (multiOrdersViewFama || []).concat(multiOrdersViewFS || []);
+                  var isMultiSplit = !!(multiOrdersView && multiOrdersView.length > 0);
+                  var mapStatusBadge = function(s){
+                    var t = String(s || '').toLowerCase();
+                    if (!t) return '-';
+                    if (/cancel/.test(t)) return 'Cancelado';
+                    if (/partial/.test(t)) return 'Parcial';
+                    if (/duplicate/.test(t)) return 'Duplicado';
+                    if (/error|fail|invalid/.test(t)) return 'Parcial';
+                    if (/pend/.test(t)) return 'Pendente';
+                    if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+                    if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+                    return s;
+                  };
+                  var stMap = (function(){
+                    if (isMultiSplit) {
+                      var normalized = multiOrdersView.map(function(it){ return mapStatusBadge(it && it.status ? it.status : ''); }).filter(Boolean);
+                      if (!normalized.length) return '-';
+                      var allDone = normalized.every(function(x){ return x === 'Concluído'; });
+                      if (allDone) return 'Concluído';
+                      var anyProgress = normalized.some(function(x){ return x === 'Em andamento'; });
+                      if (anyProgress) return 'Em andamento';
+                      var anyPending = normalized.some(function(x){ return x === 'Pendente'; });
+                      if (anyPending) return 'Pendente';
+                      var allCanceled = normalized.every(function(x){ return x === 'Cancelado'; });
+                      if (allCanceled) return 'Cancelado';
+                      return 'Parcial';
+                    }
+                    var famaPayload = (order && order.fama24h && order.fama24h.statusPayload) || null;
+                    var sRawBase = '';
+                    if (order && order.fama24h && order.fama24h.status) sRawBase = order.fama24h.status;
+                    if (!sRawBase && order && order.fama24h_multi && order.fama24h_multi.status) sRawBase = order.fama24h_multi.status;
+                    if (!sRawBase && famaPayload) sRawBase = (famaPayload.status || famaPayload.Status || famaPayload.status_text || famaPayload.statusText || famaPayload.StatusText || famaPayload.status_normalized) || '';
+                    return mapStatusBadge(sRawBase);
+                  })();
+                %>
+                <% if (!isMultiSplit) { %>
+                  <div class="info-item status-box-custom" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; background: rgba(107, 70, 193, 0.1); padding: 1.25rem; border-radius: 12px; border: 1px solid rgba(107, 70, 193, 0.2);">
+                      <span style="font-size: 1rem; font-weight: 500; color: var(--primary-purple); font-family: inherit;">Status do Serviço</span>
+                      <span id="famaServicoStatus" class="status-badge <%= (stMap==='Concluído'?'status-green':(stMap==='Cancelado'?'status-red':(stMap==='Em andamento'?'status-yellow':(stMap==='Pendente'?'status-blue':'')))) %>" style="font-size: 1rem; font-weight: 500; letter-spacing: 0.05em; font-family: inherit;"><%= stMap %></span>
+                  </div>
+                <% } %>
+                <% if (multiOrdersView && multiOrdersView.length > 0) { %>
+                <div class="info-item" style="grid-column: 1 / -1; margin-top: 0.75rem;">
+                  <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.5rem;">Divisão por Post</div>
+                  <div style="overflow:auto;">
+                    <table class="multi-orders-table" style="width:100%; border-collapse: collapse; font-size: 0.95rem;">
+                      <thead>
+                        <tr>
+                          <th style="text-align:left; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Post</th>
+                          <th style="text-align:center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Quantidade</th>
+                          <th style="text-align:center; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">ID do Pedido</th>
+                          <th style="text-align:right; padding: 0.5rem; border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody id="multiOrdersBody">
+                        <% 
+                          var mapStatus = mapStatusBadge;
+                          multiOrdersView.forEach(function(it, idx){
+                            var link = it && it.link ? String(it.link) : '';
+                            link = link.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '').trim();
+                            if (link && /^www\./i.test(link)) link = 'https://' + link;
+                            var qty = it && it.quantity ? Number(it.quantity) : 0;
+                            var oid = (it && it.orderId != null) ? String(it.orderId) : ((it && it.id != null) ? String(it.id) : '');
+                            var st = mapStatus(it && it.status ? it.status : '');
+                            var stLow = String(st || '').toLowerCase();
+                            var stCls = (/conclu/.test(stLow) ? 'status-green' : (/cancel/.test(stLow) ? 'status-red' : (/andament|process|progress|start|running/.test(stLow) ? 'status-yellow' : (/pend/.test(stLow) ? 'status-blue' : ''))));
+                        %>
+                        <tr data-multi-index="<%= String(idx) %>" data-provider-orderid="<%= oid || '' %>">
+                          <td data-label="Post" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); max-width: 0;">
+                            <% if (link) { %>
+                              <a class="multi-order-link" href="<%= link %>" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; word-break: break-all;"><%= link %></a>
+                            <% } else { %>-<% } %>
+                          </td>
+                          <td data-label="Quantidade" class="multi-order-qty" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center;"><%= qty || '-' %></td>
+                          <td data-label="ID do Pedido" class="multi-order-oid" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center; font-family: monospace;"><%= oid || '-' %></td>
+                          <td data-label="Status" class="multi-order-status" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:right;"><span class="multi-status <%= stCls %>"><%= st %></span></td>
+                        </tr>
+                        <% }); %>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <% } %>
+                <%
+                  var provName = '';
+                  var provObj = null;
+                  if (order && order.topfama && (order.topfama.status || order.topfama.orderId || order.topfama.error || order.topfama.response)) { provName = 'TopFama'; provObj = order.topfama; }
+                  else if (order && order.fama24h && (order.fama24h.status || order.fama24h.orderId || order.fama24h.error || order.fama24h.response)) { provName = 'Fama24h'; provObj = order.fama24h; }
+                  else if (order && order.fornecedor_social && (order.fornecedor_social.status || order.fornecedor_social.orderId || order.fornecedor_social.error || order.fornecedor_social.response)) { provName = 'Fornecedor Social'; provObj = order.fornecedor_social; }
+                 var provStatus = provObj && provObj.status ? String(provObj.status) : '';
+                 var provErr = null;
+                 var provResp = null;
+                 var shouldShowTech = false;
+                %>
+                <% if (shouldShowTech) { %><% } %>
+
+            </div>
+            
+            <div class="button-container" style="margin-top:1.5rem; display: flex; justify-content: center;">
+              <button id="backToPrevBtn" class="continue-button" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem; background: var(--instagram-gradient); color: white; border: none; box-shadow: 0 4px 6px -1px rgba(220, 39, 67, 0.4); transition: transform 0.2s;">
+                <span class="button-text">Voltar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+
+      </section>
+    </main>
+  </div>
+  <div id="upsellFollowersModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
+    <div class="modal-dialog" style="max-width:480px; width:95%; border-radius:16px;">
+      <div class="modal-header">
+        <h3 class="modal-title" style="flex:1; text-align:center;">Mais seguidores com 25% OFF</h3>
+        <button id="upsellFollowersClose" class="modal-close" type="button" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="upsellExclusiveBanner" aria-live="polite" style="background:#22C55E; border-radius:14px; padding:0.9rem 1.25rem; margin-bottom:0.85rem; border:1px solid #15803D; color:#f9fafb; box-shadow:0 8px 16px rgba(22, 163, 74, 0.25);">
+          <div class="exclusive-title">Desconto exclusivo disponível por tempo limitado</div>
+          <div class="exclusive-countdown">Expira em <span id="upsellTimer">10:00</span></div>
+        </div>
+        <p style="margin-top:0; margin-bottom:0.75rem; color:var(--text-secondary);">
+          Aumente seu resultado com 25% OFF em pacotes de seguidores a partir de 500.
+        </p>
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
+          <button type="button" class="continue-button" data-upsell-tipo="mistos" style="flex:1 1 100px; padding:0.4rem 0.75rem; font-size:0.85rem;">Seguidores mundiais</button>
+          <button type="button" class="continue-button" data-upsell-tipo="brasileiros" style="flex:1 1 100px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Seguidores BR</button>
+          <button type="button" class="continue-button" data-upsell-tipo="organicos" style="flex:1 1 120px; padding:0.4rem 0.75rem; font-size:0.85rem; background:transparent; color:var(--text-primary); border:1px solid var(--border-color);">Brasileiros reais</button>
+        </div>
+        <div id="upsellFollowersList" class="plan-cards" style="margin-bottom:0.75rem;"></div>
+        <div id="upsellPixContainer" style="margin-top:0.25rem; display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="upsellFollowersClose2" class="continue-button" type="button">Fechar</button>
+      </div>
+    </div>
+  </div>
+  <script id="orderDataJson" type="application/json"><%= JSON.stringify(order || {}) %></script>
+  <script>
+    (function(){
+      var orderData = {};
+      try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
+      var orderId = (orderData && orderData._id) ? String(orderData._id) : null;
+      function getAllProviderOidsText(o) {
+        var list = [];
+        try {
+          var multi = o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders) ? o.fama24h_multi.orders : [];
+          for (var i = 0; i < multi.length; i++) {
+            var it = multi[i];
+            if (!it) continue;
+            var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : ((it.id !== undefined && it.id !== null) ? it.id : null);
+            var s = (v === null || v === undefined) ? '' : String(v).trim();
+            if (!s) continue;
+            if (list.indexOf(s) === -1) list.push(s);
+          }
+        } catch(_) {}
+        try {
+          var multiFS = o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders) ? o.fornecedor_social_multi.orders : [];
+          for (var j = 0; j < multiFS.length; j++) {
+            var itFS = multiFS[j];
+            if (!itFS) continue;
+            var vFS = (itFS.orderId !== undefined && itFS.orderId !== null) ? itFS.orderId : ((itFS.id !== undefined && itFS.id !== null) ? itFS.id : null);
+            var sFS = (vFS === null || vFS === undefined) ? '' : String(vFS).trim();
+            if (!sFS) continue;
+            if (list.indexOf(sFS) === -1) list.push(sFS);
+          }
+        } catch(_) {}
+        try {
+          if (o && o.fama24h && o.fama24h.orderId !== undefined && o.fama24h.orderId !== null) {
+            var s1 = String(o.fama24h.orderId).trim();
+            if (s1 && list.indexOf(s1) === -1) list.push(s1);
+          }
+        } catch(_) {}
+        try {
+          if (o && o.fornecedor_social && o.fornecedor_social.orderId !== undefined && o.fornecedor_social.orderId !== null) {
+            var s2 = String(o.fornecedor_social.orderId).trim();
+            if (s2 && list.indexOf(s2) === -1) list.push(s2);
+          }
+        } catch(_) {}
+        try {
+          if (o && o.topfama && o.topfama.orderId !== undefined && o.topfama.orderId !== null) {
+            var s3 = String(o.topfama.orderId).trim();
+            if (s3 && list.indexOf(s3) === -1) list.push(s3);
+          }
+        } catch(_) {}
+        return list.length ? list.join(', ') : '';
+      }
+      function getFirstProviderOid(o) {
+        try {
+          var multi = o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders) ? o.fama24h_multi.orders : [];
+          for (var i = 0; i < multi.length; i++) {
+            var it = multi[i];
+            if (!it) continue;
+            var v = (it.orderId !== undefined && it.orderId !== null) ? it.orderId : ((it.id !== undefined && it.id !== null) ? it.id : null);
+            var s = (v === null || v === undefined) ? '' : String(v).trim();
+            if (s) return s;
+          }
+        } catch(_) {}
+        try {
+          var multiFS = o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders) ? o.fornecedor_social_multi.orders : [];
+          for (var j = 0; j < multiFS.length; j++) {
+            var itFS = multiFS[j];
+            if (!itFS) continue;
+            var vFS = (itFS.orderId !== undefined && itFS.orderId !== null) ? itFS.orderId : ((itFS.id !== undefined && itFS.id !== null) ? itFS.id : null);
+            var sFS = (vFS === null || vFS === undefined) ? '' : String(vFS).trim();
+            if (sFS) return sFS;
+          }
+        } catch(_) {}
+        try { if (o && o.fama24h && o.fama24h.orderId) return String(o.fama24h.orderId); } catch(_) {}
+        try { if (o && o.fornecedor_social && o.fornecedor_social.orderId) return String(o.fornecedor_social.orderId); } catch(_) {}
+        try { if (o && o.topfama && o.topfama.orderId) return String(o.topfama.orderId); } catch(_) {}
+        return null;
+      }
+      function formatDateTimeSP(raw) {
+        if (!raw) return null;
+        var d = null;
+        try { d = new Date(raw); } catch(_) { d = null; }
+        if (!d || isNaN(d.getTime())) return null;
+        try {
+          var parts = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+          var mp = {};
+          parts.forEach(function(p){ mp[p.type] = p.value; });
+          if (mp.day && mp.month && mp.year && mp.hour && mp.minute) return mp.day + '/' + mp.month + '/' + mp.year + ' às ' + mp.hour + ':' + mp.minute;
+        } catch(_) {}
+        try {
+          var sp = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+          var dd = String(sp.getUTCDate()).padStart(2,'0');
+          var mm = String(sp.getUTCMonth()+1).padStart(2,'0');
+          var yyyy = sp.getUTCFullYear();
+          var hh = String(sp.getUTCHours()).padStart(2,'0');
+          var min = String(sp.getUTCMinutes()).padStart(2,'0');
+          return dd + '/' + mm + '/' + yyyy + ' às ' + hh + ':' + min;
+        } catch(_) {}
+        return null;
+      }
+      var hasFama = !!getFirstProviderOid(orderData);
+      var lastFamaStatus = '';
+      try {
+        var oidToSave = null;
+        if (hasFama) oidToSave = String(getFirstProviderOid(orderData) || '');
+        else if (orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId) oidToSave = String(orderData.fornecedor_social.orderId);
+        else if (orderId) oidToSave = String(orderId);
+        else if (orderData && orderData.identifier) oidToSave = String(orderData.identifier);
+
+        if (oidToSave) localStorage.setItem('oppus_selected_oid', oidToSave);
+      } catch(_) {}
+      try {
+        var initialNorm = (orderData && orderData.fama24h && orderData.fama24h.status) ? orderData.fama24h.status : ((orderData && orderData.fama24h_multi && orderData.fama24h_multi.status) ? orderData.fama24h_multi.status : '');
+        var initialFama = initialNorm ? null : ((orderData && orderData.fama24h && orderData.fama24h.statusPayload) ? orderData.fama24h.statusPayload : null);
+        var elFamaInit = document.getElementById('famaServicoStatus');
+        var mapFamaInit = function(s){
+          var t = String(s || '').toLowerCase();
+          if (!t) return '';
+          if (/cancel/.test(t)) return 'Cancelado';
+          if (/partial/.test(t)) return 'Parcial';
+          if (/pend/.test(t)) return 'Pendente';
+          if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+          if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+          return s;
+        };
+        if (initialNorm && elFamaInit) {
+          var stN = mapFamaInit(initialNorm);
+          if (stN) {
+            lastFamaStatus = stN;
+            elFamaInit.textContent = stN;
+            try {
+              elFamaInit.classList.remove('status-green','status-yellow','status-red','status-blue');
+              var sN = stN.toLowerCase();
+              if (/conclu/.test(sN)) elFamaInit.classList.add('status-green');
+              else if (/cancel/.test(sN)) elFamaInit.classList.add('status-red');
+              else if (/andament|process|progress|start|running/.test(sN)) elFamaInit.classList.add('status-yellow');
+              else if (/pend/.test(sN)) elFamaInit.classList.add('status-blue');
+            } catch(_){ }
+          }
+        } else if (initialFama && elFamaInit) {
+          var raw0 = String(initialFama.status || initialFama.Status || initialFama.status_text || initialFama.statusText || initialFama.StatusText || initialFama.status_normalized || '').trim();
+          var st0 = mapFamaInit(raw0);
+          if (st0) {
+            lastFamaStatus = st0;
+            elFamaInit.textContent = st0;
+            try {
+              elFamaInit.classList.remove('status-green','status-yellow','status-red','status-blue');
+              var s0 = st0.toLowerCase();
+              if (/conclu/.test(s0)) elFamaInit.classList.add('status-green');
+              else if (/cancel/.test(s0)) elFamaInit.classList.add('status-red');
+              else if (/andament|process|progress|start|running/.test(s0)) elFamaInit.classList.add('status-yellow');
+              else if (/pend/.test(s0)) elFamaInit.classList.add('status-blue');
+            } catch(_){ }
+          }
+        }
+      } catch(_) {}
+      try {
+        var paidRaw = (orderData && orderData.paghiper && orderData.paghiper.paidAt) || (orderData && orderData.expay && orderData.expay.paidAt) || (orderData && orderData.woovi && orderData.woovi.paidAt) || orderData.paidAt || null;
+        var txt = formatDateTimeSP(paidRaw);
+        var el = document.getElementById('paidAtLocal');
+        if (el && txt) el.textContent = txt;
+      } catch(_) {}
+      
+      try {
+        var tabelaSeguidoresBase = {
+          mistos: [
+            // { q: 500, p: 'R$ 32,90' },
+            // { q: 700, p: 'R$ 39,90' },
+            // { q: 1000, p: 'R$ 45,90' },
+            // { q: 2000, p: 'R$ 69,90' },
+            // { q: 3000, p: 'R$ 99,90' },
+            // { q: 4000, p: 'R$ 129,90' },
+            // { q: 5000, p: 'R$ 129,90' },
+            // { q: 7500, p: 'R$ 169,90' },
+            // { q: 10000, p: 'R$ 199,90' },
+            // { q: 15000, p: 'R$ 329,90' }
+          ],
+          brasileiros: [
+            // { q: 500, p: 'R$ 39,90' },
+            // { q: 700, p: 'R$ 49,90' },
+            // { q: 1000, p: 'R$ 79,90' },
+            // { q: 2000, p: 'R$ 129,90' },
+            // { q: 3000, p: 'R$ 179,90' },
+            // { q: 4000, p: 'R$ 249,90' },
+            // { q: 5000, p: 'R$ 279,90' },
+            // { q: 7500, p: 'R$ 399,90' },
+            // { q: 10000, p: 'R$ 499,90' },
+            // { q: 15000, p: 'R$ 799,90' }
+          ],
+          organicos: [
+            // { q: 500, p: 'R$ 69,90' },
+            // { q: 700, p: 'R$ 89,90' },
+            // { q: 1000, p: 'R$ 129,90' },
+            // { q: 2000, p: 'R$ 199,90' },
+            // { q: 3000, p: 'R$ 249,90' },
+            // { q: 4000, p: 'R$ 329,90' },
+            // { q: 5000, p: 'R$ 499,90' },
+            // { q: 7500, p: 'R$ 599,90' },
+            // { q: 10000, p: 'R$ 899,90' },
+            // { q: 15000, p: 'R$ 1.299,90' }
+          ]
+        };
+        var parsePrecoToCents = function(str){
+          var s = String(str || '').replace(/[^0-9,\.]/g,'');
+          if (!s) return 0;
+          var parts = s.split(',');
+          var whole = parts[0].replace(/\./g,'');
+          var frac = parts[1] || '';
+          var frac2 = (frac + '00').slice(0,2);
+          var w = Number(whole || '0');
+          var f = Number(frac2 || '0');
+          if (Number.isNaN(w) || Number.isNaN(f)) return 0;
+          return (w * 100) + f;
+        };
+        var formatCentsToBRL = function(cents){
+          var v = Number(cents || 0);
+          if (!v) return 'R$ 0,00';
+          var reais = Math.floor(v/100);
+          var frac = String(v%100).padStart(2,'0');
+          return 'R$ ' + reais.toLocaleString('pt-BR') + ',' + frac;
+        };
+        var buildUpsellList = function(tipo){
+          var baseArr = tabelaSeguidoresBase[tipo] || [];
+          var result = [];
+          for (var i=0;i<baseArr.length;i++){
+            var it = baseArr[i];
+            var cents = parsePrecoToCents(it.p);
+            if (!cents) continue;
+            var newCents = Math.round(cents * 0.75);
+            result.push({ q: it.q, base: it.p, promo: formatCentsToBRL(newCents), cents: newCents });
+          }
+          return result;
+        };
+        var upsellPixContainer = document.getElementById('upsellPixContainer');
+        var upsellPaymentPollInterval = null;
+        var createUpsellPix = function(tipoLocal, qtdLocal, valueCents, promoLabel){
+          if (!upsellPixContainer) return;
+          if (!valueCents || !qtdLocal) return;
+          upsellPixContainer.style.display = 'block';
+          upsellPixContainer.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; gap:0.5rem; color:#166534;"><div class="oppus-spinner" style="width:24px;height:24px;border:3px solid rgba(22,101,52,0.15);border-top-color:#16a34a;border-radius:50%;animation:oppusSpin 1s linear infinite;"></div><span>Gerando Pix do seu upsell...</span></div>';
+          var orderDataLocal = orderData || {};
+          var nameValue = '';
+          var phoneValue = '';
+          var emailValue = '';
+          var instaUser = '';
+          var fillFromOrder = function(o){
+            if (!o || typeof o !== 'object') return;
+            var customer = o.customer || {};
+            if (!nameValue) nameValue = customer.name || 'Cliente Instagram';
+            if (!phoneValue) phoneValue = customer.phone || '';
+            if (!emailValue) emailValue = customer.email || '';
+            var iu = '';
+            try {
+              var mapAdd = o.additionalInfoMapPaid || {};
+              if (mapAdd && mapAdd['instagram_username']) iu = mapAdd['instagram_username'];
+            } catch(_) {}
+            if (!iu && Array.isArray(o.additionalInfoPaid)) {
+              var fPaid = o.additionalInfoPaid.find(function(i){ return i && i.key === 'instagram_username'; });
+              if (fPaid && fPaid.value) iu = fPaid.value;
+            }
+            if (!iu && Array.isArray(o.additionalInfo)) {
+              var fInfo = o.additionalInfo.find(function(i){ return i && i.key === 'instagram_username'; });
+              if (fInfo && fInfo.value) iu = fInfo.value;
+            }
+            if (!iu) {
+              iu = o.instagramUsername || o.instauser || '';
+            }
+            iu = String(iu || '').trim();
+            if (iu) instaUser = iu;
+          };
+          fillFromOrder(orderDataLocal);
+          var ensureOrderFromServer = function(cb){
+            if (instaUser && nameValue && phoneValue && emailValue) {
+              cb();
+              return;
+            }
+            var ident = '';
+            var corr = '';
+            var oid = '';
+            try {
+              var qs = new URLSearchParams((location && location.search) || '');
+              ident = String(qs.get('identifier') || qs.get('t') || '').trim();
+              corr = String(qs.get('correlationID') || qs.get('ref') || '').trim();
+              oid = String(qs.get('orderID') || '').trim();
+            } catch(_) {}
+            if (!ident && orderDataLocal) {
+              ident = String(orderDataLocal.identifier || (orderDataLocal.paghiper && orderDataLocal.paghiper.transactionId) || (orderDataLocal.expay && orderDataLocal.expay.transactionId) || (orderDataLocal.woovi && orderDataLocal.woovi.identifier) || '').trim();
+            }
+            if (!oid && orderDataLocal && orderDataLocal._id) {
+              oid = String(orderDataLocal._id);
+            }
+            var url = '';
+            if (ident) url = '/api/order?identifier=' + encodeURIComponent(ident);
+            else if (oid) url = '/api/order?orderID=' + encodeURIComponent(oid);
+            else if (corr) url = '/api/order?correlationID=' + encodeURIComponent(corr);
+            if (!url) {
+              cb();
+              return;
+            }
+            fetch(url)
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                try {
+                  if (d && d.order) {
+                    orderDataLocal = d.order;
+                    fillFromOrder(orderDataLocal);
+                  }
+                } catch(_) {}
+              })
+              .catch(function(){})
+              .then(function(){ cb(); });
+          };
+          ensureOrderFromServer(function(){
+            if (!nameValue) nameValue = 'Cliente Instagram';
+            if (!instaUser) {
+              var errorMsg = 'Não foi possível identificar o usuário do Instagram para o upsell.';
+              upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">' + errorMsg + '</div>';
+              return;
+            }
+            var baseIdentifier = String(orderDataLocal && (orderDataLocal.identifier || orderDataLocal._id) || '').trim();
+            var correlationID = 'UpsellFollowers_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            var additionalInfo = [
+              { key: 'tipo_servico', value: tipoLocal },
+              { key: 'categoria_servico', value: 'seguidores' },
+              { key: 'quantidade', value: String(qtdLocal) },
+              { key: 'pacote', value: String(qtdLocal) + ' seguidores - ' + String(promoLabel || '') },
+              { key: 'phone', value: String(phoneValue || '') },
+              { key: 'instagram_username', value: instaUser },
+              { key: 'upsell_followers', value: '1' }
+            ];
+            if (baseIdentifier) {
+              additionalInfo.push({ key: 'upsell_from_identifier', value: baseIdentifier });
+            }
+            var payload = {
+              correlationID: correlationID,
+              value: Number(valueCents),
+              comment: 'Upsell Seguidores OPPUS',
+              customer: {
+                name: nameValue,
+                phone: phoneValue,
+                email: emailValue
+              },
+              additionalInfo: additionalInfo,
+              profile_is_private: !!(orderDataLocal && orderDataLocal.profilePrivacy && orderDataLocal.profilePrivacy.isPrivate)
+            };
+            fetch('/api/woovi/charge', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            })
+          .then(function(resp){ return resp.json().then(function(data){ return { ok: resp.ok, data: data }; }); })
+          .then(function(result){
+            if (!result.ok) {
+              var msg = (result.data && result.data.details && result.data.details.message) ? result.data.details.message : 'Falha ao criar cobrança';
+              upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">Erro ao criar Pix: ' + msg + '</div>';
+              return;
+            }
+            var data = result.data || {};
+            var charge = data.charge || data || {};
+            var pix = (charge.paymentMethods && charge.paymentMethods.pix) ? charge.paymentMethods.pix : (charge.pix || {});
+            var brCode = pix.brCode || charge.brCode || data.brCode || '';
+            var qrImage = pix.qrCodeImage || charge.qrCodeImage || data.qrCodeImage || '';
+            var totalFormatted = formatCentsToBRL(valueCents);
+            var html = '';
+            if (qrImage) {
+              html += '<div style="text-align:center; margin-bottom:0.75rem;"><img src="' + qrImage + '" alt="QR Code Pix Upsell" style="width:200px; height:200px; border-radius:12px; background:#ffffff; box-shadow:0 4px 12px rgba(15,23,42,0.15);" /></div>';
+            }
+            html += '<div style="font-size:1rem; font-weight:700; text-align:center; margin-bottom:0.75rem; color:#166534;">Valor do Pix: <span>' + totalFormatted + '</span></div>';
+            html += '<div style="position:relative; margin-bottom:0.75rem;"><textarea id="upsellPixCodeArea" readonly style="width:100%; min-height:80px; padding:0.75rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; font-family:inherit; font-size:0.9rem; color:#022c22; resize:none;">' + brCode + '</textarea></div>';
+            html += '<button id="upsellPixCopyBtn" type="button" class="continue-button" style="width:100%; display:flex; align-items:center; justify-content:center; padding:0.9rem 1rem; margin-bottom:0.5rem;"><span class="button-text">Copiar código Pix</span></button>';
+            html += '<div style="font-size:0.85rem; color:#6b7280; text-align:center;">Após o pagamento, seu novo pedido será criado automaticamente.</div>';
+            upsellPixContainer.innerHTML = html;
+            upsellPixContainer.style.display = 'block';
+            try {
+              var targetEl = upsellPixContainer;
+              var scroller = targetEl ? targetEl.parentElement : null;
+              while (scroller && scroller !== document.body) {
+                var cs = window.getComputedStyle(scroller);
+                var oy = cs ? cs.overflowY : '';
+                if ((oy === 'auto' || oy === 'scroll') && scroller.scrollHeight > scroller.clientHeight + 10) {
+                  break;
+                }
+                scroller = scroller.parentElement;
+              }
+              if (scroller && scroller !== document.body) {
+                var rEl = targetEl.getBoundingClientRect();
+                var rSc = scroller.getBoundingClientRect();
+                var top = scroller.scrollTop + (rEl.top - rSc.top) - 16;
+                scroller.scrollTo({ top: top, behavior: 'smooth' });
+              } else {
+                var rect = targetEl.getBoundingClientRect();
+                var offset = (window.scrollY || window.pageYOffset || 0) + rect.top - 80;
+                window.scrollTo({ top: offset, behavior: 'smooth' });
+              }
+            } catch(_) {}
+            var copyBtn = document.getElementById('upsellPixCopyBtn');
+            var codeArea = document.getElementById('upsellPixCodeArea');
+            if (copyBtn && codeArea && brCode) {
+              copyBtn.addEventListener('click', function(){
+                try {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(brCode);
+                  } else {
+                    codeArea.focus();
+                    codeArea.select();
+                    document.execCommand('copy');
+                  }
+                  var span = copyBtn.querySelector('.button-text');
+                  var prev = span ? span.textContent : '';
+                  if (span) span.textContent = 'Pix copiado';
+                  copyBtn.classList.add('success');
+                  setTimeout(function(){
+                    copyBtn.classList.remove('success');
+                    if (span) span.textContent = prev || 'Copiar código Pix';
+                  }, 1600);
+                } catch(e) {
+                  alert('Não foi possível copiar o código Pix.');
+                }
+              });
+            }
+            var chargeId = charge.id || charge.chargeId || data.chargeId || '';
+            var identifier = charge.identifier || (data.charge && data.charge.identifier) || '';
+            var serverCorrelationID = charge.correlationID || (data.charge && data.charge.correlationID) || '';
+            if (upsellPaymentPollInterval) {
+              clearInterval(upsellPaymentPollInterval);
+              upsellPaymentPollInterval = null;
+            }
+            if (chargeId || identifier || serverCorrelationID) {
+              var doCheckPaid = function(){
+                var idParam = chargeId ? encodeURIComponent(chargeId) : '';
+                var identParam = encodeURIComponent(identifier || '');
+                var corrParam = encodeURIComponent(serverCorrelationID || correlationID);
+                var url = '/api/checkout/payment-state?id=' + idParam + '&identifier=' + identParam + '&correlationID=' + corrParam;
+                fetch(url)
+                  .then(function(r){ return r.json(); })
+                  .then(function(stData){
+                    try {
+                      if (stData && stData.paid === true) {
+                        if (upsellPaymentPollInterval) {
+                          clearInterval(upsellPaymentPollInterval);
+                          upsellPaymentPollInterval = null;
+                        }
+                        try {
+                          if (typeof navigateToPedidoOrFallback === 'function') {
+                            navigateToPedidoOrFallback(identifier, serverCorrelationID || correlationID, chargeId);
+                          } else {
+                            var qs = new URLSearchParams({ identifier: identifier, correlationID: serverCorrelationID || correlationID }).toString();
+                            window.location.href = '/pedido?' + qs;
+                          }
+                        } catch(_) {}
+                      }
+                    } catch(_) {}
+                  })
+                  .catch(function(){});
+              };
+              doCheckPaid();
+              upsellPaymentPollInterval = setInterval(doCheckPaid, 8000);
+            }
+          })
+          .catch(function(err){
+            var msg = err && err.message ? err.message : String(err || 'Erro desconhecido');
+            upsellPixContainer.innerHTML = '<div style="color:#b91c1c; text-align:center;">Erro ao criar Pix: ' + msg + '</div>';
+          });
+          });
+        };
+        var upsellModal = document.getElementById('upsellFollowersModal');
+        var upsellList = document.getElementById('upsellFollowersList');
+        var upsellTabs = document.querySelectorAll('[data-upsell-tipo]');
+        var currentUpsellTipo = 'mistos';
+        var renderUpsellTipo = function(tipo){
+          currentUpsellTipo = tipo;
+          if (!upsellList) return;
+          var items = buildUpsellList(tipo);
+          upsellList.innerHTML = '';
+          for (var i=0;i<items.length;i++){
+            var it = items[i];
+            var qNum = Number(it.q);
+            var badgeText = '';
+            var quantityBadges = { 50: 'PACOTE TESTE', 150:'PACOTE INICIAL', 500:'PACOTE BÁSICO', 1000:'MAIS PEDIDO', 3000:'EXCLUSIVO', 5000:'VIP', 10000:'ELITE' };
+            if (tipo === 'mistos') {
+              if (qNum === 1000) badgeText = 'MELHOR PREÇO';
+              else if (qNum === 3000) { badgeText = 'MAIS PEDIDO'; }
+            } else if (tipo === 'brasileiros') {
+              if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; }
+            } else if (tipo === 'organicos') {
+              if (qNum === 1000) { badgeText = 'MAIS PEDIDO'; }
+            }
+            if (!badgeText && quantityBadges[qNum]) badgeText = quantityBadges[qNum];
+            if (!badgeText) continue;
+            var card = document.createElement('div');
+            card.className = 'service-card plan-card';
+            if ((tipo === 'mistos' && qNum === 3000) || ((tipo === 'brasileiros' || tipo === 'organicos') && qNum === 1000)) { card.classList.add('gold-card'); }
+            var badgeHtml = '<div class="plan-badge">' + badgeText + '</div>';
+            var qtyFormatted = qNum.toLocaleString('pt-BR');
+            var baseText = String(it.base || '');
+            var promoText = String(it.promo || '');
+            card.innerHTML = badgeHtml + '<div class="card-content"><div class="card-title">' + qtyFormatted + ' seguidores</div><div class="card-desc"><span class="price-old">' + baseText + '</span> <span class="price-new">' + promoText + '</span></div></div>';
+            (function(tipoLocal, qtdLocal, promoLabel, promoCents){
+              card.addEventListener('click', function(){
+                try { createUpsellPix(tipoLocal, qtdLocal, promoCents, promoLabel); } catch(_) {}
+              });
+            })(tipo, it.q, promoText, it.cents);
+            upsellList.appendChild(card);
+          }
+          if (upsellTabs && upsellTabs.length) {
+            upsellTabs.forEach(function(el){
+              var t = el.getAttribute('data-upsell-tipo') || '';
+              if (t === tipo) {
+                el.style.background = '';
+                el.style.color = '';
+                el.style.borderColor = 'transparent';
+              } else {
+                el.style.background = 'transparent';
+                el.style.color = 'var(--text-primary)';
+                el.style.borderColor = 'var(--border-color)';
+              }
+            });
+          }
+        };
+        if (upsellTabs && upsellTabs.length) {
+          upsellTabs.forEach(function(el){
+            el.addEventListener('click', function(){
+              var t = el.getAttribute('data-upsell-tipo') || 'mistos';
+              renderUpsellTipo(t);
+            });
+          });
+        }
+        var closeUpsellModal = function(){
+          if (upsellModal) upsellModal.style.display = 'none';
+        };
+        var upsellAlreadyOpened = false;
+        var openUpsellModal = function(){
+          if (!upsellModal || upsellAlreadyOpened) return;
+          upsellAlreadyOpened = true;
+          renderUpsellTipo('mistos');
+          upsellModal.style.display = 'flex';
+          try {
+            var timerEl = document.getElementById('upsellTimer');
+            var timerId = null;
+            var remain = 600;
+            var updateTimer = function(){
+              var m = Math.floor(remain/60);
+              var s = remain % 60;
+              if (timerEl) timerEl.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+              if (remain <= 0) { if (timerId) clearInterval(timerId); timerId = null; }
+              remain--;
+            };
+            updateTimer();
+            timerId = setInterval(updateTimer, 1000);
+          } catch(_) {}
+        };
+        var upsellPaidReady = false;
+        var upsellProviderDone = true; // Habilitado direto para exibir assim que pagar
+        var upsellOpenScheduled = false;
+        var ensureUpsell = function(){};
+        var btnClose1 = document.getElementById('upsellFollowersClose');
+        var btnClose2 = document.getElementById('upsellFollowersClose2');
+        if (btnClose1) btnClose1.addEventListener('click', closeUpsellModal);
+        if (btnClose2) btnClose2.addEventListener('click', closeUpsellModal);
+        try {
+          var qsDebug = new URLSearchParams((location && location.search) || '');
+          var debugT = String(qsDebug.get('t') || qsDebug.get('identifier') || '').trim();
+          var debugRef = String(qsDebug.get('ref') || qsDebug.get('correlationID') || '').trim();
+          var debugOid = String(qsDebug.get('oid') || '').trim();
+          var isDebugUpsell = (debugT === 'ecd2a0873a5040488234acfead241250') ||
+                              (debugRef === 'wer-tw4-23444444442') ||
+                              (debugOid === '3199169');
+          if (isDebugUpsell) {
+            setTimeout(function(){ try { openUpsellModal(); } catch(_){ } }, 1200);
+          }
+        } catch(_) {}
+        
+        var statusStr = String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+        var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
+        var catServ = '';
+        try {
+          var mapAdd = (orderData && orderData.additionalInfoMapPaid) || {};
+          if (mapAdd && typeof mapAdd['categoria_servico'] === 'string') catServ = mapAdd['categoria_servico'];
+        } catch(_) {}
+        var tipoServUpsell = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
+        var isFollowersOrder = (String(catServ||'').toLowerCase().indexOf('seguidor') !== -1) || tipoServUpsell.indexOf('seguidor') !== -1;
+        
+        // Check if we are in a "post-purchase" context (URL has identifier/correlationID/ref)
+        var qsCheck = new URLSearchParams((location && location.search) || '');
+        var isPostPurchaseContext = qsCheck.has('identifier') || qsCheck.has('correlationID') || qsCheck.has('ref') || qsCheck.has('t') || qsCheck.has('just_paid');
+        
+        if (isPaidNow && isPostPurchaseContext) {
+          upsellPaidReady = true;
+          ensureUpsell();
+        }
+      } catch(_) {}
+      
+      // Retry Privacy Button
+      (function(){
+        var btn = document.getElementById('retryPrivacyBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function(){
+            btn.disabled = true;
+            var originalText = btn.textContent;
+            btn.textContent = 'Verificando...';
+            var idToUse = (orderData && (orderData.identifier || orderData._id)) || null;
+            if (!idToUse) {
+                alert('Erro: ID do pedido não encontrado.');
+                btn.disabled = false;
+                btn.textContent = originalText;
+                return;
+            }
+            fetch('/api/order/retry-fulfillment?_=' + new Date().getTime(), {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ identifier: idToUse, bypassCache: true, force: true })
+            })
+            .then(function(r){ return r.json(); })
+            .then(function(data){
+                if (data.success) {
+                    var newUrl = location.href;
+                    if (newUrl.indexOf('?') === -1) newUrl += '?t=' + new Date().getTime();
+                    else newUrl += '&t=' + new Date().getTime();
+                    location.href = newUrl;
+                } else {
+                    alert(data.error || 'Ainda não identificamos o perfil como público. Aguarde uns instantes e tente novamente.');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            })
+            .catch(function(err){
+                console.error(err);
+                alert('Erro de conexão. Tente novamente.');
+                btn.disabled = false;
+                btn.textContent = originalText;
+            });
+        });
+      })();
+
+      try {
+        var tipoServ = String((orderData && (orderData.tipo || orderData.tipoServico)) || '').toLowerCase();
+        var catServ0 = '';
+        try {
+          var mapPaid0 = (orderData && orderData.additionalInfoMapPaid) || {};
+          if (mapPaid0 && typeof mapPaid0['categoria_servico'] === 'string') catServ0 = mapPaid0['categoria_servico'];
+          if (!catServ0) {
+            var map0 = (orderData && orderData.additionalInfoMap) || {};
+            if (map0 && typeof map0['categoria_servico'] === 'string') catServ0 = map0['categoria_servico'];
+          }
+          if (!catServ0) {
+            var arr0 = Array.isArray(orderData && orderData.additionalInfo) ? orderData.additionalInfo : [];
+            var c0 = arr0.find(function(it){ return it && it.key === 'categoria_servico'; });
+            if (c0 && typeof c0.value === 'string') catServ0 = c0.value;
+          }
+          if (!catServ0) {
+            var arrPaid0 = Array.isArray(orderData && orderData.additionalInfoPaid) ? orderData.additionalInfoPaid : [];
+            var cPaid0 = arrPaid0.find(function(it){ return it && it.key === 'categoria_servico'; });
+            if (cPaid0 && typeof cPaid0.value === 'string') catServ0 = cPaid0.value;
+          }
+        } catch(_) {}
+        catServ0 = String(catServ0 || '').toLowerCase().trim();
+        var isFollowersOrganicos = (tipoServ === 'organicos') && (catServ0 !== 'curtidas') && (catServ0 !== 'visualizacoes');
+        var alreadyFS = !!(orderData && orderData.fornecedor_social && orderData.fornecedor_social.orderId);
+        var isPaid = (function(){ var s=String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase(); return (s==='pago'||s==='paid'); })();
+        var ident = String((orderData && (orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier))) || '').trim();
+        try {
+          var qs = new URLSearchParams((location && location.search) || '');
+          var identQ = String(qs.get('identifier') || qs.get('t') || '').trim();
+          var corrQ = String(qs.get('correlationID') || qs.get('ref') || '').trim();
+          if (!ident && identQ) ident = identQ;
+          if (!corrQ && (orderData && orderData.correlationID)) corrQ = String(orderData.correlationID || '').trim();
+          if (ident) {
+            var es = new EventSource('/api/payment/subscribe?identifier=' + encodeURIComponent(ident));
+            es.addEventListener('paid', function(ev){
+              try {
+                var data = JSON.parse(ev.data || '{}');
+                var oidFS = String(data && data.fornecedor_social_orderId ? data.fornecedor_social_orderId : '');
+                var oidTop = String(data && data.topfama_orderId ? data.topfama_orderId : '');
+                var oidFama = String(data && data.fama24h_orderId ? data.fama24h_orderId : '');
+                var oid = String(oidTop || oidFS || oidFama || '');
+                if (oid) {
+                  var elNumber = document.getElementById('orderNumberId');
+                  if (elNumber) elNumber.textContent = oid;
+                  try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
+                }
+                upsellPaidReady = true;
+                ensureUpsell();
+              } catch(_){}
+            });
+          } else if (corrQ) {
+            var es2 = new EventSource('/api/payment/subscribe?correlationID=' + encodeURIComponent(corrQ));
+            es2.addEventListener('paid', function(ev){
+              try {
+                var data = JSON.parse(ev.data || '{}');
+                var oidFS = String(data && data.fornecedor_social_orderId ? data.fornecedor_social_orderId : '');
+                var oidTop = String(data && data.topfama_orderId ? data.topfama_orderId : '');
+                var oidFama = String(data && data.fama24h_orderId ? data.fama24h_orderId : '');
+                var oid = String(oidTop || oidFS || oidFama || '');
+                if (oid) {
+                  var elNumber = document.getElementById('orderNumberId');
+                  if (elNumber) elNumber.textContent = oid;
+                  try { localStorage.setItem('oppus_selected_oid', oid); } catch(_){}
+                }
+                upsellPaidReady = true;
+                ensureUpsell();
+              } catch(_){}
+            });
+          }
+        } catch(_){}
+        
+        (function(){
+          var tries = 0;
+          var maxTries = 20;
+          function refreshOrderFS(){
+            tries++;
+            if (!ident) return;
+            fetch('/api/order?identifier=' + encodeURIComponent(ident))
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                try {
+                  var o = d && d.order ? d.order : null;
+                  if (!o) return;
+                  var oidFS = (o && o.fornecedor_social && o.fornecedor_social.orderId) ? String(o.fornecedor_social.orderId) : '';
+                  if (oidFS) {
+                    var elNumber = document.getElementById('orderNumberId');
+                    if (elNumber) elNumber.textContent = oidFS;
+                    try { localStorage.setItem('oppus_selected_oid', oidFS); } catch(_){}
+                  }
+                } catch(_){ }
+              })
+              .catch(function() {})
+              .then(function(){ if (tries < maxTries) setTimeout(refreshOrderFS, 1500); });
+          }
+          if (isPaid && isFollowersOrganicos) setTimeout(refreshOrderFS, 1200);
+        })();
+      } catch(_) {}
+      var famaPollTimer = null;
+      function check() {
+        var cachedOid = null;
+        try { cachedOid = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
+        var orderIDParam = cachedOid || String(getFirstProviderOid(orderData) || '') || ((orderData && orderData._id) ? String(orderData._id) : '');
+        if (!orderIDParam) return;
+        var url = '/api/order?orderID=' + encodeURIComponent(orderIDParam);
+        fetch(url)
+          .then(function(r){return r.json();})
+          .then(function(d){
+            try {
+              var o = d && d.order ? d.order : null;
+              if (!o) return;
+              var oidText = getAllProviderOidsText(o) || '';
+              var oidFirst = getFirstProviderOid(o) || '';
+              var paidRaw = (o.expay && o.expay.paidAt) || (o.woovi && o.woovi.paidAt) || o.paidAt || null;
+              var status = String(o.status || (o.expay && o.expay.status) || (o.woovi && o.woovi.status) || 'pendente');
+                var mapPaid = o && o.additionalInfoMapPaid || {};
+                var mapOrig = o && o.additionalInfoMap || {};
+                var cat0raw = (typeof mapPaid['categoria_servico'] === 'string' ? mapPaid['categoria_servico'] : '') || (typeof mapOrig['categoria_servico'] === 'string' ? mapOrig['categoria_servico'] : '');
+                if (!cat0raw) {
+                  try {
+                    var arrA = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+                    var itA = arrA.find(function(it){ return it && it.key === 'categoria_servico'; });
+                    if (itA && typeof itA.value === 'string') cat0raw = itA.value;
+                  } catch(_) {}
+                }
+                if (!cat0raw) {
+                  try {
+                    var arrB = Array.isArray(o && o.additionalInfo) ? o.additionalInfo : [];
+                    var itB = arrB.find(function(it){ return it && it.key === 'categoria_servico'; });
+                    if (itB && typeof itB.value === 'string') cat0raw = itB.value;
+                  } catch(_) {}
+                }
+                var cat0 = String(cat0raw || '').toLowerCase();
+                var t0raw = (typeof mapPaid['tipo_servico'] === 'string' ? mapPaid['tipo_servico'] : '') || (typeof mapOrig['tipo_servico'] === 'string' ? mapOrig['tipo_servico'] : '') || (o.tipo || o.tipoServico || '-');
+                if (!t0raw) {
+                  try {
+                    var arrT = Array.isArray(o && o.additionalInfoPaid) ? o.additionalInfoPaid : [];
+                    var itT = arrT.find(function(it){ return it && it.key === 'tipo_servico'; });
+                    if (itT && typeof itT.value === 'string') t0raw = itT.value;
+                  } catch(_) {}
+                }
+                if (!t0raw) {
+                  try {
+                    var arrT2 = Array.isArray(o && o.additionalInfo) ? o.additionalInfo : [];
+                    var itT2 = arrT2.find(function(it){ return it && it.key === 'tipo_servico'; });
+                    if (itT2 && typeof itT2.value === 'string') t0raw = itT2.value;
+                  } catch(_) {}
+                }
+                var t0 = String(t0raw || '-').toLowerCase();
+                var tipo = (function(){ if(cat0==='curtidas'){ if(t0==='mistos') return 'Curtidas Mistas'; if(t0==='brasileiros'||t0==='curtidas_brasileiras') return 'Curtidas Brasileiras'; if(t0==='organicos'||t0==='curtidas_reais') return 'Curtidas Reais'; } else if(cat0==='visualizacoes'){ if(t0==='visualizacoes_reels'||t0==='views'||t0==='reels') return 'Visualizações Reels'; return 'Visualizações'; } else { if(t0==='mistos') return 'Seguidores Mistos'; if(t0==='brasileiros') return 'Seguidores Brasileiros'; if(t0==='organicos') return 'Seguidores brasileiros e reais'; } return t0; })();
+              var qtd = String(o.qtd || o.quantidade || '0');
+              var insta = String(o.instagramUsername || o.instauser || '-');
+              var paidStr = formatDateTimeSP(paidRaw);
+              var elNum = document.getElementById('orderNumberId');
+              if (elNum && oidText) elNum.textContent = String(oidText);
+              try { if (oidFirst) localStorage.setItem('oppus_selected_oid', oidFirst); } catch(_){}
+              var elPaid = document.getElementById('paidAtLocal');
+              if (elPaid && paidStr) elPaid.textContent = paidStr;
+              var elSt = document.getElementById('orderStatus');
+              if (elSt) {
+                var s = String(status||'').toLowerCase();
+                  elSt.textContent = (s==='pago'||s==='paid') ? 'pedido pago' : status;
+                try {
+                  elSt.classList.toggle('status-green', (s==='pago'||s==='paid'));
+                  elSt.classList.toggle('status-yellow', s==='pendente');
+                } catch(_) {}
+              }
+              var elTipo = document.getElementById('orderTipo');
+              if (elTipo) elTipo.textContent = tipo;
+              var elQtd = document.getElementById('orderQtd');
+              if (elQtd) elQtd.textContent = String(qtd);
+              var elUser = document.getElementById('orderInsta');
+              if (elUser) elUser.textContent = insta;
+              try {
+                var getAddVal = function(obj, key){
+                  var arrPaid = Array.isArray(obj && obj.additionalInfoPaid) ? obj.additionalInfoPaid : [];
+                  var arr = Array.isArray(obj && obj.additionalInfo) ? obj.additionalInfo : [];
+                  var mapPaid = obj && obj.additionalInfoMapPaid || {};
+                  var foundPaid = arrPaid.find(function(it){ return it && it.key === key; });
+                  if (foundPaid && typeof foundPaid.value === 'string') return foundPaid.value;
+                  var found = arr.find(function(it){ return it && it.key === key; });
+                  if (found && typeof found.value === 'string') return found.value;
+                  if (mapPaid && typeof mapPaid[key] === 'string') return mapPaid[key];
+                  return '';
+                };
+                var bumpsStr = getAddVal(o, 'order_bumps');
+                var bumpsTotal = getAddVal(o, 'order_bumps_total');
+                var baseCents = 0;
+                var hasTotal = false;
+                try {
+                  if (typeof o.valueCents === 'number' && o.valueCents > 0) { baseCents = o.valueCents; hasTotal = true; }
+                  else if (o.woovi && o.woovi.paymentMethods && o.woovi.paymentMethods.pix && typeof o.woovi.paymentMethods.pix.value === 'number') { baseCents = o.woovi.paymentMethods.pix.value; }
+                } catch(_) {}
+                var bumpsCents = 0;
+                if (typeof bumpsTotal === 'string' && bumpsTotal) {
+                  var m = bumpsTotal.match(/(\d+)[,\.]?(\d{0,2})/);
+                  if (m) {
+                    var whole = Number(m[1]);
+                    var frac = String(m[2]||'');
+                    var frac2 = frac.padEnd(2,'0').slice(0,2);
+                    bumpsCents = (whole*100) + Number(frac2);
+                  }
+                }
+                var totalCents = hasTotal ? baseCents : (baseCents + bumpsCents);
+                var totalStr = '-';
+                if (totalCents > 0) {
+                  var reais = Math.floor(totalCents/100);
+                  var cents = String(totalCents%100).padStart(2,'0');
+                  totalStr = 'R$ ' + reais + ',' + cents;
+                }
+                var elB = document.getElementById('orderBumpsBox');
+                var elBT = document.getElementById('orderBumpsTotal');
+                var elTot = document.getElementById('orderTotal');
+                if (elBT) { elBT.textContent = bumpsTotal || '-'; }
+                if (elTot) { elTot.textContent = totalStr; }
+                if (elB) {
+                  if (typeof bumpsStr === 'string' && bumpsStr) {
+                    var parts = bumpsStr.split(';').map(function(p){ return p.trim(); }).filter(Boolean);
+                    var labels = parts.map(function(p){
+                      var kv = p.split(':');
+                      var k = kv[0];
+                      var v = kv[1];
+                      if (k === 'views') return 'Visualizações Reels (' + v + ')';
+                      if (k === 'likes') return 'Curtidas (' + v + ')';
+                      if (k === 'comments') return 'Comentários (' + v + ')';
+                      return k + ' (' + v + ')';
+                    });
+                    elB.textContent = labels.join(', ');
+                  } else {
+                    elB.textContent = '-';
+                  }
+                }
+                try {
+                  var elFama = document.getElementById('famaServicoStatus');
+                  var elLabel = document.getElementById('famaServicoLabel');
+                  var isFinalState = function(state){
+                    var s = String(state || lastFamaStatus || '').toLowerCase();
+                    return /cancel/.test(s) || /conclu/.test(s) || /complete|success|finished|done/.test(s);
+                  };
+                  var shouldPoll = function(state){
+                    var s = String(state || lastFamaStatus || '').toLowerCase();
+                    if (!s || s === '-') return true;
+                    if (/parcial/.test(s)) return true;
+                    return /pend/.test(s) || /andament|process|progress|start|running/.test(s) || /created|unknown/.test(s);
+                  };
+                  var schedulePoll = function(){
+                    try { if (famaPollTimer) { clearInterval(famaPollTimer); famaPollTimer = null; } } catch(_){}
+                    if (shouldPoll()) {
+                      try { famaPollTimer = setInterval(check, 120000); } catch(_){}
+                    }
+                  };
+                  var mapFama = function(s){
+                    var t = String(s || '').toLowerCase();
+                    if (!t) return '-';
+                    if (/cancel/.test(t)) return 'Cancelado';
+                    if (/partial/.test(t)) return 'Parcial';
+                    if (/duplicate/.test(t)) return 'Duplicado';
+                    if (/pend/.test(t)) return 'Pendente';
+                    if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+                    if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+                    return s;
+                  };
+                  var getStatusCls = function(label){
+                    var t = String(label || '').toLowerCase();
+                    if (/conclu/.test(t)) return 'status-green';
+                    if (/cancel/.test(t)) return 'status-red';
+                    if (/andament|process|progress|start|running/.test(t)) return 'status-yellow';
+                    if (/pend/.test(t)) return 'status-blue';
+                    return '';
+                  };
+                  var escHtml = function(s){
+                    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+                  };
+                  var setFamaBadge = function(label){
+                    var show = String(label || '-').trim() || '-';
+                    lastFamaStatus = show;
+                    if (elFama) elFama.textContent = show;
+                    var s1 = show.toLowerCase();
+                    var isDone = /conclu/.test(s1) || /complete|success|finished|done/.test(s1);
+                    try {
+                      if (elFama) {
+                        elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
+                        if (isDone) {
+                          elFama.classList.add('status-green');
+                        } else if (/cancel/.test(s1)) {
+                          elFama.classList.add('status-red');
+                        } else if (/andament|process|progress|start|running/.test(s1)) {
+                          elFama.classList.add('status-yellow');
+                        } else if (/pend/.test(s1)) {
+                          elFama.classList.add('status-blue');
+                        }
+                      }
+                    } catch(_){ }
+                    if (isDone) {
+                      upsellProviderDone = true;
+                      ensureUpsell();
+                    }
+                    schedulePoll();
+                  };
+                  var updateFama = function(resp){
+                    if (!elFama || !resp) return;
+                    var raw = String(resp.status || resp.Status || resp.status_text || resp.statusText || resp.StatusText || '').trim();
+                    var st = mapFama(raw);
+                    setFamaBadge(st || lastFamaStatus || '-');
+                    if (elLabel) elLabel.textContent = (st || lastFamaStatus || '-');
+                  };
+                  try {
+                    var persisted = o && o.fama24h && o.fama24h.statusPayload ? o.fama24h.statusPayload : null;
+                    if (persisted) {
+                      var rawPersist = String(persisted.status || persisted.Status || persisted.status_text || persisted.statusText || persisted.StatusText || '').trim();
+                      var stPersist = mapFama(rawPersist);
+                      if (stPersist) {
+                        lastFamaStatus = stPersist;
+                        if (elLabel) elLabel.textContent = stPersist;
+                        if (elFama) elFama.textContent = stPersist;
+                        try {
+                          elFama.classList.remove('status-green','status-yellow','status-red','status-blue');
+                          var s2 = stPersist.toLowerCase();
+                          var isDonePersist = /conclu/.test(s2) || /complete|success|finished|done/.test(s2);
+                          if (isDonePersist) {
+                            elFama.classList.add('status-green');
+                          } else if (/cancel/.test(s2)) {
+                            elFama.classList.add('status-red');
+                          } else if (/andament|process|progress|start|running/.test(s2)) {
+                            elFama.classList.add('status-yellow');
+                          } else if (/pend/.test(s2)) {
+                            elFama.classList.add('status-blue');
+                          }
+                          if (isDonePersist) {
+                            upsellProviderDone = true;
+                            ensureUpsell();
+                          }
+                        } catch(_){ }
+                        schedulePoll();
+                      }
+                    }
+                  } catch(_){ }
+                  try {
+                    var multiOrdersFama = (o && o.fama24h_multi && Array.isArray(o.fama24h_multi.orders)) ? o.fama24h_multi.orders : [];
+                    var multiOrdersFS = (o && o.fornecedor_social_multi && Array.isArray(o.fornecedor_social_multi.orders)) ? o.fornecedor_social_multi.orders : [];
+                    var multiOrders = (multiOrdersFama || []).concat(multiOrdersFS || []);
+                    if (multiOrders && multiOrders.length) {
+                      try {
+                        var tbody = document.getElementById('multiOrdersBody');
+                        if (tbody) {
+                          var html = '';
+                          for (var mi0=0; mi0<multiOrders.length; mi0++){
+                            var it0 = multiOrders[mi0] || {};
+                            var link0 = it0.link ? String(it0.link) : '';
+                            link0 = link0.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '').trim();
+                            if (link0 && /^www\./i.test(link0)) link0 = 'https://' + link0;
+                            var qty0 = it0.quantity ? Number(it0.quantity) : 0;
+                            var v0 = (it0.orderId !== undefined && it0.orderId !== null) ? it0.orderId : ((it0.id !== undefined && it0.id !== null) ? it0.id : null);
+                            var oid0 = (v0 === null || v0 === undefined) ? '' : String(v0).trim();
+                            var st0 = mapFama(it0 && it0.status ? it0.status : '');
+                            var cls0 = getStatusCls(st0);
+                            html += '<tr data-multi-index="' + String(mi0) + '" data-provider-orderid="' + (oid0 ? oid0.replace(/"/g,'&quot;') : '') + '">';
+                            html += '<td data-label="Post" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); max-width: 0;">';
+                            if (link0) {
+                              html += '<a class="multi-order-link" href="' + String(link0).replace(/"/g,'&quot;') + '" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; word-break: break-all;">' + String(link0).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</a>';
+                            } else {
+                              html += '-';
+                            }
+                            html += '</td>';
+                            html += '<td data-label="Quantidade" class="multi-order-qty" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center;">' + (qty0 ? String(qty0) : '-') + '</td>';
+                            html += '<td data-label="ID do Pedido" class="multi-order-oid" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:center; font-family: monospace;">' + (oid0 ? String(oid0).replace(/</g,'&lt;').replace(/>/g,'&gt;') : '-') + '</td>';
+                            html += '<td data-label="Status" class="multi-order-status" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); text-align:right;"><span class="multi-status ' + String(cls0 || '') + '">' + escHtml(st0 || '-') + '</span></td>';
+                            html += '</tr>';
+                          }
+                          if (html) tbody.innerHTML = html;
+                        }
+                      } catch(_){}
+                      var ids = [];
+                      for (var mi=0; mi<multiOrders.length; mi++){
+                        var itM = multiOrders[mi];
+                        if (!itM) continue;
+                        var vM = (itM.orderId !== undefined && itM.orderId !== null) ? itM.orderId : ((itM.id !== undefined && itM.id !== null) ? itM.id : null);
+                        var sM = (vM === null || vM === undefined) ? '' : String(vM).trim();
+                        if (!sM) continue;
+                        if (ids.indexOf(sM) === -1) ids.push(sM);
+                      }
+                      try {
+                        var trs = document.querySelectorAll('tr[data-provider-orderid]');
+                        for (var ti=0; ti<trs.length; ti++){
+                          var oidAttr = String(trs[ti].getAttribute('data-provider-orderid') || '').trim();
+                          if (!oidAttr) continue;
+                          if (ids.indexOf(oidAttr) === -1) ids.push(oidAttr);
+                        }
+                      } catch(_){}
+                      try {
+                        var elOids = document.getElementById('orderNumberId');
+                        var txtOids = (elOids && elOids.textContent) ? String(elOids.textContent).trim() : '';
+                        if (txtOids && txtOids !== '-' && txtOids.toLowerCase() !== 'unknown') {
+                          var partsOids = txtOids.split(',').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+                          for (var pi=0; pi<partsOids.length; pi++){
+                            var oidP = partsOids[pi];
+                            if (ids.indexOf(oidP) === -1) ids.push(oidP);
+                          }
+                        }
+                      } catch(_){}
+                      if (ids.length) {
+                        var rowSet = function(oid, label){
+                          try {
+                            var tr = document.querySelector('tr[data-provider-orderid="' + String(oid) + '"]');
+                            var td = tr ? tr.querySelector('.multi-order-status') : null;
+                            if (td) {
+                              var lb = String(label || '-');
+                              var cls = getStatusCls(lb);
+                              td.innerHTML = '<span class="multi-status ' + String(cls || '') + '">' + escHtml(lb) + '</span>';
+                            }
+                          } catch(_){}
+                        };
+                        var decideOverall = function(labels){
+                          var arr = (labels || []).filter(function(x){ return !!x && String(x).trim() && String(x).trim() !== '-'; }).map(function(x){ return String(x).trim(); });
+                          if (!arr.length) return '-';
+                          var allDone = arr.every(function(x){ return x === 'Concluído'; });
+                          if (allDone) return 'Concluído';
+                          var anyProgress = arr.some(function(x){ return x === 'Em andamento'; });
+                          if (anyProgress) return 'Em andamento';
+                          var anyPending = arr.some(function(x){ return x === 'Pendente'; });
+                          if (anyPending) return 'Pendente';
+                          var allCanceled = arr.every(function(x){ return x === 'Cancelado'; });
+                          if (allCanceled) return 'Cancelado';
+                          return 'Parcial';
+                        };
+                        var fetchOne = function(oid){
+                          var url = '/api/order/provider-status?order=' + encodeURIComponent(String(oid));
+                          return fetch(url, { method: 'GET', cache: 'no-store' })
+                            .then(function(r){ return r.json(); })
+                            .then(function(x){
+                              var data = x && x.data ? x.data : null;
+                              var raw = data ? String(data.status || data.Status || data.status_text || data.statusText || data.StatusText || '').trim() : '';
+                              var label = mapFama(raw);
+                              rowSet(oid, label);
+                              return label;
+                            })
+                            .catch(function(){
+                              rowSet(oid, '-');
+                              return '-';
+                            });
+                        };
+                        Promise.all(ids.map(fetchOne)).then(function(labels){
+                          var overall = decideOverall(labels);
+                          setFamaBadge(overall);
+                        }).catch(function(){});
+                        return;
+                      }
+                    }
+                  } catch(_){}
+                  if (oidFirst) {
+                    var currentDisplay = (elFama && elFama.textContent) ? elFama.textContent : '';
+                    var stateToCheck = currentDisplay || lastFamaStatus || '';
+                    if (!isFinalState(stateToCheck)) {
+                      var isFamaProvider = !!(o && o.fama24h && o.fama24h.orderId);
+                      if (isFamaProvider) {
+                        try { console.debug('Fama status request from /pedido', { order: oidFirst }); } catch(_) {}
+                        fetch('/api/fama/status', { 
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ order: String(oidFirst) })
+                        })
+                          .then(function(r){ return r.json(); })
+                          .then(function(x){ try { console.debug('Fama status response /pedido', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
+                          .catch(function(){});
+                      } else {
+                        var qs2 = new URLSearchParams((location && location.search) || '');
+                        var identParam = String(qs2.get('identifier') || qs2.get('t') || '').trim();
+                        var corrParam = String(qs2.get('correlationID') || qs2.get('ref') || '').trim();
+                        var urlParam = '';
+                        if (identParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(identParam));
+                        else if (corrParam) urlParam = ('/api/order/provider-status?id=' + encodeURIComponent(corrParam));
+                        else urlParam = ('/api/order/provider-status?order=' + encodeURIComponent(String(oidFirst)));
+                        try { console.debug('Provider status request', { url: urlParam }); } catch(_) {}
+                        fetch(urlParam, { method: 'GET' })
+                          .then(function(r){ return r.json(); })
+                          .then(function(x){ try { console.debug('Provider status response', x); } catch(_) {} try { updateFama(x && x.data); } catch(_) {} })
+                          .catch(function(){});
+                      }
+                    }
+                  }
+                } catch(_) {}
+              } catch(_) {}
+            } catch(_){}
+          })
+          .catch(function(){});
+      }
+      try { check(); } catch(_) {}
+      try {
+        var quickTries = 0;
+        var quickMaxTries = 40;
+        (function quickCheck(){
+          quickTries++;
+          var elNum = document.getElementById('orderNumberId');
+          var txtNum = (elNum && elNum.textContent) ? elNum.textContent.trim() : '';
+          if (txtNum && txtNum !== '-' && txtNum.toLowerCase() !== 'unknown') return;
+          try { check(); } catch(_) {}
+          if (quickTries < quickMaxTries) {
+            setTimeout(quickCheck, 3000);
+          }
+        })();
+      } catch(_) {}
+      try {
+        var cachedOid2 = null;
+        try { cachedOid2 = localStorage.getItem('oppus_selected_oid') || null; } catch(_) {}
+        var hasOid = cachedOid2 || ((orderData && orderData.fama24h && orderData.fama24h.orderId) ? String(orderData.fama24h.orderId) : '') || '';
+        if (hasOid && (String(lastFamaStatus || '').toLowerCase().match(/pend/) || String(lastFamaStatus || '').toLowerCase().match(/andament|process|progress|start|running/))) {
+          setInterval(check, 120000);
+        }
+      } catch(_) {}
+    })();
+    (function initCopyOrder(){
+      var btn = document.getElementById('copyOrderBtn');
+      var span = document.getElementById('orderNumberId');
+      if (!btn || !span) return;
+      function copyTextToClipboard(text) {
+        var v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(v);
+        }
+        return new Promise(function(resolve, reject){
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = v;
+            ta.setAttribute('readonly', 'readonly');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.left = '-1000px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (ok) resolve();
+            else reject(new Error('copy_failed'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+      btn.addEventListener('click', function(){
+        try {
+          var val = (span.textContent || '').trim();
+          if (!val) return;
+          copyTextToClipboard(val).then(function(){
+            try { 
+                var fb = document.getElementById('copyFeedback');
+                if (fb) fb.style.opacity = '1';
+                setTimeout(function(){ if (fb) fb.style.opacity = '0'; }, 2000);
+            } catch(_) {}
+          }).catch(function(){});
+        } catch(_) {}
+      });
+    })();
+    (function initCopyIU(){
+      function copyTextToClipboard(text) {
+        var v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(v);
+        }
+        return new Promise(function(resolve, reject){
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = v;
+            ta.setAttribute('readonly', 'readonly');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.left = '-1000px';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (ok) resolve();
+            else reject(new Error('copy_failed'));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+      document.addEventListener('click', function(e){
+        var btn = e && e.target ? e.target.closest('.copy-iu-btn') : null;
+        if (!btn) return;
+        var v = String(btn.getAttribute('data-copy') || '').replace(/^@/, '').trim();
+        copyTextToClipboard(v).catch(function(){});
+      });
+    })();
+    (function forceProviderStatusOnLoad(){
+      try {
+        var mapLabel = function(raw){
+          var t = String(raw || '').trim().toLowerCase();
+          if (!t) return '';
+          if (/cancel/.test(t)) return 'Cancelado';
+          if (/partial/.test(t)) return 'Parcial';
+          if (/pend/.test(t)) return 'Pendente';
+          if (/process|progress|start|running|created/.test(t)) return 'Em andamento';
+          if (/complete|success|finished|done|conclu/.test(t)) return 'Concluído';
+          return '';
+        };
+        var getRawStatus = function(x){
+          try {
+            var data = x && x.data ? x.data : null;
+            var raw = data ? String(data.status || data.Status || data.status_text || data.statusText || data.StatusText || '').trim() : '';
+            if (!raw && x && x.normalized) raw = String(x.normalized).trim();
+            return raw;
+          } catch(_) {}
+          return '';
+        };
+        var setBadge = function(label){
+          var el = document.getElementById('famaServicoStatus');
+          if (!el) return;
+          if (!label) return;
+          el.textContent = label;
+          try {
+            el.classList.remove('status-green','status-yellow','status-red','status-blue');
+            var s = label.toLowerCase();
+            if (/conclu/.test(s)) el.classList.add('status-green');
+            else if (/cancel/.test(s)) el.classList.add('status-red');
+            else if (/andament|process|progress|start|running/.test(s)) el.classList.add('status-yellow');
+            else if (/pend/.test(s)) el.classList.add('status-blue');
+          } catch(_) {}
+        };
+        var extractOidsFromDom = function(){
+          var ids = [];
+          try {
+            var trs = document.querySelectorAll('tr[data-provider-orderid]');
+            for (var i=0; i<trs.length; i++){
+              var v = String(trs[i].getAttribute('data-provider-orderid') || '').trim();
+              if (!v) continue;
+              if (ids.indexOf(v) === -1) ids.push(v);
+            }
+          } catch(_) {}
+          try {
+            var elOids = document.getElementById('orderNumberId');
+            var txtOids = (elOids && elOids.textContent) ? String(elOids.textContent).trim() : '';
+            if (txtOids && txtOids !== '-' && txtOids.toLowerCase() !== 'unknown') {
+              var parts = txtOids.split(',').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+              for (var p=0; p<parts.length; p++){
+                var s = parts[p];
+                if (ids.indexOf(s) === -1) ids.push(s);
+              }
+            }
+          } catch(_) {}
+          return ids;
+        };
+        var getStatusCls = function(label){
+          var t = String(label || '').toLowerCase();
+          if (/conclu/.test(t)) return 'status-green';
+          if (/cancel/.test(t)) return 'status-red';
+          if (/andament|process|progress|start|running/.test(t)) return 'status-yellow';
+          if (/pend/.test(t)) return 'status-blue';
+          return '';
+        };
+        var escHtml = function(s){
+          return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        };
+        var rowSet = function(oid, label){
+          try {
+            var tr = document.querySelector('tr[data-provider-orderid="' + String(oid) + '"]');
+            var td = tr ? tr.querySelector('.multi-order-status') : null;
+            if (td) {
+              var lb = String(label || '-');
+              var cls = getStatusCls(lb);
+              td.innerHTML = '<span class="multi-status ' + String(cls || '') + '">' + escHtml(lb) + '</span>';
+            }
+          } catch(_){}
+        };
+        var decideOverall = function(labels){
+          var arr = (labels || []).filter(function(x){ return !!x && String(x).trim() && String(x).trim() !== '-'; }).map(function(x){ return String(x).trim(); });
+          if (!arr.length) return '';
+          var allDone = arr.every(function(x){ return x === 'Concluído'; });
+          if (allDone) return 'Concluído';
+          var anyProgress = arr.some(function(x){ return x === 'Em andamento'; });
+          if (anyProgress) return 'Em andamento';
+          var anyPending = arr.some(function(x){ return x === 'Pendente'; });
+          if (anyPending) return 'Pendente';
+          var allCanceled = arr.every(function(x){ return x === 'Cancelado'; });
+          if (allCanceled) return 'Cancelado';
+          return 'Parcial';
+        };
+        var fetchOne = function(oid){
+          var url = '/api/order/provider-status?order=' + encodeURIComponent(String(oid));
+          return fetch(url, { method: 'GET', cache: 'no-store' })
+            .then(function(r){ return r.json(); })
+            .then(function(x){
+              var raw = getRawStatus(x);
+              var label = mapLabel(raw) || '-';
+              rowSet(oid, label);
+              return label;
+            })
+            .catch(function(){
+              rowSet(oid, '-');
+              return '-';
+            });
+        };
+        var pollMulti = function(){
+          var ids = extractOidsFromDom();
+          if (!ids.length) return false;
+          Promise.all(ids.map(fetchOne)).then(function(labels){
+            var overall = decideOverall(labels);
+            if (overall) setBadge(overall);
+          }).catch(function(){});
+          return true;
+        };
+
+        if (pollMulti()) {
+          try { setTimeout(pollMulti, 5000); } catch(_) {}
+          try { setInterval(pollMulti, 120000); } catch(_) {}
+          return;
+        }
+
+        var qs = new URLSearchParams((location && location.search) || '');
+        var identParam = String(qs.get('identifier') || qs.get('t') || '').trim();
+        var corrParam = String(qs.get('correlationID') || qs.get('ref') || '').trim();
+        var orderParam = String(qs.get('orderID') || qs.get('orderid') || qs.get('oid') || '').trim();
+        var url = '';
+        if (identParam) url = '/api/order/provider-status?id=' + encodeURIComponent(identParam);
+        else if (corrParam) url = '/api/order/provider-status?id=' + encodeURIComponent(corrParam);
+        else if (orderParam) url = '/api/order/provider-status?order=' + encodeURIComponent(orderParam);
+        if (!url) return;
+        fetch(url, { method: 'GET', cache: 'no-store' })
+          .then(function(r){ return r.json(); })
+          .then(function(x){
+            try {
+              var raw = getRawStatus(x);
+              var label = mapLabel(raw);
+              setBadge(label);
+            } catch(_) {}
+          })
+          .catch(function(){});
+      } catch(_) {}
+    })();
+    (function initBackButton(){
+      var btn = document.getElementById('backToPrevBtn');
+      if (!btn) return;
+      btn.addEventListener('click', function(){
+        try {
+          if (window.history && window.history.length > 1) { window.history.back(); return; }
+        } catch(_) {}
+        try {
+          var phone = localStorage.getItem('oppus_client_phone') || '';
+          if (phone) { window.location.href = '/cliente'; return; }
+        } catch(_) {}
+        window.location.href = '/checkout';
+      });
+    })();
+  </script>
+
+<!-- Privacy Check Modal -->
+<div id="privacyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99999; align-items:center; justify-content:center; padding:1rem; backdrop-filter: blur(5px);">
+  <div style="background:var(--bg-secondary); padding:2rem; border-radius:16px; max-width:400px; width:100%; text-align:center; position:relative; box-shadow:0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); border: 1px solid var(--border-color);">
+    
+    <!-- Step 1: Initial Warning -->
+    <div id="privacyStep1">
+      <div style="width:64px; height:64px; background:#FEF3C7; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-bottom:1.5rem; box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.2);">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+      </div>
+      <h3 style="margin:0 0 0.75rem 0; color:var(--text-primary); font-size: 1.25rem; font-weight: 700;">Perfil Privado Detectado</h3>
+      <div style="font-size: 1.2rem; color: var(--text-primary); margin-bottom: 1rem; font-weight: 600;">@<%= (function(){ var map=order.additionalInfoMapPaid||{}; var v=String(map['instagram_username']||'').trim(); if(v){ return v; } return String(order.instagramUsername || order.instauser || '-'); })() %></div>
+      <p style="color:var(--text-secondary); margin-bottom:2rem; line-height: 1.5;">Deixe o seu perfil no modo publico para receber o serviços. Apos ficar no modo publico retorne nessa tela e clique em confirmar para confirmamos que esta publico.</p>
+      <button id="btnConfirmPrivacy" onclick="checkPrivacyStatus()" class="continue-button" style="width:100%; justify-content:center; margin-top:1rem;">
+        <span class="button-text">Confirmar</span>
+      </button>
+    </div>
+
+    <!-- Step 2: Loading -->
+    <div id="privacyStepLoading" style="display:none; padding: 1rem 0;">
+      <div class="spinner" style="border: 3px solid rgba(0,0,0,0.1); width: 48px; height: 48px; border-radius: 50%; border-left-color: #22c55e; animation: spin 1s linear infinite; margin: 0 auto 1.5rem;"></div>
+      <h3 style="margin:0 0 0.5rem 0; color:var(--text-primary); font-size: 1.1rem;">Verificando perfil...</h3>
+      <p style="color:var(--text-secondary);">Aguarde um momento</p>
+    </div>
+
+    <!-- Step 3: Still Private (Timer) -->
+    <div id="privacyStepError" style="display:none;">
+      <div style="width:64px; height:64px; background:#FEE2E2; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-bottom:1.5rem;">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </div>
+      <h3 style="margin:0 0 0.75rem 0; color:var(--text-primary); font-size: 1.25rem; font-weight: 700;">O PERFIL ainda está privado</h3>
+      <div style="font-size: 1.2rem; color: var(--text-primary); margin-bottom: 1rem; font-weight: 600;">@<%= (function(){ var map=order.additionalInfoMapPaid||{}; var v=String(map['instagram_username']||'').trim(); if(v){ return v; } return String(order.instagramUsername || order.instauser || '-'); })() %></div>
+      <p style="color:var(--text-secondary); margin-bottom:2rem; line-height: 1.5;">Você não deixou seu perfil no modo público, deixe-o no modo público e retorne nessa tela para confirmar e finalizar o recebimento do serviço</p>
+      
+      <div style="font-size: 2rem; font-weight: 700; color: var(--text-primary); margin-bottom: 1.5rem; font-feature-settings: 'tnum'; font-variant-numeric: tabular-nums;">
+        0:<span id="privacyTimer">59</span>
+      </div>
+
+      <button disabled style="width:100%; background:var(--bg-primary); color:var(--text-secondary); border:1px solid var(--border-color); padding:1rem; border-radius:12px; font-weight:600; cursor:not-allowed; font-size:1rem; opacity: 0.7;">
+        Aguarde...
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<style>
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+</style>
+
+<script>
+(function() {
+  var orderData = {};
+  try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
+  var serviceCategory = null;
+  try {
+    if (orderData.additionalInfoMapPaid && orderData.additionalInfoMapPaid['categoria_servico']) {
+      serviceCategory = String(orderData.additionalInfoMapPaid['categoria_servico']).toLowerCase();
+    } else if (Array.isArray(orderData.additionalInfoPaid)) {
+      var fCatPaid = orderData.additionalInfoPaid.find(function(i){ return i && i.key === 'categoria_servico'; });
+      if (fCatPaid && fCatPaid.value) serviceCategory = String(fCatPaid.value).toLowerCase();
+    }
+    if (!serviceCategory && Array.isArray(orderData.additionalInfo)) {
+      var fCat = orderData.additionalInfo.find(function(i){ return i && i.key === 'categoria_servico'; });
+      if (fCat && fCat.value) serviceCategory = String(fCat.value).toLowerCase();
+    }
+  } catch(_) {}
+  var isPostCategory = (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes');
+  if (isPostCategory) {
+    return;
+  }
+
+  console.log('OrderData Privacy Check:', {
+      username: orderData.instagramUsername || orderData.instauser,
+      profilePrivacy: orderData.profilePrivacy,
+      isPrivate: orderData.profilePrivacy && orderData.profilePrivacy.isPrivate
+  });
+
+  var _privPayS = String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
+  var _privIsPaid = (_privPayS === 'pago' || _privPayS === 'paid' || _privPayS === 'completed');
+  // Modal/checagem de perfil privado SÓ para pedido PAGO. Pendente de pagamento não abre.
+  if (!_privIsPaid) {
+    /* pedido pendente → não abre o modal de perfil privado */
+  } else if (orderData && orderData.profilePrivacy && orderData.profilePrivacy.isPrivate) {
+    var modal = document.getElementById('privacyModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+    }
+  } else {
+    var alertCard = document.getElementById('privacyAlertCard');
+    if (alertCard) {
+        var modal = document.getElementById('privacyModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+    } else {
+        var uname = '';
+        if (orderData.additionalInfoMapPaid && orderData.additionalInfoMapPaid['instagram_username']) {
+            uname = orderData.additionalInfoMapPaid['instagram_username'];
+        }
+        if (!uname && Array.isArray(orderData.additionalInfoPaid)) {
+            var found = orderData.additionalInfoPaid.find(function(i){ return i && i.key === 'instagram_username'; });
+            if (found && found.value) uname = found.value;
+        }
+        if (!uname && Array.isArray(orderData.additionalInfo)) {
+            var found = orderData.additionalInfo.find(function(i){ return i && i.key === 'instagram_username'; });
+            if (found && found.value) uname = found.value;
+        }
+        if (!uname) {
+            uname = orderData.instagramUsername || orderData.instauser || orderData.link || '';
+        }
+        if (!uname) {
+            var elInsta = document.getElementById('orderInsta');
+            if (elInsta) {
+                uname = elInsta.textContent || elInsta.innerText || '';
+            }
+        }
+        
+        if (uname) {
+            uname = String(uname).replace(/\/$/, '');
+            var parts = uname.split('/');
+            uname = parts[parts.length - 1];
+            uname = uname.replace('@', '').trim();
+        }
+        
+        if (uname) {
+            fetch('/api/check-privacy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: uname })
+            })
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (d && d.isPrivate === true) {
+                    console.log('Silent check detected Private profile!');
+                    var modal = document.getElementById('privacyModal');
+                    if (modal) {
+                        modal.style.display = 'flex';
+                        document.body.style.overflow = 'hidden';
+                    }
+                }
+            })
+            .catch(function(e){ console.error('Silent check error', e); });
+        }
+    }
+  }
+})();
+
+var privacyTimerInterval = null;
+
+function checkPrivacyStatus() {
+  var orderData = {};
+  try { orderData = JSON.parse(document.getElementById('orderDataJson').textContent || '{}'); } catch(_) {}
+  
+  // Obter username (lógica robusta)
+  var username = '';
+  
+  // 1. Tentar mapa direto
+  if (orderData.additionalInfoMapPaid && orderData.additionalInfoMapPaid['instagram_username']) {
+      username = orderData.additionalInfoMapPaid['instagram_username'];
+  }
+  
+  // 2. Tentar arrays de info (Paid e Normal)
+  if (!username && Array.isArray(orderData.additionalInfoPaid)) {
+      var found = orderData.additionalInfoPaid.find(function(i){ return i && i.key === 'instagram_username'; });
+      if (found && found.value) username = found.value;
+  }
+  if (!username && Array.isArray(orderData.additionalInfo)) {
+      var found = orderData.additionalInfo.find(function(i){ return i && i.key === 'instagram_username'; });
+      if (found && found.value) username = found.value;
+  }
+
+  // 3. Tentar campos diretos
+  if (!username) {
+      username = orderData.instagramUsername || orderData.instauser || orderData.link || '';
+  }
+
+  // 4. FALLBACK DOM: Tentar pegar do elemento visual
+  if (!username) {
+      var elInsta = document.getElementById('orderInsta');
+      if (elInsta) {
+          username = elInsta.textContent || elInsta.innerText || '';
+      }
+  }
+  
+  // Limpeza (caso venha url completa)
+  if (username) {
+      username = String(username).replace(/\/$/, ''); // remove trailing slash
+      var parts = username.split('/');
+      username = parts[parts.length - 1]; // pega última parte se for url
+      username = username.replace('@', '').trim();
+  }
+
+  if (!username) {
+      alert('Não foi possível identificar o usuário do Instagram.');
+      return;
+  }
+
+  // UI Updates
+  document.getElementById('privacyStep1').style.display = 'none';
+  document.getElementById('privacyStepLoading').style.display = 'block';
+
+  fetch('/api/check-privacy?_=' + new Date().getTime(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, bypassCache: true })
+    })
+  .then(function(res) { return res.json(); })
+  .then(function(data) {
+      if (data.success && data.isPrivate === false) {
+          // Success: Profile is Public
+          
+          // UI Updates: Show Success Message
+          var step1 = document.getElementById('privacyStep1');
+          var stepLoading = document.getElementById('privacyStepLoading');
+          var stepError = document.getElementById('privacyStepError');
+          
+          if (step1) step1.style.display = 'none';
+          if (stepLoading) stepLoading.style.display = 'none';
+          if (stepError) stepError.style.display = 'none';
+
+          var successDiv = document.getElementById('privacyStepSuccess');
+          if (!successDiv) {
+              successDiv = document.createElement('div');
+              successDiv.id = 'privacyStepSuccess';
+              successDiv.innerHTML = '<div style="width:64px; height:64px; background:#D1FAE5; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-bottom:1.5rem;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg></div><h3 style="margin:0 0 0.75rem 0; color:var(--text-primary); font-size: 1.25rem; font-weight: 700;">Perfil Confirmado!</h3><p style="color:var(--text-secondary); margin-bottom:1rem; line-height: 1.5;">Por favor, aguarde que você será redirecionado para tela com detalhes do seu pedido.</p>';
+              var modalContent = document.querySelector('#privacyModal > div');
+              if (modalContent) modalContent.appendChild(successDiv);
+          }
+          successDiv.style.display = 'block';
+          
+          // Dispatch fulfillment retry (Trigger services)
+          var id = orderData.identifier || (orderData.paghiper && orderData.paghiper.transactionId) || (orderData.expay && orderData.expay.transactionId) || (orderData.woovi && orderData.woovi.identifier) || orderData._id;
+          if (id) {
+             console.log('🔄 Initiating fulfillment retry for ID:', id);
+             fetch('/api/order/retry-fulfillment', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({ identifier: id, bypassCache: true })
+             })
+             .then(function(r){ return r.json(); })
+             .then(function(d){ 
+                 console.log('✅ Fulfillment retry initiated:', d); 
+                 if (d.error) console.error('❌ Retry error:', d.error);
+             })
+             .catch(function(e){ console.error('❌ Retry fulfillment fetch error', e); })
+             .finally(function(){
+                 setTimeout(function(){ location.reload(); }, 3000);
+             });
+          } else {
+             console.error('❌ No identifier found for retry fulfillment', orderData);
+             setTimeout(function(){ location.reload(); }, 3000);
+          }
+          
+      } else {
+          // Still Private or Error
+          showPrivacyError();
+      }
+  })
+  .catch(function(err) {
+      console.error(err);
+      showPrivacyError();
+  });
+}
+
+function showPrivacyError() {
+  document.getElementById('privacyStepLoading').style.display = 'none';
+  document.getElementById('privacyStepError').style.display = 'block';
+  
+  startPrivacyTimer(30);
+}
+
+function startPrivacyTimer(seconds) {
+  var timerEl = document.getElementById('privacyTimer');
+  var timeLeft = seconds;
+  
+  timerEl.textContent = timeLeft < 10 ? '0' + timeLeft : timeLeft;
+  
+  if (privacyTimerInterval) clearInterval(privacyTimerInterval);
+  
+  privacyTimerInterval = setInterval(function() {
+    timeLeft--;
+    timerEl.textContent = timeLeft < 10 ? '0' + timeLeft : timeLeft;
+    
+    if (timeLeft <= 0) {
+      clearInterval(privacyTimerInterval);
+      // Reset to Step 1
+      document.getElementById('privacyStepError').style.display = 'none';
+      document.getElementById('privacyStep1').style.display = 'block';
+    }
+  }, 1000);
+}
+</script>
+<style>
+@media (min-width: 768px) {
+  #upsellExclusiveBanner {
+    padding: 1.1rem 1.5rem !important;
+    margin-bottom: 1.1rem !important;
+  }
+}
+</style>
+<script>window.OPPUS_DISABLE_SALE_TOASTS = true;</script>
+<script src="/js/checkout.js"></script>
+  <script src="/js/main.js"></script>
+  <!-- Tracking da TELA DE OBRIGADO (pós-pagamento). Só dispara quando obg=1 está
+       na URL — ou seja, só no redirect logo após o pagamento. Consulta do pedido
+       (email/área do cliente/painel) NÃO tem obg=1, então NÃO conta. -->
+  <script>
+    (function(){
+      try {
+        var p = new URLSearchParams(window.location.search || '');
+        if (p.get('obg') !== '1') return;
+        var id  = p.get('t') || p.get('identifier') || p.get('orderID') || '';
+        var ref = p.get('ref') || p.get('correlationID') || '';
+        if (!id && !ref) return;
+        // Dedupe no navegador: não conta 2x se der refresh.
+        var key = 'oppus_obg_' + (id || ref);
+        try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch(_) {}
+        var body = JSON.stringify({ identifier: id, correlationID: ref });
+        try {
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon('/api/track/thankyou', new Blob([body], { type: 'application/json' }));
+          } else {
+            fetch('/api/track/thankyou', { method:'POST', headers:{'Content-Type':'application/json'}, body: body, keepalive: true });
+          }
+        } catch(_) {}
+      } catch(_) {}
+    })();
+  </script>
+</body>
+</html>

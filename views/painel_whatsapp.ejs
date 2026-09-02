@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pedidos WhatsApp</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .container { max-width: 1100px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin: 0 0 14px 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .field { display:flex; flex-direction:column; gap:6px; }
+    .field label { font-size: 0.9rem; font-weight: 700; color:#111827; }
+    .field input, .field select, .field textarea { padding: 10px 12px; border-radius: 10px; border:1px solid #e5e7eb; background:#fff; font-size: 0.95rem; }
+    .field textarea { min-height: 54px; resize: vertical; }
+    .hint { font-size: 0.85rem; color:#6b7280; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+    .btn { padding: 12px 14px; border-radius: 12px; border: 0; font-weight: 900; cursor:pointer; background:#111827; color:#fff; }
+    .btn[disabled] { opacity: 0.5; cursor:not-allowed; }
+    .btn-secondary { background:#64748b; }
+    .result { margin-top: 14px; padding: 12px 12px; border-radius: 12px; border: 1px solid #e5e7eb; background: #f8fafc; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.9rem; word-break: break-all; }
+    @media (max-width: 720px) {
+      .container { padding: 12px; border-radius: 10px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', {page: 'whatsapp'}) %>
+  <div class="main-content">
+    <div class="container">
+      <h1>Pedidos WhatsApp</h1>
+      <div class="hint">Cria um pedido manual (WhatsApp) e registra no MongoDB como venda paga para contabilizar no painel.</div>
+      <div style="height:12px;"></div>
+      <div class="grid">
+        <div class="field">
+          <label for="waCategory">Categoria</label>
+          <select id="waCategory">
+            <option value="seguidores">Seguidores</option>
+            <option value="curtidas">Curtidas</option>
+            <option value="visualizacoes">Visualizações</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="waType">Serviço</label>
+          <select id="waType"></select>
+        </div>
+        <div class="field">
+          <label for="waLink">Link</label>
+          <input id="waLink" type="text" placeholder="Cole o link do perfil/post/reels" />
+        </div>
+        <div class="field">
+          <label for="waQty">Quantidade</label>
+          <input id="waQty" type="number" min="1" step="1" placeholder="Ex: 1000" />
+        </div>
+        <div class="field">
+          <label for="waValue">Valor (R$)</label>
+          <input id="waValue" type="text" placeholder="Ex: 29,90" />
+          <div class="hint" id="waSuggestedHint" style="display:none;"></div>
+          <div class="hint" id="waDiscountHint" style="display:none;"></div>
+        </div>
+        <div class="field">
+          <label>Desconto (opcional)</label>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:8px; font-weight:700; color:#111827;">
+              <input id="waDiscountToggle" type="checkbox" />
+              <span>Aplicar desconto</span>
+            </label>
+            <div id="waDiscountPctWrap" style="display:none; align-items:center; gap:8px;">
+              <input id="waDiscountPct" type="number" min="1" max="100" step="1" placeholder="%" style="width:110px;" />
+              <span class="hint">%</span>
+            </div>
+          </div>
+          <div class="hint">Se marcar, o % de desconto vira obrigatório e o valor é recalculado.</div>
+        </div>
+        <div class="field">
+          <label for="waName">Nome (opcional)</label>
+          <input id="waName" type="text" placeholder="Nome do cliente" />
+        </div>
+        <div class="field">
+          <label for="waPhone">Telefone (WhatsApp)</label>
+          <input id="waPhone" type="text" placeholder="DDD + número" />
+          <div class="hint">Usado para registro e para link temporário de reposição (quando aplicável).</div>
+        </div>
+        <div class="field">
+          <label for="waEmail">Email (opcional)</label>
+          <input id="waEmail" type="text" placeholder="email@cliente.com" />
+        </div>
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:10px; font-weight:900; color:#111827;">
+            <input id="waSkipProvider" type="checkbox" />
+            <span>Não enviar para fornecedor</span>
+          </label>
+          <div class="hint">Registra a venda e cria link de reposição, mas não despacha o pedido.</div>
+        </div>
+        <div class="field" style="grid-column: 1 / -1;">
+          <label for="waObs">Observação (opcional)</label>
+          <textarea id="waObs" placeholder="Ex: pago via Pix, atendimento WhatsApp..."></textarea>
+        </div>
+      </div>
+      <div style="height:14px;"></div>
+      <div class="row">
+        <button type="button" class="btn" id="waSubmitBtn" disabled>Enviar</button>
+        <button type="button" class="btn btn-secondary" id="waClearBtn">Limpar</button>
+        <div class="hint" id="waStatus" style="flex:1; min-width: 220px;"></div>
+      </div>
+      <div id="waResult" class="result" style="display:none;"></div>
+    </div>
+  </div>
+  <script>
+    (function(){
+      var el = function(id){ return document.getElementById(id); };
+      var catEl = el('waCategory');
+      var typeEl = el('waType');
+      var linkEl = el('waLink');
+      var qtyEl = el('waQty');
+      var valueEl = el('waValue');
+      var phoneEl = el('waPhone');
+      var emailEl = el('waEmail');
+      var nameEl = el('waName');
+      var obsEl = el('waObs');
+      var btn = el('waSubmitBtn');
+      var clearBtn = el('waClearBtn');
+      var statusEl = el('waStatus');
+      var resultEl = el('waResult');
+      var suggestedHint = el('waSuggestedHint');
+      var discountHint = el('waDiscountHint');
+      var discountToggleEl = el('waDiscountToggle');
+      var discountPctEl = el('waDiscountPct');
+      var discountPctWrapEl = el('waDiscountPctWrap');
+      var skipProviderEl = el('waSkipProvider');
+      var lastSuggested = '';
+      var valueTouched = false;
+      var discountBaseCents = 0;
+
+      var serviceOptions = {
+        seguidores: [
+          { v: 'mistos', l: 'IG - Seguidores - Mistos' },
+          { v: 'brasileiros', l: 'IG - Seguidores - Brasileiros' },
+          { v: 'organicos', l: 'IG - Seguidores - Orgânicos' }
+        ],
+        curtidas: [
+          { v: 'mistos', l: 'IG - Curtidas - Mistos' },
+          { v: 'brasileiros', l: 'IG - Curtidas - Brasileiros' },
+          { v: 'curtidas_reais', l: 'IG - Curtidas - Perfis reais' },
+          { v: 'organicos', l: 'IG - Curtidas - Orgânicos' }
+        ],
+        visualizacoes: [
+          { v: 'visualizacoes_reels', l: 'IG - Visualizações - Reels' }
+        ]
+      };
+
+      function setStatus(t) {
+        try { if (statusEl) statusEl.textContent = String(t || ''); } catch(_) {}
+      }
+      function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+      function normalizeDigits(s){ return String(s||'').replace(/\D/g,''); }
+      function hasRequired(){
+        var cat = String(catEl && catEl.value ? catEl.value : '').trim();
+        var type = String(typeEl && typeEl.value ? typeEl.value : '').trim();
+        var link = String(linkEl && linkEl.value ? linkEl.value : '').trim();
+        var qty = Number(qtyEl && qtyEl.value ? qtyEl.value : 0) || 0;
+        var val = String(valueEl && valueEl.value ? valueEl.value : '').trim();
+        var phone = normalizeDigits(phoneEl && phoneEl.value ? phoneEl.value : '');
+        var discOn = !!(discountToggleEl && discountToggleEl.checked);
+        var discPct = Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0;
+        var discOk = !discOn || (discPct > 0 && discPct <= 100);
+        return !!(cat && type && link && qty > 0 && val && phone.length >= 10 && discOk);
+      }
+      function updateBtn(){
+        try { if (btn) btn.disabled = !hasRequired(); } catch(_) {}
+      }
+
+      function normalizeIgUsernameFromInput(v){
+        try {
+          let s = String(v || '').trim();
+          if (!s) return '';
+          s = s.replace(/^['"`]+/, '').replace(/['"`]+$/, '').trim();
+          if (!s) return '';
+          if (/^https?:\/\//i.test(s)) {
+            s = s.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+            s = s.split('?')[0].split('#')[0];
+            s = s.replace(/\/+$/, '');
+            const parts = s.split('/').filter(Boolean);
+            s = parts.length ? String(parts[0] || '') : s;
+          } else if (/^instagram\.com\//i.test(s)) {
+            s = s.replace(/^instagram\.com\//i, '');
+            s = s.split('?')[0].split('#')[0];
+            s = s.replace(/\/+$/, '');
+            const parts = s.split('/').filter(Boolean);
+            s = parts.length ? String(parts[0] || '') : s;
+          }
+          s = s.trim();
+          if (s.startsWith('@')) s = s.slice(1);
+          s = s.replace(/\/+$/, '').trim();
+          if (!/^[a-zA-Z0-9._]+$/.test(s)) return '';
+          if (s.length < 1 || s.length > 60) return '';
+          return s.toLowerCase().trim();
+        } catch (_) {
+          return '';
+        }
+      }
+      function maybeNormalizeLinkField(){
+        try {
+          if (!linkEl) return;
+          const cat = String(catEl && catEl.value ? catEl.value : '').trim().toLowerCase();
+          if (cat !== 'seguidores') return;
+          const raw = String(linkEl.value || '').trim();
+          if (!raw) return;
+          const s = raw.toLowerCase();
+          if (/(^|\/)(p|reel|tv)\//i.test(s)) return;
+          const u = normalizeIgUsernameFromInput(raw);
+          if (u) linkEl.value = u;
+        } catch (_) {}
+      }
+
+      function rebuildTypes(){
+        var cat = String(catEl && catEl.value ? catEl.value : 'seguidores').trim();
+        var list = serviceOptions[cat] || [];
+        try {
+          if (!typeEl) return;
+          typeEl.innerHTML = '';
+          for (var i=0;i<list.length;i++){
+            var opt = document.createElement('option');
+            opt.value = list[i].v;
+            opt.textContent = list[i].l;
+            typeEl.appendChild(opt);
+          }
+        } catch(_) {}
+        updateBtn();
+        fetchSuggested();
+      }
+
+      function parseBrlToCents(s){
+        var raw = String(s||'').trim();
+        if (!raw) return 0;
+        raw = raw.replace(/[^\d,\.]/g,'');
+        if (!raw) return 0;
+        var m = raw.match(/(\d+)([\,\.](\d{1,2}))?$/);
+        if (!m) return 0;
+        var whole = Number(m[1]||0);
+        var frac = String(m[3]||'').padEnd(2,'0').slice(0,2);
+        var cents = (whole*100) + Number(frac||0);
+        return Number.isFinite(cents) ? cents : 0;
+      }
+      function formatCentsToBrl(c){
+        var n = Number(c||0);
+        if (!Number.isFinite(n) || n <= 0) return '';
+        var reais = Math.floor(n/100);
+        var cents = String(n%100).padStart(2,'0');
+        return String(reais) + ',' + cents;
+      }
+
+      function getBaseCentsForDiscount(){
+        var base = Number(discountBaseCents || 0) || 0;
+        if (base > 0) return base;
+        var fromSuggested = parseBrlToCents(lastSuggested);
+        if (fromSuggested > 0) return fromSuggested;
+        var cur = parseBrlToCents(String(valueEl && valueEl.value ? valueEl.value : '').trim());
+        return cur > 0 ? cur : 0;
+      }
+
+      function applyDiscountRecalc(){
+        try {
+          var discOn = !!(discountToggleEl && discountToggleEl.checked);
+          if (!discOn) {
+            try { if (discountHint) discountHint.style.display = 'none'; } catch(_) {}
+            return;
+          }
+          var pct = Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0;
+          if (!(pct > 0 && pct <= 100)) {
+            try {
+              if (discountHint) {
+                discountHint.style.display = '';
+                discountHint.textContent = 'Informe o % de desconto.';
+              }
+            } catch(_) {}
+            return;
+          }
+          var base = getBaseCentsForDiscount();
+          if (!(base > 0)) return;
+          var discounted = Math.max(0, Math.round(base * (100 - pct) / 100));
+          var brl = formatCentsToBrl(discounted);
+          if (valueEl) {
+            valueEl.value = brl;
+            valueTouched = true;
+          }
+          try {
+            if (discountHint) {
+              discountHint.style.display = '';
+              discountHint.textContent = 'Preço com desconto: R$ ' + brl + ' (base R$ ' + formatCentsToBrl(base) + ')';
+            }
+          } catch(_) {}
+        } catch(_) {}
+      }
+
+      async function fetchSuggested(){
+        try {
+          var cat = String(catEl && catEl.value ? catEl.value : '').trim();
+          var type = String(typeEl && typeEl.value ? typeEl.value : '').trim();
+          var qty = Number(qtyEl && qtyEl.value ? qtyEl.value : 0) || 0;
+          if (!cat || !type || !(qty > 0)) {
+            lastSuggested = '';
+            if (suggestedHint) suggestedHint.style.display = 'none';
+            return;
+          }
+          var url = '/api/painel/whatsapp-orders/price?category=' + encodeURIComponent(cat) + '&type=' + encodeURIComponent(type) + '&quantity=' + encodeURIComponent(String(qty));
+          var resp = await fetch(url, { method:'GET', headers:{'Accept':'application/json'}, credentials:'same-origin' });
+          if (resp && resp.status === 401) {
+            try { alert('Sessão expirada. Faça login novamente.'); } catch(_) {}
+            try { window.location.href = '/login'; } catch(_) {}
+            return;
+          }
+          var data = await resp.json().catch(function(){ return null; });
+          if (!data || data.ok !== true) {
+            lastSuggested = '';
+            if (suggestedHint) suggestedHint.style.display = 'none';
+            return;
+          }
+          var cents = Number(data.valueCents||0) || 0;
+          if (!(cents > 0)) {
+            lastSuggested = '';
+            if (suggestedHint) suggestedHint.style.display = 'none';
+            return;
+          }
+          var brl = formatCentsToBrl(cents);
+          lastSuggested = brl;
+          if (suggestedHint) {
+            suggestedHint.style.display = '';
+            suggestedHint.textContent = 'Sugestão (tabela): R$ ' + brl;
+          }
+          var current = String(valueEl && valueEl.value ? valueEl.value : '').trim();
+          var shouldAutofill = (!valueTouched) || (!current) || (current === lastSuggested);
+          if (shouldAutofill && valueEl) valueEl.value = brl;
+          if (discountToggleEl && discountToggleEl.checked) {
+            discountBaseCents = parseBrlToCents(brl);
+            applyDiscountRecalc();
+          }
+          updateBtn();
+        } catch (_) {}
+      }
+
+      try {
+        if (catEl) catEl.addEventListener('change', rebuildTypes);
+        if (typeEl) typeEl.addEventListener('change', function(){ updateBtn(); fetchSuggested(); });
+        if (qtyEl) qtyEl.addEventListener('input', function(){ updateBtn(); fetchSuggested(); });
+        if (linkEl) {
+          linkEl.addEventListener('input', updateBtn);
+          linkEl.addEventListener('blur', function(){ maybeNormalizeLinkField(); updateBtn(); });
+          linkEl.addEventListener('paste', function(){ setTimeout(function(){ maybeNormalizeLinkField(); updateBtn(); }, 0); });
+        }
+        if (phoneEl) phoneEl.addEventListener('input', updateBtn);
+        if (emailEl) emailEl.addEventListener('input', updateBtn);
+        if (nameEl) nameEl.addEventListener('input', updateBtn);
+        if (obsEl) obsEl.addEventListener('input', updateBtn);
+        if (valueEl) valueEl.addEventListener('input', function(){ valueTouched = true; updateBtn(); });
+        if (discountToggleEl) discountToggleEl.addEventListener('change', function(){
+          try {
+            if (discountToggleEl.checked) {
+              try { discountBaseCents = getBaseCentsForDiscount(); } catch(_) { discountBaseCents = 0; }
+              if (discountPctWrapEl) discountPctWrapEl.style.display = 'flex';
+              if (discountPctEl) {
+                if (!discountPctEl.value) discountPctEl.value = '15';
+                discountPctEl.focus();
+              }
+              applyDiscountRecalc();
+            } else {
+              if (discountPctWrapEl) discountPctWrapEl.style.display = 'none';
+              if (discountPctEl) discountPctEl.value = '';
+              discountBaseCents = 0;
+              if (discountHint) discountHint.style.display = 'none';
+              valueTouched = false;
+              fetchSuggested();
+            }
+          } catch(_) {}
+          updateBtn();
+        });
+        if (discountPctEl) discountPctEl.addEventListener('input', function(){ applyDiscountRecalc(); updateBtn(); });
+      } catch(_) {}
+
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function(){
+          try { if (linkEl) linkEl.value = ''; } catch(_) {}
+          try { if (qtyEl) qtyEl.value = ''; } catch(_) {}
+          try { if (valueEl) valueEl.value = ''; } catch(_) {}
+          try { if (phoneEl) phoneEl.value = ''; } catch(_) {}
+          try { if (emailEl) emailEl.value = ''; } catch(_) {}
+          try { if (nameEl) nameEl.value = ''; } catch(_) {}
+          try { if (obsEl) obsEl.value = ''; } catch(_) {}
+          try { if (skipProviderEl) skipProviderEl.checked = false; } catch(_) {}
+          try { valueTouched = false; } catch(_) {}
+          try { if (discountToggleEl) discountToggleEl.checked = false; } catch(_) {}
+          try { if (discountPctWrapEl) discountPctWrapEl.style.display = 'none'; } catch(_) {}
+          try { if (discountPctEl) discountPctEl.value = ''; } catch(_) {}
+          try { discountBaseCents = 0; } catch(_) {}
+          try { if (discountHint) discountHint.style.display = 'none'; } catch(_) {}
+          try { if (resultEl) resultEl.style.display = 'none'; } catch(_) {}
+          setStatus('');
+          updateBtn();
+          fetchSuggested();
+        });
+      }
+
+      if (btn) {
+        btn.addEventListener('click', async function(){
+          if (!hasRequired()) return;
+          maybeNormalizeLinkField();
+          var payload = {
+            category: String(catEl && catEl.value ? catEl.value : '').trim(),
+            type: String(typeEl && typeEl.value ? typeEl.value : '').trim(),
+            link: String(linkEl && linkEl.value ? linkEl.value : '').trim(),
+            quantity: Number(qtyEl && qtyEl.value ? qtyEl.value : 0) || 0,
+            value: String(valueEl && valueEl.value ? valueEl.value : '').trim(),
+            discountPercent: (discountToggleEl && discountToggleEl.checked) ? (Number(discountPctEl && discountPctEl.value ? discountPctEl.value : 0) || 0) : 0,
+            phone: String(phoneEl && phoneEl.value ? phoneEl.value : '').trim(),
+            email: String(emailEl && emailEl.value ? emailEl.value : '').trim(),
+            name: String(nameEl && nameEl.value ? nameEl.value : '').trim(),
+            obs: String(obsEl && obsEl.value ? obsEl.value : '').trim(),
+            skipProvider: !!(skipProviderEl && skipProviderEl.checked)
+          };
+          if (discountToggleEl && discountToggleEl.checked) {
+            if (!(payload.discountPercent > 0 && payload.discountPercent <= 100)) return alert('Informe o % de desconto.');
+          }
+          var cents = parseBrlToCents(payload.value);
+          if (!(cents > 0)) return alert('Valor inválido.');
+          btn.disabled = true;
+          setStatus('Criando pedido…');
+          try {
+            var controller = null;
+            var tmo = null;
+            try {
+              controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            } catch(_) { controller = null; }
+            if (controller) {
+              tmo = setTimeout(function(){
+                try { controller.abort(); } catch(_) {}
+              }, 15000);
+            }
+            var fetchOpts = {
+              method:'POST',
+              headers:{'Content-Type':'application/json','Accept':'application/json'},
+              body: JSON.stringify(payload),
+              credentials:'same-origin'
+            };
+            if (controller) fetchOpts.signal = controller.signal;
+            var resp = await fetch('/api/painel/whatsapp-orders/create', fetchOpts);
+            if (tmo) { try { clearTimeout(tmo); } catch(_) {} }
+            if (resp && resp.status === 401) {
+              setStatus('Sessão expirada.');
+              try { alert('Sessão expirada. Faça login novamente.'); } catch(_) {}
+              try { window.location.href = '/login'; } catch(_) {}
+              return;
+            }
+            var data = await resp.json().catch(function(){ return null; });
+            if (!data || data.ok !== true) {
+              var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + resp.status);
+              setStatus('Falha ao criar pedido.');
+              alert('Erro: ' + err);
+              return;
+            }
+            setStatus('Pedido solicitado.');
+            try {
+              var html = '';
+              html += '<div style="font-weight:900;color:#111827;margin-bottom:8px;">Pedido solicitado</div>';
+              var orgMsg = 'Pedido solicitado.\n' +
+                'Prazo de finalização de até 48hs, a entrega não é imediata.\n\n' +
+                'Qualquer dúvida, fico à disposição.\n' +
+                'Agradeço a confiança.';
+              if (data.refilUrl) {
+                var msgText = 'Pedido solicitado\n\n' +
+                  'Caso precise de reposição pode utilizar o link abaixo.\n' +
+                  'Atente-se as regras de reposição.\n\n' +
+                  '`' + String(data.refilUrl || '') + '`';
+                html += '<div style="margin-top:10px; white-space:pre-wrap; line-height:1.45; color:#111827;">' + esc(msgText) + '</div>';
+                html += '<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">';
+                html += '<button type="button" class="btn btn-secondary" id="waCopyRefilMsg">Copiar mensagem</button>';
+                html += '</div>';
+              } else if (payload.type === 'organicos') {
+                html += '<div style="margin-top:10px; white-space:pre-wrap; line-height:1.45; color:#111827;">' + esc(orgMsg) + '</div>';
+                html += '<div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">';
+                html += '<button type="button" class="btn btn-secondary" id="waCopyOrgMsg">Copiar mensagem</button>';
+                html += '</div>';
+              } else {
+                html += '<div style="margin-top:10px; color:#b91c1c; font-weight:800;">Link de reposição disponível apenas para Seguidores Mistos ou Brasileiros.</div>';
+              }
+              if (resultEl) { resultEl.innerHTML = html; resultEl.style.display = ''; }
+              setTimeout(function(){
+                try {
+                  var b1 = el('waCopyRefilMsg');
+                  if (b1 && data.refilUrl) b1.addEventListener('click', async function(){
+                    try {
+                      var text = 'Pedido solicitado\n\n' +
+                        'Caso precise de reposição pode utilizar o link abaixo.\n' +
+                        'Atente-se as regras de reposição.\n\n' +
+                        '`' + String(data.refilUrl || '') + '`';
+                      try {
+                        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                          await navigator.clipboard.writeText(text);
+                          return;
+                        }
+                      } catch (_) {}
+                      try {
+                        var ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        document.execCommand('copy');
+                        ta.remove();
+                      } catch (_) {}
+                    } catch (_) {}
+                  });
+                  var b2 = el('waCopyOrgMsg');
+                  if (b2) b2.addEventListener('click', async function(){
+                    try {
+                      var text = orgMsg;
+                      try {
+                        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                          await navigator.clipboard.writeText(text);
+                          return;
+                        }
+                      } catch (_) {}
+                      try {
+                        var ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        document.execCommand('copy');
+                        ta.remove();
+                      } catch (_) {}
+                    } catch (_) {}
+                  });
+                } catch(_) {}
+              }, 0);
+            } catch(_) {}
+          } catch (e) {
+            try {
+              setStatus('Falha ao criar pedido.');
+              var msg = '';
+              try {
+                if (e && e.name === 'AbortError') msg = 'Tempo excedido para criar o pedido. Tente novamente.';
+                else msg = String((e && e.message) ? e.message : 'Falha de rede ao criar o pedido.');
+              } catch(_) { msg = 'Falha de rede ao criar o pedido.'; }
+              alert('Erro: ' + msg);
+            } catch(_) {}
+          } finally {
+            if (tmo) { try { clearTimeout(tmo); } catch(_) {} }
+            btn.disabled = false;
+            updateBtn();
+          }
+        });
+      }
+
+      rebuildTypes();
+      updateBtn();
+    })();
+  </script>
+</body>
+</html>

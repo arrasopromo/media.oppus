@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-17892165907"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'AW-17892165907');
+  </script>
+<%
+  let serverQueryString = '';
+  if (typeof queryParams !== 'undefined' && queryParams) {
+     const p = new URLSearchParams();
+     ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+        if (queryParams[k]) p.set(k, queryParams[k]);
+     });
+     const s = p.toString();
+     if (s) serverQueryString = '?' + s;
+  }
+%>
+  <meta charset="utf-8" />
+  <title>Checkout - Seguidores</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <!-- Preconnect às origens externas (ganha tempo no 1º request) -->
+  <link rel="preconnect" href="https://track.agenciaoppus.site" />
+  <link rel="preconnect" href="https://connect.facebook.net" crossorigin />
+  <link href="/css/style.css?v=2" rel="stylesheet" />
+  <!-- CSS abaixo da dobra (perfil/testimonials/why-us): carrega sem bloquear o render -->
+  <link rel="stylesheet" href="/css/perfil.css" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/css/testimonials.css" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="/css/why-us.css?v=5" media="print" onload="this.media='all'" />
+  <noscript>
+    <link rel="stylesheet" href="/css/perfil.css" />
+    <link rel="stylesheet" href="/css/testimonials.css" />
+    <link rel="stylesheet" href="/css/why-us.css?v=5" />
+  </noscript>
+  <link rel="icon" type="image/png" href="/images/logo.png" />
+  <!-- TRACK COMBO -->
+  <script>
+    (function() {
+      var script = document.createElement("script");
+      script.type = "text/javascript";
+      script.async = true;
+      script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+      var firstScript = document.getElementsByTagName("script")[0];
+      firstScript.parentNode.insertBefore(script, firstScript);
+    })();
+  </script>
+  <!-- End TRACK COMBO -->
+     <!-- Google Tag Manager --> 
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': 
+  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0], 
+  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src= 
+  'https://tracke.agenciaoppus.site/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f); 
+  })(window,document,'script','dataLayer','GTM-MZD45RKD');</script> 
+  <!-- End Google Tag Manager -->
+
+</head>
+<body class="theme-light has-fixed-menu">
+  <%- include('partials/menu', { logoLink: 'https://agenciaoppus.site/engajamento' }) %>
+  <script>
+    // Server-side UTMs passed to client
+    window.SERVER_UTMS_QUERY = '<%- serverQueryString %>';
+
+    // Persist UTMs to sessionStorage immediately
+    try {
+      // Merge Server UTMs into URL if missing (visual only, mostly)
+      // But more importantly, merge into sessionStorage
+      const currentParams = new URLSearchParams(window.location.search);
+      const serverParams = new URLSearchParams(window.SERVER_UTMS_QUERY);
+      
+      const utms = {};
+      
+      // 1. From Server (Priority)
+      serverParams.forEach((v, k) => { utms[k] = v; });
+      
+      // 2. From Client URL (Overwrites server if present? usually same)
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid'].forEach(k => {
+         const v = currentParams.get(k);
+         if(v) utms[k] = v;
+      });
+
+      if (Object.keys(utms).length > 0) {
+          // Merge with existing storage
+          try {
+             const existing = JSON.parse(sessionStorage.getItem('oppus_utms') || '{}');
+             Object.assign(existing, utms);
+             sessionStorage.setItem('oppus_utms', JSON.stringify(existing));
+          } catch(e) {
+             sessionStorage.setItem('oppus_utms', JSON.stringify(utms));
+          }
+      }
+    } catch(_) {}
+
+    window.__ENG_MODE__ = (location && location.pathname && location.pathname.indexOf('/engajamento') === 0);
+    // Redirecionamento específico para Engajamento -> Instagram (com persistência de UTMs)
+    document.addEventListener('DOMContentLoaded', function() {
+      
+      // Helper para recuperar UTMs da URL ou do Storage
+      function getStoredUTMsQuery() {
+        const currentParams = new URLSearchParams(window.location.search);
+        // Ensure server params are considered if not in URL yet (e.g. if rewritten)
+        const serverParams = new URLSearchParams(window.SERVER_UTMS_QUERY);
+        serverParams.forEach((v, k) => {
+            if (!currentParams.has(k)) currentParams.set(k, v);
+        });
+
+        const stored = sessionStorage.getItem('oppus_utms');
+        if (stored) {
+            try {
+                const utms = JSON.parse(stored);
+                Object.keys(utms).forEach(k => {
+                    if (!currentParams.has(k)) {
+                        currentParams.set(k, utms[k]);
+                    }
+                });
+            } catch(e) {}
+        }
+        const qs = currentParams.toString();
+        return qs ? ('?' + qs) : '';
+    }
+
+      if (window.__ENG_MODE__) {
+        // Update links on load
+        const fullQuery = getStoredUTMsQuery();
+        
+        // Update Instagram Button/Link
+        const instaBtn = document.querySelector('.platform-btn.instagram');
+        if (instaBtn) {
+            // Se for link <a>
+            if (instaBtn.tagName === 'A') {
+                const base = instaBtn.getAttribute('href').split('?')[0];
+                instaBtn.setAttribute('href', base + fullQuery);
+            }
+        }
+
+        document.addEventListener('click', function(e) {
+          // 1. Botão Toggle da Plataforma
+          var toggleBtn = e.target.closest('.platform-btn');
+          if (toggleBtn) {
+             e.preventDefault();
+
+             var cardsDiv = document.getElementById('engajamentoServiceCards');
+             var tiktokCard = document.getElementById('tiktokMaintenanceCard');
+             var tutorialPlatform = document.getElementById('tutorialPlatform');
+             if (tutorialPlatform) tutorialPlatform.style.display = 'none';
+
+             if (toggleBtn.classList.contains('instagram')) {
+                // Show Service Cards
+                if (cardsDiv) {
+                    if (cardsDiv.style.display === 'none') {
+                        cardsDiv.style.display = 'grid';
+                        setTimeout(() => {
+                            cardsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }, 100);
+                    } else {
+                        cardsDiv.style.display = 'none';
+                    }
+                }
+                // Hide TikTok Card
+                if (tiktokCard) tiktokCard.style.display = 'none';
+
+             } else if (toggleBtn.classList.contains('tiktok')) {
+                // Show TikTok Card
+                if (tiktokCard) {
+                    tiktokCard.style.display = 'block';
+                    setTimeout(() => {
+                        tiktokCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }, 100);
+                }
+                // Hide Service Cards
+                if (cardsDiv) cardsDiv.style.display = 'none';
+             }
+             return;
+          }
+
+          // 2. Qualquer link <a> apontando para /servicos-instagram
+          var link = e.target.closest('a');
+          if (link) {
+            var href = link.getAttribute('href');
+            if (href && href.includes('servicos-instagram')) {
+               // Atualiza href dinamicamente antes de navegar
+               const baseUrl = href.split('?')[0];
+               const qs = getStoredUTMsQuery();
+               // Se o link já tem query, a gente preserva?
+               // A lógica getStoredUTMsQuery já pega tudo.
+               // Vamos apenas substituir para garantir consistência
+               link.setAttribute('href', baseUrl + qs);
+            }
+          }
+        }, true);
+      }
+    });
+  </script>
+  <div class="container checkout-page">
+    <header class="header">
+      <div id="headerTicker" class="header-ticker" aria-live="polite">
+        <span class="ticker-item enter">Empresa regularizada</span>
+      </div>
+      <h1 class="title">
+        Cresça o seu perfil Instagram com<br>
+        <span class="title-highlight-gradient">seguidores brasileiros e reais</span>
+      </h1>
+      <p class="subtitle" style="margin-top:0.25rem;">Transforme seu perfil com seguidores brasileiros e reais que geram autoridade de verdade.<br>Veja resultados em até 5 minutos.</p>
+      <div id="clientTools" class="client-tools" style="display:none;"></div>
+    </header>
+    
+        <div class="cards-grid checkout-grid">
+          <div class="service-card" id="audioCard">
+            <div class="card-content">
+              <h3 class="card-title">Guia de áudio</h3>
+              <div class="card-desc">
+                  <div class="audio-player">
+                  <audio id="guideAudio" class="audio-element" preload="none" src="/images/audio%20site.MP3"></audio>
+                  <div class="audio-controls">
+                    <div id="tutorialAudio" class="tutorial-pop tutorial-pop-input" data-tip-mode="manual" data-tip-top="50" data-tip-left="" data-tip-arrow-left="">
+                      <div class="tutorial-pop-step">1/5</div>
+                      <div class="tutorial-pop-text">Ouça o áudio primeiro</div>
+                    </div>
+                    <button type="button" id="audioPlayBtn" class="audio-speed-btn">Ouvir Áudio</button>
+                    <input type="range" id="audioProgress" class="audio-progress" min="0" max="100" value="0" />
+                  <span class="audio-time" style="white-space:nowrap;"><span id="audioCurrent">00:00</span>/<span id="audioDuration">00:00</span></span>
+                  </div>
+                  <div class="audio-speed-row">
+                    <button type="button" id="audioSpeed15x" class="audio-speed-btn">1.5x</button>
+                    <button type="button" id="audioSpeed2x" class="audio-speed-btn">2x</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="service-card" style="background: transparent; border: none; box-shadow: none; padding: 0;">
+            <div class="card-content" style="display:flex; justify-content:center; align-items:center; text-align:center;">
+              <a href="#plataformaCard" id="buyFollowersBtn" class="continue-button" style="display:inline-flex; justify-content:center; align-items:center; text-align:center; margin:34px auto 0;">
+                <span class="button-text">COMPRAR SEGUIDORES AGORA</span>
+              </a>
+              <div class="value-props">
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/ampulheta.png" alt="Anos de mercado" loading="lazy" decoding="async" />
+                    <div class="value-prop-metric">+3</div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">anos de operação</span><span class="caption-mobile">anos de<br>operação</span></div>
+                </div>
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/foguete.png" alt="Seguidores entregues" loading="lazy" decoding="async" />
+                    <div class="value-prop-metric">+2</div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">milhões de seguidores entregues</span><span class="caption-mobile">milhões de<br>seguidores<br>entregues</span></div>
+                </div>
+                <div class="value-prop-item">
+                  <div class="value-prop-row">
+                    <img class="value-prop-icon" src="/images/moeda.png" alt="Melhores preços" loading="lazy" decoding="async" />
+                    <div class="value-prop-metric">R$<span class="value-prop-arrow">↓</span></div>
+                  </div>
+                  <div class="value-prop-caption"><span class="caption-desktop">melhores preços do mercado</span><span class="caption-mobile">melhores<br>preços do<br>mercado</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="testimonials-section" id="depoimentosCard" style="display: flex; flex-direction: column; align-items: center;">
+            <div class="why-us-pill">O que as pessoas estão falando?</div>
+            <h2 class="why-us-title">Veja depoimentos de quem <span class="why-us-gradient-text">comprou conosco</span></h2>
+            <p class="why-us-subtitle" style="margin-bottom: 1.5rem;">Junte-se a milhares de clientes satisfeitos que impulsionaram suas redes sociais.</p>
+            <div id="testimonialsCarousel" class="testimonials-carousel">
+              <button type="button" class="carousel-btn prev" aria-label="Anterior">‹</button>
+              <div class="carousel-viewport">
+              <div class="carousel-track">
+                  <div class="carousel-item active" data-index="0"><img src="/images/depo1.png" alt="Depoimento 1" loading="lazy" decoding="async" /></div>
+                  <div class="carousel-item" data-index="1"><img src="/images/depo2.jpg" alt="Depoimento 2" loading="lazy" decoding="async" /></div>
+                  <div class="carousel-item" data-index="2"><img src="/images/depo3.png" alt="Depoimento 3" loading="lazy" decoding="async" /></div>
+              </div>
+              </div>
+              <button type="button" class="carousel-btn next" aria-label="Próximo">›</button>
+            </div>
+          </div>
+
+          <div id="howItWorksSection" style="margin-top: 1.75rem; background: transparent; border: none; box-shadow: none; padding: 0;">
+            <div style="text-align:center;">
+              <div class="why-us-pill">Veja como funciona</div>
+              <h2 class="why-us-title">Assista a <span class="why-us-gradient-text">apresentação</span></h2>
+              <p class="why-us-subtitle" style="margin-bottom: 1rem;">Um tour rápido pelo site e pelo passo a passo do pedido.</p>
+              <div style="position:relative; aspect-ratio: 9 / 16; height: clamp(420px, 70vh, 720px); max-width: 420px; margin: 0.75rem auto 0; border-radius:12px; overflow:hidden; box-shadow: var(--shadow); background: #000;">
+                <video id="sitePresentationVideo" controls playsinline preload="metadata" style="position:absolute; inset:0; width:100%; height:100%; object-fit: cover;">
+                  <source src="/images/apresentacao%20site.mp4" type="video/mp4">
+                </video>
+              </div>
+            </div>
+          </div>
+
+          <div class="why-choose-us-section">
+            <div class="why-us-pill">Por que escolher a Agência Oppus?</div>
+            <h2 class="why-us-title">Sabemos o que está <span class="why-us-gradient-text">funcionando</span></h2>
+            <p class="why-us-subtitle">Nossa metodologia comprovada entrega crescimento sustentável para sua presença digital</p>
+            <div class="why-us-slider-container">
+              <div class="why-us-track" id="whyUsTrack">
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 16V12M12 8H12.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>100% Seguro</h3>
+                  <p>Não pedimos senha. Seus dados ficam protegidos durante todo o processo.</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M16 21V19C16 17.9391 15.5786 16.9217 14.8284 16.1716C14.0783 15.4214 13.0609 15 12 15C10.9391 15 9.92172 15.4214 9.17157 16.1716C8.42143 16.9217 8 17.9391 8 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 13C13.6569 13 15 11.6569 15 10C15 8.34315 13.6569 7 12 7C10.3431 7 9 8.34315 9 10C9 11.6569 10.3431 13 12 13Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M4 7C4 9.20914 5.79086 11 8 11H16C18.2091 11 20 9.20914 20 7C20 4.79086 18.2091 3 16 3H8C5.79086 3 4 4.79086 4 7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Seguidores Reais</h3>
+                  <p>Trabalhamos com pacote de seguidores brasileiros reais</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M18.5 11.5L12 5L5.5 11.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 12.5V19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Entrega Rápida</h3>
+                  <p>Pacotes com resultados visiveis em até 5 minutos com crescimento de autoridade rápido</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Ferramenta Exclusiva</h3>
+                  <p>Ferramenta de reposição de seguidores perdido, exclusiva da Agência Oppus</p>
+                </div>
+                <div class="why-us-card">
+                  <div class="why-us-icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <polyline points="3.27 6.96 12 12.01 20.73 6.96" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <line x1="12" y1="22.08" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <h3>Integrações únicas</h3>
+                  <p>Sistema de integrações únicas que permite escolhas de estratégias mais dinâmicas como seleção de post e mais</p>
+                </div>
+              </div>
+              <div class="why-us-dots">
+                <div class="why-us-dot active" data-index="0"></div>
+                <div class="why-us-dot" data-index="1"></div>
+                <div class="why-us-dot" data-index="2"></div>
+                <div class="why-us-dot" data-index="3"></div>
+                <div class="why-us-dot" data-index="4"></div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Toggle de plataforma: colocar antes dos cards de seguidores -->
+          <div class="service-card" id="plataformaCard">
+            <div class="card-content">
+              <h3 class="card-title">Plataforma</h3>
+              <div class="card-desc">
+                  <div class="platform-help" style="margin-bottom:0.5rem; margin-top:20px; color: #cbd5e1; font-size: 1.125rem; text-align: center;">Escolha a plataforma em que deseja os serviços</div>
+                  <div class="platform-toggle" aria-label="Selecionar plataforma" style="position:relative;">
+                  <button type="button" class="platform-btn instagram" aria-pressed="true" aria-label="Instagram" style="text-decoration:none;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" fill="currentColor"/>
+                    </svg>
+                    <span>Instagram</span>
+                  </button>
+                  <button type="button" class="platform-btn tiktok" aria-pressed="false" aria-label="TikTok">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M14 3c.3 1.9 1.5 3.6 3.2 4.5 1 .6 2.1.9 3.2.9v3a8.6 8.6 0 01-3.2-.6 7.8 7.8 0 01-2.2-1.3v6.6a5.9 5.9 0 11-5.8-5.9c.4 0 .9.1 1.3.2v3a2.9 2.9 0 00-1.3-.3 2.9 2.9 0 102.9 2.9V3h2z" fill="currentColor"/>
+                    </svg>
+                    <span>TikTok</span>
+                  </button>
+                  <div id="tutorialPlatform" class="tutorial-pop tutorial-pop-input" style="display:block;">
+                    <div class="tutorial-pop-step">2/5</div>
+                    <div class="tutorial-pop-text">Escolha a rede social</div>
+                  </div>
+                </div>
+                
+                <!-- Cards de Serviços (Estilo Premium) -->
+                <div id="engajamentoServiceCards" style="display: grid;">
+                    
+                    <!-- Card Seguidores -->
+                    <div class="service-card premium-card card-seguidores" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-instagram'+qs; } catch(_){ return '/servicos-instagram'; } })()">
+                      <div class="card-content">
+                        <img src="/images/icone-seguidores.png" alt="Seguidores" class="card-icon-3d" onerror="this.style.display='none'">
+                        <div class="card-title text-gradient-seguidores">Seguidores</div>
+                        <div class="card-subtitle">
+                          <span class="badge-seguidores-br">Seguidores brasileiros e reais</span>
+                        </div>
+                        <div class="card-price"><span>Pacotes a partir de</span> <span class="price-value">R$ 7,90</span></div>
+                        <div class="card-security">
+                          Não precisamos da sua senha
+                        </div>
+                        <div class="card-hint">
+                          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"></circle>
+                            <path d="M12 16v-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                            <path d="M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                          </svg>
+                          Escolha o tipo
+                        </div>
+                        <button class="card-btn btn-gradient-seguidores">Ver Pacote</button>
+                      </div>
+                    </div>
+
+                    <%
+                      const _sv = (typeof serviceVisibility !== 'undefined' && serviceVisibility && typeof serviceVisibility === 'object') ? serviceVisibility : {};
+                      const _hiddenCurtidas = Array.isArray(_sv.curtidas) ? _sv.curtidas.map(s => String(s || '').trim()) : [];
+                      const _hiddenVisualizacoes = Array.isArray(_sv.visualizacoes) ? _sv.visualizacoes.map(s => String(s || '').trim()) : [];
+                      const _hideCurtidasCard = _hiddenCurtidas.includes('curtidas_brasileiras') && _hiddenCurtidas.includes('mistos') && _hiddenCurtidas.includes('organicos');
+                      const _hideVisualizacoesCard = _hiddenVisualizacoes.includes('visualizacoes_reels');
+                    %>
+
+                    <% if (!_hideCurtidasCard) { %>
+                      <!-- Card Curtidas -->
+                      <div class="service-card premium-card card-curtidas" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,v); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-curtidas'+qs; } catch(_){ return '/servicos-curtidas'; } })()">
+                        <div class="card-content">
+                          <img src="/images/curtidas-icone.png" alt="Curtidas" class="card-icon-3d" onerror="this.style.display='none'">
+                          <div class="card-title text-gradient-curtidas">Curtidas</div>
+                          <div class="card-subtitle">Curtidas perfis reais</div>
+                          <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 4,90</span></div>
+                          <div class="card-security">
+                            Não precisamos da sua senha
+                          </div>
+                          <div class="card-hint">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"></circle>
+                              <path d="M12 16v-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                              <path d="M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                            </svg>
+                            Escolha o tipo
+                          </div>
+                          <button class="card-btn btn-gradient-curtidas">Ver Pacote</button>
+                        </div>
+                      </div>
+                    <% } %>
+
+                    <% if (!_hideVisualizacoesCard) { %>
+                      <!-- Card Visualizações -->
+                      <div class="service-card premium-card card-visualizacoes" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-visualizacoes'+qs; } catch(_){ return '/servicos-visualizacoes'; } })()">
+                        <div class="card-content">
+                          <img src="/images/visualizacao-icon.png" alt="Visualizações" class="card-icon-3d" onerror="this.style.display='none'">
+                          <div class="card-title text-gradient-visualizacoes">Visualizações</div>
+                          <div class="card-subtitle">Visualizações no Reels</div>
+                          <div class="card-price"><span>Pacote a partir de</span> <span class="price-value">R$ 3,90</span></div>
+                          <div class="card-security">
+                            Não precisamos da sua senha
+                          </div>
+                          <button class="card-btn btn-gradient-visualizacoes">Ver Pacote</button>
+                        </div>
+                      </div>
+                    <% } %>
+                </div>
+
+                <!-- Card de Manutenção TikTok -->
+                <div id="tiktokMaintenanceCard" class="service-card" style="display:none; margin-top: 40px; text-align: center; padding: 2rem;">
+                    <div class="card-content">
+                        <div class="card-title" style="color: #ef4444; font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;">Em Manutenção</div>
+                        <div class="card-desc" style="font-size: 1rem;">O serviço de TikTok está temporariamente indisponível.</div>
+                    </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          <!-- Desktop: seleção por cards de tipo -->
+          <div id="tipoCards" class="option-cards" style="display:none;"></div>
+          <!-- Descrição do serviço (após escolher tipo, antes dos preços) -->
+          <div class="service-card" id="tipoDescCard" style="display:none;">
+            <div class="card-content">
+              <h3 class="card-title" id="tipoDescTitle"></h3>
+              <div class="card-desc" id="tipoDescContent"></div>
+            </div>
+          </div>
+          <!-- Desktop: cards de planos/valores -->
+          <div id="planCards" class="plan-cards" style="display:none;"></div>
+
+          
+          <div class="service-card" id="tipoSelectCard">
+            <div class="card-content">
+              <h3 class="card-title">Tipo de serviço</h3>
+              <div class="input-group" id="grupoTipo" style="position:relative;">
+                <select id="tipoSelect" class="select-input" style="flex:1;">
+                  <option value="" selected>Selecione...</option>
+                  <option value="mistos">Seguidores Mistos</option>
+                  <option value="brasileiros">Seguidores Brasileiros</option>
+                  <option value="organicos">Seguidores brasileiros e reais</option>
+                  <% if (!_hiddenCurtidas.includes('curtidas_brasileiras')) { %>
+                    <option value="curtidas_brasileiras">Curtidas Brasileiras</option>
+                  <% } %>
+                  <% if (!_hiddenVisualizacoes.includes('visualizacoes_reels')) { %>
+                    <option value="visualizacoes_reels">Visualizações Reels</option>
+                  <% } %>
+                </select>
+                <!-- Tutorial: 2/4 (selecionar rede social) -->
+                <div id="tutorial1Tipo" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">2/4</div>
+                  <div class="tutorial-pop-text">Selecionar rede social</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="service-card" id="quantidadeSelectCard">
+            <div class="card-content">
+              <h3 class="card-title">Escolha o pacote</h3>
+              <div class="input-group" id="grupoQuantidade" style="position:relative;">
+                <select id="quantidadeSelect" class="select-input" disabled style="flex:1;">
+                  <option value="">Selecione o tipo primeiro...</option>
+                </select>
+                <!-- Tutorial: 3/4 -->
+                <div id="tutorial2Pacote" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">3/4</div>
+                  <div class="tutorial-pop-text">Selecionar o plano</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Seção Ferramenta Exclusiva (Estilo Visual Novo - igual à página de serviços Instagram) -->
+          <div class="service-card" id="ferramentaExclusivaSection" style="margin-top: 3rem; text-align: center; background: transparent; box-shadow: none; border: none;">
+            <div style="display: inline-block; background: rgba(139, 92, 246, 0.1); color: #8B5CF6; padding: 0.35rem 1rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1.25rem;">
+              Exclusividade
+            </div>
+            <h3 class="card-title" style="font-size: 2rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+              <span style="font-weight: 700;">Ferramenta</span> <span style="background: linear-gradient(90deg, #FF0080 0%, #7928CA 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">Exclusiva</span>
+            </h3>
+            <p class="card-desc" style="max-width: 600px; margin: 0 auto 2rem; font-size: 1.1rem; color: var(--text-secondary);">
+              Conheça nossa tecnologia exclusiva de reposição automática de seguidores.
+            </p>
+            <div style="max-width: 500px; margin: 0 auto;">
+              <img src="/images/refil%20(1).png" alt="Ferramenta de Reposição" loading="lazy" decoding="async" style="width: 100%; max-width: 500px !important; display: block; margin: 0 auto; filter: drop-shadow(0 10px 20px rgba(0,0,0,0.1));">
+            </div>
+          </div>
+
+
+        </div>
+      </section>
+
+      <section class="section-block">
+        <div class="service-card" id="perfilCard" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title">Perfil do Instagram</h3>
+            <div class="card-desc">
+              <div class="input-group" id="grupoUsername" style="position:relative;">
+                <input type="text" id="usernameCheckoutInput" placeholder="Digite o nome de usuário ou URL do Instagram..." class="select-input" maxlength="100" />
+                <button id="checkCheckoutButton" class="continue-button" type="button" style="margin-left:0.5rem; padding:0.35rem 0.6rem; font-size:13px;">
+                  <span class="button-text">Validar</span>
+                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div id="tutorial3Usuario" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">3/5</div>
+                  <div class="tutorial-pop-text">Cole o link do seu perfil Instagram</div>
+                </div>
+              </div>
+              <div id="perfilHints" style="margin-top:0.8rem; color: var(--text-secondary);">
+                <div class="perfil-hint strong">• Não precisamos da sua senha</div>
+                <div id="howToGetLinkContainer" style="margin-top: 0.5rem; display: none;">
+                  <a href="javascript:void(0)" onclick="document.getElementById('toolExplanationModal').style.display='flex'" style="color: var(--primary-purple); font-weight: 600; text-decoration: none; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    Como pego o link do meu perfil?
+                  </a>
+                </div>
+              </div>
+              <div id="statusCheckoutMessage" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+              <div id="loadingCheckoutSpinner" class="loading-spinner" style="display:none; margin-top:0.5rem;">
+                <div class="spinner"></div>
+                <p>Verificando perfil...</p>
+              </div>
+              <div id="profilePreview" style="display:none; margin-top:0.75rem; text-align:center;">
+                <img id="checkoutProfileImage" alt="Foto do perfil" style="width:72px; height:72px; border-radius:50%; object-fit:cover; background:#fff; display:block; margin:0 auto 0.5rem;" />
+                <div style="color:#fff; margin-bottom:0.5rem;">
+                  <strong>@<span id="checkoutProfileUsername"></span></strong>
+                </div>
+                <div id="checkoutProfileStats" style="display:flex; gap:1rem; justify-content:center; color:#fff;">
+                  <div><strong>Seguidores:</strong> <span id="checkoutFollowersCount">-</span></div>
+                  <div><strong>Seguindo:</strong> <span id="checkoutFollowingCount">-</span></div>
+                  <div><strong>Posts:</strong> <span id="checkoutPostsCount">-</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="section-block">
+        <div class="cards-grid checkout-grid">
+        <!-- Promoções -->
+        <div class="service-card" id="orderBumpInline" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title" style="background: linear-gradient(90deg, #8B5CF6 0%, #3B82F6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: transparent; display: block; text-align: center; width: 100%;">Oferta exclusivas para você</h3>
+            <div class="card-desc promo-list">
+                <!-- Upgrade dinâmico -->
+                <label class="promo-item upgrade">
+                  <input type="checkbox" id="orderBumpCheckboxInline" />
+                  <div class="promo-content">
+                    <div class="promo-highlight" id="orderBumpHighlight">Upgrade de seguidores</div>
+                    <div class="promo-title">Upgrade de pacote</div>
+                    <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
+                    <div class="promo-prices" data-promo="upgrade">
+                      <span class="old-price">—</span>
+                      <span class="discount-badge">OFERTA</span>
+                      <span class="new-price">—</span>
+                    </div>
+                  </div>
+                </label>
+                <!-- Demais promoções -->
+                <label class="promo-item likes">
+                  <input type="checkbox" id="promoLikes" data-promo="likes" />
+                  <div class="promo-content">
+                    <div class="promo-highlight">+ curtidas</div>
+                    <div class="promo-title">Curtidas promocionais</div>
+                    <div class="promo-desc">Adicionar curtidas ao post.</div>
+                    <div class="promo-prices" data-promo="likes">
+                      <span class="old-price">R$ 49,90</span>
+                      <span class="discount-badge">80% OFF</span>
+                      <span class="new-price">R$ 9,90</span>
+                    </div>
+                    <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
+                      <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">−</button>
+                      <span id="likesQty" class="likes-qty">150</span>
+                      <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">+</button>
+                      <div id="likesPromoTip" class="tutorial-pop tutorial-pop-check" style="display:none;"><div class="tutorial-pop-text">Pode aumentar a quantidade clicando na seta</div></div>
+                    </div>
+                    
+                  </div>
+                </label>
+                <label class="promo-item views">
+                  <input type="checkbox" id="promoViews" data-promo="views" />
+                  <div class="promo-content">
+                    <div class="promo-highlight">+ visualizações</div>
+                    <div class="promo-title">Visualizações promocionais</div>
+                    <div class="promo-desc">Adicionar visualizações em Reels.</div>
+                    <div class="promo-prices" data-promo="views">
+                      <span class="old-price">R$ 89,90</span>
+                      <span class="discount-badge">78% OFF</span>
+                      <span class="new-price">R$ 19,90</span>
+                    </div>
+                    <div class="likes-control" aria-label="Quantidade de visualizações">
+                      <button type="button" id="viewsDec" class="likes-arrow" aria-label="Diminuir">−</button>
+                      <span id="viewsQty" class="likes-qty">1000</span>
+                      <button type="button" id="viewsInc" class="likes-arrow" aria-label="Aumentar">+</button>
+                      
+                    </div>
+                    
+                  </div>
+                </label>
+                <label class="promo-item comments">
+                  <input type="checkbox" id="promoComments" data-promo="comments" />
+                  <div class="promo-content">
+                    <div class="promo-highlight">+ COMENTÁRIOS</div>
+                    <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                      <span>Comentário promocional</span>
+                      <button id="commentsExampleBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Exemplo comentários</button>
+                    </div>
+                    <div class="promo-desc">1 comentário = R$ 1,50 cada.</div>
+                    <div class="promo-prices" data-promo="comments">
+                      <span class="old-price">R$ 29,90</span>
+                      <span class="discount-badge">67% OFF</span>
+                      <span class="new-price">R$ 9,90</span>
+                    </div>
+                    <div class="likes-control" aria-label="Quantidade de comentários">
+                      <button type="button" id="commentsDec" class="likes-arrow" aria-label="Diminuir">−</button>
+                      <span id="commentsQty" class="likes-qty">1</span>
+                      <button type="button" id="commentsInc" class="likes-arrow" aria-label="Aumentar">+</button>
+                    </div>
+                    
+                  </div>
+                </label>
+                
+                <label class="promo-item warranty60">
+                  <input type="checkbox" id="promoWarranty60" data-promo="warranty60" checked />
+                  <div class="promo-content">
+                    <div id="warrantyHighlight" class="promo-highlight">+ 30 DIAS DE REPOSIÇÃO</div>
+                    <div class="promo-title" style="display:flex; align-items:center; gap:0.5rem;">
+                      <span>Garantia estendida</span>
+                      <button id="warranty60InfoBtn" class="continue-button" type="button" style="padding:0.15rem 0.5rem; font-size:12px; line-height:1;">Entenda mais</button>
+                    </div>
+                    <div id="warrantyDesc" class="promo-desc">Não perca mais nenhum seguidor</div>
+                    <div class="promo-prices" data-promo="warranty60">
+                      <span id="warrantyOldPrice" class="old-price">R$ 39,90</span>
+                      <span id="warrantyDiscount" class="discount-badge">75% OFF</span>
+                      <span id="warrantyNewPrice" class="new-price">R$ 9,90</span>
+                    </div>
+                    <div class="likes-control" aria-label="Garantia estendida">
+                      <button type="button" id="warrantyModeDec" class="likes-arrow" aria-label="Anterior">‹</button>
+                      <span id="warrantyModeLabel" class="likes-qty">30 dias</span>
+                      <button type="button" id="warrantyModeInc" class="likes-arrow" aria-label="Próximo">›</button>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Resumo do pedido (após promoções e antes do finalizar) -->
+          <div class="service-card" id="resumo" hidden>
+            <div class="card-content">
+              <h3 class="card-title">Resumo</h3>
+              <div class="card-desc">
+                <div><strong>Tipo:</strong> <span id="resTipo"></span></div>
+                <div><strong>Quantidade:</strong> <span id="resQtd"></span></div>
+                <div><strong>Preço:</strong> <span id="resPreco"></span></div>
+                <div><strong>Promoções:</strong> <span id="resPromos"></span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Campo Finalizar -->
+          <div id="paymentCard" style="display:none;">
+            <div class="action-container" id="grupoPedido" style="position:relative;">
+                <div class="phone-field" style="position:relative; margin-bottom:0.75rem;">
+                <label for="checkoutPhoneInput" class="phone-label" style="display:block; font-weight:700; margin-bottom:0.25rem; font-size: calc(1rem + 10px);">Telefone de contato</label>
+                <p class="phone-hint" style="margin-top:0.15rem; margin-bottom:0.5rem; color:#9ca3af; font-size: calc(1rem + 3px);">Usaremos este contato caso precisarmos falar com você. Pelo telefone você pode consultar seus pedidos.</p>
+                <input id="checkoutPhoneInput" type="tel" class="select-input" placeholder="(DDD) 9XXXX-XXXX" />
+                <div id="tutorial4Validar" class="tutorial-pop tutorial-pop-input" style="display:none;">
+                  <div class="tutorial-pop-step">4/5</div>
+                  <div class="tutorial-pop-text">Digite seu telefone</div>
+                </div>
+              </div>
+              <div class="button-container">
+                <button id="realizarPedidoBtn" class="continue-button">
+                  <span class="button-text">Realizar pedido</span>
+                  <svg class="button-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div id="tutorial5Pedido" class="tutorial-pop tutorial-pop-confirm" style="display:none;">
+                  <div class="tutorial-pop-step">5/5</div>
+                  <div class="tutorial-pop-text">Crie seu pedido</div>
+                </div>
+              </div>
+            </div>
+            <div id="pixResultado" class="card-desc" style="display:none; margin-top: 0.75rem;"></div>
+          </div>
+        </div>
+      </section>
+      <section class="section-block">
+        <div class="checkout-container" style="display: flex; flex-direction: column;">
+
+          <div id="faqSection" class="faq-section">
+            <h3 class="testimonials-title" style="text-align:center; color: var(--text-primary); margin-bottom: 0.5rem;">Perguntas frequentes</h3>
+            <div class="faq-grid">
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Qual prazo de entrega do serviço?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Após a confirmação do pagamento, a entrega inicia automaticamente. Para seguidores brasileiros reais, o prazo de entrega é de até 48 horas.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Os seguidores são reais?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Sim. Trabalhamos com pacotes de seguidores brasileiros e reais.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Os perfis interagem?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Não garantimos interação dos seguidores na conta.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Vocês trabalham somente com seguidores brasileiros e reais?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Trabalhamos com 3 tipos de seguidores: mistos (perfis internacionais com alguns brasileiros), brasileiros (foto e nome brasileiros) e brasileiros reais (perfis brasileiros reais, com foto postada, stories e etc).</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Existe garantia?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Sim. Garantia de 30 dias. Temos um sistema onde você informa o ID do pedido e solicita a reposição para recuperar os seguidores que tiveram queda.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">O serviço tem queda?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Sim, o serviço tem queda porque o Instagram remove alguns perfis.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Como funciona a reposição?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>A reposição é contínua para os serviços de seguidores mistos e brasileiros. Em caso de queda você consegue realizar reposição dos mesmos, seguindo a regra de que não pode alterar o nome de usuário para manter a reposição dos seguidores.</div>
+                </div>
+              </div>
+              <div class="service-card faq-card">
+                <div class="card-content">
+                  <button type="button" class="faq-question" aria-expanded="false">
+                    <span class="faq-label">Se o perfil é privado posso receber os serviços?</span>
+                    <svg class="faq-toggle" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                  </button>
+                  <div class="faq-answer" hidden>Não. É necessário ter o perfil publico na plataforma para recebimento do serviço.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modal: Garantia 60 dias (conteúdo simples) -->
+      <div id="warranty60Modal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">Garantia estendida</h3>
+            <button id="warranty60CloseBtn" class="modal-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div class="modal-body">
+            <p style="margin-top:0.75rem; color: var(--text-secondary);">Apenas com 4 cliques e menos de 30 segundos basta a pessoa colocar o id do pedido de serviço dela no nosso sistema, e clicar no botão solicitar refil e ela recupera a quantidade de seguidores que teve queda.</p>
+            <img src="/images/reposicao.jpeg" alt="Reposição de seguidores" loading="lazy" decoding="async" style="width:100%; height: clamp(420px, 70vh, 720px); aspect-ratio: 9 / 16; object-fit: cover; border-radius:12px; margin-top:0.75rem;">
+          </div>
+          <div class="modal-footer">
+            <button id="warranty60CloseBtn2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+      <!-- Modal: Exemplo de comentários -->
+      <div id="commentsExampleModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:9999;">
+        <div class="modal-dialog" style="max-width:400px; width:90%; background: #1e1e1e; border-radius: 16px; padding: 1.5rem; position:relative; display:flex; flex-direction:column;">
+          <div class="modal-header" style="border:none; padding-bottom:0;">
+            <h3 class="modal-title" style="margin:0 auto;">Exemplo de Comentários</h3>
+            <button id="commentsExampleCloseBtn" class="modal-close" type="button" aria-label="Fechar" style="position:absolute; right:1rem; top:1rem;">✕</button>
+          </div>
+          <div class="modal-body" style="text-align:center;">
+            <div style="position:relative; aspect-ratio: 9 / 16; height: clamp(320px, 60vh, 560px); max-width: 100%; margin: 0.75rem auto 0; border-radius:12px; overflow:hidden; box-shadow: var(--shadow); background: #000;">
+              <video id="commentsVideoPlayer" src="/images/comentarios.mp4" controls muted playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit: cover;"></video>
+            </div>
+            <p style="margin-top:0.75rem; color: var(--text-secondary);">Comentários de perfis brasileiros, alta qualidade, comentários positivos e sem queda.</p>
+          </div>
+          <div class="modal-footer">
+            <button id="commentsExampleCloseBtn2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+    <!-- Modal: Explicação Link Perfil (Vídeo 9:16) -->
+    <div id="toolExplanationModal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:2147483647; justify-content:center; align-items:center;">
+      <div class="modal-content" style="background:transparent; width:100%; max-width:350px; position:relative; display:flex; flex-direction:column; align-items:center;">
+         <button type="button" onclick="document.getElementById('toolExplanationModal').style.display='none'" style="position:absolute; top:-40px; right:0; background:none; border:none; color:white; font-size:2rem; cursor:pointer; z-index:10001;">&times;</button>
+         <div style="width:100%; height: 60vh; max-height: 500px; aspect-ratio: auto; background:#000; border-radius:16px; overflow:hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);">
+            <video controls autoplay loop muted playsinline style="width:100%; height:100%; object-fit:contain;">
+                <source src="/images/como%20usar%20nome.mp4" type="video/mp4">
+                Seu navegador não suporta a tag de vídeo.
+            </video>
+         </div>
+         <div style="color:white; margin-top:1rem; text-align:center; font-size:1.1rem; width:100%; padding:0 1rem;">
+            <p style="margin:0.5rem 0;">1. Abra seu perfil Instagram</p>
+            <p style="margin:0.5rem 0;">2. Clique no botão compartilhar</p>
+            <p style="margin:0.5rem 0;">3. Copie o link e cole aqui</p>
+         </div>
+      </div>
+    </div>
+      <!-- Modal: Seleção de post (curtidas/visualizações/comentários) -->
+      <div id="postSelectModal" class="modal-overlay" style="display:none;">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 id="postModalTitle" class="modal-title">Selecionar post</h3>
+            <button id="postModalClose" class="modal-close" type="button" aria-label="Fechar">✕</button>
+          </div>
+          <div class="modal-body">
+            <div id="postModalGrid" class="post-grid"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="postModalClose2" class="continue-button" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <footer class="footer">
+      <div class="footer-bar">
+        <a href="https://instagram.com/oppus.dig" target="_blank" rel="noopener" class="footer-link instagram-link" aria-label="Instagram Agência OPPUS">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 2h10a5 5 0 015 5v10a5 5 0 01-5 5H7a5 5 0 01-5-5V7a5 5 0 015-5zm0 2a3 3 0 00-3 3v10a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H7zm5 3a5 5 0 110 10 5 5 0 010-10zm0 2a3 3 0 100 6 3 3 0 000-6zm5.5-3a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>
+        </a>
+        <span class="footer-center">&copy; 2025 Agência OPPUS. Todos os direitos reservados.</span>
+        <a href="/termos" id="termsLink" class="footer-link">Termos de Uso</a>
+      </div>
+    </footer>
+  </div>
+
+   <script defer src="/js/main.js"></script>
+   <script defer src="/js/checkout.js?v=<%= Date.now() %>"></script>
+   <script defer src="/js/why-us.js"></script>
+   <div id="toastContainer" class="toast-container"></div>
+  <div id="termsPage" class="client-page" aria-label="Termos de Uso" style="display:none;">
+    <div class="client-page-inner">
+      <h2 class="client-title">Termos de Uso</h2>
+      <p class="client-desc">Exemplo de termos. Substitua por seu conteúdo oficial.</p>
+      <div style="color: var(--text-primary); line-height: 1.6; max-width: 720px; margin: 0 auto;">
+        <p>Bem-vindo à Agência OPPUS. Ao utilizar nossos serviços, você concorda com estes termos. Este texto é um exemplo e deverá ser substituído pelos seus termos oficiais.</p>
+        <p>1. Uso do serviço: você se compromete a utilizar de forma lícita e ética.</p>
+        <p>2. Pagamentos e reembolsos: políticas aplicáveis conforme legislação vigente.</p>
+        <p>3. Privacidade: tratamos seus dados conforme nossa política de privacidade.</p>
+      </div>
+      <div class="client-actions" style="margin-top: 1rem;">
+        <button id="termsCloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
+      </div>
+    </div>
+  </div>
+  <div id="warranty60Modal" class="client-page" aria-label="Garantia 60 dias" style="display:none;">
+    <div class="client-page-inner">
+      <h2 class="client-title">+60 dias de reposição</h2>
+      <p class="client-desc">Garantia estendida: caso haja queda no período de 60 dias, nós repomos sem custo. A reposição segue as regras do serviço contratado.</p>
+      <div id="warrantyGifSlot" style="display:flex; align-items:center; justify-content:center; min-height:160px;">
+        
+      </div>
+      <div class="client-actions" style="margin-top: 1rem;">
+        <button id="warranty60CloseBtn" class="continue-button"><span class="button-text">Fechar</span></button>
+      </div>
+    </div>
+  </div>
+  <style>
+    .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
+
+    /* Ampliar área de conteúdo e larguras dos cards no desktop */
+    @media (min-width: 1024px) {
+      .checkout-page.container { max-width: 100%; width: 100%; }
+      .checkout-page .main-content { max-width: 1440px; width: 100%; margin: 0 auto; }
+      .checkout-page .subtitle { 
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 1rem;
+        line-height: 1.5;
+        margin-bottom: 0.4rem; 
+      }
+      .checkout-page .service-card { width: 100%; padding: 0.55rem 0.7rem; }
+      .checkout-page .card-content { gap: 0.2rem; }
+      /* Desktop: reduzir levemente os cards de planos (quantidade/preço) */
+      .checkout-page #planCards .service-card { min-height: 130px; }
+      .checkout-page #planCards .card-title { font-size: 1.15rem; }
+      .checkout-page #planCards .card-desc { font-size: 1.05rem; }
+      /* Desktop: aumentar título e botões da plataforma */
+      .checkout-page #plataformaCard .card-title { font-size: calc(clamp(2.75rem, 5.2vw, 3.75rem) - 2px); }
+      .checkout-page #plataformaCard .card-desc { font-size: calc(1.25rem - 2px); }
+      .checkout-page .platform-btn { padding: 1.2rem 1.6rem; font-size: 1.15rem; }
+      .checkout-page .select-input {
+        background: rgba(255, 255, 255, 0.95);
+        color: #111827;
+        width: 100%;
+        margin-top: 0.1rem; /* mais rente às bordas do card */
+        /* aumenta área útil horizontal no desktop */
+        padding-left: 0.9rem;
+        padding-right: 0.9rem;
+      }
+      .checkout-page .input-group { width: 100%; }
+      .checkout-page .input-group { max-width: 820px; }
+
+      /* Desktop-only: esconder selects de tipo/quantidade e usar cards */
+      #grupoTipo, #grupoQuantidade { display: none; }
+      #tipoCards, #planCards { display: grid !important; }
+      #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+      #planCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.8rem; }
+      #tipoCards .card-title { font-size: 1.1rem; }
+      #tipoCards .card-desc { font-size: 1rem; }
+      .option-card, .plan-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 0.6rem 0.8rem;
+        color: var(--text-primary);
+        box-shadow: var(--shadow-sm);
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        flex-direction: column;
+      }
+      .option-card .card-content, .plan-card .card-content { display: flex; align-items: center; justify-content: center; flex-direction: column; width: 100%; height: 100%; text-align: center; }
+      .option-card:hover, .plan-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: #6B46C1; }
+      .option-card.active, .plan-card.active { border-color: #6B46C1; box-shadow: var(--shadow-md); }
+      .plan-card .plan-title { font-weight: 600; }
+      .plan-card .plan-sub { color: var(--text-secondary); font-size: 0.95rem; }
+      .site-brand { left: 16rem; }
+      #audioCard .card-content { align-items: stretch; }
+      #audioCard .audio-player { width: 100%; }
+      #audioCard .audio-controls { width: 100%; }
+      #audioCard .audio-progress { height: 6px; }
+      #tipoDescCard .card-desc { font-size: calc(1rem + 2px); }
+      #resumo .card-desc { font-size: calc(1rem + 2px); }
+      .phone-label { font-size: calc(1rem + 2px); }
+      .phone-hint { font-size: calc(0.875rem + 2px); }
+    }
+    /* Garantir largura total dos inputs no mobile e desktop */
+    .checkout-page .input-group { width: 100%; }
+    @media (min-width: 1024px) { .checkout-page .input-group { max-width: 700px; } }
+    .checkout-page .select-input { width: 100%; }
+    .cards-grid.checkout-grid { gap: 1.25rem; grid-template-columns: 1fr; }
+    @media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
+    #engajamentoServiceCards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr) !important;
+      gap: 1.25rem;
+      margin-top: 6rem;
+      max-width: 1080px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 1rem 0.75rem;
+    }
+    #engajamentoServiceCards,
+    #engajamentoServiceCards .service-card,
+    #engajamentoServiceCards .card-content {
+      font-family: var(--font-family);
+    }
+
+    #engajamentoServiceCards .service-card {
+      background: #ffffff;
+      border: 1px solid rgba(243, 244, 246, 0.6);
+      border-radius: 24px; /* iOS Style */
+      padding: 1.75rem 1.4rem !important;
+      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.1); /* Sombra suave premium */
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      min-height: 340px;
+      position: relative;
+      overflow: visible;
+    }
+    #engajamentoServiceCards .service-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 30px 60px -12px rgba(0,0,0,0.15);
+    }
+    
+    /* Ícone 3D */
+    #engajamentoServiceCards .card-icon-3d {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+      margin-bottom: 0.5rem;
+      display: block;
+      filter: drop-shadow(0 12px 12px rgba(0,0,0,0.15));
+      transition: transform 0.3s ease;
+    }
+    #engajamentoServiceCards .service-card:hover .card-icon-3d {
+      transform: scale(1.05) translateY(-2px);
+    }
+
+    #engajamentoServiceCards .card-content {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #engajamentoServiceCards .card-title {
+      font-size: 1.5rem !important;
+      font-weight: 800;
+      color: #0F172A; /* Azul escuro quase preto */
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    #engajamentoServiceCards .card-subtitle {
+      font-size: 1rem;
+      color: #64748B;
+      margin-bottom: 0.6rem;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
+    #engajamentoServiceCards .card-price {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      justify-content: center;
+      gap: 0.35rem;
+      margin-bottom: 0.25rem;
+      margin-top: auto;
+      padding: 0.25rem 0;
+    }
+    /* Seguidores e Visualizações: valor em linha abaixo de "A partir de" */
+    #engajamentoServiceCards .service-card.card-seguidores .card-price,
+    #engajamentoServiceCards .service-card.card-visualizacoes .card-price {
+      flex-direction: column;
+      align-items: center;
+      gap: 0.1rem;
+    }
+    #engajamentoServiceCards .card-price span:first-child {
+      font-size: 1rem;
+      color: #64748B;
+      font-weight: 400;
+      margin-bottom: 0;
+    }
+    #engajamentoServiceCards .card-price .price-value {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #22C55E;
+    }
+    
+    #engajamentoServiceCards .card-security {
+      font-size: 1rem;
+      color: #64748B;
+      margin-top: 0.25rem;
+      margin-bottom: 0.75rem;
+      line-height: 1.4;
+    }
+
+    #engajamentoServiceCards .card-hint {
+      font-size: 0.85rem;
+      color: #64748B;
+      margin-top: -0.25rem;
+      margin-bottom: 0.75rem;
+      line-height: 1.2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    #engajamentoServiceCards .card-hint svg {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      opacity: 0.85;
+    }
+
+    /* Botões */
+    #engajamentoServiceCards .card-btn {
+      width: 100%;
+      padding: 0.9rem 1rem;
+      border-radius: 10px;
+      color: white;
+      font-family: var(--font-family);
+      font-size: 1.1rem !important;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-transform: none;
+      margin-top: auto;
+      position: relative;
+      overflow: hidden;
+      background: var(--instagram-gradient) !important;
+      box-shadow: 0 10px 25px -5px rgba(220, 39, 67, 0.4);
+    }
+    
+    #engajamentoServiceCards .card-btn:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.05) saturate(1.1);
+      box-shadow: 0 15px 30px -5px rgba(220, 39, 67, 0.5);
+    }
+
+    /* Cores de Texto Específicas (Gradient Text) */
+    .text-gradient-seguidores {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-curtidas {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-visualizacoes {
+      background: var(--instagram-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* Sombra colorida na base do card - Mantendo sutil */
+    .service-card.card-seguidores { box-shadow: 0 20px 40px -12px rgba(255, 165, 0, 0.1) !important; }
+    .service-card.card-curtidas { box-shadow: 0 20px 40px -12px rgba(255, 46, 147, 0.1) !important; }
+    .service-card.card-visualizacoes { box-shadow: 0 20px 40px -12px rgba(122, 44, 255, 0.1) !important; }
+
+    /* Ajustes Mobile */
+    @media (max-width: 639px) {
+      #engajamentoServiceCards {
+        grid-template-columns: 1fr !important;
+        gap: 0.6rem;
+        padding: 0.75rem;
+        margin-top: 2.25rem;
+      }
+      
+      #engajamentoServiceCards > .service-card:nth-child(1) {
+        grid-column: auto !important;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+      }
+
+      #engajamentoServiceCards .service-card {
+        padding: 1.2rem 1rem !important;
+        min-height: auto;
+        border-radius: 20px;
+      }
+
+      #engajamentoServiceCards .card-icon-3d {
+        width: 60px;
+        height: 60px;
+        margin-bottom: 0.8rem;
+      }
+
+      #engajamentoServiceCards .card-title {
+        font-size: 1.2rem !important;
+        margin-bottom: 0.3rem;
+      }
+      
+      /* Unificação de tamanho e cor preta para textos internos */
+      #engajamentoServiceCards .card-subtitle,
+      #engajamentoServiceCards .card-security,
+      #engajamentoServiceCards .card-price span:first-child,
+      #engajamentoServiceCards .card-price .price-value {
+        font-size: calc(0.9rem + 1px) !important;
+        color: #000000 !important;
+        font-weight: 400 !important;
+      }
+
+      /* Valor em verde e negrito, igual aos cards de planos */
+      #engajamentoServiceCards .card-price .price-value {
+        color: #22C55E !important;
+        font-weight: 700 !important;
+      }
+      
+      /* Preço na mesma linha no mobile */
+      #engajamentoServiceCards .card-price {
+        flex-direction: row !important;
+        align-items: baseline;
+        justify-content: center;
+        gap: 0.25rem;
+      }
+      
+      #engajamentoServiceCards .card-subtitle {
+        margin-bottom: 0.4rem;
+        line-height: 1.3;
+      }
+      
+      #engajamentoServiceCards .card-security {
+        margin-bottom: 0.5rem;
+      }
+
+      #engajamentoServiceCards .card-hint {
+        font-size: 0.75rem;
+        color: #000000 !important;
+        margin-top: 0.2rem;
+        margin-bottom: 0.6rem;
+        line-height: 1.25;
+      }
+      
+      #engajamentoServiceCards .card-btn {
+        padding: 0.75rem;
+        font-size: 0.95rem !important;
+        margin-top: 0.5rem;
+      }
+    }
+    /* Notificação de venda (toast) um pouco maior na Home */
+    .toast-container .toast-item { font-size: 1.05rem; padding: 0.8rem 1.05rem; }
+    .checkout-page .select-input option { color: #111827; }
+    /* Centralizar área de resultado PIX */
+    #pixResultado { text-align: center; }
+
+    /* Cards do checkout: usar cards em todas as visões e esconder selects originais */
+    #tipoSelectCard, #quantidadeSelectCard { display: none; }
+    #grupoTipo, #grupoQuantidade { display: none !important; }
+      #tipoCards, #planCards { display: grid !important; gap: 0.75rem; grid-template-columns: 1fr; }
+      #tipoCards .service-card, #planCards .service-card { min-height: 50px; }
+    @media (min-width: 640px) { #tipoCards, #planCards { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 1024px) { #tipoCards, #planCards { grid-template-columns: repeat(3, 1fr); } }
+      .service-card.active { border-color: var(--primary-purple); box-shadow: 0 0 0 3px rgba(107,70,193,0.35); }
+
+    @media (max-width: 639px) {
+      #tipoCards { grid-template-columns: repeat(3, 1fr) !important; gap: 0.5rem; }
+      #planCards { grid-template-columns: 1fr !important; gap: 0.5rem; }
+      #tipoCards .option-card, #planCards .plan-card { width: 100%; min-height: 90px; }
+      #tipoCards .card-title, #planCards .card-title { font-size: 0.9rem; line-height: 1.2; }
+      #tipoCards .card-desc, #planCards .card-desc { font-size: 0.85rem; }
+    }
+    @media (min-width: 1024px) {
+      #tipoCards .service-card { min-height: 120px; }
+    }
+    /* Card de descrição do tipo */
+    #tipoDescCard .card-desc p { margin: 0.4rem 0; }
+    #tipoDescCard .card-desc ul { margin: 0.5rem 0 0.25rem; padding-left: 1rem; }
+    #tipoDescCard .card-desc li { margin: 0.2rem 0; }
+
+    /* Centralizar texto nos cards de seguidores (tipo) */
+    #tipoCards .card-content { text-align: center; }
+    #tipoCards .card-title { text-align: center; }
+    #tipoCards .card-desc { text-align: center; }
+
+    #plataformaCard { background: transparent; border: none; box-shadow: none; padding: 0; }
+    #plataformaCard .card-content { align-items: center; }
+    #plataformaCard .card-title { font-size: calc(clamp(2.5rem, 5vw, 3.25rem) - 2px); font-weight: 700; letter-spacing: -0.02em; color: #FFFFFF; text-align: center; margin-bottom: 0.4rem; }
+    #plataformaCard .card-desc { text-align: center; }
+    #plataformaCard .platform-toggle { display: flex; justify-content: center; gap: 1rem; margin-top: 0.5rem; margin-bottom: 1.25rem; }
+    .checkout-page .platform-btn { padding: 1rem 1.35rem; font-size: 1rem; }
+    
+    .testimonials-title { font-family: var(--font-family); font-weight: 700; }
+
+    @media (max-width: 640px) {
+      .footer .footer-bar { flex-direction: column; gap: 0.4rem; }
+      .footer .footer-center { order: 3; }
+    }
+    #postSelectModal.modal-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.92); z-index: 1000; }
+    #postSelectModal .modal-dialog { width: 98vw; max-width: 1600px; max-height: calc(100vh - 2rem); overflow: auto; aspect-ratio: 16 / 9; height: auto; }
+    #postModalGrid.post-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, 1fr); }
+    @media (min-width: 1024px) { #postModalGrid.post-grid { grid-template-columns: repeat(4, 1fr); } }
+    .media-frame { position: relative; border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 16/9; }
+    .selected-mark { outline: 2px solid #7c3aed; border-radius: 8px; }
+    #postModalGrid.post-grid .inline-msg { font-size: 12px; color: var(--text-secondary); text-align: center; }
+    #postModalGrid.post-grid .continue-button { justify-content: center; }
+    @media (min-width: 1024px) { #postModalGrid.post-grid .inline-msg { font-size: 12px; } }
+    .media-frame > img, .media-frame > video, .media-frame > iframe { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border: none; }
+    @media (max-width: 640px) { #postSelectModal.modal-overlay { align-items: flex-start; } #postSelectModal .modal-dialog { width: 100%; max-width: 95vw; margin-top: 1rem; aspect-ratio: 9 / 16; height: 80vh; } .media-frame { aspect-ratio: 9/16; max-height: 200px; } #postModalGrid.post-grid .inline-msg { font-size: 11px; } }
+  </style>
+  
+</body>
+</html>

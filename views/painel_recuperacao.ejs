@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Recuperação</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h1 { margin-bottom: 20px; }
+    .header-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .back-btn { text-decoration: none; padding: 8px 16px; background: #6c757d; color: #fff; border-radius: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.9rem; }
+    th { background: #f9f9f9; font-weight: 600; }
+    tr:hover { background-color: #f1f1f1; }
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-divergent { background: #f8d7da; color: #721c24; }
+    .copy-btn { cursor: pointer; background: none; border: none; color: #007bff; font-size: 0.8em; }
+    .copy-iu-btn { border: 0; background: transparent; padding: 2px; cursor: pointer; line-height: 0; }
+    .copy-iu-btn svg { stroke: #6b7280; }
+    .copy-iu-btn:hover svg { stroke: #374151; }
+    @media (max-width: 480px) {
+      .container { padding: 12px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      .header-actions { flex-wrap: wrap; gap: 10px; }
+      h1 { font-size: 1.2rem; line-height: 1.2; }
+    }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', {page: 'recuperacao'}) %>
+  <div class="main-content">
+  <div class="container">
+    <div class="header-actions">
+        <h1 style="margin:0;">Relatório de Recuperação (>15min sem pagamento)</h1>
+        <!-- <div>
+            <a href="/painel" class="back-btn">Voltar ao Painel</a>
+        </div> -->
+    </div>
+    
+    <p>Exibindo pedidos gerados há mais de 15 minutos que não foram pagos.</p>
+
+    <%
+      const baseUrl = '/painel/recuperacao';
+      const sumReais = (Number(sumCents || 0) / 100);
+    %>
+    <div class="filters" style="margin: 12px 0 14px;">
+      <a href="<%= baseUrl %>?period=all" class="<%= period === 'all' ? 'active' : '' %>">Todos</a>
+      <a href="<%= baseUrl %>?period=today" class="<%= period === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="<%= baseUrl %>?period=last3days" class="<%= period === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
+      <a href="<%= baseUrl %>?period=last7days" class="<%= period === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
+      <a href="<%= baseUrl %>?period=thismonth" class="<%= period === 'thismonth' ? 'active' : '' %>">Este mês</a>
+      <a href="<%= baseUrl %>?period=lastmonth" class="<%= period === 'lastmonth' ? 'active' : '' %>">Mês passado</a>
+      <a href="javascript:window.location.reload();" style="background: #28a745; color: white;">Atualizar</a>
+    </div>
+
+    <div class="panel-filterbar" style="margin-bottom: 14px;">
+      <strong>Filtrar por data:</strong>
+      <input type="date" id="startDate" value="<%= startDate || '' %>" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+      <span>até</span>
+      <input type="date" id="endDate" value="<%= endDate || '' %>" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+      <button onclick="applyCustomFilter()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar</button>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin: 10px 0 8px;">
+      <div style="flex:0 0 auto; min-width: 190px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Pedidos (lista)</div>
+        <div style="font-size: 1.15rem; font-weight: 700; color:#111827;"><%= Array.isArray(orders) ? orders.length : 0 %></div>
+      </div>
+      <div style="flex:0 0 auto; min-width: 240px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Soma no período (não pagos)</div>
+        <div style="font-size: 1.15rem; font-weight: 700; color:#111827;">R$ <%= sumReais.toFixed(2).replace('.', ',') %></div>
+      </div>
+    </div>
+
+    <%
+      const m = (typeof metrics === 'object' && metrics) ? metrics : {};
+      const ms = (m && m.sent) ? m.sent : {};
+      const mr = (m && m.recovered) ? m.recovered : {};
+      const mrTotal = (mr && mr.total) ? mr.total : { orders: 0, valueCents: 0 };
+      const mrBy = (mr && mr.byStage) ? mr.byStage : {};
+      const fmtMoney = (c) => {
+        const v = (Number(c || 0) / 100);
+        return 'R$ ' + v.toFixed(2).replace('.', ',');
+      };
+      const st2 = mrBy['2'] || { orders: 0, valueCents: 0 };
+      const st3 = mrBy['3'] || { orders: 0, valueCents: 0 };
+    %>
+
+    <div style="margin: 14px 0 8px; font-weight: 700; color:#111827;">Métricas de recuperação</div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin: 10px 0 16px;">
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 1 enviado (aguardando pagamento)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email1 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 2 enviado (cupom 15%)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email2 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 220px; min-width: 220px; border: 1px solid #e5e7eb; background:#ffffff; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">E-mail 3 enviado (cupom 30%)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= Number(ms.email3 || 0) || 0 %></div>
+      </div>
+      <div style="flex:1 1 260px; min-width: 260px; border: 1px solid #e5e7eb; background:#f8fafc; border-radius: 10px; padding: 10px 12px;">
+        <div style="font-size: 0.85rem; color:#6b7280;">Valor recuperado (pedidos pagos após e-mail)</div>
+        <div style="font-size: 1.15rem; font-weight: 800; color:#111827;"><%= fmtMoney(mrTotal.valueCents || 0) %></div>
+        <div style="margin-top:4px; font-size: 0.85rem; color:#6b7280;">Pedidos recuperados: <strong style="color:#111827;"><%= Number(mrTotal.orders || 0) || 0 %></strong></div>
+        <div style="margin-top:8px; font-size: 0.85rem; color:#6b7280; display:flex; gap:10px; flex-wrap:wrap;">
+          <span>Via cupom 15%: <strong style="color:#111827;"><%= fmtMoney(st2.valueCents || 0) %></strong> (<%= Number(st2.orders || 0) || 0 %>)</span>
+          <span>Via cupom 30%: <strong style="color:#111827;"><%= fmtMoney(st3.valueCents || 0) %></strong> (<%= Number(st3.orders || 0) || 0 %>)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Cliente / Telefone</th>
+              <th>Serviço / Qtd</th>
+              <th>Usuário Instagram</th>
+              <th>Valor</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% orders.forEach(order => { %>
+              <% 
+                 let d;
+                 if (order.createdAt instanceof Date) {
+                    d = new Date(order.createdAt);
+                 } else {
+                    d = new Date(order.createdAt || new Date());
+                 }
+                 // Adjust to SP time (-3h) for display
+                 d = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+                 const dateStr = d.toISOString().replace('T', ' ').substring(0, 19);
+                 
+                 const customerName = (order.customer && order.customer.name) || 'N/A';
+                 const customerPhone = (order.customer && (order.customer.phone || order.customer.phone_number)) || 
+                                       (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'phone')?.value) ||
+                                       (order.additionalInfoMap && order.additionalInfoMap.phone) ||
+                                       'N/A';
+                                       
+                 const tipo = order.tipo || order.tipoServico || 
+                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'tipo_servico')?.value) || 
+                              (order.additionalInfoMap && order.additionalInfoMap.tipo_servico) || '-';
+                              
+                 const qtd = order.quantidade || order.qtd || 
+                             (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
+                             (order.additionalInfoMap && order.additionalInfoMap.quantidade) || '-';
+
+                 const instaUser = order.instagramUsername || order.instauser || 
+                                   (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'instagram_username')?.value) ||
+                                   (order.additionalInfoMap && order.additionalInfoMap.instagram_username) || '-';
+
+                 const val = (order.valueCents || order.total_cents || 0) / 100;
+                 const status = order.status || (order.woovi && order.woovi.status) || 'pendente';
+                 const chargeId = (order.woovi && (order.woovi.chargeId || order.woovi.id));
+              %>
+              <tr>
+                <td><%= dateStr %></td>
+                <td>
+                    <div><%= customerName %></div>
+                    <div style="font-weight:bold; color:#555;"><%= customerPhone %></div>
+                </td>
+                <td>
+                    <div><%= tipo %></div>
+                    <small>Qtd: <%= qtd %></small>
+                </td>
+                <td>
+                    <%
+                      const iuRaw = String(instaUser || '').trim();
+                      const iuClean = iuRaw.replace(/^@/, '').replace(/\/+$/, '').split('/').pop().trim();
+                      const iuHref = iuClean ? ('https://instagram.com/' + encodeURIComponent(iuClean)) : '';
+                    %>
+                    <% if (iuClean) { %>
+                      <span style="display:inline-flex; align-items:center; gap:6px;">
+                        <a href="<%= iuHref %>" target="_blank" rel="noopener noreferrer">@<%= iuClean %></a>
+                        <button type="button" class="copy-iu-btn" data-iu="<%= iuClean %>" title="Copiar usuário" aria-label="Copiar usuário">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                          </svg>
+                        </button>
+                      </span>
+                    <% } else { %>
+                      <%= instaUser %>
+                    <% } %>
+                </td>
+                <td>R$ <%= val.toFixed(2).replace('.', ',') %></td>
+                <td><span class="status-badge <%= status === 'divergent_value' ? 'status-divergent' : 'status-pending' %>"><%= status %></span></td>
+                <td>
+                    <% if (chargeId) { %>
+                        <button onclick="checkStatus(this, '<%= chargeId %>')" style="padding:4px 8px; font-size:0.8em; cursor:pointer; background: #17a2b8; color: white; border: none; border-radius: 4px;">Verificar Pagamento</button>
+                    <% } else { %>
+                        <span style="color: #999; font-size: 0.8em;">Sem ID Woovi</span>
+                    <% } %>
+                </td>
+              </tr>
+            <% }) %>
+            <% if (orders.length === 0) { %>
+                <tr>
+                    <td colspan="7" style="text-align:center; padding: 20px;">Nenhum pedido encontrado para recuperação (filtrado duplicados pagos).</td>
+                </tr>
+            <% } %>
+          </tbody>
+        </table>
+    </div>
+  </div>
+  <script>
+    function copyTextToClipboard(text) {
+        const v = String(text || '').trim();
+        if (!v) return Promise.reject(new Error('empty'));
+        if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            return navigator.clipboard.writeText(v);
+        }
+        return new Promise((resolve, reject) => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = v;
+                ta.setAttribute('readonly', 'readonly');
+                ta.style.position = 'fixed';
+                ta.style.top = '-1000px';
+                ta.style.left = '-1000px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (ok) resolve();
+                else reject(new Error('copy_failed'));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    document.addEventListener('click', function(e){
+        const btn = e && e.target ? e.target.closest('.copy-iu-btn') : null;
+        if (!btn) return;
+        const iu = String(btn.getAttribute('data-iu') || '').replace(/^@/, '').trim();
+        copyTextToClipboard(iu).catch(function(){});
+    });
+
+    function applyCustomFilter() {
+        const baseUrl = '/painel/recuperacao';
+        const startDate = String(document.getElementById('startDate')?.value || '').trim();
+        const endDate = String(document.getElementById('endDate')?.value || '').trim();
+        const params = new URLSearchParams();
+        params.set('period', 'custom');
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        window.location.href = baseUrl + '?' + params.toString();
+    }
+
+    async function checkStatus(btn, id) {
+        const originalText = btn.innerText;
+        btn.innerText = 'Verificando...';
+        btn.disabled = true;
+        
+        try {
+            const res = await fetch('/api/woovi/charge-status?id=' + id);
+            const data = await res.json();
+            
+            const status = (data.charge && data.charge.status) || data.status || 'unknown';
+            
+            if (status === 'COMPLETED' || status === 'PAID') {
+                alert('Pagamento CONFIRMADO! O pedido será atualizado.');
+                window.location.reload();
+            } else {
+                alert('Status atual na Woovi: ' + status);
+            }
+        } catch(e) {
+            alert('Erro ao verificar: ' + e.message);
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+  </script>
+  </div>
+</body>
+</html>

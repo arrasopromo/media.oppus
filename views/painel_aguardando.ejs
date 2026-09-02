@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aguardando Pedido</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    .main-content { max-width: 100% !important; width: calc(100% - 250px); box-sizing: border-box; }
+    @media (max-width: 768px) { .main-content { width: 100%; } }
+    .container { max-width: 100%; width: 100%; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); box-sizing: border-box; }
+    h1 { margin-bottom: 6px; font-size: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 28px 0 10px; }
+    .page-sub { color: #666; font-size: 0.9rem; margin-bottom: 20px; line-height: 1.5; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+    .stat-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; background: #fafafa; }
+    .stat-label { font-size: 0.78rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .stat-value { font-size: 1.6rem; font-weight: 800; color: #111827; line-height: 1; }
+    .stat-card--yellow { border-color: #fde68a; background: #fffbeb; }
+    .stat-card--green  { border-color: #bbf7d0; background: #f0fdf4; }
+    .stat-card--blue   { border-color: #bfdbfe; background: #eff6ff; }
+    .stat-card--gray   { border-color: #e5e7eb; background: #f9fafb; }
+
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #e5e7eb; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; min-width: 1150px; }
+    th { background: #f9fafb; padding: 10px 12px; text-align: left; font-size: 0.82rem; font-weight: 700; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.85rem; vertical-align: top; }
+    tr:hover td { background: #fafafa; }
+    tr:last-child td { border-bottom: none; }
+    .cell-main { font-weight: 700; color: #111827; }
+    .cell-sub { font-size: 0.76rem; color: #6b7280; margin-top: 3px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+    .badge--green  { background: #dcfce7; color: #166534; }
+    .badge--blue   { background: #dbeafe; color: #1e40af; }
+    .badge--yellow { background: #fef3c7; color: #92400e; }
+    .badge--red    { background: #fee2e2; color: #991b1b; }
+    .badge--gray   { background: #f3f4f6; color: #374151; }
+    .badge--orange { background: #ffedd5; color: #9a3412; }
+
+    .btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 13px; border-radius: 6px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; text-decoration: none; }
+    .btn:hover { filter: brightness(0.92); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn--primary { background: #4f46e5; color: #fff; }
+    .btn--green   { background: #16a34a; color: #fff; }
+    .btn--ghost   { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+
+    .note { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px; font-size: 0.83rem; color: #1e3a8a; line-height: 1.6; margin-bottom: 18px; }
+    .note b { color: #1e40af; }
+    .note code { background: #dbeafe; padding: 1px 5px; border-radius: 4px; font-size: 0.78rem; }
+
+    .empty-state { text-align: center; padding: 42px 24px; color: #9ca3af; }
+    .empty-state p { font-size: 0.95rem; margin: 0; }
+
+    #toast { position: fixed; bottom: 24px; right: 24px; background: #111827; color: #fff; padding: 12px 18px; border-radius: 10px; font-size: 0.88rem; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.2); opacity: 0; transform: translateY(8px); transition: all 0.25s ease; pointer-events: none; z-index: 9999; max-width: 340px; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok  { background: #166534; }
+    #toast.err { background: #991b1b; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page: 'aguardando' }) %>
+  <div class="main-content">
+  <div class="container">
+
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:6px;">
+      <div>
+        <h1>Aguardando Pedido</h1>
+        <p class="page-sub">
+          Pedidos de <b>seguidores</b> represados porque o mesmo perfil já tinha outro pedido de seguidores
+          nas últimas <%= cfg.windowHours %>h que ainda não concluiu no fornecedor.
+          O envio sai sozinho assim que o pedido de referência ficar <b>Completed</b>.
+        </p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn--primary" id="btnCheck">Verificar agora</button>
+        <a href="/painel/aguardando" class="btn btn--ghost">Atualizar</a>
+      </div>
+    </div>
+
+    <% if (!cfg.enabled) { %>
+      <div class="note" style="background:#fef2f2; border-color:#fecaca; color:#991b1b;">
+        <b>Fila desligada</b> — <code>FOLLOWERS_QUEUE_ENABLED=false</code>. Todo pedido está sendo despachado na hora.
+      </div>
+    <% } %>
+
+    <div class="note">
+      Só entram aqui pedidos de <b>seguidores</b> (mistos, brasileiros e orgânicos) — curtidas e visualizações passam direto.
+      O pedido represado continua normal para o cliente: e-mail, nota fiscal, cupom e link de refil saem na hora; só o envio ao fornecedor espera.
+      Se o pedido de referência travar, este é liberado à força após <b><%= cfg.maxWaitHours %>h</b>.
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card stat-card--yellow">
+        <div class="stat-label">Aguardando agora</div>
+        <div class="stat-value"><%= held.length %></div>
+      </div>
+      <div class="stat-card stat-card--blue">
+        <div class="stat-label">Perfis na fila</div>
+        <div class="stat-value"><%= [...new Set(held.map(h => h.username))].length %></div>
+      </div>
+      <div class="stat-card stat-card--gray">
+        <div class="stat-label">Janela / espera máx.</div>
+        <div class="stat-value" style="font-size:1.15rem;"><%= cfg.windowHours %>h / <%= cfg.maxWaitHours %>h</div>
+      </div>
+    </div>
+
+    <h2>Na fila (<%= held.length %>)</h2>
+    <% if (!held.length) { %>
+      <div class="empty-state"><p>Nenhum pedido represado. Tudo sendo despachado normalmente.</p></div>
+    <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Perfil</th>
+            <th>Pedido de referência (segura a fila)</th>
+            <th>Status no fornecedor</th>
+            <th>Pedido aguardando</th>
+            <th>Qtd</th>
+            <th>Fornecedor</th>
+            <th>OrderID (após despacho)</th>
+            <th>Esperando há</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+        <% held.forEach(function(h) { %>
+          <tr>
+            <td><span class="cell-main">@<%= h.username || '—' %></span></td>
+            <td>
+              <% if (h.ref) {
+                   var refProvLabel = (h.ref.provider === 'fama24h' ? 'Fama24h' : h.ref.provider === 'fornecedor_social' ? 'Fornecedor Social' : h.ref.provider === 'topfama' ? 'TopFama' : 'Fornecedor');
+              %>
+                <% if (h.ref.providerOrderIds && h.ref.providerOrderIds.length) { %>
+                  <div class="cell-main mono"><%= refProvLabel %> #<%= h.ref.providerOrderIds.join(', #') %></div>
+                <% } else { %>
+                  <div class="cell-main" style="color:#b45309;">não despachado</div>
+                <% } %>
+                <div class="cell-sub">
+                  <%= h.ref.tipo || '?' %> · <%= h.ref.quantidade ? h.ref.quantidade.toLocaleString('pt-BR') : '?' %>
+                  · <span title="ID da transação na plataforma" style="color:#94a3b8;">tx <%= h.ref.identifier || '—' %></span>
+                </div>
+              <% } else { %>
+                <span class="cell-sub">pedido não encontrado</span>
+              <% } %>
+            </td>
+            <td>
+              <% var sts = (h.ref && h.ref.statuses) ? h.ref.statuses : []; %>
+              <% if (sts.length) { sts.forEach(function(s) { %>
+                <span class="badge <%= s === 'completed' ? 'badge--green' : (s === 'processing' ? 'badge--blue' : (s === 'pending' ? 'badge--yellow' : (s === 'cancelled' ? 'badge--red' : 'badge--gray'))) %>"><%= s %></span>
+              <% }); } else { %>
+                <span class="badge badge--gray"><%= (h.ref && h.ref.reason === 'blocker_not_dispatched') ? 'não despachado' : '—' %></span>
+              <% } %>
+              <% if (h.lastCheckAt) { %>
+                <div class="cell-sub">checado <%= new Date(h.lastCheckAt).toLocaleString('pt-BR') %></div>
+              <% } %>
+            </td>
+            <td>
+              <div class="cell-main mono"><%= h.identifier || '—' %></div>
+              <div class="cell-sub"><%= h.tipo || '?' %></div>
+            </td>
+            <td><%= h.quantidade ? h.quantidade.toLocaleString('pt-BR') : '—' %></td>
+            <td><span class="badge badge--gray"><%= h.providerLabel %></span></td>
+            <td>
+              <% if (h.providerOrderIds && h.providerOrderIds.length) { %>
+                <span class="mono">#<%= h.providerOrderIds.join(', #') %></span>
+              <% } else { %>
+                <span class="cell-sub">— aguardando</span>
+              <% } %>
+            </td>
+            <td>
+              <span class="waiting-since" data-since="<%= h.heldAt || '' %>">—</span>
+              <% if (h.releaseAfterAt) { %>
+                <div class="cell-sub">solta em <%= new Date(h.releaseAfterAt).toLocaleString('pt-BR') %></div>
+              <% } %>
+            </td>
+            <td>
+              <button class="btn btn--green btn-release" data-id="<%= h.identifier || h.mongoId %>">Liberar agora</button>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <% } %>
+
+  </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    function toast(msg, kind) {
+      var t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'show ' + (kind || '');
+      setTimeout(function () { t.className = ''; }, 4000);
+    }
+
+    // "Esperando há X" calculado no cliente para não depender do fuso do servidor
+    (function renderWaiting() {
+      document.querySelectorAll('.waiting-since').forEach(function (el) {
+        var since = el.getAttribute('data-since');
+        if (!since) { el.textContent = '—'; return; }
+        var ms = Date.now() - new Date(since).getTime();
+        if (!isFinite(ms) || ms < 0) { el.textContent = '—'; return; }
+        var min = Math.floor(ms / 60000);
+        if (min < 60) el.textContent = min + ' min';
+        else if (min < 1440) el.textContent = Math.floor(min / 60) + 'h ' + (min % 60) + 'min';
+        else el.textContent = Math.floor(min / 1440) + 'd ' + Math.floor((min % 1440) / 60) + 'h';
+      });
+    })();
+
+    document.getElementById('btnCheck').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Verificando...';
+      fetch('/api/painel/followers-queue/check', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j.ok) { toast('Falhou: ' + (j.error || j.skipped || 'erro'), 'err'); btn.disabled = false; btn.textContent = 'Verificar agora'; return; }
+          toast('Checados ' + j.checked + ' · liberados ' + j.released + ' · ainda na fila ' + j.stillWaiting, 'ok');
+          setTimeout(function () { location.reload(); }, 1200);
+        })
+        .catch(function (e) { toast('Erro: ' + e.message, 'err'); btn.disabled = false; btn.textContent = 'Verificar agora'; });
+    });
+
+    document.querySelectorAll('.btn-release').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-id');
+        if (!confirm('Liberar ' + id + ' agora, sem esperar o pedido de referência concluir?')) return;
+        btn.disabled = true;
+        btn.textContent = 'Liberando...';
+        fetch('/api/painel/followers-queue/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: id })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j.ok) { toast('Falhou: ' + (j.error || 'erro'), 'err'); btn.disabled = false; btn.textContent = 'Liberar agora'; return; }
+            toast('Liberado e despachado: ' + id, 'ok');
+            setTimeout(function () { location.reload(); }, 1200);
+          })
+          .catch(function (e) { toast('Erro: ' + e.message, 'err'); btn.disabled = false; btn.textContent = 'Liberar agora'; });
+      });
+    });
+  </script>
+</body>
+</html>

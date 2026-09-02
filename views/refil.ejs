@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Refil de Seguidores</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="/css/style.css" rel="stylesheet" />
+</head>
+<body class="refil-page theme-light">
+  <div class="container checkout-page">
+    <header class="header">
+      <h1 class="title">Refil</h1>
+      <p class="subtitle">Informe o @ do Instagram para solicitar reposição</p>
+      <% if (typeof refilIsLifetime !== 'undefined' && refilIsLifetime) { %>
+        <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Vitalícia</strong></p>
+      <% } else if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
+        <% if (refilDaysLeft <= 0) { %>
+          <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Expirado</strong></p>
+        <% } else { %>
+          <p class="subtitle" style="margin-top:0.25rem;">Acesso expira em: <strong><%= refilDaysLeft %></strong> <%= (refilDaysLeft === 1 ? 'dia' : 'dias') %></p>
+        <% } %>
+      <% } %>
+    </header>
+    <main class="main-content">
+      <% const waHref = (typeof whatsappHref === 'string' && whatsappHref) ? whatsappHref : ('https://wa.me/553173425727?text=' + encodeURIComponent('Perdi seguidores e preciso de reposição. ID do meu pedido: ')); %>
+        <div class="refil-info-accordion" id="refilInfo">
+          <button class="refil-info-toggle" id="refilInfoToggle" type="button" aria-expanded="false" aria-controls="refilInfoContent">
+            <div class="refil-info-left">
+              <span class="info-icon" aria-hidden="true">i</span>
+              <span class="info-title">Regras de reposição</span>
+            </div>
+            <span class="chevron" aria-hidden="true">▸</span>
+          </button>
+          <div class="refil-info-content" id="refilInfoContent" hidden>
+            <ul>
+              <li>Após solicitar reposição, aguarde 24h para solicitar uma nova.</li>
+              <li>A reposição é para repor a queda de seguidores — não é possível solicitar no mesmo dia da compra.</li>
+              <li>Não é possível realizar reposição de usuários que trocam o nome do perfil.</li>
+              <li>O perfil precisa estar público para reposição.</li>
+            </ul>
+          </div>
+        </div>
+        
+      <section class="section-block">
+        <div class="service-card" id="refilCard">
+          <div class="card-content">
+            <h3 class="card-title">Reposição</h3>
+            <div class="card-desc">
+              <div class="input-group" id="grupoRefil">
+                <div id="tutorialRefilPedidoId" class="tutorial-pop tutorial-pop-input">
+                  <div class="tutorial-pop-text">Digite o @ aqui</div>
+                </div>
+                <div id="refilProfileBar" style="display:none; align-items:center; gap:12px; margin-bottom:14px; padding:10px 12px; border:1px solid #e8e8ef; border-radius:14px; background:#fafafd;">
+                  <div id="refilProfileAvatar" style="width:46px; height:46px; border-radius:50%; overflow:hidden; flex:0 0 auto; background:linear-gradient(135deg,#8b5cf6,#6d28d9); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:1.1rem;"></div>
+                  <div style="flex:1 1 auto; min-width:0;">
+                    <div style="font-size:0.72rem; color:#8a8a9a; letter-spacing:.3px;">Perfil selecionado</div>
+                    <div id="refilProfileName" style="font-weight:700; color:#1f2430; font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <div id="refilProfileMeta" style="font-size:0.74rem; color:#8a8a9a;"></div>
+                  </div>
+                  <button type="button" id="refilProfileNext" aria-label="Trocar de perfil" title="Trocar de perfil" style="display:none; flex:0 0 auto; width:38px; height:38px; border-radius:50%; border:1px solid #e0e0ea; background:#fff; cursor:pointer; font-size:1.25rem; color:#6d28d9; line-height:1;">›</button>
+                </div>
+                <script type="application/json" id="refilProfilesJson"><%- JSON.stringify((typeof refilProfiles !== 'undefined' && refilProfiles) ? refilProfiles : []).replace(/</g, '\\u003c') %></script>
+                <div class="refil-input-row">
+                  <input type="text" id="refilUsernameInput" class="select-input" placeholder="Digite o @ do Instagram..." value="<%= (typeof lastRefilUsername !== 'undefined' && lastRefilUsername) ? String(lastRefilUsername) : '' %>" maxlength="60" />
+                  <button id="refilSubmitBtn" class="continue-button" type="button">
+                    <span class="button-text">Solicitar Reposição</span>
+                  </button>
+                </div>
+                <div id="refilStatus" class="status-message" style="display:none; margin-top:0.5rem;"></div>
+                <div id="refilResult" class="card-desc" style="display:none; margin-top:0.75rem;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="service-card" id="refilHistoryCard" style="display:none;">
+          <div class="card-content">
+            <h3 class="card-title">Histórico de Reposições</h3>
+            <div class="card-desc" id="refilHistoryList"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <style>
+    .refil-page .container.checkout-page { padding-top: 24px; }
+    .refil-page .section-block { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+    .refil-page .main-content { max-width: 1160px; width: 100%; margin: 0 auto; }
+    .refil-page .refil-info-accordion { width: 100%; max-width: 980px; margin: 6px auto 14px auto; }
+    .refil-page .refil-info-toggle { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--border-color); border-radius:12px; background: #ffffff; color: var(--text-primary); cursor:pointer; }
+    .refil-page .refil-info-left { display:flex; align-items:center; gap:10px; }
+    .refil-page .refil-info-toggle .info-icon { flex:0 0 auto; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; background:#2563eb; color:#fff; line-height:22px; }
+    .refil-page .refil-info-toggle .info-title { font-weight:700; }
+    .refil-page .refil-info-toggle .chevron { transition: transform 160ms ease; transform: rotate(0deg); font-size:16px; opacity:0.9; }
+    .refil-page .refil-info-accordion.open .refil-info-toggle .chevron { transform: rotate(90deg); }
+    .refil-page .refil-info-content { border:1px solid var(--border-color); border-top:0; border-radius:0 0 12px 12px; padding:12px 16px; background: #ffffff; }
+    .refil-page .refil-info-content ul { margin:0; padding-left: 20px; list-style: disc; }
+    .refil-page .refil-info-content li { margin: 6px 0; }
+    .refil-page .refil-info-content .faq-item { display:block; }
+    .refil-page .refil-info-content .faq-q { font-weight:700; margin: 4px 0 6px 0; }
+    .refil-page .refil-info-content .faq-a { color: var(--text-secondary); line-height: 1.6; }
+    .refil-page #refilCard { width: 100%; max-width: 980px; margin: 0 auto; }
+    .refil-page #refilHistoryCard { width: 100%; max-width: 980px; margin: 0 auto; }
+    .refil-page #refilCard .card-content { display: flex; flex-direction: column; align-items: center; }
+    .refil-page #refilCard .card-desc { width: 100%; display: flex; flex-direction: column; align-items: center; }
+    .refil-page #grupoRefil { width: 100%; max-width: 760px; position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+    .refil-page #grupoRefil .refil-input-row { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+    .refil-page #grupoRefil .select-input { width: 100%; max-width: 760px; }
+    .refil-page #refilSubmitBtn { margin-left: 0 !important; }
+    .refil-page .tutorial-pop { display: flex !important; }
+    .refil-page .tutorial-pop.hide { display: none !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId { border-color: #cc2366 !important; background: var(--instagram-gradient) !important; color: #ffffff !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId .tutorial-pop-text { color: #ffffff !important; }
+    body.theme-light.refil-page #tutorialRefilPedidoId::after { border-top-color: #cc2366 !important; }
+    .refil-page #tutorialRefilPedidoId { top: 32px; left: 16px; transform: none; --tip-arrow-left: 34px; }
+    @media (max-width: 767px) {
+      .refil-page #refilCard { max-width: 1020px; }
+      .refil-page #grupoRefil { max-width: 100%; }
+      .refil-page #grupoRefil .select-input { max-width: 100%; }
+      .refil-page #tutorialRefilPedidoId { top: 56px; max-width: 280px; left: 6px; --tip-arrow-left: 22px; }
+      body.theme-light.refil-page #tutorialRefilPedidoId::after { top: -6px; bottom: auto; border-top: 0; border-bottom: 6px solid #cc2366 !important; }
+    }
+    @media (min-width: 768px) {
+      .refil-page #grupoRefil .refil-input-row { flex-direction: column; justify-content: center; }
+      .refil-page #refilSubmitBtn { white-space: nowrap; }
+      .refil-page #tutorialRefilPedidoId { top: 78px; left: 20px; --tip-arrow-left: 44px; }
+      body.theme-light.refil-page #tutorialRefilPedidoId::after { top: -6px; bottom: auto; border-top: 0; border-bottom: 6px solid #cc2366 !important; }
+    }
+  </style>
+  
+  <script>
+    (function(){
+      var accordions = document.querySelectorAll('.refil-info-accordion');
+      if (accordions && accordions.forEach) {
+        accordions.forEach(function(root){
+          var toggle = root.querySelector('.refil-info-toggle');
+          var content = root.querySelector('.refil-info-content');
+          if (!toggle || !content) return;
+          toggle.addEventListener('click', function(){
+            var expanded = String(toggle.getAttribute('aria-expanded') || '').toLowerCase() === 'true';
+            if (expanded) {
+              toggle.setAttribute('aria-expanded', 'false');
+              content.setAttribute('hidden', '');
+              try { root.classList.remove('open'); } catch(_) {}
+            } else {
+              toggle.setAttribute('aria-expanded', 'true');
+              content.removeAttribute('hidden');
+              try { root.classList.add('open'); } catch(_) {}
+            }
+          });
+        });
+      }
+      function safeTrim(v) {
+        try { return String(v || '').replace(/^\s+|\s+$/g, ''); } catch(_) { return ''; }
+      }
+      function hasClass(el, cls) {
+        if (!el) return false;
+        var c = el.className || '';
+        return (' ' + c + ' ').indexOf(' ' + cls + ' ') >= 0;
+      }
+      function addClass(el, cls) {
+        if (!el || !cls) return;
+        if (el.classList && el.classList.add) { el.classList.add(cls); return; }
+        if (hasClass(el, cls)) return;
+        el.className = safeTrim((el.className || '') + ' ' + cls);
+      }
+      function removeClass(el, cls) {
+        if (!el || !cls) return;
+        if (el.classList && el.classList.remove) { el.classList.remove(cls); return; }
+        var c = ' ' + (el.className || '') + ' ';
+        while (c.indexOf(' ' + cls + ' ') >= 0) c = c.replace(' ' + cls + ' ', ' ');
+        el.className = safeTrim(c);
+      }
+      function sanitizeSupplierName(input){
+        var s = '';
+        try { s = String(input || ''); } catch(_) { s = ''; }
+        return safeTrim(
+          s
+            .replace(/\bfama24h\b\s*[:\-–—]?\s*/ig, '')
+            .replace(/\(\s*fama24h\s*\)/ig, '')
+            .replace(/\[\s*fama24h\s*\]/ig, '')
+            .replace(/\{\s*fama24h\s*\}/ig, '')
+            .replace(/\s{2,}/g, ' ')
+        );
+      }
+      function setStatus(statusEl, msg, type){
+        if (!statusEl) return;
+        statusEl.textContent = sanitizeSupplierName(msg);
+        statusEl.style.display = 'block';
+        statusEl.style.textAlign = 'center';
+        statusEl.style.color = type === 'success' ? '#22C55E' : (type === 'error' ? '#ef4444' : 'var(--text-primary)');
+      }
+      function formatDatePtBR(iso){
+        try {
+          var d = new Date(iso);
+          if (!d || isNaN(d.getTime())) return String(iso || '');
+          var day = String(d.getDate()).padStart ? String(d.getDate()).padStart(2, '0') : ('0' + d.getDate()).slice(-2);
+          var month = String(d.getMonth() + 1).padStart ? String(d.getMonth() + 1).padStart(2, '0') : ('0' + (d.getMonth() + 1)).slice(-2);
+          var year = String(d.getFullYear()).slice(-2);
+          var hh = String(d.getHours()).padStart ? String(d.getHours()).padStart(2, '0') : ('0' + d.getHours()).slice(-2);
+          var mm = String(d.getMinutes()).padStart ? String(d.getMinutes()).padStart(2, '0') : ('0' + d.getMinutes()).slice(-2);
+          return day + '/' + month + '/' + year + ' ' + hh + ':' + mm;
+        } catch(_) {
+          return String(iso || '');
+        }
+      }
+      function httpJson(url, method, bodyObj, cb) {
+        try {
+          var xhr = new XMLHttpRequest();
+          var done = false;
+          var finish = function (ok, data, status) {
+            if (done) return;
+            done = true;
+            cb(!!ok, data || {}, status || 0);
+          };
+          xhr.open(method || 'GET', url, true);
+          xhr.setRequestHeader('Accept', 'application/json');
+          if (method === 'POST') xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            var status = xhr.status || 0;
+            var raw = '';
+            try { raw = xhr.responseText || ''; } catch(_) { raw = ''; }
+            var data = null;
+            try { data = raw ? JSON.parse(raw) : null; } catch(_) { data = null; }
+            if (!data && raw) data = { raw: raw };
+            finish(status >= 200 && status < 300, data || {}, status);
+          };
+          try { xhr.timeout = 120000; } catch(_) {}
+          xhr.ontimeout = function () {
+            finish(false, { ok: false, error: 'timeout', message: 'Erro, tente novamente.' }, 0);
+          };
+          xhr.onerror = function () {
+            finish(false, { ok: false, error: 'network_error', message: 'Erro, tente novamente.' }, 0);
+          };
+          xhr.send(method === 'POST' ? JSON.stringify(bodyObj || {}) : null);
+        } catch (e) {
+          cb(false, { error: (e && e.message) ? e.message : String(e) }, 0);
+        }
+      }
+
+      function normalizeUsernameInput(v) {
+        try {
+          var s = safeTrim(v);
+          if (!s) return '';
+          s = s.replace(/[`"'“”‘’]/g, '');
+          s = s.replace(/\s+/g, '');
+          s = s.replace(/^@+/, '');
+          s = s.replace(/\/+$/, '');
+          if (/^https?:\/\//i.test(s)) {
+            try {
+              var u = new URL(s);
+              var p = String(u.pathname || '').replace(/\/+$/, '');
+              var parts = p.split('/').filter(function(x){ return !!x; });
+              s = parts.length ? parts[parts.length - 1] : '';
+            } catch(_) {}
+          } else if (s.indexOf('/') >= 0) {
+            var parts2 = s.split('/').filter(function(x){ return !!x; });
+            s = parts2.length ? parts2[parts2.length - 1] : s;
+          }
+          s = safeTrim(s.replace(/^@+/, ''));
+          if (!s) return '';
+          s = s.toLowerCase();
+          if (!/^[a-z0-9._]{1,30}$/.test(s)) return '';
+          return s;
+        } catch(_) { return ''; }
+      }
+
+      var orderInput = document.getElementById('refilUsernameInput');
+      var submitBtn = document.getElementById('refilSubmitBtn');
+      var statusEl = document.getElementById('refilStatus');
+      var resultEl = document.getElementById('refilResult');
+
+      // ── Trava de 24h do refil1 (UX) ──
+      // Quando o fama24h responde POSITIVO, o botão trava por 24h para aquele @ (com contagem
+      // regressiva). O backend já bloqueia 24h por orderId; aqui é o feedback visual e impede o reenvio.
+      window.__refilLockTimer = window.__refilLockTimer || null;
+      window.__refilApplyLock = function (username) {
+        try {
+          var btn = document.getElementById('refilSubmitBtn'); if (!btn) return;
+          var bt = btn.querySelector ? btn.querySelector('.button-text') : null;
+          var u = String(username || '').replace(/^@+/, '').toLowerCase().trim();
+          var until = 0;
+          try { until = parseInt(localStorage.getItem('oppus_refil_lock_' + u) || '0', 10) || 0; } catch (_) {}
+          if (window.__refilLockTimer) { try { clearInterval(window.__refilLockTimer); } catch (_) {} window.__refilLockTimer = null; }
+          function fmt(rem) { var h = Math.floor(rem / 3600000), m = Math.floor((rem % 3600000) / 60000), s = Math.floor((rem % 60000) / 1000); return (h > 0 ? h + 'h ' : '') + ((h > 0 || m > 0) ? m + 'min ' : '') + s + 's'; }
+          function tick() {
+            var rem = until - Date.now();
+            if (!u || !until || rem <= 0) {
+              try { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; } catch (_) {}
+              if (bt) bt.textContent = 'Solicitar Reposição';
+              if (window.__refilLockTimer) { try { clearInterval(window.__refilLockTimer); } catch (_) {} window.__refilLockTimer = null; }
+              return;
+            }
+            try { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'not-allowed'; } catch (_) {}
+            if (bt) bt.textContent = 'Disponível em ' + fmt(rem);
+          }
+          tick();
+          if (until && (until - Date.now()) > 0) window.__refilLockTimer = setInterval(tick, 1000);
+        } catch (_) {}
+      };
+      window.__refilSetLock = function (username, untilMs) {
+        try {
+          var u = String(username || '').replace(/^@+/, '').toLowerCase().trim();
+          if (!u || !untilMs) return;
+          try { localStorage.setItem('oppus_refil_lock_' + u, String(untilMs)); } catch (_) {}
+          window.__refilApplyLock(u);
+        } catch (_) {}
+      };
+      var tipEl = document.getElementById('tutorialRefilPedidoId');
+      var historyCardEl = document.getElementById('refilHistoryCard');
+      var historyListEl = document.getElementById('refilHistoryList');
+      var refilToken = "<%= (typeof refilToken !== 'undefined' && refilToken) ? String(refilToken) : '' %>";
+
+      function syncTipVisibility(){
+        if (!tipEl || !orderInput) return;
+        var hasValue = !!safeTrim(orderInput.value);
+        if (hasValue) addClass(tipEl, 'hide');
+        else removeClass(tipEl, 'hide');
+      }
+
+      function renderHistory(items){
+        if (!historyCardEl || !historyListEl) return;
+        var arr = (items && items.length && typeof items.length === 'number') ? items : (Array.isArray && Array.isArray(items) ? items : []);
+        historyCardEl.style.display = 'block';
+        if (!arr.length) {
+          historyListEl.innerHTML = '<div style="text-align:center; color: var(--text-secondary);">Nenhuma reposição com sucesso ainda.</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < arr.length; i++) {
+          var it = arr[i] || {};
+          var when = formatDatePtBR(it && it.requestedAt ? it.requestedAt : '');
+          html += '<div style="display:flex; justify-content:space-between; gap: 0.75rem; padding: 0.6rem 0; border-top: 1px solid var(--border-color);">' +
+            '<div style="min-width: 0;">' +
+              '<div style="font-weight: 700;">Reposição solicitada</div>' +
+              '<div style="color: var(--text-secondary); font-size: 0.9rem;">' + when + '</div>' +
+            '</div>' +
+          '</div>';
+        }
+        historyListEl.innerHTML = html;
+      }
+
+      function loadHistory(username){
+        if (!historyCardEl || !historyListEl) return;
+        var v = normalizeUsernameInput(username);
+        if (!v) {
+          historyCardEl.style.display = 'none';
+          return;
+        }
+        var debugFlag = false;
+        try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+        httpJson('/api/refil/history', 'POST', { username: v, debug: (debugFlag ? 1 : 0) }, function (ok, data) {
+          if (!ok || !data || data.ok !== true) {
+            historyCardEl.style.display = 'none';
+            return;
+          }
+          renderHistory(data.history);
+        });
+      }
+
+      function extractErrorMessage(data){
+        try {
+          if (!data) return 'Falha ao solicitar refil';
+          var main = safeTrim((data.message || data.error || ''));
+          if (!main && data.raw) main = safeTrim(String(data.raw || ''));
+          var details = data.details;
+          var sub = '';
+          if (typeof details === 'string') sub = details;
+          else if (details && typeof details === 'object') sub = (details.message || details.error || details.detail || details.reason || '');
+          var merged = [];
+          if (safeTrim(main)) merged.push(main);
+          if (safeTrim(sub)) merged.push(sub);
+          var base = sanitizeSupplierName(merged.length ? merged.join(' — ') : 'Falha ao solicitar refil');
+          try {
+            var debugFlag = false;
+            try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+            if (debugFlag && data && typeof data === 'object') {
+              var did = safeTrim(String(data.debugId || ''));
+              var stp = safeTrim(String(data.step || ''));
+              if (did || stp) {
+                base += ' (' + [stp ? ('etapa: ' + stp) : '', did ? ('debug: ' + did) : ''].filter(Boolean).join(' | ') + ')';
+              }
+            }
+          } catch(_) {}
+          return base;
+        } catch(_) { return 'Falha ao solicitar refil'; }
+      }
+
+      function submitRefil(){
+        if (window.__refilInFlight) return;
+        window.__refilInFlight = true;
+        var username = normalizeUsernameInput(orderInput && orderInput.value ? orderInput.value : '');
+        if (!username) { setStatus(statusEl, 'Digite o @ do Instagram', 'error'); window.__refilInFlight = false; return; }
+        setStatus(statusEl, 'Solicitando reposição...', 'info');
+        if (resultEl) resultEl.style.display = 'none';
+        if (submitBtn) { try { submitBtn.disabled = true; submitBtn.style.opacity = '0.7'; } catch(_) {} }
+
+        var pathname = '';
+        try { pathname = String(window && window.location && window.location.pathname ? window.location.pathname : ''); } catch(_) { pathname = ''; }
+        var isRefil2 = pathname.toLowerCase().indexOf('refil2') >= 0;
+
+        // ── /refil1: fluxo simples — dispara a reposição direto e mostra "Reposição solicitada" ──
+        if (!isRefil2) {
+          httpJson('/api/refil/simple', 'POST', { username: username }, function (ok, data) {
+            if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+            window.__refilInFlight = false;
+            try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch(_) {}
+            try { if (historyCardEl) historyCardEl.style.display = 'none'; } catch(_) {}
+            if (ok && data && data.ok) {
+              setStatus(statusEl, 'Reposição solicitada ✓ Nova solicitação liberada em 24h.', 'success');
+              try { window.__refilSetLock(username, Date.now() + 24 * 60 * 60 * 1000); } catch (_) {}
+            } else {
+              var emsg = (data && (data.message || data.error)) || 'Não foi possível solicitar a reposição.';
+              setStatus(statusEl, emsg, 'error');
+              // backend recusou por já ter solicitado nas últimas 24h → trava o botão pelo tempo restante
+              if (data && data.error === 'refill_unavailable') {
+                var hrs = 24; try { var mm = String(data.message || '').match(/([\d.,]+)\s*h/i); if (mm) { var p = parseFloat(String(mm[1]).replace(',', '.')); if (isFinite(p) && p > 0) hrs = p; } } catch (_) {}
+                try { window.__refilSetLock(username, Date.now() + hrs * 60 * 60 * 1000); } catch (_) {}
+              }
+            }
+            try { if (statusEl) statusEl.style.fontWeight = '400'; } catch(_) {}
+          });
+          return;
+        }
+
+        var stepTimer = null;
+        var stepIdx = 0;
+        if (isRefil2) {
+          var steps = [
+            '1/3 Verificando elegibilidade…',
+            '2/3 Consultando seguidores atuais…',
+            '3/3 Iniciando reposição…'
+          ];
+          try { setStatus(statusEl, steps[0], 'info'); } catch(_) {}
+          try {
+            stepTimer = setInterval(function(){
+              try {
+                stepIdx = (stepIdx + 1) % steps.length;
+                setStatus(statusEl, steps[stepIdx], 'info');
+              } catch(_) {}
+            }, 1400);
+          } catch(_) { stepTimer = null; }
+        }
+        var debugFlag = false;
+        try { debugFlag = String(window && window.location && window.location.search ? window.location.search : '').indexOf('debug=1') >= 0; } catch(_) { debugFlag = false; }
+        httpJson('/api/refil/preview', 'POST', { username: username, source: (isRefil2 ? 'refil2' : 'refil'), debug: (debugFlag ? 1 : 0) }, function (ok, data) {
+          try { if (stepTimer) clearInterval(stepTimer); } catch(_) {}
+          if (isRefil2) {
+            var statusCode = (arguments && arguments.length >= 3) ? arguments[2] : '';
+            var safeNum = function (v) {
+              if (v == null) return null;
+              if (typeof v === 'number' && isFinite(v)) return Math.trunc(v);
+              var s = String(v || '').replace(/[^\d]/g, '');
+              if (!s) return null;
+              var n = Number(s);
+              return isFinite(n) ? n : null;
+            };
+            var normalizeSaida = function (data) {
+              try {
+                if (!data) return '';
+                if (typeof data === 'string') return String(data || '');
+                if (data && typeof data === 'object') {
+                  if (typeof data.saida === 'string') return String(data.saida || '');
+                  if (typeof data.message === 'string') return String(data.message || '');
+                  if (typeof data.error === 'string') return String(data.error || '');
+                  if (typeof data.raw === 'string') return String(data.raw || '');
+                }
+                return '';
+              } catch (_) { return ''; }
+            };
+            var escapeHtml = function (s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+            var isFormatted = !!(ok && data && typeof data === 'object' && data.ok === true && String(data.status || '') === 'initiated' && data.data && typeof data.data === 'object');
+            if (isFormatted) {
+              var qi = safeNum(data.data.quantidade_inicial);
+              var qa = safeNum(data.data.quantidade_atual);
+              var qq = safeNum(data.data.quantidade_de_queda);
+              var title = String(data.message || 'Reposição iniciada');
+              var md = safeNum(data.data.min_drop);
+              if (md == null) md = 100;
+              var isBelowMinDrop = (qq != null && md != null && qq < md);
+              var userTitle = title;
+              var statusTitle = isBelowMinDrop ? 'Queda abaixo do mínimo para reposição.' : 'Reposição iniciada.';
+              setStatus(statusEl, statusTitle, isBelowMinDrop ? 'warning' : 'success');
+              try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
+              if (resultEl) resultEl.style.display = 'block';
+              var bg = isBelowMinDrop ? 'rgba(245,158,11,0.12)' : 'rgba(16,185,129,0.10)';
+              var bd = isBelowMinDrop ? 'rgba(245,158,11,0.35)' : 'rgba(16,185,129,0.25)';
+              var txt = isBelowMinDrop ? '#92400e' : '#047857';
+              var txt2 = isBelowMinDrop ? '#78350f' : '#065F46';
+              var detailsHtml = (!isBelowMinDrop)
+                ? (
+                    '<div style="margin-top:10px; color:' + txt2 + '; font-family: inherit; font-size: 0.95rem; line-height:1.65;">' +
+                      (qi != null ? ('<div>Quantidade inicial: ' + String(qi) + '</div>') : '') +
+                      (qa != null ? ('<div>Quantidade atual: ' + String(qa) + '</div>') : '') +
+                      (qq != null ? ('<div>Quantidade de queda: ' + String(qq) + '</div>') : '') +
+                    '</div>'
+                  )
+                : '';
+              if (resultEl) resultEl.innerHTML = '<div style="text-align:left;">' +
+                '<div style="background: ' + bg + '; border: 1px solid ' + bd + '; border-radius: 12px; padding: 14px 14px;">' +
+                  '<div style="display:flex; justify-content:space-between; align-items:center; gap: 12px;">' +
+                    '<div style="font-weight: 400; color: ' + txt + ';">' + escapeHtml(userTitle) + '</div>' +
+                    '<button type="button" id="refilCloseResultBtn" style="border:none; background:transparent; color:' + txt + '; font-size:18px; line-height:18px; cursor:pointer;">×</button>' +
+                  '</div>' +
+                  detailsHtml +
+                '</div>' +
+              '</div>';
+              try {
+                var closeBtn = document.getElementById('refilCloseResultBtn');
+                if (closeBtn) closeBtn.onclick = function () { try { if (resultEl) resultEl.style.display = 'none'; } catch (_) {} };
+              } catch (_) {}
+            } else {
+              var outTxt = '';
+              try {
+                outTxt = normalizeSaida(data);
+                if (!outTxt) outTxt = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
+              } catch(_) { outTxt = String(data || ''); }
+              outTxt = String(outTxt || '').trim();
+              if (/timeout|econnaborted|etimedout|econnreset/i.test(outTxt)) outTxt = 'Erro, tente novamente';
+              setStatus(statusEl, outTxt || ('Webhook: HTTP ' + String(statusCode || '')), ok ? 'success' : 'error');
+              try { if (statusEl) statusEl.style.fontWeight = '400'; } catch (_) {}
+              try { if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; } } catch (_) {}
+            }
+            try { if (historyCardEl) historyCardEl.style.display = 'none'; } catch(_) {}
+            if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+            window.__refilInFlight = false;
+            return;
+          }
+          if (!ok) {
+            setStatus(statusEl, extractErrorMessage(data), 'error');
+            if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+            window.__refilInFlight = false;
+            return;
+          }
+          var st = (data && data.status) ? String(data.status) : '';
+          var msg = (data && data.message) ? String(data.message) : 'OK';
+          if (st === 'above_target') {
+            setStatus(statusEl, 'Acima da meta: reposição indisponível', 'warning');
+          } else if (st === 'below_threshold') {
+            setStatus(statusEl, 'Queda abaixo do mínimo para reposição (mínimo: 50).', 'warning');
+          } else if (st === 'deficit') {
+            setStatus(statusEl, 'Reposição calculada', 'success');
+          } else if (st === 'no_followers_purchase') {
+            setStatus(statusEl, 'Nenhuma compra de seguidores encontrada', 'error');
+          } else if (st === 'no_orders') {
+            setStatus(statusEl, 'Nenhum pedido encontrado', 'error');
+          } else {
+            setStatus(statusEl, 'Consulta realizada', 'info');
+          }
+          if (resultEl) resultEl.style.display = 'block';
+          var item = data;
+          var d = item && item.data ? item.data : {};
+          var target = (typeof d.target_followers !== 'undefined') ? d.target_followers : '—';
+          var current = (typeof d.current_followers !== 'undefined') ? d.current_followers : '—';
+          var deficit = (typeof d.deficit !== 'undefined') ? d.deficit : '—';
+          var minDrop = (typeof d.min_drop !== 'undefined') ? d.min_drop : 50;
+          var base = (typeof d.base_followers !== 'undefined' && d.base_followers !== null) ? d.base_followers : '—';
+          var note = (st === 'below_threshold') ? ('<div style="color:#b45309; margin-top:4px;">Obs: Para repor, a queda mínima é de ' + minDrop + ' seguidores.</div>') : '';
+          var webhook = (data && data.webhook) ? data.webhook : null;
+          var webhookHtml = '';
+          try {
+            if (webhook) {
+              var statusTxt = (webhook && webhook.ok === false) ? 'Falhou' : 'OK';
+              var content = '';
+              try {
+                if (webhook && (webhook.data !== undefined)) {
+                  var raw = (typeof webhook.data === 'string') ? webhook.data : JSON.stringify(webhook.data);
+                  raw = String(raw || '');
+                  if (raw.length > 1800) raw = raw.slice(0, 1800) + '...';
+                  content = raw;
+                } else if (webhook && webhook.message) {
+                  content = String(webhook.message || '');
+                  if (content.length > 1800) content = content.slice(0, 1800) + '...';
+                }
+              } catch(_) { content = ''; }
+              webhookHtml = '<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border-color);">' +
+                '<div><strong>Webhook:</strong> ' + statusTxt + '</div>' +
+                (content ? ('<div style="margin-top:6px; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; opacity: 0.9;">' + content.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>') : '') +
+              '</div>';
+            }
+          } catch(_) { webhookHtml = ''; }
+          if (resultEl) resultEl.innerHTML = '<div style="text-align:left;">' +
+            '<div><strong>Usuário:</strong> ' + username + '</div>' +
+            '<div><strong>Mensagem:</strong> ' + msg + '</div>' +
+            '<div><strong>Base da compra:</strong> ' + base + '</div>' +
+            '<div><strong>Meta de seguidores:</strong> ' + target + '</div>' +
+            '<div><strong>Seguidores atuais:</strong> ' + current + '</div>' +
+            '<div><strong>Falta repor:</strong> ' + deficit + '</div>' +
+            note +
+          '</div>' + webhookHtml;
+
+          loadHistory(username);
+          if (submitBtn) { try { submitBtn.disabled = false; submitBtn.style.opacity = ''; } catch(_) {} }
+          window.__refilInFlight = false;
+        });
+      }
+
+      try { window.submitRefil = submitRefil; } catch(_) {}
+      try { window.syncRefilTip = syncTipVisibility; } catch(_) {}
+
+      if (orderInput) {
+        var historyTimer = null;
+        orderInput.oninput = function () {
+          syncTipVisibility();
+          var v = normalizeUsernameInput(orderInput.value);
+          try { if (window.__refilApplyLock) window.__refilApplyLock(v); } catch(_) {}
+          try { if (historyTimer) clearTimeout(historyTimer); } catch(_) {}
+          historyTimer = setTimeout(function () { loadHistory(v); }, 650);
+        };
+        orderInput.onkeyup = orderInput.oninput;
+        orderInput.onchange = orderInput.oninput;
+        syncTipVisibility();
+        try { if (window.__refilApplyLock) window.__refilApplyLock(normalizeUsernameInput(orderInput.value)); } catch(_) {}
+        try { if (normalizeUsernameInput(orderInput.value)) loadHistory(orderInput.value); } catch(_) {}
+      }
+      if (submitBtn) {
+        submitBtn.onclick = function (ev) {
+          try { if (ev && ev.preventDefault) ev.preventDefault(); } catch(_) {}
+          submitRefil();
+          return false;
+        };
+      }
+
+      // ── Seletor de perfil (avatar) ──
+      // Pré-preenche o @ do perfil que mais gastou (ordem definida no backend, sem expor valor).
+      // Com 1 perfil: mostra só o avatar. Com 2+: mostra a seta para alternar entre os perfis.
+      (function(){
+        var bar = document.getElementById('refilProfileBar');
+        var avatarEl = document.getElementById('refilProfileAvatar');
+        var nameEl = document.getElementById('refilProfileName');
+        var metaEl = document.getElementById('refilProfileMeta');
+        var nextBtn = document.getElementById('refilProfileNext');
+        var profiles = [];
+        try { profiles = JSON.parse((document.getElementById('refilProfilesJson') || {}).textContent || '[]') || []; } catch(_) { profiles = []; }
+        if (!bar || !orderInput || !profiles.length) return;
+        var idx = 0;
+        function fmtFollowers(n){
+          if (typeof n !== 'number' || !isFinite(n) || n <= 0) return '';
+          if (n >= 1000000) return (n/1000000).toFixed(1).replace('.0','') + 'M';
+          if (n >= 1000) return (n/1000).toFixed(1).replace('.0','') + 'k';
+          return String(n);
+        }
+        function render(triggerHistory){
+          var p = profiles[idx]; if (!p) return;
+          var u = String(p.username || '').replace(/^@+/, '');
+          if (nameEl) nameEl.textContent = '@' + u;
+          if (metaEl) {
+            var parts = [];
+            if (p.fullName) parts.push(p.fullName);
+            var f = fmtFollowers(p.followersCount);
+            if (f) parts.push(f + ' seguidores');
+            metaEl.textContent = parts.join(' · ');
+          }
+          if (avatarEl) {
+            avatarEl.innerHTML = '';
+            // Usa a rota de avatar (cache + fallback robusto) em vez da URL crua do cache,
+            // que costuma vir vazia/expirada (CDN do Instagram) e deixava o avatar em branco.
+            var img = document.createElement('img');
+            img.src = '/avatar/instagram/' + encodeURIComponent(u);
+            img.alt = u;
+            img.referrerPolicy = 'no-referrer';
+            img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'cover';
+            img.onerror = function(){ try { avatarEl.innerHTML = ''; avatarEl.textContent = (u.charAt(0) || '?').toUpperCase(); } catch(_){} };
+            avatarEl.appendChild(img);
+          }
+          if (orderInput) orderInput.value = u;
+          try { if (window.__refilApplyLock) window.__refilApplyLock(u); } catch(_) {}
+          try { if (typeof syncTipVisibility === 'function') syncTipVisibility(); } catch(_) {}
+          if (triggerHistory) { try { if (typeof loadHistory === 'function') loadHistory(u); } catch(_) {} }
+        }
+        var multi = profiles.length > 1;
+        if (multi && nextBtn) {
+          nextBtn.style.display = '';
+          nextBtn.addEventListener('click', function(){ idx = (idx + 1) % profiles.length; render(true); });
+        }
+        // 1 compra (1 perfil) → perfil já selecionado, não mostra o campo de @ nem o tutorial.
+        // 2+ perfis (compras p/ perfis diferentes) → mostra o campo p/ escolher/editar o @.
+        if (orderInput) orderInput.style.display = multi ? '' : 'none';
+        try { var tip = document.getElementById('tutorialRefilPedidoId'); if (tip && !multi) tip.style.display = 'none'; } catch(_) {}
+        bar.style.display = 'flex';
+        render(false);
+      })();
+    })();
+  </script>
+</body>
+</html>

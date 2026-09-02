@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGÊNCIA OPPUS</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/perfil.css">
+    <link rel="icon" type="image/png" href="/images/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- TRACK COMBO -->
+    <script>
+      (function() {
+        var script = document.createElement("script");
+        script.type = "text/javascript";
+        script.async = true;
+        script.src = "https://track.agenciaoppus.site/tag/TC-FQZRKRMP.js";
+        var firstScript = document.getElementsByTagName("script")[0];
+        firstScript.parentNode.insertBefore(script, firstScript);
+      })();
+    </script>
+    <!-- End TRACK COMBO -->
+  </head>
+<body class="theme-light has-fixed-menu">
+    <nav class="fixed-menu" aria-label="Menu fixo">
+      <div class="menu-left site-brand">
+        <a href="/" style="display:flex;align-items:center;gap:0.5rem;text-decoration:none;">
+          <img src="/images/logo.png" alt="Agência Oppus" class="site-logo logo-dark" />
+          <img src="/images/logo escura.png" alt="Agência Oppus" class="site-logo logo-light" />
+          <span class="site-brand-text">Agência Oppus</span>
+        </a>
+      </div>
+      <div class="menu-right">
+        <button id="clientFetchBtn" class="client-btn" aria-label="Buscar pedido">Cliente</button>
+        
+      </div>
+    </nav>
+    <div class="container">
+        <!-- Landing Page -->
+        <div id="landingPage">
+            <header class="header">
+                <h1 class="title">Teste nossos serviços</h1>
+                <p class="subtitle">Escolha o serviço que tem interesse em testar</p>
+                <button id="themeToggleBtn" class="theme-toggle" aria-label="Alternar tema" aria-pressed="true"><span class="theme-label">Tema: Escuro</span><span class="icon icon-sun" aria-hidden="true"><svg class="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/></g></svg></span><span class="icon icon-moon" aria-hidden="true"><svg class="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg></span><span class="sr-only">Alternar tema</span></button>
+            </header>
+            <main class="main-content">
+                <!-- Seção: Seguidores -->
+                <section class="section-block">
+                    <h2 class="section-label centered-label">Seguidores</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=seguidores_mistos" data-servico="seguidores_mistos">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores Mistos</h3>
+                                <p class="card-desc">Perfis variados, entrega rápida e estável, com seguidores reais. 100% seguro e confidencial, sem senha.</p>
+                            </div>
+                        </a>
+                        <a class="service-card" href="/perfil?servico=seguidores_brasileiros" data-servico="seguidores_brasileiros">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores Brasileiros</h3>
+                                <p class="card-desc">Seguidores brasileiros reais, focados no público do Brasil. 100% seguro e confidencial, sem senha.</p>
+                            </div>
+                        </a>
+                        <a class="service-card disabled" href="#" aria-disabled="true" title="Disponível para teste somente após primeira compra." data-servico="seguidores_organicos">
+                            <div class="card-content">
+                                <h3 class="card-title">Seguidores brasileiros e reais</h3>
+                                <p class="card-desc">Perfis brasileiros e reais, disponíveis para teste após primeira compra. 100% seguro e confidencial, sem senha.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+
+                <!-- Seção: Curtidas -->
+                <section class="section-block centered">
+                    <h2 class="section-label">Curtidas</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=curtidas_brasileiras" data-servico="curtidas_brasileiras">
+                            <div class="card-content">
+                                <h3 class="card-title">Curtidas Brasileiras</h3>
+                                <p class="card-desc">Interações reais do público brasileiro.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+
+                <!-- Seção: Visualização Reels -->
+                <section class="section-block centered">
+                    <h2 class="section-label">Visualização Reels</h2>
+                    <div class="cards-grid">
+                        <a class="service-card" href="/perfil?servico=visualizacoes_reels" data-servico="visualizacoes_reels">
+                            <div class="card-content">
+                                <h3 class="card-title">Visualizações Reels</h3>
+                                <p class="card-desc">Aumente o alcance dos seus vídeos.</p>
+                            </div>
+                        </a>
+                    </div>
+                </section>
+            </main>
+            <footer class="footer">
+                <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+            </footer>
+        </div>
+        <!-- Página de Perfil (inicialmente oculta) -->
+        <div id="perfilPage" style="display:none;">
+            <div id="timer" class="timer">05:00</div>
+            <header class="header">
+                <button class="back-button" onclick="goBack()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Voltar
+                </button>
+            </header>
+            <main class="main-content">
+                <div class="profile-section">
+                    <h1 class="title">Buscar Perfil</h1>
+                    <p class="subtitle">Digite o nome de usuário do Instagram</p>
+                    <div id="profileImageContainer" class="profile-image-container" style="display: none;">
+                        <div class="profile-image-embed">
+                            <img id="profileImage" src="" alt="Foto de perfil" class="profile-image">
+                            <div id="verifiedBadge" class="profile-verified-badge" style="display: none;">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="profile-info">
+                            <div id="profileUsername" class="profile-username"></div>
+                            <div id="profileStats" class="profile-stats"></div>
+                        </div>
+                    </div>
+                    <div class="search-container"></div>
+                    <div id="statusMessage" class="status-message" style="display: none;"></div>
+                    <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Verificando perfil...</p>
+                    </div>
+                    <div class="action-container">
+                        <button id="confirmButton" class="confirm-button" onclick="confirmProfile()" disabled>
+                            Confirmar
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </main>
+            <footer class="footer">
+                <p>&copy; 2025 Agência OPPUS. Todos os direitos reservados.</p>
+            </footer>
+            <div id="toastContainer" class="toast-container"></div>
+            <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+                <div class="loading-content">
+                    <div class="spinner-large"></div>
+                    <p>Processando...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/js/main.js" defer></script>
+    <script src="/js/perfil.js" defer></script>
+</body>
+</html>
+

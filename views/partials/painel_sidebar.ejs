@@ -1,0 +1,451 @@
+<%
+    var _p = (typeof page !== 'undefined') ? page : '';
+    function _a(k){ return _p === k ? 'active' : ''; }
+    var _groups = {
+        geral:       ['dashboard','vendas'],
+        financeiro:  ['controladoria','notas-fiscais'],
+        operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
+        marketing:   ['coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm'],
+        ferramentas: ['consulta-perfil','service_types','testes-servicos','whatsapp-ia-teste']
+    };
+    function _open(list){ return (list.indexOf(_p) >= 0) ? 'open' : ''; }
+%>
+<div class="sidebar">
+    <input type="checkbox" id="sidebarToggle" class="sidebar-toggle" />
+    <div class="sidebar-top">
+        <h2>Painel Admin</h2>
+        <label for="sidebarToggle" class="sidebar-menu-btn" aria-label="Abrir menu">Menu</label>
+    </div>
+    <nav class="sidebar-menu">
+        <div class="nav-search">
+            <input type="text" id="navSearch" class="nav-search-input" placeholder="Pesquisar no menu…" autocomplete="off" spellcheck="false" aria-label="Pesquisar no menu" />
+            <button type="button" id="navSearchClear" class="nav-search-clear" aria-label="Limpar" title="Limpar">×</button>
+        </div>
+        <div class="nav-search-empty" id="navSearchEmpty" hidden>Nenhum item encontrado.</div>
+        <button type="button" class="nav-expand-all" id="navExpandAll" aria-expanded="false">Expandir tudo</button>
+
+        <details class="nav-group" data-group="geral" <%= _open(_groups.geral) %>>
+            <summary>Visão Geral <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel" class="<%= _a('dashboard') %>">Dashboard</a></li>
+                <li><a href="/painel?view=vendas" class="<%= _a('vendas') %>">Vendas</a></li>
+            </ul>
+        </details>
+
+        <details class="nav-group" data-group="financeiro" <%= _open(_groups.financeiro) %>>
+            <summary>Financeiro <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel/controladoria" class="<%= _a('controladoria') %>">Controladoria</a></li>
+                <li><a href="/painel/notas-fiscais" class="<%= _a('notas-fiscais') %>">Notas Fiscais</a></li>
+            </ul>
+        </details>
+
+        <details class="nav-group" data-group="operacao" <%= _open(_groups.operacao) %>>
+            <summary>Operação de Pedidos <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel/gerenciamento-seguidores" class="<%= _a('gerenciamento-seguidores') %>">Gerenciamento de Seguidores</a></li>
+                <li><a href="/painel?view=refil2" class="<%= _a('refil2') %>">Gerenciamento Refil</a></li>
+                <li><a href="/painel/gestao-parcial-topfama" class="<%= _a('gestao-parcial-topfama') %>">Gestão Parcial (Topfama)</a></li>
+                <li><a href="/painel/aguardando" class="<%= _a('aguardando') %>">Aguardando Pedido</a></li>
+                <li><a href="/painel?view=unknown_orderid&period=all" class="<%= _a('unknown_orderid') %>">OrderID Unknown</a></li>
+                <li><a href="/painel/registro-pedido" class="<%= _a('registro-pedido') %>">Registro de Pedido</a></li>
+                <li><a href="/painel/privados" class="<%= _a('privados') %>">Perfis Privados</a></li>
+                <li><a href="/painel/whatsapp" class="<%= _a('whatsapp') %>">Pedidos WhatsApp</a></li>
+            </ul>
+        </details>
+
+        <details class="nav-group" data-group="marketing" <%= _open(_groups.marketing) %>>
+            <summary>Marketing &amp; Retenção <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel?view=coupons" class="<%= _a('coupons') %>">Cupons</a></li>
+                <li><a href="/painel/recuperacao-whatsapp" class="<%= _a('recuperacao-whatsapp') %>">Recuperação WhatsApp</a></li>
+                <li><a href="/painel/upsell" class="<%= _a('upsell') %>">Gestão de Upsell</a></li>
+                <li><a href="/painel/ltv" class="<%= _a('ltv') %>">LTV (Disparo)</a></li>
+                <li><a href="/painel/whatsapp-crm" class="<%= _a('whatsapp-crm') %>">CRM WhatsApp (LTV)</a></li>
+                <li><a href="/painel/ia-crm" class="<%= _a('ia-crm') %>">CRM IA WhatsApp</a></li>
+            </ul>
+        </details>
+
+        <details class="nav-group" data-group="ferramentas" <%= _open(_groups.ferramentas) %>>
+            <summary>Ferramentas <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel/consulta-perfil" class="<%= _a('consulta-perfil') %>">Consulta de Perfil</a></li>
+                <li><a href="/painel?view=service_types" class="<%= _a('service_types') %>">Gerenciamento Tipos</a></li>
+                <li><a href="/painel/testes-servicos" class="<%= _a('testes-servicos') %>">Testes de Serviços</a></li>
+                <li><a href="/painel/whatsapp-ia-teste" class="<%= _a('whatsapp-ia-teste') %>">IA WhatsApp (Teste)</a></li>
+            </ul>
+        </details>
+
+        <a href="/logout" class="nav-logout" onclick="return confirm('Tem certeza que deseja sair?')">Sair</a>
+    </nav>
+</div>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+        background: #f0f2f5;
+    }
+    .sidebar {
+        width: 250px;
+        background: #343a40;
+        color: #fff;
+        height: 100vh;
+        position: fixed;
+        left: 0;
+        top: 0;
+        padding: 20px;
+        box-sizing: border-box;
+        z-index: 1000;
+        /* permite rolagem quando os tópicos não cabem na altura da tela
+           (notebooks / telas baixas) — antes os últimos itens ficavam cortados */
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+    /* barra de rolagem discreta na sidebar */
+    .sidebar::-webkit-scrollbar { width: 8px; }
+    .sidebar::-webkit-scrollbar-thumb { background: #495057; border-radius: 8px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar h2 { margin-top: 0; }
+    .sidebar-toggle { display: none; }
+    .sidebar-top { display: block; }
+    .sidebar-menu-btn { display: none; }
+    .sidebar h2 {
+        color: #fff;
+        margin-bottom: 24px;
+        font-size: 1.5rem;
+        text-align: center;
+        border-bottom: 1px solid #495057;
+        padding-bottom: 20px;
+    }
+    .sidebar-menu {
+        display: block;
+        padding: 0;
+    }
+
+    /* Campo de pesquisa do menu */
+    .nav-search {
+        position: relative;
+        margin-bottom: 8px;
+    }
+    .nav-search-input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 26px 8px 12px;
+        border: 1px solid #495057;
+        border-radius: 8px;
+        background: #2b3035;
+        color: #fff;
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .nav-search-input::placeholder { color: #8e99a4; }
+    .nav-search-input:focus { border-color: #007bff; background: #31373d; }
+    .nav-search-clear {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: none;
+        width: 18px;
+        height: 18px;
+        line-height: 16px;
+        text-align: center;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: #495057;
+        color: #cfd4da;
+        font-size: 0.95rem;
+        cursor: pointer;
+    }
+    .nav-search-clear:hover { background: #5c636a; color: #fff; }
+    .nav-search.has-text .nav-search-clear { display: block; }
+    .nav-search-empty {
+        color: #8e99a4;
+        font-size: 0.82rem;
+        padding: 4px 12px 10px;
+    }
+    /* durante a busca, o item que casa fica destacado */
+    .nav-group li a.nav-search-hit { background: #3d444b; color: #fff; }
+
+    /* Botão Expandir/Recolher tudo */
+    .nav-expand-all {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid #495057;
+        color: #8e99a4;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 8px 12px 12px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: color 0.15s;
+    }
+    .nav-expand-all:hover { color: #fff; }
+
+    /* Grupos (tópicos) */
+    .nav-group {
+        margin-bottom: 6px;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .nav-group > summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 12px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #8e99a4;
+        user-select: none;
+        transition: color 0.15s, background 0.15s;
+    }
+    .nav-group > summary::-webkit-details-marker { display: none; }
+    .nav-group > summary:hover { color: #fff; background: #3d444b; }
+    .nav-caret {
+        margin-left: auto;
+        font-size: 1.05rem;
+        line-height: 1;
+        color: #6c757d;
+        transition: transform 0.2s;
+    }
+    .nav-group[open] > summary .nav-caret { transform: rotate(90deg); }
+    .nav-group[open] > summary { color: #cfd4da; }
+
+    .nav-group ul {
+        list-style: none;
+        padding: 2px 0 8px;
+        margin: 0;
+    }
+    .nav-group li { margin: 0; }
+    .nav-group li a {
+        display: block;
+        padding: 9px 14px 9px 30px;
+        color: #adb5bd;
+        text-decoration: none;
+        border-left: 2px solid transparent;
+        transition: all 0.15s;
+        font-size: 0.94rem;
+    }
+    .nav-group li a:hover {
+        background: #495057;
+        color: #fff;
+    }
+    .nav-group li a.active {
+        background: #007bff;
+        color: #fff;
+        font-weight: 600;
+        border-left-color: #9ecbff;
+    }
+
+    .nav-logout {
+        display: block;
+        margin-top: 14px;
+        padding: 11px 14px;
+        color: #e8a5a5;
+        text-decoration: none;
+        border-top: 1px solid #495057;
+        border-radius: 0 0 4px 4px;
+        font-size: 0.95rem;
+        transition: all 0.15s;
+    }
+    .nav-logout:hover { background: #5c2b2b; color: #fff; }
+
+    /* Main content adjustment */
+    .main-content {
+        margin-left: 250px;
+        padding: 30px;
+        min-height: 100vh;
+        max-width: none;
+        width: auto;
+    }
+    .panel-table-scroll {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .panel-table-scroll table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    @media (max-width: 768px) {
+        .sidebar {
+            width: 100%;
+            height: auto;
+            position: sticky;
+            top: 0;
+            padding: 10px 12px;
+        }
+        .sidebar-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .sidebar h2 {
+            display: block;
+            margin: 0;
+            font-size: 1.05rem;
+            border-bottom: 0;
+            padding-bottom: 0;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .sidebar-menu-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border: 1px solid #495057;
+            border-radius: 8px;
+            background: #495057;
+            color: #fff;
+            font-size: 0.95rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .sidebar-menu {
+            display: none;
+            padding: 10px 0 0;
+            margin: 0;
+            max-height: calc(100vh - 54px);
+            overflow: auto;
+        }
+        .sidebar-toggle:checked ~ .sidebar-menu {
+            display: block;
+        }
+        .main-content {
+            margin-left: 0;
+            padding: 15px;
+            width: 100%;
+        }
+        .nav-group li a {
+            padding: 9px 14px 9px 28px;
+            font-size: 0.9rem;
+        }
+    }
+</style>
+<script>
+    (function () {
+        // Lembra quais tópicos ficam abertos/fechados entre navegações
+        var KEY = 'oppusNavGroups';
+        var saved = {};
+        try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { saved = {}; }
+        var groups = document.querySelectorAll('.nav-group[data-group]');
+        var btn = document.getElementById('navExpandAll');
+        var searching = false;
+
+        function refreshBtn() {
+            if (!btn) return;
+            var allOpen = Array.prototype.every.call(groups, function (g) { return g.open; });
+            btn.textContent = allOpen ? 'Recolher tudo' : 'Expandir tudo';
+            btn.setAttribute('aria-expanded', allOpen ? 'true' : 'false');
+        }
+
+        groups.forEach(function (g) {
+            var id = g.getAttribute('data-group');
+            // respeita estado salvo (mas mantém aberto o grupo do item ativo)
+            var hasActive = !!g.querySelector('a.active');
+            if (!hasActive && saved.hasOwnProperty(id)) {
+                g.open = !!saved[id];
+            }
+            g.addEventListener('toggle', function () {
+                if (searching) { return; } // durante a busca não sobrescreve o estado salvo
+                try {
+                    saved[id] = g.open;
+                    localStorage.setItem(KEY, JSON.stringify(saved));
+                } catch (_) {}
+                refreshBtn();
+            });
+        });
+
+        if (btn) {
+            btn.addEventListener('click', function () {
+                var allOpen = Array.prototype.every.call(groups, function (g) { return g.open; });
+                var target = !allOpen; // se nem todos abertos -> abre todos; senão fecha todos
+                groups.forEach(function (g) { g.open = target; });
+                refreshBtn();
+            });
+        }
+        refreshBtn();
+
+        // ── Pesquisa no menu ──────────────────────────────────────────────
+        var search = document.getElementById('navSearch');
+        var searchWrap = search ? search.parentElement : null;
+        var searchClear = document.getElementById('navSearchClear');
+        var searchEmpty = document.getElementById('navSearchEmpty');
+
+        function norm(s) {
+            try { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim(); }
+            catch (_) { return String(s || '').toLowerCase().trim(); }
+        }
+
+        // Restaura os grupos ao estado normal (salvo / item ativo) ao sair da busca.
+        function restoreGroups() {
+            groups.forEach(function (g) {
+                g.style.display = '';
+                var id = g.getAttribute('data-group');
+                var hasActive = !!g.querySelector('a.active');
+                g.open = hasActive ? true : (saved.hasOwnProperty(id) ? !!saved[id] : g.open);
+                Array.prototype.forEach.call(g.querySelectorAll('li'), function (li) { li.style.display = ''; });
+                Array.prototype.forEach.call(g.querySelectorAll('a.nav-search-hit'), function (a) { a.classList.remove('nav-search-hit'); });
+            });
+            if (btn) btn.style.display = '';
+            if (searchEmpty) searchEmpty.hidden = true;
+        }
+
+        function applyFilter() {
+            var q = norm(search ? search.value : '');
+            if (searchWrap) searchWrap.classList.toggle('has-text', !!q);
+            if (!q) {
+                searching = false;
+                restoreGroups();
+                refreshBtn();
+                return;
+            }
+            searching = true;
+            if (btn) btn.style.display = 'none'; // esconde "Expandir tudo" durante a busca
+            var totalHits = 0;
+            groups.forEach(function (g) {
+                var groupHits = 0;
+                Array.prototype.forEach.call(g.querySelectorAll('li'), function (li) {
+                    var a = li.querySelector('a');
+                    var txt = norm(a ? a.textContent : '');
+                    var match = txt.indexOf(q) >= 0;
+                    li.style.display = match ? '' : 'none';
+                    if (a) a.classList.toggle('nav-search-hit', match);
+                    if (match) groupHits++;
+                });
+                g.style.display = groupHits ? '' : 'none';
+                g.open = groupHits > 0; // abre os grupos com resultado
+                totalHits += groupHits;
+            });
+            if (searchEmpty) searchEmpty.hidden = totalHits > 0;
+        }
+
+        if (search) {
+            search.addEventListener('input', applyFilter);
+            search.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') { search.value = ''; applyFilter(); search.blur(); }
+            });
+        }
+        if (searchClear) {
+            searchClear.addEventListener('click', function () {
+                if (search) { search.value = ''; search.focus(); }
+                applyFilter();
+            });
+        }
+    })();
+</script>

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testes de Serviços</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    h1 { margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .btn { padding: 8px 14px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9rem; color: #fff; }
+    .btn-purple { background: #7c3aed; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    /* ── Tabela estilo Baserow ── */
+    .grid-wrap { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; overflow: auto; -webkit-overflow-scrolling: touch; }
+    /* barra de rolagem horizontal no TOPO (sincronizada com a de baixo) */
+    .top-scroll { overflow-x: auto; overflow-y: hidden; }
+    .top-scroll-inner { height: 1px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; color: #202124; }
+    th, td { padding: 0 10px; height: 34px; text-align: left; border-right: 1px solid #ededed; border-bottom: 1px solid #ededed; vertical-align: middle; white-space: nowrap; }
+    thead th { background: #f5f6f8; color: #6b7280; font-weight: 600; font-size: 12px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid #dcdde1; }
+    tbody tr:hover td { background: #f7f9fc; }
+    .rownum { width: 44px; min-width: 44px; text-align: center; color: #9aa0a6; background: #fafafa; font-size: 12px; }
+    thead th.rownum { background: #f0f1f3; }
+    tbody tr:hover .rownum { background: #eef1f5; color: #5f6368; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    /* célula editável (clique pra editar) */
+    td.edit { cursor: text; }
+    td.edit:hover { box-shadow: inset 0 0 0 2px #d9c7f7; }
+    td.bool { cursor: pointer; }
+    td.editing { box-shadow: inset 0 0 0 2px #7c3aed !important; padding: 0; }
+    .cell-input { width: 100%; height: 32px; border: none; outline: none; padding: 0 10px; font-size: 13px; box-sizing: border-box; background: #fff; font-family: inherit; }
+    .tag { display: inline-block; padding: 1px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; line-height: 18px; }
+    .tag-yes { background: #d7f5dd; color: #0b6b2e; }
+    .tag-no { background: #ffe0e0; color: #a12020; }
+    .tag-warn { background: #fff0d6; color: #92600b; }
+    .tag-good { background: #e3f6e6; color: #1a7a35; }
+    .tag-bad { background: #ffe0e0; color: #a12020; }
+    .tag-none { background: #eef0f2; color: #8a9098; }
+    .tag-blue { background: #dbeafe; color: #1e40af; }
+    td.cycle { cursor: pointer; }
+    td.cycle:hover { background: #f7f9fc; }
+    .muted { color: #9aa0a6; }
+    a.link { color: #2563eb; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+    th.col-perfil, td.col-perfil { width: 200px; max-width: 200px; }
+    .perfil-txt { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+    a.ig-link { color: #2563eb; text-decoration: none; display: inline-flex; align-items: center; vertical-align: middle; padding: 0 2px; cursor: pointer; }
+    a.ig-link:hover { color: #1e40af; }
+    a.ig-link svg { display: block; }
+    .queda-ok { color: #166534; }
+    .queda-warn { color: #b45309; }
+    .queda-bad { color: #dc2626; }
+    /* Qtd atual vs contratada */
+    .q-below { color: #dc2626; font-weight: 700; }
+    .q-above { color: #166534; font-weight: 700; }
+    /* histórico da qtd atual: seta ▾ que estende o campo com a lista dia a dia */
+    .hist-toggle { border: none; background: transparent; cursor: pointer; color: #7c3aed; font-size: 13px; padding: 0 3px; line-height: 1; vertical-align: middle; }
+    .hist-toggle:hover { color: #5b21b6; }
+    .hist-panel { margin-top: 5px; border-top: 1px dashed #e5e7eb; padding-top: 4px; min-width: 130px; }
+    .hist-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #4b5563; padding: 1px 0; white-space: nowrap; }
+    .hist-d { color: #9aa0a6; }
+    .hist-v { font-variant-numeric: tabular-nums; font-weight: 600; }
+    /* dropdown inline (qualidade / velocidade) */
+    td.selcell { padding: 0 4px; }
+    .cell-select { width: 100%; height: 30px; border: 1px solid transparent; background: transparent; font-size: 13px; font-family: inherit; color: #202124; cursor: pointer; outline: none; border-radius: 4px; padding: 0 4px; }
+    .cell-select:hover { border-color: #d9c7f7; }
+    .cell-select:focus { border-color: #7c3aed; box-shadow: inset 0 0 0 1px #7c3aed; }
+    .addrow td { cursor: pointer; color: #6b7280; font-weight: 600; height: 36px; }
+    .addrow:hover td { background: #f0f4ff; color: #4f46e5; }
+    .mini-btn { padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; border: 1px solid; background: #fff; margin-right: 3px; }
+    .mb-check { border-color: #7c3aed; color: #7c3aed; }
+    .mb-check:hover { background: #7c3aed; color: #fff; }
+    .mb-del { border-color: #dc2626; color: #dc2626; }
+    .mb-del:hover { background: #dc2626; color: #fff; }
+    .mb-fav { border-color: #e0a800; color: #e0a800; font-size: 14px; line-height: 1; padding: 3px 7px; }
+    .mb-fav:hover { background: #fff8e1; }
+    .mb-fav.is-fav { background: #fff3cd; color: #b8860b; }
+    /* Perfil caiu/sumiu: a linha vira "morta" — cinza, texto apagado e barra vermelha na
+       lateral. Antes era #fff4f4 (99% branco), que na prática não dava pra ver. Estas
+       linhas NÃO são mais consultadas nas checagens em lote. */
+    tr.row-failed td { background: #e9eaee !important; color: #7c818c !important; box-shadow: inset 4px 0 0 #dc2626; }
+    tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7c818c; }
+    tr.row-failed:hover td { background: #dfe1e6 !important; }
+    /* X vermelho na frente do número da linha quando a medição falhou (perfil caiu/sumiu).
+       Usa ::before pra sobreviver ao renumber() que só reescreve o textContent da célula. */
+    tr.row-failed .rownum::before { content: "\2715 "; color: #dc2626; font-weight: 800; }
+    /* Etiqueta "caiu" na coluna do perfil, pra ficar claro do que se trata. */
+    .tag-off { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .3px; vertical-align: middle; }
+    /* ordenação + filtro por coluna */
+    thead th.sortable { cursor: pointer; user-select: none; }
+    thead th.sortable:hover { background: #eef1f5; }
+    .sort-caret { color: #7c3aed; font-size: 11px; }
+    tr.filter-row th { padding: 4px 6px; background: #fbfbfc; position: sticky; top: 34px; z-index: 1; border-bottom: 1px solid #dcdde1; }
+    .col-filter { width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid #dcdde1; border-radius: 4px; font-size: 12px; font-family: inherit; font-weight: 400; }
+    .col-filter:focus { border-color: #7c3aed; outline: none; }
+    .filter-tag { cursor: pointer; user-select: none; display: inline-block; }
+    .filter-tag:hover { filter: brightness(0.95); }
+    .range-filter { display: flex; align-items: center; gap: 3px; }
+    .range-in { flex: 1 1 0; min-width: 0; box-sizing: border-box; padding: 3px 4px; border: 1px solid #dcdde1; border-radius: 4px; font-size: 12px; font-family: inherit; }
+    .range-in:focus { border-color: #7c3aed; outline: none; }
+    .range-in::-webkit-outer-spin-button, .range-in::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .range-in { -moz-appearance: textfield; }
+    .range-dash { color: #9ca3af; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'testes-servicos' }) %>
+  <div class="main-content">
+    <h1>Testes de Serviços</h1>
+    <div class="sub">Clique em <strong>+ nova linha</strong> e preencha os campos direto na tabela (clique na célula pra editar). O sistema mede a <strong>quantidade atual de seguidores</strong> e a <strong>% de queda</strong> todo dia às 12h (BRT). A data do pedido é registrada automaticamente.</div>
+
+    <div class="toolbar">
+      <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
+      <span id="checkAllMsg" class="sub" style="margin:0;"></span>
+    </div>
+
+    <% var TIPO_OPTS = ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'];
+       var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'' };
+       var _forn = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
+       var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
+       function _tipoIcon(t){ t=String(t||''); if(/mundial/i.test(t)) return '🌍'; if(/brasileir/i.test(t)) return '🇧🇷'; return ''; }
+       function _tipoLabel(t){ var ic=_tipoIcon(t); return (ic?ic+' ':'') + t; }
+       function _perfilParts(raw){
+         var v = String(raw||'').replace(/^@+/,'').trim();
+         if (!v) return { label:'', href:'', empty:true };
+         var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
+         var href;
+         if (!isLink) href = 'https://instagram.com/' + encodeURIComponent(v);
+         else if (/^https?:\/\//i.test(v)) href = v;
+         else if (/instagram\.com/i.test(v)) href = 'https://' + v.replace(/^\/+/, '');
+         else href = 'https://www.instagram.com/' + v.replace(/^\/+/, '');
+         return { label: (isLink ? v : ('@' + v)), href: href, empty:false };
+       } %>
+    <form class="toolbar" method="get" action="/painel/testes-servicos" style="background:#f8f9ff;border:1px solid #e6e8f5;border-radius:8px;padding:10px 12px;">
+      <label class="sub" style="margin:0;">Tipo
+        <select name="tipo" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+          <option value="">Todos</option>
+          <% TIPO_OPTS.forEach(function(t){ %><option value="<%= t %>" <%= _ff.tipo===t?'selected':'' %>><%= _tipoLabel(t) %></option><% }); %>
+        </select>
+      </label>
+      <label class="sub" style="margin:0;">Fornecedor
+        <select name="fornecedor" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+          <option value="">Todos</option>
+          <% _forn.forEach(function(f){ %><option value="<%= f %>" <%= _ff.fornecedor===f?'selected':'' %>><%= f %></option><% }); %>
+        </select>
+      </label>
+      <label class="sub" style="margin:0;">Queda de <input type="number" name="quedaMin" value="<%= _ff.quedaMin %>" step="0.1" placeholder="10" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
+      <label class="sub" style="margin:0;">até <input type="number" name="quedaMax" value="<%= _ff.quedaMax %>" step="0.1" placeholder="30" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
+      <label class="sub" style="margin:0; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" name="fav" value="1" <%= (_ff.fav==='1')?'checked':'' %>> ★ Só favoritos</label>
+      <button type="submit" class="btn btn-purple">Filtrar</button>
+      <a href="/painel/testes-servicos" class="sub" style="margin:0;">limpar</a>
+      <span class="sub" style="margin-left:auto;"><strong><%= (rows||[]).length %></strong><% if (typeof totalAll!=='undefined' && totalAll!==(rows||[]).length) { %> de <%= totalAll %><% } %> teste(s)</span>
+    </form>
+
+    <div class="top-scroll" id="topScroll"><div class="top-scroll-inner" id="topScrollInner"></div></div>
+    <div class="grid-wrap" id="gridWrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="rownum">#</th>
+            <th>Id serviço</th>
+            <th>Tipo</th>
+            <th class="col-perfil">Perfil teste</th>
+            <th>Qtd contratada</th>
+            <th>Qtd atual</th>
+            <th>Qualidade</th>
+            <th>Refil?</th>
+            <th>Entrega</th>
+            <th>Velocidade início</th>
+            <th>Preço</th>
+            <th>Data pedido</th>
+            <th>Fornecedor</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <% (rows || []).forEach(function(r, _i){
+               var dataTxt = '—';
+               if (r.dataPedido) { var p = r.dataPedido.split('-'); if (p.length===3) dataTxt = p[2]+'/'+p[1]+'/'+p[0]; }
+               var lastTxt = '';
+               if (r.lastCheckAt) { try { var lc = new Date(r.lastCheckAt); lastTxt = ('0'+lc.getDate()).slice(-2)+'/'+('0'+(lc.getMonth()+1)).slice(-2)+' '+('0'+lc.getHours()).slice(-2)+':'+('0'+lc.getMinutes()).slice(-2); } catch(_){} }
+               var precoRaw = (r.preco != null) ? Number(r.preco).toFixed(2).replace('.', ',') : '';
+               // Qtd atual x contratada: abaixo=vermelho (queda), acima/igual=verde. % vs contratada.
+               var atualCls = '', pctTxt = '', pctCls = '';
+               if (r.atual != null && r.quantidade > 0) {
+                 var diff = r.atual - r.quantidade;
+                 var pct = Math.round(Math.abs(diff) / r.quantidade * 100);
+                 if (diff < 0) { atualCls = 'q-below'; pctCls = 'q-below'; pctTxt = '▼ ' + pct + '%'; }
+                 else { atualCls = 'q-above'; pctCls = 'q-above'; pctTxt = '▲ ' + pct + '%'; }
+               }
+               var QUAL_OPTS = ['', 'Baixa', 'Media', 'Boa', 'Otima'];
+               var VEL_OPTS = ['', 'Rapido', 'Lento', 'Muito lento'];
+               var _qcls = ({'Baixa':'tag-bad','Media':'tag-warn','Boa':'tag-good','Otima':'tag-yes'})[r.qualidade||''] || 'tag-none';
+               var _vcls = ({'Rapido':'tag-yes','Lento':'tag-warn','Muito lento':'tag-no'})[r.velocidadeInicio||''] || 'tag-none';
+               var _ecls = ({'Mais':'tag-yes','Igual':'tag-blue','Menos':'tag-no'})[r.entregaMais||''] || 'tag-none';
+               // ── Histórico da qtd atual (1 ponto/dia): lista que ESTENDE o campo ao clicar na seta ──
+               var _hist = Array.isArray(r.history) ? r.history : [];
+               var _sp = _hist.map(function(h){ return { c: Number(h.count), at: h.at }; }).filter(function(x){ return isFinite(x.c); }).slice(-60);
+               var histRows = '';
+               if (_sp.length >= 1) {
+                 histRows = _sp.slice().reverse().map(function(x){
+                   var d = new Date(x.at);
+                   var dd = ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear();
+                   return '<div class="hist-row"><span class="hist-d">'+dd+'</span><span class="hist-v">'+x.c.toLocaleString('pt-BR')+'</span></div>';
+                 }).join('');
+               }
+          %>
+<%# Saida escapada transformava as aspas do atributo em entidade: o class virava texto
+      solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
+          <tr data-id="<%= r.id %>"<% if (r.measureFailed) { %> class="row-failed" data-failed="1" title="Falha ao medir<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — ignorada nas checagens em lote"<% } %>>
+            <td class="rownum"><%= _i + 1 %></td>
+            <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %></td>
+            <td class="selcell">
+              <select class="cell-select" data-field="tipo">
+                <option value="" <%= (r.tipo||'')===''?'selected':'' %>>—</option>
+                <% TIPO_OPTS.forEach(function(t){ %><option value="<%= t %>" <%= (r.tipo||'')===t?'selected':'' %>><%= _tipoLabel(t) %></option><% }); %>
+              </select>
+            </td>
+            <td class="edit col-perfil" data-field="perfil" data-type="perfil" data-raw="<%= r.perfil %>"><% var _pp = _perfilParts(r.perfil); if (!_pp.empty) { %><span class="perfil-txt" title="<%= _pp.label %>"><%= _pp.label %></span> <a class="ig-link" href="<%= _pp.href %>" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram"><%- IG_SVG %></a><% } else { %><span class="muted">—</span><% } %><% if (r.measureFailed) { %><span class="tag-off" title="Perfil não pôde ser medido<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — não é mais consultado nas checagens em lote">caiu</span><% } %></td>
+            <td class="edit num" data-field="quantidade" data-type="int" data-raw="<%= r.quantidade || '' %>"><%= r.quantidade ? r.quantidade.toLocaleString('pt-BR') : '—' %></td>
+            <td class="num" data-v="<%= r.atual != null ? r.atual : '' %>">
+              <% if (r.atual != null) { %>
+                <strong class="<%= atualCls %>"><%= r.atual.toLocaleString('pt-BR') %></strong>
+                <% if (pctTxt) { %> <span class="<%= pctCls %>" style="font-size:12px;">(<%= pctTxt %>)</span><% } %>
+                <% if (histRows) { %> <button type="button" class="hist-toggle" title="Ver histórico dia a dia">▾</button>
+                  <div class="hist-panel" style="display:none;"><%- histRows %></div>
+                <% } else if (lastTxt) { %><br><span class="muted" style="font-size:11px;">pico <%= (r.pico!=null?r.pico:0).toLocaleString('pt-BR') %> · <%= lastTxt %></span><% } %>
+              <% } else { %><span class="muted">sem medição</span><% } %>
+            </td>
+            <td class="cycle" data-field="qualidade" data-raw="<%= r.qualidade || '' %>" data-options="<%= QUAL_OPTS.join('|') %>" title="Clique pra alternar"><span class="tag <%= _qcls %>"><%= r.qualidade || '—' %></span></td>
+            <td class="bool" data-field="temRefil" data-raw="<%= r.temRefil ? 1 : 0 %>"><span class="tag <%= r.temRefil ? 'tag-yes' : 'tag-no' %>"><%= r.temRefil ? 'Sim' : 'Não' %></span></td>
+            <td class="cycle" data-field="entregaMais" data-raw="<%= r.entregaMais || '' %>" data-options="|Mais|Igual|Menos" title="Clique pra alternar"><span class="tag <%= _ecls %>"><%= r.entregaMais || '—' %></span></td>
+            <td class="cycle" data-field="velocidadeInicio" data-raw="<%= r.velocidadeInicio || '' %>" data-options="<%= VEL_OPTS.join('|') %>" title="Clique pra alternar"><span class="tag <%= _vcls %>"><%= r.velocidadeInicio || '—' %></span></td>
+            <td class="edit num" data-field="preco" data-type="preco" data-raw="<%= precoRaw %>"><% if (r.preco != null) { %>R$ <%= precoRaw %><% } else { %>—<% } %></td>
+            <td class="edit" data-field="dataPedido" data-type="date" data-raw="<%= r.dataPedido || '' %>" title="Clique pra alterar a data do pedido"><% if (r.dataPedido) { %><%= dataTxt %><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="edit" data-field="fornecedor" data-type="text" data-raw="<%= r.fornecedor %>"><%= r.fornecedor || '—' %></td>
+            <td>
+              <button type="button" class="mini-btn mb-fav<%= r.favorito ? ' is-fav' : '' %>" data-id="<%= r.id %>" data-fav="<%= r.favorito ? 1 : 0 %>" title="<%= r.favorito ? 'Desfavoritar' : 'Favoritar' %>"><%= r.favorito ? '★' : '☆' %></button>
+              <button type="button" class="mini-btn mb-check" data-id="<%= r.id %>" title="Medir seguidores agora">↻ checar</button>
+              <button type="button" class="mini-btn mb-del" data-id="<%= r.id %>" title="Excluir linha">excluir</button>
+            </td>
+          </tr>
+          <% }); %>
+          <tr class="addrow" id="addRow"><td colspan="14">+ nova linha</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      function $(id){ return document.getElementById(id); }
+      async function post(url, body){
+        var r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify(body||{}) });
+        return await r.json().catch(function(){ return null; });
+      }
+      function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+      function fmtInt(v){ var n = Number(v); return Number.isFinite(n) ? n.toLocaleString('pt-BR') : ''; }
+      var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
+      function perfilParts(raw){
+        var v = String(raw||'').replace(/^@+/,'').trim();
+        if (!v) return { label:'', href:'', empty:true };
+        var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
+        var href;
+        if (!isLink) href = 'https://instagram.com/' + encodeURIComponent(v);
+        else if (/^https?:\/\//i.test(v)) href = v;
+        else if (/instagram\.com/i.test(v)) href = 'https://' + v.replace(/^\/+/, '');
+        else href = 'https://www.instagram.com/' + v.replace(/^\/+/, '');
+        return { label: (isLink ? v : ('@' + v)), href: href, empty:false };
+      }
+      function fmtDate(raw){ var p = String(raw||'').slice(0,10).split('-'); return (p.length===3) ? (p[2]+'/'+p[1]+'/'+p[0]) : String(raw||''); }
+
+      // Redesenha o conteúdo de uma célula editável a partir do data-raw.
+      function renderCell(td){
+        var type = td.getAttribute('data-type'); var raw = td.getAttribute('data-raw') || '';
+        if (type === 'perfil') {
+          var pp = perfilParts(raw);
+          td.innerHTML = pp.empty ? '<span class="muted">—</span>'
+            : '<span class="perfil-txt" title="' + esc(pp.label) + '">' + esc(pp.label) + '</span> <a class="ig-link" href="' + esc(pp.href) + '" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram">' + IG_SVG + '</a>';
+        }
+        else if (type === 'int') { td.innerHTML = raw ? fmtInt(raw) : '—'; }
+        else if (type === 'preco') { td.innerHTML = raw ? ('R$ ' + esc(raw)) : '—'; }
+        else if (type === 'date') { td.innerHTML = raw ? esc(fmtDate(raw)) : '<span class="muted">—</span>'; }
+        else { td.innerHTML = raw ? esc(raw) : '—'; }
+      }
+
+      // Edição inline de célula de texto/número
+      function startEdit(td){
+        if (td.classList.contains('editing')) return;
+        var type = td.getAttribute('data-type');
+        var field = td.getAttribute('data-field');
+        var raw = td.getAttribute('data-raw') || '';
+        var tr = td.closest('tr'); var id = tr.getAttribute('data-id');
+        td.classList.add('editing');
+        var input = document.createElement('input');
+        input.className = 'cell-input';
+        input.type = (type === 'int') ? 'number' : (type === 'date') ? 'date' : 'text';
+        input.value = raw;
+        td.innerHTML = ''; td.appendChild(input); input.focus(); try { input.select(); } catch(_){}
+        // Abre o calendário na hora (quando suportado) pra já escolher a data.
+        if (type === 'date') { try { if (input.showPicker) input.showPicker(); } catch(_){} }
+        var done = false;
+        function finish(commit){
+          if (done) return; done = true;
+          var val = input.value;
+          td.classList.remove('editing');
+          if (commit && val !== raw) {
+            td.setAttribute('data-raw', val); renderCell(td);
+            var body = { id: id }; body[field] = val;
+            post('/api/painel/testes-servicos/update', body);
+          } else { renderCell(td); }
+        }
+        input.addEventListener('blur', function(){ finish(true); });
+        input.addEventListener('keydown', function(e){
+          if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+          else if (e.key === 'Escape') { finish(false); }
+        });
+      }
+
+      // Cor da tag por campo/valor (igual à lógica server-side).
+      function tagClassFor(field, val){
+        val = String(val||'');
+        if (field === 'qualidade') return ({'Baixa':'tag-bad','Media':'tag-warn','Boa':'tag-good','Otima':'tag-yes'})[val] || 'tag-none';
+        if (field === 'velocidadeInicio') return ({'Rapido':'tag-yes','Lento':'tag-warn','Muito lento':'tag-no'})[val] || 'tag-none';
+        if (field === 'entregaMais') return ({'Mais':'tag-yes','Igual':'tag-blue','Menos':'tag-no'})[val] || 'tag-none';
+        return 'tag-none';
+      }
+      // Célula que ALTERNA entre opções ao clicar (igual refil/entrega+), mostrando tag colorida.
+      function cycleCell(td){
+        var field = td.getAttribute('data-field');
+        var opts = (td.getAttribute('data-options')||'').split('|');
+        var cur = td.getAttribute('data-raw') || '';
+        var idx = opts.indexOf(cur); if (idx < 0) idx = 0;
+        var next = opts[(idx + 1) % opts.length];
+        td.setAttribute('data-raw', next);
+        td.innerHTML = '<span class="tag ' + tagClassFor(field, next) + '">' + (next ? esc(next) : '—') + '</span>';
+        var tr = td.closest('tr'); var id = tr.getAttribute('data-id');
+        var body = { id: id }; body[field] = next;
+        post('/api/painel/testes-servicos/update', body);
+      }
+
+      // Toggle de célula booleana (Sim/Não)
+      function toggleBool(td){
+        var field = td.getAttribute('data-field');
+        var cur = td.getAttribute('data-raw') === '1';
+        var nv = !cur;
+        td.setAttribute('data-raw', nv ? '1' : '0');
+        td.innerHTML = '<span class="tag ' + (nv ? 'tag-yes' : 'tag-no') + '">' + (nv ? 'Sim' : 'Não') + '</span>';
+        var tr = td.closest('tr'); var id = tr.getAttribute('data-id');
+        var body = { id: id }; body[field] = nv ? '1' : '0';
+        post('/api/painel/testes-servicos/update', body);
+      }
+
+      // Delegação de cliques na tabela
+      $('tbody').addEventListener('click', async function(ev){
+        if (ev.target.closest('a.ig-link')) return; // deixa a setinha abrir o IG em nova guia, sem editar
+        var addr = ev.target.closest('#addRow');
+        if (addr) {
+          addr.querySelector('td').textContent = 'criando…';
+          var d = await post('/api/painel/testes-servicos/create', {});
+          if (d && d.ok) { location.reload(); } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
+          return;
+        }
+        var btn = ev.target.closest('button');
+        if (btn) {
+          // Seta ▾ do histórico: estende/recolhe a lista dia a dia dentro do campo.
+          if (btn.classList.contains('hist-toggle')) {
+            var panel = btn.parentElement.querySelector('.hist-panel');
+            if (panel) { var open = panel.style.display !== 'none'; panel.style.display = open ? 'none' : 'block'; btn.textContent = open ? '▾' : '▴'; }
+            return;
+          }
+          var id = btn.getAttribute('data-id');
+          if (btn.classList.contains('mb-fav')) {
+            var cur = btn.getAttribute('data-fav') === '1';
+            var nv = !cur;
+            btn.setAttribute('data-fav', nv ? '1' : '0');
+            btn.textContent = nv ? '★' : '☆';
+            btn.classList.toggle('is-fav', nv);
+            btn.title = nv ? 'Desfavoritar' : 'Favoritar';
+            post('/api/painel/testes-servicos/update', { id: id, favorito: nv ? '1' : '0' });
+            return;
+          }
+          if (btn.classList.contains('mb-check')) {
+            var old = btn.textContent; btn.disabled = true; btn.textContent = 'medindo…';
+            var d = await post('/api/painel/testes-servicos/check', { id: id });
+            if (d && d.ok) { location.reload(); } else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = old; }
+          } else if (btn.classList.contains('mb-del')) {
+            if (!confirm('Excluir esta linha?')) return;
+            var d2 = await post('/api/painel/testes-servicos/delete', { id: id });
+            if (d2 && d2.ok) { location.reload(); } else { alert('Falha ao excluir.'); }
+          }
+          return;
+        }
+        var cycleTd = ev.target.closest('td.cycle');
+        if (cycleTd) { cycleCell(cycleTd); return; }
+        var boolTd = ev.target.closest('td.bool');
+        if (boolTd) { toggleBool(boolTd); return; }
+        var editTd = ev.target.closest('td.edit');
+        if (editTd) { startEdit(editTd); return; }
+      });
+
+      // Dropdown de Tipo (list): salva ao mudar
+      $('tbody').addEventListener('change', function(ev){
+        var sel = ev.target.closest('.cell-select');
+        if (!sel) return;
+        var tr = sel.closest('tr'); if (!tr) return;
+        var id = tr.getAttribute('data-id'); var field = sel.getAttribute('data-field');
+        var body = { id: id }; body[field] = sel.value;
+        post('/api/painel/testes-servicos/update', body);
+      });
+
+      // Checar todos
+      $('checkAllBtn').addEventListener('click', async function(){
+        var btn = this, msg = $('checkAllMsg');
+        btn.disabled = true; msg.textContent = 'Consultando seguidores de todos…';
+        var d = await post('/api/painel/testes-servicos/check-all', {});
+        if (d && d.ok) {
+          var res = d.result || {};
+          try { sessionStorage.setItem('svcCheckFails', JSON.stringify(res.failedIds || [])); } catch(_){}
+          msg.textContent = 'Ok: ' + (res.ok||0) + ' medidos' + (res.fail ? (' · ' + res.fail + ' falha(s)') : '') + (res.ignored ? (' · ' + res.ignored + ' ignorada(s) com X') : '') + '. Recarregando…';
+          setTimeout(function(){ location.reload(); }, 1000);
+        }
+        else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); btn.disabled = false; }
+      });
+
+      // Após o reload, mostra QUAIS linhas falharam no último "Checar todos" (# da linha) e destaca.
+      (function(){
+        var raw; try { raw = sessionStorage.getItem('svcCheckFails'); sessionStorage.removeItem('svcCheckFails'); } catch(_){ raw = null; }
+        if (!raw) return;
+        var ids; try { ids = JSON.parse(raw); } catch(_){ ids = []; }
+        if (!Array.isArray(ids) || !ids.length) return;
+        var nums = [], fora = 0;
+        ids.forEach(function(id){
+          var tr = document.querySelector('tr[data-id="' + id + '"]');
+          if (tr) {
+            tr.classList.add('row-failed');
+            // etiqueta "caiu" sem precisar recarregar a página
+            var pc = tr.querySelector('td.col-perfil');
+            if (pc && !pc.querySelector('.tag-off')) {
+              var tg = document.createElement('span');
+              tg.className = 'tag-off';
+              tg.textContent = 'caiu';
+              tg.title = 'Perfil não pôde ser medido — não é mais consultado nas checagens em lote';
+              pc.appendChild(tg);
+            }
+            var rn = tr.querySelector('.rownum'); nums.push(rn ? rn.textContent.trim() : '?');
+          }
+          else fora++;
+        });
+        var msg = $('checkAllMsg');
+        if (msg) {
+          var parts = [];
+          if (nums.length) parts.push('Falhou ao medir: ' + nums.map(function(n){ return '#'+n; }).join(', '));
+          if (fora) parts.push(fora + ' fora do filtro');
+          if (!parts.length) parts.push('houve falhas na última checagem');
+          msg.innerHTML = '<span style="color:#b45309; font-weight:600;">⚠ ' + parts.join(' · ') + '</span> <span style="color:#9ca3af;">(geralmente o perfil caiu/sumiu)</span>';
+        }
+      })();
+
+      // ── Ordenação (clique no cabeçalho) + filtro por coluna (estilo Excel) ──
+      (function(){
+        var table = document.querySelector('.grid-wrap table');
+        if (!table || !table.tHead) return;
+        var thead = table.tHead, tbody = $('tbody');
+        var headRow = thead.rows[0];
+        var ths = Array.prototype.slice.call(headRow.cells);
+        var skip = {}; skip[0] = true; skip[ths.length - 1] = true; // pula # e Ação
+
+        function dataRows(){ return Array.prototype.slice.call(tbody.querySelectorAll('tr[data-id]')); }
+        function cellValue(td){
+          if (!td) return '';
+          if (td.dataset && 'v' in td.dataset) return td.dataset.v || '';
+          var sel = td.querySelector && td.querySelector('select'); if (sel) return sel.value || '';
+          if (td.dataset && 'raw' in td.dataset) { if (td.classList.contains('bool')) return td.dataset.raw === '1' ? 'Sim' : 'Não'; return td.dataset.raw || ''; }
+          return (td.textContent || '').trim();
+        }
+        function numOf(s){ var t = String(s == null ? '' : s).trim().replace(/\s/g,'').replace(',', '.'); if (t === '') return null; var n = parseFloat(t); return isNaN(n) ? null : n; }
+        function renumber(){ var i = 1; dataRows().forEach(function(tr){ if (tr.style.display !== 'none') { var rn = tr.querySelector('.rownum'); if (rn) rn.textContent = i++; } }); }
+
+        // filtros por coluna — cada coluna define um PREDICADO (função). Colunas sem filtro
+        // (Tipo, Qtd contratada, Qtd atual) usam os filtros GERAIS do topo.
+        var preds = {};
+        function applyFilters(){
+          dataRows().forEach(function(tr){
+            var show = true;
+            for (var c in preds){ var p = preds[c]; if (!p) continue; if (!p(cellValue(tr.cells[c]))) { show = false; break; } }
+            tr.style.display = show ? '' : 'none';
+          });
+          renumber();
+        }
+        var rows0 = dataRows();
+        function firstCell(i){ return rows0[0] && rows0[0].cells[i]; }
+        function colField(i){ var td = firstCell(i); if (!td) return ''; if (td.dataset && td.dataset.field) return td.dataset.field; var sel = td.querySelector && td.querySelector('select'); if (sel) return sel.getAttribute('data-field') || 'select'; if (td.classList.contains('num')) return '__atual__'; return ''; }
+        function distinctVals(i){ var seen = {}, out = []; rows0.forEach(function(tr){ var v = cellValue(tr.cells[i]).trim(); if (v && !seen[v]) { seen[v] = 1; out.push(v); } }); out.sort(function(a, b){ return a.localeCompare(b, 'pt-BR'); }); return out; }
+        function tagClassMap(i){ var map = {}; rows0.forEach(function(tr){ var td = tr.cells[i]; if (!td) return; var v = cellValue(td).trim(); if (!v || map[v]) return; var tg = td.querySelector('.tag'); if (tg) { var m = (tg.className.match(/tag-[a-z]+/) || [])[0]; if (m) map[v] = m; } }); return map; }
+
+        // Filtro TAG clicável (cicla os valores) — para colunas cujo campo é tag clicável.
+        function buildCycleFilter(col){
+          var vals = [''].concat(distinctVals(col)), clsMap = tagClassMap(col), idx = 0;
+          var chip = document.createElement('span'); chip.title = 'Clique pra filtrar';
+          function render(){ var v = vals[idx]; chip.className = 'filter-tag tag ' + (v ? (clsMap[v] || 'tag-none') : 'tag-none'); chip.textContent = v || 'Todos'; }
+          chip.addEventListener('click', function(){ idx = (idx + 1) % vals.length; var val = String(vals[idx] || '').toLowerCase(); preds[col] = val ? function(v){ return String(v).toLowerCase() === val; } : null; render(); applyFilters(); });
+          render(); return chip;
+        }
+        // Filtro numérico de FAIXA (mín/máx) — estilo "Entre" do Excel, sem digitar operador.
+        // Só mín = ≥ mín · só máx = ≤ máx · os dois = entre.
+        function buildRangeFilter(col){
+          var wrap = document.createElement('div'); wrap.className = 'range-filter';
+          var mn = document.createElement('input'); mn.type = 'number'; mn.step = 'any'; mn.className = 'range-in'; mn.placeholder = 'mín';
+          var dash = document.createElement('span'); dash.className = 'range-dash'; dash.textContent = '–';
+          var mx = document.createElement('input'); mx.type = 'number'; mx.step = 'any'; mx.className = 'range-in'; mx.placeholder = 'máx';
+          function upd(){
+            var lo = mn.value === '' ? null : parseFloat(String(mn.value).replace(',', '.'));
+            var hi = mx.value === '' ? null : parseFloat(String(mx.value).replace(',', '.'));
+            if ((lo == null || isNaN(lo)) && (hi == null || isNaN(hi))) { preds[col] = null; }
+            else preds[col] = function(v){ var n = numOf(v); if (n == null) return false; if (lo != null && !isNaN(lo) && n < lo) return false; if (hi != null && !isNaN(hi) && n > hi) return false; return true; };
+            applyFilters();
+          }
+          mn.addEventListener('input', upd); mx.addEventListener('input', upd);
+          wrap.appendChild(mn); wrap.appendChild(dash); wrap.appendChild(mx);
+          return wrap;
+        }
+        // Filtro por DATA (seletor de data) — mostra as linhas com aquela data.
+        function buildDateFilter(col){
+          var inp = document.createElement('input'); inp.className = 'col-filter'; inp.type = 'date';
+          inp.addEventListener('change', function(){ var d = String(inp.value || '').slice(0, 10); preds[col] = d ? function(v){ return String(v).slice(0, 10) === d; } : null; applyFilters(); });
+          return inp;
+        }
+        function buildTextFilter(col){
+          var inp = document.createElement('input'); inp.className = 'col-filter'; inp.type = 'text'; inp.placeholder = 'filtrar…';
+          inp.addEventListener('input', function(){ var q = String(inp.value || '').toLowerCase().trim(); preds[col] = q ? function(v){ return String(v).toLowerCase().indexOf(q) >= 0; } : null; applyFilters(); });
+          return inp;
+        }
+        var NO_FILTER = { 'tipo': 1, 'quantidade': 1, '__atual__': 1, 'select': 1, 'preco': 1 }; // sem filtro na coluna
+        var CYCLE_FIELDS = { 'qualidade': 1, 'temRefil': 1, 'entregaMais': 1, 'velocidadeInicio': 1 };
+        var frow = document.createElement('tr'); frow.className = 'filter-row';
+        ths.forEach(function(th, i){
+          var cell = document.createElement('th');
+          if (!skip[i] && rows0.length) {
+            var f = colField(i), el = null;
+            if (NO_FILTER[f]) el = null;
+            else if (CYCLE_FIELDS[f]) el = buildCycleFilter(i);
+            else if (f === 'dataPedido') el = buildDateFilter(i);
+            else el = buildTextFilter(i); // serviceId, perfil, fornecedor
+            if (el) cell.appendChild(el);
+          }
+          frow.appendChild(cell);
+        });
+        thead.appendChild(frow);
+
+        // ordenação por clique no cabeçalho
+        var sortState = { col: -1, dir: 1 };
+        ths.forEach(function(th, i){
+          if (skip[i]) return;
+          th.classList.add('sortable');
+          var caret = document.createElement('span'); caret.className = 'sort-caret'; th.appendChild(caret);
+          th.addEventListener('click', function(){
+            sortState.dir = (sortState.col === i) ? -sortState.dir : 1;
+            sortState.col = i;
+            var rows = dataRows();
+            var allNum = rows.every(function(tr){ var v = cellValue(tr.cells[i]); return v === '' || numOf(v) != null; });
+            rows.sort(function(a, b){
+              var va = cellValue(a.cells[i]), vb = cellValue(b.cells[i]), r;
+              if (allNum){ var na = numOf(va), nb = numOf(vb); na = (na == null ? -Infinity : na); nb = (nb == null ? -Infinity : nb); r = na - nb; }
+              else r = String(va).localeCompare(String(vb), 'pt-BR', { numeric: true, sensitivity: 'base' });
+              return r * sortState.dir;
+            });
+            var addRow = document.getElementById('addRow');
+            rows.forEach(function(tr){ tbody.insertBefore(tr, addRow); });
+            thead.querySelectorAll('.sort-caret').forEach(function(c){ c.textContent = ''; });
+            caret.textContent = sortState.dir > 0 ? ' ▲' : ' ▼';
+            renumber();
+          });
+        });
+      })();
+
+      // ── Barra de rolagem horizontal no TOPO, espelhando a de baixo ──
+      (function(){
+        var gw = document.getElementById('gridWrap');
+        var top = document.getElementById('topScroll');
+        var inner = document.getElementById('topScrollInner');
+        var table = gw && gw.querySelector('table');
+        if (!gw || !top || !inner || !table) return;
+        function syncWidth(){ inner.style.width = table.scrollWidth + 'px'; top.style.display = (table.scrollWidth > gw.clientWidth + 1) ? 'block' : 'none'; }
+        var lock = false;
+        top.addEventListener('scroll', function(){ if (lock) return; lock = true; gw.scrollLeft = top.scrollLeft; lock = false; });
+        gw.addEventListener('scroll', function(){ if (lock) return; lock = true; top.scrollLeft = gw.scrollLeft; lock = false; });
+        window.addEventListener('resize', syncWidth);
+        syncWidth();
+        setTimeout(syncWidth, 300); // re-sincroniza após render dos filtros/colunas
+      })();
+    })();
+  </script>
+</body>
+</html>
