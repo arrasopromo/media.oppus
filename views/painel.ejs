@@ -8349,9 +8349,11 @@
       <div style="margin-bottom:15px;">
         <label style="display:block; margin-bottom:5px; font-weight:bold;">Fornecedor:</label>
         <select id="unknownModalProvider" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
-          <option value="fama24h">Fama24h</option>
-          <option value="fama24h_views">Fama24h (Bump Views)</option>
-          <option value="fama24h_likes">Fama24h (Bump Curtidas)</option>
+          <%# O `value` continua sendo o nome do campo no banco (o backend espera o slot).
+              Só o rótulo mudou: o slot `fama24h` é servido pela NuvraSMM desde a migração. %>
+          <option value="fama24h">NuvraSMM (principal)</option>
+          <option value="fama24h_views">NuvraSMM (Bump Views)</option>
+          <option value="fama24h_likes">NuvraSMM (Bump Curtidas)</option>
           <option value="fornecedor_social">Fornecedor Social</option>
           <option value="fornecedor_social_likes">Fornecedor Social (Bump Curtidas)</option>
           <option value="topfama">TopFama (Curtidas reais)</option>

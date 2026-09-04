@@ -4031,8 +4031,11 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
     const exec = (async () => {
         console.log(`🔍 Iniciando verificação do perfil (APIFY): @${username} (bypassCache: ${bypassCache})`);
 
-        // ── PRIMÁRIA: API self-hosted (grátis, <5s). Se ok, retorna aqui; senão cai no RocketAPI/Apify abaixo.
-        try {
+        // Self-API self-hosted (grátis, <5s). ERA a primária; agora é FALLBACK — a ordem
+        // passou a ser RocketAPI → self-API → Apify. Fica como função para ser chamada
+        // depois do RocketAPI, sem duplicar o corpo.
+        const tentarSelfApi = async () => {
+          try {
             const _self = await fetchProfileSelfApi(username, 5000);
             if (_self && _self.success && _self.profile && Number(_self.profile.followersCount) > 0) {
                 const sp = _self.profile;
@@ -4070,11 +4073,13 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                 console.log(`✅ Perfil @${username} via SELF-API (${sp.followersCount} seg., ${rProfileData.latestPosts.length} posts)`);
                 return resultSelf;
             }
-        } catch (_) {}
+          } catch (_) {}
+          return null;
+        };
 
         try {
             // ---------------------------------------------------------
-            // TENTATIVA 1: ROCKETAPI (Rápido: ~2-5s)
+            // PRIMÁRIA: ROCKETAPI (Rápido: ~2-5s)
             // ---------------------------------------------------------
             if (process.env.ROCKETAPI_TOKEN && (!global.rocketApiDisabledUntil || Date.now() > global.rocketApiDisabledUntil)) {
                 try {
@@ -4280,6 +4285,10 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                 }
               } catch (eByid) { try { console.warn('⚠️ RocketAPI by-id fallback falhou:', eByid && eByid.message); } catch (_) {} }
             }
+
+            // RocketAPI não resolveu → tenta a self-API antes de gastar Apify, que é pago.
+            const _selfFb = await tentarSelfApi();
+            if (_selfFb) return _selfFb;
 
             // Apify sem cota (limite mensal estourado) → não adianta tentar. Se marcado como
             // fora, pula direto e devolve "perfil não encontrado" (o RocketAPI já falhou acima).
@@ -21106,7 +21115,16 @@ app.post('/api/openpix/webhook', async (req, res) => {
               }
           }
 
-          const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
+          // Lia só o additionalInfoMap. Em boa parte dos pedidos o `order_bumps` existe
+          // apenas nos arrays (additionalInfoPaid/additionalInfo) — aí hasUpgrade saía
+          // false, este despacho (que corre ANTES do processOrderFulfillment) mandava a
+          // quantidade base, e o cálculo correto chegava depois só pra achar que já foi
+          // enviado. Resultado: 96 pedidos de views com upgrade pago e não entregue.
+          // Mesmo fallback do bloco principal.
+          const bumpsStr0 = additionalInfoMap['order_bumps']
+            || ((record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value)
+            || ((record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value)
+            || '';
           const hasUpgrade = typeof bumpsStr0 === 'string' && /(^|;)upgrade:\d+/i.test(bumpsStr0);
           const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
           const isVisualizacoes = /(visualizacoes|views|reels)/i.test(tipo);
@@ -23244,21 +23262,34 @@ app.get('/posts', async (req, res) => {
   }
 });
 
-// Busca posts via RocketAPI. RÁPIDO: se já temos o ID do IG salvo, vai DIRETO no get_media
-// (pula get_info/search). Senão resolve por get_info (timeout curto) → search e SALVA o ID p/ as próximas.
+// Busca posts: o ROCKETAPI é a fonte PRIMÁRIA. A self-API (self-hosted, grátis) era a
+// primária e virou FALLBACK — só entra quando o RocketAPI não devolve nenhum post.
+// O wrapper existe porque a busca via RocketAPI tem várias saídas de erro; assim o
+// fallback cobre todas sem precisar repetir a chamada em cada uma.
 async function fetchInstagramPostsRocketApi(username, opts) {
+  const r = await _postsViaRocketApi(username, opts);
+  if (r && r.success && Array.isArray(r.posts) && r.posts.length) return r;
+  try {
+    const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+    const reels = !!(opts && opts.reels);
+    if (uname) {
+      const _self = await fetchProfileSelfApi(uname, 5000);
+      if (_self && _self.success && Array.isArray(_self.posts) && _self.posts.length) {
+        let posts = _self.posts;
+        if (reels) posts = posts.filter(p => p.isVideo);
+        if (posts.length) return { success: true, username: uname, posts, via: 'self_api' };
+      }
+    }
+  } catch (_) {}
+  return r; // preserva o erro original do RocketAPI quando a self-API também não resolve
+}
+
+// RÁPIDO: se já temos o ID do IG salvo, vai DIRETO no get_media (pula get_info/search).
+// Senão resolve por get_info (timeout curto) → search e SALVA o ID p/ as próximas.
+async function _postsViaRocketApi(username, opts) {
   const reels = !!(opts && opts.reels); // modo reels (visualizações) → usa get_clips
   const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
   if (!uname) return { success: false, error: 'missing_username' };
-  // PRIMÁRIA: self-API (grátis, <5s) — traz os 12 posts. Fallback = RocketAPI abaixo.
-  try {
-    const _self = await fetchProfileSelfApi(uname, 5000);
-    if (_self && _self.success && Array.isArray(_self.posts) && _self.posts.length) {
-      let posts = _self.posts;
-      if (reels) posts = posts.filter(p => p.isVideo);
-      if (posts.length) return { success: true, username: uname, posts, via: 'self_api' };
-    }
-  } catch (_) {}
   if (!process.env.ROCKETAPI_TOKEN) return { success: false, error: 'no_token' };
   const auth = { headers: { 'Authorization': `Token ${process.env.ROCKETAPI_TOKEN}` }, validateStatus: () => true };
 
@@ -23872,7 +23903,11 @@ app.post('/session/mark-paid', async (req, res) => {
         const instaUser = (/^https?:\/\//i.test(String(instaUserRaw))) ? String(instaUserRaw) : `https://instagram.com/${String(instaUserRaw)}`;
         const alreadySentFS = !!(record && record.fornecedor_social && record.fornecedor_social.orderId);
         const alreadySentFama = !!(record && record.fama24h && record.fama24h.orderId);
-        const bumpsStr0 = additionalInfoMap['order_bumps'] || '';
+        // Mesmo fallback do bloco principal: o `order_bumps` nem sempre está no mapa.
+        const bumpsStr0 = additionalInfoMap['order_bumps']
+          || ((record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value)
+          || ((record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value)
+          || '';
         const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
         const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
         const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
@@ -24982,6 +25017,37 @@ app.post('/api/refil/simple', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'no_provider_order', message: 'Seu pedido ainda está em processamento. Tente novamente mais tarde.' });
     }
 
+    // ── ÂNCORA DE REPOSIÇÃO (force-refil) ────────────────────────────────────
+    // Quando um "Forçar refil" é feito no Gerenciamento de Refil, ele cria um pedido
+    // NOVO no fornecedor (add) — hoje no Nuvra — e grava em refil2_requests.forceRefil.
+    // As reposições seguintes deste @ precisam mirar NESSE pedido novo (e no provedor
+    // dele), não no pedido original — que pode estar num fornecedor antigo/morto. Sem
+    // isto, forçar refil pro Nuvra não mudava as próximas reposições, que continuavam
+    // batendo no orderId original. Só sobrepõe quando o force é MAIS recente que o
+    // despacho do pedido escolhido (uma compra nova legítima ainda vence a âncora).
+    let __usingAnchor = false;
+    try {
+      const r2c = await getCollection('refil2_requests');
+      const anchorArr = await r2c.find(
+        { username: re, 'forceRefil.orderId': { $exists: true, $nin: [null, ''] }, 'forceRefil.status': 'created' },
+        { projection: { forceRefil: 1 } }
+      ).sort({ 'forceRefil.forcedAt': -1, 'forceRefil.finishedAt': -1, _id: -1 }).limit(1).toArray();
+      const fr = (anchorArr && anchorArr[0] && anchorArr[0].forceRefil) ? anchorArr[0].forceRefil : null;
+      const anchorOid = (fr && /^[0-9]+$/.test(String(fr.orderId || '').trim())) ? String(fr.orderId).trim() : '';
+      if (anchorOid) {
+        const anchorMs = (() => { const s = String((fr.forcedAt || fr.finishedAt || fr.requestedAt) || '').trim(); const t = s ? new Date(s).getTime() : 0; return Number.isFinite(t) ? t : 0; })();
+        if (anchorMs && anchorMs >= orderRecencyMs(order)) {
+          famaOrderId = anchorOid;
+          __refilLogOrderId = anchorOid;
+          __usingAnchor = true;
+          // O provedor da âncora é resolvido pela MESMA heurística de sempre (tamanho do
+          // orderId) — não pelo forceRefil.provider, que em registros antigos foi gravado
+          // fixo como 'fama24h' quando na verdade o pedido foi pro Nuvra.
+          try { console.log('🔁 [refil/simple] âncora de force-refil', { username, anchorOid }); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
     // Bloqueia reposição no mesmo dia do pagamento: a reposição serve para repor a QUEDA
     // de seguidores ao longo do tempo, então não faz sentido logo após a compra.
     const getPaidAtMs = (o) => {
@@ -25049,7 +25115,11 @@ app.post('/api/refil/simple', async (req, res) => {
     }
 
     // Reposição vai pro MESMO provedor onde o pedido foi criado (fama antigo → fama; nuvra → nuvra).
-    const __refillApi = resolveRefillProviderApi(famaOrderId, order, 'fama24h');
+    // Se estamos usando a âncora de force-refil, o provedor é o dela (o pedido novo não está no
+    // bloco do pedido original, então resolveRefillProviderApi cairia na heurística por tamanho).
+    const __refillApi = __usingAnchor
+      ? resolveRefillProviderApi(famaOrderId, null, null)
+      : resolveRefillProviderApi(famaOrderId, order, 'fama24h');
     const providerKey = __refillApi.key;
     const apiUrl = __refillApi.url;
     try { console.log('🔁 [refil/simple] provedor da reposição', { order: famaOrderId, provider: __refillApi.provider }); } catch(_) {}
@@ -25094,7 +25164,7 @@ app.post('/api/refil/simple', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'refill_failed', providerError: errMsg || null, refillInProgress: jaEmAndamento, message: friendly });
     }
 
-    try { await col.updateOne({ _id: order._id }, { $push: { refillHistory: { requestedAt: new Date().toISOString(), provider: 'fama24h', baseExternalOrderId: famaOrderId, username, request: { action: 'refill', order: famaOrderId }, response: refillData, status: 'initiated', via: viaTag } } }); } catch (_) {}
+    try { await col.updateOne({ _id: order._id }, { $push: { refillHistory: { requestedAt: new Date().toISOString(), provider: __refillApi.provider, baseExternalOrderId: famaOrderId, usedAnchor: __usingAnchor, username, request: { action: 'refill', order: famaOrderId }, response: refillData, status: 'initiated', via: viaTag } } }); } catch (_) {}
     try {
       const throttleCol = await getCollection('refil_throttle');
       const nowIso = new Date().toISOString();
@@ -42718,7 +42788,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
         $set: {
           forceRefil: {
             status: 'processing',
-            provider: 'fama24h',
+            provider: forceProvider,
             requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
             startedAt: nowIso,
             requestedAt: nowIso,
@@ -42817,6 +42887,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
       {
         $set: {
           'forceRefil.status': status,
+          'forceRefil.provider': forceProvider,
           ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
           'forceRefil.response': data,
           ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),
@@ -42831,7 +42902,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
       }
     );
 
-    return res.json({ ok: true, provider: 'fama24h', orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
+    return res.json({ ok: true, provider: forceProvider, orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
   }
@@ -43157,6 +43228,7 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
             {
               $set: {
                 'forceRefil.status': orderId ? status : 'error',
+                'forceRefil.provider': _forceProvider,
                 ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
                 'forceRefil.response': data,
                 ...(statusPayload ? { 'forceRefil.statusPayload': statusPayload } : {}),

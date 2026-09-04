@@ -302,11 +302,20 @@
                        let supId = '';
                        let supProvDisplay = '';
                        let supProvKey = '';
-                       if (order.fama24h && order.fama24h.orderId) { 
-                           supId = order.fama24h.orderId; 
-                           supProvDisplay = 'Fama24h'; 
+                       if (order.fama24h && order.fama24h.orderId) {
+                           supId = order.fama24h.orderId;
+                           // O slot chama-se `fama24h` no banco, mas o provedor real vem de
+                           // fama24h.provider (gravado no despacho). Fallback pelo tamanho do
+                           // orderId só quando o campo não existe em pedido antigo.
+                           supProvDisplay = (function () {
+                               const p = String((order.fama24h && order.fama24h.provider) || '').trim().toLowerCase();
+                               if (p === 'nuvra' || p === 'nuvrasmm') return 'NuvraSMM';
+                               if (p === 'fama24h') return 'Fama24h';
+                               const n = Number(String(order.fama24h.orderId).trim());
+                               return (Number.isFinite(n) && n < 1000000) ? 'NuvraSMM' : 'Fama24h';
+                           })();
                            supProvKey = 'fama24h';
-                       } else if (order.fornecedor_social && order.fornecedor_social.orderId) { 
+                       } else if (order.fornecedor_social && order.fornecedor_social.orderId) {
                            supId = order.fornecedor_social.orderId; 
                            supProvDisplay = 'FornecedorSocial'; 
                            supProvKey = 'fornecedor_social';
@@ -379,7 +388,8 @@
           <div style="margin-bottom: 15px;">
               <label style="display: block; margin-bottom: 5px; font-weight: bold;">Fornecedor:</label>
               <select id="modalProvider" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-                  <option value="fama24h">Fama24h</option>
+                  <%# value = nome do campo no banco; rótulo = provedor real (NuvraSMM) %>
+                  <option value="fama24h">NuvraSMM (principal)</option>
                   <option value="fornecedor_social">Fornecedor Social</option>
               </select>
           </div>
