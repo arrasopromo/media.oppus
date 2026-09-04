@@ -16388,15 +16388,15 @@ async function maybeSendOrderRecoveryCouponSms({ record, stage, couponCode, coup
 // ============================================================================
 // NOTA FISCAL (Spedy) — rotas de webhook e administração
 // ----------------------------------------------------------------------------
-// Toda a integração é NO-OP enquanto SPEDY_ENABLED != true. Ver notaFiscalManager.js
+// Toda a integração é NO-OP enquanto SPEEDY_ENABLED != true. Ver notaFiscalManager.js
 // ============================================================================
 
 // Webhook público que recebe as atualizações de status das notas da Spedy.
-// Protegido por um token compartilhado (SPEDY_WEBHOOK_TOKEN) enviado via
+// Protegido por um token compartilhado (SPEEDY_WEBHOOK_TOKEN) enviado via
 // query (?token=), header (x-spedy-token) ou no path (/api/spedy/webhook/:token).
 async function _handleSpedyWebhook(req, res) {
   try {
-    const expected = String(process.env.SPEDY_WEBHOOK_TOKEN || '').trim();
+    const expected = String(process.env.SPEEDY_WEBHOOK_TOKEN || '').trim();
     if (expected) {
       const got = String(
         req.query?.token || req.headers['x-spedy-token'] || req.params?.token || ''
@@ -17597,7 +17597,7 @@ async function processOrderFulfillment(record, col, req) {
 
     // --- NOTA FISCAL (Spedy) ---
     // Dispara a emissão da nota fiscal em background (fire-and-forget).
-    // No-op quando SPEDY_ENABLED != true. Idempotente: nunca emite 2x para
+    // No-op quando SPEEDY_ENABLED != true. Idempotente: nunca emite 2x para
     // o mesmo pedido. Não bloqueia nem afeta o fulfillment em caso de erro.
     try { notaFiscalManager.emitirEmBackground(record, col); } catch (_) {}
 

@@ -2,7 +2,7 @@
 // Cliente HTTP fino para a API da Spedy (emissão de notas fiscais).
 // Documentação: https://api.spedy.com.br/v1
 //
-// IMPORTANTE: este módulo NÃO faz nada até que SPEDY_ENABLED=true e uma
+// IMPORTANTE: este módulo NÃO faz nada até que SPEEDY_ENABLED=true e uma
 // chave de API válida sejam configuradas no .env. Por padrão aponta para o
 // AMBIENTE SANDBOX. Veja notaFiscalManager.js para o mapeamento de pedidos.
 
@@ -19,33 +19,33 @@ function envBool(v) {
 
 /**
  * Resolve a configuração da Spedy a partir das variáveis de ambiente.
- * - SPEDY_ENABLED: liga/desliga toda a integração (default: false)
- * - SPEDY_ENVIRONMENT: 'sandbox' | 'production' (default: sandbox)
- * - SPEDY_API_KEY: chave usada como fallback nos dois ambientes
- * - SPEDY_API_KEY_SANDBOX / SPEDY_API_KEY_PRODUCTION: chaves específicas
+ * - SPEEDY_ENABLED: liga/desliga toda a integração (default: false)
+ * - SPEEDY_ENVIRONMENT: 'sandbox' | 'production' (default: sandbox)
+ * - SPEEDY_API_KEY: chave usada como fallback nos dois ambientes
+ * - SPEEDY_API_KEY_SANDBOX / SPEEDY_API_KEY_PRODUCTION: chaves específicas
  */
 function getConfig() {
   const environment =
-    String(process.env.SPEDY_ENVIRONMENT || 'sandbox').trim().toLowerCase() === 'production'
+    String(process.env.SPEEDY_ENVIRONMENT || 'sandbox').trim().toLowerCase() === 'production'
       ? 'production'
       : 'sandbox';
   const isProd = environment === 'production';
 
   const apiKey = String(
     (isProd
-      ? process.env.SPEDY_API_KEY_PRODUCTION
-      : process.env.SPEDY_API_KEY_SANDBOX) ||
-      process.env.SPEDY_API_KEY ||
+      ? process.env.SPEEDY_API_KEY_PRODUCTION
+      : process.env.SPEEDY_API_KEY_SANDBOX) ||
+      process.env.SPEEDY_API_KEY ||
       ''
   ).trim();
 
   return {
-    enabled: envBool(process.env.SPEDY_ENABLED),
+    enabled: envBool(process.env.SPEEDY_ENABLED),
     environment,
     baseUrl: BASE_URLS[environment],
     apiKey,
-    companyId: String(process.env.SPEDY_COMPANY_ID || '').trim(),
-    timeoutMs: Number(process.env.SPEDY_TIMEOUT_MS || 45000),
+    companyId: String(process.env.SPEEDY_COMPANY_ID || '').trim(),
+    timeoutMs: Number(process.env.SPEEDY_TIMEOUT_MS || 45000),
   };
 }
 
@@ -68,10 +68,10 @@ async function request(method, endpoint, body, opts = {}) {
   const cfg = getConfig();
 
   if (!cfg.enabled) {
-    return { ok: false, status: 0, data: null, error: 'spedy_disabled', message: 'Integração Spedy desligada (SPEDY_ENABLED != true).' };
+    return { ok: false, status: 0, data: null, error: 'spedy_disabled', message: 'Integração Spedy desligada (SPEEDY_ENABLED != true).' };
   }
   if (!cfg.apiKey) {
-    return { ok: false, status: 0, data: null, error: 'spedy_missing_api_key', message: 'SPEDY_API_KEY não configurada.' };
+    return { ok: false, status: 0, data: null, error: 'spedy_missing_api_key', message: 'SPEEDY_API_KEY não configurada.' };
   }
 
   const url = `${cfg.baseUrl}${endpoint}`;

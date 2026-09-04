@@ -15,7 +15,7 @@
 // da Spedy. CPF/endereço vêm do checkout ou do enriquecimento (losdados).
 //
 // SEGURANÇA / ESTADO:
-//   - Só emite quando SPEDY_ENABLED=true e há chave (spedyClient.isConfigured()).
+//   - Só emite quando SPEEDY_ENABLED=true e há chave (spedyClient.isConfigured()).
 //   - Por padrão aponta para o SANDBOX (nenhuma nota real é emitida).
 //   - Idempotente: usa um "claim" atômico no Mongo para nunca emitir 2x.
 //   - Sem CPF → represa (held) para correção manual.
@@ -190,20 +190,20 @@ function resolveAmountReais(record) {
 
 /**
  * Endereço-padrão (fallback) usado quando o cliente não tem endereço e não foi
- * possível enriquecer. Configurável por env (SPEDY_FALLBACK_*). Ver .env.example.
+ * possível enriquecer. Configurável por env (SPEEDY_FALLBACK_*). Ver .env.example.
  */
 function fallbackAddress() {
-  const cep = onlyDigits(process.env.SPEDY_FALLBACK_CEP || '01001000');
-  const ibge = onlyDigits(process.env.SPEDY_FALLBACK_IBGE || '');
+  const cep = onlyDigits(process.env.SPEEDY_FALLBACK_CEP || '01001000');
+  const ibge = onlyDigits(process.env.SPEEDY_FALLBACK_IBGE || '');
   const addr = {
-    street: String(process.env.SPEDY_FALLBACK_STREET || 'Praça da Sé').trim(),
-    number: String(process.env.SPEDY_FALLBACK_NUMBER || 'S/N').trim(),
-    district: String(process.env.SPEDY_FALLBACK_DISTRICT || 'Sé').trim(),
+    street: String(process.env.SPEEDY_FALLBACK_STREET || 'Praça da Sé').trim(),
+    number: String(process.env.SPEEDY_FALLBACK_NUMBER || 'S/N').trim(),
+    district: String(process.env.SPEEDY_FALLBACK_DISTRICT || 'Sé').trim(),
     postalCode: cep,
-    additionalInformation: String(process.env.SPEDY_FALLBACK_INFO || 'Endereço não informado pelo cliente').trim(),
+    additionalInformation: String(process.env.SPEEDY_FALLBACK_INFO || 'Endereço não informado pelo cliente').trim(),
   };
   if (ibge) addr.city = { code: ibge };
-  else addr.city = { name: String(process.env.SPEDY_FALLBACK_CITY || 'São Paulo').trim(), state: String(process.env.SPEDY_FALLBACK_STATE || 'SP').trim().toUpperCase().slice(0, 2) };
+  else addr.city = { name: String(process.env.SPEEDY_FALLBACK_CITY || 'São Paulo').trim(), state: String(process.env.SPEEDY_FALLBACK_STATE || 'SP').trim().toUpperCase().slice(0, 2) };
   return addr;
 }
 
@@ -272,7 +272,7 @@ function mapOrderToSpedyPayload(record, opts = {}) {
     autoIssueMode: 'immediately',
     status: 'approved',
     paymentMethod: mapPaymentMethod(record),
-    sendEmailToCustomer: envBool(process.env.SPEDY_SEND_EMAIL, true),
+    sendEmailToCustomer: envBool(process.env.SPEEDY_SEND_EMAIL, false),
     customer,
     items: [
       {
@@ -438,8 +438,8 @@ async function emitirNotaParaPedido(record, col, opts = {}) {
     // Payload da nota de EBOOK: valor fracionado + produto "ebook".
     const payload = mapOrderToSpedyPayload(record, {
       amount: ebookAmount,
-      productName: String(process.env.SPEDY_EBOOK_PRODUCT_NAME || 'Ebook').trim(),
-      productCode: String(process.env.SPEDY_EBOOK_PRODUCT_CODE || 'ebook').trim(),
+      productName: String(process.env.SPEEDY_EBOOK_PRODUCT_NAME || 'Ebook').trim(),
+      productCode: String(process.env.SPEEDY_EBOOK_PRODUCT_CODE || 'ebook').trim(),
     });
     if (!payload) {
       await persistNota(col, record._id, { emissionState: 'error', error: 'payload_invalido' });
