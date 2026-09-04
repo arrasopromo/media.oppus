@@ -7381,13 +7381,8 @@
                   <td><%= order.qty %></td>
                   <td>
                     R$ <%= order.costPer1000.toFixed(2).replace('.', ',') %>
-                    <% if (order.costPer1000Real) { %>
-                      <span title="charge real do fornecedor (action=status)<%= order.costPer1000Qty ? ' — base ' + order.costPer1000Qty + ' enviados' : '' %>" style="display:inline-block; margin-left:4px; font-size:0.62rem; font-weight:800; color:#166534; background:#dcfce7; border-radius:999px; padding:1px 6px;">status</span>
-                      <% if (order.costPer1000Qty && Number(order.costPer1000Qty) !== Number(order.qty)) { %>
-                        <div><small style="color:#666;">base <%= order.costPer1000Qty %> enviados</small></div>
-                      <% } %>
-                    <% } else { %>
-                      <span title="sem charge do fornecedor — preço por 1000 do cost_settings" style="display:inline-block; margin-left:4px; font-size:0.62rem; font-weight:800; color:#92400e; background:#fef3c7; border-radius:999px; padding:1px 6px;">tabela</span>
+                    <% if (order.costPer1000Real && order.costPer1000Qty && Number(order.costPer1000Qty) !== Number(order.qty)) { %>
+                      <div><small style="color:#666;">base <%= order.costPer1000Qty %> enviados</small></div>
                     <% } %>
                   </td>
                   <td>R$ <%= (function(){ try { var n = Number(order && typeof order.paymentFee !== 'undefined' ? order.paymentFee : NaN); if (isFinite(n) && n > 0) return n.toFixed(2).replace('.', ','); var pm = String(order && (order.paymentMethod || order.payment_method || order.method) ? (order.paymentMethod || order.payment_method || order.method) : '').toLowerCase(); if (pm.indexOf('paghiper') >= 0) return '0,99'; return '0,85'; } catch(_) { return '0,85'; } })() %></td>
@@ -7397,11 +7392,6 @@
                   </td>
                   <td>
                     R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>
-                    <% if (order.bumpCostReal) { %>
-                      <span title="soma do charge real dos bumps (action=status)" style="display:inline-block; margin-left:4px; font-size:0.62rem; font-weight:800; color:#166534; background:#dcfce7; border-radius:999px; padding:1px 6px;">status</span>
-                    <% } else if (order.orderBumps) { %>
-                      <span title="sem charge dos bumps — custo estimado pelo cost_settings" style="display:inline-block; margin-left:4px; font-size:0.62rem; font-weight:800; color:#92400e; background:#fef3c7; border-radius:999px; padding:1px 6px;">tabela</span>
-                    <% } %>
                     <% if (order.orderBumpsTotal) { %>
                       <div><small style="color:#666;"><%= order.orderBumpsTotal %></small></div>
                     <% } %>
