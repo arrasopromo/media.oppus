@@ -78,17 +78,16 @@
     .mb-fav { border-color: #e0a800; color: #e0a800; font-size: 14px; line-height: 1; padding: 3px 7px; }
     .mb-fav:hover { background: #fff8e1; }
     .mb-fav.is-fav { background: #fff3cd; color: #b8860b; }
-    /* Perfil caiu/sumiu: a linha vira "morta" — cinza, texto apagado e barra vermelha na
-       lateral. Antes era #fff4f4 (99% branco), que na prática não dava pra ver. Estas
-       linhas NÃO são mais consultadas nas checagens em lote. */
-    tr.row-failed td { background: #e9eaee !important; color: #7c818c !important; box-shadow: inset 4px 0 0 #dc2626; }
-    tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7c818c; }
-    tr.row-failed:hover td { background: #dfe1e6 !important; }
-    /* X vermelho na frente do número da linha quando a medição falhou (perfil caiu/sumiu).
-       Usa ::before pra sobreviver ao renumber() que só reescreve o textContent da célula. */
+    /* Perfil caiu/sumiu: linha com fundo vermelho SUTIL (baixo contraste), sem pintar cada
+       célula. O acento vermelho + o X ficam só na 1ª célula (#). Estas linhas NÃO são mais
+       consultadas nas checagens em lote. */
+    tr.row-failed td { background: #f7e0e0 !important; color: #7b6b6b !important; }
+    tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7b6b6b; }
+    tr.row-failed:hover td { background: #f2d3d3 !important; }
+    /* Acento vermelho só na 1ª célula + X na frente. ::before sobrevive ao renumber()
+       (que só reescreve o textContent da célula). */
+    tr.row-failed td.rownum { box-shadow: inset 3px 0 0 #dc2626; font-weight: 700; }
     tr.row-failed .rownum::before { content: "\2715 "; color: #dc2626; font-weight: 800; }
-    /* Etiqueta "caiu" na coluna do perfil, pra ficar claro do que se trata. */
-    .tag-off { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .3px; vertical-align: middle; }
     /* ordenação + filtro por coluna */
     thead th.sortable { cursor: pointer; user-select: none; }
     thead th.sortable:hover { background: #eef1f5; }
@@ -219,7 +218,7 @@
                 <% TIPO_OPTS.forEach(function(t){ %><option value="<%= t %>" <%= (r.tipo||'')===t?'selected':'' %>><%= _tipoLabel(t) %></option><% }); %>
               </select>
             </td>
-            <td class="edit col-perfil" data-field="perfil" data-type="perfil" data-raw="<%= r.perfil %>"><% var _pp = _perfilParts(r.perfil); if (!_pp.empty) { %><span class="perfil-txt" title="<%= _pp.label %>"><%= _pp.label %></span> <a class="ig-link" href="<%= _pp.href %>" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram"><%- IG_SVG %></a><% } else { %><span class="muted">—</span><% } %><% if (r.measureFailed) { %><span class="tag-off" title="Perfil não pôde ser medido<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — não é mais consultado nas checagens em lote">caiu</span><% } %></td>
+            <td class="edit col-perfil" data-field="perfil" data-type="perfil" data-raw="<%= r.perfil %>"><% var _pp = _perfilParts(r.perfil); if (!_pp.empty) { %><span class="perfil-txt" title="<%= _pp.label %>"><%= _pp.label %></span> <a class="ig-link" href="<%= _pp.href %>" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram"><%- IG_SVG %></a><% } else { %><span class="muted">—</span><% } %></td>
             <td class="edit num" data-field="quantidade" data-type="int" data-raw="<%= r.quantidade || '' %>"><%= r.quantidade ? r.quantidade.toLocaleString('pt-BR') : '—' %></td>
             <td class="num" data-v="<%= r.atual != null ? r.atual : '' %>">
               <% if (r.atual != null) { %>
@@ -436,16 +435,7 @@
         ids.forEach(function(id){
           var tr = document.querySelector('tr[data-id="' + id + '"]');
           if (tr) {
-            tr.classList.add('row-failed');
-            // etiqueta "caiu" sem precisar recarregar a página
-            var pc = tr.querySelector('td.col-perfil');
-            if (pc && !pc.querySelector('.tag-off')) {
-              var tg = document.createElement('span');
-              tg.className = 'tag-off';
-              tg.textContent = 'caiu';
-              tg.title = 'Perfil não pôde ser medido — não é mais consultado nas checagens em lote';
-              pc.appendChild(tg);
-            }
+            tr.classList.add('row-failed'); // fundo vermelho sutil + X na 1ª célula (via CSS)
             var rn = tr.querySelector('.rownum'); nums.push(rn ? rn.textContent.trim() : '?');
           }
           else fora++;

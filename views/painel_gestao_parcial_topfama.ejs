@@ -109,7 +109,7 @@
             <th>Status</th>
             <th>Qtd faltando</th>
             <th>Curtidas atuais</th>
-            <th>Novo OrderID</th>
+            <th>Reenvios (cadeia)</th>
             <th>Ação</th>
           </tr>
         </thead>
@@ -126,7 +126,8 @@
                else if (/cancel|refund|error/.test(st)) { cls = 'pill-canc'; }
                var d = r.dataMs ? new Date(r.dataMs) : null;
                var dataTxt = d ? (('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)) : '—';
-               var canReorder = (r.remains != null && r.remains > 0 && !r.novoOrderId && (r.statusCat === 'partial' || r.statusCat === 'canc'));
+               var hasChain = (r.reorders && r.reorders.length);
+               var canReorder = (r.remains != null && r.remains > 0 && !r.novoOrderId && !hasChain && (r.statusCat === 'partial' || r.statusCat === 'canc'));
           %>
           <tr>
             <td style="text-align:center;"><input type="checkbox" class="rowChk" data-id="<%= r.id %>" data-field="<%= r.field %>" data-done="<%= r.statusDone ? 1 : 0 %>" data-fornecedor="<%= r.fornecedor || '' %>" data-orderid="<%= r.orderIdOriginal || '' %>" data-usuario="<%= r.usuario || '' %>" data-linkpost="<%= r.linkPost || '' %>" data-inicial="<%= (r.initialLikes != null ? r.initialLikes : '') %>" data-contratada="<%= (r.qtdContratada != null ? r.qtdContratada : '') %>" data-atual="<%= (r.okNok === 'oculto' ? '(oculto)' : (r.auditLikes != null ? r.auditLikes : '')) %>"></td>
@@ -154,13 +155,29 @@
                 </span>
               <% } %>
             </td>
-            <td><% if (r.novoOrderId) { %><span style="color:#166534; font-weight:700;"><%= r.novoOrderId %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td>
+              <% if (hasChain) { %>
+                <div style="font-size:0.72rem; line-height:1.5;">
+                  <span class="muted">pai #<%= r.orderIdOriginal %></span>
+                  <% r.reorders.forEach(function(rr){ var rc = rr.reason === 'cancelado' ? '#b91c1c' : (rr.reason === 'manual' ? '#4f46e5' : '#166534'); %>
+                    <div>↳ <span style="color:<%= rc %>; font-weight:700;">#<%= rr.orderId %></span>
+                      <span class="muted"><%= rr.reason %><%= rr.quantity ? (' ' + rr.quantity.toLocaleString('pt-BR')) : '' %><%= rr.status ? (' · ' + rr.status) : '' %></span>
+                    </div>
+                  <% }); %>
+                  <% if (r.reorderChainDone) { %><div class="muted" style="font-size:0.66rem;">✓ cadeia encerrada<%= r.reorderStopReason ? (' (' + r.reorderStopReason + ')') : '' %></div><% } %>
+                </div>
+              <% } else if (r.novoOrderId) { %>
+                <span style="color:#166534; font-weight:700;"><%= r.novoOrderId %></span>
+              <% } else { %>
+                <span class="muted">—</span>
+              <% } %>
+            </td>
             <td>
               <button type="button" class="verify-btn" data-id="<%= r.id %>" data-field="<%= r.field %>">Verificar</button>
               <% if (canReorder) { %>
                 <button type="button" class="reorder-btn" data-id="<%= r.id %>" data-field="<%= r.field %>" data-remains="<%= r.remains %>">Gerar novo orderid</button>
-              <% } else if (r.novoOrderId) { %>
-                <span class="muted">reposto</span>
+              <% } else if (hasChain || r.novoOrderId) { %>
+                <span class="muted"><%= r.reorderChainDone ? 'encerrado' : 'enviado' %></span>
               <% } %>
             </td>
           </tr>

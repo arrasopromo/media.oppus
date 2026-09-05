@@ -2950,8 +2950,131 @@ async function runTopfamaPartialSweep() {
       const a = await auditTopfamaCompletedLikes({ cooldownHours: 24 });
       out.auditScanned = a.scanned; out.audited = a.audited; out.auditFailed = a.failed;
     } catch (_) {}
+    // Conclusão de pedido PARCIAL de curtidas: parcial → envia a quantidade que faltou
+    // entregar; cancelado → 1 retry. Só age quando TOPFAMA_AUTO_REORDER_ENABLED=true.
+    // Cada novo orderId é atrelado ao pai. NÃO é reposição de queda pós-entrega.
+    try {
+      const rr = await processTopfamaAutoReorders();
+      out.autoReorderEnabled = rr.enabled; out.reordered = rr.reordered; out.reorderStopped = rr.stopped; out.reorderErrors = rr.errors;
+    } catch (_) {}
   } catch (e) { out.error = e && e.message; }
   __topfamaSweepRunning = false;
+  return out;
+}
+
+// ── CONCLUSÃO DE PEDIDO PARCIAL DE CURTIDAS (topfama / fornecedor_social) ─────
+// NÃO é reposição de queda: é COMPLETAR o pedido quando o fornecedor entregou só
+// parte. Regras: PARCIAL (remains>0) → novo pedido `add` com a quantidade que FALTOU
+// ENTREGAR; CANCELADO → 1 retry com a mesma quantidade (se o retry também cancelar,
+// para). Cada novo orderId é anexado a `${field}.reorders[]` (cadeia atrelada ao pai
+// `orderId`). Desligado por padrão (TOPFAMA_AUTO_REORDER_ENABLED). Guardas configuráveis.
+function topfamaAutoReorderCfg() {
+  return {
+    enabled: String(process.env.TOPFAMA_AUTO_REORDER_ENABLED || '').trim().toLowerCase() === 'true',
+    maxChain: Math.max(1, Number(process.env.TOPFAMA_REORDER_MAX_CHAIN || 4) || 4),
+    minRemains: Math.max(1, Number(process.env.TOPFAMA_REORDER_MIN_REMAINS || 25) || 25),
+    windowDays: Math.max(1, Number(process.env.TOPFAMA_REORDER_WINDOW_DAYS || 14) || 14),
+  };
+}
+function topfamaStatusCat(status, remains) {
+  const st = String(status || '').toLowerCase();
+  if (/complet|conclu/.test(st)) return 'done';
+  if (/partial|parcial/.test(st)) return (Number(remains) > 0 ? 'partial' : 'done');
+  if (/cancel|refund|estorn/.test(st)) return 'canceled';
+  if (/progress|process|pending|andamento/.test(st)) return 'progress';
+  return 'other';
+}
+// Coloca um pedido `add` no provedor e captura o custo (status). { ok, orderId, charge, error }.
+async function placeProviderAdd(provider, service, link, quantity) {
+  try {
+    const cfg = REFIL_PROVIDER_CFG[provider] || REFIL_PROVIDER_CFG.topfama;
+    const key = process.env[cfg.keyEnv] || '';
+    if (!key) return { ok: false, error: 'missing_key' };
+    if (!service || !link || !(Number(quantity) > 0)) return { ok: false, error: 'missing_payload' };
+    const payload = new URLSearchParams({ key, action: 'add', service: String(service), link: String(link), quantity: String(Math.floor(Number(quantity))) });
+    const resp = await axios.post(cfg.url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000, validateStatus: () => true });
+    const d = (resp && resp.data && typeof resp.data === 'object') ? resp.data : {};
+    const orderId = d.order || d.orderId || (d.data && d.data.order) || null;
+    if (!orderId) return { ok: false, error: String(d.error || d.Error || 'no_order_id').slice(0, 200), raw: d };
+    let charge = null;
+    try { const s = await providerFetchStatus(provider, orderId); if (s && s.charge != null) charge = s.charge; } catch (_) {}
+    return { ok: true, orderId: String(orderId), charge };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'network_error' }; }
+}
+// Avalia UM bloco de curtidas (a ponta da cadeia) e reenvia se parcial/cancelado.
+async function autoReorderEvaluateBlock(col, o, field, cfg) {
+  const sub = o[field]; if (!sub || !sub.orderId) return null;
+  if (sub.reorderChainDone) return null;
+  const provider = refilProviderOf(field);
+  const rp = sub.requestPayload || {};
+  const service = rp.service, link = rp.link;
+  const chain = Array.isArray(sub.reorders) ? sub.reorders.slice() : [];
+  const tailIsChild = chain.length > 0;
+  const tail = tailIsChild ? chain[chain.length - 1] : null;
+  const tailOrderId = tailIsChild ? String((tail && tail.orderId) || '') : String(sub.orderId);
+  const tailReason = tailIsChild ? String((tail && tail.reason) || '') : 'original';
+  const tailQty = tailIsChild ? (Number(tail && tail.quantity) || 0) : (Number(rp.quantity) || 0);
+  if (!/^[0-9]+$/.test(tailOrderId)) return null;
+
+  const r = await providerFetchStatus(provider, tailOrderId);
+  if (!r || r.error) return { error: (r && r.error) || 'status_failed' };
+  const remains = Math.floor(Number(r.remains) || 0);
+  const cat = topfamaStatusCat(r.status, remains);
+  const nowIso = new Date().toISOString();
+  const set = {};
+  if (tailIsChild) { chain[chain.length - 1] = Object.assign({}, tail, { status: r.status, remains, statusCheckedAt: nowIso }); set[`${field}.reorders`] = chain; }
+  const finish = async (extra) => { Object.assign(set, extra || {}); if (Object.keys(set).length) await col.updateOne({ _id: o._id }, { $set: set }); };
+
+  if (cat === 'done') { await finish({ [`${field}.reorderChainDone`]: true }); return { done: true }; }
+  if (cat === 'progress' || cat === 'other') { await finish(); return { waiting: true }; }
+  if (chain.length >= cfg.maxChain) { await finish({ [`${field}.reorderChainDone`]: true, [`${field}.reorderStopReason`]: 'max_chain' }); return { stopped: 'max_chain' }; }
+
+  if (cat === 'partial') {
+    if (remains < cfg.minRemains) { await finish({ [`${field}.reorderChainDone`]: true, [`${field}.reorderStopReason`]: 'remains_below_min' }); return { stopped: 'remains_below_min' }; }
+    const add = await placeProviderAdd(provider, service, link, remains);
+    if (!add.ok) { await finish({ [`${field}.reorderLastError`]: add.error, [`${field}.reorderLastErrorAt`]: nowIso }); return { error: add.error }; }
+    chain.push({ orderId: add.orderId, quantity: remains, reason: 'parcial', at: nowIso, status: 'created', remains: null, charge: add.charge });
+    set[`${field}.reorders`] = chain;
+    await finish({ [`${field}.reorderLastError`]: '' });
+    return { reordered: 'parcial', orderId: add.orderId, quantity: remains };
+  }
+  if (cat === 'canceled') {
+    if (tailReason === 'cancelado') { await finish({ [`${field}.reorderChainDone`]: true, [`${field}.reorderStopReason`]: 'canceled_twice' }); return { stopped: 'canceled_twice' }; }
+    const qty = tailQty > 0 ? tailQty : (Number(rp.quantity) || 0);
+    if (!(qty > 0)) { await finish({ [`${field}.reorderChainDone`]: true, [`${field}.reorderStopReason`]: 'no_qty' }); return { stopped: 'no_qty' }; }
+    const add = await placeProviderAdd(provider, service, link, qty);
+    if (!add.ok) { await finish({ [`${field}.reorderLastError`]: add.error, [`${field}.reorderLastErrorAt`]: nowIso }); return { error: add.error }; }
+    chain.push({ orderId: add.orderId, quantity: qty, reason: 'cancelado', at: nowIso, status: 'created', remains: null, charge: add.charge });
+    set[`${field}.reorders`] = chain;
+    await finish({ [`${field}.reorderLastError`]: '' });
+    return { reordered: 'cancelado', orderId: add.orderId, quantity: qty };
+  }
+  return null;
+}
+// Varre os blocos elegíveis e aplica a auto-reposição (quando habilitada). Máx 1 reenvio
+// por bloco por passada (o próximo só sai quando a ponta atual resolver).
+async function processTopfamaAutoReorders() {
+  const cfg = topfamaAutoReorderCfg();
+  const out = { enabled: cfg.enabled, evaluated: 0, reordered: 0, stopped: 0, errors: 0 };
+  if (!cfg.enabled) return out;
+  try {
+    const col = await getCollection('checkout_orders');
+    const orQ = TOPFAMA_FIELDS.map((f) => ({ [`${f}.orderId`]: { $exists: true, $nin: [null, ''] } }));
+    let minId = null;
+    try { minId = require('mongodb').ObjectId.createFromTime(Math.floor((Date.now() - cfg.windowDays * 86400000) / 1000)); } catch (_) {}
+    const query = minId ? { $and: [{ $or: orQ }, { _id: { $gte: minId } }] } : { $or: orQ };
+    const orders = await col.find(query, { projection: Object.assign({ _id: 1 }, TOPFAMA_PROJ) }).limit(5000).toArray();
+    for (const o of orders) {
+      for (const f of TOPFAMA_FIELDS) {
+        const sub = o[f]; if (!sub || !sub.orderId || sub.reorderChainDone) continue;
+        try {
+          const res = await autoReorderEvaluateBlock(col, o, f, cfg);
+          if (res) { out.evaluated++; if (res.reordered) out.reordered++; if (res.stopped || res.done) out.stopped++; if (res.error) out.errors++; }
+        } catch (_) { out.errors++; }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+  } catch (e) { out.error = e && e.message; }
   return out;
 }
 
@@ -2996,7 +3119,11 @@ app.post('/api/painel/topfama/reorder', requireAdmin, async (req, res) => {
     const d = (resp && resp.data && typeof resp.data === 'object') ? resp.data : {};
     const newOrderId = d.order || d.orderId || (d.data && d.data.order) || null;
     if (!newOrderId) return res.status(502).json({ ok: false, error: 'reorder_failed', message: String(d.error || d.Error || 'fornecedor não retornou order id').slice(0, 200) });
-    await col.updateOne({ _id: o._id }, { $set: { [`${field}.reorderId`]: String(newOrderId), [`${field}.reorderQty`]: remains, [`${field}.reorderAt`]: new Date().toISOString() } });
+    // Anexa também à cadeia `reorders[]` (mesmo modelo do automático), atrelado ao pai.
+    const nowIso = new Date().toISOString();
+    const chain = Array.isArray(sub.reorders) ? sub.reorders.slice() : [];
+    chain.push({ orderId: String(newOrderId), quantity: remains, reason: 'manual', at: nowIso, status: 'created', remains: null });
+    await col.updateOne({ _id: o._id }, { $set: { [`${field}.reorderId`]: String(newOrderId), [`${field}.reorderQty`]: remains, [`${field}.reorderAt`]: nowIso, [`${field}.reorders`]: chain, [`${field}.reorderChainDone`]: false } });
     return res.json({ ok: true, reorderId: String(newOrderId), quantity: remains });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
@@ -3137,6 +3264,16 @@ app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
           status: String(sub.status || ''),
           remains: (sub.remains != null && sub.remains !== '') ? Math.floor(Number(sub.remains) || 0) : null,
           novoOrderId: String(sub.reorderId || ''),
+          reorders: (Array.isArray(sub.reorders) ? sub.reorders : []).map((rr) => ({
+            orderId: String((rr && rr.orderId) || ''),
+            quantity: Number((rr && rr.quantity) || 0) || 0,
+            reason: String((rr && rr.reason) || ''),
+            status: String((rr && rr.status) || ''),
+            remains: (rr && rr.remains != null && rr.remains !== '') ? Math.floor(Number(rr.remains) || 0) : null,
+            at: (rr && rr.at) || null,
+          })).filter((rr) => rr.orderId),
+          reorderChainDone: !!sub.reorderChainDone,
+          reorderStopReason: String(sub.reorderStopReason || ''),
           checkedAt: sub.statusCheckedAt || null,
           statusDone: /complet|conclu/.test(String(sub.status || '').toLowerCase()),
           statusCat: (function () {
@@ -18920,6 +19057,10 @@ async function processOrderFulfillment(record, col, req) {
     broadcastPaymentPaid(identifier, correlationID);
     try { await ensureRefilLink(identifier, correlationID, req); } catch(_) {}
 
+    // Perfil especial: se este @ já está na watchlist, sincroniza o orderId (âncora) com
+    // este pedido novo e recalcula a baseline (alvo). Não bloqueia a entrega.
+    try { if (isFollowersService && instaUser) { syncSpecialProfileAnchor(instaUser).catch(() => {}); } } catch (_) {}
+
     // ── UPSELL (dispara só quando pai CONCLUÍDO): NÃO despacha o upsell quando o pai é apenas DESPACHADO.
     // O upsell só é despachado quando o pai estiver CONCLUÍDO no fornecedor — isso é
     // verificado pelo poller startUpsellParentStatusLoop. Aqui apenas registramos que
@@ -19118,9 +19259,19 @@ app.get('/painel/aguardando', requireAdmin, async (req, res) => {
         const held = [];
         for (const d of heldDocs) held.push(await fqBuildQueueRow(col, d));
 
+        // HISTÓRICO: pedidos que já passaram pela fila e foram liberados/despachados
+        // (status 'released') nos últimos 7 dias — antes sumiam do painel. Mostramos com
+        // flag verde "✓ Despachado" para manter o histórico visível.
+        const releasedCutoffIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const releasedDocs = await col.find({ 'followersQueue.status': 'released', 'followersQueue.releasedAt': { $gte: releasedCutoffIso } })
+            .sort({ 'followersQueue.releasedAt': -1 }).limit(200).toArray();
+        const released = [];
+        for (const d of releasedDocs) released.push(await fqBuildQueueRow(col, d));
+
         return res.render('painel_aguardando', {
             page: 'aguardando',
             held,
+            released,
             cfg: {
                 enabled: followersQueueEnabled(),
                 windowHours: Math.round(followersQueueWindowMs() / 3600000),
@@ -25363,6 +25514,89 @@ async function getOrderInitialAndQty(orderId, username) {
     return { initial, qty, target: initial + qty };
   } catch (_) { return null; }
 }
+// Mantém o PERFIL ESPECIAL em sincronia com a realidade, sem edição manual:
+//   • quando o cliente compra um PEDIDO NOVO de seguidores para um @ que já está na
+//     watchlist, o orderId (âncora das próximas reposições) passa a apontar para esse
+//     pedido e a BASELINE (alvo = seguidores na compra + qtd comprada) é recalculada;
+//   • quando rola um FORÇAR-REFIL (novo pedido no fornecedor), o orderId passa a apontar
+//     para ele — mas a baseline NÃO muda (força repõe queda, não é um novo contrato).
+// Regras:
+//   - só mexe em quem JÁ está em special_profiles (nunca cria perfil);
+//   - a âncora (orderId) = evento MAIS RECENTE entre o pedido do cliente e a força
+//     (mesma lógica de /api/refil/simple);
+//   - a baseline sempre segue o último pedido de CLIENTE (contrato).
+// Idempotente e à prova de erro (nunca lança) — pode ser chamada em background.
+async function syncSpecialProfileAnchor(username, opts = {}) {
+  try {
+    const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+    if (!uname) return null;
+    const col = await getCollection('special_profiles');
+    const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('^@?' + esc(uname) + '$', 'i');
+    const doc = await col.findOne({ username: re });
+    if (!doc) return null; // não está na watchlist → nada a fazer
+
+    // 1) Pedido de CLIENTE (checkout_orders) de seguidores mais recente com orderId do
+    //    provedor. O bloco é sempre `fama24h` mesmo quando o provedor real é o Nuvra.
+    const ordersCol = await getCollection('checkout_orders');
+    const clientArr = await ordersCol.find(
+      { $and: [
+        { 'fama24h.orderId': { $exists: true, $nin: [null, ''] } },
+        { $or: [ { instauser: re }, { instagramUsername: re }, { 'additionalInfoMapPaid.instagram_username': re }, { 'additionalInfoMap.instagram_username': re } ] }
+      ] },
+      { projection: { 'fama24h.orderId': 1, initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1, tipo: 1, tipoServico: 1, paidAt: 1, createdAt: 1, woovi: 1, paghiper: 1 } }
+    ).limit(30).toArray();
+    const recency = (o) => { let b = 0; for (const c of [o && o.woovi && o.woovi.paidAt, o && o.paghiper && o.paghiper.paidAt, o && o.paidAt, o && o.createdAt]) { const t = c ? new Date(String(c)).getTime() : 0; if (t > b) b = t; } return b; };
+    clientArr.sort((a, b) => recency(b) - recency(a));
+    const oidOf = (o) => String((o && o.fama24h && o.fama24h.orderId) || '').trim();
+    const isSeg = (o) => { const t = String((o && (o.tipo || o.tipoServico)) || '').toLowerCase(); return t === 'mistos' || t === 'brasileiros' || t.indexOf('seguidor') >= 0; };
+    const client = clientArr.find(o => isSeg(o) && /^[0-9]+$/.test(oidOf(o))) || clientArr.find(o => /^[0-9]+$/.test(oidOf(o))) || null;
+    const clientOid = client ? oidOf(client) : '';
+    const clientMs = client ? recency(client) : 0;
+
+    // 2) Âncora de FORÇA mais recente (refil2_requests.forceRefil).
+    let forceOid = '', forceMs = 0;
+    try {
+      const r2 = await getCollection('refil2_requests');
+      const fa = await r2.find(
+        { username: re, 'forceRefil.orderId': { $exists: true, $nin: [null, ''] }, 'forceRefil.status': 'created' },
+        { projection: { forceRefil: 1 } }
+      ).sort({ 'forceRefil.forcedAt': -1, _id: -1 }).limit(1).toArray();
+      const fr = fa && fa[0] && fa[0].forceRefil;
+      if (fr && /^[0-9]+$/.test(String(fr.orderId || '').trim())) {
+        forceOid = String(fr.orderId).trim();
+        const s = String(fr.forcedAt || fr.finishedAt || '').trim();
+        forceMs = s ? new Date(s).getTime() : 0;
+      }
+    } catch (_) {}
+
+    const set = {};
+    // Baseline = alvo do pedido de cliente (inicial + qtd). Força não altera o alvo.
+    // IMPORTANTE: a baseline só SOBE, nunca desce. A marca d'água do audit eleva a
+    // baseline conforme o perfil cresce; recalcular de um pedido ANTIGO (alvo menor)
+    // rebaixaria o alvo e o perfil nunca mais seria reposto. Só elevamos quando uma
+    // compra nova de verdade tem alvo MAIOR que o atual.
+    if (clientOid) {
+      try { const tb = await getOrderInitialAndQty(clientOid, uname); if (tb && tb.target > 0 && tb.target > Number(doc.baselineFollowers || 0)) set.baselineFollowers = tb.target; } catch (_) {}
+      const t = String((client.tipo || client.tipoServico) || '').toLowerCase();
+      const tipoNorm = (t === 'mistos' || t.includes('misto')) ? 'mistos' : ((t === 'brasileiros' || t.includes('brasileir')) ? 'brasileiros' : '');
+      if (tipoNorm && tipoNorm !== String(doc.tipo || '')) set.tipo = tipoNorm;
+    }
+    // Âncora (orderId) = evento mais recente entre pedido de cliente e força.
+    let anchor = '';
+    if (clientOid && clientMs >= forceMs) anchor = clientOid;
+    else if (forceOid) anchor = forceOid;
+    else if (clientOid) anchor = clientOid;
+    if (anchor && anchor !== String(doc.orderId || '').trim()) set.orderId = anchor;
+
+    if (Object.keys(set).length) {
+      set.anchorSyncedAt = new Date();
+      await col.updateOne({ _id: doc._id }, { $set: set });
+      try { console.log('🔗 [special-sync] @' + uname, JSON.stringify(set)); } catch (_) {}
+    }
+    return set;
+  } catch (e) { try { console.warn('[special-sync] erro:', e && e.message); } catch (_) {} return null; }
+}
 async function famaRefillOrder(orderId) {
   // Reposição vai pro provedor onde o pedido foi criado (heurística por orderId: fama antigo → fama).
   const __rp = resolveRefillProviderApi(orderId);
@@ -25404,6 +25638,10 @@ function refil1RefillByUsername(username) {
 async function auditSpecialProfile(doc) {
   const out = { id: String(doc._id), username: doc.username, action: 'none' };
   const col = await getCollection('special_profiles');
+  // Self-heal antes de decidir a reposição: garante que orderId (âncora) e baseline (alvo)
+  // reflitam o pedido de cliente / força mais recente, mesmo que os ganchos de evento tenham
+  // sido perdidos (ex.: compra feita antes deste deploy). Recarrega o doc se algo mudou.
+  try { const changed = await syncSpecialProfileAnchor(doc.username); if (changed && Object.keys(changed).length) { const fresh = await col.findOne({ _id: doc._id }); if (fresh) doc = fresh; } } catch (_) {}
   const now = new Date();
   const intervalH = (Number(doc.intervalHours) > 0) ? Number(doc.intervalHours) : 48;
   const minDrop = (Number(doc.minDrop) >= 1) ? Number(doc.minDrop) : 1;
@@ -42902,6 +43140,10 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
       }
     );
 
+    // Perfil especial: se este @ está na watchlist, aponta o orderId (âncora) para o
+    // pedido forçado que acabou de ser criado (baseline não muda — força repõe queda).
+    try { if (orderId) await syncSpecialProfileAnchor(uname); } catch (_) {}
+
     return res.json({ ok: true, provider: forceProvider, orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
@@ -43244,6 +43486,7 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
             }
           );
 
+          if (orderId) { try { await syncSpecialProfileAnchor(doc.username); } catch (_) {} }
           if (orderId) results.push({ id, ok: true, orderId, charge, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, serviceId });
           else results.push({ id, error: 'provider_no_orderid', message: (data && (data.message || data.error || data.errors)) ? String(data.message || data.error || data.errors) : 'Fornecedor não retornou orderId' });
         } catch (e) {

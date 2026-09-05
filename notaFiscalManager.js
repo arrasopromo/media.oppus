@@ -160,26 +160,27 @@ function resolveCustomerName(record) {
   return name || 'Consumidor Final';
 }
 
-/** Descrição/nome do serviço vendido. */
-function resolveProductName(record) {
-  const m = addInfoMap(record);
-  const pacote = String(m['pacote'] || '').trim();
-  if (pacote) return pacote.slice(0, 120);
-  const tipo = String(record?.tipoServico || record?.tipo || 'Serviço').trim();
-  const qtd = Number(record?.quantidade || record?.qtd || 0) || 0;
-  const cat = String(m['categoria_servico'] || '').trim();
-  const base = [cat || tipo, qtd ? `${qtd}` : ''].filter(Boolean).join(' - ');
-  return (base || 'Serviço de engajamento').slice(0, 120);
+// Descrição fiscal PADRÃO usada em TODAS as notas de serviço. Antes a descrição saía
+// com o slug interno + quantidade ("mistos - 500", "visualizacoes_reels - 25000"), o que
+// é ruim para um documento fiscal. Agora é uma discriminação única e profissional para
+// todas as notas — configurável por env, mas com este texto como padrão.
+const DEFAULT_SERVICE_DESCRIPTION = 'Serviços para redes sociais.';
+const DEFAULT_SERVICE_CODE = 'servicos-redes-sociais';
+
+/** Descrição/nome do serviço vendido — FIXA para todas as notas (padrão único). */
+function resolveProductName(/* record */) {
+  const fixed = String(process.env.SPEEDY_SERVICE_DESCRIPTION || DEFAULT_SERVICE_DESCRIPTION).trim();
+  return (fixed || DEFAULT_SERVICE_DESCRIPTION).slice(0, 120);
 }
 
-/** Código estável do produto (para o cadastro auto-criado na Spedy). */
-function resolveProductCode(record) {
-  const tipo = String(record?.tipoServico || record?.tipo || 'servico')
+/** Código estável do produto (para o cadastro auto-criado na Spedy) — único e fixo. */
+function resolveProductCode(/* record */) {
+  const code = String(process.env.SPEEDY_SERVICE_CODE || DEFAULT_SERVICE_CODE)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 30);
-  return tipo || 'servico';
+  return code || 'servico';
 }
 
 /** Valor pago do pedido em reais (usa o valor efetivamente pago). */
@@ -276,6 +277,10 @@ function mapOrderToSpedyPayload(record, opts = {}) {
     customer,
     items: [
       {
+        // `description` (item) + `product.name` = discriminação do serviço na NFS-e.
+        // O override invoices[] (PostInvoiceDto) não tem campo de descrição, então a
+        // discriminação vem daqui. Mantemos o padrão único em ambos.
+        description: productName,
         quantity: 1,
         price: amount,
         amount,

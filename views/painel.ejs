@@ -101,19 +101,25 @@
       .panel-filterbar span { width: 100%; }
     }
 
+    #cupons { max-width: 100%; box-sizing: border-box; overflow-x: hidden; }
     #cupons .coupon-form { display: grid; grid-template-columns: 1fr; gap: 12px; }
     #cupons .coupon-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     #cupons .coupon-row--code { grid-template-columns: 1fr 90px; }
+    /* min-width:0 impede que number/datetime-local (largura intrínseca fixa) estourem o
+       grid no telefone; width:100%+box-sizing faz o padding caber dentro da célula. */
+    #cupons .coupon-row input, #cupons .coupon-row select { width: 100%; box-sizing: border-box; min-width: 0; }
     #cupons .coupon-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
     #cupons .coupon-list-wrap { max-height: 520px; overflow: auto; -webkit-overflow-scrolling: touch; border: 1px solid #eee; border-radius: 6px; background: #fff; }
+    #cupons .panel-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     #cupons .coupons-table { width: 100%; border-collapse: collapse; min-width: 820px; }
     @media (max-width: 520px) {
+      #cupons { padding: 12px; }
       #cupons .coupon-row { grid-template-columns: 1fr; }
       #cupons .coupon-row--code { grid-template-columns: 1fr; }
       #cupons .coupon-actions { flex-direction: column; align-items: stretch; }
       #cupons .coupon-actions button { width: 100%; }
-      #cupons .coupons-table { min-width: 0; }
-      #cupons .coupons-table th, #cupons .coupons-table td { padding: 8px; }
+      #cupons .coupons-table { min-width: 0; width: 100%; table-layout: fixed; }
+      #cupons .coupons-table th, #cupons .coupons-table td { padding: 8px 6px; word-break: break-word; }
     #cupons .coupons-table th:nth-child(5), #cupons .coupons-table td:nth-child(5),
       #cupons .coupons-table th:nth-child(6), #cupons .coupons-table td:nth-child(6),
       #cupons .coupons-table th:nth-child(7), #cupons .coupons-table td:nth-child(7),

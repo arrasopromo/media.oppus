@@ -14,9 +14,8 @@
     h2 { font-size: 1.1rem; margin: 28px 0 10px; }
     .page-sub { color: #666; font-size: 0.9rem; margin-bottom: 20px; line-height: 1.5; }
 
-    .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
-    @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 480px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
     .stat-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; background: #fafafa; }
     .stat-label { font-size: 0.78rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
     .stat-value { font-size: 1.6rem; font-weight: 800; color: #111827; line-height: 1; }
@@ -104,6 +103,10 @@
         <div class="stat-label">Perfis na fila</div>
         <div class="stat-value"><%= [...new Set(held.map(h => h.username))].length %></div>
       </div>
+      <div class="stat-card stat-card--green">
+        <div class="stat-label">Despachados (7d)</div>
+        <div class="stat-value"><%= (typeof released !== 'undefined' ? released.length : 0) %></div>
+      </div>
       <div class="stat-card stat-card--gray">
         <div class="stat-label">Janela / espera máx.</div>
         <div class="stat-value" style="font-size:1.15rem;"><%= cfg.windowHours %>h / <%= cfg.maxWaitHours %>h</div>
@@ -182,6 +185,66 @@
             </td>
             <td>
               <button class="btn btn--green btn-release" data-id="<%= h.identifier || h.mongoId %>">Liberar agora</button>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <% } %>
+
+    <% var releasedRows = (typeof released !== 'undefined' && Array.isArray(released)) ? released : []; %>
+    <h2>Despachados — histórico <span style="font-size:0.75rem; color:#6b7280; font-weight:400;">(últimos 7 dias · <%= releasedRows.length %>)</span></h2>
+    <% if (!releasedRows.length) { %>
+      <div class="empty-state"><p>Nenhum pedido despachado pela fila nos últimos 7 dias.</p></div>
+    <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Perfil</th>
+            <th>Pedido</th>
+            <th>Qtd</th>
+            <th>Fornecedor</th>
+            <th>OrderID</th>
+            <th>Despachado em</th>
+            <th>Situação</th>
+          </tr>
+        </thead>
+        <tbody>
+        <% releasedRows.forEach(function(h) { %>
+          <tr>
+            <td><span class="cell-main">@<%= h.username || '—' %></span></td>
+            <td>
+              <div class="cell-main mono"><%= h.identifier || '—' %></div>
+              <div class="cell-sub"><%= h.tipo || '?' %></div>
+            </td>
+            <td><%= h.quantidade ? h.quantidade.toLocaleString('pt-BR') : '—' %></td>
+            <td><span class="badge badge--gray"><%= h.providerLabel %></span></td>
+            <td>
+              <% if (h.providerOrderIds && h.providerOrderIds.length) { %>
+                <span class="mono">#<%= h.providerOrderIds.join(', #') %></span>
+              <% } else { %>
+                <span class="cell-sub">—</span>
+              <% } %>
+            </td>
+            <td>
+              <span class="cell-sub"><%= h.releasedAt ? new Date(h.releasedAt).toLocaleString('pt-BR') : '—' %></span>
+            </td>
+            <td>
+              <% if (h.dispatched) { %>
+                <span class="badge badge--green">✓ Despachado</span>
+              <% } else { %>
+                <span class="badge badge--yellow">liberado</span>
+              <% } %>
+              <% if (h.releaseReason) {
+                   var reasonLabel = h.releaseReason === 'blocker_finished' ? 'referência concluiu'
+                     : (h.releaseReason === 'already_dispatched' ? 'já despachado antes'
+                     : (h.releaseReason === 'max_wait_expired' ? 'liberado por tempo (espera máx.)'
+                     : (h.releaseReason === 'manual_release' ? 'liberado manual' : h.releaseReason)));
+              %>
+                <div class="cell-sub"><%= reasonLabel %></div>
+              <% } %>
             </td>
           </tr>
         <% }); %>
