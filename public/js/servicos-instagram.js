@@ -5584,15 +5584,35 @@ document.addEventListener('DOMContentLoaded', function() {
   } catch (_) {}
 
   if (tipoSelect) {
+    // Primeiro tipo VISÍVEL (respeita o "Gerenciamento de Tipos"). Antes o default era
+    // fixo 'mistos' — se mistos estivesse oculto, a descrição/pacotes carregavam mistos
+    // mesmo assim. Agora cai no 1º não-oculto (ex.: brasileiros).
+    const firstVisibleTipo = (function(){
+      try {
+        const order = isCurtidasContext ? ['mistos', 'curtidas_brasileiras', 'organicos']
+          : (isViewsContext ? ['visualizacoes_reels'] : ['mistos', 'brasileiros', 'organicos']);
+        for (let i = 0; i < order.length; i++) { const t = order[i]; if (tabela[t] && hiddenTipos.indexOf(t) < 0) return t; }
+        const keys = Object.keys(tabela).filter(t => t !== 'seguidores_tiktok' && hiddenTipos.indexOf(t) < 0);
+        return keys[0] || '';
+      } catch (_) { return ''; }
+    })();
     const preTipo = normalizeTipoForContext(urlPrefill.tipo);
-    if (preTipo) {
+    if (preTipo && hiddenTipos.indexOf(preTipo) < 0) {
       tipoSelect.value = preTipo;
-    } else if (!tipoSelect.value) {
-      tipoSelect.value = 'mistos';
+    } else if (!tipoSelect.value || hiddenTipos.indexOf(String(tipoSelect.value)) >= 0) {
+      tipoSelect.value = firstVisibleTipo;
     }
     // Always dispatch change to ensure cards are rendered and scroll logic runs
     setTimeout(() => {
         tipoSelect.dispatchEvent(new Event('change'));
+        // marca o card do tipo selecionado como ativo (default sem clique do usuário)
+        try {
+          const sel = String(tipoSelect.value || '').trim();
+          if (sel && tipoCards) {
+            const cards = tipoCards.querySelectorAll('.option-card');
+            cards.forEach(c => c.classList.toggle('active', c.getAttribute('data-tipo') === sel));
+          }
+        } catch (_) {}
     }, 100);
   }
 

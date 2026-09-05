@@ -2720,7 +2720,7 @@ async function dispatchTopfamaLikesBump(col, filter, serviceId, link, quantity) 
             const provErr = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
             if (provErr && !orderId) {
                 const errStr = typeof provErr === 'string' ? provErr : JSON.stringify(provErr);
-                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                 const setObj = { 'topfama_likes.status': st, 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.response': data, 'topfama_likes.requestedAt': new Date().toISOString() };
                 setObj[st === 'duplicate' ? 'topfama_likes.duplicate' : 'topfama_likes.error'] = provErr;
                 if (st === 'duplicate') await col.updateOne(filter, { $set: setObj, $unset: { 'topfama_likes.error': '' } });
@@ -2734,7 +2734,7 @@ async function dispatchTopfamaLikesBump(col, filter, serviceId, link, quantity) 
             try { console.error('❌ topfama_likes_error', e?.response?.data || e?.message || String(e), { link, quantity }); } catch (_) {}
             const errVal = e?.response?.data || e?.message || String(e);
             const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+            const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
             const setObj = { 'topfama_likes.status': st, 'topfama_likes.requestPayload': { service: serviceId, link, quantity }, 'topfama_likes.requestedAt': new Date().toISOString() };
             setObj[st === 'duplicate' ? 'topfama_likes.duplicate' : 'topfama_likes.error'] = errVal;
             if (st === 'duplicate') await col.updateOne(filter, { $set: setObj, $unset: { 'topfama_likes.error': '' } });
@@ -2745,6 +2745,16 @@ async function dispatchTopfamaLikesBump(col, filter, serviceId, link, quantity) 
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  GESTÃO PARCIAL (TopFama) — status via action=status a cada 6h + reposição
+// Reconhece a resposta de DUPLICATA do fornecedor (o link já tem pedido = já subiu).
+// Provedores usam strings diferentes: "link_duplicate", "neworder.error.link_duplicate"
+// E TAMBÉM "Duplicate link" (Nuvra) — que antes NÃO era reconhecida e o pedido caía como
+// erro no OrderID Unknown, mesmo tendo subido. Duplicata = já enviado, NÃO é erro.
+function isDuplicateProviderError(s) {
+  try {
+    const t = String(s == null ? '' : (typeof s === 'object' ? JSON.stringify(s) : s)).toLowerCase();
+    return t.includes('duplicate') || t.includes('duplicado') || t.includes('duplicada');
+  } catch (_) { return false; }
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // Gestão Parcial (refil de curtidas): agora cobre TopFama E Fornecedor Social (id 194).
 // Cada campo do pedido aponta pro seu provider.
@@ -3077,6 +3087,169 @@ async function processTopfamaAutoReorders() {
   } catch (e) { out.error = e && e.message; }
   return out;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// GESTÃO DE SALDO DOS PAINÉIS (fornecedores SMM) — alerta no WhatsApp (Evolution)
+// quando o saldo cai abaixo do limite. Limites: fornecedor_social 200, nuvra 100,
+// worldsmm 50, demais 100 (configuráveis por env SALDO_MIN_*). Cooldown por painel
+// pra não spamar; reseta quando o saldo volta acima do limite.
+// ══════════════════════════════════════════════════════════════════════════
+function panelBalanceRegistry() {
+  const n = (v, d) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : d; };
+  // alertDefault = alerta ligado por padrão quando não há config salva no painel.
+  return [
+    { name: 'fornecedor_social', label: 'Fornecedor Social', url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY', link: 'https://fornecedorsocial.com', threshold: n(process.env.SALDO_MIN_FORNECEDOR_SOCIAL, 200), alertDefault: true },
+    { name: 'nuvra', label: 'NuvraSMM', url: process.env.NUVRASMM_API_URL || 'https://nuvrasmm.com/api/v2', keyEnv: 'NUVRASMM_API_KEY', link: 'https://nuvrasmm.com', threshold: n(process.env.SALDO_MIN_NUVRA, 100), alertDefault: true },
+    { name: 'worldsmm', label: 'WorldSMM', url: 'https://worldsmm.com.br/api/v2', keyEnv: 'WORLDSMM_API_KEY', link: 'https://worldsmm.com.br', threshold: n(process.env.SALDO_MIN_WORLDSMM, 50), alertDefault: true },
+    { name: 'topfama', label: 'TopFama', url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', link: 'https://topfama.com', threshold: n(process.env.SALDO_MIN_TOPFAMA, 100), alertDefault: false },
+    { name: 'fama24h', label: 'Fama24h', url: 'https://fama24h.net/api/v2', keyEnv: 'FAMA24H_API_KEY', link: 'https://fama24h.net', threshold: n(process.env.SALDO_MIN_FAMA24H, 100), alertDefault: false },
+  ];
+}
+// Config por-painel de alerta (liga/desliga) salva no settings (_id 'panel_balance_config').
+// Retorna { [panel]: boolean }. Cacheado por 20s.
+let __panelAlertCfgCache = { atMs: 0, values: null };
+async function loadPanelBalanceAlertConfig() {
+  try {
+    if (__panelAlertCfgCache.values && (Date.now() - __panelAlertCfgCache.atMs) < 20000) return __panelAlertCfgCache.values;
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    const doc = col ? await col.findOne({ _id: 'panel_balance_config' }, { projection: { _id: 0, alerts: 1 } }) : null;
+    const values = (doc && doc.alerts && typeof doc.alerts === 'object') ? doc.alerts : {};
+    __panelAlertCfgCache = { atMs: Date.now(), values };
+    return values;
+  } catch (_) { return __panelAlertCfgCache.values || {}; }
+}
+// Alerta efetivo do painel: override salvo tem prioridade; senão o alertDefault do registro.
+function panelAlertEnabled(p, cfg) {
+  const v = cfg ? cfg[p.name] : undefined;
+  if (v === true || v === false) return v;
+  return p.alertDefault !== false;
+}
+async function fetchPanelBalance(p) {
+  try {
+    const key = String(process.env[p.keyEnv] || '').trim();
+    if (!key) return { ok: false, error: 'missing_key' };
+    const params = new URLSearchParams({ key, action: 'balance' });
+    const r = await axios.post(p.url, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' }, timeout: 20000, validateStatus: () => true });
+    const d = (r && r.data && typeof r.data === 'object') ? r.data : {};
+    if (d.balance !== undefined && d.balance !== null) {
+      const bal = Number(String(d.balance).replace(',', '.'));
+      if (Number.isFinite(bal)) return { ok: true, balance: bal, currency: String(d.currency || 'BRL') };
+    }
+    return { ok: false, error: String(d.error || d.Error || ('http_' + (r && r.status))).slice(0, 140) };
+  } catch (e) { return { ok: false, error: (e && (e.code || e.message)) || 'network_error' }; }
+}
+// Envia texto pelo WhatsApp via Evolution API (instância do .env). { ok, error }.
+async function sendEvolutionText(number, text) {
+  try {
+    const baseUrl = String(process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '');
+    const apiKey = String(process.env.EVOLUTION_API_KEY || '').trim();
+    const instance = String(process.env.EVOLUTION_INSTANCE_NAME || 'oppus').trim();
+    const instanceToken = String(process.env.EVOLUTION_INSTANCE_TOKEN || '').trim();
+    if (!baseUrl || !apiKey || !instance) return { ok: false, error: 'evolution_not_configured' };
+    const digits = String(number || '').replace(/\D/g, '');
+    const num = digits.startsWith('55') ? digits : ((digits.length === 10 || digits.length === 11) ? '55' + digits : digits);
+    if (!num || num.length < 10) return { ok: false, error: 'invalid_phone' };
+    const headers = Object.assign({ 'Content-Type': 'application/json', apikey: apiKey }, instanceToken ? { token: instanceToken } : {});
+    const urls = [`${baseUrl}/message/sendText/${encodeURIComponent(instance)}`, `${baseUrl}/api/message/sendText/${encodeURIComponent(instance)}`];
+    let resp = null, lastErr = null;
+    for (const url of urls) {
+      try { resp = await axios.post(url, { number: num, text }, { timeout: 20000, headers }); lastErr = null; break; }
+      catch (err) { const st = err && err.response && err.response.status; if (st && st !== 404) throw err; lastErr = err; }
+    }
+    if (!resp && lastErr) return { ok: false, error: (lastErr.message || 'send_failed') };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'send_failed' }; }
+}
+// Checa saldo de todos os painéis; alerta no WhatsApp quem estiver abaixo do limite.
+let __panelBalanceRunning = false;
+async function runPanelBalanceCheck({ force = false } = {}) {
+  if (__panelBalanceRunning) return { skipped: 'running' };
+  __panelBalanceRunning = true;
+  const out = { checked: 0, balances: [], low: [], alerted: [], errors: [] };
+  try {
+    const enabled = String(process.env.PANEL_BALANCE_ALERT_ENABLED || 'true').trim().toLowerCase() !== 'false';
+    const phone = String(process.env.PANEL_BALANCE_ALERT_PHONE || '5531975938916').replace(/\D/g, '');
+    const cooldownH = Math.max(1, Number(process.env.PANEL_BALANCE_ALERT_COOLDOWN_HOURS || 12) || 12);
+    const col = await getCollection('panel_balance_alerts');
+    const alertCfg = await loadPanelBalanceAlertConfig();
+    const now = Date.now();
+    const fmt = (v) => 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    for (const p of panelBalanceRegistry()) {
+      const key = String(process.env[p.keyEnv] || '').trim();
+      if (!key) continue; // painel sem chave → ignora
+      const alertOn = panelAlertEnabled(p, alertCfg); // flag por-painel (Gerenciamento de Tipos)
+      out.checked++;
+      const b = await fetchPanelBalance(p);
+      if (!b.ok) { out.errors.push({ panel: p.name, error: b.error }); continue; }
+      out.balances.push({ panel: p.name, label: p.label, balance: b.balance, threshold: p.threshold, low: b.balance < p.threshold, link: p.link, alertEnabled: alertOn });
+      const low = b.balance < p.threshold;
+      const state = await col.findOne({ _id: p.name });
+      if (!low) {
+        try { await col.updateOne({ _id: p.name }, { $set: { lastBalance: b.balance, lowSince: null, updatedAt: new Date() } }, { upsert: true }); } catch (_) {}
+        continue;
+      }
+      out.low.push({ panel: p.name, balance: b.balance, threshold: p.threshold, alertEnabled: alertOn });
+      const lastAlertMs = state && state.lastAlertAt ? new Date(state.lastAlertAt).getTime() : 0;
+      const cooled = force || !lastAlertMs || (now - lastAlertMs) >= cooldownH * 3600000;
+      if (enabled && alertOn && cooled && phone) {
+        const text = `⚠️ *Saldo baixo no painel ${p.label}*\n\nSaldo atual: ${fmt(b.balance)}\nLimite de alerta: ${fmt(p.threshold)}\n\nRecarregue o painel: ${p.link}`;
+        const s = await sendEvolutionText(phone, text);
+        if (s.ok) { out.alerted.push(p.name); try { await col.updateOne({ _id: p.name }, { $set: { lastAlertAt: new Date(), lastBalance: b.balance, lowSince: (state && state.lowSince) || new Date(), threshold: p.threshold, updatedAt: new Date() } }, { upsert: true }); } catch (_) {} }
+        else { out.errors.push({ panel: p.name, error: 'send:' + s.error }); }
+      } else {
+        try { await col.updateOne({ _id: p.name }, { $set: { lastBalance: b.balance, lowSince: (state && state.lowSince) || new Date(), threshold: p.threshold, updatedAt: new Date() } }, { upsert: true }); } catch (_) {}
+      }
+    }
+  } catch (e) { out.error = e && e.message; }
+  __panelBalanceRunning = false;
+  return out;
+}
+let __panelBalanceTimer = null;
+function startPanelBalanceLoop() {
+  if (__panelBalanceTimer) return;
+  const intervalH = Math.max(1, Number(process.env.PANEL_BALANCE_CHECK_INTERVAL_HOURS || 6) || 6);
+  setTimeout(() => { runPanelBalanceCheck().then((r) => { try { console.log('💰 [saldo-paineis] low:', (r.low || []).map(x => x.panel).join(',') || '-', '| alertados:', (r.alerted || []).join(',') || '-'); } catch (_) {} }).catch(() => {}); }, 5 * 60 * 1000);
+  __panelBalanceTimer = setInterval(() => { runPanelBalanceCheck().catch(() => {}); }, intervalH * 3600000);
+  try { __panelBalanceTimer.unref && __panelBalanceTimer.unref(); } catch (_) {}
+}
+// Só vê os saldos (sem alertar) — pro admin conferir a qualquer hora.
+app.get('/api/painel/saldo/list', requireAdmin, async (req, res) => {
+  try {
+    const alertCfg = await loadPanelBalanceAlertConfig();
+    const rows = [];
+    for (const p of panelBalanceRegistry()) {
+      const alertOn = panelAlertEnabled(p, alertCfg);
+      const key = String(process.env[p.keyEnv] || '').trim();
+      if (!key) { rows.push({ panel: p.name, label: p.label, configured: false, link: p.link, threshold: p.threshold, alertEnabled: alertOn }); continue; }
+      const b = await fetchPanelBalance(p);
+      rows.push({ panel: p.name, label: p.label, configured: true, threshold: p.threshold, link: p.link, alertEnabled: alertOn, ok: b.ok, balance: b.ok ? b.balance : null, currency: b.ok ? b.currency : null, low: b.ok ? (b.balance < p.threshold) : null, error: b.ok ? null : b.error });
+    }
+    return res.json({ ok: true, rows });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Liga/desliga o alerta de saldo de UM painel (flag do Gerenciamento de Tipos).
+app.post('/api/painel/saldo/alert-config', requireAdmin, async (req, res) => {
+  try {
+    const panel = String((req.body && req.body.panel) || '').trim();
+    const valid = panelBalanceRegistry().some((p) => p.name === panel);
+    if (!valid) return res.status(400).json({ ok: false, error: 'invalid_panel' });
+    const alertEnabled = !(req.body && (req.body.alertEnabled === false || req.body.alertEnabled === 'false'));
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    await col.updateOne({ _id: 'panel_balance_config' }, { $set: { [`alerts.${panel}`]: alertEnabled, updatedAt: new Date().toISOString() } }, { upsert: true });
+    __panelAlertCfgCache = { atMs: 0, values: null }; // invalida cache
+    return res.json({ ok: true, panel, alertEnabled });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Roda a checagem+alerta agora (force=1 ignora o cooldown — útil pra testar o WhatsApp).
+app.post('/api/painel/saldo/check', requireAdmin, async (req, res) => {
+  try {
+    const force = String((req.body && req.body.force) || '') === 'true' || String(req.query.force || '') === '1';
+    const r = await runPanelBalanceCheck({ force });
+    return res.json({ ok: true, result: r });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
 
 let __topfamaTimer = null;
 function startTopfamaPartialLoop() {
@@ -18343,7 +18516,7 @@ async function processOrderFulfillment(record, col, req) {
                             } catch (err) {
                                 const errVal = err?.response?.data || err?.message || String(err);
                                 const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                                const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                                 orders.push({ link: linkFS, quantity: qtyForPost, orderId: null, status: st, error: errVal });
                             }
                         }
@@ -18456,7 +18629,7 @@ async function processOrderFulfillment(record, col, req) {
                                     const orderId = extractProviderOrderId(famaData);
                                     const hasErr = !!(famaData && (famaData.error || famaData.errors));
                                     const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
-                                    const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                                    const isDup = !orderId && isDuplicateProviderError(errText);
                                     let oid = orderId ? String(orderId) : null;
                                     if (!oid && isDup) {
                                         const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
@@ -18467,7 +18640,7 @@ async function processOrderFulfillment(record, col, req) {
                                 } catch (err) {
                                     const errVal = err?.response?.data || err?.message || String(err);
                                     const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                                    const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                                     let oid = null;
                                     if (st === 'duplicate') {
                                         const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
@@ -18552,7 +18725,7 @@ async function processOrderFulfillment(record, col, req) {
                                     } catch (_) {}
                                 }
                             }
-                            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                            const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                             await col.updateOne(filter, { $set: { fama24h: { status: st, error: providerErr, requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
                         } else {
                             const st = orderId ? 'created' : 'unknown';
@@ -18563,7 +18736,7 @@ async function processOrderFulfillment(record, col, req) {
                     } catch (err) {
                         const errVal = err?.response?.data || err?.message || String(err);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         await col.updateOne(filter, { $set: { fama24h: { status: st, error: errVal, requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, requestedAt: new Date().toISOString() } } });
                     }
                 }
@@ -18689,7 +18862,7 @@ async function processOrderFulfillment(record, col, req) {
                     } catch (err) {
                         const errVal = err?.response?.data || err?.message || String(err);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         orders.push({ link: linkSan, quantity: perPostQty, orderId: null, status: st, error: errVal });
                     }
                 }
@@ -18734,7 +18907,7 @@ async function processOrderFulfillment(record, col, req) {
                         const providerErr = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
                         if (providerErr && !orderId) {
                             const errStr = typeof providerErr === 'string' ? providerErr : JSON.stringify(providerErr);
-                            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                            const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                             await col.updateOne(filter, { $set: { [providerPath]: { status: st, error: providerErr, requestPayload: { service: serviceId, link: sanitizedLink, quantity: qtd }, response: data, requestedAt: new Date().toISOString() } } });
                         } else {
                             await col.updateOne(filter, { $set: { [providerPath]: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: sanitizedLink, quantity: qtd }, response: data, requestedAt: new Date().toISOString() } } });
@@ -18743,7 +18916,7 @@ async function processOrderFulfillment(record, col, req) {
                     } catch (err) {
                         const errVal = err?.response?.data || err?.message || String(err);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         await col.updateOne(filter, { $set: { [providerPath]: { status: st, error: errVal, requestPayload: { service: serviceId, link: sanitizedLink, quantity: qtd }, requestedAt: new Date().toISOString() } } });
                     }
                 }
@@ -18865,7 +19038,7 @@ async function processOrderFulfillment(record, col, req) {
                         const providerErrViews = (dataViews && (dataViews.error || (dataViews.data && dataViews.data.error) || (dataViews.response && dataViews.response.error))) || null;
                         if (providerErrViews && !orderIdViews) {
                           const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           if (st === 'duplicate') {
                             await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
                           } else {
@@ -18879,7 +19052,7 @@ async function processOrderFulfillment(record, col, req) {
                     } catch (e2) {
                         const errVal = e2?.response?.data || e2?.message || String(e2);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         try { console.error('❌ fama24h_views_error', errVal, { link: viewsLink, quantity: viewsQty }); } catch(_) {}
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
@@ -18929,7 +19102,7 @@ async function processOrderFulfillment(record, col, req) {
                         const providerErrLikes = (dataLikes && (dataLikes.error || (dataLikes.data && dataLikes.data.error) || (dataLikes.response && dataLikes.response.error))) || null;
                         if (providerErrLikes && !orderIdLikes) {
                           const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           if (st === 'duplicate') {
                             await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': providerErrLikes, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fornecedor_social_likes.response': dataLikes, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                           } else {
@@ -18944,7 +19117,7 @@ async function processOrderFulfillment(record, col, req) {
                         try { console.error('❌ fornecedor_social_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
                         const errVal = e3?.response?.data || e3?.message || String(e3);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': errVal, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                         } else {
@@ -18969,7 +19142,7 @@ async function processOrderFulfillment(record, col, req) {
                         const providerErrLikes = (dataLikes && (dataLikes.error || (dataLikes.data && dataLikes.data.error) || (dataLikes.response && dataLikes.response.error))) || null;
                         if (providerErrLikes && !orderIdLikes) {
                           const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           if (st === 'duplicate') {
                             await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                           } else {
@@ -18984,7 +19157,7 @@ async function processOrderFulfillment(record, col, req) {
                         try { console.error('❌ fama24h_likes_error', e3?.response?.data || e3?.message || String(e3), { link: likesLink, quantity: likesQty }); } catch(_) {}
                         const errVal = e3?.response?.data || e3?.message || String(e3);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                         } else {
@@ -20312,377 +20485,6 @@ app.post('/api/blacklist/remove', async (req, res) => {
     }
 });
 
-app.post('/api/ggram-order', async (req, res) => {
-    const { username, id: bodyId, servico, link: linkFromBody } = req.body;
-    const linkId = req.query.id || bodyId || req.session.linkSlug;
-    const userAgent = req.get('User-Agent') || '';
-    const ip = req.realIP || req.ip || req.connection.remoteAddress || req.headers["x-forwarded-for"] || "unknown";
-    
-    console.log('linkId recebido:', linkId);
-    // Helper: resolver service id de curtidas no ggram via action=services (cache em memória)
-    let GGRAM_LIKES_SERVICE_CACHE = null;
-    async function resolveGgramLikesServiceId(ggramKey) {
-        if (GGRAM_LIKES_SERVICE_CACHE) return GGRAM_LIKES_SERVICE_CACHE;
-        const params = new URLSearchParams();
-        params.append('key', ggramKey);
-        params.append('action', 'services');
-        const apiCandidates = ['https://ggram.me/api/v2', 'https://www.ggram.me/api/v2'];
-        for (const apiUrl of apiCandidates) {
-            try {
-                const resp = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-                const servicesArr = Array.isArray(resp.data) ? resp.data : (Array.isArray(resp.data?.services) ? resp.data.services : []);
-                const match = servicesArr.find(s => {
-                    const name = (s?.name || '').toString();
-                    return /curtidas|likes/i.test(name) && /br|brasil|brazil|brasileir/i.test(name);
-                });
-                if (match && match.service) {
-                    console.log('[GGRAM] Service curtidas BR resolvido:', match.service, '-', match.name);
-                    GGRAM_LIKES_SERVICE_CACHE = String(match.service);
-                    return GGRAM_LIKES_SERVICE_CACHE;
-                }
-            } catch (err) {
-                if (err.code === 'ENOTFOUND') {
-                    console.warn('[GGRAM] ENOTFOUND ao listar serviços em', apiUrl, '- tentando próximo');
-                    continue;
-                }
-                console.warn('[GGRAM] Falha ao obter lista de serviços:', err?.response?.status || err.message);
-            }
-        }
-        return null;
-    }
-    
-    try {
-        // EXCEÇÃO: Para teste123, considerar também sessão/linkId
-        if (linkId === 'teste123') {
-            // Mapear serviço conforme escolha
-            const serviceMap = {
-                seguidores_mistos: '650',
-                seguidores_brasileiros: '625',
-                visualizacoes_reels: '250',
-                curtidas_brasileiras: 'LIKES_BRS',
-                curtidas: 'LIKES_BRS'
-            };
-            const selectedServiceKey = (servico || 'seguidores_mistos');
-            const selectedServiceId = serviceMap[selectedServiceKey] || '663';
-            const quantitiesMap = {
-                visualizacoes_reels: '3000',
-                curtidas_brasileiras: '20',
-                curtidas: '20',
-                seguidores_mistos: '150',
-                seguidores_brasileiros: '150'
-            };
-            const quantity = quantitiesMap[selectedServiceKey] || '150';
-            const isFollowerService = ['650', '625'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
-            const isLikesService = (selectedServiceKey || '').startsWith('curtidas');
-            // Preparar campo/valor alvo conforme tipo de serviço
-            const rawValue = linkFromBody || username || '';
-            let targetField = 'link';
-            let targetValue = isFollowerService ? (username || rawValue) : rawValue;
-            if (!isFollowerService) {
-                // Normalizar link para posts: /reel/ -> /p/ e garantir barra final
-                const replaced = (targetValue || '').replace(/\/reel\//i, '/p/');
-                if (/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(replaced)) {
-                    targetValue = replaced.endsWith('/') ? replaced : (replaced + '/');
-                } else {
-                    targetValue = replaced;
-                }
-            }
-            let response;
-            if (isLikesService) {
-                // ggram.me para curtidas brasileiras
-                const ggramKey = process.env.GGRAM_API_KEY || '';
-                let ggramService = process.env.GGRAM_SERVICE_ID_LIKES_BRS;
-                if (!ggramService) {
-                    ggramService = await resolveGgramLikesServiceId(ggramKey);
-                }
-                if (!ggramKey || !ggramService) {
-                    return res.status(200).json({ error: 'config_missing', message: 'Configuração ggram ausente: defina (GGRAM_SERVICE_ID_LIKES_BRS) ou habilite auto-descoberta com chave válida.' });
-                }
-                const params = new URLSearchParams();
-                params.append('key', ggramKey);
-                params.append('action', 'add');
-                params.append('service', ggramService);
-                params.append('link', targetValue);
-                params.append('quantity', quantity);
-                console.log('[GGRAM][TESTE123] Enviando pedido', { service: ggramService, quantity, link: targetValue });
-                // Tentar variações de domínio
-                const apiCandidates = ['https://ggram.me/api/v2', 'https://www.ggram.me/api/v2'];
-                for (const apiUrl of apiCandidates) {
-                    try {
-                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-                        console.log('[GGRAM][TESTE123] Sucesso em', apiUrl);
-                        break;
-                    } catch (err) {
-                        if (err.code === 'ENOTFOUND') {
-                            console.warn('[GGRAM][TESTE123] ENOTFOUND em', apiUrl, '- tentando próximo');
-                            continue;
-                        }
-                        throw err;
-                    }
-                }
-            } else {
-                // Fama24h para seguidores e visualizações
-                const apiKey = (process.env.NUVRASMM_API_KEY || '').trim();
-                if (!apiKey) {
-                    console.error('[FAMA24H][TESTE123] Chave API ausente. Defina FAMA24H_API_KEY no .env');
-                    return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
-                }
-                console.log('[FAMA24H][TESTE123] Usando chave', apiKey.slice(0,6) + '***');
-                const params = new URLSearchParams();
-                params.append('key', apiKey);
-                params.append('action', 'add');
-                params.append('service', selectedServiceId);
-                params.append(targetField, (targetValue || '').trim());
-                params.append('quantity', quantity);
-                console.log('[FAMA24H][TESTE123] Enviando pedido', { service: selectedServiceId, quantity, [targetField]: targetValue, selectedServiceKey, isFollowerService });
-                const apiCandidates = ['https://nuvrasmm.com/api/v2'];
-                for (const apiUrl of apiCandidates) {
-                    try {
-                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
-                        console.log('[FAMA24H][TESTE123] Sucesso em', apiUrl);
-                        console.log('[FAMA24H][TESTE123] Resposta', response?.data);
-                        break;
-                    } catch (err) {
-                        if (err.code === 'ENOTFOUND') {
-                            console.warn('[FAMA24H][TESTE123] ENOTFOUND em', apiUrl, '- tentando próximo');
-                            continue;
-                        }
-                        throw err;
-                    }
-                }
-            }
-            // Validar resposta da Fama24h antes de retornar sucesso
-            if (response && response.data && response.data.order) {
-                return res.json({
-                    ...response.data,
-                    success: true,
-                    message: 'Pedido realizado com sucesso (teste123)'
-                });
-            }
-            // Se veio erro ou não há "order", retornar como falha
-            const apiError = response?.data?.error || 'api_error';
-            return res.status(400).json({
-                success: false,
-                error: apiError,
-                message: 'Falha ao realizar pedido na Fama24h (teste)',
-                response: response?.data || null
-            });
-        }
-        
-        // BLOQUEIO POR LINK TEMPORÁRIO: Verificar se este link já foi usado para um pedido
-        /* DISABLED
-        const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
-        if (result.success) {
-            const existingOrder = result.rows.find(row =>
-                (row.link === linkId) &&
-                (row.teste === 'OK')
-            );
-            
-            if (existingOrder) {
-                console.log('🔒 Bloqueio de link: Link temporário já foi usado para um pedido', { linkId });
-                return res.status(409).json({
-                    error: 'link_blocked',
-                    message: 'Este link temporário já foi usado para um pedido. Links são válidos apenas para um pedido.'
-                });
-            }
-        }
-        */
-        // Impedir serviço orgânico via backend
-        if (servico === 'seguidores_organicos') {
-            return res.status(403).json({ error: 'service_unavailable', message: 'Serviço disponível para teste somente após primeira compra.' });
-        }
-        const serviceMap = {
-            seguidores_mistos: '650',
-            seguidores_brasileiros: '625',
-            visualizacoes_reels: '250',
-            curtidas_brasileiras: '1810',
-            curtidas: '1810'
-        };
-        const selectedServiceKey = (servico || 'seguidores_mistos');
-        const selectedServiceId = serviceMap[selectedServiceKey] || '663';
-        const quantitiesMap = {
-            visualizacoes_reels: '3000',
-            curtidas_brasileiras: '20',
-            curtidas: '20'
-        };
-        const quantity = quantitiesMap[selectedServiceKey] || '50';
-        const rawValue = linkFromBody || username || '';
-        const isFollowerService = ['650', '625'].includes(String(selectedServiceId)) || (selectedServiceKey || '').startsWith('seguidores');
-        const isLikesService = (selectedServiceKey || '').startsWith('curtidas');
-        // Definir campo/valor correto conforme tipo de serviço
-        let targetField = 'link';
-        let targetValue = isFollowerService ? (username || rawValue || '') : (rawValue || '');
-        if (!isFollowerService) {
-            // Normalizar link para serviços de post: trocar /reel/ por /p/ e garantir barra final
-            const replaced = (targetValue || '').replace(/\/reel\//i, '/p/');
-            if (/^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/i.test(replaced)) {
-                targetValue = replaced.endsWith('/') ? replaced : (replaced + '/');
-            } else {
-                targetValue = replaced;
-            }
-        }
-        let response;
-        if (isLikesService) {
-            // ggram.me para curtidas brasileiras (chamada direta)
-            const ggramKey = process.env.GGRAM_API_KEY || '';
-            const ggramService = process.env.GGRAM_SERVICE_ID_LIKES_BRS || '1810';
-            if (!ggramKey || !ggramService) {
-                return res.status(200).json({ error: 'config_missing', message: 'Configuração ggram ausente: defina GGRAM_API_KEY e GGRAM_SERVICE_ID_LIKES_BRS.' });
-            }
-            const params = new URLSearchParams();
-            params.append('key', ggramKey);
-            params.append('action', 'add');
-            params.append('service', ggramService);
-            params.append('link', targetValue);
-            params.append('quantity', quantity);
-            console.log('[GGRAM] Enviando pedido', { service: ggramService, quantity, link: targetValue });
-            // Tentar variações de domínio
-            const apiCandidates = ['https://ggram.me/api/v2', 'https://www.ggram.me/api/v2'];
-            for (const apiUrl of apiCandidates) {
-                try {
-                    response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-                    console.log('[GGRAM] Sucesso em', apiUrl);
-                    break;
-                } catch (err) {
-                    if (err.code === 'ENOTFOUND') {
-                        console.warn('[GGRAM] ENOTFOUND em', apiUrl, '- tentando próximo');
-                        continue;
-                    }
-                    throw err;
-                }
-            }
-            if (!response) {
-                const likesProviders = [1,2,3,4].map(n => ({
-                    url: (process.env[`LIKES${n}_URL`] || '').trim(),
-                    key: (process.env[`LIKES${n}_KEY`] || '').trim(),
-                    service: (process.env[`LIKES${n}_SERVICE_ID`] || '').trim()
-                })).filter(p => p.url && p.key && p.service);
-                for (const p of likesProviders) {
-                    try {
-                        const lp = new URLSearchParams();
-                        lp.append('key', p.key);
-                        lp.append('action', 'add');
-                        lp.append('service', p.service);
-                        lp.append('link', targetValue);
-                        lp.append('quantity', quantity);
-                        const r = await axios.post(p.url, lp, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-                        response = r;
-                        console.log('[LIKES][ALT] Sucesso em', p.url);
-                        break;
-                    } catch (err) {
-                        if (err.code === 'ENOTFOUND') {
-                            console.warn('[LIKES][ALT] ENOTFOUND em', p.url);
-                            continue;
-                        }
-                    }
-                }
-            }
-        } else {
-            const smmProviders = [1,2,3,4].map(n => ({
-                url: (process.env[`SMM${n}_URL`] || '').trim(),
-                key: (process.env[`SMM${n}_KEY`] || '').trim(),
-                serviceId: (process.env[`SMM${n}_SERVICE_${(selectedServiceKey || '').toUpperCase()}`] || '').trim()
-            })).filter(p => p.url && p.key && p.serviceId);
-            if (smmProviders.length > 0) {
-                for (const p of smmProviders) {
-                    try {
-                        const sp = new URLSearchParams();
-                        sp.append('key', p.key);
-                        sp.append('action', 'add');
-                        sp.append('service', p.serviceId);
-                        sp.append(targetField, (targetValue || '').trim());
-                        sp.append('quantity', quantity);
-                        const r = await axios.post(p.url, sp, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
-                        response = r;
-                        console.log('[SMM][ALT] Sucesso em', p.url);
-                        break;
-                    } catch (err) {
-                        if (err.code === 'ENOTFOUND') {
-                            console.warn('[SMM][ALT] ENOTFOUND em', p.url);
-                            continue;
-                        }
-                    }
-                }
-            }
-            if (!response) {
-                const apiKey2 = (process.env.NUVRASMM_API_KEY || '').trim();
-                if (!apiKey2) {
-                    console.error('[FAMA24H] Chave API ausente. Defina FAMA24H_API_KEY no .env');
-                    return res.status(500).json({ success: false, error: 'missing_api_key', message: 'Chave API Fama24h ausente no servidor.' });
-                }
-                const params = new URLSearchParams();
-                params.append('key', apiKey2);
-                params.append('action', 'add');
-                params.append('service', selectedServiceId);
-                params.append(targetField, (targetValue || '').trim());
-                params.append('quantity', quantity);
-                const apiCandidates = ['https://nuvrasmm.com/api/v2'];
-                for (const apiUrl of apiCandidates) {
-                    try {
-                        response = await axios.post(apiUrl, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' } });
-                        console.log('[FAMA24H] Sucesso em', apiUrl);
-                        break;
-                    } catch (err) {
-                        if (err.code === 'ENOTFOUND') {
-                            console.warn('[FAMA24H] ENOTFOUND em', apiUrl);
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        if (response?.data?.order) {
-            // Buscar a linha correta no Baserow pelo campo 'link' igual ao linkId
-            /* DISABLED
-            const result = await baserowManager.getAllTableRows(BASEROW_TABLES.CONTROLE);
-            if (result.success) {
-                const row = result.rows.find(r => r[CONTROLE_FIELDS.LINK] === linkId);
-                if (row) {
-                    const updateData = {
-                        statushttp: 'OK',
-                        teste: 'OK'
-                    };
-                    // Para serviços de seguidores, salva instauser; para post (curtidas/visualizações), salva linkpost
-                    if (isFollowerService) {
-                        updateData.instauser = targetValue;
-                    } else {
-                        updateData.linkpost = targetValue;
-                    }
-                    await baserowManager.updateRowPatch(BASEROW_TABLES.CONTROLE, row.id, mapControleData(updateData));
-                }
-            }
-            */
-            
-            // INVALIDAR O LINK TEMPORÁRIO após pedido bem-sucedido
-            if (linkId && linkId !== 'teste123') {
-                linkManager.invalidateLink(linkId);
-                console.log(`🔒 Link temporário invalidado após pedido: ${linkId}`);
-            }
-            
-            return res.json({
-                ...response.data,
-                success: true,
-                message: 'Pedido realizado com sucesso'
-            });
-        }
-        if (isFollowerService && response.data.error === 'link_duplicate') {
-            return res.status(409).json({ 
-                error: 'link_duplicate',
-                message: 'Você acabou de realizar um pedido para este perfil. Aguarde alguns minutos antes de tentar novamente.'
-            });
-        }
-        // Se falhou, retornar erro detalhado
-        return res.status(400).json({
-            success: false,
-            error: response?.data?.error || 'api_error',
-            message: 'Falha ao realizar pedido na Fama24h',
-            response: response?.data || null
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message || 'Erro ao enviar pedido' });
-    }
-});
-
 app.post('/api/check-usage', async (req, res) => {
   const userAgent = req.get('User-Agent') || '';
   const ip = req.realIP || req.ip || req.connection.remoteAddress || req.headers["x-forwarded-for"] || "unknown";
@@ -21424,7 +21226,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                     } catch (err) {
                       const errVal = err?.response?.data || err?.message || String(err);
                       const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                       orders.push({ link: linkFS, quantity: qtyForPost, orderId: null, status: st, error: errVal });
                     }
                   }
@@ -21570,7 +21372,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                           const orderId = extractProviderOrderId(famaData);
                           const hasErr = !!(famaData && (famaData.error || famaData.errors));
                           const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
-                          const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                          const isDup = !orderId && isDuplicateProviderError(errText);
                           let oid = orderId ? String(orderId) : null;
                           if (!oid && isDup) {
                             const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
@@ -21581,7 +21383,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                         } catch (err) {
                           const errVal = err?.response?.data || err?.message || String(err);
                           const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           let oid = null;
                           if (st === 'duplicate') {
                             const prev = await findExistingFamaOrderIdByLink(col, linkForFama);
@@ -21864,7 +21666,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       const providerErrViews = (dataViews && (dataViews.error || (dataViews.data && dataViews.data.error) || (dataViews.response && dataViews.response.error))) || null;
                       if (providerErrViews && !orderIdViews) {
                         const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': dataViews, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
                         } else {
@@ -21878,7 +21680,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                     } catch (e2) {
                       const errVal = e2?.response?.data || e2?.message || String(e2);
                       const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                       if (st === 'duplicate') {
                         await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
                       } else {
@@ -21933,7 +21735,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                         const providerErrLikesFS = (dataLikesFS && (dataLikesFS.error || (dataLikesFS.data && dataLikesFS.data.error) || (dataLikesFS.response && dataLikesFS.response.error))) || null;
                         if (providerErrLikesFS && !orderIdLikesFS) {
                           const errStr = typeof providerErrLikesFS === 'string' ? providerErrLikesFS : JSON.stringify(providerErrLikesFS);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           if (st === 'duplicate') {
                             await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': providerErrLikesFS, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQtyForStatus }, 'fornecedor_social_likes.response': dataLikesFS, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                           } else {
@@ -21947,7 +21749,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       } catch (e3) {
                         const errVal = e3?.response?.data || e3?.message || String(e3);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': errVal, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQtyForStatus }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                         } else {
@@ -21972,7 +21774,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                         const providerErrLikes = (dataLikes && (dataLikes.error || (dataLikes.data && dataLikes.data.error) || (dataLikes.response && dataLikes.response.error))) || null;
                         if (providerErrLikes && !orderIdLikes) {
                           const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
-                          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                           if (st === 'duplicate') {
                             await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.response': dataLikes, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                           } else {
@@ -21986,7 +21788,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       } catch (e3) {
                         const errVal = e3?.response?.data || e3?.message || String(e3);
                         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                         if (st === 'duplicate') {
                           await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQtyForStatus }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                         } else {
@@ -22590,7 +22392,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
         const providerErrViews = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
         if (providerErrViews && !orderIdViews) {
           const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
-          const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+          const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
           if (st === 'duplicate') {
             await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 7, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
             results.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null, data };
@@ -22607,7 +22409,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
       } catch (e) {
         const errVal = e?.response?.data || e?.message || String(e);
         const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-        const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+        const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
         if (st === 'duplicate') {
           await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 7, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
           results.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null, error: null };
@@ -22660,7 +22462,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
             } catch (e) {
               const errVal = e?.response?.data || e?.message || String(e);
               const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
               if (st === 'duplicate') {
                 await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': errVal, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                 results.likes = { duplicate: true, orderId: record?.fornecedor_social_likes?.orderId || null, error: null };
@@ -22691,7 +22493,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
               const providerErrLikes = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
               if (providerErrLikes && !orderIdLikes) {
                 const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
-                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                 if (st === 'duplicate') {
                   await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                   results.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null, data };
@@ -22708,7 +22510,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
             } catch (e) {
               const errVal = e?.response?.data || e?.message || String(e);
               const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
               if (st === 'duplicate') {
                 await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                 results.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null, error: null };
@@ -22778,7 +22580,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
             const providerErrViews = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
             if (providerErrViews && !orderIdViews) {
               const errStr = typeof providerErrViews === 'string' ? providerErrViews : JSON.stringify(providerErrViews);
-              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
               if (st === 'duplicate') {
                 await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': providerErrViews, 'fama24h_views.requestPayload': { service: 7, link: viewsLink, quantity: viewsQty }, 'fama24h_views.response': data, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
                 resultItem.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null };
@@ -22795,7 +22597,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
           } catch (e) {
             const errVal = e?.response?.data || e?.message || String(e);
             const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-            const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+            const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
             if (st === 'duplicate') {
               await col.updateOne(filter, { $set: { 'fama24h_views.status': 'duplicate', 'fama24h_views.duplicate': errVal, 'fama24h_views.requestPayload': { service: 7, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_views.error': '' } });
               resultItem.views = { duplicate: true, orderId: record?.fama24h_views?.orderId || null };
@@ -22851,7 +22653,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
               } catch (e) {
                 const errVal = e?.response?.data || e?.message || String(e);
                 const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                 if (st === 'duplicate') {
                   await col.updateOne(filter, { $set: { 'fornecedor_social_likes.status': 'duplicate', 'fornecedor_social_likes.duplicate': errVal, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() }, $unset: { 'fornecedor_social_likes.error': '' } });
                   resultItem.likes = { duplicate: true, orderId: record?.fornecedor_social_likes?.orderId || null };
@@ -22885,7 +22687,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
                   const providerErrLikes = (data && (data.error || (data.data && data.data.error) || (data.response && data.response.error))) || null;
                   if (providerErrLikes && !orderIdLikes) {
                     const errStr = typeof providerErrLikes === 'string' ? providerErrLikes : JSON.stringify(providerErrLikes);
-                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                    const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                     if (st === 'duplicate') {
                       await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': providerErrLikes, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.response': data, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                       resultItem.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null };
@@ -22902,7 +22704,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
                 } catch (e) {
                   const errVal = e?.response?.data || e?.message || String(e);
                   const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                   if (st === 'duplicate') {
                     await col.updateOne(filter, { $set: { 'fama24h_likes.status': 'duplicate', 'fama24h_likes.duplicate': errVal, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLink, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() }, $unset: { 'fama24h_likes.error': '' } });
                     resultItem.likes = { duplicate: true, orderId: record?.fama24h_likes?.orderId || null };
@@ -24289,7 +24091,7 @@ app.post('/session/mark-paid', async (req, res) => {
                     const orderId = extractProviderOrderId(famaData);
                     const hasErr = !!(famaData && (famaData.error || famaData.errors));
                     const errText = String((famaData && (famaData.error || famaData.errors || famaData.message)) || '').toLowerCase();
-                    const isDup = !orderId && (errText.includes('link_duplicate') || /neworder\.error\.link_duplicate/.test(errText));
+                    const isDup = !orderId && isDuplicateProviderError(errText);
                     let oid = orderId ? String(orderId) : null;
                     if (!oid && isDup) {
                       const prev = await findExistingFamaOrderIdByLink(col, link);
@@ -24300,7 +24102,7 @@ app.post('/session/mark-paid', async (req, res) => {
                   } catch (err) {
                     const errVal = err?.response?.data || err?.message || String(err);
                     const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                    const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                    const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                     let oid = null;
                     if (st === 'duplicate') {
                       const prev = await findExistingFamaOrderIdByLink(col, link);
@@ -24544,7 +24346,7 @@ app.post('/session/mark-paid', async (req, res) => {
                 } catch (e2) {
                   const errVal = e2?.response?.data || e2?.message || String(e2);
                   const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                   try { console.error('❌ [mark-paid] fama24h_views_error', errVal); } catch(_) {}
                   await col.updateOne(filter, { $set: { 'fama24h_views.status': st, 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
                 }
@@ -24597,7 +24399,7 @@ app.post('/session/mark-paid', async (req, res) => {
                     } catch (e3) {
                       const errVal = e3?.response?.data || e3?.message || String(e3);
                       const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                       try { console.error('❌ [mark-paid] fornecedor_social_likes_error', errVal); } catch(_) {}
                       await col.updateOne(filter, { $set: { 'fornecedor_social_likes.error': errVal, 'fornecedor_social_likes.status': st, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQty }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() } });
                     }
@@ -24627,7 +24429,7 @@ app.post('/session/mark-paid', async (req, res) => {
                     } catch (e3) {
                       const errVal = e3?.response?.data || e3?.message || String(e3);
                       const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                      const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                      const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                       try { console.error('❌ [mark-paid] fama24h_likes_error', errVal); } catch(_) {}
                       await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': st, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
                     }
@@ -39085,6 +38887,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
                 { 'fama24h.orderId': '' },
                 { 'fama24h.orderId': null }
               ]
+            },
+            {
+              // Curtidas/visualizações vão pelo fama24h_multi. Só é "unknown" se o multi
+              // TAMBÉM falhou — se subiu (created/duplicate/partial), não entra no painel.
+              $or: [
+                { fama24h_multi: { $exists: false } },
+                { 'fama24h_multi.status': { $in: ['error', 'unknown'] } }
+              ]
             }
           ]
         },
@@ -39106,6 +38916,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
                 { 'fornecedor_social.orderId': { $exists: false } },
                 { 'fornecedor_social.orderId': '' },
                 { 'fornecedor_social.orderId': null }
+              ]
+            },
+            {
+              // Orgânicos podem ir pelo fornecedor_social_multi. Só é "unknown" se o multi
+              // TAMBÉM falhou (created/duplicate/partial = subiu, não entra no painel).
+              $or: [
+                { fornecedor_social_multi: { $exists: false } },
+                { 'fornecedor_social_multi.status': { $in: ['error', 'unknown'] } }
               ]
             }
           ]
@@ -46825,6 +46643,7 @@ const server = app.listen(port, () => {
   try { startEmailBounceLoop(); } catch (_) {} // processa bounces (DSN) → supressão automática
   try { startLtvD2Loop(); } catch (_) {} // LTV D+2: só ENVIA se a config (settings.ltv_d2.enabled) estiver ligada — desligado por padrão
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
+  try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
 
@@ -48313,7 +48132,7 @@ app.post('/api/payment/confirm', async (req, res) => {
             } catch (e2) {
               const errVal = e2?.response?.data || e2?.message || String(e2);
               const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-              const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+              const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
               await col.updateOne(filter, { $set: { 'fama24h_views.status': st, 'fama24h_views.error': errVal, 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
             }
           }
@@ -48355,7 +48174,7 @@ app.post('/api/payment/confirm', async (req, res) => {
                 } catch (e3) {
                   const errVal = e3?.response?.data || e3?.message || String(e3);
                   const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                   await col.updateOne(filter, { $set: { 'fornecedor_social_likes.error': errVal, 'fornecedor_social_likes.status': st, 'fornecedor_social_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQty }, 'fornecedor_social_likes.requestedAt': new Date().toISOString() } });
                 }
               }
@@ -48379,7 +48198,7 @@ app.post('/api/payment/confirm', async (req, res) => {
                 } catch (e3) {
                   const errVal = e3?.response?.data || e3?.message || String(e3);
                   const errStr = (typeof errVal === 'string') ? errVal : JSON.stringify(errVal);
-                  const st = errStr && errStr.includes('link_duplicate') ? 'duplicate' : 'error';
+                  const st = isDuplicateProviderError(errStr) ? 'duplicate' : 'error';
                   await col.updateOne(filter, { $set: { 'fama24h_likes.error': errVal, 'fama24h_likes.status': st, 'fama24h_likes.requestPayload': { service: likesBumpConf.serviceId, link: likesLinkSel, quantity: likesQty }, 'fama24h_likes.requestedAt': new Date().toISOString() } });
                 }
               }

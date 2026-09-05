@@ -160,6 +160,11 @@ function createOrder(payload) {
   return request('post', '/orders', payload);
 }
 
+/** POST /v1/service-invoices — emite NFS-e (nota de serviço) direta. */
+function createServiceInvoice(payload) {
+  return request('post', '/service-invoices', payload);
+}
+
 /** GET /v1/service-invoices/{id} — consulta NFS-e. */
 function getServiceInvoice(id) {
   return request('get', `/service-invoices/${encodeURIComponent(id)}`);
@@ -183,6 +188,7 @@ module.exports = {
   isConfigured,
   request,
   createOrder,
+  createServiceInvoice,
   getServiceInvoice,
   getProductInvoice,
   getInvoice,

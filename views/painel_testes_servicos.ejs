@@ -84,10 +84,10 @@
     tr.row-failed td { background: #f7e0e0 !important; color: #7b6b6b !important; }
     tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7b6b6b; }
     tr.row-failed:hover td { background: #f2d3d3 !important; }
-    /* Acento vermelho só na 1ª célula + X na frente. ::before sobrevive ao renumber()
-       (que só reescreve o textContent da célula). */
+    /* Acento vermelho sutil só na 1ª célula (sem o X). */
     tr.row-failed td.rownum { box-shadow: inset 3px 0 0 #dc2626; font-weight: 700; }
-    tr.row-failed .rownum::before { content: "\2715 "; color: #dc2626; font-weight: 800; }
+    /* Ocultar perfis mortos: quando ligado, some com as linhas que caíram. */
+    #gridWrap.hide-dead tr.row-failed { display: none; }
     /* ordenação + filtro por coluna */
     thead th.sortable { cursor: pointer; user-select: none; }
     thead th.sortable:hover { background: #eef1f5; }
@@ -113,6 +113,10 @@
 
     <div class="toolbar">
       <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
+      <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem; color:#374151; user-select:none;">
+        <input type="checkbox" id="hideDeadChk"> Ocultar perfis mortos
+      </label>
+      <span id="hideDeadCount" class="sub" style="margin:0; color:#9ca3af;"></span>
       <span id="checkAllMsg" class="sub" style="margin:0;"></span>
     </div>
 
@@ -582,6 +586,26 @@
         syncWidth();
         setTimeout(syncWidth, 300); // re-sincroniza após render dos filtros/colunas
       })();
+    })();
+  </script>
+  <script>
+    // Ocultar perfis mortos (linhas que caíram / measureFailed). Lembra a escolha.
+    (function(){
+      var chk = document.getElementById('hideDeadChk');
+      var grid = document.getElementById('gridWrap');
+      var cnt = document.getElementById('hideDeadCount');
+      if (!chk || !grid) return;
+      function deadCount(){ return grid.querySelectorAll('tr.row-failed').length; }
+      function apply(on){
+        grid.classList.toggle('hide-dead', on);
+        var d = deadCount();
+        if (cnt) cnt.textContent = on ? (d ? ('(' + d + ' oculto' + (d > 1 ? 's' : '') + ')') : '(nenhum morto)') : '';
+        try { localStorage.setItem('svcHideDead', on ? '1' : '0'); } catch(_){}
+      }
+      var saved = '0'; try { saved = localStorage.getItem('svcHideDead') || '0'; } catch(_){}
+      chk.checked = saved === '1';
+      apply(chk.checked);
+      chk.addEventListener('change', function(){ apply(chk.checked); });
     })();
   </script>
 </body>

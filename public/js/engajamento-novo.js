@@ -642,7 +642,19 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     ];
 
-    servicesConfig.forEach(config => {
+    // Respeita a visibilidade do "Gerenciamento de Tipos": some com os tipos ocultados
+    // (ex.: ocultou "seguidores mistos" → a seção de mistos nem é renderizada).
+    // Chaves: followers→seguidores, likes→curtidas, views→visualizacoes; usa config.type.
+    const __sv = (window.__serviceVisibility && typeof window.__serviceVisibility === 'object') ? window.__serviceVisibility : {};
+    const __svCtxKey = { followers: 'seguidores', likes: 'curtidas', views: 'visualizacoes' };
+    const __isTypeHidden = (c) => {
+      const ctx = __svCtxKey[c.service]; if (!ctx) return false;
+      const hidden = Array.isArray(__sv[ctx]) ? __sv[ctx].map(x => String(x || '').trim()) : [];
+      return hidden.indexOf(String(c.type)) !== -1;
+    };
+    const visibleServices = servicesConfig.filter(c => !__isTypeHidden(c));
+
+    visibleServices.forEach(config => {
       // Section Container
       const section = document.createElement('div');
       section.className = 'section-block section-with-bg';

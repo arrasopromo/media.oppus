@@ -1203,17 +1203,26 @@
 
   <%- include('partials/footer') %>
   
+  <script>window.__serviceVisibility = <%- JSON.stringify((typeof serviceVisibility !== 'undefined' && serviceVisibility) ? serviceVisibility : {}) %>;</script>
   <script src="/js/main.js?v=13"></script>
   <script src="/js/checkout.js?v=<%= Date.now() %>"></script>
-  <script src="/js/engajamento-novo.js?v=13"></script>
+  <script src="/js/engajamento-novo.js?v=14"></script>
   
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Initialize with first option selected (Followers + Mistos)
-      // This ensures the quantity selector is visible immediately
-      if (window.selectDirectService) {
-        window.selectDirectService('followers', 'mistos');
-      }
+      // Seleciona o PRIMEIRO tipo VISÍVEL (respeita o "Gerenciamento de Tipos").
+      // Se ocultou seguidores mistos, cai no brasileiro; se todos os seguidores
+      // estão ocultos, cai na primeira curtida visível.
+      if (!window.selectDirectService) return;
+      var sv = window.__serviceVisibility || {};
+      var hiddenSeg = Array.isArray(sv.seguidores) ? sv.seguidores.map(function(x){ return String(x||'').trim(); }) : [];
+      var hiddenCur = Array.isArray(sv.curtidas) ? sv.curtidas.map(function(x){ return String(x||'').trim(); }) : [];
+      var segOrder = ['mistos', 'brasileiros', 'organicos'];
+      var curOrder = ['mistos', 'curtidas_brasileiras', 'organicos'];
+      var firstSeg = segOrder.filter(function(t){ return hiddenSeg.indexOf(t) === -1; })[0];
+      if (firstSeg) { window.selectDirectService('followers', firstSeg); return; }
+      var firstCur = curOrder.filter(function(t){ return hiddenCur.indexOf(t) === -1; })[0];
+      if (firstCur) { window.selectDirectService('likes', firstCur); }
     });
   </script>
 

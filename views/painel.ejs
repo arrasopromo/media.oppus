@@ -143,6 +143,21 @@
       #serviceTypes .service-types-table td:nth-child(3)::before { content: "ID solicitação: "; font-weight: 700; color: #6b7280; }
       #serviceTypes .service-types-table td:nth-child(4) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
       #serviceTypes .service-types-table td:nth-child(4)::before { content: "Oculto: "; font-weight: 700; color: #6b7280; }
+      /* Saldo dos painéis: vira cartões no celular */
+      #panelBalances .panel-table-scroll { overflow-x: visible; }
+      #panelBalances .panel-balances-table { min-width: 0 !important; }
+      #panelBalances .panel-balances-table thead { display: none; }
+      #panelBalances .panel-balances-table,
+      #panelBalances .panel-balances-table tbody,
+      #panelBalances .panel-balances-table tr,
+      #panelBalances .panel-balances-table td { display: block; width: 100%; box-sizing: border-box; }
+      #panelBalances .panel-balances-table tr { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+      #panelBalances .panel-balances-table td { border-bottom: none !important; padding: 6px 0 !important; text-align: right !important; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      #panelBalances .panel-balances-table td::before { font-weight: 700; color: #6b7280; }
+      #panelBalances .panel-balances-table td:nth-child(1)::before { content: "Painel"; }
+      #panelBalances .panel-balances-table td:nth-child(2)::before { content: "Saldo"; }
+      #panelBalances .panel-balances-table td:nth-child(3)::before { content: "Limite"; }
+      #panelBalances .panel-balances-table td:nth-child(4)::before { content: "Alertar"; }
     }
   </style>
 </head>
@@ -3462,6 +3477,78 @@
           </table>
         </div>
       </div>
+
+      <div id="panelBalances" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:800; color:#111827;">Saldo dos painéis (fornecedores)</div>
+            <div style="font-size:0.85rem; color:#6b7280;">Alerta de saldo baixo no WhatsApp. Ligue/desligue o alerta por painel.</div>
+          </div>
+          <button type="button" id="panelBalancesReload" class="unknown-btn">Atualizar saldos</button>
+        </div>
+        <div class="panel-table-scroll" style="margin-top:12px; overflow-x:auto;">
+          <table class="panel-balances-table" style="width:100%; border-collapse:collapse; min-width:420px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Painel</th>
+                <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Saldo</th>
+                <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite</th>
+                <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Alertar</th>
+              </tr>
+            </thead>
+            <tbody id="panelBalancesBody">
+              <tr><td colspan="4" style="padding:12px; text-align:center; color:#777;">Carregando saldos…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <script>
+        (function(){
+          var body = document.getElementById('panelBalancesBody');
+          if (!body) return;
+          function fmt(v){ try { return 'R$ ' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); } catch(_){ return 'R$ ' + v; } }
+          function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+          function bindToggles(){
+            Array.prototype.slice.call(document.querySelectorAll('.panelAlertChk')).forEach(function(chk){
+              chk.addEventListener('change', function(){
+                var panel = chk.getAttribute('data-panel'); var on = chk.checked; chk.disabled = true;
+                fetch('/api/painel/saldo/alert-config', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ panel: panel, alertEnabled: on }) })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){ chk.disabled=false; var lbl=chk.parentNode.querySelector('.panelAlertLbl'); if(lbl) lbl.textContent = on?'ligado':'desligado'; if(!d||!d.ok){ chk.checked=!on; if(lbl) lbl.textContent=(!on)?'ligado':'desligado'; alert('Falha ao salvar: '+((d&&d.error)||'erro')); } })
+                  .catch(function(){ chk.disabled=false; chk.checked=!on; alert('Erro de rede.'); });
+              });
+            });
+          }
+          function render(rows){
+            if (!rows || !rows.length){ body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#777;">Nenhum painel</td></tr>'; return; }
+            body.innerHTML = rows.map(function(r){
+              var saldo = !r.configured ? '<span style="color:#9ca3af;">sem chave</span>'
+                : (r.ok ? '<strong style="color:'+(r.low?'#b91c1c':'#166534')+'">'+fmt(r.balance)+'</strong>'+(r.low?' <span style="font-size:0.7rem;color:#b91c1c;">baixo</span>':'') : '<span style="color:#b45309;" title="'+esc(r.error)+'">erro</span>');
+              var on = (r.alertEnabled !== false);
+              return '<tr>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;color:#111827;">'+esc(r.label)+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;">'+saldo+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;color:#6b7280;">'+fmt(r.threshold)+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:center;">'
+                +   '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">'
+                +     '<input type="checkbox" class="panelAlertChk" data-panel="'+esc(r.panel)+'" '+(on?'checked':'')+'>'
+                +     '<span class="panelAlertLbl" style="font-size:0.8rem;color:#6b7280;">'+(on?'ligado':'desligado')+'</span>'
+                +   '</label></td>'
+                + '</tr>';
+            }).join('');
+            bindToggles();
+          }
+          function load(){
+            body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#777;">Carregando saldos…</td></tr>';
+            fetch('/api/painel/saldo/list', { credentials:'same-origin' })
+              .then(function(r){ return r.json(); })
+              .then(function(d){ if(d&&d.ok) render(d.rows||[]); else body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#b91c1c;">Erro ao carregar</td></tr>'; })
+              .catch(function(){ body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#b91c1c;">Erro de rede</td></tr>'; });
+          }
+          var rl=document.getElementById('panelBalancesReload'); if(rl) rl.addEventListener('click', load);
+          load();
+        })();
+      </script>
       <script type="application/json" id="serviceTypeServiceIdsJson"><%- JSON.stringify(ids0 || {}).replace(/</g, '\\u003c') %></script>
       <script>
         (function(){

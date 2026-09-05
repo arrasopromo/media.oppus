@@ -358,6 +358,68 @@ function pickInvoiceFromOrderResponse(data) {
   }
 }
 
+// Liga o modo EBOOK (split na 1ª compra). Enquanto false (padrão), o sistema emite
+// SÓ nota de SERVIÇO do valor cheio para todo pedido pago. Ligar só após a troca de CNAE.
+function ebookEnabled() {
+  return String(process.env.SPEEDY_EBOOK_ENABLED || '').trim().toLowerCase() === 'true';
+}
+// Tomador (receiver) da NFS-e. A NFS-e IDENTIFICA o tomador por nome + e-mail + telefone
+// mesmo SEM CPF (confirmado na Spedy/Vespasiano). Então montamos o tomador com o que
+// houver (+ CPF quando existir). Só fica "sem tomador" quando não há NENHUM dado real.
+function buildServiceReceiver(record) {
+  const c = (record.customer && typeof record.customer === 'object') ? record.customer : {};
+  const cpf = resolveCpf(record);
+  const name = resolveCustomerName(record); // nome real, ou 'Consumidor Final' se não houver
+  const email = String(c.email || '').trim();
+  const phone = onlyDigits(c.phone_number || c.phone || c.telefone || c.whatsapp);
+  if (!cpf && !email && !phone && name === 'Consumidor Final') return null; // anônimo → sem tomador
+  const rec = { name };
+  if (cpf) rec.federalTaxNumber = cpf;
+  if (email) rec.email = email;
+  if (phone) rec.phoneNumber = phone;
+  return rec;
+}
+// Emite uma NOTA DE SERVIÇO (NFS-e) do valor `amount` via POST /service-invoices.
+// Sem tomador quando não há CPF (permitido em NFS-e). Grava o resultado em notaFiscal.
+async function emitirNotaServico(record, col, amount, opts = {}) {
+  if (!(amount > 0)) return { ok: false, skipped: true, reason: 'zero_amount' };
+  const cfg = spedy.getConfig();
+  if (!opts.force && !opts._alreadyClaimed) {
+    const claimed = await claimOrder(col, record, cfg.environment);
+    if (!claimed) return { ok: false, skipped: true, reason: 'already_claimed_or_issued' };
+  } else if (opts.force) {
+    await persistNota(col, record._id, { emissionState: 'claimed', environment: cfg.environment, requestedAt: nowIso() });
+  }
+  await persistNota(col, record._id, { kind: 'servico', orderAmount: resolveAmountReais(record), serviceAmount: amount });
+  // Nota de SERVIÇO é emitida SEM TOMADOR (sem receiver) — decisão do negócio.
+  const desc = String(process.env.SPEEDY_SERVICE_DESCRIPTION || DEFAULT_SERVICE_DESCRIPTION).trim() || DEFAULT_SERVICE_DESCRIPTION;
+  const payload = {
+    description: desc,
+    issue: true,
+    sendEmailToCustomer: envBool(process.env.SPEEDY_SEND_EMAIL, false),
+    effectiveDate: new Date(orderDateMs(record) || Date.now()).toISOString(),
+    total: { invoiceAmount: amount, netAmount: amount },
+  };
+  const resp = await spedy.createServiceInvoice(payload);
+  if (!resp.ok) {
+    await persistNota(col, record._id, { emissionState: 'error', error: resp.message || resp.error || 'erro', httpStatus: resp.status });
+    return { ok: false, reason: resp.error, message: resp.message, status: resp.status };
+  }
+  const d = resp.data || {};
+  const st = String(d.status || '').toLowerCase();
+  await persistNota(col, record._id, {
+    model: 'serviceInvoice',
+    kind: 'servico',
+    emissionState: st === 'authorized' ? 'authorized' : ((st === 'canceled' || st === 'cancelled') ? 'canceled' : 'enqueued'),
+    invoiceId: String(d.id || ''),
+    number: (d.number != null ? d.number : null),
+    status: String(d.status || ''),
+    semTomador: true,
+    error: null,
+  });
+  return { ok: true, invoiceId: d.id, number: d.number, status: d.status, amount, semTomador: true };
+}
+
 /**
  * Emite a nota fiscal de um pedido pago.
  * @param {object} record  documento de checkout_orders (deve ter _id)
@@ -380,7 +442,15 @@ async function emitirNotaParaPedido(record, col, opts = {}) {
       return { ok: false, skipped: true, reason: 'zero_amount' };
     }
 
-    // ── REGRA: Spedy emite SÓ a nota de EBOOK, SÓ na 1ª compra ──
+    // ── MODO SERVIÇO (padrão, enquanto SPEEDY_EBOOK_ENABLED != true) ──
+    // Emite nota de SERVIÇO do valor CHEIO para TODO pedido pago (recompra inclusa;
+    // sem tomador quando não há CPF). Aguardando a troca de CNAE para ligar o ebook.
+    // O bloco de EBOOK abaixo só roda com a flag ligada.
+    if (!ebookEnabled()) {
+      return await emitirNotaServico(record, col, amount, opts);
+    }
+
+    // ── REGRA (modo EBOOK): Spedy emite SÓ a nota de EBOOK, SÓ na 1ª compra ──
     const ctrlCfg = await getControladoriaConfig();
     const orderMs = orderDateMs(record);
 
