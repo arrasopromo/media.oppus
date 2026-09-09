@@ -3794,15 +3794,23 @@ app.get('/painel/ia-crm', requireAdmin, (req, res) => {
 app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
   try {
     const col = await getCollection('wa_ia_messages');
-    const convs = await col.aggregate([
+    // scope: 'new' (só conversas do nosso número, sem histórico importado),
+    // 'legacy' (só o histórico do DataCrazy) ou 'all' (padrão). Sem isso, as
+    // ~2.3k conversas importadas afogam as novas na lista.
+    const scope = String(req.query.scope || 'all').toLowerCase();
+    const pipeline = [];
+    if (scope === 'new') pipeline.push({ $match: { importedFrom: { $ne: 'datacrazy' } } });
+    else if (scope === 'legacy') pipeline.push({ $match: { importedFrom: 'datacrazy' } });
+    pipeline.push(
       { $sort: { createdAt: -1 } },
       { $group: { _id: '$phone', lastText: { $first: '$text' }, lastDir: { $first: '$direction' }, lastAt: { $first: '$createdAt' }, name: { $first: '$name' } } },
       { $sort: { lastAt: -1 } },
-      { $limit: 300 },
-    ]).toArray();
+      { $limit: 300 }
+    );
+    const convs = await col.aggregate(pipeline).toArray();
     const phones = convs.map((c) => c._id);
     const cc = await getCollection('whatsapp_contacts');
-    const contacts = await cc.find({ _id: { $in: phones } }, { projection: { botPaused: 1, unread: 1, name: 1 } }).toArray().catch(() => []);
+    const contacts = await cc.find({ _id: { $in: phones } }, { projection: { botPaused: 1, unread: 1, name: 1, legacy: 1, importedFrom: 1 } }).toArray().catch(() => []);
     const cmap = {}; for (const c of contacts) cmap[c._id] = c;
     const list = convs.map((c) => ({
       phone: c._id,
@@ -3810,6 +3818,10 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
       lastText: c.lastText || '', lastDir: c.lastDir, lastAt: c.lastAt,
       botPaused: !!(cmap[c._id] && cmap[c._id].botPaused),
       unread: !!(cmap[c._id] && cmap[c._id].unread),
+      // Conversa IMPORTADA (histórico do DataCrazy): nasce com a IA pausada e ganha
+      // uma tag própria, pra não se confundir com chat que o atendente assumiu.
+      legacy: !!(cmap[c._id] && cmap[c._id].legacy),
+      importedFrom: (cmap[c._id] && cmap[c._id].importedFrom) || '',
     }));
     return res.json({ ok: true, conversations: list });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
@@ -3820,7 +3832,7 @@ app.get('/api/painel/ia-crm/messages', requireAdmin, async (req, res) => {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'no_phone' });
     const col = await getCollection('wa_ia_messages');
-    const msgs = await col.find({ phone }, { projection: { text: 1, direction: 1, createdAt: 1, agent: 1, type: 1, mediaId: 1, mime: 1, filename: 1 } }).sort({ createdAt: 1 }).limit(600).toArray();
+    const msgs = await col.find({ phone }, { projection: { text: 1, direction: 1, createdAt: 1, agent: 1, type: 1, mediaId: 1, mime: 1, filename: 1, wamid: 1, replyTo: 1 } }).sort({ createdAt: 1 }).limit(600).toArray();
     const cc = await getCollection('whatsapp_contacts');
     try { await cc.updateOne({ _id: phone }, { $set: { unread: false } }); } catch (_) {}
     const contact = await cc.findOne({ _id: phone }, { projection: { botPaused: 1, name: 1 } });
@@ -3832,11 +3844,13 @@ app.post('/api/painel/ia-crm/send', requireAdmin, async (req, res) => {
   try {
     const phone = String((req.body && req.body.phone) || '').trim();
     const text = String((req.body && req.body.text) || '').trim();
+    // wamid da mensagem sendo CITADA (responder mensagem específica). Opcional.
+    const replyTo = String((req.body && req.body.replyTo) || '').trim();
     if (!phone || !text) return res.status(400).json({ ok: false, error: 'missing' });
     const cc = await getCollection('whatsapp_contacts');
     await cc.updateOne({ _id: phone }, { $set: { botPaused: true } }, { upsert: true });
     const wa = require('./whatsappCloud.js');
-    const r = await wa.sendWhatsAppText(phone, text, { agent: true });
+    const r = await wa.sendWhatsAppText(phone, text, { agent: true, replyTo });
     if (!r || !r.ok) return res.status(502).json({ ok: false, error: 'send_failed', detail: (r && (r.error || r.status)) || 'erro' });
     return res.json({ ok: true });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
@@ -4222,6 +4236,34 @@ app.get('/api/instagram/info', async (req, res) => {
         console.error('Erro na rota /api/instagram/info:', error);
         res.status(500).json({ success: false, error: 'Erro interno ao buscar perfil' });
     }
+});
+
+// Verifica se o @ já tem uma extensão de refil ATIVA (6m/12m/vitalício não expirada).
+// O checkout usa isso pra OCULTAR o order bump de garantia — evita a pessoa recomprar
+// refil e ficar sobrescrevendo a extensão. Fail-open: em erro, responde active:false
+// (mostra o bump), pra nunca esconder por engano.
+app.get('/api/refil/warranty-status', async (req, res) => {
+  try {
+    try { res.set('Cache-Control', 'no-store'); } catch (_) {}
+    const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+    if (hitRateLimit(`warranty_ip:${ip}`, 120, 10 * 60 * 1000)) return res.json({ ok: true, active: false, rateLimited: true });
+    const u = String(req.query.username || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._]/g, '');
+    if (!u) return res.json({ ok: true, active: false });
+    const tl = await getCollection('temporary_links');
+    const rec = await tl.findOne(
+      { purpose: 'refil', $or: [{ instauser: u }, { instausers: u }] },
+      { projection: { warrantyMode: 1, expiresAt: 1 } }
+    );
+    if (!rec) return res.json({ ok: true, active: false });
+    const mode = String(rec.warrantyMode || '').toLowerCase();
+    const isExtended = (mode === '6m' || mode === '12m' || mode === 'life' || mode === 'lifetime');
+    let active = false;
+    if (isExtended) {
+      if (mode === 'life' || mode === 'lifetime') active = true;
+      else { const t = rec.expiresAt ? new Date(rec.expiresAt).getTime() : 0; active = Number.isFinite(t) && t > Date.now(); }
+    }
+    return res.json({ ok: true, active, mode: mode || null, expiresAt: rec.expiresAt || null });
+  } catch (e) { return res.json({ ok: true, active: false }); }
 });
 
 const PROFILE_CACHE = new Map();
@@ -9944,8 +9986,15 @@ app.get('/api/painel/ia-crm/media', requireAdmin, async (req, res) => {
     if (!/^[0-9]+$/.test(mediaId)) return res.status(400).json({ ok: false, error: 'invalid_id' });
     const wa = require('./whatsappCloud.js');
     const c = await getCollection('wa_ia_messages');
-    const doc = await c.findOne({ mediaId }, { projection: { _id: 1, mime: 1 } });
+    const doc = await c.findOne({ mediaId }, { projection: { _id: 1, mime: 1, demoB64: 1, demoMime: 1 } });
     if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+    // DEMO: mídia embutida (seed de teste) — serve os bytes direto, sem chamar a Meta.
+    if (doc.demoB64) {
+      res.setHeader('Content-Type', String(doc.demoMime || doc.mime || 'application/octet-stream'));
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('Content-Disposition', 'inline');
+      return res.end(Buffer.from(String(doc.demoB64), 'base64'));
+    }
     const cfg = wa.getIaConfig();
     if (!cfg.phoneId || !cfg.token) return res.status(400).json({ ok: false, error: 'not_configured' });
     const axios = require('axios');
@@ -14407,6 +14456,15 @@ const isPaghiperCompletedStatus = (statusLower) => {
     return /\b(completed|complete)\b/i.test(s);
 };
 
+// ESTORNO: a PagHiper devolve `refunded` (estorno de PIX pago) e, em chargebacks,
+// `chargeback`/`reversed`. `canceled`/`cancelled` só é estorno se o pedido JÁ estava
+// pago (invoice cancelada sem pagamento não é estorno — é boleto/PIX que expirou).
+const isPaghiperRefundStatus = (statusLower) => {
+    const s = String(statusLower || '').toLowerCase().trim();
+    if (!s) return false;
+    return /\b(refunded|refund|estornad|estorno|chargeback|charged_back|reversed)\b/i.test(s);
+};
+
 app.post('/api/paghiper/charge', async (req, res) => {
     try {
         const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -15355,10 +15413,65 @@ app.post('/api/paghiper/notification', async (req, res) => {
             if (phStatusDateIso) setFields['paghiper.statusAt'] = phStatusDateIso;
         }
 
+        // ── ESTORNO / CHARGEBACK ──────────────────────────────────────────────
+        // A PagHiper manda `refunded` no estorno de PIX pago. `canceled` só conta
+        // como estorno se o pedido JÁ estava pago (invoice cancelada sem pagamento
+        // é PIX/boleto que expirou — não é devolução de dinheiro). Marca o pedido
+        // como 'estornado' (sai do faturamento, que conta por status='pago'/token)
+        // e cancela a nota fiscal, se já houver uma AUTORIZADA na Spedy.
+        const canceledLower = /\b(cancel)/i.test(statusLower);
+        const wasPaid = !!(existingOrder && (
+            String(existingOrder.status || '').toLowerCase() === 'pago' ||
+            existingOrder.paidAt ||
+            (existingOrder.paghiper && existingOrder.paghiper.paidAt)
+        ));
+        const refundFlag = !paidFlag && (isPaghiperRefundStatus(statusLower) || (canceledLower && wasPaid));
+        // $unset aplicado junto do estorno: tira o pedido do faturamento de vez.
+        // Várias queries de receita casam por `paidAt`/`paghiper.paidAt` EXISTENTE
+        // (não só por status='pago'); então movemos os marcadores de pagamento para
+        // campos `refunded*` (auditoria preservada no bloco paghiper.statusPayload).
+        const unsetFields = {};
+        if (refundFlag) {
+            setFields.status = 'estornado';
+            setFields['paghiper.status'] = statusLower || 'refunded';
+            setFields.refundedAt = parsePaghiperDateToIso(stRoot?.status_date) || new Date().toISOString();
+            setFields['paghiper.refundedAt'] = setFields.refundedAt;
+            if (paidValueCents != null) setFields.refundedValueCents = paidValueCents;
+            // preserva os timestamps de pagamento originais antes de removê-los da receita
+            const origPaidAt = (existingOrder && existingOrder.paidAt) || null;
+            const origPhPaidAt = (existingOrder && existingOrder.paghiper && existingOrder.paghiper.paidAt) || null;
+            if (origPaidAt) { setFields.refundedPaidAt = origPaidAt; unsetFields.paidAt = ''; }
+            if (origPhPaidAt) { setFields['paghiper.refundedPaidAt'] = origPhPaidAt; unsetFields['paghiper.paidAt'] = ''; }
+        }
+
+        const updateDoc = Object.keys(unsetFields).length ? { $set: setFields, $unset: unsetFields } : { $set: setFields };
         if (existingOrder) {
-            await col.updateOne({ _id: existingOrder._id }, { $set: setFields });
+            await col.updateOne({ _id: existingOrder._id }, updateDoc);
         } else if (conds.length) {
-            await col.updateOne(filter, { $set: setFields });
+            await col.updateOne(filter, updateDoc);
+            // Notificação (estorno/pago) de um pedido que NÃO existe no banco → nada é
+            // gravado (updateOne sem upsert). Loga p/ dar visibilidade a esse gap.
+            if (refundFlag || paidFlag) {
+                console.warn(`⚠️ [PagHiper] notificação ${statusLower || '?'} sem pedido no banco — transação ${transactionId}, order_id ${orderId || '?'}.`);
+            }
+        }
+
+        // Estorno confirmado + pedido existente → cancela a nota fiscal (se autorizada).
+        if (refundFlag && existingOrder) {
+            try {
+                const record = await col.findOne({ _id: existingOrder._id });
+                const motivo = `Estorno PagHiper (${statusLower || 'refunded'}) — transação ${transactionId}.`;
+                const r = await notaFiscalManager.cancelarNotaDoPedido(record, col, motivo);
+                if (r && r.ok && !r.skipped) {
+                    console.log(`🧾❌ [PagHiper] pedido ${record?.identifier || record?._id} estornado → nota cancelada (nº ${r.number || r.invoiceId}).`);
+                } else if (r && r.skipped) {
+                    console.log(`ℹ️ [PagHiper] pedido ${record?.identifier || record?._id} estornado → nota: ${r.reason}.`);
+                } else if (r && !r.ok) {
+                    console.warn(`⚠️ [PagHiper] pedido ${record?.identifier || record?._id} estornado → FALHA ao cancelar nota: ${r.message || r.reason}.`);
+                }
+            } catch (eR) {
+                console.error('[PagHiper] erro ao cancelar nota do estorno:', eR?.message);
+            }
         }
 
         if (paidFlag && existingOrder && !isDivergent) {
@@ -16852,13 +16965,26 @@ app.get('/painel/notas-fiscais', requireAdmin, async (req, res) => {
       const fd = o.fiscalData || {};
       return {
         id: String(o._id || ''),
+        identifier: String(o.identifier || '').trim(),
         date: o.paidAt || o.createdAt || o.criado || null,
         name: c.name || c.nome || fd.nome || '-',
         phone: String(c.phone_number || c.phone || c.telefone || c.whatsapp || getAdd('telefone') || getAdd('phone') || '').trim(),
         cpf: String(c.cpf || c.federalTaxNumber || fd.cpf || '').replace(/\D/g, ''),
-        hasAddress: !!(fd.endereco || (c.address && (c.address.street || c.address.postalCode))),
+        hasAddress: (function () {
+          // Estrito: só ✓ quando há endereço REAL (rua/CEP). Antes qualquer fd.endereco
+          // (até objeto vazio) virava ✓ falso. Nota de serviço sem tomador não usa endereço.
+          try {
+            const addrC = c.address && (String(c.address.street || '').trim() || String(c.address.postalCode || c.address.cep || '').trim());
+            const e = fd.endereco;
+            const addrF = e && (typeof e === 'string' ? e.trim() : String(e.logradouro || e.street || e.cep || e.postalCode || '').trim());
+            return !!(addrC || addrF);
+          } catch (_) { return false; }
+        })(),
         valueReais: (Number(o.valueCents || 0) / 100),
         state: String(nf.emissionState || '-'),
+        kind: String(nf.kind || ''),           // 'servico' | 'ebook'
+        model: String(nf.model || ''),         // 'serviceInvoice' | ...
+        semTomador: nf.semTomador === true,
         heldReason: nf.heldReason || null,
         error: nf.error || null,
         number: nf.number || null,
@@ -16962,15 +17088,23 @@ function _collectProviderChargeSources(order) {
     const q = Number(obj?.requestPayload?.quantity);
     out.push({ provider, orderId: id, statusPayload: obj.statusPayload || null, role: role || 'base', slot: slot || '', qtySent: (Number.isFinite(q) && q > 0) ? q : 0 });
   };
-  add('fama24h', order?.fama24h, 'base', 'fama24h');
-  add('fama24h', order?.fama24h_views, 'bump', 'fama24h_views');
-  add('fama24h', order?.fama24h_likes, 'bump', 'fama24h_likes');
+  // Os slots "fama24h*" são LEGADO de nomenclatura: o provedor REAL hoje é NuvraSMM.
+  // Mesma regra do resolveRefillProviderApi: orderId >= 1.000.000 = fama24h.net
+  // (histórico), abaixo disso = nuvra. Sem isto o rótulo saía sempre "fama24h".
+  const effFama = (obj) => {
+    try { const p = normalizeSmmProvider((obj && (obj.provider || obj.effProvider)) || ''); if (p && SMM_PROVIDERS[p]) return p; } catch (_) {}
+    const n = Number(obj && obj.orderId);
+    return (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra';
+  };
+  add(effFama(order?.fama24h), order?.fama24h, 'base', 'fama24h');
+  add(effFama(order?.fama24h_views), order?.fama24h_views, 'bump', 'fama24h_views');
+  add(effFama(order?.fama24h_likes), order?.fama24h_likes, 'bump', 'fama24h_likes');
   add('fornecedor_social', order?.fornecedor_social, 'base', 'fornecedor_social');
   add('fornecedor_social', order?.fornecedor_social_likes, 'bump', 'fornecedor_social_likes');
   add('topfama', order?.topfama, 'base', 'topfama');
   add('topfama', order?.topfama_likes, 'bump', 'topfama_likes');
   add('worldsmm', order?.worldsmm_comments, 'bump', 'worldsmm_comments');
-  (order?.fama24h_multi?.orders || []).forEach(o => add('fama24h', o, 'base', 'fama24h_multi'));
+  (order?.fama24h_multi?.orders || []).forEach(o => add(effFama(o), o, 'base', 'fama24h_multi'));
   (order?.fornecedor_social_multi?.orders || []).forEach(o => add('fornecedor_social', o, 'base', 'fornecedor_social_multi'));
 
   // Nem todo pedido tem slot principal: quando o serviço COMPRADO é views/curtidas/
@@ -17731,10 +17865,12 @@ async function fqFetchProviderStatus(provider, orderId) {
 function fqCollectProviderOrders(order) {
     const out = [];
     const pushIf = (provider, id) => { const s = String(id == null ? '' : id).trim(); if (s) out.push({ provider, orderId: s }); };
-    pushIf('fama24h', order?.fama24h?.orderId);
+    // Slot legado "fama24h": provedor real é NuvraSMM quando o orderId < 1.000.000.
+    const effFama = (id) => { const n = Number(id); return (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra'; };
+    pushIf(effFama(order?.fama24h?.orderId), order?.fama24h?.orderId);
     pushIf('fornecedor_social', order?.fornecedor_social?.orderId);
     pushIf('topfama', order?.topfama?.orderId);
-    (Array.isArray(order?.fama24h_multi?.orders) ? order.fama24h_multi.orders : []).forEach(o => pushIf('fama24h', o && (o.orderId ?? o.id)));
+    (Array.isArray(order?.fama24h_multi?.orders) ? order.fama24h_multi.orders : []).forEach(o => { const id = o && (o.orderId ?? o.id); pushIf(effFama(id), id); });
     (Array.isArray(order?.fornecedor_social_multi?.orders) ? order.fornecedor_social_multi.orders : []).forEach(o => pushIf('fornecedor_social', o && (o.orderId ?? o.id)));
     return out;
 }
@@ -19378,11 +19514,12 @@ async function fqBuildQueueRow(col, doc) {
                     const uname = fqOrderUsername(blocker) || username;
                     const found = await getFamaOrderIdFromMongo(uname);
                     if (found && found.orderId) {
-                        provOrders = [{ provider: 'fama24h', orderId: String(found.orderId) }];
-                        provider = 'fama24h';
+                        const _effProv = (Number.isFinite(Number(found.orderId)) && Number(found.orderId) >= 1000000) ? 'fama24h' : 'nuvra';
+                        provOrders = [{ provider: _effProv, orderId: String(found.orderId) }];
+                        provider = _effProv;
                         fallbackOrder = true;
                         let st = '';
-                        try { st = await fqFetchProviderStatus('fama24h', String(found.orderId)); } catch (_) {}
+                        try { st = await fqFetchProviderStatus(_effProv, String(found.orderId)); } catch (_) {}
                         statuses = st ? [st] : [];
                     }
                 } catch (_) {}
@@ -26444,6 +26581,9 @@ app.post('/api/woovi/charge/dev', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+// Percentuais do cálculo de lucro do dashboard (ajustáveis por env).
+const DASH_IMPOSTO_PCT = Number(process.env.DASH_IMPOSTO_PCT || 13) || 13;        // imposto sobre o faturamento
+const DASH_ADS_MARKUP_PCT = Number(process.env.DASH_ADS_MARKUP_PCT || 13.8) || 13.8; // encargo sobre o gasto de ads
 const DEFAULT_COST_SETTINGS = {
   seguidores_mistos: 2.70,
   seguidores_brasileiros: 9.60,
@@ -26455,6 +26595,79 @@ const DEFAULT_COST_SETTINGS = {
   comentarios: 0.34,
   visualizacoes: 0.01
 };
+
+// ─── AUTO-CALIBRAÇÃO do cost_settings pelo custo REAL recente ───────────────
+// Quando um pedido não tem orderId no fornecedor, o custo cai na ESTIMATIVA
+// (cost_settings). Pra essa estimativa não ficar defasada, recalibramos cada
+// tipo pela MÉDIA do custo real (charge/1k do action=status) dos últimos N
+// pedidos daquele tipo. Ex.: 3 pedidos de mistos com charge 9/1k → cost_settings
+// de mistos vira 9. Roda periodicamente e via endpoint. Só considera pedidos com
+// charge REAL de base capturado (costs.providerChargeBase + baseQty).
+async function recalibrateCostSettingsFromRecent(opts = {}) {
+  const apply = opts.apply === true;
+  const MIN = Math.max(1, Number(process.env.COST_RECALIBRATE_SAMPLES || 3) || 3);
+  const settingsCol = await getCollection('settings');
+  let stored = {};
+  try { const d = await settingsCol.findOne({ _id: 'cost_settings' }); if (d && d.values && typeof d.values === 'object') stored = { ...d.values }; } catch (_) {}
+  const current = Object.assign({}, DEFAULT_COST_SETTINGS, stored);
+  const col = await getCollection('checkout_orders');
+  const docs = await col.find(
+    { 'costs.providerChargeBase': { $gt: 0 }, 'costs.providerChargeBaseQty': { $gt: 0 } },
+    { projection: { paidAt: 1, createdAt: 1, paghiper: 1, woovi: 1, tipo: 1, tipoServico: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'costs.providerChargeBase': 1, 'costs.providerChargeBaseQty': 1 } }
+  ).sort({ paidAt: -1, createdAt: -1 }).limit(20000).toArray();
+  const getInfo = (o, k) => { try { if (o.additionalInfoMapPaid && o.additionalInfoMapPaid[k] != null) return String(o.additionalInfoMapPaid[k]); if (o.additionalInfoMap && o.additionalInfoMap[k] != null) return String(o.additionalInfoMap[k]); const a = Array.isArray(o.additionalInfo) ? o.additionalInfo : []; const it = a.find(x => x && x.key === k); if (it) return String(it.value); } catch (_) {} return ''; };
+  const dateMs = (o) => { for (const c of [o.paidAt, o.paghiper && o.paghiper.paidAt, o.woovi && o.woovi.paidAt, o.createdAt]) { const t = c ? new Date(String(c)).getTime() : 0; if (t) return t; } return 0; };
+  // ltvServiceKey devolve 'curtidas_organicos', mas o _costPer1000For lê a chave
+  // 'curtidas_organicas' (com "a"). Sem esse alias, curtidas orgânicas nunca calibram.
+  const KEY_ALIAS = { curtidas_organicos: 'curtidas_organicas' };
+  const buckets = {};
+  for (const o of docs) {
+    const cat = getInfo(o, 'categoria_servico') || '';
+    const tipo = getInfo(o, 'tipo_servico') || o.tipoServico || o.tipo || '';
+    let key = ltvServiceKey(cat, tipo);
+    key = KEY_ALIAS[key] || key;
+    if (!key || !(key in DEFAULT_COST_SETTINGS)) continue;
+    const base = Number(o.costs.providerChargeBase), q = Number(o.costs.providerChargeBaseQty);
+    if (!(base > 0) || !(q > 0)) continue;
+    const per1k = base / (q / 1000);
+    if (!(per1k > 0) || !Number.isFinite(per1k)) continue;
+    (buckets[key] = buckets[key] || []).push({ per1k, ms: dateMs(o) });
+  }
+  const changes = [];
+  const newValues = { ...stored };
+  for (const key of Object.keys(DEFAULT_COST_SETTINGS)) {
+    const arr = (buckets[key] || []).sort((a, b) => b.ms - a.ms).slice(0, MIN);
+    if (arr.length < MIN) continue;
+    const avg = Math.round((arr.reduce((s, x) => s + x.per1k, 0) / arr.length) * 100) / 100;
+    if (!(avg > 0)) continue;
+    const cur = Number(current[key]);
+    if (Math.abs(avg - cur) >= 0.01) { changes.push({ key, from: cur, to: avg, samples: arr.map(x => Math.round(x.per1k * 100) / 100) }); newValues[key] = avg; }
+  }
+  if (apply && changes.length) {
+    newValues._custom = true; // o dashboard só usa values quando _custom === true
+    await settingsCol.updateOne({ _id: 'cost_settings' }, { $set: { values: newValues, recalibratedAt: new Date().toISOString() } }, { upsert: true });
+    try { console.log('🧮 [cost-recalib] ' + changes.map(c => c.key + ' ' + c.from + '→' + c.to).join(', ')); } catch (_) {}
+  }
+  return { apply, minSamples: MIN, considered: docs.length, changes };
+}
+// Endpoint admin: dry-run (default) ou aplicar (?apply=1 ou body.apply=true).
+app.post('/api/painel/cost-settings/recalibrate', requireAdmin, async (req, res) => {
+  try {
+    const apply = String((req.query && req.query.apply) || (req.body && req.body.apply) || '') === '1' || (req.body && req.body.apply === true);
+    const r = await recalibrateCostSettingsFromRecent({ apply });
+    return res.json({ ok: true, ...r });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Loop automático: recalibra a cada COST_RECALIBRATE_HOURS (default 6h). Ligado por
+// padrão; desligue com COST_AUTOCALIBRATE_ENABLED=false.
+function startCostRecalibrateLoop() {
+  if (String(process.env.COST_AUTOCALIBRATE_ENABLED || 'true').toLowerCase() === 'false') { try { console.log('🧮 [cost-recalib] auto-calibração DESLIGADA (COST_AUTOCALIBRATE_ENABLED=false)'); } catch (_) {} return; }
+  const hours = Math.max(1, Number(process.env.COST_RECALIBRATE_HOURS || 6) || 6);
+  const run = () => { recalibrateCostSettingsFromRecent({ apply: true }).catch(() => {}); };
+  setTimeout(run, 60 * 1000); // 1ª rodada ~1min após subir
+  const t = setInterval(run, hours * 60 * 60 * 1000);
+  try { if (t && t.unref) t.unref(); } catch (_) {}
+}
 
 app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
   // Tópico "Recuperação" removido do painel — redireciona para o dashboard.
@@ -37741,6 +37954,40 @@ function __painelTriggerRefresh(cacheKey, req) {
   } catch (_) { try { __painelRefreshing.delete(cacheKey); } catch (e) {} }
 }
 
+// Gasto de anúncios DIA A DIA (time_increment=1) para a tabela de lucro diário do
+// dashboard. Mesmo cache curto do total. Retorna { ok, byDay: { 'YYYY-MM-DD': gasto } }.
+const __fbDailyCache = new Map();
+async function fetchFacebookSpendDaily({ since, until, datePreset } = {}) {
+  const token = String(process.env.FB_ADS_TOKEN || '').trim();
+  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
+  if (!token || !act) return { ok: false, error: 'not_configured' };
+  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
+  const params = { fields: 'spend', time_increment: 1, limit: 500, access_token: token };
+  let cacheKey;
+  if (datePreset) { params.date_preset = datePreset; cacheKey = 'd:preset:' + datePreset; }
+  else {
+    const s = String(since || '').trim(), u = String(until || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
+    params.time_range = JSON.stringify({ since: s, until: u });
+    cacheKey = 'd:' + s + '|' + u;
+  }
+  const now = Date.now();
+  const hit = __fbDailyCache.get(cacheKey);
+  if (hit && hit.exp > now) return { ok: true, byDay: hit.value, cached: true };
+  try {
+    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
+    if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
+    const byDay = {};
+    for (const row of ((resp.data && resp.data.data) || [])) {
+      if (row && row.date_start) byDay[row.date_start] = Number(row.spend) || 0;
+    }
+    __fbDailyCache.set(cacheKey, { value: byDay, exp: now + 5 * 60 * 1000 });
+    return { ok: true, byDay };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'fetch_failed' };
+  }
+}
+
 // Busca o GASTO de anúncios da conta do Facebook (Marketing API / Insights, campo `spend`).
 // Cache curto em memória por faixa de datas (evita bater na Graph API a cada load do painel).
 const __fbSpendCache = new Map(); // chave -> { value, exp }
@@ -40270,6 +40517,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
     // Cost calculation
     let totalCost = 0;
     let totalRevenue = 0;
+    // Agregação por DIA (BRT) para a tabela de lucro diário. Usa exatamente o mesmo
+    // faturamento e custo por pedido do resto do dashboard — o custo já inclui a taxa
+    // do gateway e o charge REAL do fornecedor quando existe.
+    const __dailyAgg = new Map(); // 'YYYY-MM-DD' -> { rev, cost, n }
     let totalBumpRevenue = 0;
     const report = filteredOrders.map(o => {
       const extractInfo = (key) => {
@@ -40659,6 +40910,15 @@ app.get('/painel', requireAdmin, async (req, res) => {
       totalBumpRevenue += bumpRevenue;
       const revenue = Math.max(0, totalPaid - bumpRevenue);
       totalRevenue += totalPaid;
+      try {
+        const _ms = resolvePaidAtMsForPanel(o);
+        if (_ms) {
+          const _d = new Date(_ms - 3 * 3600000).toISOString().slice(0, 10); // dia BRT
+          const _e = __dailyAgg.get(_d) || { rev: 0, cost: 0, n: 0 };
+          _e.rev += totalPaid; _e.cost += totalItemCost; _e.n += 1;
+          __dailyAgg.set(_d, _e);
+        }
+      } catch (_) {}
 
       return {
         _id: o._id,
@@ -41724,6 +41984,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     // Gasto de anúncios do Facebook — acompanha o período do painel (só dashboard/vendas).
     let fbSpend = null, fbSpendOk = false;
+    // Lucro por dia (tabela do dashboard). Percentuais configuráveis por env.
+    let dailyProfit = [], dailyProfitTotals = null, dailyProfitAdsOk = false, dailyProfitTruncated = false;
     let adFormatPie = { ok: false, formats: [] };
     let bumpPie = { ok: false, categories: [] };
     if (view === 'dashboard' || view === 'vendas') {
@@ -41753,6 +42015,47 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const r = await fetchFacebookSpend(fbArgs);
         if (r && r.ok) { fbSpend = Number(r.spend) || 0; fbSpendOk = true; }
         else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
+        // ── Tabela de LUCRO POR DIA (segue o filtro de período do dashboard) ──
+        // lucro = faturamento − custo serviço (fornecedor + taxa gateway)
+        //         − ads×(1+markup) − imposto sobre o faturamento.
+        try {
+          const rd = await fetchFacebookSpendDaily(fbArgs);
+          const adsByDay = (rd && rd.ok) ? rd.byDay : {};
+          dailyProfitAdsOk = !!(rd && rd.ok);
+          const dias = new Set([...__dailyAgg.keys(), ...Object.keys(adsByDay)]);
+          let rows = [];
+          for (const d of [...dias].sort()) {
+            const a = __dailyAgg.get(d) || { rev: 0, cost: 0, n: 0 };
+            const adsRaw = Number(adsByDay[d]) || 0;
+            const ads = adsRaw * (1 + DASH_ADS_MARKUP_PCT / 100);
+            const imposto = a.rev * (DASH_IMPOSTO_PCT / 100);
+            const lucro = a.rev - a.cost - ads - imposto;
+            rows.push({
+              dia: d, pedidos: a.n,
+              receita: Math.round(a.rev * 100) / 100,
+              custoServico: Math.round(a.cost * 100) / 100,
+              adsRaw: Math.round(adsRaw * 100) / 100,
+              ads: Math.round(ads * 100) / 100,
+              imposto: Math.round(imposto * 100) / 100,
+              lucro: Math.round(lucro * 100) / 100,
+              margem: a.rev > 0 ? Math.round((lucro / a.rev) * 1000) / 10 : 0,
+              adsPct: a.rev > 0 ? Math.round((ads / a.rev) * 1000) / 10 : 0,
+            });
+          }
+          rows.sort((x, y) => y.dia.localeCompare(x.dia)); // mais recente primeiro
+          // Teto de linhas: no filtro "todos" o período pode ter centenas de dias.
+          // Mostra os mais recentes; os totais abaixo somam SÓ o que está na tela,
+          // pra tabela e rodapé sempre baterem.
+          const _cap = Math.max(1, Number(process.env.DASH_DAILY_PROFIT_MAX_DAYS || 62) || 62);
+          dailyProfitTruncated = rows.length > _cap;
+          rows = rows.slice(0, _cap);
+          dailyProfit = rows;
+          dailyProfitTotals = rows.reduce((acc, r2) => ({
+            pedidos: acc.pedidos + r2.pedidos, receita: acc.receita + r2.receita,
+            custoServico: acc.custoServico + r2.custoServico, ads: acc.ads + r2.ads,
+            imposto: acc.imposto + r2.imposto, lucro: acc.lucro + r2.lucro,
+          }), { pedidos: 0, receita: 0, custoServico: 0, ads: 0, imposto: 0, lucro: 0 });
+        } catch (eDP) { try { console.warn('⚠️ [dashboard] lucro diário falhou:', eDP && eDP.message); } catch (_) {} }
         // Insights por FORMATO (pizza de vendas) + pizza de ORDER BUMPS — só no dashboard.
         if (view === 'dashboard') {
           try { const rf = await fetchFacebookInsightsByFormat(fbArgs); if (rf && rf.ok) adFormatPie = { ok: true, formats: rf.formats }; } catch (_) {}
@@ -41765,7 +42068,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -46646,6 +46949,7 @@ const server = app.listen(port, () => {
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
+  try { startCostRecalibrateLoop(); } catch (_) {} // Auto-calibra cost_settings pelo custo real dos últimos N pedidos de cada tipo (a cada 6h)
 
   // ── Garante índices em checkout_orders (idempotente) — evita varredura completa (COLLSCAN) ──
   (async function ensureCheckoutOrdersIndexes() {

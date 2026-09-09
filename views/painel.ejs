@@ -4422,6 +4422,60 @@
           <div class="summary-sub" style="margin-top:6px;"><%= _rs.email.count %> pedido(s) · <%= _rs.email.valueBRL %> recuperado(s)</div>
         </div>
       </div>
+      <%# ── LUCRO POR DIA — segue o filtro de período do dashboard ───────────── %>
+      <% if (view === 'dashboard' && typeof dailyProfit !== 'undefined' && dailyProfit && dailyProfit.length) {
+           var _dpBrl = function(n){ return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ','); };
+           var _dpNum = function(n){ return Number(n || 0).toFixed(1).replace('.', ','); };
+           var _dpT = dailyProfitTotals || { pedidos:0, receita:0, custoServico:0, ads:0, imposto:0, lucro:0 };
+           var _dpMargem = _dpT.receita > 0 ? (_dpT.lucro / _dpT.receita * 100) : 0; %>
+      <div style="margin-top:14px; border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; width:100%; box-sizing:border-box;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <strong style="font-size:1rem; color:#111827;">Lucro por dia</strong>
+          <div style="font-size:0.78rem; color:#6b7280;">
+            faturamento − custo serviço − ads +<%= String(DASH_ADS_MARKUP_PCT).replace('.', ',') %>% − imposto <%= String(DASH_IMPOSTO_PCT).replace('.', ',') %>%
+          </div>
+        </div>
+        <% if (!dailyProfitAdsOk) { %>
+        <div style="margin-top:8px; font-size:0.78rem; color:#b45309; background:#fef3c7; padding:6px 10px; border-radius:6px;">
+          Gasto de anúncios indisponível no período — o lucro abaixo não desconta ads.
+        </div>
+        <% } %>
+        <% if (typeof dailyProfitTruncated !== 'undefined' && dailyProfitTruncated) { %>
+        <div style="margin-top:8px; font-size:0.78rem; color:#6b7280;">
+          Mostrando os <%= dailyProfit.length %> dias mais recentes do período (o total abaixo soma só estes). Use o filtro de período para recortar.
+        </div>
+        <% } %>
+        <div style="margin-top:10px;">
+          <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+            <thead>
+              <tr style="background:#f9fafb; text-align:right;">
+                <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #e5e7eb;">Dia</th>
+                <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Lucro</th>
+                <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Margem</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% dailyProfit.forEach(function(d){
+                   var _lucroCor = d.lucro >= 0 ? '#16a34a' : '#dc2626';
+                   var _dia = d.dia.slice(8,10) + '/' + d.dia.slice(5,7); %>
+              <tr style="text-align:right; border-bottom:1px solid #f3f4f6;">
+                <td style="padding:8px 12px; text-align:left; font-weight:600;"><%= _dia %></td>
+                <td style="padding:8px 12px; font-weight:700; color:<%= _lucroCor %>;"><%= _dpBrl(d.lucro) %></td>
+                <td style="padding:8px 12px; font-weight:600; color:<%= _lucroCor %>;"><%= _dpNum(d.margem) %>%</td>
+              </tr>
+              <% }); %>
+            </tbody>
+            <tfoot>
+              <tr style="text-align:right; background:#f9fafb; font-weight:700;">
+                <td style="padding:10px 12px; text-align:left;">Total</td>
+                <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpBrl(_dpT.lucro) %></td>
+                <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpNum(_dpMargem) %>%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      <% } %>
       <% if (view === 'dashboard') { %>
       <div id="dashboardRealtimeWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">

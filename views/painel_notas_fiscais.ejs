@@ -59,20 +59,25 @@
           <thead>
             <tr>
               <th>Data</th><th>Cliente</th><th>Telefone</th><th>CPF</th><th>End.</th>
-              <th>Valor</th><th>Estado</th><th>Ação</th>
+              <th>Valor</th><th>Tipo</th><th>Estado</th><th>Ação</th>
             </tr>
           </thead>
           <tbody>
             <% rows.forEach(function(r){ %>
               <tr id="row-<%= r.id %>">
                 <td class="mono"><%= r.date ? new Date(r.date).toLocaleDateString('pt-BR') : '-' %></td>
-                <td><%= r.name %><div class="mono">#<%= r.id.slice(-6) %></div></td>
+                <td><%= r.name %><div class="mono" style="color:#94a3b8;">Pedido: <%= r.identifier || ('#' + r.id.slice(-6)) %></div></td>
                 <td class="mono"><%= r.phone || '-' %></td>
                 <td>
                   <% if (r.cpf) { %><span class="mono ok"><%= r.cpf %></span><% } else { %><span class="miss">sem CPF</span><% } %>
                 </td>
-                <td><% if (r.hasAddress) { %><span class="ok">✓</span><% } else { %><span class="mono" style="color:#94a3b8">padrão</span><% } %></td>
+                <td><% if (r.semTomador) { %><span class="mono" style="color:#94a3b8">—</span><% } else if (r.hasAddress) { %><span class="ok">✓</span><% } else { %><span class="mono" style="color:#94a3b8">padrão</span><% } %></td>
                 <td class="mono">R$ <%= r.valueReais.toFixed(2) %></td>
+                <td>
+                  <% var _tipoNota = (r.kind === 'servico' || r.model === 'serviceInvoice') ? 'Serviço' : (r.kind === 'ebook' ? 'Ebook' : (r.kind || '—')); %>
+                  <span class="badge b-authorized"><%= _tipoNota %></span>
+                  <div class="mono" style="color:#94a3b8;font-size:11px;"><%= r.semTomador ? 'sem tomador' : (r.cpf ? 'c/ tomador' : 'consumidor final') %></div>
+                </td>
                 <td>
                   <span class="badge b-<%= ['held','error','enqueued','authorized','rejected'].indexOf(r.state) >= 0 ? r.state : 'none' %>"><%= r.state %></span>
                   <% if (r.heldReason) { %><div class="mono" style="color:#92400e"><%= r.heldReason %></div><% } %>
@@ -81,19 +86,22 @@
                 </td>
                 <td>
                   <div class="act">
-                    <% if (r.state === 'held' || r.state === 'error' || r.state === 'rejected' || !r.cpf) { %>
+                    <% var _needsAction = (r.state === 'held' || r.state === 'error' || r.state === 'rejected' || r.state === 'canceled'); %>
+                    <% if (_needsAction && !r.semTomador) { %>
                       <input class="inp" id="cpf-<%= r.id %>" placeholder="CPF" value="<%= r.cpf %>" />
                       <button class="btn p" onclick="salvarReemitir('<%= r.id %>')">Salvar + reemitir</button>
                       <button class="btn g" onclick="enriquecer('<%= r.id %>')">Buscar por tel.</button>
-                    <% } else { %>
+                    <% } else if (_needsAction) { %>
                       <button class="btn" onclick="reemitir('<%= r.id %>')">Reemitir</button>
+                    <% } else { %>
+                      <span class="mono ok" title="Nota já emitida">✓ emitida<%= r.number ? (' · nº ' + r.number) : '' %></span>
                     <% } %>
                   </div>
                 </td>
               </tr>
             <% }); %>
             <% if (!rows.length) { %>
-              <tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:26px;">Nenhum pedido neste estado.</td></tr>
+              <tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:26px;">Nenhum pedido neste estado.</td></tr>
             <% } %>
           </tbody>
         </table>

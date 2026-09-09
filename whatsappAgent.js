@@ -93,6 +93,8 @@ function systemPrompt() {
     'Ao validar o perfil, confirme com o @ e o NÚMERO REAL de seguidores que a ferramenta validar_perfil retornou. NUNCA escreva "NOME" ou "N" literalmente — use os valores reais. Ex.: "Achei seu perfil! @fulano, 12.345 seguidores. Confere?". Se o nome vier vazio, é só omitir o nome.',
     '"SÃO FALSOS/FAKE/ROBÔS?" (sobre mistos ou internacionais): responda CURTO e GENÉRICO, SEM detalhamento e SEM dizer que são falsos/fake. NÃO faça comparação longa entre os tipos e NÃO empurre os orgânicos. NUNCA afirme que algum tipo é falso, fake ou robô. Ex. de tom: "São contas reais que dão número e autoridade ao seu perfil. Quer que eu te mostre a tabela?". Não volunteie ressalvas nem defeitos.',
     'Pedido múltiplo (vários serviços numa mensagem): avise que faz um de cada vez, organizado, e comece pelo primeiro.',
+    'TIPO ANTES DO PREÇO (CRÍTICO): NUNCA mostre tabela/valor de seguidores ou curtidas sem deixar claro DE QUAL TIPO são. Se o cliente ainda não escolheu, PERGUNTE primeiro (*mistos*, *brasileiros* ou *brasileiros reais*). Se as ferramentas retornarem tipoAssumido=true, os preços são de *mistos* (internacionais) — então ou você escreve isso explicitamente na mensagem, ou pergunta o tipo antes de cotar. Mostrar preço de *mistos* como se fosse "o preço" engana o cliente e gera reclamação depois.',
+    'O @ DO CLIENTE É LITERAL: ao chamar validar_perfil ou gerar_pix, copie o @ EXATAMENTE como o cliente escreveu, caractere por caractere. NUNCA corrija, complete, abrevie ou redigite o handle — trocar uma letra faz um perfil válido parecer inexistente.',
     'Fluxo de venda: 1) descubra serviço + tipo; 2) mostre a tabela e pergunte a quantidade; 3) cote o valor exato; 4) peça o @ e valide (confirme nome+seguidores); 5) se tem post, peça o link (+ split); 6) colete SÓ nome e e-mail; 7) confirme o resumo e gere o Pix.',
     'GERAR O PIX — REGRA CRÍTICA: assim que tiver serviço, quantidade, @ (validado), nome e e-mail, chame a ferramenta *gerar_pix* IMEDIATAMENTE, no MESMO turno. NUNCA diga "vou gerar o Pix", "aguarde um momento", "estou processando" e pare sem chamar a ferramenta — isso deixa o cliente esperando pra sempre e o pedido NÃO é criado. Não anuncie a intenção: execute (chame gerar_pix) e só então confirme. Se faltar algum dado, peça só o que falta.',
     'Pix: ao gerar (a ferramenta gerar_pix rodou com ok), NUNCA escreva no texto o código copia-e-cola, o QR Code, nenhum link/URL, nem rótulos tipo "Código Pix:" ou "QR Code:". O sistema envia AUTOMATICAMENTE, em mensagens separadas, a instrução de como copiar e o código copia-e-cola — você NÃO precisa (nem deve) colocar nada disso. Sua mensagem deve ter só: a confirmação do valor/resumo do pedido e o fechamento "Fico no aguardo da confirmação do seu pagamento para liberar seu pedido." NÃO use "se precisar de mais alguma coisa, estou à disposição" nesse momento. Se gerar_pix retornar erro, NÃO diga que deu certo — peça pra tentar de novo ou acione o suporte. Nunca peça CPF (é gerado automaticamente).',
@@ -113,10 +115,41 @@ const TOOLS = [
 
 async function runTool(name, args, ctx) {
   try {
-    if (name === 'cotar_preco') return await sales.quote(args || {});
-    if (name === 'tabela_precos') return sales.priceTable(args || {});
+    // Quando o cliente NÃO escolheu o tipo, o catálogo assume *mistos* (internacionais)
+    // silenciosamente — e a IA acabava cotando mundial sem avisar. Devolve um aviso
+    // explícito para o modelo, que é obrigado a sinalizar o tipo ou perguntar antes.
+    const avisaTipo = (r, args2) => {
+      try {
+        const semTipo = !String((args2 && args2.tipo) || '').trim();
+        const aceitaTipo = ['seguidores', 'curtidas'].includes(String((args2 && args2.servico) || '').toLowerCase());
+        if (r && r.ok && semTipo && aceitaTipo) {
+          r.tipoAssumido = true;
+          r.aviso = 'O cliente NÃO escolheu o tipo — assumi *mistos* (internacionais/mundiais). Você DEVE dizer explicitamente que são *mistos* ao mostrar estes preços, ou perguntar antes qual tipo ele quer (*mistos*, *brasileiros* ou *brasileiros reais*). NUNCA mostre estes valores como se fossem os únicos.';
+        }
+      } catch (_) {}
+      return r;
+    };
+    if (name === 'cotar_preco') return avisaTipo(await sales.quote(args || {}), args);
+    if (name === 'tabela_precos') return avisaTipo(sales.priceTable(args || {}), args);
     if (name === 'validar_perfil') {
-      const vr = await sales.validateProfile((args && args.usuario) || '');
+      const pedido = String((args && args.usuario) || '').trim();
+      let vr = await sales.validateProfile(pedido);
+      // REDE DE SEGURANÇA: o modelo às vezes REDIGITA o @ e come/troca letras
+      // (cliente mandou "apluizcarlosmauro", o modelo buscou "apluzcarlosmauro"),
+      // fazendo um perfil válido aparecer como inexistente. Se falhou e a mensagem
+      // do cliente é um handle diferente do que o modelo passou, tenta o texto CRU.
+      if (!vr || !vr.ok) {
+        const cru = String(ctx.text || '').trim().replace(/^@+/, '');
+        const pareceHandle = /^[a-zA-Z0-9._]{2,30}$/.test(cru) || /instagram\.com\//i.test(String(ctx.text || ''));
+        const diferente = cru.toLowerCase() !== pedido.toLowerCase().replace(/^@+/, '');
+        if (pareceHandle && diferente && cru) {
+          const vr2 = await sales.validateProfile(String(ctx.text || '').trim());
+          if (vr2 && vr2.ok) {
+            try { console.log('🔁 [agent] @ corrigido pelo texto do cliente:', pedido, '->', cru); } catch (_) {}
+            vr = vr2;
+          }
+        }
+      }
       if (vr && vr.ok) { ctx.validated = true; ctx.validatedUsername = vr.username || String((args && args.usuario) || '').replace(/^@+/, ''); }
       return vr;
     }

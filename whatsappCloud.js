@@ -37,6 +37,7 @@ async function logIaMessage(d) {
       mime: String(d.mime || '').slice(0, 100),
       filename: String(d.filename || '').slice(0, 200),
       wamid, name: String(d.name || '').slice(0, 120),
+      replyTo: String(d.replyTo || '').slice(0, 200),   // wamid da mensagem citada
       agent: !!d.agent, // true = enviado por atendente humano no CRM; false = bot
       createdAt: new Date(),
     };
@@ -58,12 +59,14 @@ async function sendWhatsAppText(to, text, opts = {}) {
   if (!c.phoneId || !c.token) return { ok: false, error: 'not_configured' };
   const url = `https://graph.facebook.com/${c.version}/${c.phoneId}/messages`;
   const payload = { messaging_product: 'whatsapp', to: String(to), type: 'text', text: { preview_url: false, body: String(text || '').slice(0, 4096) } };
+  // Responder CITANDO uma mensagem específica (igual ao "responder" do WhatsApp).
+  if (opts && opts.replyTo) payload.context = { message_id: String(opts.replyTo) };
   try {
     const resp = await axios.post(url, payload, { headers: { Authorization: 'Bearer ' + c.token, 'Content-Type': 'application/json' }, timeout: 20000, validateStatus: () => true });
     const ok = resp.status >= 200 && resp.status < 300;
     if (ok && opts.log !== false) {
       const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
-      logIaMessage({ phone: String(to), direction: 'out', type: 'text', text, wamid, agent: !!opts.agent }).catch(() => {});
+      logIaMessage({ phone: String(to), direction: 'out', type: 'text', text, wamid, agent: !!opts.agent, replyTo: opts.replyTo || '' }).catch(() => {});
     }
     return { ok, status: resp.status, data: resp.data };
   } catch (e) { return { ok: false, error: (e && e.message) || 'erro' }; }
@@ -212,14 +215,14 @@ async function handleInboundMessage(m, contactName) {
     const md = m[m.type] || {};
     const kind = (m.type === 'voice') ? 'audio' : m.type;
     const label = kind === 'image' ? '[imagem]' : kind === 'audio' ? '[áudio]' : kind === 'video' ? '[vídeo]' : kind === 'document' ? ('[documento] ' + (md.filename || '')) : kind === 'sticker' ? '[figurinha]' : '[mídia]';
-    logIaMessage({ phone: from, direction: 'in', type: kind, text: (md.caption ? (label + ' ' + md.caption) : label), mediaId: String(md.id || ''), mime: String(md.mime_type || ''), filename: String(md.filename || ''), wamid: String(m.id || ''), name: contactName || '' }).catch(() => {});
+    logIaMessage({ phone: from, direction: 'in', type: kind, text: (md.caption ? (label + ' ' + md.caption) : label), mediaId: String(md.id || ''), mime: String(md.mime_type || ''), filename: String(md.filename || ''), wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') }).catch(() => {});
     return;
   }
 
   // Registra a mensagem RECEBIDA no inbox (mesmo se o bot estiver pausado / for comando).
   const inboundText = bodyRaw || (btnTitle ? ('🔘 ' + btnTitle) : '');
   if (inboundText && !/^\/(pause|pausar|start|iniciar|começar|comecar|resume|retomar)$/.test(lc)) {
-    logIaMessage({ phone: from, direction: 'in', type: btn ? 'button' : (m.type || 'text'), text: inboundText, wamid: String(m.id || ''), name: contactName || '' }).catch(() => {});
+    logIaMessage({ phone: from, direction: 'in', type: btn ? 'button' : (m.type || 'text'), text: inboundText, wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') }).catch(() => {});
   }
 
   // Comandos de controle (texto): /pause e /start (para operar o número da IA).

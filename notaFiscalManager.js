@@ -393,12 +393,15 @@ async function emitirNotaServico(record, col, amount, opts = {}) {
   await persistNota(col, record._id, { kind: 'servico', orderAmount: resolveAmountReais(record), serviceAmount: amount });
   // Nota de SERVIÇO é emitida SEM TOMADOR (sem receiver) — decisão do negócio.
   const desc = String(process.env.SPEEDY_SERVICE_DESCRIPTION || DEFAULT_SERVICE_DESCRIPTION).trim() || DEFAULT_SERVICE_DESCRIPTION;
+  // integrationId = id do PEDIDO (atrela a nota ao pedido na Spedy; máx 36 chars).
+  const integrationId = String(record.identifier || record._id || '').trim().slice(0, 36);
   const payload = {
     description: desc,
     issue: true,
     sendEmailToCustomer: envBool(process.env.SPEEDY_SEND_EMAIL, false),
     effectiveDate: new Date(orderDateMs(record) || Date.now()).toISOString(),
     total: { invoiceAmount: amount, netAmount: amount },
+    ...(integrationId ? { integrationId } : {}),
   };
   const resp = await spedy.createServiceInvoice(payload);
   if (!resp.ok) {
@@ -650,8 +653,95 @@ async function sincronizarStatus(record, col) {
       processingDetail: data.processingDetail || null,
     });
 
+    // Estorno chegou ANTES da nota ser autorizada: ficou a intenção gravada
+    // (cancelRequestedAt). Assim que a Spedy autoriza, cancela de verdade.
+    if (emissionState === 'authorized' && nf.cancelRequestedAt && !nf.canceledAt) {
+      try {
+        const rec2 = Object.assign({}, record, { notaFiscal: Object.assign({}, nf, { emissionState: 'authorized', status, number: data.number ?? nf.number ?? null }) });
+        const c = await cancelarNotaDoPedido(rec2, col, nf.cancelReason || 'Pedido estornado.');
+        if (c && c.ok && !c.skipped) console.log(`🧾❌ [Spedy] nota autorizada após estorno → cancelada (pedido ${record.identifier || record._id}).`);
+      } catch (_) {}
+    }
+
     return { ok: true, status, data };
   } catch (e) {
+    return { ok: false, reason: 'exception', message: e?.message };
+  }
+}
+
+/**
+ * CANCELA a nota fiscal de um pedido (estorno/chargeback). Só age se houver
+ * uma nota AUTORIZADA. Idempotente: se já estiver cancelada, não faz nada.
+ * @param {object} record  documento de checkout_orders (com notaFiscal)
+ * @param {object} col     coleção Mongo `checkout_orders`
+ * @param {string} [reason] justificativa (a Spedy exige)
+ * @returns {Promise<{ok:boolean, skipped?:boolean, reason?:string, message?:string}>}
+ */
+async function cancelarNotaDoPedido(record, col, reason) {
+  try {
+    if (!spedy.isConfigured()) return { ok: false, skipped: true, reason: 'not_configured' };
+    if (!record || !record._id || !col) return { ok: false, skipped: true, reason: 'invalid_input' };
+    const nf = (record.notaFiscal && typeof record.notaFiscal === 'object') ? record.notaFiscal : {};
+    const state = String(nf.emissionState || '').toLowerCase();
+    // Sem nota emitida → nada a cancelar.
+    if (!nf.invoiceId) return { ok: false, skipped: true, reason: 'sem_nota' };
+    // Já cancelada / rejeitada / negada → idempotente.
+    if (state === 'canceled' || state === 'cancelled') return { ok: true, skipped: true, reason: 'ja_cancelada' };
+    if (state === 'rejected' || state === 'denied') return { ok: false, skipped: true, reason: 'nota_' + state };
+    // O estado LOCAL pode estar defasado: a nota é gravada como 'enqueued' e a Spedy
+    // autoriza logo depois, sem que a gente tenha sincronizado. Antes de desistir,
+    // RECONSULTA a nota na Spedy e usa o estado real. (Sem isto, um estorno logo após
+    // a compra deixaria passar uma nota já autorizada.)
+    let effState = state;
+    if (effState !== 'authorized') {
+      try {
+        const q = await spedy.getInvoice(nf.model || 'serviceInvoice', nf.invoiceId);
+        if (q && q.ok && q.data) {
+          const st = String(q.data.status || '').toLowerCase();
+          const mapped = st === 'authorized' ? 'authorized'
+            : ((st === 'canceled' || st === 'cancelled') ? 'canceled'
+            : (st === 'rejected' ? 'rejected' : (st === 'denied' ? 'denied' : effState)));
+          await persistNota(col, record._id, { emissionState: mapped, status: String(q.data.status || ''), number: (q.data.number != null ? q.data.number : (nf.number ?? null)) });
+          effState = mapped;
+          if (effState === 'canceled') return { ok: true, skipped: true, reason: 'ja_cancelada' };
+          if (effState === 'rejected' || effState === 'denied') return { ok: false, skipped: true, reason: 'nota_' + effState };
+        }
+      } catch (_) {}
+    }
+    // Ainda não autorizada (em processamento) → registra a INTENÇÃO de cancelar. Quando
+    // a sincronização vir a nota autorizada, ela cancela (ver sincronizarStatus).
+    if (effState !== 'authorized') {
+      await persistNota(col, record._id, { cancelRequestedAt: nowIso(), cancelReason: String(reason || '').slice(0, 255) });
+      return { ok: false, skipped: true, reason: 'nota_nao_autorizada', state: effState };
+    }
+    const model = String(nf.model || 'serviceInvoice');
+    // Hoje só emitimos nota de SERVIÇO (serviceInvoice). Guarda p/ quando houver ebook.
+    if (model && model !== 'serviceInvoice') {
+      await persistNota(col, record._id, { cancelRequestedAt: nowIso(), cancelReason: String(reason || '').slice(0, 255) });
+      return { ok: false, skipped: true, reason: 'modelo_nao_suportado', model };
+    }
+    const motivo = String(reason || 'Pedido estornado pelo cliente/gateway.').trim().slice(0, 255);
+    const resp = await spedy.cancelServiceInvoice(nf.invoiceId, motivo);
+    if (!resp.ok) {
+      await persistNota(col, record._id, { cancelError: resp.message || resp.error || 'erro', cancelHttpStatus: resp.status, cancelRequestedAt: nowIso(), cancelReason: motivo });
+      console.warn(`[Spedy] cancelamento FALHOU pedido ${record.identifier || record._id} nota ${nf.invoiceId}: ${resp.message || resp.error}`);
+      return { ok: false, reason: resp.error, message: resp.message, status: resp.status };
+    }
+    // A Spedy processa o cancelamento de forma ASSÍNCRONA: a resposta do DELETE devolve
+    // a nota ainda com o status ANTERIOR ('authorized'), e só depois ela vira 'canceled'.
+    // Portanto NÃO derivamos o estado desse retorno — um 2xx já significa cancelamento
+    // aceito. (Confiar no status do DELETE deixava a nota marcada como autorizada.)
+    await persistNota(col, record._id, {
+      emissionState: 'canceled',
+      status: 'canceled',
+      canceledAt: nowIso(),
+      cancelReason: motivo,
+      cancelError: null,
+    });
+    console.log(`🧾❌ [Spedy] nota CANCELADA — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId} (motivo: ${motivo})`);
+    return { ok: true, invoiceId: nf.invoiceId, number: nf.number, status: d.status || 'canceled' };
+  } catch (e) {
+    console.error('[Spedy] cancelarNotaDoPedido erro:', e?.message);
     return { ok: false, reason: 'exception', message: e?.message };
   }
 }
@@ -661,6 +751,7 @@ module.exports = {
   emitirEmBackground,
   handleWebhookEvent,
   sincronizarStatus,
+  cancelarNotaDoPedido,
   mapOrderToSpedyPayload,
   // reexports úteis
   isConfigured: spedy.isConfigured,

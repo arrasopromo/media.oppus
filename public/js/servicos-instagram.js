@@ -2423,7 +2423,16 @@ document.addEventListener('DOMContentLoaded', function() {
   function updateWarrantyVisibility(tipo) {
     const warrantyItem = document.querySelector('.promo-item.warranty60');
     if (!warrantyItem) return;
-    
+
+    // Se o @ JÁ tem extensão de refil ativa (6m/12m/vitalício), esconde o bump de garantia
+    // — evita recomprar/sobrescrever refil. (window.__hasActiveWarranty vem da validação do @.)
+    if (window.__hasActiveWarranty === true) {
+        warrantyItem.style.display = 'none';
+        const cbW = document.getElementById('promoWarranty60');
+        if (cbW && cbW.checked) { cbW.checked = false; try { updatePromosSummary(); } catch (_) {} }
+        return;
+    }
+
     // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') {
         warrantyItem.style.display = '';
@@ -3754,7 +3763,22 @@ document.addEventListener('DOMContentLoaded', function() {
         if (checkoutPostsCount) checkoutPostsCount.textContent = _fmt(profile.postsCount, false);
         
         if (profilePreview) profilePreview.style.display = 'block';
-        
+
+        // Checa se o @ JÁ tem extensão de refil ativa → esconde o order bump de garantia
+        // (evita recompra/sobrescrita de refil). Fail-open: erro/silêncio mantém o bump.
+        try {
+          var _uW = String((profile && profile.username) || username || '').replace(/^@+/, '').trim();
+          if (_uW) {
+            fetch('/api/refil/warranty-status?username=' + encodeURIComponent(_uW), { credentials: 'same-origin' })
+              .then(function(r){ return r.json(); })
+              .then(function(d){
+                window.__hasActiveWarranty = !!(d && d.active);
+                try { updateWarrantyVisibility(tipoSelect ? String(tipoSelect.value || '') : ''); } catch (_) {}
+              })
+              .catch(function(){});
+          }
+        } catch (_) {}
+
         // Show contact fields
         const contactArea = document.getElementById('contactFieldsArea');
         if (contactArea) {

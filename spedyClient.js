@@ -170,6 +170,15 @@ function getServiceInvoice(id) {
   return request('get', `/service-invoices/${encodeURIComponent(id)}`);
 }
 
+/**
+ * DELETE /v1/service-invoices/{id} — CANCELA a NFS-e.
+ * Body: { reason } (obrigatório). Prazos/regras de cancelamento variam por UF.
+ */
+function cancelServiceInvoice(id, reason) {
+  const body = { reason: String(reason || 'Pedido estornado/cancelado.').trim().slice(0, 255) };
+  return request('delete', `/service-invoices/${encodeURIComponent(id)}`, body);
+}
+
 /** GET /v1/product-invoices/{id} — consulta NF-e. */
 function getProductInvoice(id) {
   return request('get', `/product-invoices/${encodeURIComponent(id)}`);
@@ -190,6 +199,7 @@ module.exports = {
   createOrder,
   createServiceInvoice,
   getServiceInvoice,
+  cancelServiceInvoice,
   getProductInvoice,
   getInvoice,
   extractSpedyError,

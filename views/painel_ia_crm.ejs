@@ -29,6 +29,26 @@
     .badge-unread { background: #25d366; color: #fff; border-radius: 999px; font-size: 0.68rem; padding: 1px 7px; margin-left: 6px; }
     .tag-bot { font-size: 0.62rem; background: #7c3aed; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
     .tag-paused { font-size: 0.62rem; background: #6b7280; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+    /* Abas: separa conversas novas do histórico importado. */
+    .scope-tabs { display:flex; gap:6px; padding:0 10px 8px; }
+    .scope-tab { flex:1; font-size:0.74rem; padding:5px 0; border:1px solid #d5dbe3; background:#fff; color:#475569; border-radius:7px; cursor:pointer; }
+    .scope-tab.active { background:#111b21; color:#fff; border-color:#111b21; }
+    /* Conversa importada (histórico DataCrazy): IA pausada por origem, não por atendimento. */
+    .tag-legacy { font-size: 0.62rem; background: #b45309; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+    /* Coluna de tempo à direita da conversa */
+    .conv-side { flex-shrink:0; display:flex; flex-direction:column; align-items:flex-end; gap:2px; min-width:52px; }
+    .side-elapsed { font-size:0.76rem; font-weight:700; color:#667781; }
+    .side-elapsed.pend { color:#d97706; }
+    .side-clock { font-size:0.68rem; color:#9aa5ab; }
+    /* Conversa aguardando resposta: barra laranja à esquerda */
+    .conv.pend { border-left:3px solid #f59e0b; background:#fffdf7; }
+    .conv.pend:hover { background:#fff8ea; }
+    .conv.pend.active { background:#e9f7ef; }
+    /* Cabeçalho de grupo (aguardando / respondidas) */
+    .grp { position:sticky; top:0; z-index:1; background:#eef2f5; color:#54656f; font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; padding:5px 14px; border-bottom:1px solid #e2e8ec; }
+    .ans-tabs { padding-top:0; }
+    .pend-badge { background:#f59e0b; color:#fff; border-radius:999px; font-size:0.62rem; padding:0 5px; margin-left:3px; }
+    .scope-tab.active .pend-badge { background:#fff; color:#111b21; }
     /* Thread */
     .thread { flex: 1; display: flex; flex-direction: column; background: #efeae2; min-width: 0; }
     .thread-head { padding: 10px 16px; background: #f0f2f5; border-bottom: 1px solid #e9edef; display: flex; align-items: center; gap: 10px; }
@@ -61,9 +81,24 @@
     .media-doc .doc-dl { font-size: 0.72rem; color: #027eb5; font-weight: 600; }
     .b.media { padding: 4px; }
     .b.media .meta { padding: 0 4px 2px; }
+    /* Citação dentro do balão + botão responder */
+    .b { position: relative; }
+    .quoted { border-left:3px solid #25d366; background:rgba(0,0,0,0.05); border-radius:5px; padding:4px 8px; margin-bottom:5px; }
+    .b.in .quoted { border-left-color:#7c3aed; }
+    .q-who { font-size:0.64rem; font-weight:800; color:#1d6fd8; }
+    .q-txt { font-size:0.78rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .reply-btn { position:absolute; top:2px; right:4px; opacity:0; border:none; background:transparent; cursor:pointer; font-size:0.95rem; color:#54656f; padding:0 3px; }
+    .b:hover .reply-btn { opacity:0.75; }
+    .reply-btn:hover { opacity:1 !important; }
+    .reply-bar { display:flex; align-items:center; gap:8px; padding:7px 14px; background:#eef2f5; border-top:1px solid #e2e8ec; }
+    .reply-bar .rb-body { flex:1; min-width:0; border-left:3px solid #25d366; padding-left:8px; }
+    .reply-bar .rb-who { font-size:0.68rem; font-weight:800; color:#1d6fd8; }
+    .reply-bar .rb-txt { font-size:0.8rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .reply-bar button { border:none; background:transparent; font-size:1rem; cursor:pointer; color:#54656f; }
     /* composer */
     .composer { display: flex; gap: 6px; padding: 8px 12px; background: #f0f2f5; border-top: 1px solid #e9edef; align-items: center; }
-    .composer input[type=text] { flex: 1; padding: 10px 14px; border: none; border-radius: 22px; font-size: 0.92rem; outline: none; }
+    .composer textarea { flex: 1; padding: 10px 14px; border: none; border-radius: 18px; font-size: 0.92rem; outline: none;
+      resize: none; font-family: inherit; line-height: 1.35; max-height: 120px; overflow-y: auto; }
     .composer #sendBtn { padding: 0 18px; height: 40px; border: none; border-radius: 22px; background: #25d366; color: #fff; font-weight: 700; cursor: pointer; }
     .composer #sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
     .txt-btn { padding: 0 14px; height: 40px; border: 1px solid #cbd5e1; background: #fff; border-radius: 20px; cursor: pointer; font-size: 0.82rem; color: #54656f; flex-shrink: 0; font-weight: 600; }
@@ -94,6 +129,17 @@
           <span class="pill" id="convCount">0</span>
         </div>
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa..." autocomplete="off"></div>
+        <!-- Separa as conversas NOVAS do histórico importado do DataCrazy. -->
+        <div class="scope-tabs">
+          <button type="button" class="scope-tab active" data-scope="new">Novas</button>
+          <button type="button" class="scope-tab" data-scope="legacy">Antigas</button>
+          <button type="button" class="scope-tab" data-scope="all">Todas</button>
+        </div>
+        <div class="scope-tabs ans-tabs">
+          <button type="button" class="scope-tab active" data-answer="all">Todas</button>
+          <button type="button" class="scope-tab" data-answer="pending">⏳ Sem resposta <span class="pend-badge" id="pendCount">0</span></button>
+          <button type="button" class="scope-tab" data-answer="done">✓ Respondidas</button>
+        </div>
         <div class="conv-list" id="convList"></div>
       </div>
       <!-- Thread -->
@@ -113,10 +159,14 @@
           </div>
           <div class="hint" id="pausedHint" style="display:none;">⏸ IA pausada neste chat — ela NÃO responde. Só você atende. Clique em "▶ Dar Play (IA)" para a IA voltar a responder.</div>
           <div class="msgs" id="msgs"></div>
+          <div id="replyBar" class="reply-bar" style="display:none;">
+            <div class="rb-body"><div class="rb-who" id="rbWho"></div><div class="rb-txt" id="rbTxt"></div></div>
+            <button type="button" id="rbCancel" title="Cancelar resposta">✕</button>
+          </div>
           <div class="composer">
             <button type="button" class="txt-btn" id="attachBtn" title="Anexar imagem, documento ou áudio">Anexar</button>
             <input type="file" id="fileInput" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" style="display:none">
-            <input type="text" id="msgInput" placeholder="Escreva uma mensagem..." autocomplete="off">
+            <textarea id="msgInput" placeholder="Escreva uma mensagem..." rows="1" autocomplete="off"></textarea>
             <button type="button" class="txt-btn" id="micBtn" title="Gravar áudio">Gravar</button>
             <button type="button" id="sendBtn">Enviar</button>
           </div>
@@ -134,26 +184,72 @@
       function fmtTime(d){ try{ var x=new Date(d); var now=new Date(); var sameDay=x.toDateString()===now.toDateString(); return sameDay ? (('0'+x.getHours()).slice(-2)+':'+('0'+x.getMinutes()).slice(-2)) : (('0'+x.getDate()).slice(-2)+'/'+('0'+(x.getMonth()+1)).slice(-2)); }catch(_){ return ''; } }
       async function api(url, opts){ var r=await fetch(url, Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts||{})); return await r.json().catch(function(){return null;}); }
 
-      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '' };
+      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', scope: 'new', answer: 'all', msgs: [], replyTo: null };
 
+      // Tempo decorrido compacto: 6min / 22h / 3d — mostrado À DIREITA da conversa.
+      function fmtElapsed(d){
+        try{
+          var ms=Date.now()-new Date(d).getTime(); if(!isFinite(ms)||ms<0) return '';
+          var min=Math.floor(ms/60000);
+          if(min<1) return 'agora';
+          if(min<60) return min+'min';
+          var h=Math.floor(min/60); if(h<24) return h+'h';
+          var dd=Math.floor(h/24); return dd+'d';
+        }catch(_){ return ''; }
+      }
       function renderConvs(){
         var list=$('convList'); var q=state.filter.toLowerCase();
-        var items=state.convs.filter(function(c){ return !q || (c.name||'').toLowerCase().indexOf(q)>=0 || (c.phone||'').indexOf(q)>=0; });
+        var items=state.convs.filter(function(c){
+          if(q && (c.name||'').toLowerCase().indexOf(q)<0 && (c.phone||'').indexOf(q)<0) return false;
+          // "não respondida" = a última mensagem foi do CLIENTE (ninguém respondeu depois)
+          var pendente=(c.lastDir!=='out');
+          if(state.answer==='pending' && !pendente) return false;
+          if(state.answer==='done' && pendente) return false;
+          return true;
+        });
+        // Não respondidas primeiro; dentro de cada grupo, mais recente no topo.
+        items.sort(function(a,b){
+          var pa=(a.lastDir!=='out')?0:1, pb=(b.lastDir!=='out')?0:1;
+          if(pa!==pb) return pa-pb;
+          return new Date(b.lastAt||0)-new Date(a.lastAt||0);
+        });
+        var nPend=state.convs.filter(function(c){ return c.lastDir!=='out'; }).length;
         $('convCount').textContent=state.convs.length;
-        list.innerHTML=items.map(function(c){
+        var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
+
+        var html=''; var grupoAtual=null;
+        items.forEach(function(c){
+          var pendente=(c.lastDir!=='out');
+          // Cabeçalho de grupo (só quando não está filtrando por um dos dois)
+          if(state.answer==='all'){
+            var g=pendente?'pend':'ok';
+            if(g!==grupoAtual){
+              grupoAtual=g;
+              html+='<div class="grp">'+(pendente?'⏳ Aguardando resposta':'✓ Respondidas')+'</div>';
+            }
+          }
           var nm=c.name || ('+'+c.phone);
           var prefix=(c.lastDir==='out')?'Você: ':'';
-          return '<div class="conv'+(state.current===c.phone?' active':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
+          var tag=c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
+          html+='<div class="conv'+(state.current===c.phone?' active':'')+(pendente?' pend':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
             +'<div class="avatar">'+esc(initials(c.name,c.phone))+'</div>'
-            +'<div class="conv-main"><div class="conv-top"><span class="conv-name">'+esc(nm)
-            +(c.botPaused?'<span class="tag-paused">humano</span>':'<span class="tag-bot">bot</span>')+'</span>'
-            +'<span class="conv-time">'+fmtTime(c.lastAt)+'</span></div>'
-            +'<div class="conv-sub">'+esc(prefix)+esc(c.lastText||'')+(c.unread?'<span class="badge-unread">novo</span>':'')+'</div></div></div>';
-        }).join('') || '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa ainda.</div>';
+            +'<div class="conv-main">'
+              +'<div class="conv-top"><span class="conv-name">'+esc(nm)+tag+'</span></div>'
+              +'<div class="conv-sub">'+esc(prefix)+esc(c.lastText||'')+'</div>'
+            +'</div>'
+            // Coluna de tempo à DIREITA (não embaixo): decorrido + hora/data
+            +'<div class="conv-side">'
+              +'<div class="side-elapsed'+(pendente?' pend':'')+'">'+fmtElapsed(c.lastAt)+'</div>'
+              +'<div class="side-clock">'+fmtTime(c.lastAt)+'</div>'
+              +(c.unread?'<span class="badge-unread">novo</span>':'')
+            +'</div>'
+          +'</div>';
+        });
+        list.innerHTML=html || '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
       }
 
       async function loadConvs(){
-        var d=await api('/api/painel/ia-crm/conversations');
+        var d=await api('/api/painel/ia-crm/conversations?scope='+encodeURIComponent(state.scope));
         if(d&&d.ok){ state.convs=d.conversations||[]; renderConvs(); }
       }
 
@@ -169,14 +265,25 @@
       function renderMsgs(msgs){
         var box=$('msgs');
         var MEDIA=['image','audio','video','document','sticker'];
-        box.innerHTML=(msgs||[]).map(function(m){
+        state.msgs = msgs||[];
+        // índice por wamid p/ montar o trecho citado
+        var porWamid={}; state.msgs.forEach(function(m){ if(m.wamid) porWamid[m.wamid]=m; });
+        box.innerHTML=state.msgs.map(function(m){
           var isMedia = MEDIA.indexOf(m.type)>=0 && m.mediaId;
           var cls='b '+(m.direction==='out'?('out'+(m.agent?' agent':'')):'in')+((m.type==='image'||m.type==='sticker'||m.type==='video')&&m.mediaId?' media':'');
           var who=(m.direction==='out')?(m.agent?'Atendente':'Bot'):'';
           var inner;
           if(isMedia){ var cap=String(m.text||'').replace(/^\[[^\]]*\]\s*/,''); inner=mediaHtml(m)+(cap?('<div class="cap">'+esc(cap)+'</div>'):''); }
           else inner=esc(m.text);
-          return '<div class="'+cls+'">'+(who?'<div class="who">'+who+'</div>':'')+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
+          // Bloco da mensagem CITADA (quando esta responde a outra)
+          var quote='';
+          if(m.replyTo && porWamid[m.replyTo]){
+            var q=porWamid[m.replyTo];
+            var qwho=(q.direction==='out')?(q.agent?'Atendente':'Bot'):'Cliente';
+            quote='<div class="quoted"><div class="q-who">'+qwho+'</div><div class="q-txt">'+esc(String(q.text||'').slice(0,120))+'</div></div>';
+          }
+          var btn = m.wamid ? '<button type="button" class="reply-btn" data-wamid="'+esc(m.wamid)+'" title="Responder esta mensagem">↩</button>' : '';
+          return '<div class="'+cls+'">'+btn+(who?'<div class="who">'+who+'</div>':'')+quote+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
         }).join('');
         box.scrollTop=box.scrollHeight;
       }
@@ -207,6 +314,17 @@
       // Eventos
       $('convList').addEventListener('click', function(ev){ var c=ev.target.closest('.conv'); if(!c) return; openChat(c.getAttribute('data-phone'), c.getAttribute('data-name')); });
       $('backBtn').addEventListener('click', function(){ $('crm').classList.remove('show-thread'); state.current=null; renderConvs(); });
+      document.querySelector('.scope-tabs').addEventListener('click', function(ev){
+        var b=ev.target.closest('.scope-tab'); if(!b) return;
+        // só limpa as abas de ESCOPO (as de resposta têm seu próprio estado)
+        document.querySelectorAll('.scope-tabs:not(.ans-tabs) .scope-tab').forEach(function(x){ x.classList.remove('active'); });
+        b.classList.add('active'); state.scope=b.getAttribute('data-scope'); loadConvs();
+      });
+      document.querySelector('.ans-tabs').addEventListener('click', function(ev){
+        var b=ev.target.closest('.scope-tab'); if(!b) return;
+        document.querySelectorAll('.ans-tabs .scope-tab').forEach(function(x){ x.classList.remove('active'); });
+        b.classList.add('active'); state.answer=b.getAttribute('data-answer'); renderConvs();
+      });
       $('search').addEventListener('input', function(){ state.filter=this.value; renderConvs(); });
       $('botBtn').addEventListener('click', async function(){
         if(!state.current) return;
@@ -217,13 +335,38 @@
       async function send(){
         var txt=$('msgInput').value.trim(); if(!txt||!state.current) return;
         $('sendBtn').disabled=true;
-        var d=await api('/api/painel/ia-crm/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt }) });
+        var d=await api('/api/painel/ia-crm/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) });
         $('sendBtn').disabled=false;
-        if(d&&d.ok){ $('msgInput').value=''; setBotBtn(true); await refreshOpen(); loadConvs(); }
+        if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(); loadConvs(); }
         else { alert('Falha ao enviar: '+((d&&(d.detail||d.error))||'erro')); }
       }
+      // Responder mensagem específica (citação) — vale p/ mensagem do cliente e nossa.
+      function setReply(wamid){
+        var m=(state.msgs||[]).find(function(x){ return x.wamid===wamid; }); if(!m) return;
+        state.replyTo=wamid;
+        $('rbWho').textContent=(m.direction==='out')?(m.agent?'Atendente':'Bot'):'Cliente';
+        $('rbTxt').textContent=String(m.text||'').slice(0,140);
+        $('replyBar').style.display='flex';
+        $('msgInput').focus();
+      }
+      function clearReply(){ state.replyTo=null; $('replyBar').style.display='none'; }
+      $('rbCancel').addEventListener('click', clearReply);
+      $('msgs').addEventListener('click', function(ev){
+        var b=ev.target.closest('.reply-btn'); if(!b) return;
+        ev.stopPropagation(); setReply(b.getAttribute('data-wamid'));
+      });
       $('sendBtn').addEventListener('click', send);
-      $('msgInput').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); send(); } });
+      // Celular (Android/iOS): a tecla Enter do teclado deve QUEBRAR LINHA — quem envia
+      // é o botão. No desktop: Enter envia, Ctrl+Enter e Shift+Enter quebram linha.
+      var IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 900);
+      function autoGrow(){ var el=$('msgInput'); el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+      $('msgInput').addEventListener('input', autoGrow);
+      $('msgInput').addEventListener('keydown', function(e){
+        if(e.key!=='Enter') return;
+        if(IS_MOBILE) return;                 // celular: deixa quebrar linha
+        if(e.ctrlKey||e.metaKey||e.shiftKey) return; // Ctrl/Cmd/Shift+Enter: quebra linha
+        e.preventDefault(); send();
+      });
 
       // Anexar / enviar mídia
       function upmsg(t, err){ var e=$('upMsg'); e.textContent=t||''; e.className='upmsg'+(err?' err':''); }

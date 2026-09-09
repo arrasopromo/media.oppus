@@ -1238,6 +1238,15 @@ document.addEventListener('DOMContentLoaded', function() {
                   document.getElementById('checkoutProfileUsername').textContent = data.username.replace(/^@+/, '');
                   var _eu = String(data.username || '').trim().replace(/^@+/, '');
                   document.getElementById('checkoutProfileImage').src = _eu ? ('/avatar/instagram/' + encodeURIComponent(_eu)) : (data.profilePicUrl || '/img/default-avatar.png');
+                  // @ já tem extensão de refil ativa (6m/12m/vitalício) → esconde o bump de garantia.
+                  try {
+                    if (_eu) {
+                      fetch('/api/refil/warranty-status?username=' + encodeURIComponent(_eu), { credentials: 'same-origin' })
+                        .then(function(r){ return r.json(); })
+                        .then(function(d){ window.__hasActiveWarranty = !!(d && d.active); try { updateOrderBumpsVisibility(); } catch (_) {} })
+                        .catch(function(){});
+                    }
+                  } catch (_) {}
                   document.getElementById('checkoutFollowersCount').textContent = data.followers || '-';
                   document.getElementById('checkoutFollowingCount').textContent = data.following || '-';
                   document.getElementById('checkoutPostsCount').textContent = data.postsCount || '-';
@@ -1473,7 +1482,15 @@ document.addEventListener('DOMContentLoaded', function() {
   function updateOrderBumpsVisibility() {
       const warrantyCard = document.querySelector('.promo-item.warranty60');
       if (!warrantyCard) return;
-  
+
+      // @ já tem extensão de refil ativa (6m/12m/vitalício) → esconde o bump de garantia.
+      if (window.__hasActiveWarranty === true) {
+          warrantyCard.style.display = 'none';
+          const cbW = document.getElementById('promoWarranty60');
+          if (cbW && cbW.checked) { cbW.checked = false; if (typeof updatePromosSummary === 'function') updatePromosSummary(); }
+          return;
+      }
+
       const isFollowers = window.currentService === 'followers';
       // 'mistos' = Mundiais, 'organicos' = Brasileiros Reais, 'brasileiros' = Brasileiros
     const isEligibleType = window.selectedType === 'mistos' || window.selectedType === 'organicos' || window.selectedType === 'brasileiros' || window.selectedType === 'curtidas_brasileiras';
