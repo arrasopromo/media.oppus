@@ -3803,10 +3803,12 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
     else if (scope === 'legacy') pipeline.push({ $match: { importedFrom: 'datacrazy' } });
     pipeline.push(
       { $sort: { createdAt: -1 } },
-      // `outs` = quantas respostas NOSSAS a conversa tem. É o que define
-      // "respondida" no painel: se já houve interação de nossa parte, ela sai da
-      // fila — mesmo que o cliente tenha mandado um "ok" depois da resposta.
-      { $group: { _id: '$phone', lastText: { $first: '$text' }, lastDir: { $first: '$direction' }, lastAt: { $first: '$createdAt' }, name: { $first: '$name' }, outs: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } } } },
+      // `humanOuts` = respostas do ATENDENTE (agent:true), não do bot. É o que
+      // define "respondida" no painel: conversa que só o bot atendeu continua na
+      // fila; se VOCÊ respondeu manualmente, sai da fila — mesmo que o cliente
+      // tenha mandado um "ok" depois da sua resposta.
+      { $group: { _id: '$phone', lastText: { $first: '$text' }, lastDir: { $first: '$direction' }, lastAt: { $first: '$createdAt' }, name: { $first: '$name' },
+        humanOuts: { $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'out'] }, { $eq: ['$agent', true] }] }, 1, 0] } } } },
       { $sort: { lastAt: -1 } },
       { $limit: 300 }
     );
@@ -3819,8 +3821,9 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
       phone: c._id,
       name: (cmap[c._id] && cmap[c._id].name) || c.name || '',
       lastText: c.lastText || '', lastDir: c.lastDir, lastAt: c.lastAt,
-      // já houve interação nossa nessa conversa (bot ou atendente)
-      answered: Number(c.outs || 0) > 0,
+      // VOCÊ (atendente) já respondeu essa conversa manualmente. Resposta só do
+      // bot NÃO conta como respondida.
+      answered: Number(c.humanOuts || 0) > 0,
       botPaused: !!(cmap[c._id] && cmap[c._id].botPaused),
       unread: !!(cmap[c._id] && cmap[c._id].unread),
       // Conversa IMPORTADA (histórico do DataCrazy): nasce com a IA pausada e ganha
@@ -3828,17 +3831,17 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
       legacy: !!(cmap[c._id] && cmap[c._id].legacy),
       importedFrom: (cmap[c._id] && cmap[c._id].importedFrom) || '',
     }));
-    // Fila de trabalho: conversas NOVAS em que NINGUÉM respondeu ainda (nem bot,
-    // nem atendente). Vai sempre no retorno pra guia "Não respondidas" mostrar o
-    // mesmo número em qualquer aba aberta.
+    // Fila de trabalho: conversas NOVAS que o ATENDENTE ainda não respondeu
+    // (atendimento só do bot continua contando como pendente). Vai sempre no
+    // retorno pra guia "Não respondidas" mostrar o mesmo número em qualquer aba.
     let pendingNew = 0;
     if (scope === 'new') pendingNew = list.filter((c) => !c.answered).length;
     else {
       try {
         const agg = await col.aggregate([
           { $match: { importedFrom: { $ne: 'datacrazy' } } },
-          { $group: { _id: '$phone', outs: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } } } },
-          { $match: { outs: 0 } },
+          { $group: { _id: '$phone', humanOuts: { $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'out'] }, { $eq: ['$agent', true] }] }, 1, 0] } } } },
+          { $match: { humanOuts: 0 } },
           { $count: 'n' },
         ]).toArray();
         pendingNew = (agg[0] && agg[0].n) || 0;

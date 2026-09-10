@@ -169,8 +169,8 @@
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa..." autocomplete="off"></div>
         <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
         <div class="tabs" id="tabs">
-          <button type="button" class="tab" data-tab="pending">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
-          <button type="button" class="tab" data-tab="done">✓ Respondidas</button>
+          <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente — atendimento só do bot continua aqui">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
+          <button type="button" class="tab" data-tab="done" title="Você já respondeu manualmente em algum momento">✓ Respondidas</button>
           <button type="button" class="tab active" data-tab="new">Novas</button>
           <button type="button" class="tab" data-tab="legacy">Antigas</button>
           <button type="button" class="tab" data-tab="all">Todas</button>
@@ -259,9 +259,9 @@
         var list=$('convList'); var q=state.filter.toLowerCase();
         var items=state.convs.filter(function(c){
           if(q && (c.name||'').toLowerCase().indexOf(q)<0 && (c.phone||'').indexOf(q)<0) return false;
-          // "não respondida" = NINGUÉM respondeu essa conversa ainda. Se você já
-          // respondeu, ela é respondida — mesmo que o cliente tenha mandado um
-          // "ok" depois (antes eu olhava só a última mensagem e ela voltava pra fila).
+          // "respondida" = VOCÊ respondeu manualmente em algum momento. Conversa
+          // atendida só pelo BOT continua como não respondida. E o "ok" do cliente
+          // depois da sua resposta não joga a conversa de volta pra fila.
           var respondida=(c.answered===undefined) ? (c.lastDir==='out') : !!c.answered;
           if(state.answer==='pending' && respondida) return false;
           if(state.answer==='done' && !respondida) return false;
