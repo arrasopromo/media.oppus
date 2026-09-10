@@ -245,7 +245,14 @@
             +'</div>'
           +'</div>';
         });
-        list.innerHTML=html || '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
+        var novo = html || '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
+        // O polling redesenha a lista a cada 5s. Se nada mudou, não mexe no DOM
+        // (senão o scroll do usuário volta pro topo enquanto ele está rolando).
+        if(novo===state._convsHtml) return;
+        var topoAntes=list.scrollTop;
+        list.innerHTML=novo;
+        state._convsHtml=novo;
+        list.scrollTop=topoAntes;   // mantém onde o usuário estava
       }
 
       async function loadConvs(){
@@ -262,13 +269,16 @@
         if(m.type==='document') return '<a class="media-doc" href="'+src+'" target="_blank"><span class="doc-ico">📄</span><span class="doc-name">'+esc(m.filename||'documento')+'</span><span class="doc-dl">abrir</span></a>';
         return esc(m.text||'');
       }
-      function renderMsgs(msgs){
+      // force=true só quando ABRE a conversa (aí sim vai pro fim).
+      // Nos refreshes automáticos NUNCA arrasta a tela: só desce sozinho se o
+      // usuário já estava colado no rodapé; se ele rolou pra cima, fica onde está.
+      function renderMsgs(msgs, force){
         var box=$('msgs');
         var MEDIA=['image','audio','video','document','sticker'];
         state.msgs = msgs||[];
         // índice por wamid p/ montar o trecho citado
         var porWamid={}; state.msgs.forEach(function(m){ if(m.wamid) porWamid[m.wamid]=m; });
-        box.innerHTML=state.msgs.map(function(m){
+        var html=state.msgs.map(function(m){
           var isMedia = MEDIA.indexOf(m.type)>=0 && m.mediaId;
           var cls='b '+(m.direction==='out'?('out'+(m.agent?' agent':'')):'in')+((m.type==='image'||m.type==='sticker'||m.type==='video')&&m.mediaId?' media':'');
           var who=(m.direction==='out')?(m.agent?'Atendente':'Bot'):'';
@@ -285,7 +295,14 @@
           var btn = m.wamid ? '<button type="button" class="reply-btn" data-wamid="'+esc(m.wamid)+'" title="Responder esta mensagem">↩</button>' : '';
           return '<div class="'+cls+'">'+btn+(who?'<div class="who">'+who+'</div>':'')+quote+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
         }).join('');
-        box.scrollTop=box.scrollHeight;
+        // Nada mudou? não redesenha (evita piscar áudio/imagem e perder o scroll).
+        if(!force && html===state._msgsHtml) return;
+        var perto=(box.scrollHeight-box.scrollTop-box.clientHeight)<80; // usuário estava no rodapé?
+        var topoAntes=box.scrollTop;
+        box.innerHTML=html;
+        state._msgsHtml=html;
+        if(force || perto) box.scrollTop=box.scrollHeight;
+        else box.scrollTop=topoAntes;   // respeita onde o usuário parou
       }
 
       function setBotBtn(paused){
@@ -302,13 +319,14 @@
         $('tName').textContent=name || ('+'+phone); $('tPhone').textContent='+'+phone; $('tAvatar').textContent=initials(name,phone);
         renderConvs();
         var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(phone));
-        if(d&&d.ok){ renderMsgs(d.messages); setBotBtn(d.botPaused); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
+        if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
       }
 
-      async function refreshOpen(){
+      // force=true só quando VOCÊ acabou de enviar/agir (aí desce pro fim de propósito).
+      async function refreshOpen(force){
         if(!state.current) return;
         var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(state.current));
-        if(d&&d.ok){ renderMsgs(d.messages); setBotBtn(d.botPaused); }
+        if(d&&d.ok){ renderMsgs(d.messages, force===true); setBotBtn(d.botPaused); }
       }
 
       // Eventos
@@ -337,7 +355,7 @@
         $('sendBtn').disabled=true;
         var d=await api('/api/painel/ia-crm/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) });
         $('sendBtn').disabled=false;
-        if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(); loadConvs(); }
+        if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(true); loadConvs(); }
         else { alert('Falha ao enviar: '+((d&&(d.detail||d.error))||'erro')); }
       }
       // Responder mensagem específica (citação) — vale p/ mensagem do cliente e nossa.
@@ -377,7 +395,7 @@
         try {
           var r=await fetch('/api/painel/ia-crm/send-media', { method:'POST', credentials:'same-origin', body: fd });
           var d=await r.json().catch(function(){ return null; });
-          if(d&&d.ok){ upmsg(''); setBotBtn(true); await refreshOpen(); loadConvs(); }
+          if(d&&d.ok){ upmsg(''); setBotBtn(true); await refreshOpen(true); loadConvs(); }
           else { upmsg('Falha: '+((d&&d.message)||(d&&d.error)||'erro'), true); }
         } catch(e){ upmsg('Erro de rede ao enviar.', true); }
       }
