@@ -291,12 +291,10 @@
           if(state.answer==='done' && !respondida) return false;
           return true;
         });
-        // Não respondidas primeiro; dentro de cada grupo, mais recente no topo.
-        items.sort(function(a,b){
-          var pa=(a.lastDir!=='out')?0:1, pb=(b.lastDir!=='out')?0:1;
-          if(pa!==pb) return pa-pb;
-          return new Date(b.lastAt||0)-new Date(a.lastAt||0);
-        });
+        // Ordem = mais recente no topo, igual WhatsApp. (Antes jogava pro FIM as
+        // conversas em que você falou por último — a que você acabou de responder
+        // "sumia" lá pra baixo da lista.)
+        items.sort(function(a,b){ return new Date(b.lastAt||0)-new Date(a.lastAt||0); });
         // Badge da guia "Não respondidas" = o que está na lista carregada.
         var nPend=state.convs.filter(function(c){ return !c.answered; }).length;
         $('convCount').textContent=state.convs.length;
