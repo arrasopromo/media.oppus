@@ -14818,13 +14818,21 @@ app.post('/api/paghiper/charge', async (req, res) => {
                 process.env.SITE_URL,
                 process.env.PUBLIC_URL,
                 process.env.APP_URL,
-                process.env.BASE_URL
+                process.env.BASE_URL,
+                process.env.PUBLIC_BASE_URL
             ];
-            const picked = candidates.map(s => String(s || '').trim()).find(Boolean);
+            // URL interna NUNCA pode virar notification_url: a IA do WhatsApp cria o
+            // Pix chamando este endpoint via http://localhost:3000, e a PagHiper
+            // recebia "http://localhost:3000/api/paghiper/notification" — que ela não
+            // alcança. Resultado: nenhum Pix da IA recebia webhook (0 de 9 em 10 dias)
+            // e o pedido pago ficava "pendente" pra sempre.
+            const isInternal = (u) => /\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(\/|$)/i.test(String(u || ''));
+            const picked = candidates.map(s => String(s || '').trim()).find((s) => s && !isInternal(s));
             const fallbackFromReq = (function () {
                 try {
                     const host = String(req.get('host') || req.headers['host'] || '').trim();
                     if (!host) return '';
+                    if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?$/i.test(host)) return '';
                     const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || (req.secure ? 'https' : 'http');
                     return `${proto}://${host}`;
                 } catch (_) { return ''; }
@@ -47985,6 +47993,89 @@ function iaPayRecoveryMessage(stage) {
   // 25 min — urgência (o Pix da PagHiper dura ~1 dia, então NÃO afirmamos "expira em 5min").
   return 'Última chamada! Seu pedido ainda está aguardando o pagamento do Pix. Pra garantir o impulsionamento com esse valor, é só finalizar o Pix — assim que cair, já começo o seu perfil.';
 }
+// ── Conciliação PagHiper (rede de segurança do webhook) ──────────────────────
+// Se o webhook não chegar (URL errada, queda, deploy no meio), o pedido pago fica
+// "pendente" pra sempre. A cada PAGHIPER_RECONCILE_LOOP_MS, pega os pedidos
+// PagHiper ainda pendentes das últimas 48h e consulta /invoice/status. Pagou →
+// marca pago e roda o MESMO fulfillment do webhook. Cada pedido é consultado no
+// máximo a cada 10 min. Aqui 'completed' também conta como pago: a PagHiper
+// devolve 'completed' pro Pix já liquidado, e o pedido local está pendente.
+async function runPaghiperReconcileTick() {
+  const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
+  const token = String(process.env.PAGHIPER_TOKEN || '').trim();
+  if (!apiKey || !token) return { checked: 0, paid: 0 };
+  const col = await getCollection('checkout_orders');
+  const { ObjectId } = require('mongodb');
+  const now = Date.now();
+  const minId = ObjectId.createFromTime(Math.floor((now - 48 * 3600 * 1000) / 1000));
+  const maxId = ObjectId.createFromTime(Math.floor((now - 3 * 60 * 1000) / 1000));   // dá 3 min pro webhook normal
+  const recheckCut = new Date(now - 10 * 60 * 1000).toISOString();
+  const pendente = {
+    status: { $nin: ['pago', 'paid', 'cancelado', 'estornado', 'refunded', 'expired', 'expirado', 'divergent_value'] },
+    paidAt: { $in: [null] },
+    'paghiper.paidAt': { $in: [null] },
+  };
+  const docs = await col.find(Object.assign({
+    _id: { $gte: minId, $lte: maxId },
+    'paghiper.transactionId': { $exists: true, $nin: [null, ''] },
+    'paghiper.reconcileHold': { $ne: true },   // pedido tratado à mão: não concilia/despacha sozinho
+    $or: [{ 'paghiper.reconcileCheckedAt': { $exists: false } }, { 'paghiper.reconcileCheckedAt': { $lte: recheckCut } }],
+  }, pendente), { projection: { _id: 1, identifier: 1, correlationID: 1, 'paghiper.transactionId': 1, expectedValueCents: 1 } })
+    .sort({ _id: -1 }).limit(40).toArray();
+
+  const out = { checked: 0, paid: 0 };
+  for (const d of docs) {
+    const tx = String(d.paghiper.transactionId);
+    let stRoot = null, data = null;
+    try {
+      const resp = await axios.post('https://pix.paghiper.com/invoice/status/', { token, apiKey, transaction_id: tx },
+        { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 15000, validateStatus: () => true });
+      data = resp && resp.data; stRoot = (data && (data.status_request || data)) || {};
+    } catch (_) { continue; }
+    out.checked++;
+    const st = String(stRoot.status || '').trim().toLowerCase();
+    const paidCents = parseInt(String(stRoot.value_cents_paid || ''), 10);
+    const pago = isPaghiperPaidStatus(st) || (isPaghiperCompletedStatus(st) && !(Number.isFinite(paidCents) && paidCents <= 0));
+    if (!pago) {
+      try { await col.updateOne({ _id: d._id }, { $set: { 'paghiper.reconcileCheckedAt': new Date().toISOString(), 'paghiper.reconcileLastStatus': st || null } }); } catch (_) {}
+      continue;
+    }
+    const paidIso = parsePaghiperDateToIso(stRoot.paid_date) || parsePaghiperDateToIso(stRoot.status_date) || new Date().toISOString();
+    const divergente = !!(d.expectedValueCents && Number.isFinite(paidCents) && paidCents > 0 && paidCents !== d.expectedValueCents);
+    const set = {
+      status: divergente ? 'divergent_value' : 'pago',
+      paidAt: paidIso,
+      'paghiper.status': divergente ? 'divergent_value' : 'pago',
+      'paghiper.paidAt': paidIso,
+      'paghiper.statusPayload': data || null,
+      'paghiper.reconciledAt': new Date().toISOString(),
+      'paghiper.reconcileCheckedAt': new Date().toISOString(),
+      'paghiper.reconcileLastStatus': st,
+    };
+    if (isPaghiperCompletedStatus(st)) set['paghiper.completedAt'] = parsePaghiperDateToIso(stRoot.status_date) || paidIso;
+    if (divergente) set.mismatchDetails = { expected: d.expectedValueCents, paid: paidCents, detectedAt: new Date().toISOString(), source: 'reconcile' };
+    // claim atômico: se o webhook marcou pago nesse meio tempo, não repete o fulfillment
+    const claim = await col.updateOne(Object.assign({ _id: d._id }, pendente), { $set: set });
+    if (!(claim && claim.modifiedCount > 0)) continue;
+    out.paid++;
+    try { console.log(`💸 [paghiper-reconcile] ${d.identifier} PAGO na PagHiper (${st}) sem webhook — conciliado${divergente ? ' (VALOR DIVERGENTE, não despacha)' : ''}`); } catch (_) {}
+    if (divergente) continue;
+    try { const fresh = await col.findOne({ _id: d._id }); await processOrderFulfillment(fresh, col, null); } catch (e) { try { console.error('[paghiper-reconcile] fulfillment', d.identifier, e && e.message); } catch (_) {} }
+    try { await broadcastPaymentPaid(d.identifier, d.correlationID); } catch (_) {}
+  }
+  return out;
+}
+(function startPaghiperReconcileLoop() {
+  if (String(process.env.PAGHIPER_RECONCILE_ENABLED || '1') === '0') return;
+  if (!backgroundJobsEnabled()) { try { console.log('⏸️ [paghiper-reconcile] DESLIGADO (BACKGROUND_JOBS_ENABLED=false)'); } catch (_) {} return; }
+  const loopMs = Math.max(60 * 1000, parseInt(String(process.env.PAGHIPER_RECONCILE_LOOP_MS || '180000'), 10) || 180000);
+  try { console.log('🔁 [paghiper-reconcile] enabled loopMs=' + loopMs); } catch (_) {}
+  let running = false;
+  const tick = async () => { if (running) return; running = true; try { await runPaghiperReconcileTick(); } catch (_) {} finally { running = false; } };
+  setTimeout(() => { tick().catch(() => {}); }, 60000);
+  setInterval(() => { tick().catch(() => {}); }, loopMs);
+})();
+
 // Reserva o direito de mandar UM lembrete para este número agora. Se ele já
 // recebeu um nos últimos IA_PAY_RECOVERY_MIN_GAP_MIN minutos (por qualquer
 // pedido), devolve false. É atômico: dois pedidos do mesmo cliente no mesmo tick

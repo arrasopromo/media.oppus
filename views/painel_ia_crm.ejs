@@ -85,6 +85,7 @@
     .b .cap { margin-top: 4px; }
     .media-img, .media-sticker { max-width: 240px; max-height: 300px; border-radius: 8px; display: block; cursor: pointer; }
     .media-sticker { max-width: 130px; background: transparent; }
+    .media-link { display: block; cursor: zoom-in; }
     .media-video { max-width: 260px; border-radius: 8px; display: block; }
     .media-audio { width: 230px; height: 38px; margin-top: 2px; }
     .media-doc { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.05); padding: 9px 11px; border-radius: 8px; text-decoration: none; color: inherit; min-width: 180px; }
@@ -179,9 +180,7 @@
         <div class="tabs" id="tabs">
           <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente — atendimento só do bot continua aqui">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
           <button type="button" class="tab" data-tab="done" title="Você já respondeu manualmente em algum momento">✓ Respondidas</button>
-          <button type="button" class="tab active" data-tab="new">Novas</button>
-          <button type="button" class="tab" data-tab="legacy">Antigas</button>
-          <button type="button" class="tab" data-tab="all">Todas</button>
+          <button type="button" class="tab active" data-tab="all">Todas</button>
         </div>
         <div class="conv-list" id="convList"></div>
       </div>
@@ -234,16 +233,16 @@
       function fmtTime(d){ try{ var x=new Date(d); var now=new Date(); var sameDay=x.toDateString()===now.toDateString(); return sameDay ? (('0'+x.getHours()).slice(-2)+':'+('0'+x.getMinutes()).slice(-2)) : (('0'+x.getDate()).slice(-2)+'/'+('0'+(x.getMonth()+1)).slice(-2)); }catch(_){ return ''; } }
       async function api(url, opts){ var r=await fetch(url, Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts||{})); return await r.json().catch(function(){return null;}); }
 
-      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', tab: 'new', scope: 'new', answer: 'all', msgs: [], replyTo: null };
+      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', tab: 'all', scope: 'all', answer: 'all', msgs: [], replyTo: null };
 
       // Cada guia é um par (escopo, respondida?). A separação aguardando/respondida
       // vive SÓ nos botões — a lista não tem mais cabeçalho de grupo no meio.
+      // Sem separação Novas/Antigas: uma lista só, por recência. A conversa importada
+      // do DataCrazy continua identificada pela tag laranja "antiga".
       var TABS = {
-        pending: { scope: 'new',    answer: 'pending' },  // ninguém respondeu ainda
-        done:    { scope: 'new',    answer: 'done'    },  // já houve interação
-        'new':   { scope: 'new',    answer: 'all' },
-        legacy:  { scope: 'legacy', answer: 'all' },
-        all:     { scope: 'all',    answer: 'all' }
+        pending: { scope: 'all', answer: 'pending' },  // você ainda não respondeu
+        done:    { scope: 'all', answer: 'done'    },  // você já respondeu
+        all:     { scope: 'all', answer: 'all' }
       };
 
       // A sidebar do painel fica sticky no topo no celular: sem descontar a altura
@@ -288,9 +287,8 @@
           if(pa!==pb) return pa-pb;
           return new Date(b.lastAt||0)-new Date(a.lastAt||0);
         });
-        // O badge da guia "Não respondidas" é sempre a fila das conversas NOVAS,
-        // independente da guia aberta (senão trocaria de número a cada aba).
-        var nPend=(state.pendingNew!=null) ? state.pendingNew : state.convs.filter(function(c){ return !c.answered; }).length;
+        // Badge da guia "Não respondidas" = o que está na lista carregada.
+        var nPend=state.convs.filter(function(c){ return !c.answered; }).length;
         $('convCount').textContent=state.convs.length;
         var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
 
@@ -338,8 +336,10 @@
         var src='/api/painel/ia-crm/media?id='+encodeURIComponent(m.mediaId||'');
         // sem onclick inline: as aspas escapadas quebravam o atributo e o clique
         // não fazia nada. Quem abre é o visualizador (delegação de clique em #msgs).
-        if(m.type==='image') return '<img class="media-img" src="'+src+'" alt="imagem" loading="lazy">';
-        if(m.type==='sticker') return '<img class="media-sticker" src="'+src+'" alt="figurinha" loading="lazy">';
+        // A imagem fica dentro de um link: o clique normal abre o visualizador (JS
+        // faz preventDefault); se o JS falhar, o link ainda abre a foto numa aba nova.
+        if(m.type==='image') return '<a class="media-link" href="'+src+'" target="_blank" rel="noopener"><img class="media-img" src="'+src+'" alt="imagem" loading="lazy"></a>';
+        if(m.type==='sticker') return '<a class="media-link" href="'+src+'" target="_blank" rel="noopener"><img class="media-sticker" src="'+src+'" alt="figurinha" loading="lazy"></a>';
         if(m.type==='audio') return '<audio class="media-audio" controls preload="none" src="'+src+'"></audio>';
         if(m.type==='video') return '<video class="media-video" controls preload="metadata" src="'+src+'"></video>';
         if(m.type==='document') return '<a class="media-doc" href="'+src+'" target="_blank"><span class="doc-ico">📄</span><span class="doc-name">'+esc(m.filename||'documento')+'</span><span class="doc-dl">abrir</span></a>';
@@ -474,8 +474,13 @@
       $('rbCancel').addEventListener('click', clearReply);
       $('msgs').addEventListener('click', function(ev){
         // Foto/figurinha: abre no visualizador em tela cheia.
-        var img=ev.target.closest('.media-img, .media-sticker');
-        if(img){ ev.preventDefault(); abrirImagem(img.getAttribute('src')); return; }
+        var img=ev.target.closest('.media-link, .media-img, .media-sticker');
+        if(img){
+          ev.preventDefault();
+          var el=img.matches('img')?img:img.querySelector('img');
+          abrirImagem((el && el.getAttribute('src')) || img.getAttribute('href'));
+          return;
+        }
         var b=ev.target.closest('.reply-btn'); if(!b) return;
         ev.stopPropagation(); setReply(b.getAttribute('data-wamid'));
       });
