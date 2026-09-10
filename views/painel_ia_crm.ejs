@@ -100,14 +100,21 @@
     .b.in .quoted { border-left-color:#7c3aed; }
     .q-who { font-size:0.64rem; font-weight:800; color:#1d6fd8; }
     .q-txt { font-size:0.78rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    /* Responder: o botão precisa ser VISÍVEL — no celular não existe hover, então
-       antes ele ficava invisível (opacity:0) e não dava pra usar. */
-    .reply-btn { position:absolute; top:1px; right:1px; width:26px; height:26px; opacity:0.3; border:none; background:transparent;
-      cursor:pointer; font-size:0.95rem; line-height:1; color:#54656f; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; }
-    .b:hover .reply-btn { opacity:0.85; }
-    .reply-btn:hover { opacity:1 !important; background:rgba(0,0,0,0.07); }
-    .b .reply-btn + .who, .b > .reply-btn ~ .quoted { margin-right: 20px; }
-    .b.media .reply-btn { background:rgba(255,255,255,0.85); opacity:0.85; }
+    /* Seta ⌄ no canto do balão (igual WhatsApp Web): abre o menu com "Responder".
+       No PC aparece ao passar o mouse; em tela touch fica sempre visível. */
+    .msg-menu-btn { position:absolute; top:2px; right:2px; width:24px; height:24px; opacity:0; border:none; background:transparent;
+      cursor:pointer; color:#54656f; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; transition:opacity .12s; }
+    .msg-menu-btn svg { width:18px; height:18px; display:block; }
+    .b:hover .msg-menu-btn, .msg-menu-btn.aberto { opacity:0.9; }
+    .msg-menu-btn:hover { opacity:1 !important; background:rgba(0,0,0,0.07); }
+    .b .msg-menu-btn + .who, .b > .msg-menu-btn ~ .quoted { margin-right: 18px; }
+    .b.media .msg-menu-btn { background:rgba(255,255,255,0.9); }
+    @media (hover: none) { .msg-menu-btn { opacity:0.55; } }
+    .msg-menu { position:fixed; z-index:60; min-width:160px; background:#fff; border-radius:8px; padding:6px 0;
+      box-shadow:0 4px 16px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.1); }
+    .msg-menu button { display:block; width:100%; text-align:left; border:none; background:transparent; padding:9px 18px;
+      font-size:0.9rem; color:#111b21; cursor:pointer; font-family:inherit; }
+    .msg-menu button:hover { background:#f0f2f5; }
     .reply-bar { display:flex; align-items:center; gap:8px; padding:7px 14px; background:#eef2f5; border-top:1px solid #e2e8ec; }
     .reply-bar .rb-body { flex:1; min-width:0; border-left:3px solid #25d366; padding-left:8px; }
     .reply-bar .rb-who { font-size:0.68rem; font-weight:800; color:#1d6fd8; }
@@ -155,7 +162,7 @@
       .thread-head .t-name { font-size: 0.95rem; max-width: 42vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .btn-bot { padding: 6px 9px; font-size: 0.72rem; }
       .b { max-width: 86%; }
-      .reply-btn { opacity: 0.55; width: 30px; height: 30px; font-size: 1.05rem; }
+      .msg-menu-btn { width: 30px; height: 30px; }
       .tab { font-size: 0.72rem; padding: 6px 10px; }
       .media-img, .media-sticker, .media-video { max-width: 68vw; }
       .media-audio { width: 62vw; max-width: 240px; }
@@ -371,8 +378,11 @@
             var qwho=(q.direction==='out')?(q.agent?'Atendente':'Bot'):'Cliente';
             quote='<div class="quoted"><div class="q-who">'+qwho+'</div><div class="q-txt">'+esc(String(q.text||'').slice(0,120))+'</div></div>';
           }
-          var btn = m.wamid ? '<button type="button" class="reply-btn" data-wamid="'+esc(m.wamid)+'" title="Responder esta mensagem">↩</button>' : '';
-          var dw = m.wamid ? ' data-wamid="'+esc(m.wamid)+'"' : '';   // p/ duplo-clique e toque longo
+          // Só mensagem com ID REAL do WhatsApp pode ser citada. As importadas do
+          // DataCrazy ("dc_…") não existem no WhatsApp: citar uma fazia o envio falhar.
+          var citavel = /^wamid\./.test(String(m.wamid||''));
+          var btn = citavel ? '<button type="button" class="msg-menu-btn" data-wamid="'+esc(m.wamid)+'" title="Opções" aria-label="Opções da mensagem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>' : '';
+          var dw = citavel ? ' data-wamid="'+esc(m.wamid)+'"' : '';   // p/ toque longo no celular
           return '<div class="'+cls+'"'+dw+'>'+btn+(who?'<div class="who">'+who+'</div>':'')+quote+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
         }).join('');
         // Nada mudou? não redesenha (evita piscar áudio/imagem e perder o scroll).
@@ -484,9 +494,42 @@
           abrirImagem((el && el.getAttribute('src')) || img.getAttribute('href'));
           return;
         }
-        var b=ev.target.closest('.reply-btn'); if(!b) return;
-        ev.stopPropagation(); setReply(b.getAttribute('data-wamid'));
+        var b=ev.target.closest('.msg-menu-btn'); if(!b) return;
+        ev.stopPropagation();
+        if(b.classList.contains('aberto')){ fecharMenuMsg(); return; }
+        abrirMenuMsg(b.getAttribute('data-wamid'), b);
       });
+      // ── Menu da mensagem (seta ⌄): Responder / Copiar ─────────────────────────
+      var menuMsg=null, menuBtn=null;
+      function fecharMenuMsg(){
+        if(menuMsg){ menuMsg.remove(); menuMsg=null; }
+        if(menuBtn){ menuBtn.classList.remove('aberto'); menuBtn=null; }
+      }
+      function abrirMenuMsg(wamid, ancora){
+        fecharMenuMsg();
+        var m=(state.msgs||[]).find(function(x){ return x.wamid===wamid; }); if(!m) return;
+        menuMsg=document.createElement('div'); menuMsg.className='msg-menu';
+        menuMsg.innerHTML='<button type="button" data-acao="responder">Responder</button>'+(m.text?'<button type="button" data-acao="copiar">Copiar texto</button>':'');
+        document.body.appendChild(menuMsg);
+        var r=ancora.getBoundingClientRect(), w=menuMsg.offsetWidth, h=menuMsg.offsetHeight;
+        var left=Math.min(Math.max(8, r.right-w), window.innerWidth-w-8);
+        var top=(r.bottom+4+h<window.innerHeight) ? r.bottom+4 : Math.max(8, r.top-h-4);
+        menuMsg.style.left=left+'px'; menuMsg.style.top=top+'px';
+        if(ancora.classList.contains('msg-menu-btn')){ menuBtn=ancora; menuBtn.classList.add('aberto'); }
+        menuMsg.addEventListener('click', function(e){
+          var a=e.target.closest('button'); if(!a) return;
+          var acao=a.getAttribute('data-acao'); fecharMenuMsg();
+          if(acao==='responder') setReply(wamid);
+          if(acao==='copiar'){ try{ navigator.clipboard.writeText(String(m.text||'')); }catch(_){} }
+        });
+      }
+      var ignoraProxClique=false;   // o toque longo termina num "clique" que fecharia o menu na hora
+      document.addEventListener('click', function(e){
+        if(ignoraProxClique){ ignoraProxClique=false; return; }
+        if(menuMsg && !menuMsg.contains(e.target) && !e.target.closest('.msg-menu-btn')) fecharMenuMsg();
+      }, true);
+      document.addEventListener('keydown', function(e){ if(e.key==='Escape') fecharMenuMsg(); });
+      $('msgs').addEventListener('scroll', fecharMenuMsg, { passive:true });
       // ── Visualizador de imagem ───────────────────────────────────────────────
       function abrirImagem(src){
         if(!src) return;
@@ -498,11 +541,8 @@
       // clicar no fundo (fora da imagem) fecha
       $('lightbox').addEventListener('click', function(ev){ if(ev.target===this) fecharImagem(); });
       document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('lightbox').style.display==='flex') fecharImagem(); });
-      // Além do botão: duplo-clique (PC) e toque longo (celular), como no WhatsApp.
-      $('msgs').addEventListener('dblclick', function(ev){
-        var b=ev.target.closest('.b'); if(!b || !b.getAttribute('data-wamid')) return;
-        setReply(b.getAttribute('data-wamid'));
-      });
+      // Sem duplo-clique (marcava resposta sem querer). No celular, toque longo no
+      // balão abre o MESMO menu da seta — nunca responde direto.
       var pressTimer=null, pressX=0, pressY=0;
       function cancelPress(){ if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; } }
       $('msgs').addEventListener('touchstart', function(ev){
@@ -512,7 +552,8 @@
         pressTimer=setTimeout(function(){
           pressTimer=null;
           try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
-          setReply(b.getAttribute('data-wamid'));
+          ignoraProxClique=true; setTimeout(function(){ ignoraProxClique=false; }, 700);
+          abrirMenuMsg(b.getAttribute('data-wamid'), b.querySelector('.msg-menu-btn') || b);
         }, 450);
       }, { passive:true });
       $('msgs').addEventListener('touchmove', function(ev){

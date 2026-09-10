@@ -3864,11 +3864,39 @@ app.post('/api/painel/ia-crm/send', requireAdmin, async (req, res) => {
     const cc = await getCollection('whatsapp_contacts');
     await cc.updateOne({ _id: phone }, { $set: { botPaused: true } }, { upsert: true });
     const wa = require('./whatsappCloud.js');
-    const r = await wa.sendWhatsAppText(phone, text, { agent: true, replyTo });
-    if (!r || !r.ok) return res.status(502).json({ ok: false, error: 'send_failed', detail: (r && (r.error || r.status)) || 'erro' });
-    return res.json({ ok: true });
+    // Só dá pra citar mensagem com ID REAL do WhatsApp ("wamid.…"). O histórico
+    // importado do DataCrazy tem ID "dc_…" — a Meta recusava o envio inteiro
+    // (502 no painel) quando o atendente respondia citando uma dessas.
+    const replyOk = /^wamid\./.test(replyTo) ? replyTo : '';
+    let r = await wa.sendWhatsAppText(phone, text, { agent: true, replyTo: replyOk });
+    let semCitacao = false;
+    // Se a Meta recusar só por causa da citação (mensagem antiga/apagada), manda sem citar.
+    if ((!r || !r.ok) && replyOk) {
+      const r2 = await wa.sendWhatsAppText(phone, text, { agent: true });
+      if (r2 && r2.ok) { r = r2; semCitacao = true; }
+    }
+    if (!r || !r.ok) {
+      const metaErr = (r && r.data && r.data.error) || {};
+      const code = Number(metaErr.code) || 0;
+      const detail = explainWhatsAppSendError(metaErr, r);
+      try { const ec = await getCollection('wa_send_errors'); await ec.insertOne({ at: new Date(), phone, code, subcode: metaErr.error_subcode || null, message: String(metaErr.message || (r && r.error) || '').slice(0, 300), details: metaErr.error_data || null, httpStatus: r && r.status, replyTo: replyTo || null, textPreview: text.slice(0, 80) }); } catch (_) {}
+      return res.status(502).json({ ok: false, error: 'send_failed', code, detail });
+    }
+    return res.json({ ok: true, semCitacao });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Traduz a recusa da API do WhatsApp Cloud pra algo que o atendente entenda.
+function explainWhatsAppSendError(err, r) {
+  const code = Number(err && err.code) || 0;
+  const msg = String((err && (err.error_user_msg || err.message)) || (r && r.error) || '').trim();
+  if (code === 131047 || /re-engagement|24 hours/i.test(msg)) return 'Passou de 24h desde a última mensagem do cliente. Nesse caso o WhatsApp só permite mensagem modelo (template) — texto livre não é entregue.';
+  if (code === 131026) return 'O WhatsApp não conseguiu entregar pra esse número (sem WhatsApp, bloqueou o número ou versão antiga do app).';
+  if (code === 131056) return 'Muitas mensagens pro mesmo número em pouco tempo. Espere um pouco e tente de novo.';
+  if (code === 131048 || code === 368) return 'O WhatsApp limitou envios deste número (spam/qualidade). Tente mais tarde.';
+  if (code === 190 || code === 10 || code === 200) return 'Token/permissão da API do WhatsApp inválido ou expirado.';
+  if (code === 131000 || code === 1 || code === 2) return 'Instabilidade na API do WhatsApp. Tente de novo em instantes.';
+  return (msg ? msg : 'erro desconhecido') + (code ? ` (código ${code})` : (r && r.status ? ` (HTTP ${r.status})` : ''));
+}
 // Pausar/retomar o bot num chat (assumir/devolver o atendimento)
 app.post('/api/painel/ia-crm/bot', requireAdmin, async (req, res) => {
   try {
