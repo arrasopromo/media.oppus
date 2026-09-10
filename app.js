@@ -10503,6 +10503,7 @@ const SMM_PROVIDERS = {
   nuvra:             { url: 'https://nuvrasmm.com/api/v2',         keyEnv: 'NUVRASMM_API_KEY',          label: 'NuvraSMM' },
   fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY', label: 'Fornecedor Social' },
   topfama:           { url: 'https://topfama.com/api/v2',          keyEnv: 'TOPFAMA_API_KEY',           label: 'TopFama' },
+  smmhustle:         { url: 'https://smmhustle.com/api/v2',        keyEnv: 'SMMHUSTLE_API_KEY',         label: 'SMMHustle' },
 };
 const SMM_PROVIDER_IDS = Object.keys(SMM_PROVIDERS);
 const normalizeSmmProvider = (v) => {
@@ -10511,6 +10512,7 @@ const normalizeSmmProvider = (v) => {
   if (s === 'nuvra' || s === 'nuvrasmm') return 'nuvra';
   if (s === 'fornecedorsocial' || s === 'fornecedor_social') return 'fornecedor_social';
   if (s === 'topfama' || s === 'top_fama') return 'topfama';
+  if (s === 'smmhustle' || s === 'smm_hustle' || s === 'hustle') return 'smmhustle';
   return s;
 };
 const smmProviderUrl = (p) => (SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).url;
