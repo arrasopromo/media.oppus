@@ -114,9 +114,12 @@
     .reply-bar .rb-txt { font-size:0.8rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .reply-bar button { border:none; background:transparent; font-size:1rem; cursor:pointer; color:#54656f; }
     /* composer — padrão WhatsApp: campo largo, ações como ícones redondos */
-    .composer { display: flex; gap: 6px; padding: 8px 10px; background: #f0f2f5; border-top: 1px solid #e9edef; align-items: flex-end; }
-    .composer textarea { flex: 1 1 auto; min-width: 0; padding: 10px 14px; border: none; border-radius: 20px; font-size: 0.95rem; outline: none;
-      resize: none; font-family: inherit; line-height: 1.35; max-height: 120px; overflow-y: auto; background: #fff; }
+    /* position/z-index: nada da conversa (balões, mídia, botões absolutos) pode
+       ficar por cima do campo de digitação. */
+    .composer { position: relative; z-index: 5; display: flex; gap: 6px; padding: 8px 10px; background: #f0f2f5; border-top: 1px solid #e9edef; align-items: flex-end; cursor: text; }
+    .composer textarea { position: relative; z-index: 1; flex: 1 1 auto; min-width: 0; min-height: 40px; padding: 10px 14px; border: 1px solid #e2e7ea; border-radius: 20px; font-size: 0.95rem; outline: none;
+      resize: none; font-family: inherit; line-height: 1.35; max-height: 120px; overflow-y: auto; background: #fff; color: #111b21; cursor: text; pointer-events: auto; -webkit-user-select: text; user-select: text; }
+    .composer textarea:focus { border-color: #25d366; box-shadow: 0 0 0 2px rgba(37,211,102,0.15); }
     .icon-btn { width: 40px; height: 40px; flex: 0 0 40px; border: none; background: transparent; border-radius: 50%;
       cursor: pointer; font-size: 1.15rem; line-height: 1; color: #54656f; display: flex; align-items: center; justify-content: center; padding: 0; }
     .icon-btn:hover { background: #e2e7ea; }
@@ -222,7 +225,7 @@
   <div class="lightbox" id="lightbox" style="display:none;">
     <a class="lb-open" id="lbOpen" href="#" target="_blank" rel="noopener">abrir original</a>
     <button type="button" class="lb-close" id="lbClose" title="Fechar (Esc)">✕</button>
-    <img id="lbImg" src="" alt="">
+    <img id="lbImg" alt="">
   </div>
 
   <script>
@@ -490,7 +493,7 @@
         $('lbImg').src=src; $('lbOpen').href=src;
         $('lightbox').style.display='flex';
       }
-      function fecharImagem(){ $('lightbox').style.display='none'; $('lbImg').src=''; }
+      function fecharImagem(){ $('lightbox').style.display='none'; $('lbImg').removeAttribute('src'); }
       $('lbClose').addEventListener('click', fecharImagem);
       // clicar no fundo (fora da imagem) fecha
       $('lightbox').addEventListener('click', function(ev){ if(ev.target===this) fecharImagem(); });
@@ -524,6 +527,11 @@
       var IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 900);
       function autoGrow(){ var el=$('msgInput'); el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
       $('msgInput').addEventListener('input', autoGrow);
+      // Clicar em qualquer ponto da barra de digitação (fora dos botões) já foca o campo.
+      document.querySelector('.composer').addEventListener('click', function(ev){
+        if(ev.target.closest('button, input, textarea, a')) return;
+        $('msgInput').focus();
+      });
       $('msgInput').addEventListener('keydown', function(e){
         if(e.key!=='Enter') return;
         if(IS_MOBILE) return;                 // celular: deixa quebrar linha

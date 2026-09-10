@@ -3834,19 +3834,9 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
     // Fila de trabalho: conversas NOVAS que o ATENDENTE ainda não respondeu
     // (atendimento só do bot continua contando como pendente). Vai sempre no
     // retorno pra guia "Não respondidas" mostrar o mesmo número em qualquer aba.
-    let pendingNew = 0;
-    if (scope === 'new') pendingNew = list.filter((c) => !c.answered).length;
-    else {
-      try {
-        const agg = await col.aggregate([
-          { $match: { importedFrom: { $ne: 'datacrazy' } } },
-          { $group: { _id: '$phone', humanOuts: { $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'out'] }, { $eq: ['$agent', true] }] }, 1, 0] } } } },
-          { $match: { humanOuts: 0 } },
-          { $count: 'n' },
-        ]).toArray();
-        pendingNew = (agg[0] && agg[0].n) || 0;
-      } catch (_) { pendingNew = 0; }
-    }
+    // Conta sobre a própria lista (o painel pede a cada 5s — uma 2ª agregação
+    // varrendo a coleção inteira aqui só pesava o servidor).
+    const pendingNew = list.filter((c) => !c.answered).length;
     return res.json({ ok: true, conversations: list, pendingNew });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
