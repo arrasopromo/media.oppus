@@ -8,7 +8,13 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: sans-serif; background: #f0f2f5; color: #111b21; margin: 0; padding: 0; }
-    .crm { display: flex; height: calc(100vh - 0px); background: #fff; }
+    /* Altura real do chat: desconta o topo do painel (no celular a sidebar fica
+       sticky em cima). --crm-top é medido no JS; sem isso o rodapé (campo de
+       digitação) e o botão Voltar ficavam fora da tela no celular. */
+    .crm { display: flex; height: calc(100vh - var(--crm-top, 0px)); height: calc(100dvh - var(--crm-top, 0px)); background: #fff; overflow: hidden; }
+    /* o painel dá min-height:100vh no .main-content — aqui isso criava rolagem
+       extra na página e empurrava o campo de digitação pra fora da tela. */
+    .main-content { min-height: 0 !important; overflow: hidden; }
     /* Lista de conversas */
     .convs { width: 360px; min-width: 300px; border-right: 1px solid #e9edef; display: flex; flex-direction: column; background: #fff; }
     .convs-head { padding: 12px 14px; background: #f0f2f5; border-bottom: 1px solid #e9edef; display: flex; align-items: center; gap: 10px; }
@@ -29,10 +35,18 @@
     .badge-unread { background: #25d366; color: #fff; border-radius: 999px; font-size: 0.68rem; padding: 1px 7px; margin-left: 6px; }
     .tag-bot { font-size: 0.62rem; background: #7c3aed; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
     .tag-paused { font-size: 0.62rem; background: #6b7280; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
-    /* Abas: separa conversas novas do histórico importado. */
-    .scope-tabs { display:flex; gap:6px; padding:0 10px 8px; }
-    .scope-tab { flex:1; font-size:0.74rem; padding:5px 0; border:1px solid #d5dbe3; background:#fff; color:#475569; border-radius:7px; cursor:pointer; }
-    .scope-tab.active { background:#111b21; color:#fff; border-color:#111b21; }
+    /* Guias: Aguardando | Novas | Antigas | Todas — uma linha só, rolável no celular. */
+    .tabs { display:flex; gap:6px; padding:2px 10px 10px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    .tabs::-webkit-scrollbar { display:none; }
+    .tab { flex:0 0 auto; white-space:nowrap; font-size:0.76rem; font-weight:600; padding:7px 13px; border:1px solid #dfe5ea;
+      background:#fff; color:#54656f; border-radius:999px; cursor:pointer; display:inline-flex; align-items:center; gap:5px; transition:background .12s, color .12s; }
+    .tab:hover { background:#f3f6f8; }
+    .tab.active { background:#111b21; color:#fff; border-color:#111b21; }
+    /* Aguardando resposta tem cor própria: é a fila de trabalho. */
+    .tab[data-tab="pending"] { background:#fffaf0; border-color:#f3d29a; color:#b45309; }
+    .tab[data-tab="pending"].active { background:#f59e0b; border-color:#f59e0b; color:#fff; }
+    .tab-badge { background:#f59e0b; color:#fff; border-radius:999px; font-size:0.66rem; font-weight:800; padding:0 6px; min-width:18px; text-align:center; }
+    .tab.active .tab-badge { background:#fff; color:#b45309; }
     /* Conversa importada (histórico DataCrazy): IA pausada por origem, não por atendimento. */
     .tag-legacy { font-size: 0.62rem; background: #b45309; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
     /* Coluna de tempo à direita da conversa */
@@ -46,9 +60,6 @@
     .conv.pend.active { background:#e9f7ef; }
     /* Cabeçalho de grupo (aguardando / respondidas) */
     .grp { position:sticky; top:0; z-index:1; background:#eef2f5; color:#54656f; font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; padding:5px 14px; border-bottom:1px solid #e2e8ec; }
-    .ans-tabs { padding-top:0; }
-    .pend-badge { background:#f59e0b; color:#fff; border-radius:999px; font-size:0.62rem; padding:0 5px; margin-left:3px; }
-    .scope-tab.active .pend-badge { background:#fff; color:#111b21; }
     /* Thread */
     .thread { flex: 1; display: flex; flex-direction: column; background: #efeae2; min-width: 0; }
     .thread-head { padding: 10px 16px; background: #f0f2f5; border-bottom: 1px solid #e9edef; display: flex; align-items: center; gap: 10px; }
@@ -95,15 +106,17 @@
     .reply-bar .rb-who { font-size:0.68rem; font-weight:800; color:#1d6fd8; }
     .reply-bar .rb-txt { font-size:0.8rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .reply-bar button { border:none; background:transparent; font-size:1rem; cursor:pointer; color:#54656f; }
-    /* composer */
-    .composer { display: flex; gap: 6px; padding: 8px 12px; background: #f0f2f5; border-top: 1px solid #e9edef; align-items: center; }
-    .composer textarea { flex: 1; padding: 10px 14px; border: none; border-radius: 18px; font-size: 0.92rem; outline: none;
-      resize: none; font-family: inherit; line-height: 1.35; max-height: 120px; overflow-y: auto; }
-    .composer #sendBtn { padding: 0 18px; height: 40px; border: none; border-radius: 22px; background: #25d366; color: #fff; font-weight: 700; cursor: pointer; }
+    /* composer — padrão WhatsApp: campo largo, ações como ícones redondos */
+    .composer { display: flex; gap: 6px; padding: 8px 10px; background: #f0f2f5; border-top: 1px solid #e9edef; align-items: flex-end; }
+    .composer textarea { flex: 1 1 auto; min-width: 0; padding: 10px 14px; border: none; border-radius: 20px; font-size: 0.95rem; outline: none;
+      resize: none; font-family: inherit; line-height: 1.35; max-height: 120px; overflow-y: auto; background: #fff; }
+    .icon-btn { width: 40px; height: 40px; flex: 0 0 40px; border: none; background: transparent; border-radius: 50%;
+      cursor: pointer; font-size: 1.15rem; line-height: 1; color: #54656f; display: flex; align-items: center; justify-content: center; padding: 0; }
+    .icon-btn:hover { background: #e2e7ea; }
+    .icon-btn.rec { background: #dc2626; color: #fff; animation: pulse 1s infinite; }
+    .composer #sendBtn { width: 40px; height: 40px; flex: 0 0 40px; border: none; border-radius: 50%; background: #25d366; color: #fff;
+      font-size: 1.05rem; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
     .composer #sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .txt-btn { padding: 0 14px; height: 40px; border: 1px solid #cbd5e1; background: #fff; border-radius: 20px; cursor: pointer; font-size: 0.82rem; color: #54656f; flex-shrink: 0; font-weight: 600; }
-    .txt-btn:hover { background: #eef1f4; }
-    .txt-btn.rec { background: #dc2626; color: #fff; border-color: #dc2626; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
     .upmsg { font-size: 0.75rem; color: #667781; padding: 0 16px 6px; background: #f0f2f5; min-height: 0; }
     .upmsg.err { color: #dc2626; }
@@ -114,7 +127,24 @@
       .thread { display: none; }
       .crm.show-thread .convs { display: none; }
       .crm.show-thread .thread { display: flex; }
-      .thread-head .back { display: inline-block; }
+      /* Voltar: botão de verdade, grande e sempre visível no topo da conversa. */
+      .thread-head { padding: 8px 10px; gap: 8px; }
+      .thread-head .back { display: inline-flex; align-items: center; justify-content: center;
+        width: 38px; height: 38px; flex: 0 0 38px; border-radius: 50%; background: #fff;
+        border: 1px solid #dfe5ea; font-size: 1.25rem; color: #111b21; }
+      .thread-head .back:active { background: #e2e7ea; }
+      .thread-head .avatar { width: 34px !important; height: 34px !important; }
+      .thread-head .t-name { font-size: 0.95rem; max-width: 42vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .btn-bot { padding: 6px 9px; font-size: 0.72rem; }
+      .b { max-width: 86%; }
+      .media-img, .media-sticker, .media-video { max-width: 68vw; }
+      .media-audio { width: 62vw; max-width: 240px; }
+      /* Campo de digitação largo: as ações viram só ícone, como no WhatsApp. */
+      .composer { padding: 7px 8px; gap: 4px; }
+      .composer textarea { font-size: 16px; }   /* < 16px faz o iOS dar zoom sozinho */
+      .icon-btn { width: 36px; height: 36px; flex: 0 0 36px; font-size: 1.1rem; }
+      .composer #sendBtn { width: 40px; height: 40px; flex: 0 0 40px; }
+      .msgs { padding: 10px 8px; }
     }
   </style>
 </head>
@@ -129,16 +159,12 @@
           <span class="pill" id="convCount">0</span>
         </div>
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa..." autocomplete="off"></div>
-        <!-- Separa as conversas NOVAS do histórico importado do DataCrazy. -->
-        <div class="scope-tabs">
-          <button type="button" class="scope-tab active" data-scope="new">Novas</button>
-          <button type="button" class="scope-tab" data-scope="legacy">Antigas</button>
-          <button type="button" class="scope-tab" data-scope="all">Todas</button>
-        </div>
-        <div class="scope-tabs ans-tabs">
-          <button type="button" class="scope-tab active" data-answer="all">Todas</button>
-          <button type="button" class="scope-tab" data-answer="pending">⏳ Sem resposta <span class="pend-badge" id="pendCount">0</span></button>
-          <button type="button" class="scope-tab" data-answer="done">✓ Respondidas</button>
+        <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
+        <div class="tabs" id="tabs">
+          <button type="button" class="tab" data-tab="pending">⏳ Aguardando <span class="tab-badge" id="pendCount">0</span></button>
+          <button type="button" class="tab active" data-tab="new">Novas</button>
+          <button type="button" class="tab" data-tab="legacy">Antigas</button>
+          <button type="button" class="tab" data-tab="all">Todas</button>
         </div>
         <div class="conv-list" id="convList"></div>
       </div>
@@ -164,11 +190,11 @@
             <button type="button" id="rbCancel" title="Cancelar resposta">✕</button>
           </div>
           <div class="composer">
-            <button type="button" class="txt-btn" id="attachBtn" title="Anexar imagem, documento ou áudio">Anexar</button>
+            <button type="button" class="icon-btn" id="attachBtn" title="Anexar imagem, documento ou áudio" aria-label="Anexar">📎</button>
             <input type="file" id="fileInput" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" style="display:none">
-            <textarea id="msgInput" placeholder="Escreva uma mensagem..." rows="1" autocomplete="off"></textarea>
-            <button type="button" class="txt-btn" id="micBtn" title="Gravar áudio">Gravar</button>
-            <button type="button" id="sendBtn">Enviar</button>
+            <textarea id="msgInput" placeholder="Mensagem" rows="1" autocomplete="off"></textarea>
+            <button type="button" class="icon-btn" id="micBtn" title="Gravar áudio" aria-label="Gravar áudio">🎤</button>
+            <button type="button" id="sendBtn" title="Enviar" aria-label="Enviar">➤</button>
           </div>
           <div class="upmsg" id="upMsg"></div>
         </div>
@@ -184,7 +210,29 @@
       function fmtTime(d){ try{ var x=new Date(d); var now=new Date(); var sameDay=x.toDateString()===now.toDateString(); return sameDay ? (('0'+x.getHours()).slice(-2)+':'+('0'+x.getMinutes()).slice(-2)) : (('0'+x.getDate()).slice(-2)+'/'+('0'+(x.getMonth()+1)).slice(-2)); }catch(_){ return ''; } }
       async function api(url, opts){ var r=await fetch(url, Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts||{})); return await r.json().catch(function(){return null;}); }
 
-      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', scope: 'new', answer: 'all', msgs: [], replyTo: null };
+      var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', tab: 'new', scope: 'new', answer: 'all', msgs: [], replyTo: null };
+
+      // Cada guia é um par (escopo, respondida?). "Aguardando" é a fila de trabalho:
+      // só conversas NOVAS em que a última mensagem foi do cliente.
+      var TABS = {
+        pending: { scope: 'new',    answer: 'pending' },
+        'new':   { scope: 'new',    answer: 'all' },
+        legacy:  { scope: 'legacy', answer: 'all' },
+        all:     { scope: 'all',    answer: 'all' }
+      };
+
+      // A sidebar do painel fica sticky no topo no celular: sem descontar a altura
+      // dela, o rodapé do chat (campo de digitação) some da tela.
+      function fitHeight(){
+        try{
+          var sb=document.querySelector('.sidebar');
+          var top=(sb && window.innerWidth<=768) ? Math.round(sb.getBoundingClientRect().height) : 0;
+          document.documentElement.style.setProperty('--crm-top', top+'px');
+        }catch(_){}
+      }
+      fitHeight();
+      window.addEventListener('resize', fitHeight);
+      window.addEventListener('orientationchange', function(){ setTimeout(fitHeight, 250); });
 
       // Tempo decorrido compacto: 6min / 22h / 3d — mostrado À DIREITA da conversa.
       function fmtElapsed(d){
@@ -213,7 +261,9 @@
           if(pa!==pb) return pa-pb;
           return new Date(b.lastAt||0)-new Date(a.lastAt||0);
         });
-        var nPend=state.convs.filter(function(c){ return c.lastDir!=='out'; }).length;
+        // O badge da guia "Aguardando" é sempre a fila das conversas NOVAS,
+        // independente da guia aberta (senão trocaria de número a cada aba).
+        var nPend=(state.pendingNew!=null) ? state.pendingNew : state.convs.filter(function(c){ return c.lastDir!=='out'; }).length;
         $('convCount').textContent=state.convs.length;
         var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
 
@@ -245,7 +295,10 @@
             +'</div>'
           +'</div>';
         });
-        var novo = html || '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
+        var vazio = (state.tab==='pending')
+          ? '<div class="empty" style="height:auto;padding:28px 20px;">✅ Nenhuma conversa aguardando resposta.</div>'
+          : '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
+        var novo = html || vazio;
         // O polling redesenha a lista a cada 5s. Se nada mudou, não mexe no DOM
         // (senão o scroll do usuário volta pro topo enquanto ele está rolando).
         if(novo===state._convsHtml) return;
@@ -257,7 +310,7 @@
 
       async function loadConvs(){
         var d=await api('/api/painel/ia-crm/conversations?scope='+encodeURIComponent(state.scope));
-        if(d&&d.ok){ state.convs=d.conversations||[]; renderConvs(); }
+        if(d&&d.ok){ state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew; renderConvs(); }
       }
 
       function mediaHtml(m){
@@ -312,10 +365,25 @@
         else { b.className='btn-bot on'; b.textContent='⏸ Pausar IA'; $('pausedHint').style.display='none'; }
       }
 
+      // Volta pra lista de conversas (celular).
+      function voltarLista(){
+        $('crm').classList.remove('show-thread');
+        state.current=null; state.replyTo=null; $('replyBar').style.display='none';
+        renderConvs();
+        try{ window.scrollTo(0,0); }catch(_){}
+      }
+
       async function openChat(phone, name){
+        var jaAberto=$('crm').classList.contains('show-thread');
         state.current=phone; state.currentName=name;
         $('emptyThread').style.display='none'; $('threadInner').style.display='flex';
         $('crm').classList.add('show-thread');
+        // No celular a lista some: registra no histórico pra tecla/gesto "voltar"
+        // do aparelho trazer de volta a lista em vez de sair da página.
+        var jaNoHistorico=!!(history.state && history.state.crmThread);
+        if(!jaAberto && !jaNoHistorico && window.innerWidth<=820){ try{ history.pushState({ crmThread:1 }, ''); }catch(_){} }
+        try{ window.scrollTo(0,0); }catch(_){}
+        fitHeight();
         $('tName').textContent=name || ('+'+phone); $('tPhone').textContent='+'+phone; $('tAvatar').textContent=initials(name,phone);
         renderConvs();
         var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(phone));
@@ -331,17 +399,26 @@
 
       // Eventos
       $('convList').addEventListener('click', function(ev){ var c=ev.target.closest('.conv'); if(!c) return; openChat(c.getAttribute('data-phone'), c.getAttribute('data-name')); });
-      $('backBtn').addEventListener('click', function(){ $('crm').classList.remove('show-thread'); state.current=null; renderConvs(); });
-      document.querySelector('.scope-tabs').addEventListener('click', function(ev){
-        var b=ev.target.closest('.scope-tab'); if(!b) return;
-        // só limpa as abas de ESCOPO (as de resposta têm seu próprio estado)
-        document.querySelectorAll('.scope-tabs:not(.ans-tabs) .scope-tab').forEach(function(x){ x.classList.remove('active'); });
-        b.classList.add('active'); state.scope=b.getAttribute('data-scope'); loadConvs();
+      $('backBtn').addEventListener('click', function(){
+        if(history.state && history.state.crmThread){ history.back(); return; }  // desfaz o pushState
+        voltarLista();
       });
-      document.querySelector('.ans-tabs').addEventListener('click', function(ev){
-        var b=ev.target.closest('.scope-tab'); if(!b) return;
-        document.querySelectorAll('.ans-tabs .scope-tab').forEach(function(x){ x.classList.remove('active'); });
-        b.classList.add('active'); state.answer=b.getAttribute('data-answer'); renderConvs();
+      // Botão/gesto "voltar" do aparelho e tecla Esc também voltam pra lista.
+      window.addEventListener('popstate', function(){ if($('crm').classList.contains('show-thread')) voltarLista(); });
+      document.addEventListener('keydown', function(e){
+        if(e.key==='Escape' && state.current && window.innerWidth<=820){ $('backBtn').click(); }
+      });
+      // O menu do painel abre/fecha e muda a altura do topo: recalcula.
+      var sbToggle=document.getElementById('sidebarToggle');
+      if(sbToggle) sbToggle.addEventListener('change', function(){ setTimeout(fitHeight, 30); });
+      $('tabs').addEventListener('click', function(ev){
+        var b=ev.target.closest('.tab'); if(!b) return;
+        var t=b.getAttribute('data-tab'); var cfg=TABS[t]; if(!cfg) return;
+        document.querySelectorAll('#tabs .tab').forEach(function(x){ x.classList.remove('active'); });
+        b.classList.add('active');
+        var mudouEscopo=(state.scope!==cfg.scope);
+        state.tab=t; state.scope=cfg.scope; state.answer=cfg.answer;
+        if(mudouEscopo) loadConvs(); else renderConvs();
       });
       $('search').addEventListener('input', function(){ state.filter=this.value; renderConvs(); });
       $('botBtn').addEventListener('click', async function(){
@@ -416,14 +493,14 @@
           recChunks=[];
           mediaRecorder.ondataavailable=function(e){ if(e.data&&e.data.size) recChunks.push(e.data); };
           mediaRecorder.onstop=async function(){
-            recording=false; $('micBtn').classList.remove('rec'); $('micBtn').textContent='Gravar';
+            recording=false; $('micBtn').classList.remove('rec'); $('micBtn').textContent='🎤';
             try{ recStream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
             var type=(mediaRecorder.mimeType||'audio/webm').split(';')[0];
             var ext=type.indexOf('ogg')>=0?'ogg':(type.indexOf('mp4')>=0?'mp4':'webm');
             var blob=new Blob(recChunks,{ type:type });
             await uploadFile(new File([blob],'audio.'+ext,{ type:type }));
           };
-          mediaRecorder.start(); recording=true; $('micBtn').classList.add('rec'); $('micBtn').textContent='Parar'; upmsg('Gravando… clique em "Parar" para enviar.');
+          mediaRecorder.start(); recording=true; $('micBtn').classList.add('rec'); $('micBtn').textContent='⏹'; upmsg('Gravando… toque no ⏹ para enviar.');
         } catch(e){ alert('Não consegui acessar o microfone. Verifique a permissão.'); }
       });
 

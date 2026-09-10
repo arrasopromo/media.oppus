@@ -3823,7 +3823,24 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
       legacy: !!(cmap[c._id] && cmap[c._id].legacy),
       importedFrom: (cmap[c._id] && cmap[c._id].importedFrom) || '',
     }));
-    return res.json({ ok: true, conversations: list });
+    // Fila de trabalho: conversas NOVAS cuja última mensagem foi do cliente.
+    // Vai sempre no retorno pra guia "Aguardando" mostrar o mesmo número em
+    // qualquer aba aberta. No escopo 'new' dá pra contar da própria lista.
+    let pendingNew = 0;
+    if (scope === 'new') pendingNew = list.filter((c) => c.lastDir !== 'out').length;
+    else {
+      try {
+        const agg = await col.aggregate([
+          { $match: { importedFrom: { $ne: 'datacrazy' } } },
+          { $sort: { createdAt: -1 } },
+          { $group: { _id: '$phone', lastDir: { $first: '$direction' } } },
+          { $match: { lastDir: { $ne: 'out' } } },
+          { $count: 'n' },
+        ]).toArray();
+        pendingNew = (agg[0] && agg[0].n) || 0;
+      } catch (_) { pendingNew = 0; }
+    }
+    return res.json({ ok: true, conversations: list, pendingNew });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Mensagens de uma conversa (marca como lida)
