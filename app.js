@@ -47985,15 +47985,43 @@ function iaPayRecoveryMessage(stage) {
   // 25 min — urgência (o Pix da PagHiper dura ~1 dia, então NÃO afirmamos "expira em 5min").
   return 'Última chamada! Seu pedido ainda está aguardando o pagamento do Pix. Pra garantir o impulsionamento com esse valor, é só finalizar o Pix — assim que cair, já começo o seu perfil.';
 }
+// Reserva o direito de mandar UM lembrete para este número agora. Se ele já
+// recebeu um nos últimos IA_PAY_RECOVERY_MIN_GAP_MIN minutos (por qualquer
+// pedido), devolve false. É atômico: dois pedidos do mesmo cliente no mesmo tick
+// não passam os dois.
+async function claimRecoverySlot(phone) {
+  try {
+    const gapMin = Math.max(1, parseInt(String(process.env.IA_PAY_RECOVERY_MIN_GAP_MIN || '25'), 10) || 25);
+    const cc = await getCollection('whatsapp_contacts');
+    const agora = new Date();
+    const corte = new Date(agora.getTime() - gapMin * 60 * 1000);
+    // garante o documento ANTES (com upsert junto do filtro condicional, um
+    // segundo disparo estouraria erro de _id duplicado e passaria batido)
+    await cc.updateOne({ _id: phone }, { $setOnInsert: { _id: phone, createdAt: agora } }, { upsert: true });
+    const r = await cc.updateOne(
+      { _id: phone, $or: [{ payRecoveryLastAt: { $exists: false } }, { payRecoveryLastAt: null }, { payRecoveryLastAt: { $lte: corte } }] },
+      { $set: { payRecoveryLastAt: agora }, $inc: { payRecoveryCount: 1 } }
+    );
+    return !!(r && r.modifiedCount > 0);
+  } catch (_) { return false; }   // na dúvida NÃO manda: perder um lembrete é melhor que spammar
+}
+
 async function runIaPaymentRecoveryTick() {
   const wa = require('./whatsappCloud.js');
   if (!(wa.configured && wa.configured())) return; // sem credenciais da IA, não faz nada
   const col = await getCollection('checkout_orders');
   const now = Date.now();
-  // Limita pela criação (via ObjectId) às últimas ~40min — evita disparar em pedidos
-  // antigos quando o recurso é ligado, sem depender do tipo do campo createdAt.
+  // Menos insistência: 1 lembrete e 1 última chamada. Antes eram 3 (5/10/25min) e,
+  // com mais de um Pix aberto, viravam 5+ mensagens seguidas no mesmo chat.
+  const stages = String(process.env.IA_PAY_RECOVERY_STAGES || '10,40')
+    .split(',').map((s) => parseInt(String(s).trim(), 10)).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+  if (!stages.length) return;
+  // Limita pela criação (via ObjectId) à janela do último estágio + folga — evita
+  // disparar em pedidos antigos quando o recurso é ligado, sem depender do tipo
+  // do campo createdAt.
+  const janelaMin = stages[stages.length - 1] + 15;
   const { ObjectId } = require('mongodb');
-  let minId; try { minId = ObjectId.createFromTime(Math.floor((now - 40 * 60 * 1000) / 1000)); } catch (_) { return; }
+  let minId; try { minId = ObjectId.createFromTime(Math.floor((now - janelaMin * 60 * 1000) / 1000)); } catch (_) { return; }
   const unpaid = {
     status: { $nin: ['pago', 'paid', 'cancelado', 'estornado', 'refunded', 'expired', 'expirado'] },
     paidAt: { $in: [null] },
@@ -48009,7 +48037,6 @@ async function runIaPaymentRecoveryTick() {
     for (const m of [d.additionalInfoMapPaid, d.additionalInfoMap]) { if (m && String(m.source || '') === 'wpp_agent') return true; }
     return false;
   };
-  const stages = [5, 10, 25];
   for (const doc of docs) {
     try {
       if (!isWppAgent(doc)) continue;
@@ -48018,8 +48045,12 @@ async function runIaPaymentRecoveryTick() {
       if (!createdMs) continue;
       const ageMin = (now - createdMs) / 60000;
       if (ageMin < 5) continue;
-      const phone = String((doc.customer && doc.customer.phone) || '').replace(/\D/g, '');
-      if (!phone || phone.length < 10) continue;
+      // O telefone do checkout vem SEM o DDI ("(96) 98110-3674"). Mandar assim
+      // criava uma conversa PARALELA no CRM ("9681103674"), separada da conversa
+      // real do WhatsApp ("559681103674") — por isso os disparos apareciam num
+      // chat só de bot e o atendimento de verdade sumia da lista.
+      const phone = normalizePhoneBR((doc.customer && doc.customer.phone) || '');
+      if (!phone || phone.length < 12) continue;
       if (await wa.isBotPaused(phone)) continue; // atendente assumiu → não perturba
       for (const st of stages) {
         if (ageMin < st) continue;
@@ -48029,10 +48060,17 @@ async function runIaPaymentRecoveryTick() {
           Object.assign({ _id: doc._id, [flag]: { $exists: false } }, unpaid),
           { $set: { [flag]: new Date(), 'iaPayRecovery.phone': phone } }
         );
-        if (claim && claim.modifiedCount > 0) {
-          try { await wa.sendWhatsAppText(phone, iaPayRecoveryMessage(st)); } catch (_) {}
-          try { console.log(`💬 [ia-pay-recovery] stage${st} ${phone} order=${doc._id}`); } catch (_) {}
+        if (!(claim && claim.modifiedCount > 0)) continue;
+        // Trava POR NÚMERO: o cliente que gera 2 ou 3 Pix recebia a sequência
+        // inteira multiplicada (5 mensagens em 20min no mesmo chat). Aqui ele
+        // recebe no máximo 1 lembrete a cada IA_PAY_RECOVERY_MIN_GAP_MIN minutos,
+        // não importa quantos pedidos em aberto tenha.
+        if (!(await claimRecoverySlot(phone))) {
+          try { console.log(`⏭️ [ia-pay-recovery] pulado (cooldown do número) ${phone} stage${st}`); } catch (_) {}
+          continue;
         }
+        try { await wa.sendWhatsAppText(phone, iaPayRecoveryMessage(st)); } catch (_) {}
+        try { console.log(`💬 [ia-pay-recovery] stage${st} ${phone} order=${doc._id}`); } catch (_) {}
       }
     } catch (_) {}
   }
