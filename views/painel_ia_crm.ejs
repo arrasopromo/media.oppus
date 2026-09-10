@@ -45,6 +45,8 @@
     /* Aguardando resposta tem cor própria: é a fila de trabalho. */
     .tab[data-tab="pending"] { background:#fffaf0; border-color:#f3d29a; color:#b45309; }
     .tab[data-tab="pending"].active { background:#f59e0b; border-color:#f59e0b; color:#fff; }
+    .tab[data-tab="done"] { background:#f4fbf6; border-color:#c3e6d1; color:#15803d; }
+    .tab[data-tab="done"].active { background:#16a34a; border-color:#16a34a; color:#fff; }
     .tab-badge { background:#f59e0b; color:#fff; border-radius:999px; font-size:0.66rem; font-weight:800; padding:0 6px; min-width:18px; text-align:center; }
     .tab.active .tab-badge { background:#fff; color:#b45309; }
     /* Conversa importada (histórico DataCrazy): IA pausada por origem, não por atendimento. */
@@ -58,8 +60,6 @@
     .conv.pend { border-left:3px solid #f59e0b; background:#fffdf7; }
     .conv.pend:hover { background:#fff8ea; }
     .conv.pend.active { background:#e9f7ef; }
-    /* Cabeçalho de grupo (aguardando / respondidas) */
-    .grp { position:sticky; top:0; z-index:1; background:#eef2f5; color:#54656f; font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; padding:5px 14px; border-bottom:1px solid #e2e8ec; }
     /* Thread */
     .thread { flex: 1; display: flex; flex-direction: column; background: #efeae2; min-width: 0; }
     .thread-head { padding: 10px 16px; background: #f0f2f5; border-bottom: 1px solid #e9edef; display: flex; align-items: center; gap: 10px; }
@@ -71,7 +71,7 @@
     .btn-bot.on { border-color: #16a34a; color: #16a34a; background: #fff; }
     .btn-bot.off { border-color: #d97706; color: #d97706; background: #fff; }
     .msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
-    .b { max-width: 72%; padding: 7px 10px; border-radius: 8px; font-size: 0.9rem; line-height: 1.35; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,0.13); position: relative; }
+    .b { max-width: 72%; padding: 7px 26px 7px 10px; border-radius: 8px;   /* espaço à direita p/ o botão responder */ font-size: 0.9rem; line-height: 1.35; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,0.13); position: relative; }
     .b .meta { font-size: 0.62rem; color: #667781; margin-top: 3px; text-align: right; }
     .b.in { align-self: flex-start; background: #fff; }
     .b.out { align-self: flex-end; background: #d9fdd3; }
@@ -98,9 +98,14 @@
     .b.in .quoted { border-left-color:#7c3aed; }
     .q-who { font-size:0.64rem; font-weight:800; color:#1d6fd8; }
     .q-txt { font-size:0.78rem; color:#54656f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .reply-btn { position:absolute; top:2px; right:4px; opacity:0; border:none; background:transparent; cursor:pointer; font-size:0.95rem; color:#54656f; padding:0 3px; }
-    .b:hover .reply-btn { opacity:0.75; }
-    .reply-btn:hover { opacity:1 !important; }
+    /* Responder: o botão precisa ser VISÍVEL — no celular não existe hover, então
+       antes ele ficava invisível (opacity:0) e não dava pra usar. */
+    .reply-btn { position:absolute; top:1px; right:1px; width:26px; height:26px; opacity:0.3; border:none; background:transparent;
+      cursor:pointer; font-size:0.95rem; line-height:1; color:#54656f; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; }
+    .b:hover .reply-btn { opacity:0.85; }
+    .reply-btn:hover { opacity:1 !important; background:rgba(0,0,0,0.07); }
+    .b .reply-btn + .who, .b > .reply-btn ~ .quoted { margin-right: 20px; }
+    .b.media .reply-btn { background:rgba(255,255,255,0.85); opacity:0.85; }
     .reply-bar { display:flex; align-items:center; gap:8px; padding:7px 14px; background:#eef2f5; border-top:1px solid #e2e8ec; }
     .reply-bar .rb-body { flex:1; min-width:0; border-left:3px solid #25d366; padding-left:8px; }
     .reply-bar .rb-who { font-size:0.68rem; font-weight:800; color:#1d6fd8; }
@@ -137,6 +142,7 @@
       .thread-head .t-name { font-size: 0.95rem; max-width: 42vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .btn-bot { padding: 6px 9px; font-size: 0.72rem; }
       .b { max-width: 86%; }
+      .reply-btn { opacity: 0.55; width: 30px; height: 30px; font-size: 1.05rem; }
       .media-img, .media-sticker, .media-video { max-width: 68vw; }
       .media-audio { width: 62vw; max-width: 240px; }
       /* Campo de digitação largo: as ações viram só ícone, como no WhatsApp. */
@@ -161,7 +167,8 @@
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa..." autocomplete="off"></div>
         <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
         <div class="tabs" id="tabs">
-          <button type="button" class="tab" data-tab="pending">⏳ Aguardando <span class="tab-badge" id="pendCount">0</span></button>
+          <button type="button" class="tab" data-tab="pending">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
+          <button type="button" class="tab" data-tab="done">✓ Respondidas</button>
           <button type="button" class="tab active" data-tab="new">Novas</button>
           <button type="button" class="tab" data-tab="legacy">Antigas</button>
           <button type="button" class="tab" data-tab="all">Todas</button>
@@ -212,10 +219,11 @@
 
       var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', tab: 'new', scope: 'new', answer: 'all', msgs: [], replyTo: null };
 
-      // Cada guia é um par (escopo, respondida?). "Aguardando" é a fila de trabalho:
-      // só conversas NOVAS em que a última mensagem foi do cliente.
+      // Cada guia é um par (escopo, respondida?). A separação aguardando/respondida
+      // vive SÓ nos botões — a lista não tem mais cabeçalho de grupo no meio.
       var TABS = {
-        pending: { scope: 'new',    answer: 'pending' },
+        pending: { scope: 'new',    answer: 'pending' },  // ninguém respondeu ainda
+        done:    { scope: 'new',    answer: 'done'    },  // já houve interação
         'new':   { scope: 'new',    answer: 'all' },
         legacy:  { scope: 'legacy', answer: 'all' },
         all:     { scope: 'all',    answer: 'all' }
@@ -261,23 +269,17 @@
           if(pa!==pb) return pa-pb;
           return new Date(b.lastAt||0)-new Date(a.lastAt||0);
         });
-        // O badge da guia "Aguardando" é sempre a fila das conversas NOVAS,
+        // O badge da guia "Não respondidas" é sempre a fila das conversas NOVAS,
         // independente da guia aberta (senão trocaria de número a cada aba).
         var nPend=(state.pendingNew!=null) ? state.pendingNew : state.convs.filter(function(c){ return c.lastDir!=='out'; }).length;
         $('convCount').textContent=state.convs.length;
         var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
 
-        var html=''; var grupoAtual=null;
+        // Sem cabeçalho de grupo no meio da lista: a separação respondida/não
+        // respondida é feita pelos BOTÕES lá em cima.
+        var html='';
         items.forEach(function(c){
           var pendente=(c.lastDir!=='out');
-          // Cabeçalho de grupo (só quando não está filtrando por um dos dois)
-          if(state.answer==='all'){
-            var g=pendente?'pend':'ok';
-            if(g!==grupoAtual){
-              grupoAtual=g;
-              html+='<div class="grp">'+(pendente?'⏳ Aguardando resposta':'✓ Respondidas')+'</div>';
-            }
-          }
           var nm=c.name || ('+'+c.phone);
           var prefix=(c.lastDir==='out')?'Você: ':'';
           var tag=c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
@@ -296,7 +298,7 @@
           +'</div>';
         });
         var vazio = (state.tab==='pending')
-          ? '<div class="empty" style="height:auto;padding:28px 20px;">✅ Nenhuma conversa aguardando resposta.</div>'
+          ? '<div class="empty" style="height:auto;padding:28px 20px;">✅ Nenhuma conversa sem resposta.</div>'
           : '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
         var novo = html || vazio;
         // O polling redesenha a lista a cada 5s. Se nada mudou, não mexe no DOM
@@ -346,7 +348,8 @@
             quote='<div class="quoted"><div class="q-who">'+qwho+'</div><div class="q-txt">'+esc(String(q.text||'').slice(0,120))+'</div></div>';
           }
           var btn = m.wamid ? '<button type="button" class="reply-btn" data-wamid="'+esc(m.wamid)+'" title="Responder esta mensagem">↩</button>' : '';
-          return '<div class="'+cls+'">'+btn+(who?'<div class="who">'+who+'</div>':'')+quote+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
+          var dw = m.wamid ? ' data-wamid="'+esc(m.wamid)+'"' : '';   // p/ duplo-clique e toque longo
+          return '<div class="'+cls+'"'+dw+'>'+btn+(who?'<div class="who">'+who+'</div>':'')+quote+inner+'<div class="meta">'+fmtTime(m.createdAt)+'</div></div>';
         }).join('');
         // Nada mudou? não redesenha (evita piscar áudio/imagem e perder o scroll).
         if(!force && html===state._msgsHtml) return;
@@ -450,6 +453,29 @@
         var b=ev.target.closest('.reply-btn'); if(!b) return;
         ev.stopPropagation(); setReply(b.getAttribute('data-wamid'));
       });
+      // Além do botão: duplo-clique (PC) e toque longo (celular), como no WhatsApp.
+      $('msgs').addEventListener('dblclick', function(ev){
+        var b=ev.target.closest('.b'); if(!b || !b.getAttribute('data-wamid')) return;
+        setReply(b.getAttribute('data-wamid'));
+      });
+      var pressTimer=null, pressX=0, pressY=0;
+      function cancelPress(){ if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; } }
+      $('msgs').addEventListener('touchstart', function(ev){
+        var b=ev.target.closest('.b'); if(!b || !b.getAttribute('data-wamid')) return;
+        var t=ev.touches[0]; pressX=t.clientX; pressY=t.clientY;
+        cancelPress();
+        pressTimer=setTimeout(function(){
+          pressTimer=null;
+          try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
+          setReply(b.getAttribute('data-wamid'));
+        }, 450);
+      }, { passive:true });
+      $('msgs').addEventListener('touchmove', function(ev){
+        if(!pressTimer) return; var t=ev.touches[0];
+        if(Math.abs(t.clientX-pressX)>8 || Math.abs(t.clientY-pressY)>8) cancelPress();  // rolou a tela: não é toque longo
+      }, { passive:true });
+      $('msgs').addEventListener('touchend', cancelPress, { passive:true });
+      $('msgs').addEventListener('touchcancel', cancelPress, { passive:true });
       $('sendBtn').addEventListener('click', send);
       // Celular (Android/iOS): a tecla Enter do teclado deve QUEBRAR LINHA — quem envia
       // é o botão. No desktop: Enter envia, Ctrl+Enter e Shift+Enter quebram linha.
