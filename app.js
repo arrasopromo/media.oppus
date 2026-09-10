@@ -25168,6 +25168,7 @@ app.post('/api/refil/simple', async (req, res) => {
     // batendo no orderId original. Só sobrepõe quando o force é MAIS recente que o
     // despacho do pedido escolhido (uma compra nova legítima ainda vence a âncora).
     let __usingAnchor = false;
+    let __anchorProvider = '';   // só quando o registro da âncora tem provider CONFIRMADO (ex.: SMMHustle)
     try {
       const r2c = await getCollection('refil2_requests');
       const anchorArr = await r2c.find(
@@ -25182,6 +25183,7 @@ app.post('/api/refil/simple', async (req, res) => {
           famaOrderId = anchorOid;
           __refilLogOrderId = anchorOid;
           __usingAnchor = true;
+          if (fr.providerVerified === true && SMM_PROVIDERS[normalizeSmmProvider(fr.provider)]) __anchorProvider = normalizeSmmProvider(fr.provider);
           // O provedor da âncora é resolvido pela MESMA heurística de sempre (tamanho do
           // orderId) — não pelo forceRefil.provider, que em registros antigos foi gravado
           // fixo como 'fama24h' quando na verdade o pedido foi pro Nuvra.
@@ -25259,9 +25261,13 @@ app.post('/api/refil/simple', async (req, res) => {
     // Reposição vai pro MESMO provedor onde o pedido foi criado (fama antigo → fama; nuvra → nuvra).
     // Se estamos usando a âncora de force-refil, o provedor é o dela (o pedido novo não está no
     // bloco do pedido original, então resolveRefillProviderApi cairia na heurística por tamanho).
-    const __refillApi = __usingAnchor
-      ? resolveRefillProviderApi(famaOrderId, null, null)
-      : resolveRefillProviderApi(famaOrderId, order, 'fama24h');
+    // Âncora com provider CONFIRMADO (força no SMMHustle): vai direto nele — o ID do
+    // SMMHustle é pequeno e a heurística por tamanho mandaria a reposição pra Nuvra.
+    const __refillApi = (__usingAnchor && __anchorProvider)
+      ? { provider: __anchorProvider, url: smmProviderUrl(__anchorProvider), key: smmProviderKey(__anchorProvider) }
+      : (__usingAnchor
+        ? resolveRefillProviderApi(famaOrderId, null, null)
+        : resolveRefillProviderApi(famaOrderId, order, 'fama24h'));
     const providerKey = __refillApi.key;
     const apiUrl = __refillApi.url;
     try { console.log('🔁 [refil/simple] provedor da reposição', { order: famaOrderId, provider: __refillApi.provider }); } catch(_) {}
@@ -25546,7 +25552,7 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
     const clientMs = client ? recency(client) : 0;
 
     // 2) Âncora de FORÇA mais recente (refil2_requests.forceRefil).
-    let forceOid = '', forceMs = 0;
+    let forceOid = '', forceMs = 0, forceProv = '';
     try {
       const r2 = await getCollection('refil2_requests');
       const fa = await r2.find(
@@ -25558,6 +25564,7 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
         forceOid = String(fr.orderId).trim();
         const s = String(fr.forcedAt || fr.finishedAt || '').trim();
         forceMs = s ? new Date(s).getTime() : 0;
+        if (fr.providerVerified === true && SMM_PROVIDERS[normalizeSmmProvider(fr.provider)]) forceProv = normalizeSmmProvider(fr.provider);
       }
     } catch (_) {}
 
@@ -25574,11 +25581,14 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
       if (tipoNorm && tipoNorm !== String(doc.tipo || '')) set.tipo = tipoNorm;
     }
     // Âncora (orderId) = evento mais recente entre pedido de cliente e força.
-    let anchor = '';
+    let anchor = '', anchorProv = '';
     if (clientOid && clientMs >= forceMs) anchor = clientOid;
-    else if (forceOid) anchor = forceOid;
+    else if (forceOid) { anchor = forceOid; anchorProv = forceProv; }
     else if (clientOid) anchor = clientOid;
     if (anchor && anchor !== String(doc.orderId || '').trim()) set.orderId = anchor;
+    // Fornecedor da âncora (só quando confirmado, ex.: força no SMMHustle). Vazio =
+    // reposição segue a heurística de sempre pelo tamanho do orderId.
+    if (anchor && anchorProv !== String(doc.anchorProvider || '')) set.anchorProvider = anchorProv;
 
     if (Object.keys(set).length) {
       set.anchorSyncedAt = new Date();
@@ -25588,9 +25598,11 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
     return set;
   } catch (e) { try { console.warn('[special-sync] erro:', e && e.message); } catch (_) {} return null; }
 }
-async function famaRefillOrder(orderId) {
-  // Reposição vai pro provedor onde o pedido foi criado (heurística por orderId: fama antigo → fama).
-  const __rp = resolveRefillProviderApi(orderId);
+async function famaRefillOrder(orderId, provider = '') {
+  // Reposição vai pro provedor onde o pedido foi criado. Com provider confirmado
+  // (âncora do SMMHustle) usa ele; senão, heurística por orderId (fama antigo → fama).
+  const _pv = normalizeSmmProvider(provider);
+  const __rp = (_pv && SMM_PROVIDERS[_pv]) ? { provider: _pv, url: smmProviderUrl(_pv), key: smmProviderKey(_pv) } : resolveRefillProviderApi(orderId);
   const providerKey = __rp.key;
   const apiUrl = __rp.url;
   if (!providerKey) return { ok: false, error: 'missing_key' };
@@ -25664,7 +25676,7 @@ async function auditSpecialProfile(doc) {
       else { errMsg = (rf1 && (rf1.message || rf1.error)) || ''; }
       // 2º) fallback: se o refil1 não resolveu (ex.: pedido não está no nosso banco) e há orderId manual, tenta direto.
       if (!refillId && doc.orderId) {
-        const rf2 = await famaRefillOrder(doc.orderId);
+        const rf2 = await famaRefillOrder(doc.orderId, doc.anchorProvider || "");
         if (rf2.ok) { refillId = String(rf2.refill); logged = false; }
         else if (!errMsg) { errMsg = rf2.error || 'falha'; }
       }
@@ -43000,6 +43012,109 @@ app.post('/api/painel/refil2/manual-initial-bulk', requireAdmin, async (req, res
   }
 });
 
+// ── Câmbio p/ custos de fornecedor cobrados em DÓLAR (ex.: SMMHustle) ────────────
+// Cotação USD→BRL com cache de 1h. Fonte: AwesomeAPI (pública, sem chave). Se ela
+// falhar, usa USD_BRL_RATE do .env; se nada existir, devolve rate null (o painel
+// mostra o valor em USD e avisa que não converteu — nunca inventa cotação).
+let __fxUsdBrl = { atMs: 0, rate: null, source: '' };
+async function getUsdBrlRate() {
+  const now = Date.now();
+  if (__fxUsdBrl.rate && (now - __fxUsdBrl.atMs) < 3600 * 1000) return __fxUsdBrl;
+  try {
+    const r = await axios.get('https://economia.awesomeapi.com.br/json/last/USD-BRL', { timeout: 8000, validateStatus: () => true });
+    const bid = Number(r && r.data && r.data.USDBRL && r.data.USDBRL.bid);
+    if (Number.isFinite(bid) && bid > 1 && bid < 20) { __fxUsdBrl = { atMs: now, rate: bid, source: 'awesomeapi' }; return __fxUsdBrl; }
+  } catch (_) {}
+  const envRate = Number(String(process.env.USD_BRL_RATE || '').replace(',', '.'));
+  if (Number.isFinite(envRate) && envRate > 0) return { atMs: now, rate: envRate, source: 'env USD_BRL_RATE' };
+  return __fxUsdBrl.rate ? __fxUsdBrl : { atMs: now, rate: null, source: 'indisponivel' };
+}
+// Moeda da CONTA no fornecedor (action=balance) — usada quando o /status não traz
+// "currency". Cache de 6h por fornecedor.
+const __providerCurrencyCache = {};
+async function getProviderAccountCurrency(provider) {
+  const p = normalizeSmmProvider(provider);
+  const c = __providerCurrencyCache[p];
+  if (c && (Date.now() - c.atMs) < 6 * 3600 * 1000) return c.currency;
+  try {
+    const key = smmProviderKey(p); if (!key) return null;
+    const r = await axios.post(smmProviderUrl(p), new URLSearchParams({ key, action: 'balance' }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000, validateStatus: () => true });
+    const cur = String((r && r.data && r.data.currency) || '').trim().toUpperCase() || null;
+    __providerCurrencyCache[p] = { atMs: Date.now(), currency: cur };
+    return cur;
+  } catch (_) { return null; }
+}
+// Converte o "charge" do fornecedor pra reais. Devolve { raw, currency, brl, rate, fxSource }.
+async function providerChargeToBrl(provider, charge, currencyFromStatus) {
+  const raw = Number(String(charge == null ? '' : charge).replace(',', '.'));
+  if (!Number.isFinite(raw)) return { raw: null, currency: currencyFromStatus || null, brl: null, rate: null, fxSource: null };
+  let currency = String(currencyFromStatus || '').trim().toUpperCase();
+  if (!currency) currency = (await getProviderAccountCurrency(provider)) || '';
+  if (!currency || currency === 'BRL' || currency === 'R$') return { raw, currency: currency || 'BRL?', brl: Math.round(raw * 100) / 100, rate: 1, fxSource: currency ? 'mesma moeda' : 'moeda não informada (assumido BRL)' };
+  if (currency === 'USD' || currency === '$') {
+    const fx = await getUsdBrlRate();
+    if (!fx.rate) return { raw, currency: 'USD', brl: null, rate: null, fxSource: 'cotação indisponível' };
+    return { raw, currency: 'USD', brl: Math.round(raw * fx.rate * 100) / 100, rate: Math.round(fx.rate * 10000) / 10000, fxSource: fx.source };
+  }
+  return { raw, currency, brl: null, rate: null, fxSource: 'moeda sem conversão configurada' };
+}
+
+// Gastos dos "Forçar orderid" feitos no SMMHustle (modal do Gerenciamento de Refil).
+// Consulta o action=status (em lote, até 100 IDs por chamada) pra pegar o valor
+// cobrado; converte USD→BRL quando a conta cobra em dólar e guarda no registro.
+app.get('/api/painel/refil2/smmhustle-spend', requireAdmin, async (req, res) => {
+  try {
+    const col = await getCollection('refil2_requests');
+    const q = { 'forceRefil.provider': 'smmhustle', 'forceRefil.orderId': { $exists: true, $nin: [null, ''] } };
+    const docs = await col.find(q, { projection: { username: 1, forceRefil: 1 } }).sort({ 'forceRefil.forcedAt': -1, _id: -1 }).limit(1000).toArray();
+    const key = smmProviderKey('smmhustle');
+    const FINAL = /^(completed|canceled|cancelled|partial|refunded)$/i;
+    const pend = docs.filter(d => { const fr = d.forceRefil || {}; const st = String((fr.statusPayload && fr.statusPayload.status) || '').trim(); return !(FINAL.test(st) && fr.chargeBrl != null); });
+    const live = {};
+    if (key && pend.length) {
+      for (let i = 0; i < pend.length; i += 100) {
+        const ids = pend.slice(i, i + 100).map(d => String(d.forceRefil.orderId));
+        try {
+          const r = await axios.post(smmProviderUrl('smmhustle'), new URLSearchParams({ key, action: 'status', orders: ids.join(',') }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 25000, validateStatus: () => true });
+          const data = (r && r.data && typeof r.data === 'object') ? r.data : {};
+          // Multi-status devolve { "<id>": {...} }; alguns painéis respondem 1 ID no formato simples.
+          if (ids.length === 1 && (data.status || data.charge !== undefined)) live[ids[0]] = data;
+          else for (const id of ids) if (data[id] && typeof data[id] === 'object') live[id] = data[id];
+        } catch (_) {}
+      }
+    }
+    const rows = [];
+    for (const d of docs) {
+      const fr = d.forceRefil || {};
+      const oid = String(fr.orderId);
+      const sp = live[oid] || fr.statusPayload || null;
+      let fx = null;
+      if (sp && sp.charge !== undefined && sp.charge !== null && !sp.error) {
+        fx = await providerChargeToBrl('smmhustle', sp.charge, sp.currency);
+        // Pedido já com cotação gravada: mantém a cotação do dia da solicitação.
+        if (fx && fx.currency === 'USD' && Number(fr.fxRate) > 0 && fx.raw != null) { fx.rate = Number(fr.fxRate); fx.brl = Math.round(fx.raw * fx.rate * 100) / 100; fx.fxSource = fr.fxSource || fx.fxSource; }
+        if (live[oid]) {
+          try { await col.updateOne({ _id: d._id }, { $set: { 'forceRefil.statusPayload': sp, 'forceRefil.charge': fx.raw, 'forceRefil.currency': fx.currency, 'forceRefil.chargeBrl': fx.brl, 'forceRefil.fxRate': fx.rate, 'forceRefil.fxSource': fx.fxSource, 'forceRefil.lastStatusAt': new Date().toISOString(), ...(fr.fxAt ? {} : { 'forceRefil.fxAt': new Date().toISOString() }) } }); } catch (_) {}
+        }
+      }
+      rows.push({
+        id: String(d._id), orderId: oid, username: String(d.username || '').replace(/^@+/, ''),
+        forcedAt: fr.forcedAt || fr.finishedAt || fr.requestedAt || null,
+        quantity: Number(fr.requestPayload && fr.requestPayload.quantity) || null,
+        service: fr.requestPayload && fr.requestPayload.service,
+        status: sp ? (sp.status || sp.error || null) : (fr.status || null),
+        remains: sp && sp.remains !== undefined ? Number(sp.remains) : null,
+        charge: fx ? fx.raw : null, currency: fx ? fx.currency : (sp && sp.currency) || null,
+        brl: fx ? fx.brl : null, rate: fx ? fx.rate : null, fxSource: fx ? fx.fxSource : null,
+      });
+    }
+    const totBrl = rows.reduce((s, r) => s + (Number(r.brl) || 0), 0);
+    const totRaw = rows.reduce((s, r) => s + (Number(r.charge) || 0), 0);
+    const semConversao = rows.filter(r => r.charge != null && r.brl == null).length;
+    return res.json({ ok: true, keyConfigured: !!key, rows, totals: { count: rows.length, brl: Math.round(totBrl * 100) / 100, raw: Math.round(totRaw * 10000) / 10000, currency: (rows.find(r => r.currency) || {}).currency || null, semConversao, quantity: rows.reduce((s, r) => s + (Number(r.quantity) || 0), 0) } });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal', message: (e && e.message) || String(e) }); }
+});
+
 app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -43078,8 +43193,17 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     const tipoLower = String(resolvedTipo || '').toLowerCase();
     const tipoRaw = tipoLower;
     // Forçar refil cria um pedido NOVO → usa o provedor escolhido no painel (mesma lógica de novo pedido).
+    // Opção "Forçar SMMHustle" (seta do botão): manda o pedido pro SMMHustle no serviço
+    // SMMHUSTLE_FORCE_SERVICE_ID (padrão 367, que tem refil) e esse pedido vira a âncora
+    // de reposição do perfil.
+    const forceVia = normalizeSmmProvider(body.provider || '');
+    const viaSmmHustle = forceVia === 'smmhustle';
     let serviceId = null, forceProvider = 'fama24h', forceApiUrl = smmProviderUrl('fama24h'), forceApiKey = '';
-    {
+    if (viaSmmHustle) {
+      serviceId = Math.trunc(Number(process.env.SMMHUSTLE_FORCE_SERVICE_ID || 367)) || 367;
+      forceProvider = 'smmhustle'; forceApiUrl = smmProviderUrl('smmhustle'); forceApiKey = smmProviderKey('smmhustle');
+      if (!forceApiKey) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'SMMHUSTLE_API_KEY', message: 'API key do SMMHustle não configurada (SMMHUSTLE_API_KEY no .env).' });
+    } else {
       let _ck = null, _fb = null;
       if (/misto/.test(tipoLower)) { _ck = 'mistos'; _fb = 663; }
       else if (/brasileir/.test(tipoLower)) { _ck = 'brasileiros'; _fb = 23; }
@@ -43150,7 +43274,10 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     // quando o perfil caía de novo depois de já ter sido forçado, não dava pra forçar mais.
     const forcedAtMs = (() => { try { const s = String((already && (already.finishedAt || already.requestedAt || already.startedAt)) || '').trim(); const t = s ? new Date(s).getTime() : 0; return Number.isFinite(t) ? t : 0; } catch (_) { return 0; } })();
     const recentForce = forcedAtMs ? ((Date.now() - forcedAtMs) < 24 * 60 * 60 * 1000) : true;
-    if ((hasOrderId || isCreated) && recentForce) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item nas últimas 24h.' });
+    // Trocar de fornecedor (ex.: o força na Nuvra não resolveu e agora vai pro SMMHustle)
+    // é uma decisão deliberada — não bloqueia pela janela de 24h do força anterior.
+    const trocaFornecedor = viaSmmHustle && normalizeSmmProvider(already && already.provider) !== 'smmhustle';
+    if ((hasOrderId || isCreated) && recentForce && !trocaFornecedor) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item nas últimas 24h.' });
     if (isProcessing) {
       const startedMs = (() => {
         try {
@@ -43164,8 +43291,8 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
       if (ageMs && ageMs < graceMs) return res.status(409).json({ ok: false, error: 'already_processing', message: 'Já existe um Forçar refil em processamento para este item' });
     }
 
-    const key = forceApiKey || (process.env.NUVRASMM_API_KEY || '');
-    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
+    const key = forceApiKey || (viaSmmHustle ? '' : (process.env.NUVRASMM_API_KEY || ''));
+    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: viaSmmHustle ? 'SMMHUSTLE_API_KEY' : 'FAMA24H_API_KEY' });
 
     const nowIso = new Date().toISOString();
     const requestedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username || '').trim() : '';
@@ -43200,6 +43327,9 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
           forceRefil: {
             status: 'processing',
             provider: forceProvider,
+            // providerVerified: o provider deste registro é CONFIÁVEL (registros antigos
+            // gravavam 'fama24h' fixo). Só com ele a reposição segue o provider gravado.
+            ...(viaSmmHustle ? { providerVerified: true } : {}),
             requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
             startedAt: nowIso,
             requestedAt: nowIso,
@@ -43260,7 +43390,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
           }
         }
       );
-      return res.status(502).json({ ok: false, error: 'provider_no_orderid', message: msg, provider: 'fama24h', data });
+      return res.status(502).json({ ok: false, error: 'provider_no_orderid', message: msg, provider: forceProvider, data });
     }
 
     let statusPayload = null;
@@ -43293,10 +43423,16 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
         charge = pickCharge(statusPayload);
       } catch (_) {}
     }
+    // Custo em reais (SMMHustle pode cobrar em dólar → converte pela cotação do dia).
+    let chargeFx = null;
+    if (viaSmmHustle && charge !== null) {
+      try { chargeFx = await providerChargeToBrl('smmhustle', charge, statusPayload && statusPayload.currency); } catch (_) {}
+    }
     await col.updateOne(
       { _id: new ObjectId(id) },
       {
         $set: {
+          ...(chargeFx ? { 'forceRefil.currency': chargeFx.currency, 'forceRefil.chargeBrl': chargeFx.brl, 'forceRefil.fxRate': chargeFx.rate, 'forceRefil.fxSource': chargeFx.fxSource, 'forceRefil.fxAt': new Date().toISOString() } : {}),
           'forceRefil.status': status,
           'forceRefil.provider': forceProvider,
           ...(orderId ? { 'forceRefil.orderId': orderId } : {}),
@@ -43317,7 +43453,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     // pedido forçado que acabou de ser criado (baseline não muda — força repõe queda).
     try { if (orderId) await syncSpecialProfileAnchor(uname); } catch (_) {}
 
-    return res.json({ ok: true, provider: forceProvider, orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, data, statusPayload });
+    return res.json({ ok: true, provider: forceProvider, orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, chargeFx, data, statusPayload });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
   }

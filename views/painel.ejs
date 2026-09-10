@@ -4938,6 +4938,79 @@
             <button type="button" id="refil2AuditVerifyFilteredBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Verificar filtro</button>
             <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
             <button type="button" id="refil2SpecialBtn" style="padding:6px 10px; border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">⭐ Perfis especiais</button>
+            <button type="button" id="refil2SmmSpendBtn" style="padding:6px 10px; border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">💵 Gastos SMMHustle</button>
+            <script>
+              // Modal "Gastos SMMHustle": lista os Forçar orderid feitos no SMMHustle com o
+              // valor cobrado (action=status), convertido pra R$ quando a conta é em dólar.
+              (function(){
+                var fmtBRL=function(n){ return (n==null||!isFinite(n))?'—':Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); };
+                var fmtN=function(n){ return (n==null||!isFinite(n))?'—':Number(n).toLocaleString('pt-BR'); };
+                var esc=function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+                var dia=function(iso){ try{ var d=new Date(iso); return isFinite(d)?d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—'; }catch(_){ return '—'; } };
+                var modal=null, dados=null;
+                function montar(){
+                  modal=document.createElement('div');
+                  modal.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(17,24,39,0.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 12px;overflow:auto;';
+                  modal.innerHTML='<div style="background:#fff;border-radius:12px;width:100%;max-width:1000px;box-shadow:0 20px 60px rgba(0,0,0,0.25);">'
+                    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #e5e7eb;gap:10px;flex-wrap:wrap;">'
+                    +'<div><div style="font-weight:800;color:#111827;">💵 Gastos — Forçar orderid no SMMHustle</div><div style="font-size:0.8rem;color:#6b7280;">Valor pelo /status do SMMHustle. Em dólar, convertido pela cotação do dia da solicitação.</div></div>'
+                    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input type="date" id="smmSpFrom" style="padding:6px 8px;border:1px solid #e5e7eb;border-radius:8px;"><input type="date" id="smmSpTo" style="padding:6px 8px;border:1px solid #e5e7eb;border-radius:8px;">'
+                    +'<button type="button" id="smmSpReload" style="padding:6px 10px;border:1px solid #e5e7eb;background:#fff;border-radius:8px;cursor:pointer;">Atualizar</button>'
+                    +'<button type="button" id="smmSpClose" style="padding:6px 10px;border:0;background:#111827;color:#fff;border-radius:8px;cursor:pointer;">Fechar</button></div></div>'
+                    +'<div id="smmSpBody" style="padding:14px 16px;">Carregando…</div></div>';
+                  document.body.appendChild(modal);
+                  modal.addEventListener('click',function(e){ if(e.target===modal) fechar(); });
+                  modal.querySelector('#smmSpClose').addEventListener('click',fechar);
+                  modal.querySelector('#smmSpReload').addEventListener('click',carregar);
+                  modal.querySelector('#smmSpFrom').addEventListener('change',render);
+                  modal.querySelector('#smmSpTo').addEventListener('change',render);
+                }
+                function fechar(){ if(modal) modal.style.display='none'; }
+                function render(){
+                  var body=modal.querySelector('#smmSpBody');
+                  if(!dados||!dados.ok){ body.innerHTML='<div style="color:#b91c1c;">Erro ao carregar: '+esc((dados&&(dados.message||dados.error))||'sem resposta')+'</div>'; return; }
+                  var de=modal.querySelector('#smmSpFrom').value, ate=modal.querySelector('#smmSpTo').value;
+                  var rows=(dados.rows||[]).filter(function(r){ var d=r.forcedAt?new Date(new Date(r.forcedAt).getTime()-3*3600e3).toISOString().slice(0,10):''; if(de&&d<de) return false; if(ate&&d>ate) return false; return true; });
+                  var totBrl=0,totRaw=0,totQtd=0,semConv=0,cur=''; rows.forEach(function(r){ totBrl+=Number(r.brl)||0; totRaw+=Number(r.charge)||0; totQtd+=Number(r.quantity)||0; if(r.charge!=null&&r.brl==null) semConv++; if(r.currency&&!cur) cur=r.currency; });
+                  var avisos='';
+                  if(!dados.keyConfigured) avisos+='<div style="background:#fef3c7;color:#92400e;padding:8px 10px;border-radius:8px;margin-bottom:10px;font-size:0.85rem;">⚠ API key do SMMHustle não configurada (SMMHUSTLE_API_KEY) — valores não puderam ser consultados.</div>';
+                  if(semConv) avisos+='<div style="background:#fef3c7;color:#92400e;padding:8px 10px;border-radius:8px;margin-bottom:10px;font-size:0.85rem;">⚠ '+semConv+' pedido(s) sem conversão para R$ (cotação indisponível). Defina USD_BRL_RATE no .env como reserva.</div>';
+                  var html=avisos+'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;">'
+                    +'<div><div style="font-size:0.75rem;color:#6b7280;">Total gasto</div><div style="font-size:1.35rem;font-weight:800;color:#0f766e;">'+fmtBRL(totBrl)+'</div></div>'
+                    +(cur&&cur!=='BRL'&&cur!=='BRL?'?'<div><div style="font-size:0.75rem;color:#6b7280;">Na moeda do SMMHustle</div><div style="font-size:1.1rem;font-weight:700;">'+esc(cur)+' '+Number(totRaw).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:4})+'</div></div>':'')
+                    +'<div><div style="font-size:0.75rem;color:#6b7280;">Pedidos</div><div style="font-size:1.1rem;font-weight:700;">'+rows.length+'</div></div>'
+                    +'<div><div style="font-size:0.75rem;color:#6b7280;">Seguidores enviados</div><div style="font-size:1.1rem;font-weight:700;">'+fmtN(totQtd)+'</div></div></div>';
+                  if(!rows.length){ body.innerHTML=html+'<div style="color:#6b7280;padding:20px 0;">Nenhum Forçar orderid no SMMHustle '+((de||ate)?'nesse período':'ainda')+'.</div>'; return; }
+                  html+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.86rem;"><thead><tr style="background:#f9fafb;">'
+                    +['Data da solicitação','Perfil','Order ID','Qtd enviada','Status','Valor ('+esc(cur||'moeda')+')','Valor (R$)','Cotação'].map(function(h){ return '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;white-space:nowrap;">'+h+'</th>'; }).join('')+'</tr></thead><tbody>';
+                  rows.forEach(function(r){
+                    html+='<tr>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;white-space:nowrap;">'+dia(r.forcedAt)+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;"><a href="https://instagram.com/'+encodeURIComponent(r.username)+'" target="_blank" rel="noopener">@'+esc(r.username)+'</a></td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-family:monospace;">'+esc(r.orderId)+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;">'+fmtN(r.quantity)+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;">'+esc(r.status||'—')+(r.remains!=null&&r.remains>0?' <span style="color:#6b7280;">(faltam '+fmtN(r.remains)+')</span>':'')+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;">'+(r.charge!=null?esc(r.currency||'')+' '+Number(r.charge).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:4}):'—')+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-weight:700;">'+fmtBRL(r.brl)+'</td>'
+                      +'<td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;color:#6b7280;" title="'+esc(r.fxSource||'')+'">'+(r.rate&&r.rate!==1?'R$ '+Number(r.rate).toLocaleString('pt-BR',{minimumFractionDigits:4}):(r.rate===1?'—':'—'))+'</td>'
+                      +'</tr>';
+                  });
+                  body.innerHTML=html+'</tbody></table></div>';
+                }
+                async function carregar(){
+                  if(!modal) montar();
+                  modal.style.display='flex';
+                  modal.querySelector('#smmSpBody').textContent='Consultando o SMMHustle…';
+                  try{ var r=await fetch('/api/painel/refil2/smmhustle-spend',{credentials:'same-origin'}); dados=await r.json().catch(function(){ return {ok:false,error:'HTTP '+r.status}; }); }
+                  catch(e){ dados={ok:false,error:(e&&e.message)||'erro de rede'}; }
+                  render();
+                }
+                var b=document.getElementById('refil2SmmSpendBtn'); if(b) b.addEventListener('click',carregar);
+                document.addEventListener('keydown',function(e){ if(e.key==='Escape'&&modal&&modal.style.display!=='none') fechar(); });
+                // menus da seta ▾ (position:fixed) fecham ao rolar a página/tabela
+                window.addEventListener('scroll',function(){ document.querySelectorAll('.refil2ForceMenu').forEach(function(m){ m.style.display='none'; }); },true);
+              })();
+            </script>
             <div id="refil2ExportWrap" style="position:relative; display:inline-flex; align-items:center;">
               <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
               <button type="button" id="refil2ExportMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding:6px 10px; border:1px solid #e5e7eb; border-left:0; background:#fff; color:#111827; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.85rem;">▾</button>
@@ -5421,7 +5494,14 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
-                      <button type="button" class="refil2ForceRefilOne" style="padding:5px 8px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar orderid</button>
+                      <%# Botão dividido: "Forçar orderid" (fornecedor do painel) + seta ▾ com "Forçar SMMHustle". %>
+                      <div class="refil2ForceSplit" style="display:inline-flex; align-items:stretch; white-space:nowrap;">
+                        <button type="button" class="refil2ForceRefilOne" style="padding:5px 8px; border:1px solid #111827; background:#111827; color:#fff; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Forçar orderid</button>
+                        <button type="button" class="refil2ForceMenuBtn" title="Mais opções de forçar" aria-haspopup="true" style="padding:5px 7px; border:1px solid #111827; border-left:1px solid #4b5563; background:#111827; color:#fff; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.8rem;">▾</button>
+                        <div class="refil2ForceMenu" style="display:none; position:fixed; min-width:240px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.14); padding:6px; z-index:10000;">
+                          <button type="button" class="refil2ForceSmmHustle" style="display:block; width:100%; text-align:left; padding:9px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.88rem;">Forçar SMMHustle <span style="color:#6b7280;">(serviço <%= (process.env.SMMHUSTLE_FORCE_SERVICE_ID || '367') %>)</span></button>
+                        </div>
+                      </div>
                     </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#111827;">
                       <span class="refil2ForceAt"><%= forceAt %></span>
@@ -6805,7 +6885,34 @@
             try {
               var t = ev && ev.target ? ev.target : null;
               if (!t) return;
+              // Seta ▾ do "Forçar orderid": abre/fecha o menu da linha (position:fixed pra
+              // não ser cortado pela rolagem da tabela).
+              var fecharMenusForce = function(){ document.querySelectorAll('.refil2ForceMenu').forEach(function(m){ m.style.display='none'; }); };
+              var menuTg = (t.closest && t.closest('.refil2ForceMenuBtn')) ? t.closest('.refil2ForceMenuBtn') : null;
+              if (menuTg) {
+                ev.preventDefault();
+                var mw = menuTg.parentElement ? menuTg.parentElement.querySelector('.refil2ForceMenu') : null;
+                var jaAberto = !!(mw && mw.style.display === 'block');
+                fecharMenusForce();
+                if (mw && !jaAberto) {
+                  var rc = menuTg.getBoundingClientRect();
+                  mw.style.display = 'block';
+                  var mwW = mw.offsetWidth, mwH = mw.offsetHeight;
+                  mw.style.left = Math.max(8, Math.min(rc.right - mwW, window.innerWidth - mwW - 8)) + 'px';
+                  mw.style.top = ((rc.bottom + 4 + mwH < window.innerHeight) ? rc.bottom + 4 : Math.max(8, rc.top - mwH - 4)) + 'px';
+                }
+                return;
+              }
+              var smmOpt = (t.closest && t.closest('.refil2ForceSmmHustle')) ? t.closest('.refil2ForceSmmHustle') : null;
+              if (!smmOpt) fecharMenusForce();
+              var forceVia = '';
               var forceBtn = (t.closest && t.closest('.refil2ForceRefilOne')) ? t.closest('.refil2ForceRefilOne') : null;
+              if (smmOpt) {
+                forceVia = 'smmhustle';
+                var splitEl = smmOpt.closest('.refil2ForceSplit');
+                forceBtn = splitEl ? splitEl.querySelector('.refil2ForceRefilOne') : null;
+                fecharMenusForce();
+              }
               if (forceBtn) {
                 ev.preventDefault();
                 var rowF = (forceBtn.closest && forceBtn.closest('tr')) ? forceBtn.closest('tr') : null;
@@ -6848,6 +6955,7 @@
                   if (finalTxt2) parts.push('Final: ' + finalTxt2);
                   msg = 'Forçar orderid agora' + (parts.length ? (' (' + parts.join(' · ') + ')') : '') + '?';
                 } catch (_) {}
+                if (forceVia === 'smmhustle') msg = msg.replace('Forçar orderid agora', 'Forçar no SMMHustle agora') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele.';
                 if (!confirm(msg)) return;
                 forceBtn.disabled = true;
                 forceBtn.style.opacity = '0.7';
@@ -6855,7 +6963,7 @@
                   var respF = await fetch('/api/painel/refil2/force-refil', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: idF })
+                    body: JSON.stringify(forceVia ? { id: idF, provider: forceVia } : { id: idF })
                   });
                   var dataF = await readJsonResp(respF);
                   if (!respF.ok || !(dataF && dataF.ok)) {
@@ -6888,8 +6996,9 @@
                     if (okEl) okEl.textContent = '';
                   } catch (_) {}
                   if (oid) {
-                    forceBtn.textContent = 'Enviado (' + oid + ')';
-                    forceBtn.title = 'Pedido Fama24h: ' + oid;
+                    var provNome = (dataF && dataF.provider === 'smmhustle') ? 'SMMHustle' : 'Nuvra';
+                    forceBtn.textContent = (dataF && dataF.provider === 'smmhustle') ? ('SMMHustle (' + oid + ')') : ('Enviado (' + oid + ')');
+                    forceBtn.title = 'Pedido ' + provNome + ': ' + oid;
                   } else {
                     forceBtn.textContent = 'Enviado';
                   }
