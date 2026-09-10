@@ -36,8 +36,9 @@
     .tag-bot { font-size: 0.62rem; background: #7c3aed; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
     .tag-paused { font-size: 0.62rem; background: #6b7280; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
     /* Guias: Aguardando | Novas | Antigas | Todas — uma linha só, rolável no celular. */
-    .tabs { display:flex; gap:6px; padding:2px 10px 10px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
-    .tabs::-webkit-scrollbar { display:none; }
+    /* Quebram linha: rolar as guias pro lado no celular não funcionava e a 3ª em
+       diante ficava inalcançável. Agora TODAS aparecem, em duas fileiras. */
+    .tabs { display:flex; flex-wrap:wrap; gap:6px; padding:2px 10px 10px; }
     .tab { flex:0 0 auto; white-space:nowrap; font-size:0.76rem; font-weight:600; padding:7px 13px; border:1px solid #dfe5ea;
       background:#fff; color:#54656f; border-radius:999px; cursor:pointer; display:inline-flex; align-items:center; gap:5px; transition:background .12s, color .12s; }
     .tab:hover { background:#f3f6f8; }
@@ -143,6 +144,7 @@
       .btn-bot { padding: 6px 9px; font-size: 0.72rem; }
       .b { max-width: 86%; }
       .reply-btn { opacity: 0.55; width: 30px; height: 30px; font-size: 1.05rem; }
+      .tab { font-size: 0.72rem; padding: 6px 10px; }
       .media-img, .media-sticker, .media-video { max-width: 68vw; }
       .media-audio { width: 62vw; max-width: 240px; }
       /* Campo de digitação largo: as ações viram só ícone, como no WhatsApp. */
@@ -257,10 +259,12 @@
         var list=$('convList'); var q=state.filter.toLowerCase();
         var items=state.convs.filter(function(c){
           if(q && (c.name||'').toLowerCase().indexOf(q)<0 && (c.phone||'').indexOf(q)<0) return false;
-          // "não respondida" = a última mensagem foi do CLIENTE (ninguém respondeu depois)
-          var pendente=(c.lastDir!=='out');
-          if(state.answer==='pending' && !pendente) return false;
-          if(state.answer==='done' && pendente) return false;
+          // "não respondida" = NINGUÉM respondeu essa conversa ainda. Se você já
+          // respondeu, ela é respondida — mesmo que o cliente tenha mandado um
+          // "ok" depois (antes eu olhava só a última mensagem e ela voltava pra fila).
+          var respondida=(c.answered===undefined) ? (c.lastDir==='out') : !!c.answered;
+          if(state.answer==='pending' && respondida) return false;
+          if(state.answer==='done' && !respondida) return false;
           return true;
         });
         // Não respondidas primeiro; dentro de cada grupo, mais recente no topo.
@@ -271,7 +275,7 @@
         });
         // O badge da guia "Não respondidas" é sempre a fila das conversas NOVAS,
         // independente da guia aberta (senão trocaria de número a cada aba).
-        var nPend=(state.pendingNew!=null) ? state.pendingNew : state.convs.filter(function(c){ return c.lastDir!=='out'; }).length;
+        var nPend=(state.pendingNew!=null) ? state.pendingNew : state.convs.filter(function(c){ return !c.answered; }).length;
         $('convCount').textContent=state.convs.length;
         var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
 
