@@ -4340,7 +4340,7 @@ app.get('/api/refil/warranty-status', async (req, res) => {
     );
     if (!rec) return res.json({ ok: true, active: false });
     const mode = String(rec.warrantyMode || '').toLowerCase();
-    const isExtended = (mode === '6m' || mode === '12m' || mode === 'life' || mode === 'lifetime');
+    const isExtended = (mode === '4m' || mode === '6m' || mode === '12m' || mode === 'life' || mode === 'lifetime');
     let active = false;
     if (isExtended) {
       if (mode === 'life' || mode === 'lifetime') active = true;
@@ -5460,9 +5460,11 @@ async function ensureRefilLink(identifier, correlationID, req) {
       const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
       const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
       const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
+      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia nova: 4 meses (R$ 14,90)
       const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
       if (hasLife) return { mode: 'life', months: null, days: null };
       if (has6m) return { mode: '6m', months: 6, days: null };
+      if (has4m) return { mode: '4m', months: 4, days: null };
       if (has12m) return { mode: '12m', months: 12, days: null };
       return { mode: '30', months: 1, days: 30 };
     })();
@@ -10939,6 +10941,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
       const parts = s.split(';');
       let hasLife = false;
       let has6m = false;
+      let has4m = false;
       let has12m = false;
       for (const raw of parts) {
         const part = String(raw || '').trim();
@@ -10951,10 +10954,12 @@ const refilPageHandler = (fromPath) => async (req, res) => {
         if (!(qty > 0)) continue;
         if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
         else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
+        else if (key === 'warranty_4m' || key === 'warranty4m') has4m = true;
         else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
       }
       if (hasLife) return { isLifetime: true, mode: 'life', months: null };
       if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
+      if (has4m) return { isLifetime: false, mode: '4m', months: 4 };
       if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
     } catch (_) {}
     return out;
@@ -18184,7 +18189,8 @@ async function processOrderFulfillment(record, col, req) {
             const _linkIdExt = _rawTokenExt.replace(/[^a-zA-Z0-9_-]/g, '').trim();
 
             const _modeRawExt = String(_fullMapExt['refil_mode'] || _fullMapExt['refilMode'] || '').trim().toLowerCase();
-            const _modeExt = (_modeRawExt === '6' || _modeRawExt === '6meses' || _modeRawExt === '6m') ? '6m'
+            const _modeExt = (_modeRawExt === '4' || _modeRawExt === '4meses' || _modeRawExt === '4m') ? '4m'
+                : (_modeRawExt === '6' || _modeRawExt === '6meses' || _modeRawExt === '6m') ? '6m'
                 : (_modeRawExt === '12' || _modeRawExt === '12meses' || _modeRawExt === '12m') ? '12m'
                 : (_modeRawExt === 'life' || _modeRawExt === 'lifetime' || _modeRawExt === 'vitalicio' || _modeRawExt === 'vitalício') ? 'life'
                 : '30';
@@ -18219,8 +18225,8 @@ async function processOrderFulfillment(record, col, req) {
                     _setsExt.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
                     _setsExt.warrantyMode = 'life';
                     _setsExt.warrantyDays = null;
-                } else if (_modeExt === '6m' || _modeExt === '12m') {
-                    const _monthsExt = _modeExt === '12m' ? 12 : 6;
+                } else if (_modeExt === '4m' || _modeExt === '6m' || _modeExt === '12m') {
+                    const _monthsExt = _modeExt === '12m' ? 12 : (_modeExt === '4m' ? 4 : 6);
                     const _brtOffMs = 3 * 60 * 60 * 1000;
                     const _brtYmd = (ms) => { const d = new Date(Number(ms || 0) - _brtOffMs); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() }; };
                     const _daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
@@ -24430,7 +24436,8 @@ app.post('/session/mark-paid', async (req, res) => {
             const linkIdX = rawTokenX.replace(/[^a-zA-Z0-9_-]/g, '').trim();
 
             const modeRawX = String(addMapX['refil_mode'] || addMapX['refilMode'] || '').trim().toLowerCase();
-            const modeX = (modeRawX === '6' || modeRawX === '6meses' || modeRawX === '6m') ? '6m'
+            const modeX = (modeRawX === '4' || modeRawX === '4meses' || modeRawX === '4m') ? '4m'
+              : (modeRawX === '6' || modeRawX === '6meses' || modeRawX === '6m') ? '6m'
               : (modeRawX === '12' || modeRawX === '12meses' || modeRawX === '12m') ? '12m'
               : (modeRawX === 'life' || modeRawX === 'lifetime' || modeRawX === 'vitalicio' || modeRawX === 'vitalício') ? 'life'
               : (modeRawX || '30');
@@ -24492,8 +24499,8 @@ app.post('/session/mark-paid', async (req, res) => {
                 setsX.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
                 setsX.warrantyMode = 'life';
                 setsX.warrantyDays = null;
-              } else if (modeX === '6m' || modeX === '12m') {
-                const monthsToAdd = modeX === '12m' ? 12 : 6;
+              } else if (modeX === '4m' || modeX === '6m' || modeX === '12m') {
+                const monthsToAdd = modeX === '12m' ? 12 : (modeX === '4m' ? 4 : 6);
                 const brtOffsetMs = 3 * 60 * 60 * 1000;
                 const brtYmdFromMs = (ms) => {
                   const d = new Date(Number(ms || 0) - brtOffsetMs);
@@ -29618,10 +29625,11 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       if (w === 'life' || w === 'vitalicio') return 'life';
       if (w === '12m' || w === '1ano' || w === '1_ano') return '12m';
       if (w === '6m' || w === '6meses' || w === '6_meses') return '6m';
+      if (w === '4m' || w === '4meses' || w === '4_meses') return '4m';
       if (!w && lifetimeOnly) return 'life';
       return '';
     })();
-    const warrantyFilter = (warrantyUi === 'life' || warrantyUi === '12m' || warrantyUi === '6m') ? warrantyUi : '';
+    const warrantyFilter = (warrantyUi === 'life' || warrantyUi === '12m' || warrantyUi === '6m' || warrantyUi === '4m') ? warrantyUi : '';
     const refilExpiredOnly = (refilExpiredFlag || warrantyUi === 'expired');
     const startDateRaw = String(req.query.startDate || '').trim();
     const endDateRaw = String(req.query.endDate || '').trim();
@@ -29792,9 +29800,11 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
       const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
       const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
+      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia nova: 4 meses (R$ 14,90)
       const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
       if (hasLife) return { isLifetime: true, months: null, mode: 'life', days: null };
       if (has6m) return { isLifetime: false, months: 6, mode: '6m', days: null };
+      if (has4m) return { isLifetime: false, months: 4, mode: '4m', days: null };
       if (has12m) return { isLifetime: false, months: 12, mode: '12m', days: null };
       return { isLifetime: false, months: 1, mode: '30', days: 30 };
     };
@@ -30173,9 +30183,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
             const daysRaw = Number(d?.warrantyDays);
             const days = Number.isFinite(daysRaw) ? daysRaw : null;
             let mode = linkMode;
-            if (mode !== '6m' && mode !== '12m') {
+            if (mode !== '4m' && mode !== '6m' && mode !== '12m') {
               if (days != null && days >= 330) mode = '12m';
               else if (days != null && days >= 170) mode = '6m';
+              else if (days != null && days >= 110) mode = '4m';
             }
             const left = (() => {
               try {
@@ -30377,6 +30388,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (mode !== '12m') return false;
         } else if (warrantyFilter === '6m') {
           if (mode !== '6m') return false;
+        } else if (warrantyFilter === '4m') {
+          if (mode !== '4m') return false;
         }
       } else if (lifetimeOnly) {
         if (r.refilIsLifetime !== true) return false;
@@ -30479,6 +30492,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const absDiffAgg = { thresholdAbs: warrantyThresholdAbs, base: 0, gte: 0, lt: 0 };
       const warrantyAgg = {
         life: { key: 'life', label: 'Vitalício', ok: 0, nok: 0, total: 0 },
+        '4m': { key: '4m', label: '4 meses', ok: 0, nok: 0, total: 0 },
         '6m': { key: '6m', label: '6 meses', ok: 0, nok: 0, total: 0 },
         '12m': { key: '12m', label: '1 ano', ok: 0, nok: 0, total: 0 }
       };
@@ -30528,7 +30542,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         }
         if (abs != null && Number.isFinite(abs)) {
           const mode = String(r && r.refilWarrantyMode ? r.refilWarrantyMode : '').trim().toLowerCase();
-          const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : ''));
+          const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '4m' ? '4m' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : '')));
           if (wKey && warrantyAgg[wKey]) {
             warrantyAgg[wKey].total += 1;
             if (abs >= warrantyThresholdAbs) warrantyAgg[wKey].nok += 1;
@@ -32667,6 +32681,7 @@ app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdm
         const parts = s.split(';');
         let hasLife = false;
         let has6m = false;
+        let has4m = false;
         let has12m = false;
         for (const raw of parts) {
           const part = String(raw || '').trim();
@@ -32679,10 +32694,12 @@ app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdm
           if (!(qty > 0)) continue;
           if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
           else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
+          else if (key === 'warranty_4m' || key === 'warranty4m') has4m = true;
           else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
         }
         if (hasLife) return { isLifetime: true, mode: 'life', months: null };
         if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
+        if (has4m) return { isLifetime: false, mode: '4m', months: 4 };
         if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
       } catch (_) {}
       return out;
@@ -38247,7 +38264,7 @@ async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
         else if (k === 'likes') { const rev = (_BP_CURTIDAS[variant] || _BP_CURTIDAS.mistos)[qv] || 0; othersCents += rev; if (rev || qv) { cat.curtidas.count++; cat.curtidas.revenue += rev / 100; cat.curtidas.cost += (qv / 1000) * (_BP_COST_CURTIDAS[variant] || _BP_COST_CURTIDAS.mistos); } }
         else if (k === 'views') { const rev = _BP_VIEWS[qv] || 0; othersCents += rev; if (rev || qv) { cat.views.count++; cat.views.revenue += rev / 100; cat.views.cost += (qv / 1000) * _BP_COST_VIEWS_PER_K; } }
         else if (k === 'comments') { const rev = qv * 150; othersCents += rev; if (qv) { cat.comentarios.count++; cat.comentarios.revenue += rev / 100; cat.comentarios.cost += qv * _BP_COST_COMMENT_UNIT; } }
-        else if (/^warranty/.test(k)) { othersCents += 990; cat.garantia.count++; cat.garantia.revenue += 9.9; }
+        else if (/^warranty/.test(k)) { const wc = /^warranty_?4m$/.test(k) ? 1490 : 990; othersCents += wc; cat.garantia.count++; cat.garantia.revenue += wc / 100; }
       }
       if (hasUpgrade) {
         cat.upgrade.count++;
@@ -44102,6 +44119,7 @@ app.post('/api/painel/refil2/apply-extension', requireAdmin, async (req, res) =>
     if (!linkId) return res.status(400).json({ ok: false, error: 'missing_linkId' });
 
     const mode = (modeRaw === 'life' || modeRaw === 'lifetime' || modeRaw === 'vitalicio') ? 'life'
+      : (modeRaw === '4m' || modeRaw === '4') ? '4m'
       : (modeRaw === '6m' || modeRaw === '6') ? '6m'
       : (modeRaw === '12m' || modeRaw === '12') ? '12m'
       : '30';
@@ -44130,6 +44148,8 @@ app.post('/api/painel/refil2/apply-extension', requireAdmin, async (req, res) =>
     if (mode === 'life') {
       sets.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
       sets.warrantyMode = 'life'; sets.warrantyDays = null;
+    } else if (mode === '4m') {
+      sets.expiresAt = addMonths(baseMs, 4); sets.warrantyMode = '4m'; sets.warrantyDays = null;
     } else if (mode === '6m') {
       sets.expiresAt = addMonths(baseMs, 6); sets.warrantyMode = '6m'; sets.warrantyDays = null;
     } else if (mode === '12m') {

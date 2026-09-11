@@ -883,7 +883,7 @@
     views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
     comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
     warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
-    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 }, // garantia 4 meses (key warranty_4m)
   };
   try { window.promoPricing = promoPricing; } catch(_) {}
 
@@ -913,11 +913,11 @@
   const wDisc = document.getElementById('warrantyDiscount');
   function applyWarrantyMode(){
     const isLife = true;
-    if (wLabel) wLabel.textContent = '6 meses';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
+    if (wLabel) wLabel.textContent = '4 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 4 MESES';
     if (wOld) wOld.textContent = 'R$ 39,90';
-    if (wNew) wNew.textContent = 'R$ 9,90';
-    if (wDisc) wDisc.textContent = '75% OFF';
+    if (wNew) wNew.textContent = 'R$ 14,90';
+    if (wDisc) wDisc.textContent = '63% OFF';
     try { updatePromosSummary(); } catch(_) {}
   }
   applyWarrantyMode();
@@ -2699,9 +2699,9 @@
       }
     if (warrantyChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="warranty60"] .new-price')?.textContent || '';
-        if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.warranty60 ? window.promoPricing.warranty60.price : '') || 'R$ 9,90';
-        const label = 'Reposição por 6 meses';
-        promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        if (!priceStr) priceStr = (window.promoPricing && window.promoPricing.warranty60 ? window.promoPricing.warranty60.price : '') || 'R$ 14,90';
+        const label = 'Reposição por 4 meses';
+        promos.push({ key: 'warranty_4m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -5914,9 +5914,9 @@
           promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
         }
         if (warrantyChecked) {
-          const priceStr = 'R$ 19,90';
-          const label = 'Reposição por 6 meses';
-          promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
+          const priceStr = 'R$ 14,90';
+          const label = 'Reposição por 4 meses';
+          promos.push({ key: 'warranty_4m', qty: 1, label, priceCents: window.parsePrecoToCents(priceStr) });
         }
         if (upgradeChecked) {
           let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';

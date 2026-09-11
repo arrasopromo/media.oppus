@@ -221,8 +221,11 @@ const calculateOrderBumps = (bumpsStr, baseType) => {
             // 1 comment = R$ 1,50 (150 cents)
             total += q * 150;
             
+        } else if (key === 'warranty_4m' || key === 'warranty4m') {
+             // Garantia nova (a partir de 09/2026): reposição por 4 meses, R$ 14,90.
+             total += 1490;
         } else if (key === 'warranty' || key === 'warranty30' || key === 'warranty_life' || key === 'warranty_lifetime' || key === 'warranty60' || key === 'warranty_6m' || key === 'warranty6m') {
-             total += 990; 
+             total += 990; // chaves antigas (6 meses) — mantidas pra pedidos já feitos
         }
     });
     
@@ -235,6 +238,7 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
     if (tipo === 'refil_extensao') {
         const modeItem = additionalInfo.find(x => x && x.key === 'refil_mode');
         const mode = String(modeItem?.value || '').trim().toLowerCase();
+        if (mode === '4m' || mode === '4') return 1490; // extensão nova: 4 meses, R$ 14,90
         if (mode === 'life') return 990;
         return 990;
     }

@@ -697,6 +697,7 @@
                 %>
                 <option value="all" <%= (!wf || wf === 'all') ? 'selected' : '' %>>Todos</option>
                 <option value="expired" <%= (wf === 'expired') ? 'selected' : '' %>>Expirada</option>
+                <option value="4m" <%= (wf === '4m') ? 'selected' : '' %>>4 meses</option>
                 <option value="6m" <%= (wf === '6m') ? 'selected' : '' %>>6 meses</option>
                 <option value="12m" <%= (wf === '12m') ? 'selected' : '' %>>1 ano</option>
                 <option value="life" <%= (wf === 'life') ? 'selected' : '' %>>Vitalício</option>
@@ -872,6 +873,7 @@
                   if (refilIsLifetime || refilMode === 'life') return 'Vitalícia';
                   if (refilMode === '12m') return '1 ano';
                   if (refilMode === '6m') return '6 meses';
+                  if (refilMode === '4m') return '4 meses';
                   if (refilDaysLeft !== null) return '30 dias';
                   return '-';
                 })();
@@ -899,6 +901,8 @@
                     <span class="unknown-badge unknown-badge--lifetime">1 ano</span>
                   <% } else if (refilMode === '6m') { %>
                     <span class="unknown-badge unknown-badge--lifetime">6 meses</span>
+                  <% } else if (refilMode === '4m') { %>
+                    <span class="unknown-badge unknown-badge--lifetime">4 meses</span>
                   <% } %>
                   <%
                     const uRaw = String(username || '').trim();

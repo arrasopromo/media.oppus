@@ -373,7 +373,7 @@ document.addEventListener('DOMContentLoaded', function() {
     views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
     comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
     warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
-    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 }, // garantia 4 meses (key warranty_4m)
   };
   try { window.promoPricing = promoPricing; } catch(_) {}
 
@@ -2402,11 +2402,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = '6 meses';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
+    if (wLabel) wLabel.textContent = '4 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 4 MESES';
     if (wOld) wOld.textContent = 'R$ 39,90';
-    if (wNew) wNew.textContent = 'R$ 9,90';
-    if (wDisc) wDisc.textContent = '75% OFF';
+    if (wNew) wNew.textContent = 'R$ 14,90';
+    if (wDisc) wDisc.textContent = '63% OFF';
     updatePromosSummary();
   }
 
@@ -2852,9 +2852,9 @@ document.addEventListener('DOMContentLoaded', function() {
       if (warrantyChecked) {
         const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
         let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
-        if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 9,90';
-        const label = 'Reposição por 6 meses';
-        promos.push({ key: 'warranty_6m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 14,90';
+        const label = 'Reposição por 4 meses';
+        promos.push({ key: 'warranty_4m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -2915,7 +2915,7 @@ document.addEventListener('DOMContentLoaded', function() {
                    oldPriceCents = p.priceCents * 1.7;
                 } else {
                    // Likes, Views, Warranty
-                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : (p.key === 'warranty_6m' ? 'warranty' : p.key))];
+                   const conf = promoPricing[p.key === 'warranty30' ? 'warranty' : (p.key === 'warranty_lifetime' ? 'warranty' : ((p.key === 'warranty_6m' || p.key === 'warranty_4m') ? 'warranty' : p.key))];
                    if (conf) oldPriceCents = parsePrecoToCents(conf.old);
                    else if (p.key === 'warranty_lifetime') oldPriceCents = 12990; // R$ 129,90
                    else if (p.key === 'warranty_6m') oldPriceCents = 12990; // R$ 129,90
@@ -5343,7 +5343,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
 
           const warCb = document.getElementById('promoWarranty60');
-          if (warCb && map.warranty_6m) warCb.checked = true;
+          if (warCb && (map.warranty_4m || map.warranty_6m)) warCb.checked = true;
 
           try { updatePromosSummary(); } catch (_) {}
           try { updatePedidoButtonState(); } catch (_) {}

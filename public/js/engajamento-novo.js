@@ -270,7 +270,7 @@ document.addEventListener('DOMContentLoaded', function() {
     views: { old: 'R$ 89,90', price: 'R$ 19,90', discount: 78 },
     comments: { old: 'R$ 29,90', price: 'R$ 9,90', discount: 67 },
     warranty: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 },
-    warranty60: { old: 'R$ 39,90', price: 'R$ 9,90', discount: 75 },
+    warranty60: { old: 'R$ 39,90', price: 'R$ 14,90', discount: 63 }, // garantia 4 meses (key warranty_4m)
   };
   try { window.promoPricing = promoPricing; } catch(_) {}
 
@@ -430,20 +430,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = '6 meses';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 6 MESES';
+    if (wLabel) wLabel.textContent = '4 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 4 MESES';
     
     // Custom Price for Followers (Mistos/Brasileiros)
     const isFollowers = window.currentService === 'followers';
 
     if (isFollowers && isLife) {
-        if (wOld) wOld.textContent = 'R$ 49,90';
-        if (wNew) wNew.textContent = 'R$ 9,00';
-        if (wDisc) wDisc.textContent = '82% OFF';
+        if (wOld) wOld.textContent = 'R$ 39,90';
+        if (wNew) wNew.textContent = 'R$ 14,90';
+        if (wDisc) wDisc.textContent = '63% OFF';
     } else {
-        if (wOld) wOld.textContent = isLife ? 'R$ 129,90' : 'R$ 39,90';
-        if (wNew) wNew.textContent = isLife ? 'R$ 19,90' : 'R$ 9,90';
-        if (wDisc) wDisc.textContent = isLife ? '85% OFF' : '75% OFF';
+        if (wOld) wOld.textContent = 'R$ 39,90';
+        if (wNew) wNew.textContent = 'R$ 14,90';
+        if (wDisc) wDisc.textContent = '63% OFF';
     }
     updatePromosSummary();
   }
@@ -1778,10 +1778,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (promoWarranty && promoWarranty.checked) {
        promos.push({ 
-           key: 'warranty_6m', 
+           key: 'warranty_4m', 
            qty: 1, 
-           label: 'Reposição por 6 meses', 
-           priceCents: 990 // R$ 9,90
+           label: 'Reposição por 4 meses', 
+           priceCents: 1490 // R$ 14,90
        });
     }
     
@@ -1838,6 +1838,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     oldPriceCents = 12990; // R$ 129,90
                 } else if (p.key === 'warranty60') {
                     oldPriceCents = 3990; // R$ 39,90 (Old Price)
+                } else if (p.key === 'warranty_4m') {
+                    oldPriceCents = 3990; // R$ 39,90
                 } else if (p.key === 'warranty_6m') {
                     oldPriceCents = 12990; // R$ 129,90
                 } else if (p.key === 'upgrade') {
