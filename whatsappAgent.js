@@ -100,6 +100,7 @@ function systemPrompt() {
     'Pix: ao gerar (a ferramenta gerar_pix rodou com ok), NUNCA escreva no texto o código copia-e-cola, o QR Code, nenhum link/URL, nem rótulos tipo "Código Pix:" ou "QR Code:". O sistema envia AUTOMATICAMENTE, em mensagens separadas, a instrução de como copiar e o código copia-e-cola — você NÃO precisa (nem deve) colocar nada disso. Sua mensagem deve ter só: a confirmação do valor/resumo do pedido e o fechamento "Fico no aguardo da confirmação do seu pagamento para liberar seu pedido." NÃO use "se precisar de mais alguma coisa, estou à disposição" nesse momento. Se gerar_pix retornar erro, NÃO diga que deu certo — peça pra tentar de novo ou acione o suporte. Nunca peça CPF (é gerado automaticamente).',
     'TIPO no fechamento (CRÍTICO p/ o preço): ao chamar gerar_pix, use EXATAMENTE o mesmo tipo que você cotou e o cliente confirmou. "brasileiros reais"/"reais"/"de verdade"/"orgânico" = tipo *organicos* — NUNCA mande como "brasileiros" (isso troca o produto e cobra o valor errado). "brasileiros" (sem "reais") = brasileiros simples. Na dúvida do tipo, confirme com o cliente antes de gerar. O valor do Pix TEM que ser o mesmo que você cotou.',
     'E-MAIL: para pedir o e-mail, pergunte de forma simples e direta (ex.: "Pra finalizar, me passa seu melhor e-mail?"). Como normalmente é a PRIMEIRA compra, você NÃO tem o e-mail do cliente — então NUNCA diga "parece que não recebi seu e-mail", "faltou seu e-mail" ou algo que sugira que ele já enviou. Só peça.',
+    'ERRO NA REPOSIÇÃO (cliente diz que pediu a reposição e deu erro, erro interno, não consegue, não funciona, manda print de erro): NUNCA mande o link de reposição de novo e NUNCA responda com status do pedido ("está em andamento") — ele JÁ tentou pelo link. Diga que vai acionar o suporte para verificar e resolver, e chame chamar_suporte com o motivo.',
     'Se o cliente pedir atendente humano ou fizer reclamação séria, use chamar_suporte e pare de vender.',
   ].join('\n');
 }
@@ -254,6 +255,43 @@ async function handleAgentMessage(msg, sendText) {
     try { console.error('❌ whatsappAgent erro:', e && e.message); } catch (_) {}
   }
 
+  // ERRO NA REPOSIÇÃO: o cliente já tentou pelo link e deu erro — mandar o link de novo
+  // (ou dizer "está em andamento") não resolve nada e irrita. Aqui a IA para, aciona o
+  // suporte humano e avisa no ntfy. Vale quando ele fala em erro/não consegue E o assunto
+  // é reposição (pela palavra ou porque já mandamos o link nesta conversa).
+  let erroRefilTratado = false;
+  try {
+    const erroRe = /(erro|falhou|falha|deu ruim|travou|n[ãa]o (consigo|consegui|deu|vai|d[áa]|funciona|funcionou|carrega|abre|abriu|aceita|deixa)|n[ãa]o est[áa] funcionando|indispon[íi]vel|apareceu.*(erro|problema))/i;
+    const refilRe = /(repos|refil|refill|reposi[çc][ãa]o|link)/i;
+    const ultimasDoCliente = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-3).map((h) => String(h.content || '')));
+    const jaMandamosLink = (hist || []).some((h) => h && h.role === 'assistant' && /refil\?token=/i.test(String(h.content || '')));
+    // "o erro foi meu", "errei" = o cliente se corrigindo, não é falha do sistema.
+    const culpaDoCliente = /(erro\s+(foi|é|e)\s+meu|meu\s+erro|errei|foi\s+mal)/i.test(String(text || ''));
+    const falaDeErro = !culpaDoCliente && erroRe.test(String(text || ''));
+    const assuntoRefil = refilRe.test(ultimasDoCliente.join(' ')) || jaMandamosLink;
+    if (falaDeErro && assuntoRefil && !ctx.pixToSend) {
+      finalText = 'Entendi, a página de reposição está dando erro pra você. Nesse caso o link não vai resolver — já estou acionando o *suporte* pra verificar o que aconteceu e resolver a sua reposição. Assim que verificarmos, te retorno por aqui.';
+      ctx.support = true;
+      ctx.quedaResolved = true;
+      erroRefilTratado = true;
+      try { await sales.flagSupport(phone, 'Erro ao solicitar reposição pelo link'); } catch (_) {}
+      try {
+        const c = await getCollection('whatsapp_contacts');
+        await c.updateOne({ _id: String(phone) }, { $set: { flag: 'erro_refil', botPaused: true, supportReason: 'Erro na página de reposição', supportAt: new Date().toISOString() } }, { upsert: true });
+      } catch (_) {}
+      try {
+        const base = String(process.env.PUBLIC_BASE_URL || process.env.INTERNAL_BASE || '').replace(/\/+$/, '');
+        await sales.sendNtfy({
+          title: '+' + String(phone).replace(/\D/g, '') + ' - erro na reposicao',
+          message: 'Cliente diz que a página de reposição deu erro. A IA foi pausada — verifique pelo CRM.',
+          priority: 'high',
+          tags: 'warning',
+          click: base ? (base + '/painel/ia-crm') : undefined,
+        });
+      } catch (_) {}
+    }
+  } catch (_) {}
+
   // FORÇA a resposta de QUEDA (não-orgânico): SÓ o link, sem status/entrega/justificativa.
   // O modelo tende a "explicar demais" quando o pedido está concluído — aqui garantimos
   // o tom seco pedido, independente do que ele escreveu. Só quando: intenção de queda
@@ -263,7 +301,7 @@ async function handleAgentMessage(msg, sendText) {
     const userMsgs = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-2).map((h) => String(h.content || '')));
     const isQueda = userMsgs.some((t) => quedaRe.test(t));
     const cp = ctx.lastConsulta;
-    if (isQueda && cp && cp.encontrado && !ctx.support && !ctx.pixToSend) {
+    if (isQueda && cp && cp.encontrado && !ctx.support && !ctx.pixToSend && !erroRefilTratado) {
       if (cp.ehBrasileirosReais) {
         // Orgânico: NÃO manda link — verifica + estabilidade (5-6%). Seco, sem status.
         finalText = 'Pode ficar tranquilo(a)! Vou verificar seu pedido, mas fica despreocupado(a): os *brasileiros reais* são o nosso serviço mais estável, com taxa de queda de apenas 5-6% em período superior a um mês.';

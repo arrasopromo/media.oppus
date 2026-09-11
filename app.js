@@ -25476,6 +25476,15 @@ async function fetchCurrentFollowersLive(username) {
   return { ok: false, error: 'lookup_failed' };
 }
 
+// Falha de reposição do cliente: fica registrada em `refil_falhas` (antes só o SUCESSO era
+// gravado, e quando o cliente dizia "deu erro" não havia como saber o motivo).
+async function logRefilFalha(dados) {
+  try {
+    const c = await getCollection('refil_falhas');
+    await c.insertOne(Object.assign({ at: new Date().toISOString() }, dados || {}));
+  } catch (_) {}
+}
+
 app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req, res) => {
   try {
     const usernameRaw = String((req.body && (req.body.username || req.body.user || req.body.instagram_username || req.body.instauser)) || '').trim();
@@ -25578,7 +25587,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     ];
     const arr = await col.find({ $or: usernameOr }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(50).toArray();
     const paidArr = (arr || []).filter(pickPaid);
-    if (!paidArr.length) return res.status(404).json({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para esse @.' });
+    if (!paidArr.length) { await logRefilFalha({ username, motivo: 'no_orders' }); return res.status(404).json({ ok: false, error: 'no_orders', message: 'Nenhum pedido pago encontrado para esse @.' }); }
     // Reordena pela recência REAL. Vendas via WhatsApp (manuais) têm `paidAt`/`createdAt` mas NÃO
     // têm `woovi.paidAt`; o sort do Mongo (que prioriza woovi.paidAt) jogava elas pro fim, fazendo
     // o refil pegar um Pix antigo em vez da compra de WhatsApp mais recente. Aqui usamos a MAIOR data.
@@ -25631,7 +25640,8 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     }
     if (!order) {
       const anySimple = paidArr.some(o => { const t = getTipo(o); return (t === 'mistos' || t === 'brasileiros') && isSeguidoresOrder(o); });
-      if (!anySimple) return res.status(400).json({ ok: false, error: 'not_supported', message: 'Reposição disponível apenas para seguidores mistos e brasileiros.' });
+      if (!anySimple) { await logRefilFalha({ username, motivo: 'not_supported' }); return res.status(400).json({ ok: false, error: 'not_supported', message: 'Reposição disponível apenas para seguidores mistos e brasileiros.' }); }
+      await logRefilFalha({ username, motivo: 'no_provider_order' });
       return res.status(400).json({ ok: false, error: 'no_provider_order', message: 'Seu pedido ainda está em processamento. Tente novamente mais tarde.' });
     }
 
@@ -25747,7 +25757,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     const providerKey = __refillApi.key;
     const apiUrl = __refillApi.url;
     try { console.log('🔁 [refil/simple] provedor da reposição', { order: famaOrderId, provider: __refillApi.provider }); } catch(_) {}
-    if (!providerKey) { await __releaseThrottle(); return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' }); }
+    if (!providerKey) { await __releaseThrottle(); await logRefilFalha({ username, motivo: 'missing_key', provider: __refillApi.provider }); return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' }); }
 
     const params = new URLSearchParams();
     params.append('key', providerKey);
@@ -25760,6 +25770,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
       refillData = normalizeProviderResponseData(resp.data) || {};
     } catch (e) {
       await __releaseThrottle();
+      await logRefilFalha({ username, motivo: 'provider_error', provider: __refillApi.provider, orderId: famaOrderId, detalhe: String((e && e.message) || e).slice(0, 300) });
       return res.status(502).json({ ok: false, error: 'provider_error', message: 'Erro ao solicitar reposição. Tente novamente.' });
     }
 
@@ -25785,6 +25796,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
       // Se JÁ tem reposição em andamento no fornecedor, mantém o bloqueio (existe refil
       // ativo). Se foi erro genuíno, libera o slot para o cliente poder tentar de novo.
       if (!jaEmAndamento) await __releaseThrottle();
+      await logRefilFalha({ username, motivo: jaEmAndamento ? 'refill_em_andamento' : 'refill_recusado', provider: __refillApi.provider, orderId: famaOrderId, providerError: errMsg || null, resposta: refillData || null });
       return res.status(400).json({ ok: false, error: 'refill_failed', providerError: errMsg || null, refillInProgress: jaEmAndamento, message: friendly });
     }
 
@@ -25797,6 +25809,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
 
     return res.json({ ok: true, refill: refillId, message: 'Reposição solicitada' });
   } catch (e) {
+    await logRefilFalha({ motivo: 'server_error', detalhe: String((e && e.message) || e).slice(0, 300) });
     return res.status(500).json({ ok: false, error: 'server_error', message: 'Erro ao solicitar reposição.' });
   }
 });
