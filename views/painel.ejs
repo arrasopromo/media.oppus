@@ -2483,6 +2483,12 @@
                   + ' <span style="color:#64748b;">(mistos ' + nf(m.count) + ' = ' + brl(m.cost) + ' · brasileiros ' + nf(b.count) + ' = ' + brl(b.cost) + ')</span>';
                 if (d.skipped && d.skipped.organic) msg += ' <span style="color:#9ca3af;">· ' + nf(d.skipped.organic) + ' orgânicos ignorados</span>';
                 if (d.skipped && d.skipped.missingRate) msg += ' <span style="color:#dc2626;">· ' + nf(d.skipped.missingRate) + ' sem preço</span>';
+                // Fornecedor/serviço usado no preço (e o motivo quando faltou preço)
+                try {
+                  var fo = d.fonte || {}; var desc = function(x, nome){ if (!x) return ''; var t = nome + ': ' + (x.provider || '?') + ' serviço ' + (x.serviceId || '?'); if (x.rate != null) t += ' (' + brl(x.rate) + '/mil)'; else if (x.motivo) t += ' — ' + x.motivo; return t; };
+                  var linha = [desc(fo.mistos, 'mistos'), desc(fo.brasileiros, 'brasileiros')].filter(Boolean).join(' · ');
+                  if (linha) msg += '<div style="font-size:0.8rem;color:#64748b;margin-top:2px;">Preço: ' + linha + '</div>';
+                } catch(_){}
                 if (out) { out.style.color = '#111827'; out.innerHTML = msg; }
                 // Habilita "Enviar pedidos" (só depois do cálculo), com os alvos do filtro.
                 try { if (window.__enableRefilSend) window.__enableRefilSend(sendTargets); } catch(_){}

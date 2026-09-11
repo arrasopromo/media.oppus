@@ -44045,31 +44045,46 @@ app.post('/api/painel/gerenciamento-seguidores/refil-cost-estimate', requireAdmi
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
     const itemsRaw = Array.isArray(body.items) ? body.items : [];
-    const key = process.env.NUVRASMM_API_KEY || '';
-    if (!key) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FAMA24H_API_KEY' });
 
+    // O preço sai do MESMO fornecedor+serviço que o "Forçar orderid" usa (Gerenciamento
+    // de Tipos). Antes lia sempre o slot legado 'fama24h' (IDs 709/686) e procurava na
+    // tabela da Nuvra — onde esses IDs não existem → todos os pedidos "sem preço".
     const axiosLocal = require('axios');
-    const cacheKey = '__MEUAPP_FAMA24H_SERVICES_CACHE';
     const nowMs = Date.now();
-    const cached = (global && global[cacheKey]) ? global[cacheKey] : null;
     const ttlMs = 10 * 60 * 1000;
-    let services = (cached && cached.atMs && (nowMs - cached.atMs) < ttlMs && Array.isArray(cached.services)) ? cached.services : null;
-    if (!services) {
-      const payload = new URLSearchParams({ key: String(key), action: 'services' });
-      const resp = await axiosLocal.post('https://nuvrasmm.com/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
+    global.__refilCostSvcCache = global.__refilCostSvcCache || {};
+    const servicesOf = async (md) => {
+      const c = global.__refilCostSvcCache[md.provider];
+      if (c && (nowMs - c.atMs) < ttlMs && c.byId) return c.byId;
+      if (!md.key) return null;
+      const payload = new URLSearchParams({ key: String(md.key), action: 'services' });
+      const resp = await axiosLocal.post(md.url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true });
       const arr = Array.isArray(resp.data) ? resp.data : (Array.isArray(resp.data && resp.data.services) ? resp.data.services : []);
-      services = Array.isArray(arr) ? arr : [];
-      try { if (global) global[cacheKey] = { atMs: nowMs, services }; } catch (_) {}
-    }
-    const serviceById = new Map();
-    for (const s of (services || [])) { const sid = (s && (s.service || s.id)) ? String(s.service || s.id).trim() : ''; if (sid && !serviceById.has(sid)) serviceById.set(sid, s); }
+      const byId = new Map();
+      for (const s of (arr || [])) { const sid = (s && (s.service || s.id)) ? String(s.service || s.id).trim() : ''; if (sid && !byId.has(sid)) byId.set(sid, s); }
+      global.__refilCostSvcCache[md.provider] = { atMs: nowMs, byId };
+      return byId;
+    };
     const parseRate = (v) => { try { if (v == null) return null; if (typeof v === 'number' && Number.isFinite(v)) return v; const n = Number(String(v).trim().replace(',', '.')); return Number.isFinite(n) ? n : null; } catch (_) { return null; } };
-    const rateOf = (sid) => { const svc = serviceById.get(String(sid)) || {}; return parseRate(svc.rate != null ? svc.rate : (svc.price != null ? svc.price : svc.cost)); };
-
-    const midMistos = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'mistos', provider: 'fama24h', fallback: 663 });
-    const midBras = await resolveServiceTypeServiceId({ ctx: 'seguidores', key: 'brasileiros', provider: 'fama24h', fallback: 23 });
-    const rateMistos = rateOf(midMistos);
-    const rateBras = rateOf(midBras);
+    // Taxa por 1000 em R$ (fornecedor em dólar é convertido pela cotação do dia).
+    const rateFor = async (tipoKey, fallbackId) => {
+      const md = await resolveMainDispatch({ ctx: 'seguidores', key: tipoKey, fallbackId });
+      const info = { provider: md.provider, serviceId: md.serviceId, rate: null, currency: null, motivo: null };
+      if (!md.key) { info.motivo = 'sem API key do fornecedor ' + md.provider; return info; }
+      const byId = await servicesOf(md);
+      const svc = byId ? byId.get(String(md.serviceId)) : null;
+      if (!svc) { info.motivo = 'serviço ' + md.serviceId + ' não existe no ' + md.provider; return info; }
+      const raw = parseRate(svc.rate != null ? svc.rate : (svc.price != null ? svc.price : svc.cost));
+      if (raw == null) { info.motivo = 'serviço sem preço'; return info; }
+      const fx = await providerChargeToBrl(md.provider, raw, svc.currency);
+      info.currency = fx.currency; info.rate = fx.brl; info.rateOriginal = raw;
+      if (info.rate == null) info.motivo = 'sem cotação para ' + fx.currency;
+      return info;
+    };
+    const infoMistos = await rateFor('mistos', 663);
+    const infoBras = await rateFor('brasileiros', 23);
+    const rateMistos = infoMistos.rate;
+    const rateBras = infoBras.rate;
 
     const PROVIDER_MIN = 100;
     const byTipo = { mistos: { count: 0, qty: 0, cost: 0, rate: rateMistos }, brasileiros: { count: 0, qty: 0, cost: 0, rate: rateBras } };
@@ -44101,7 +44116,9 @@ app.post('/api/painel/gerenciamento-seguidores/refil-cost-estimate', requireAdmi
         brasileiros: { count: byTipo.brasileiros.count, qty: byTipo.brasileiros.qty, cost: r2(byTipo.brasileiros.cost), rate: rateBras }
       },
       skipped,
-      providerMinQty: PROVIDER_MIN
+      providerMinQty: PROVIDER_MIN,
+      // de onde saiu o preço (e por que faltou, se faltou)
+      fonte: { mistos: infoMistos, brasileiros: infoBras }
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'estimate_failed', message: e?.message || String(e) });
