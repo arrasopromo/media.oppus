@@ -16480,10 +16480,25 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             } catch (_) {}
             try { console.log(`✅ [recovery-email] sent id=${orderIdShort} to=${to}`); } catch (_) {}
         } catch (e) {
+            const errMsg = String(e?.message || e);
             try {
-                await col.updateOne({ _id: record._id, 'emails.paymentRecoveryLockAt': nowIso }, { $unset: { 'emails.paymentRecoveryLockAt': '' }, $set: { 'emails.paymentRecoveryLastError': String(e?.message || e) } });
+                await col.updateOne({ _id: record._id, 'emails.paymentRecoveryLockAt': nowIso }, { $unset: { 'emails.paymentRecoveryLockAt': '' }, $set: { 'emails.paymentRecoveryLastError': errMsg, 'emails.paymentRecoveryLastErrorAt': new Date().toISOString() }, $inc: { 'emails.paymentRecoveryFailCount': 1 } });
             } catch (_) {}
-            try { console.warn(`❌ [recovery-email] fail id=${orderIdShort} to=${to}: ${String(e?.message || e)}`); } catch (_) {}
+            // Antes a falha só soltava a trava e o pedido voltava na rodada seguinte — pra
+            // SEMPRE. Endereço que o servidor de e-mail recusa (domínio inexistente/erro de
+            // digitação, ex.: "@gemail.com") nunca vai passar: depois de 2 recusas (ou 3
+            // falhas de qualquer tipo) o pedido sai da recuperação por e-mail.
+            let desistiu = false;
+            try {
+                const cur = await col.findOne({ _id: record._id }, { projection: { 'emails.paymentRecoveryFailCount': 1 } });
+                const fails = Number(cur && cur.emails && cur.emails.paymentRecoveryFailCount) || 0;
+                const recusado = /recipients? (were )?rejected|recipient address rejected|user unknown|no such (user|domain)|lookup failure|domain not found|mailbox unavailable|invalid (recipient|address)/i.test(errMsg);
+                if (fails >= 3 || (recusado && fails >= 2)) {
+                    await col.updateOne({ _id: record._id }, { $set: { 'emails.paymentRecoverySkippedAt': new Date().toISOString(), 'emails.paymentRecoverySkipReason': recusado ? 'email_recusado' : 'falhas_repetidas' } });
+                    desistiu = true;
+                }
+            } catch (_) {}
+            try { console.warn(`❌ [recovery-email] fail id=${orderIdShort} to=${to}: ${errMsg}${desistiu ? ' → desistindo deste pedido (e-mail recusado)' : ''}`); } catch (_) {}
         }
     } catch (_) {}
 };
