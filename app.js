@@ -4235,6 +4235,48 @@ async function fetchInstagramPosts(username) {
 }
 
 // Rota para buscar informações do perfil (usada no checkout novo)
+// ── API própria de perfil do Instagram (scraper nosso — instagramScraper.js) ──────
+// GET /api/v1/instagram/perfil/:usuario   (alias: /api/v1/instagram/profile/:usuario)
+//   Acesso: header "x-api-key" com uma das chaves de IG_SCRAPER_API_KEYS (separadas
+//   por vírgula) — uso servidor-a-servidor — OU sessão de admin do painel.
+//   ?fresh=1 ignora o cache (10 min). Limite: IG_SCRAPER_RATE_PER_MIN por chave/IP.
+//   Respostas: 200 perfil | 400 usuário inválido | 401 sem acesso | 404 não existe |
+//              429 limite | 503 Instagram negando (tenta de novo em retryAfterSec).
+const __igScraper = require('./instagramScraper');
+function __igApiAuthorized(req) {
+  const keys = String(process.env.IG_SCRAPER_API_KEYS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const given = String(req.get('x-api-key') || '').trim();
+  if (given && keys.length) {
+    const crypto = require('crypto');
+    for (const k of keys) {
+      if (k.length === given.length && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(given))) return { ok: true, who: 'key:' + k.slice(0, 4) };
+    }
+  }
+  try {
+    if (req.session && req.session.adminUser) return { ok: true, who: 'admin' };
+    const tok = parseCookieHeader(req)[ADMIN_AUTH_COOKIE] || '';
+    const data = tok ? verifyAdminAuth(tok) : null;
+    if (data && data.username) return { ok: true, who: 'admin' };
+  } catch (_) {}
+  return { ok: false };
+}
+async function __igProfileHandler(req, res) {
+  try { res.set('Cache-Control', 'no-store'); } catch (_) {}
+  const auth = __igApiAuthorized(req);
+  if (!auth.ok) return res.status(401).json({ ok: false, error: 'unauthorized', message: 'Envie o header x-api-key (IG_SCRAPER_API_KEYS) ou use a sessão do painel.' });
+  const perMin = Math.max(1, Number(process.env.IG_SCRAPER_RATE_PER_MIN || 60) || 60);
+  const rlKey = auth.who.startsWith('key:') ? auth.who : ('ip:' + (req.realIP || req.ip || ''));
+  if (hitRateLimit(`ig_scraper:${rlKey}`, perMin, 60 * 1000)) return res.status(429).json({ ok: false, error: 'rate_limited', message: `Limite de ${perMin} consultas por minuto.` });
+  const r = await __igScraper.getInstagramProfile(req.params.username, { fresh: String(req.query.fresh || '') === '1' });
+  if (r.ok) return res.json(Object.assign({ ok: true }, r.profile, { cached: !!r.cached, stale: !!r.stale }));
+  const map = { invalid_username: [400, 'Usuário inválido.'], not_found: [404, 'Perfil não existe (ou foi removido).'], blocked: [503, 'O Instagram está negando consultas agora. Tente de novo em instantes.'], error: [502, 'Falha ao consultar o Instagram.'] };
+  const [code, msg] = map[r.status] || [502, 'Falha ao consultar o Instagram.'];
+  if (r.retryAfterSec) { try { res.set('Retry-After', String(r.retryAfterSec)); } catch (_) {} }
+  return res.status(code).json({ ok: false, error: r.status, message: msg, ...(r.retryAfterSec ? { retryAfterSec: r.retryAfterSec } : {}), ...(r.detail ? { detail: r.detail } : {}) });
+}
+app.get('/api/v1/instagram/perfil/:username', __igProfileHandler);
+app.get('/api/v1/instagram/profile/:username', __igProfileHandler);
+
 app.get('/api/instagram/info', async (req, res) => {
     try {
         try { res.set('Cache-Control', 'no-store'); } catch (_) {}
