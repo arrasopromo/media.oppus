@@ -395,7 +395,7 @@ function goBack() {
     }
     
     // Se não tem dados de sessão, voltar para /teste123 como fallback
-    window.location.href = '/teste123';
+    window.location.href = '/';
 }
 function initializeTimer() {
     // Timer direto de 5 minutos

@@ -4,6 +4,9 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const express = require("express");
 const session = require("express-session");
 const crypto = require("crypto");
+// Chamadas internas (ex.: IA de vendas → /api/internal/*) se autenticam com este segredo.
+// Sem INTERNAL_API_SECRET no .env, gera um por boot (o chamador roda no mesmo processo).
+if (!String(process.env.INTERNAL_API_SECRET || '').trim()) process.env.INTERNAL_API_SECRET = crypto.randomBytes(32).toString('hex');
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const PQueue = require("p-queue").default;
 const LinkManager = require("./linkManager");
@@ -19,7 +22,9 @@ const controladoria = require('./controladoriaManager');
 const nodemailer = require('nodemailer');
 
 const app = express();
-app.set("trust proxy", true); // Confiar em cabeçalhos de proxy
+// Só confia no X-Forwarded-For vindo de proxy LOCAL (o nginx no próprio servidor).
+// Com `true`, o 1º IP do header era aceito — e esse valor é o cliente quem escreve.
+app.set("trust proxy", "loopback, linklocal, uniquelocal");
 
 // ═══════════════════════════════════════════════════════════════════
 //  COMPRESSÃO gzip — reduz ~70-80% o tráfego de JS/CSS/HTML/JSON.
@@ -115,7 +120,7 @@ if (NET_MONITOR_ON) {
 }
 
 // Endpoint pra ver o consumo acumulado ao vivo
-app.get('/api/__debug/net-stats', (req, res) => {
+app.get('/api/__debug/net-stats', adminOnly, (req, res) => {
   try {
     const elapsedS = Math.max(1, Math.round((Date.now() - __net.startedAt) / 1000));
     const sortByBytes = (obj) => Object.entries(obj).map(([k, v]) => ({ k, count: v.count, bytes: v.bytes, kb: Math.round(v.bytes / 1024), kbps: Math.round(v.bytes / elapsedS / 1024) })).sort((a, b) => b.bytes - a.bytes);
@@ -257,8 +262,19 @@ class MongoSessionStore extends session.Store {
   }
 }
 const sessionStore = new MongoSessionStore();
+// Segredo da sessão: SESSION_SECRET do .env; sem ele, derivado do ADMIN_COOKIE_SECRET (estável
+// entre restarts); sem nenhum dos dois, aleatório por boot. Antes era um literal público
+// ("agencia-oppus-secret-key", visível no repositório).
+const __sessionSecret = (function () {
+  const direct = String(process.env.SESSION_SECRET || '').trim();
+  if (direct) return direct;
+  const adminSecret = String(process.env.ADMIN_COOKIE_SECRET || '').trim();
+  if (adminSecret) return crypto.createHmac('sha256', adminSecret).update('oppus-session-v2').digest('hex');
+  try { console.warn('⚠️  SESSION_SECRET/ADMIN_COOKIE_SECRET ausentes no .env — segredo de sessão aleatório por boot.'); } catch (_) {}
+  return crypto.randomBytes(48).toString('hex');
+})();
 app.use(session({
-  secret: "agencia-oppus-secret-key",
+  secret: __sessionSecret,
   resave: false,
   saveUninitialized: false,
   rolling: true, // renova o cookie de sessão a cada resposta (sliding) → não expira no meio do uso
@@ -324,31 +340,19 @@ app.use((req, res, next) => {
 
 // Middleware melhorado para capturar IP real (útil quando atrás de proxy)
 app.use((req, res, next) => {
-    // Tentar diferentes headers para capturar o IP real
-    let ip = req.headers['x-forwarded-for'] || 
-             req.headers['x-real-ip'] || 
-             req.headers['cf-connecting-ip'] || 
-             req.headers['x-client-ip'] || 
-             req.headers['x-forwarded'] || 
-             req.headers['forwarded-for'] || 
-             req.headers['forwarded'] ||
-             req.connection.remoteAddress || 
-             req.socket.remoteAddress || 
-             req.ip || 
-             'unknown';
-    
-    // Se x-forwarded-for contém múltiplos IPs, pegar o primeiro
-    if (ip && ip.includes(',')) {
-        ip = ip.split(',')[0].trim();
+    // IP real do cliente. O Express já resolve req.ip pelo X-Forwarded-For confiando só
+    // no proxy local (trust proxy acima): o IP que o nginx anexou é o do cliente, e o que o
+    // cliente escreve no header fica à esquerda e é ignorado. Headers como x-real-ip /
+    // cf-connecting-ip só valem se a conexão veio do proxy local (senão são forjáveis).
+    const isLocalAddr = (a) => /^(::1$|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f[cd][0-9a-f]{2}:|fe80:)/i.test(a);
+    const norm = (a) => String(a || '').trim().replace(/^::ffff:/i, '');
+    let ip = norm(req.ip);
+    const peer = norm((req.socket && req.socket.remoteAddress) || '');
+    if ((!ip || isLocalAddr(ip)) && isLocalAddr(peer)) {
+        const xr = norm(req.headers['x-real-ip']);
+        if (xr) ip = xr;
     }
-    
-    // Normalizar IPv6 mapeado para IPv4
-    const ipNormalized = ip.replace('::ffff:', '');
-    
-    // Atribuir o IP real à requisição
-    req.realIP = ipNormalized;
-    req.ip = ipNormalized; // Também sobrescrever req.ip
-    
+    req.realIP = ip || 'unknown';
     next();
 });
 
@@ -589,6 +593,162 @@ const requireAdmin = (req, res, next) => {
     }
     return res.redirect('/login');
 };
+
+// Mesma trava do requireAdmin, mas declarada como function (hoisted): serve para rotas
+// registradas ANTES da definição do requireAdmin no arquivo.
+function adminOnly(req, res, next) { return requireAdmin(req, res, next); }
+
+// Chamada interna autenticada (header x-internal-secret = INTERNAL_API_SECRET) OU admin logado.
+function adminOrInternal(req, res, next) {
+    const want = String(process.env.INTERNAL_API_SECRET || '').trim();
+    const got = String(req.get('x-internal-secret') || '').trim();
+    if (want && got && got.length === want.length) {
+        try { if (crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return next(); } catch (_) {}
+    }
+    return requireAdmin(req, res, next);
+}
+
+// Loga chamadas barradas pelas travas públicas (para achar algum uso legítimo não mapeado).
+function logBlockedCall(req, motivo) {
+    try { console.warn(`🛡️ [seguranca] bloqueado ${req.method} ${req.originalUrl || req.url} ip=${req.realIP || req.ip || '?'} motivo=${motivo}`); } catch (_) {}
+}
+
+// Pagamento CONFIRMADO pelo servidor (webhook/consulta ao gateway/cobrança de cartão).
+// Rotas chamadas pelo navegador ou por terceiros nunca podem, sozinhas, virar um pedido em pago.
+function isOrderConfirmedPaid(o) {
+    const st = String((o && o.status) || '').toLowerCase().trim();
+    return st === 'pago' || st === 'paid';
+}
+
+// Consulta a cobrança na Woovi (aceita chargeId, identifier ou correlationID). Retorna o charge ou null.
+async function fetchWooviChargeForVerify(ids) {
+    const auth = String(process.env.WOOVI_AUTH || '').trim();
+    if (!auth) return null;
+    const seen = new Set();
+    for (const raw of (ids || [])) {
+        const id = String(raw == null ? '' : raw).trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        try {
+            const r = await axios.get(`https://api.woovi.com/api/v1/charge/${encodeURIComponent(id)}`, {
+                headers: { Authorization: auth, 'Content-Type': 'application/json' }, timeout: 15000, validateStatus: () => true
+            });
+            const ch = (r && r.status === 200 && r.data) ? (r.data.charge || null) : null;
+            if (ch) return ch;
+        } catch (_) {}
+    }
+    return null;
+}
+function isWooviChargePaid(ch) {
+    const st = String((ch && ch.status) || '').toLowerCase();
+    return !!ch && (ch.paid === true || st === 'completed' || st === 'paid');
+}
+
+// Confirmação de pagamento vinda de fora (webhook/automação): só vale se o pedido JÁ está pago
+// no banco, se a Woovi confirmar a cobrança com o valor esperado, ou se for admin logado.
+async function verifyExternalPaymentConfirm(req, record) {
+    if (req && req.session && req.session.adminUser) return { ok: true, via: 'admin' };
+    if (!record) return { ok: false, reason: 'order_not_found' };
+    if (isOrderConfirmedPaid(record)) return { ok: true, via: 'already_paid' };
+    const w = record.woovi || {};
+    const ch = await fetchWooviChargeForVerify([w.chargeId, w.identifier, record.correlationID, record.identifier]);
+    if (!isWooviChargePaid(ch)) return { ok: false, reason: 'gateway_not_paid' };
+    const expected = Number(record.expectedValueCents || record.valueCents || 0);
+    const paid = Number(ch.value || 0);
+    if (expected > 0 && paid > 0 && paid < expected) return { ok: false, reason: 'gateway_value_below_expected', charge: ch };
+    return { ok: true, via: 'woovi', charge: ch, paidValueCents: paid || null };
+}
+
+// Chaves "fortes" de um pedido = códigos aleatórios que só o cliente tem (código da cobrança,
+// correlationID, sessão da Stripe, token do refil). Nº do fornecedor (sequencial), _id do Mongo e
+// telefone são "fracos": dá para chutar/enumerar e ver o pedido (nome, e-mail, CPF) de outra pessoa.
+function orderMatchesStrongKey(doc, k) {
+    if (!doc || !k) return false;
+    const eq = (v, arr) => { const x = String(v == null ? '' : v).trim(); return !!x && arr.some((a) => String(a == null ? '' : a).trim() === x); };
+    const w = doc.woovi || {}, ph = doc.paghiper || {}, ex = doc.expay || {}, st = doc.stripe || {};
+    const gatewayIds = [doc.identifier, w.identifier, w.chargeId, w.id, ph.transactionId, ex.transactionId, ex.id, st.checkout_session_id];
+    return eq(k.identifier, gatewayIds) || eq(k.correlationID, [doc.correlationID]) ||
+        eq(k.sessionId, [st.checkout_session_id, doc.identifier]) || eq(k.refilToken, [doc.refilLinkId]) ||
+        eq(k.gatewayId, gatewayIds);
+}
+// Pedido achado por chave fraca só aparece para: admin, o cliente logado dono do pedido, ou o
+// navegador que acabou de pagar esse pedido (sessão marcada no /session/mark-paid).
+function canSeeOrderByWeakKey(req, doc) {
+    if (!doc || !req) return false;
+    const sess = req.session || {};
+    if (sess.adminUser) return true;
+    const norm = (v) => String(v == null ? '' : v).trim();
+    const clientEmail = norm(sess.clientAuth && sess.clientAuth.email).toLowerCase();
+    if (clientEmail && norm(doc.customer && doc.customer.email).toLowerCase() === clientEmail) return true;
+    const mine = [sess.lastPaidIdentifier, sess.lastPaidCorrelationID].map(norm).filter(Boolean);
+    if (!mine.length) return false;
+    const docIds = [doc.identifier, doc.correlationID, doc.woovi && doc.woovi.identifier, doc.paghiper && doc.paghiper.transactionId].map(norm).filter(Boolean);
+    return mine.some((x) => docIds.includes(x));
+}
+
+// Consultas públicas de status de cobrança: o front só lê status/paid. Tira o payload bruto do
+// gateway e os dados do pagador (nome, e-mail, CPF, telefone) — admin continua vendo tudo.
+function publicStatusResponse(req, res, next) {
+    if (req.session && req.session.adminUser) return next();
+    const orig = res.json.bind(res);
+    res.json = (body) => {
+        try {
+            if (body && typeof body === 'object' && !Array.isArray(body)) {
+                body = Object.assign({}, body);
+                delete body.raw;
+                if (body.charge && typeof body.charge === 'object') {
+                    const c = Object.assign({}, body.charge);
+                    for (const k of ['customer', 'payer', 'additionalInfo', 'taxID']) delete c[k];
+                    body.charge = c;
+                }
+                for (const k of ['customer', 'payer']) delete body[k];
+            }
+        } catch (_) {}
+        return orig(body);
+    };
+    next();
+}
+
+// Limite por IP nas rotas públicas que disparam consulta paga / pedido no fornecedor.
+// Folgado de propósito: clientes no 4G às vezes saem pelo mesmo IP.
+function publicIpLimit(bucket, limit, windowMin) {
+    return function (req, res, next) {
+        if (req.session && req.session.adminUser) return next();
+        const ip = req.realIP || req.ip || 'unknown';
+        if (hitRateLimit(`${bucket}:${ip}`, limit, windowMin * 60 * 1000)) {
+            logBlockedCall(req, bucket + '_rate_limit');
+            return res.status(429).json({ ok: false, error: 'rate_limited', message: 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.' });
+        }
+        return next();
+    };
+}
+
+// /api/refil/create não é usado pelo site: é a API de refil para integração. Exige a chave
+// REFIL_CLIENT_API_KEY (campo apiKey/key ou header x-api-key) ou admin logado.
+function refilCreateAuth(req, res, next) {
+    if (req.session && req.session.adminUser) return next();
+    const want = String(process.env.REFIL_CLIENT_API_KEY || '').trim();
+    const got = String((req.body && (req.body.apiKey || req.body.apikey || req.body.key)) || req.get('x-api-key') || '').trim();
+    if (want && got && got === want) return next();
+    logBlockedCall(req, want ? 'refil_create_chave_invalida' : 'refil_create_sem_chave_configurada');
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+}
+// Status do fornecedor para o público sem o custo (charge/currency) — só admin vê.
+function hideProviderCharge(req, res, next) {
+    if (req.session && req.session.adminUser) return next();
+    const orig = res.json.bind(res);
+    res.json = (body) => {
+        try {
+            if (body && body.data && typeof body.data === 'object' && !Array.isArray(body.data)) {
+                const d = Object.assign({}, body.data);
+                delete d.charge; delete d.Charge; delete d.currency;
+                body = Object.assign({}, body, { data: d });
+            }
+        } catch (_) {}
+        return orig(body);
+    };
+    next();
+}
 
 const onlinePresence = new Map();
 const onlinePresenceTtlMs = 45 * 1000;
@@ -4893,11 +5053,11 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
     }
 }
 
-app.get('/teste-embed', (req, res) => {
+app.get('/teste-embed', adminOnly, (req, res) => {
   res.render('teste-embed');
 });
 
-app.get('/api/test-embed-data', async (req, res) => {
+app.get('/api/test-embed-data', adminOnly, async (req, res) => {
   try {
     const username = String(req.query.username || '').trim();
     if (!username) return res.json({ ok: false, error: 'Username missing' });
@@ -5755,7 +5915,7 @@ app.get('/api/payment/subscribe', (req, res) => {
 });
 
 // Diagnóstico: ambiente de execução
-app.get('/__debug/env', (req, res) => {
+app.get('/__debug/env', adminOnly, (req, res) => {
   try {
     const fs = require('fs');
     const info = {
@@ -5777,7 +5937,7 @@ app.get('/__debug/env', (req, res) => {
 });
 
 // Diagnóstico: testar a chave da Fama24h (sem expor o valor)
-app.get('/__debug/fama24h-balance', async (req, res) => {
+app.get('/__debug/fama24h-balance', adminOnly, async (req, res) => {
   try {
     const apiKey = (process.env.NUVRASMM_API_KEY || '').trim();
     if (!apiKey) {
@@ -5831,7 +5991,7 @@ app.get('/__debug/fama24h-balance', async (req, res) => {
 });
 
 // Admin: Normalizar expiração dos temporary_links para N dias a partir da criação
-app.get('/__admin/temporary-links/normalize-expiration', async (req, res) => {
+app.get('/__admin/temporary-links/normalize-expiration', adminOnly, async (req, res) => {
   try {
     const days = Math.max(1, Number(req.query.days || 7) || 7);
     const ms = days * 24 * 60 * 60 * 1000;
@@ -5863,7 +6023,7 @@ app.get('/__admin/temporary-links/normalize-expiration', async (req, res) => {
   }
 });
 
-app.post('/api/admin/temporary-links/normalize-expiration', async (req, res) => {
+app.post('/api/admin/temporary-links/normalize-expiration', adminOnly, async (req, res) => {
   try {
     const days = Math.max(1, Number((req.body && req.body.days) || req.query.days || 7) || 7);
     const ms = days * 24 * 60 * 60 * 1000;
@@ -5896,7 +6056,7 @@ app.post('/api/admin/temporary-links/normalize-expiration', async (req, res) => 
 });
 
 // Admin: Unificar temporary_links por telefone (um ID por número)
-app.get('/__admin/temporary-links/unify-by-phone', async (req, res) => {
+app.get('/__admin/temporary-links/unify-by-phone', adminOnly, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const tl = await getCollection('temporary_links');
@@ -5942,7 +6102,7 @@ app.get('/__admin/temporary-links/unify-by-phone', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/admin/temporary-links/unify-by-phone', async (req, res) => {
+app.post('/api/admin/temporary-links/unify-by-phone', adminOnly, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const tl = await getCollection('temporary_links');
@@ -6006,7 +6166,7 @@ app.use((req, res, next) => {
 
 // Rota de checkout será tratada mais abaixo por app.get('/checkout')
 // Diagnóstico: enviar conteúdo bruto do template de checkout
-app.get('/__debug/checkout-raw', (req, res) => {
+app.get('/__debug/checkout-raw', adminOnly, (req, res) => {
   try {
     const fs = require('fs');
     const p = path.join(__dirname, 'views', 'checkout.ejs');
@@ -6019,7 +6179,7 @@ app.get('/__debug/checkout-raw', (req, res) => {
 });
 
 // Diagnóstico: enviar conteúdo bruto do template index
-app.get('/__debug/index-raw', (req, res) => {
+app.get('/__debug/index-raw', adminOnly, (req, res) => {
   try {
     const fs = require('fs');
     const p = path.join(__dirname, 'views', 'index.ejs');
@@ -6032,7 +6192,7 @@ app.get('/__debug/index-raw', (req, res) => {
 });
 
 // Diagnóstico: listar arquivos e tamanhos em views/
-app.get('/__debug/views-list', (req, res) => {
+app.get('/__debug/views-list', adminOnly, (req, res) => {
   try {
     const fs = require('fs');
     const dir = path.join(__dirname, 'views');
@@ -6084,19 +6244,24 @@ app.get('/@react-refresh', (req, res) => {
 });
 
 // Helper: validar hosts permitidos para proxy de imagem
+// Domínios reais do Instagram/Facebook (sufixo EXATO). Antes bastava o nome CONTER "instagram"
+// — instagram.qualquer-site.com passava, e o servidor mandava os cookies do Instagram pra ele.
+const IMAGE_PROXY_HOST_SUFFIXES = ['instagram.com', 'cdninstagram.com', 'fbcdn.net'];
+function isInstagramCdnHost(host) {
+  const h = String(host || '').toLowerCase().replace(/\.$/, '');
+  return IMAGE_PROXY_HOST_SUFFIXES.some((s) => h === s || h.endsWith('.' + s));
+}
+function isSelfProfileApiHost(host) {
+  try { const selfHost = new URL(SELF_PROFILE_API).hostname.toLowerCase(); return !!selfHost && String(host || '').toLowerCase() === selfHost; } catch (_) { return false; }
+}
 function isAllowedImageHost(urlStr) {
   try {
     const u = new URL(urlStr);
     const host = u.hostname.toLowerCase();
     // Host da self-API de perfil (serve as fotos via /media em HTTP) — liberado para o
     // /image-proxy buscar server-side e entregar em HTTPS (senão dá mixed-content no site).
-    try { const selfHost = new URL(SELF_PROFILE_API).hostname.toLowerCase(); if (selfHost && host === selfHost) return true; } catch (_) {}
-    return (
-      host.includes('instagram') ||
-      host.includes('cdninstagram') ||
-      host.includes('fbcdn') ||
-      host.includes('scontent')
-    );
+    if (isSelfProfileApiHost(host)) return true;
+    return u.protocol === 'https:' && isInstagramCdnHost(host);
   } catch (e) {
     return false;
   }
@@ -6120,13 +6285,22 @@ app.get('/image-proxy', async (req, res) => {
         timeout: 25000,
         headers,
         httpsAgent: httpsAgent || undefined,
-        validateStatus: () => true
+        validateStatus: () => true,
+        maxRedirects: 3,
+        // Redirecionamento só para os mesmos domínios permitidos (senão vira porta para a rede interna).
+        beforeRedirect: (opts) => {
+          const h = String((opts && (opts.hostname || opts.host)) || '').replace(/:\d+$/, '');
+          if (!isInstagramCdnHost(h) && !isSelfProfileApiHost(h)) throw new Error('redirect_blocked');
+        }
       });
     };
 
     let response = await tryFetch({ headers: headersBase });
 
-    if (response.status === 403 || response.status === 429) {
+    // Cookies de sessão do Instagram só vão para domínio do Instagram/Facebook.
+    let __proxyHost = '';
+    try { __proxyHost = new URL(targetUrl).hostname; } catch (_) {}
+    if ((response.status === 403 || response.status === 429) && isInstagramCdnHost(__proxyHost)) {
       const now = Date.now();
       const candidates = (cookieProfiles || [])
         .filter(p => p && p.ds_user_id && p.sessionid && (Number(p.disabledUntil || 0) <= now))
@@ -6208,7 +6382,7 @@ app.use((req, res, next) => {
     next();
 });
 // Rota crítica para registrar validações (deve estar bem no topo)
-app.post('/api/instagram/track-validated', async (req, res) => {
+app.post('/api/instagram/track-validated', publicIpLimit('track_validated', 60, 10), async (req, res) => {
   try {
     const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
@@ -6216,7 +6390,7 @@ app.post('/api/instagram/track-validated', async (req, res) => {
     const doc = {
       username,
       checkedAt: new Date().toISOString(),
-      ip: req.headers['x-forwarded-for'] || req.ip || null,
+      ip: req.realIP || req.ip || null,
       userAgent: req.get('User-Agent') || '',
       source: 'api.track.top'
     };
@@ -6461,7 +6635,9 @@ app.get('/oppus', (req, res) => {
   });
 });
 
-const CLIENT_AUTH_DEBUG_EMAILS = new Set(['rainan2000@gmail.com', 'arraso.promo@gmail.com'].map((s) => String(s || '').trim().toLowerCase()).filter(Boolean));
+// E-mails de teste da área do cliente (pulam a exigência de compra e recebem link local).
+// Vêm do .env (CLIENT_AUTH_DEBUG_EMAILS=a@x.com,b@y.com); antes ficavam fixos no código público.
+const CLIENT_AUTH_DEBUG_EMAILS = new Set(String(process.env.CLIENT_AUTH_DEBUG_EMAILS || '').split(',').map((s) => String(s || '').trim().toLowerCase()).filter(Boolean));
 
 function isClientAuthDebugEmail(emailLower) {
     const e = String(emailLower || '').trim().toLowerCase();
@@ -7352,7 +7528,7 @@ app.post('/cliente/forgot', async (req, res) => {
         await col.updateOne({ email }, { $set: { reset: { tokenHash, expiresAt, createdAt: new Date().toISOString(), usedAt: null } } });
 
         const baseUrl = (function () {
-            // DEBUG: emails de debug (rainan2000/arraso.promo) recebem link localhost para testes locais
+            // DEBUG: emails de debug (CLIENT_AUTH_DEBUG_EMAILS) recebem link localhost para testes locais
             if (isClientAuthDebugEmail(email)) {
                 const localPort = String(process.env.PORT || '3000').trim() || '3000';
                 const localUrl = String(process.env.DEBUG_LOCAL_URL || process.env.LOCALHOST_URL || `http://localhost:${localPort}`).trim();
@@ -7400,7 +7576,7 @@ app.post('/cliente/reset', async (req, res) => {
 });
 
 // Debug: listar rotas registradas
-app.get('/__routes', (req, res) => {
+app.get('/__routes', adminOnly, (req, res) => {
     try {
         const stack = app._router?.stack || [];
         const routes = stack
@@ -7416,7 +7592,8 @@ app.get('/__routes', (req, res) => {
 });
 
 // Rota especial para teste123 (DEVE vir ANTES da rota /:slug)
-app.get('/teste123', (req, res) => {
+// Atalho de teste: só admin (antes liberava o /perfil para qualquer visitante).
+app.get('/teste123', adminOnly, (req, res) => {
     req.session.perfilAccessAllowed = true;
     req.session.linkSlug = 'teste123';
     req.session.linkAccessTime = Date.now();
@@ -9826,7 +10003,19 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
   try {
     // Quando WHATSAPP_FORWARD_SECRET está definido, só aceita encaminhamento autenticado (header).
     const fwdSecret = String(process.env.WHATSAPP_FORWARD_SECRET || '');
-    if (fwdSecret && String(req.headers['x-oppus-forward-token'] || '') !== fwdSecret) return;
+    const fwdOk = !!fwdSecret && String(req.headers['x-oppus-forward-token'] || '') === fwdSecret;
+    if (fwdSecret && !fwdOk && !String(process.env.WHATSAPP_APP_SECRET || '').trim()) return;
+    // Com WHATSAPP_APP_SECRET (App Secret da Meta) no .env, exige a assinatura X-Hub-Signature-256
+    // do corpo — sem ela, qualquer um podia forjar mensagens de clientes e acionar a IA.
+    const appSecret = String(process.env.WHATSAPP_APP_SECRET || '').trim();
+    if (appSecret && !fwdOk) {
+      const sig = String(req.headers['x-hub-signature-256'] || '');
+      const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+      const expected = 'sha256=' + crypto.createHmac('sha256', appSecret).update(raw).digest('hex');
+      let valid = false;
+      try { valid = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)); } catch (_) {}
+      if (!valid) { logBlockedCall(req, 'whatsapp_assinatura_invalida'); return; }
+    }
     const ltvPid = String(process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
     const entries = Array.isArray(body.entry) ? body.entry : [];
@@ -10998,7 +11187,8 @@ const refilPageHandler = (fromPath) => async (req, res) => {
   try {
     let isValid = false;
     if (token) {
-      if (/^liberado$/i.test(token)) {
+      // "liberado" abria o refil para qualquer um: agora só vale para admin logado.
+      if (/^liberado$/i.test(token) && req.session && req.session.adminUser) {
          isValid = true;
          if (req.session) {
             req.session.refilAccessAllowed = true;
@@ -15173,7 +15363,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
     }
 });
 
-app.get('/api/paghiper/charge-status', async (req, res) => {
+app.get('/api/paghiper/charge-status', publicStatusResponse, async (req, res) => {
     try {
         try { res.set('Cache-Control', 'no-store'); } catch (_) {}
         const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -15355,8 +15545,19 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
 // Custo COMPLETO de um pedido para a TrackCombo:
 //   fornecedor (charge REAL do action=status: principal + cada bump; o que ainda não tem
 //   charge — ex.: bump não despachado — entra pela estimativa da tabela cost_settings)
-//   + taxa do gateway (value_fee_cents da PagHiper; 0,99 se não vier)
+//   + taxa do gateway (value_fee_cents da PagHiper; tabela paghiperFeeFor se não vier)
 //   + imposto (DASH_IMPOSTO_PCT = 13% do valor total da venda).
+// Taxa fixa da PagHiper por transação (R$). Renegociada de 0,99 para 0,69 a partir do pedido
+// 09R8UL0BB4PRQ026 (11/09/2026 14:36). A notificação da PagHiper já traz o valor real
+// (value_fee_cents); isto é o fallback para quando o payload não está à mão (ex.: dashboard).
+const PAGHIPER_FEE_SCHEDULE = [{ since: '2026-09-11T17:36:00Z', fee: 0.69 }];
+function paghiperFeeFor(dateLike) {
+  const t = dateLike ? new Date(dateLike).getTime() : Date.now();
+  let fee = 0.99;
+  for (const s of PAGHIPER_FEE_SCHEDULE) { if (Number.isFinite(t) && t >= new Date(s.since).getTime()) fee = s.fee; }
+  return fee;
+}
+
 async function computeTrackComboOrderCost(order, opts = {}) {
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const sources = [];
@@ -15409,7 +15610,7 @@ async function computeTrackComboOrderCost(order, opts = {}) {
   const valueCents = Number(opts.valueCents);
   const saleValue = Number.isFinite(valueCents) && valueCents > 0 ? valueCents / 100 : (Number(order && order.valueCents) || 0) / 100;
   const feeCents = Number(opts.feeCents);
-  const gatewayFee = Number.isFinite(feeCents) && feeCents >= 0 ? feeCents / 100 : 0.99;
+  const gatewayFee = Number.isFinite(feeCents) && feeCents >= 0 ? feeCents / 100 : paghiperFeeFor((order && order.paghiper && order.paghiper.paidAt) || (order && order.paidAt) || null);
   const tax = saleValue * (DASH_IMPOSTO_PCT / 100);
   const total = (service || 0) + bumps + gatewayFee + tax;
   return {
@@ -15420,7 +15621,6 @@ async function computeTrackComboOrderCost(order, opts = {}) {
 }
 
 app.post('/api/paghiper/notification', async (req, res) => {
-    let forwardOnError = null;
     try {
         try { res.set('Cache-Control', 'no-store'); } catch (_) {}
         const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -15498,7 +15698,6 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 } catch (_) {}
             })().catch(() => {});
         };
-        forwardOnError = forwardToTrackCombo;
 
         const resp = await axios.post('https://pix.paghiper.com/invoice/notification/', { token, apiKey, transaction_id: transactionId, notification_id: notificationId }, {
             headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -15679,14 +15878,15 @@ app.post('/api/paghiper/notification', async (req, res) => {
             try { await broadcastPaymentPaid(existingOrder?.identifier, existingOrder?.correlationID); } catch (_) {}
         }
 
-        // Demais notificações (pendente, estorno, upsell aguardando o pai...) seguem na hora.
-        forwardToTrackCombo({ valueCents: paidValueCents, feeCents });
+        // Demais notificações (pendente, estorno, upsell aguardando o pai...) seguem na hora —
+        // só se a PagHiper reconheceu a notificação (status preenchido); forjada não vai.
+        if (statusRaw) forwardToTrackCombo({ valueCents: paidValueCents, feeCents });
 
         return res.status(200).json({ ok: true });
     } catch (err) {
         try { console.error('❌ PagHiper notification error:', err?.message || String(err)); } catch (_) {}
-        // Falhou antes de encaminhar (ex.: consulta à PagHiper): a TrackCombo recebe mesmo assim.
-        try { if (forwardOnError) forwardOnError({}); } catch (_) {}
+        // Não encaminha à TrackCombo sem a confirmação da PagHiper (notificação forjada cairia aqui).
+        // Com 500 a PagHiper reenvia a notificação, e o reenvio é encaminhado normalmente.
         // Não retornar 200 em falha: a PagHiper tenta novamente automaticamente.
         return res.status(500).json({ ok: false, error: 'notification_processing_failed' });
     }
@@ -15882,7 +16082,7 @@ app.post('/api/painel/paghiper/fix-paidat', requireAdmin, async (req, res) => {
     }
 });
 
-app.get('/api/expay/charge-status', async (req, res) => {
+app.get('/api/expay/charge-status', publicStatusResponse, async (req, res) => {
     try {
         const id = String(req.query.id || '').trim();
         const identifier = String(req.query.identifier || '').trim();
@@ -15922,6 +16122,15 @@ app.get('/api/expay/charge-status', async (req, res) => {
 
 app.post('/api/expay/webhook', async (req, res) => {
     try {
+        // A Expay não assina o webhook e o corpo dizia sozinho que o pedido foi pago. Só processa
+        // com o token combinado (EXPAY_WEBHOOK_TOKEN) na URL (?token=) ou no header x-webhook-token.
+        // Sem token configurado, ignora (Expay sem pedidos pagos desde jul/2026).
+        const expayTok = String(process.env.EXPAY_WEBHOOK_TOKEN || '').trim();
+        const expayGot = String((req.query && req.query.token) || req.get('x-webhook-token') || '').trim();
+        if (!expayTok || expayGot !== expayTok) {
+            logBlockedCall(req, expayTok ? 'expay_token_invalido' : 'expay_webhook_desativado');
+            return res.status(200).json({ ok: true, ignored: true });
+        }
         let body = req.body || {};
         if (typeof body === 'string') {
             try { body = JSON.parse(body); } catch (_) { body = {}; }
@@ -19584,27 +19793,34 @@ async function processOrderFulfillment(record, col, req) {
 
 app.post('/api/order/retry-fulfillment', async (req, res) => {
     try {
-        const { identifier, orderID } = req.body;
+        // String(): objeto no corpo ({"$ne":null}) virava operador do Mongo e casava qualquer pedido.
+        const identifier = String((req.body && req.body.identifier) || '').trim();
+        const orderID = String((req.body && req.body.orderID) || '').trim();
         const id = identifier || orderID;
         if (!id) return res.status(400).json({ error: 'Missing identifier' });
-        
+
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
-        
+
         const conds = [];
         conds.push({ identifier: id });
         conds.push({ 'woovi.identifier': id });
         conds.push({ correlationID: id });
-        
+
         // Add check for ObjectId to support finding by _id
         if (/^[0-9a-fA-F]{24}$/.test(id)) {
             try { conds.push({ _id: new (require('mongodb').ObjectId)(id) }); } catch(_) {}
         }
-        
+
         const record = await col.findOne({ $or: conds });
-        
+
         if (!record) return res.status(404).json({ error: 'Order not found' });
-        
+        // Só reenvia pedido com pagamento confirmado (antes despachava pedido não pago).
+        if (!isOrderConfirmedPaid(record) && !(req.session && req.session.adminUser)) {
+            logBlockedCall(req, 'retry_fulfillment_nao_pago');
+            return res.status(409).json({ error: 'order_not_paid' });
+        }
+
         // Update privacy to public in checkout_orders
         await col.updateOne({ _id: record._id }, { 
             $set: { 
@@ -19884,7 +20100,7 @@ app.post('/api/painel/followers-queue/release', requireAdmin, async (req, res) =
 });
 
 // API: consultar status de cobrança PIX via Woovi
-app.get('/api/woovi/charge-status', async (req, res) => {
+app.get('/api/woovi/charge-status', publicStatusResponse, async (req, res) => {
   try {
     const WOOVI_AUTH = process.env.WOOVI_AUTH || '';
     const id = (req.query.id || '').trim();
@@ -19997,12 +20213,20 @@ app.get('/api/woovi/charge-status', async (req, res) => {
   }
 });
 
-app.post('/api/fama/status', async (req, res) => {
+app.post('/api/fama/status', publicIpLimit('fama_status', 60, 10), async (req, res) => {
   try {
     const key = process.env.NUVRASMM_API_KEY || '';
     const orderParam = String((req.body && (req.body.order || req.body.orderId)) || req.query.order || '').trim();
     if (!key) return res.status(400).json({ ok: false, error: 'missing_key' });
     if (!orderParam) return res.status(400).json({ ok: false, error: 'missing_order' });
+    const __isAdminFama = !!(req.session && req.session.adminUser);
+    // Só consulta pedido que é NOSSO (antes qualquer nº do fornecedor, com a nossa chave).
+    if (!__isAdminFama) {
+      const colChk = await getCollection('checkout_orders');
+      const n0 = Number(orderParam);
+      const own = await colChk.findOne({ $or: [{ 'fama24h.orderId': orderParam }, ...(Number.isFinite(n0) ? [{ 'fama24h.orderId': n0 }] : [])] }, { projection: { _id: 1 } });
+      if (!own) { logBlockedCall(req, 'fama_status_pedido_alheio'); return res.status(404).json({ ok: false, error: 'order_not_found' }); }
+    }
     const axios = require('axios');
     const payload = new URLSearchParams({ key, action: 'status', order: orderParam });
     try { console.log('🛰️ Fama status request', { order: orderParam, action: 'status' }); } catch(_) {}
@@ -20023,14 +20247,17 @@ app.post('/api/fama/status', async (req, res) => {
         { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } }
       );
     } catch (_) {}
-    return res.json({ ok: true, data: resp.data || {} });
+    // Custo do fornecedor (charge) não vai para o público.
+    const __out = Object.assign({}, resp.data || {});
+    if (!__isAdminFama) { delete __out.charge; delete __out.Charge; delete __out.currency; }
+    return res.json({ ok: true, data: __out });
   } catch (e) {
     try { console.error('🛰️ Fama status error', e?.response?.data || e?.message || String(e)); } catch(_) {}
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
-app.get('/api/order/provider-status', async (req, res) => {
+app.get('/api/order/provider-status', publicIpLimit('provider_status', 120, 10), hideProviderCharge, async (req, res) => {
   try {
     const idRaw = String(req.query.order || req.query.orderID || req.query.oid || req.query.identifier || req.query.id || '').trim();
     try { console.log('🛰️ [provider-status] incoming', { query: req.query }); } catch(_) {}
@@ -20249,7 +20476,7 @@ app.post('/api/order/admin/set-multi-order-ids', async (req, res) => {
   try {
     const adminToken = (req.headers['x-admin-token'] || req.headers['x_admin_token'] || '').toString().trim();
     const required = String(process.env.ORDER_ADMIN_TOKEN || '').trim();
-    const allowDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+    const allowDev = !!(req.session && req.session.adminUser); // admin logado (antes: qualquer um se NODE_ENV != production)
     if (!(allowDev || (required && adminToken && adminToken === required))) {
       return res.status(403).json({ ok: false, error: 'forbidden' });
     }
@@ -20329,7 +20556,7 @@ app.get('/:slug', async (req, res, next) => {
             res.send(html);
         });
     }
-    if (slug === 'teste123') {
+    if (slug === 'teste123' && req.session && req.session.adminUser) {
         req.session.perfilAccessAllowed = true;
         req.session.linkSlug = slug;
         req.session.linkAccessTime = Date.now();
@@ -20405,7 +20632,7 @@ app.get('/perfil', (req, res) => {
         return res.render('perfil');
     }
     // Exceção via query id=teste123
-    if (id === 'teste123') {
+    if (id === 'teste123' && req.session && req.session.adminUser) {
         req.session.perfilAccessAllowed = true;
         req.session.linkSlug = id;
         req.session.linkAccessTime = Date.now();
@@ -20437,7 +20664,7 @@ app.get('/restrito', (req, res) => {
 });
 
 // Rota para gerar link temporário (mantém POST /generate)
-app.post("/generate", (req, res) => {
+app.post("/generate", adminOnly, (req, res) => {
     try {
         const linkInfo = linkManager.generateLink(req);
         // Novo formato de link: raiz do domínio
@@ -20459,12 +20686,12 @@ app.post("/generate", (req, res) => {
 });
 
 // Rotas administrativas para monitoramento
-app.get("/admin/links", (req, res) => {
+app.get("/admin/links", adminOnly, (req, res) => {
     const stats = linkManager.getGeneralStats();
     res.json(stats);
 });
 
-app.get("/admin/link/:id", (req, res) => {
+app.get("/admin/link/:id", adminOnly, (req, res) => {
     const { id } = req.params;
     const stats = linkManager.getLinkStats(id);
     
@@ -20475,7 +20702,7 @@ app.get("/admin/link/:id", (req, res) => {
     }
 });
 
-app.delete("/admin/link/:id", (req, res) => {
+app.delete("/admin/link/:id", adminOnly, (req, res) => {
     const { id } = req.params;
     const deleted = linkManager.invalidateLink(id);
     
@@ -20493,6 +20720,17 @@ app.post("/api/check-privacy", async (req, res) => {
     const bypassCache = true;
     const userAgent = req.get("User-Agent") || "";
     const ip = req.realIP || req.ip || req.connection.remoteAddress || "";
+    // Cada chamada consulta RocketAPI/Apify (pago): mesma trava das rotas irmãs (token da página +
+    // limite por IP). Antes era aberta e sem limite.
+    const tk = String(req.get('x-oppus-api-tk') || (req.body && req.body.tk) || '').trim();
+    const sessTk = req.session && req.session.oppusApiTk ? String(req.session.oppusApiTk) : '';
+    if (!sessTk || !tk || tk !== sessTk) {
+        logBlockedCall(req, 'check_privacy_sem_token');
+        return res.status(403).json({ success: false, error: 'forbidden' });
+    }
+    if (hitRateLimit(`check_privacy_ip:${ip}`, 30, 10 * 60 * 1000)) {
+        return res.status(429).json({ success: false, error: 'rate_limited' });
+    }
 
     if (!username || username.length < 1) {
         return res.status(400).json({
@@ -20744,10 +20982,12 @@ app.post("/api/check-instagram-profile", async (req, res) => {
 app.post('/api/internal/ia-check-profile', async (req, res) => {
   try {
     const ip = String(req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '').trim();
-    const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === 'localhost' || ip.endsWith(':127.0.0.1');
+    // Só chamada interna com o segredo (atrás do nginx toda conexão chega de 127.0.0.1,
+    // então IP de loopback não prova que a chamada é interna).
     const wantSecret = String(process.env.INTERNAL_API_SECRET || '').trim();
     const gotSecret = String(req.get('x-internal-secret') || '').trim();
-    if (!isLoopback && !(wantSecret && gotSecret && gotSecret === wantSecret)) {
+    if (!(wantSecret && gotSecret && gotSecret === wantSecret) && !(req.session && req.session.adminUser)) {
+      logBlockedCall(req, 'ia_check_sem_segredo');
       return res.status(403).json({ success: false, error: 'forbidden' });
     }
     const raw = String((req.body && req.body.username) || '').trim();
@@ -20776,7 +21016,7 @@ app.post('/api/internal/ia-check-profile', async (req, res) => {
 // --- Rotas de Blacklist ---
 
 // Listar usuários bloqueados
-app.get('/api/blacklist', async (req, res) => {
+app.get('/api/blacklist', adminOnly, async (req, res) => {
     try {
         const col = await getCollection('blacklist');
         const list = await col.find({}).sort({ blockedAt: -1 }).toArray();
@@ -20788,7 +21028,7 @@ app.get('/api/blacklist', async (req, res) => {
 });
 
 // Adicionar usuário à blacklist
-app.post('/api/blacklist/add', async (req, res) => {
+app.post('/api/blacklist/add', adminOnly, async (req, res) => {
     try {
         const { username } = req.body;
         if (!username) return res.status(400).json({ error: 'missing_username' });
@@ -20813,7 +21053,7 @@ app.post('/api/blacklist/add', async (req, res) => {
 });
 
 // Remover usuário da blacklist
-app.post('/api/blacklist/remove', async (req, res) => {
+app.post('/api/blacklist/remove', adminOnly, async (req, res) => {
     try {
         const { username } = req.body;
         if (!username) return res.status(400).json({ error: 'missing_username' });
@@ -20830,7 +21070,7 @@ app.post('/api/blacklist/remove', async (req, res) => {
 
 app.post('/api/check-usage', async (req, res) => {
   const userAgent = req.get('User-Agent') || '';
-  const ip = req.realIP || req.ip || req.connection.remoteAddress || req.headers["x-forwarded-for"] || "unknown";
+  const ip = req.realIP || req.ip || req.connection.remoteAddress || "unknown";
   // Lista de exceção
   const ipExcecao = ['45.190.117.46', '127.0.0.1', '::1', 'localhost'];
   if (ipExcecao.includes(ip)) {
@@ -20895,7 +21135,7 @@ app.post('/api/check-link-status', async (req, res) => {
   */
 });
 
-app.post('/api/webhook-phone', async (req, res) => {
+app.post('/api/webhook-phone', adminOrInternal, async (req, res) => {
   const phone = req.body.tel || req.body.phone;
   console.log('Webhook recebido:', req.body);
   if (!phone) return res.status(400).json({ error: 'Telefone não informado' });
@@ -20955,7 +21195,7 @@ app.post('/api/webhook-phone', async (req, res) => {
 });
 
 // Importação em massa de telefones
-app.post('/api/webhook-phone-bulk', async (req, res) => {
+app.post('/api/webhook-phone-bulk', adminOrInternal, async (req, res) => {
   try {
     const { tels, link } = req.body || {};
     if (!Array.isArray(tels) || tels.length === 0) {
@@ -20994,7 +21234,7 @@ app.post('/api/webhook-phone-bulk', async (req, res) => {
 });
 
 // Endpoint de diagnóstico: ler linha do Baserow por ID
-app.get('/api/debug-baserow-row', async (req, res) => {
+app.get('/api/debug-baserow-row', adminOnly, async (req, res) => {
   return res.json({ success: false, error: 'Baserow integration disabled' });
   /*
   const id = Number(req.query.id);
@@ -21018,7 +21258,7 @@ app.post('/api/track-audio-progress', async (req, res) => {
         const col = await getCollection('audio_logs');
         
         // Capture IP and force IPv4 format if mapped
-        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+        let ip = req.realIP || req.socket.remoteAddress || '';
         if (ip.includes(',')) ip = ip.split(',')[0].trim();
         if (ip.startsWith('::ffff:')) ip = ip.substring(7); // Normalize to IPv4
         
@@ -21121,7 +21361,7 @@ app.post('/api/meta/track', async (req, res) => {
     const phoneHash = phoneNorm ? crypto.createHash('sha256').update(phoneNorm, 'utf8').digest('hex') : undefined;
     const event_time = Math.floor(Date.now() / 1000);
     const userAgent = req.headers['user-agent'] || '';
-    const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
+    const clientIp = String(req.realIP || req.socket?.remoteAddress || '');
     const testCode = process.env.META_TEST_EVENT_CODE;
     const payload = {};
     const url = `https://graph.facebook.com/v18.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
@@ -21146,7 +21386,19 @@ app.post('/api/openpix/webhook', async (req, res) => {
 
       // Atualiza status para 'pago' quando a cobrança for concluída
     if (/CHARGE_COMPLETED/.test(event)) {
-      const charge = body.charge || {};
+      // Webhook sem assinatura verificada: o corpo não é confiável (dava para forjar "pago", trocar
+      // o @ e incluir bumps). Usa a cobrança consultada na própria Woovi pelo id recebido.
+      const chargeIn = body.charge || {};
+      const chargeApi = await fetchWooviChargeForVerify([chargeIn.correlationID, chargeIn.identifier, chargeIn.id]);
+      if (!chargeApi) {
+        logBlockedCall(req, 'openpix_cobranca_nao_encontrada');
+        return res.status(503).json({ ok: false, error: 'charge_lookup_failed' }); // Woovi reenvia depois
+      }
+      if (!isWooviChargePaid(chargeApi)) {
+        logBlockedCall(req, 'openpix_cobranca_nao_paga');
+        return res.status(200).json({ ok: true, ignored: true });
+      }
+      const charge = chargeApi;
       const customerName = charge?.customer?.name || null;
       const customerObj = charge?.customer || (body.pix && body.pix.customer) || null;
       const payerObj = charge?.payer || (body.pix && body.pix.payer) || null;
@@ -22310,7 +22562,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
     // Monta payload para CAPI
     const contents = (tipo && qtd) ? [{ id: tipo, quantity: qtd }] : [];
     const userAgent = req.headers['user-agent'] || '';
-    const clientIp = (req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || '').toString();
+    const clientIp = String(req.realIP || req.socket?.remoteAddress || '');
     const eventSourceUrl = paymentLinkUrl || `https://agenciaoppus.site/checkout${phoneRaw ? `?phone=${encodeURIComponent(phoneRaw)}` : ''}`;
 
     /*
@@ -22342,7 +22594,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
 });
 
 // Fallback: Disparar envio de serviço para fornecedor (Fama24h/FornecedorSocial) manualmente
-app.post('/api/services/dispatch', async (req, res) => {
+app.post('/api/services/dispatch', adminOnly, async (req, res) => {
   try {
     const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
     const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
@@ -22550,7 +22802,7 @@ app.post('/api/services/dispatch', async (req, res) => {
 });
 
 // Healthcheck MongoDB endpoints
-app.get('/api/mongo/health', async (req, res) => {
+app.get('/api/mongo/health', adminOnly, async (req, res) => {
   try {
     const col = await getCollection('health_checks');
     const doc = { ts: new Date().toISOString(), ua: req.get('User-Agent') || '', ip: req.realIP || req.ip || null };
@@ -22560,7 +22812,7 @@ app.get('/api/mongo/health', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/mongo/ping', async (req, res) => {
+app.get('/api/mongo/ping', adminOnly, async (req, res) => {
   try {
     const col = await getCollection('health_checks');
     const one = await col.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } });
@@ -22569,7 +22821,7 @@ app.get('/api/mongo/ping', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/mongo/validated-count', async (req, res) => {
+app.get('/api/mongo/validated-count', adminOnly, async (req, res) => {
   try {
     const vu = await getCollection('validated_insta_users');
     const c = await vu.countDocuments();
@@ -22579,7 +22831,7 @@ app.get('/api/mongo/validated-count', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/debug/validated', async (req, res) => {
+app.post('/api/debug/validated', adminOnly, async (req, res) => {
   try {
     const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.status(400).json({ ok: false, error: 'missing_username' });
@@ -22591,7 +22843,7 @@ app.post('/api/debug/validated', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/instagram/validated', async (req, res) => {
+app.get('/api/instagram/validated', adminOnly, async (req, res) => {
   try {
     const col = await getCollection('validated_insta_users');
     const cursor = col.find({}, { projection: { _id: 1, username: 1, checkedAt: 1, isPrivate: 1, isVerified: 1, linkId: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(20);
@@ -22601,7 +22853,7 @@ app.get('/api/instagram/validated', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/instagram/validet', async (req, res) => {
+app.get('/api/instagram/validet', adminOnly, async (req, res) => {
   try {
     const { username } = req.query || {};
     const col = await getCollection('validated_insta_users');
@@ -22613,7 +22865,7 @@ app.get('/api/instagram/validet', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/instagram/validet-track', async (req, res) => {
+app.post('/api/instagram/validet-track', publicIpLimit('validet_track', 60, 10), async (req, res) => {
   try {
     const username = String((req.body && req.body.username) || '').trim().toLowerCase();
     if (!username) return res.json({ ok: false, error: 'missing_username' });
@@ -22632,7 +22884,7 @@ app.post('/api/instagram/validet-track', async (req, res) => {
     // Link audio_logs to username
     try {
         const al = await getCollection('audio_logs');
-        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+        let ip = req.realIP || req.socket.remoteAddress || '';
         if (ip.includes(',')) ip = ip.split(',')[0].trim();
         if (ip.startsWith('::ffff:')) ip = ip.substring(7);
 
@@ -22684,7 +22936,7 @@ app.post('/api/instagram/validet-track', async (req, res) => {
     return res.json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/orderbump/resend', async (req, res) => {
+app.post('/api/orderbump/resend', adminOnly, async (req, res) => {
   try {
     const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
     const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
@@ -22876,7 +23128,7 @@ app.post('/api/orderbump/resend', async (req, res) => {
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
-app.post('/api/orderbump/fix-latest', async (req, res) => {
+app.post('/api/orderbump/fix-latest', adminOnly, async (req, res) => {
   try {
     const identifier = String((req.body && (req.body.identifier || req.body.id)) || req.query.identifier || '').trim();
     const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
@@ -23067,7 +23319,7 @@ app.post('/api/orderbump/fix-latest', async (req, res) => {
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
-app.get('/api/orders', async (req, res) => {
+app.get('/api/orders', adminOnly, async (req, res) => {
   try {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
@@ -23101,7 +23353,7 @@ app.get('/api/orders', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/checkout-orders', async (req, res) => {
+app.get('/api/checkout-orders', adminOnly, async (req, res) => {
   try {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
@@ -23207,8 +23459,10 @@ app.get('/api/checkout/payment-state', async (req, res) => {
     }
     if (correlationID) conds.push({ correlationID });
     
+    // Sem nenhuma chave, o filtro vazio devolvia o pedido MAIS RECENTE de qualquer cliente.
+    if (!doc && !conds.length) return res.status(400).json({ ok: false, error: 'missing_keys' });
     if (!doc) {
-        const filter = conds.length ? { $or: conds } : {};
+        const filter = { $or: conds };
         const arr = await col.find(filter, { projection }).sort({ createdAt: -1, _id: -1 }).limit(1).toArray();
         doc = (Array.isArray(arr) && arr.length) ? arr[0] : null;
     }
@@ -23379,6 +23633,10 @@ app.get('/pedido', async (req, res) => {
       }
     }
 
+    if (doc && !orderMatchesStrongKey(doc, { identifier, correlationID, sessionId, gatewayId: orderIDRaw }) && !canSeeOrderByWeakKey(req, doc)) {
+      logBlockedCall(req, 'pedido_chave_fraca');
+      doc = null;
+    }
     if (doc) {
       try {
         const additionalInfoMap = doc.additionalInfoMapPaid || (Array.isArray(doc.additionalInfoPaid) ? doc.additionalInfoPaid.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : (Array.isArray(doc.additionalInfo) ? doc.additionalInfo.reduce((acc, it) => { acc[it.key] = it.value; return acc; }, {}) : {}));
@@ -24086,7 +24344,7 @@ app.get('/api/recovery/context', async (req, res) => {
 });
 
 // Redefinições próximas ao bloco de Instagram para garantir registro
-app.get('/api/instagram/validated', async (req, res) => {
+app.get('/api/instagram/validated', adminOnly, async (req, res) => {
   try {
     const col = await getCollection('validated_insta_users');
     const cursor = col.find({}, { projection: { _id: 1, username: 1, checkedAt: 1, isPrivate: 1, isVerified: 1, linkId: 1 } }).sort({ checkedAt: -1, _id: -1 }).limit(20);
@@ -24096,7 +24354,7 @@ app.get('/api/instagram/validated', async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/instagram/validet', async (req, res) => {
+app.get('/api/instagram/validet', adminOnly, async (req, res) => {
   try {
     const { username } = req.query || {};
     const col = await getCollection('validated_insta_users');
@@ -24152,6 +24410,10 @@ app.post('/session/mark-paid', async (req, res) => {
         const filter = identifier ? { $or: [ { 'woovi.identifier': identifier }, { identifier } ] } : { correlationID };
         const record = await col.findOne(filter);
         if (!record) return;
+        // O navegador só avisa que viu o pagamento; quem confirma é o gateway (webhook/consulta
+        // de status/cobrança do cartão), que já gravou status='pago' antes do front chegar aqui.
+        // Sem essa confirmação no banco, não marca nem despacha (antes bastava chamar a rota).
+        if (!isOrderConfirmedPaid(record)) { logBlockedCall(req, 'mark_paid_nao_confirmado'); return; }
         try { console.log('🧩 [mark-paid] record_found', { identifier, correlationID, orderId: String(record?._id || '') }); } catch(_) {}
         const buildAddMap = (arr) => (Array.isArray(arr) ? arr : []).reduce((acc, it) => { const k = String(it?.key || '').trim(); if (k) acc[k] = String(it?.value ?? '').trim(); return acc; }, {});
         const additionalInfoMapPaid = (record?.additionalInfoMapPaid && typeof record.additionalInfoMapPaid === 'object') ? record.additionalInfoMapPaid : buildAddMap(record?.additionalInfoPaid);
@@ -24941,12 +25203,16 @@ app.get('/api/order', async (req, res) => {
         ] });
       }
     }
+    if (doc && !orderMatchesStrongKey(doc, { identifier, correlationID, refilToken, gatewayId: id || orderIDRaw }) && !canSeeOrderByWeakKey(req, doc)) {
+      logBlockedCall(req, 'api_order_chave_fraca');
+      doc = null;
+    }
     return res.json({ ok: true, order: doc || null });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/refil/links', async (req, res) => {
+app.get('/api/refil/links', adminOnly, async (req, res) => {
   try {
     const onlyValid = String(req.query.onlyValid || '').toLowerCase() === 'true';
     const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50)));
@@ -25011,7 +25277,7 @@ app.get('/api/refil/order', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get('/api/refil/link-of-order', async (req, res) => {
+app.get('/api/refil/link-of-order', adminOnly, async (req, res) => {
   try {
     const identifier = String(req.query.identifier || '').trim();
     const correlationID = String(req.query.correlationID || '').trim();
@@ -25052,7 +25318,7 @@ app.get('/api/refil/link-of-order', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/refil/backfill', async (req, res) => {
+app.post('/api/refil/backfill', adminOnly, async (req, res) => {
   try {
     const identifier = String((req.body && req.body.identifier) || req.query.identifier || '').trim();
     const correlationID = String((req.body && req.body.correlationID) || req.query.correlationID || '').trim();
@@ -25155,7 +25421,7 @@ async function fetchCurrentFollowersLive(username) {
   return { ok: false, error: 'lookup_failed' };
 }
 
-app.post('/api/refil/simple', async (req, res) => {
+app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req, res) => {
   try {
     const usernameRaw = String((req.body && (req.body.username || req.body.user || req.body.instagram_username || req.body.instauser)) || '').trim();
     const normalizeUsername = (v) => {
@@ -25963,7 +26229,7 @@ app.post('/api/painel/refil/special/check', requireAdmin, async (req, res) => {
   } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.post('/api/refil/create', async (req, res) => {
+app.post('/api/refil/create', refilCreateAuth, publicIpLimit('refil_create', 60, 10), async (req, res) => {
   try {
     const orderIdInput = String((req.body && (req.body.order_id || req.body.orderId)) || '').trim();
     const usernameRaw = String((req.body && (req.body.username || req.body.user || req.body.u || req.body.instauser || req.body.instagram_username || req.body.instagramUsername || req.body.link)) || '').trim();
@@ -26425,7 +26691,7 @@ app.post('/api/refil/create', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/refil/history', async (req, res) => {
+app.post('/api/refil/history', publicIpLimit('refil_history', 60, 10), async (req, res) => {
   try {
     const orderIdInput = String((req.body && (req.body.order_id || req.body.orderId)) || '').trim();
     const usernameRaw = String((req.body && (req.body.username || req.body.user || req.body.u || req.body.instauser || req.body.instagram_username || req.body.instagramUsername || req.body.link)) || '').trim();
@@ -26707,7 +26973,8 @@ app.post('/api/refil/history', async (req, res) => {
     if (usernameInput && /^@?thiagomanoel$/i.test(usernameInput)) {
       return res.json({ ok: true, history: [] });
     }
-    if (usernameInput && /^@?thiagomanoel_porsche$/i.test(usernameInput)) {
+    // Reset do histórico da conta de teste: só admin (antes qualquer um apagava pela URL).
+    if (usernameInput && /^@?thiagomanoel_porsche$/i.test(usernameInput) && req.session && req.session.adminUser) {
       try {
         const esc = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const re = new RegExp(`^@?${esc(usernameInput)}$`, 'i');
@@ -26723,7 +26990,7 @@ app.post('/api/refil/history', async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.post('/api/woovi/charge/dev', async (req, res) => {
+app.post('/api/woovi/charge/dev', adminOnly, async (req, res) => {
   try {
     const { correlationID, value, comment, customer, additionalInfo } = req.body || {};
     if (!value || typeof value !== 'number') {
@@ -27311,7 +27578,7 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/refil/preview', async (req, res) => {
+app.post('/api/refil/preview', publicIpLimit('refil_preview', 40, 10), async (req, res) => {
   try {
     const raw = String((req.body && (req.body.username || req.body.user || req.body.u || req.body.instauser || req.body.instagram_username || req.body.instagramUsername || req.body.link)) || '').trim();
     const normalizeUsername = (v) => {
@@ -41075,7 +41342,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         else if (methodHint.includes('paghiper') || gatewayHint.includes('paghiper') || gatewayHint.includes('pag_hiper') || gatewayHint.includes('pag hiper')) gateway = 'paghiper';
         else if (hasWoovi) gateway = 'woovi';
 
-        if (gateway === 'paghiper') paymentFee = 0.99;
+        if (gateway === 'paghiper') paymentFee = paghiperFeeFor((phA && phA.paidAt) || (phB && phB.paidAt) || (phC && phC.paidAt) || o.paidAt || o.createdAt || null);
         else paymentFee = 0.85;
       } catch (_) {}
       // Custo do fornecedor: CHARGE REAL (action=status) somando base + TODOS os bumps —
@@ -45009,7 +45276,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/painel/custos', async (req, res) => {
+app.post('/painel/custos', adminOnly, async (req, res) => {
   try {
     const { getCollection } = require('./mongodbClient');
     const settingsCol = await getCollection('settings');
@@ -45900,7 +46167,7 @@ app.delete('/api/admin/coupons/:id', requireAdmin, async (req, res) => {
 });
 
 // Rota pública de validação de cupom
-app.post('/api/validate-coupon', async (req, res) => {
+app.post('/api/validate-coupon', publicIpLimit('validate_coupon', 30, 10), async (req, res) => {
     try {
         const code = normalizeCouponCode(req.body?.code);
         const profileKey = normalizeProfileKey(req.body?.instagram_username || '');
@@ -46028,7 +46295,7 @@ app.get('/api/recovery/context', async (req, res) => {
   }
 });
 
-app.post('/api/checkout/abandoned-lead', async (req, res) => {
+app.post('/api/checkout/abandoned-lead', publicIpLimit('abandoned_lead', 15, 10), async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
     const emailRaw = String(body.email || '').trim().toLowerCase();
@@ -46387,7 +46654,7 @@ async function tryHandleRecoveryShortLinkSlug(slug, req, res) {
 
     try {
       const now = new Date();
-      const ip = String((req.headers['x-forwarded-for'] || req.ip || '')).split(',')[0].trim();
+      const ip = String(req.realIP || req.ip || '').trim();
       const ua = String(req.headers['user-agent'] || '').trim();
       const ref = String(req.headers['referer'] || '').trim();
       await linksCol.updateOne({ _id: link._id }, { $inc: { clicks: 1 }, $set: { lastClickAt: now.toISOString() } });
@@ -46495,6 +46762,16 @@ app.post('/api/cliente/login-from-order', async (req, res) => {
     const existing = await accCol.findOne({ email }, { projection: { email: 1, passwordHash: 1 } });
 
     if (existing && existing.passwordHash) {
+      // Auto-login só no navegador que acabou de pagar ESTE pedido (sessão do mark-paid). Antes,
+      // o código de qualquer pedido pago logava na conta do dono dele, de qualquer lugar.
+      const s0 = req.session || {};
+      const mine = [s0.lastPaidIdentifier, s0.lastPaidCorrelationID].map((v) => String(v || '').trim()).filter(Boolean);
+      const orderIds = [order.identifier, order.correlationID, order?.woovi?.identifier, order?.paghiper?.transactionId].map((v) => String(v || '').trim()).filter(Boolean);
+      const freshPaidSession = mine.some((x) => orderIds.includes(x)) && (Date.now() - Number(s0.lastPaidMarkedAt || 0)) <= 24 * 60 * 60 * 1000;
+      if (!freshPaidSession) {
+        logBlockedCall(req, 'login_from_order_outra_sessao');
+        return res.json({ ok: true, action: 'login', redirectUrl: '/cliente' });
+      }
       // Conta com senha — auto-login via sessão
       if (req.session) {
         req.session.clientAuth = { email };
@@ -47051,9 +47328,11 @@ app.get('/api/upsell/offer', async (req, res) => {
 });
 
 // POST /api/upsell/charge  — cria cobrança PIX (PagHiper) para o upsell
-app.post('/api/upsell/charge', async (req, res) => {
+app.post('/api/upsell/charge', publicIpLimit('upsell_charge', 10, 10), async (req, res) => {
   try {
-    const { parentIdentifier, customerName, customerPhone } = req.body || {};
+    const { customerName, customerPhone } = req.body || {};
+    // String(): um objeto ({"$ne":null}) virava operador do Mongo e casava o pedido de outra pessoa.
+    const parentIdentifier = String((req.body && req.body.parentIdentifier) || '').trim();
     if (!parentIdentifier) return res.status(400).json({ ok: false, error: 'missing_parent_identifier' });
 
     const col = await getCollection('checkout_orders');
@@ -48589,23 +48868,29 @@ app.post('/api/payment/confirm', async (req, res) => {
     const value = Number(body.value || 0) || 0;
     const paidAtRaw = body.paidAt || null;
     const endToEndId = String(body.endToEndId || '').trim() || null;
-    const tipo = String(body.tipo_servico || '').trim();
-    const qtd = Number(body.quantidade || 0) || 0;
-    const instaUser = String(body.instagram_username || '').trim();
+    const __isAdminReq = !!(req.session && req.session.adminUser);
+    const tipo = __isAdminReq ? String(body.tipo_servico || '').trim() : '';
+    const qtd = __isAdminReq ? (Number(body.quantidade || 0) || 0) : 0;
+    const instaUser = __isAdminReq ? String(body.instagram_username || '').trim() : '';
     const phoneRaw = String(body.phone || '').trim();
 
     const col = await getCollection('checkout_orders');
     const conds = [];
     if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
     if (correlationID) conds.push({ correlationID });
-    if (phoneRaw) {
+    if (phoneRaw && __isAdminReq) {
       const digits = phoneRaw.replace(/\D/g, '');
       if (digits) {
         conds.push({ 'customer.phone': `+55${digits}` });
         conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
       }
     }
-    const filter = conds.length ? { $or: conds } : {};
+    if (!conds.length) return res.status(400).json({ ok: false, error: 'missing_keys' });
+    const __rec0 = await col.findOne({ $or: conds });
+    if (!__rec0) return res.status(404).json({ ok: false, error: 'order_not_found' });
+    const __ver = await verifyExternalPaymentConfirm(req, __rec0);
+    if (!__ver.ok) { logBlockedCall(req, 'payment_confirm_' + __ver.reason); return res.status(403).json({ ok: false, error: 'payment_not_verified', reason: __ver.reason }); }
+    const filter = { _id: __rec0._id };
 
     const setFields = {
       status: 'pago',
@@ -48613,7 +48898,7 @@ app.post('/api/payment/confirm', async (req, res) => {
     };
     if (paidAtRaw) setFields['woovi.paidAt'] = paidAtRaw;
     if (endToEndId) setFields['woovi.endToEndId'] = endToEndId;
-    if (typeof value === 'number') setFields['woovi.paymentMethods.pix.value'] = value;
+    if (__ver.paidValueCents) setFields['woovi.paymentMethods.pix.value'] = __ver.paidValueCents; else if (__isAdminReq && value) setFields['woovi.paymentMethods.pix.value'] = value;
     if (tipo) setFields['tipo'] = tipo;
     if (qtd) setFields['qtd'] = qtd;
     if (instaUser) setFields['instagramUsername'] = instaUser;
@@ -49055,9 +49340,10 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     const value = Number(body.value || 0) || 0;
     const paidAtRaw = body.paidAt || null;
     const endToEndId = String(body.endToEndId || '').trim() || null;
-    const tipo = String(body.tipo_servico || '').trim();
-    const qtd = Number(body.quantidade || 0) || 0;
-    const instaUser = String(body.instagram_username || '').trim();
+    const __isAdminReq = !!(req.session && req.session.adminUser);
+    const tipo = __isAdminReq ? String(body.tipo_servico || '').trim() : '';
+    const qtd = __isAdminReq ? (Number(body.quantidade || 0) || 0) : 0;
+    const instaUser = __isAdminReq ? String(body.instagram_username || '').trim() : '';
     const phoneRaw = String(body.phone || '').trim();
 
     const { getCollection } = require('./mongodbClient');
@@ -49065,20 +49351,22 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     const conds = [];
     if (identifier) { conds.push({ 'woovi.identifier': identifier }); conds.push({ identifier }); }
     if (correlationID) conds.push({ correlationID });
-    if (phoneRaw) {
+    if (phoneRaw && __isAdminReq) {
       const digits = phoneRaw.replace(/\D/g, '');
       if (digits) {
         conds.push({ 'customer.phone': `+55${digits}` });
         conds.push({ additionalInfo: { $elemMatch: { key: 'phone', value: digits } } });
       }
     }
-    const filter = conds.length ? { $or: conds } : {};
-
+    if (!conds.length) return res.status(400).json({ ok: false, error: 'missing_keys' });
     // 1. Fetch existing order FIRST to validate value
-    const record = await col.findOne(filter);
+    const record = await col.findOne({ $or: conds });
     if (!record) {
-      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID, phone: phoneRaw });
+      return res.status(404).json({ ok: false, error: 'order_not_found', identifier, correlationID });
     }
+    const filter = { _id: record._id };
+    const __ver = await verifyExternalPaymentConfirm(req, record);
+    if (!__ver.ok) { logBlockedCall(req, 'validar_confirmado_' + __ver.reason); return res.status(403).json({ ok: false, error: 'payment_not_verified', reason: __ver.reason }); }
 
     try {
       const uname = String(instaUser || record.instagramUsername || record.instauser || '').trim().toLowerCase().replace(/^@/, '');
@@ -49126,7 +49414,7 @@ app.post('/webhook/validar-confirmado', async (req, res) => {
     // ---------------------------------------------------------
     const expectedValue = record.expectedValueCents;
     // Use body value if provided, otherwise fallback to record value (though body value is preferred for 'payment confirmed' hook)
-    const paidValue = value || record.valueCents;
+    const paidValue = (__ver.paidValueCents || (__isAdminReq ? value : 0)) || record.valueCents;
     
     let isDivergent = false;
     let mismatchDetails = null;

@@ -21,7 +21,7 @@ class LinkManager {
     // Gerar novo link temporário
     generateLink(req) {
         const id = crypto.randomBytes(6).toString('hex');
-        const currentIP = normalizeIP(req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']);
+        const currentIP = normalizeIP(req.realIP || req.ip || req.connection.remoteAddress);
         const currentUserAgent = req.get('User-Agent') || '';
         const now = Date.now();
         

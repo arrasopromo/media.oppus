@@ -5576,12 +5576,10 @@
     function hideClientPage(){ if (clientPage) { clientPage.style.display = 'none'; } }
     if (fetchBtn) {
       fetchBtn.addEventListener('click', (e) => {
-        if (clientPage) {
-          e.preventDefault();
-          showClientPage();
-        } else {
-          window.location.href = '/cliente';
-        }
+        // Consulta de pedidos agora é pela Área do Cliente (com login) — a busca só pelo
+        // telefone expunha pedidos de qualquer pessoa.
+        e.preventDefault();
+        window.location.href = '/cliente';
       });
     }
     attachPhoneMask(phoneInputPage);
@@ -5589,12 +5587,8 @@
     document.addEventListener('click', (ev) => {
       const t = ev.target;
       if (t && (t.id === 'clientFetchBtn' || (t.closest && t.closest('#clientFetchBtn')))) {
-        if (clientPage) {
-          ev.preventDefault();
-          showClientPage();
-        } else {
-          window.location.href = '/cliente';
-        }
+        ev.preventDefault();
+        window.location.href = '/cliente';
       }
     });
     if (backBtn) backBtn.addEventListener('click', hideClientPage);

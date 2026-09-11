@@ -2339,7 +2339,7 @@
         if (uname) {
             fetch('/api/check-privacy', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-oppus-api-tk': (window.OPPUS_API_TK || '') },
                 body: JSON.stringify({ username: uname })
             })
             .then(function(r){ return r.json(); })
@@ -2415,7 +2415,7 @@ function checkPrivacyStatus() {
 
   fetch('/api/check-privacy?_=' + new Date().getTime(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-oppus-api-tk': (window.OPPUS_API_TK || '') },
         body: JSON.stringify({ username: username, bypassCache: true })
     })
   .then(function(res) { return res.json(); })
