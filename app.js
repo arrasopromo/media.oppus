@@ -40552,26 +40552,48 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const paidOverValidatedPeriodPct = validatedProfilesPeriod > 0 ? (validatedProfilesConverted / validatedProfilesPeriod) * 100 : 0;
 
     // ── RECUPERAÇÃO por canal (SMS x E-mail) ──────────────────────────────
-    // Base = pedidos PAGOS no período (filteredOrders). Para cada um, vê se foi
-    // recuperado e por qual canal (getOrderRecoveryInfo cobre pedidos antigos).
-    const recoveryStats = (function () {
+    // % = CLIENTES recuperados ÷ CLIENTES que receberam a mensagem daquele canal no
+    // período. Cliente conta 1 vez por canal: os 3 e-mails de recuperação (10min,
+    // 15%, 30%) ou vários pedidos abandonados do mesmo cliente = 1 envio. (Antes a
+    // base era o total de pedidos PAGOS do período, que não tem relação com envio.)
+    const recoveryStats = await (async function () {
         const toBRLr = (c) => `R$ ${(Math.max(0, Number(c) || 0) / 100).toFixed(2).replace('.', ',')}`;
+        const emailKey = (o) => { const e = String((o && o.customer && o.customer.email) || (o && o.additionalInfoMapPaid && o.additionalInfoMapPaid.email) || (o && o.additionalInfoMap && o.additionalInfoMap.email) || '').trim().toLowerCase(); return e ? ('em:' + e) : ('id:' + String(o && o._id)); };
+        const phoneKey = (o) => { const p = String((o && o.sms && o.sms.paymentRecoveryLastTo) || (o && o.customer && o.customer.phone) || '').replace(/\D/g, '').slice(-11); return p ? ('ph:' + p) : ('id:' + String(o && o._id)); };
+        // Numerador: pedidos pagos no período que foram recuperados (valor em pedidos; % em clientes).
         let smsCount = 0, smsValue = 0, emailCount = 0, emailValue = 0;
+        const smsRecKeys = new Set(), emailRecKeys = new Set();
         for (const o of filteredOrders) {
             const info = getOrderRecoveryInfo(o);
             if (!info.recovered) continue;
-            if (info.channel === 'sms') { smsCount += 1; smsValue += info.valueCents; }
-            else { emailCount += 1; emailValue += info.valueCents; }
+            if (info.channel === 'sms') { smsCount += 1; smsValue += info.valueCents; smsRecKeys.add(phoneKey(o)); }
+            else { emailCount += 1; emailValue += info.valueCents; emailRecKeys.add(emailKey(o)); }
         }
-        const totalPaid = paidOrdersPeriod || 0;
-        const pct = (n) => totalPaid > 0 ? Math.round((n / totalPaid) * 1000) / 10 : 0;
+        // Denominador: clientes que RECEBERAM recuperação no período (envio registrado).
+        const emailSentKeys = new Set(), smsSentKeys = new Set();
+        try {
+            const rg = (typeof getPeriodRange === 'function') ? getPeriodRange() : null;
+            const between = (rg && rg.start && rg.endExclusive) ? { $gte: new Date(rg.start).toISOString(), $lt: new Date(rg.endExclusive).toISOString() } : { $exists: true, $nin: [null, ''] };
+            const emailFields = ['emails.paymentRecoveryStage0SentAt', 'emails.paymentRecoveryStage10SentAt', 'emails.paymentRecoveryStage15SentAt', 'emails.paymentRecoverySentAt', 'emails.paymentRecoveryStage30SentAt'];
+            const smsFields = ['sms.paymentRecoveryStage15SentAt', 'sms.paymentRecoveryStage30SentAt'];
+            const proj = { _id: 1, 'customer.email': 1, 'customer.phone': 1, 'additionalInfoMapPaid.email': 1, 'additionalInfoMap.email': 1, 'sms.paymentRecoveryLastTo': 1 };
+            const eDocs = await col.find({ $or: emailFields.map((f) => ({ [f]: between })) }, { projection: proj }).limit(100000).toArray();
+            for (const d of eDocs) emailSentKeys.add(emailKey(d));
+            const sDocs = await col.find({ $or: smsFields.map((f) => ({ [f]: between })) }, { projection: proj }).limit(100000).toArray();
+            for (const d of sDocs) smsSentKeys.add(phoneKey(d));
+        } catch (_) {}
+        // Recuperado cujo envio foi antes do período ainda entra na base (nunca passa de 100%).
+        for (const k of emailRecKeys) emailSentKeys.add(k);
+        for (const k of smsRecKeys) smsSentKeys.add(k);
+        const pctOf = (n, base) => base > 0 ? Math.round((n / base) * 1000) / 10 : 0;
         const totalCount = smsCount + emailCount;
         const totalValue = smsValue + emailValue;
+        const totalSent = new Set([...emailSentKeys, ...smsSentKeys]).size;
         return {
-            totalPaid,
-            sms:   { count: smsCount,   pct: pct(smsCount),   valueCents: smsValue,   valueBRL: toBRLr(smsValue) },
-            email: { count: emailCount, pct: pct(emailCount), valueCents: emailValue, valueBRL: toBRLr(emailValue) },
-            total: { count: totalCount, pct: pct(totalCount), valueCents: totalValue, valueBRL: toBRLr(totalValue) }
+            totalPaid: paidOrdersPeriod || 0,
+            sms:   { count: smsCount,   customers: smsRecKeys.size,   sentCustomers: smsSentKeys.size,   pct: pctOf(smsRecKeys.size, smsSentKeys.size),     valueCents: smsValue,   valueBRL: toBRLr(smsValue) },
+            email: { count: emailCount, customers: emailRecKeys.size, sentCustomers: emailSentKeys.size, pct: pctOf(emailRecKeys.size, emailSentKeys.size), valueCents: emailValue, valueBRL: toBRLr(emailValue) },
+            total: { count: totalCount, sentCustomers: totalSent, pct: pctOf(smsRecKeys.size + emailRecKeys.size, totalSent), valueCents: totalValue, valueBRL: toBRLr(totalValue) }
         };
     })();
 

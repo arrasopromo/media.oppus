@@ -4421,15 +4421,15 @@
           <div class="summary-sub" style="margin-top:6px;">dos <%= _us.eligibleParents %> pedidos pagos pegaram upsell</div>
         </div>
         <% var _rs = (typeof recoveryStats !== 'undefined' && recoveryStats) ? recoveryStats : { totalPaid:0, sms:{count:0,pct:0,valueBRL:'R$ 0,00'}, email:{count:0,pct:0,valueBRL:'R$ 0,00'} }; %>
-        <div class="summary-card" title="Pedidos pagos após um SMS de recuperação, sobre o total de pagos no período">
+        <div class="summary-card" title="Clientes que pagaram depois do SMS de recuperação ÷ clientes que receberam SMS no período (cada cliente conta 1 vez, mesmo com vários SMS/pedidos)">
           <div class="summary-label">Recuperado por SMS</div>
           <div class="summary-value"><%= Number(_rs.sms.pct || 0).toFixed(1).replace('.', ',') %>%</div>
-          <div class="summary-sub" style="margin-top:6px;"><%= _rs.sms.count %> pedido(s) · <%= _rs.sms.valueBRL %> recuperado(s)</div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (_rs.sms.customers != null ? _rs.sms.customers : _rs.sms.count) %> de <%= (_rs.sms.sentCustomers || 0) %> cliente(s) que receberam · <%= _rs.sms.count %> pedido(s) · <%= _rs.sms.valueBRL %></div>
         </div>
-        <div class="summary-card" title="Pedidos pagos após um e-mail de recuperação, sobre o total de pagos no período">
+        <div class="summary-card" title="Clientes que pagaram depois do e-mail de recuperação ÷ clientes que receberam e-mail no período (os 3 e-mails do mesmo cliente contam como 1 envio)">
           <div class="summary-label">Recuperado por E-mail</div>
           <div class="summary-value"><%= Number(_rs.email.pct || 0).toFixed(1).replace('.', ',') %>%</div>
-          <div class="summary-sub" style="margin-top:6px;"><%= _rs.email.count %> pedido(s) · <%= _rs.email.valueBRL %> recuperado(s)</div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (_rs.email.customers != null ? _rs.email.customers : _rs.email.count) %> de <%= (_rs.email.sentCustomers || 0) %> cliente(s) que receberam · <%= _rs.email.count %> pedido(s) · <%= _rs.email.valueBRL %></div>
         </div>
       </div>
       <%# ── LUCRO POR DIA — segue o filtro de período do dashboard ───────────── %>
