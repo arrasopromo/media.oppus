@@ -475,7 +475,9 @@
         if(!d||!d.ok||state.current!==phone||!d.total) return;   // sem pedido: não mostra nada
         state.pedidosTotal=d.total;
         if(d.usuarios&&d.usuarios[0]){ $('tIg').textContent='@'+d.usuarios[0]; $('tIg').style.display='inline'; }
+        state.pedidosPor=String(d.achadoPor||'');
         $('pedidosBtn').textContent='🧾 Ver pedidos ('+d.total+')';
+        $('pedidosBtn').title=/^arroba:/.test(state.pedidosPor) ? ('Encontrado pelo @ citado na conversa (o telefone do pedido é outro)') : 'Pedidos deste telefone';
         $('pedidosBtn').style.display='inline-block';
       }
       function fecharPedidos(){ var b=document.getElementById('pedBack'); if(b) b.remove(); }
@@ -483,7 +485,8 @@
         if(!state.current) return;
         fecharPedidos();
         var back=document.createElement('div'); back.className='ped-back'; back.id='pedBack';
-        back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+'</div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
+        var comoAchou=/^arroba:/.test(String(state.pedidosPor||'')) ? (' · pelo @'+esc(String(state.pedidosPor).replace('arroba:',''))+' da conversa') : '';
+        back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+comoAchou+'</div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
         document.body.appendChild(back);
         back.addEventListener('click', function(ev){ if(ev.target===back||ev.target.closest('.ped-head button')) fecharPedidos(); });
         var d=await api('/api/painel/ia-crm/pedidos?phone='+encodeURIComponent(state.current));

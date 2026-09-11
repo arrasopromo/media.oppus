@@ -4057,6 +4057,42 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
         total = resumo ? await col.countDocuments(filtro8, { limit: 200 }) : docs.length;
       }
     }
+    // Ainda nada: muita gente fala no WhatsApp por um número diferente do que cadastrou na
+    // compra. Então procura pelo @ do Instagram citado NA CONVERSA (foi assim que o pedido do
+    // @harasveracruz apareceu). Só entra quando a busca por telefone falhou.
+    let achadoPor = docs.length ? 'telefone' : '';
+    if (!total) {
+      const handles = [];
+      try {
+        const waCol = await getCollection('wa_ia_messages');
+        const msgs = await waCol.find({ phone: String(req.query.phone || '').trim() }, { projection: { text: 1, direction: 1 } }).sort({ createdAt: -1 }).limit(120).toArray();
+        for (const m of msgs) {
+          const t = String((m && m.text) || '');
+          for (const mt of t.matchAll(/@([a-zA-Z0-9._]{2,30})/g)) handles.push(mt[1].toLowerCase());
+          for (const mt of t.matchAll(/instagram\.com\/([a-zA-Z0-9._]{2,30})/gi)) handles.push(mt[1].toLowerCase());
+          // cliente que manda só o usuário, sem @ (ex.: "sshey_lla94")
+          if (m.direction === 'in' && /^[a-zA-Z0-9._]{3,30}$/.test(t.trim()) && /[._0-9]/.test(t)) handles.push(t.trim().toLowerCase());
+        }
+      } catch (_) {}
+      const unicos = [...new Set(handles)].slice(0, 5);
+      for (const h of unicos) {
+        const rx = new RegExp('^@?' + h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+        // campos indexados primeiro; os mapas de additionalInfo só se não achar (varrem a coleção)
+        for (const cond of [
+          { $or: [{ instagramUsername: rx }, { instauser: rx }] },
+          { $or: [{ 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx }] },
+        ]) {
+          const achados = await col.find(cond, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+          if (achados.length) {
+            docs = achados;
+            total = resumo ? await col.countDocuments(cond, { limit: 200 }) : achados.length;
+            achadoPor = 'arroba:' + h;
+            break;
+          }
+        }
+        if (total) break;
+      }
+    }
     const info = (o, k) => {
       for (const m of [o.additionalInfoMapPaid, o.additionalInfoMap]) if (m && m[k] != null && String(m[k]).trim()) return String(m[k]).trim();
       return '';
@@ -4078,7 +4114,7 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
       };
     });
     const usuarios = [...new Set(orders.map((o) => o.instagram).filter(Boolean))];
-    return res.json({ ok: true, total, usuarios, orders: resumo ? [] : orders });
+    return res.json({ ok: true, total, usuarios, achadoPor, orders: resumo ? [] : orders });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 
