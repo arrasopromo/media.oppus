@@ -303,7 +303,16 @@ async function handleAgentMessage(msg, sendText) {
   // (evita o cliente receber o copia-e-cola DUPLICADO).
   if (ctx.pixToSend) finalText = stripPixFromText(finalText, ctx.pixToSend);
   finalText = sanitizeForWhatsapp(finalText);
-  if (finalText) { try { await sendText(phone, finalText); } catch (_) {} }
+  // O modelo às vezes escreve "Mistoss"/"Mistosos" — corrige antes de enviar.
+  finalText = finalText.replace(/\b([Mm])istos(?:s+|os)\b/g, '$1istos');
+  // Resposta em BALÕES (intro | lista | pergunta), com um respiro entre eles.
+  if (finalText) {
+    const bolhas = splitIntoBubbles(finalText);
+    for (let i = 0; i < bolhas.length; i++) {
+      if (i > 0 && BUBBLE_GAP_MS > 0) { try { await new Promise((r) => setTimeout(r, BUBBLE_GAP_MS)); } catch (_) {} }
+      try { await sendText(phone, bolhas[i]); } catch (_) {}
+    }
+  }
   // Entrega do Pix em 3 mensagens SEPARADAS, com 2s entre cada (não despeja tudo de
   // uma vez): 1) instrução de como copiar; 2) o copia-e-cola SOZINHO num balão, pra o
   // cliente copiar tocando/segurando na mensagem (não em link — link não valida).
@@ -319,6 +328,62 @@ async function handleAgentMessage(msg, sendText) {
   // Sinaliza p/ a camada do WhatsApp que a IA acabou de PEDIR a confirmação do @ (para
   // agendar um "cutucão" se o cliente sumir). Só quando validou e não fechou/parou.
   return { awaitingConfirm: !!(ctx.validated && !ctx.pixToSend && !ctx.support && !ctx.quedaResolved), username: ctx.validatedUsername || '' };
+}
+
+// ── Quebra a resposta em BALÕES, como uma pessoa escreve no WhatsApp ─────────────
+// Tudo num balão só fica pesado (ex.: apresentação dos serviços, tabela de preço).
+// Regra: introdução | lista (serviços/tipos/pacotes) | pergunta final, cada um no
+// seu balão. Texto curto e sem lista continua num balão só. Máx. BOT_MAX_BUBBLES.
+const MAX_BUBBLES = Math.max(1, Number(process.env.BOT_MAX_BUBBLES || 4));
+const BUBBLE_GAP_MS = Math.max(0, Number(process.env.BOT_BUBBLE_GAP_MS || 1300));
+function splitIntoBubbles(text) {
+  const t = String(text || '').replace(/\r/g, '').trim();
+  if (!t) return [];
+  const isItem = (l) => /^\s*(\d{1,2}\s*[.)\-–]|\d️⃣|[-•▪️✅🔹👉]\s?|\*\d+\*)/.test(l);
+  const hasList = t.split('\n').filter(isItem).length >= 2;
+  if (t.length <= 280 && !hasList) return [t];
+  // 1) blocos por linha em branco; 2) dentro do bloco, separa texto corrido da lista.
+  const segs = [];
+  for (const block of t.split(/\n\s*\n/)) {
+    const lines = block.split('\n').map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim());
+    let cur = [], curIsList = null;
+    for (const l of lines) {
+      // linha de continuação de item (não começa com marcador, mas está dentro da lista)
+      const item = isItem(l) || (curIsList === true && /^\s{2,}\S/.test(l));
+      if (curIsList !== null && item !== curIsList) { segs.push({ list: curIsList, text: cur.join('\n') }); cur = []; }
+      cur.push(l); curIsList = item;
+    }
+    if (cur.length) segs.push({ list: !!curIsList, text: cur.join('\n') });
+  }
+  // Junta pedaços muito curtos no vizinho (evita balão de 2 palavras), exceto a pergunta final.
+  const out = [];
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    const prev = out[out.length - 1];
+    const ehUltimo = i === segs.length - 1;
+    if (prev && !s.list && !prev.list && (s.text.length < 60 || prev.text.length < 60) && !(ehUltimo && /\?\s*$/.test(s.text))) { prev.text += '\n\n' + s.text; continue; }
+    if (prev && s.list && prev.list) { prev.text += '\n' + s.text; continue; }
+    out.push({ list: s.list, text: s.text });
+  }
+  // Lista muito longa (ex.: 3 itens com explicação grande): divide em partes de até ~550 chars.
+  const final = [];
+  for (const s of out) {
+    if (s.list && s.text.length > 700) {
+      let acc = '';
+      for (const l of s.text.split('\n')) {
+        if (acc && isItem(l) && (acc.length + l.length) > 550) { final.push(acc); acc = l; }
+        else acc = acc ? acc + '\n' + l : l;
+      }
+      if (acc) final.push(acc);
+    } else final.push(s.text);
+  }
+  // Respeita o máximo de balões: junta os menores vizinhos até caber.
+  while (final.length > MAX_BUBBLES) {
+    let best = 0, bestLen = Infinity;
+    for (let i = 0; i < final.length - 1; i++) { const len = final[i].length + final[i + 1].length; if (len < bestLen) { bestLen = len; best = i; } }
+    final.splice(best, 2, final[best] + '\n\n' + final[best + 1]);
+  }
+  return final.map((x) => x.trim()).filter(Boolean);
 }
 
 // ── Fallback determinístico (sem OPENAI_API_KEY): guia mínimo, não trava o atendimento ──
