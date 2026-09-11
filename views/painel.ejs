@@ -70,6 +70,11 @@
     .refil2-badge--yellow { background:#fef3c7; color:#92400e; }
     .refil2-badge--red { background:#fee2e2; color:#991b1b; }
     .refil2-badge--gray { background:#f3f4f6; color:#374151; }
+    /* Menu ▾ do "Forçar orderid" (Forçar BR Nuvra / Forçar SMMHustle) */
+    .refil2ForceMenu { display:none; position:fixed; min-width:190px; background:#fff; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.12); padding:4px; z-index:10000; }
+    .refil2ForceOpt { display:block; width:100%; text-align:left; padding:7px 10px; border:0; background:transparent; border-radius:6px; cursor:pointer; font:inherit; font-size:0.85rem; color:#111827; }
+    .refil2ForceOpt:hover { background:#f3f4f6; }
+    .refil2ForceOpt small { color:#9ca3af; margin-left:4px; }
     .followers-pager-link { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; text-decoration: none; color: #111827; }
     .followers-pager-link--disabled { pointer-events: none; opacity: 0.5; }
     .followers-email--sent { color:#16a34a; font-weight:700; }
@@ -5504,12 +5509,13 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
-                      <%# Botão dividido: "Forçar orderid" (fornecedor do painel) + seta ▾ com "Forçar SMMHustle". %>
+                      <%# Botão dividido: "Forçar orderid" (fornecedor do painel) + seta ▾ com "Forçar BR Nuvra" e "Forçar SMMHustle". %>
                       <div class="refil2ForceSplit" style="display:inline-flex; align-items:stretch; white-space:nowrap;">
                         <button type="button" class="refil2ForceRefilOne" style="padding:5px 8px; border:1px solid #111827; background:#111827; color:#fff; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Forçar orderid</button>
-                        <button type="button" class="refil2ForceMenuBtn" title="Mais opções de forçar" aria-haspopup="true" style="padding:5px 7px; border:1px solid #111827; border-left:1px solid #4b5563; background:#111827; color:#fff; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.8rem;">▾</button>
-                        <div class="refil2ForceMenu" style="display:none; position:fixed; min-width:240px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.14); padding:6px; z-index:10000;">
-                          <button type="button" class="refil2ForceSmmHustle" style="display:block; width:100%; text-align:left; padding:9px 10px; border:0; background:#fff; color:#111827; border-radius:8px; cursor:pointer; font-size:0.88rem;">Forçar SMMHustle <span style="color:#6b7280;">(serviço <%= (process.env.SMMHUSTLE_FORCE_SERVICE_ID || '367') %>)</span></button>
+                        <button type="button" class="refil2ForceMenuBtn" title="Forçar em outro serviço" aria-haspopup="true" style="padding:5px 7px; border:1px solid #111827; border-left:1px solid #4b5563; background:#111827; color:#fff; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.8rem;">▾</button>
+                        <div class="refil2ForceMenu" role="menu">
+                          <button type="button" class="refil2ForceOpt" data-via="nuvra_br" role="menuitem">Forçar BR Nuvra <small><%= (process.env.NUVRA_BR_FORCE_SERVICE_ID || '159') %></small></button>
+                          <button type="button" class="refil2ForceOpt" data-via="smmhustle" role="menuitem">Forçar SMMHustle <small><%= (process.env.SMMHUSTLE_FORCE_SERVICE_ID || '367') %></small></button>
                         </div>
                       </div>
                     </td>
@@ -6913,13 +6919,14 @@
                 }
                 return;
               }
-              var smmOpt = (t.closest && t.closest('.refil2ForceSmmHustle')) ? t.closest('.refil2ForceSmmHustle') : null;
-              if (!smmOpt) fecharMenusForce();
+              // Opções do menu ▾: data-via="nuvra_br" (Nuvra serviço BR 159) ou "smmhustle".
+              var viaOpt = (t.closest && t.closest('.refil2ForceOpt')) ? t.closest('.refil2ForceOpt') : null;
+              if (!viaOpt) fecharMenusForce();
               var forceVia = '';
               var forceBtn = (t.closest && t.closest('.refil2ForceRefilOne')) ? t.closest('.refil2ForceRefilOne') : null;
-              if (smmOpt) {
-                forceVia = 'smmhustle';
-                var splitEl = smmOpt.closest('.refil2ForceSplit');
+              if (viaOpt) {
+                forceVia = String(viaOpt.getAttribute('data-via') || '');
+                var splitEl = viaOpt.closest('.refil2ForceSplit');
                 forceBtn = splitEl ? splitEl.querySelector('.refil2ForceRefilOne') : null;
                 fecharMenusForce();
               }
@@ -6966,6 +6973,7 @@
                   msg = 'Forçar orderid agora' + (parts.length ? (' (' + parts.join(' · ') + ')') : '') + '?';
                 } catch (_) {}
                 if (forceVia === 'smmhustle') msg = msg.replace('Forçar orderid agora', 'Forçar no SMMHustle agora') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele.';
+                if (forceVia === 'nuvra_br') msg = msg.replace('Forçar orderid agora', 'Forçar BR na Nuvra agora (serviço <%= (process.env.NUVRA_BR_FORCE_SERVICE_ID || "159") %>)') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele (serviço BR, com refil).';
                 if (!confirm(msg)) return;
                 forceBtn.disabled = true;
                 forceBtn.style.opacity = '0.7';
@@ -6973,7 +6981,7 @@
                   var respF = await fetch('/api/painel/refil2/force-refil', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(forceVia ? { id: idF, provider: forceVia } : { id: idF })
+                    body: JSON.stringify(forceVia === 'nuvra_br' ? { id: idF, via: 'nuvra_br' } : (forceVia ? { id: idF, provider: forceVia } : { id: idF }))
                   });
                   var dataF = await readJsonResp(respF);
                   if (!respF.ok || !(dataF && dataF.ok)) {
@@ -7006,8 +7014,9 @@
                     if (okEl) okEl.textContent = '';
                   } catch (_) {}
                   if (oid) {
-                    var provNome = (dataF && dataF.provider === 'smmhustle') ? 'SMMHustle' : 'Nuvra';
-                    forceBtn.textContent = (dataF && dataF.provider === 'smmhustle') ? ('SMMHustle (' + oid + ')') : ('Enviado (' + oid + ')');
+                    var viaResp = (dataF && dataF.via) || '';
+                    var provNome = (dataF && dataF.provider === 'smmhustle') ? 'SMMHustle' : (viaResp === 'nuvra_br' ? 'Nuvra BR (serviço ' + (dataF.serviceId || '') + ')' : 'Nuvra');
+                    forceBtn.textContent = (dataF && dataF.provider === 'smmhustle') ? ('SMMHustle (' + oid + ')') : (viaResp === 'nuvra_br' ? ('BR Nuvra (' + oid + ')') : ('Enviado (' + oid + ')'));
                     forceBtn.title = 'Pedido ' + provNome + ': ' + oid;
                   } else {
                     forceBtn.textContent = 'Enviado';
