@@ -4013,6 +4013,61 @@ app.get('/api/painel/ia-crm/messages', requireAdmin, async (req, res) => {
     return res.json({ ok: true, phone, name: (contact && contact.name) || '', botPaused: !!(contact && contact.botPaused), messages: msgs });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Pedidos do telefone aberto no CRM (botão "Ver pedidos" ao lado do número).
+// Consulta separada e sob demanda: não passa pelo fluxo de mensagens nem pelo bot.
+let __crmPhoneIndexOk = false;
+app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
+  try {
+    const digits = String(req.query.phone || '').replace(/\D/g, '');
+    if (!digits) return res.status(400).json({ ok: false, error: 'no_phone' });
+    const resumo = String(req.query.resumo || '') === '1';
+    // 55 + DDD + número → variações que aparecem gravadas em customer.phone
+    const semDdi = digits.replace(/^55/, '');
+    const d11 = semDdi.slice(-11);
+    const d10 = d11.length === 11 && d11[2] === '9' ? d11.slice(0, 2) + d11.slice(3) : '';
+    const cands = [];
+    for (const base of [d11, d10].filter(Boolean)) {
+      cands.push(base, '55' + base, '+55' + base, '+' + base);
+      const ddd = base.slice(0, 2), resto = base.slice(2);
+      cands.push(`(${ddd}) ${resto.slice(0, resto.length - 4)}-${resto.slice(-4)}`);
+    }
+    const col = await getCollection('checkout_orders');
+    // Índices dos 3 campos do $or (sem os três, o Mongo varre a coleção inteira a cada consulta).
+    if (!__crmPhoneIndexOk) {
+      for (const campo of ['customer.phone', 'additionalInfoMapPaid.phone', 'additionalInfoMap.phone']) {
+        try { await col.createIndex({ [campo]: 1 }, { sparse: true }); } catch (_) {}
+      }
+      __crmPhoneIndexOk = true;
+    }
+    const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
+    const proj = { identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
+    const docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+    const total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
+    const info = (o, k) => {
+      for (const m of [o.additionalInfoMapPaid, o.additionalInfoMap]) if (m && m[k] != null && String(m[k]).trim()) return String(m[k]).trim();
+      return '';
+    };
+    const orders = docs.map((o) => {
+      const pagoEm = o.paidAt || (o.paghiper && o.paghiper.paidAt) || (o.woovi && o.woovi.paidAt) || '';
+      return {
+        identifier: o.identifier || '',
+        status: String(o.status || '').toLowerCase(),
+        criadoEm: o.createdAt || '',
+        pagoEm,
+        instagram: String(o.instagramUsername || o.instauser || info(o, 'instagram_username') || '').replace(/^@+/, ''),
+        categoria: info(o, 'categoria_servico') || String(o.categoriaServico || ''),
+        tipo: info(o, 'tipo_servico') || String(o.tipoServico || o.tipo || ''),
+        quantidade: Number(o.qtd || o.quantidade || info(o, 'quantidade') || 0) || 0,
+        bumps: info(o, 'order_bumps'),
+        valor: Number(o.valueCents || 0) / 100,
+        cliente: (o.customer && o.customer.name) || ''
+      };
+    });
+    const usuarios = [...new Set(orders.map((o) => o.instagram).filter(Boolean))];
+    return res.json({ ok: true, total, usuarios, orders: resumo ? [] : orders });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
 // Atendente envia mensagem manual (assume o chat: pausa o bot)
 app.post('/api/painel/ia-crm/send', requireAdmin, async (req, res) => {
   try {

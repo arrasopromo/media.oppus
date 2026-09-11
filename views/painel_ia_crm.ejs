@@ -73,6 +73,8 @@
     .btn-bot.off { border-color: #d97706; color: #d97706; background: #fff; }
     .msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
     .b { max-width: 72%; padding: 7px 26px 7px 10px; border-radius: 8px;   /* espaço à direita p/ o botão responder */ font-size: 0.9rem; line-height: 1.35; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,0.13); position: relative; }
+    .b { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+    .msg-menu-btn, .b .meta, .b .who { -webkit-user-select: none; user-select: none; }
     .b .meta { font-size: 0.62rem; color: #667781; margin-top: 3px; text-align: right; }
     .b.in { align-self: flex-start; background: #fff; }
     .b.out { align-self: flex-end; background: #d9fdd3; }
@@ -83,6 +85,26 @@
     .msgs { background-color: #efeae2; background-image: radial-gradient(rgba(0,0,0,0.03) 1px, transparent 1px); background-size: 22px 22px; }
     /* mídia nos balões */
     .b .cap { margin-top: 4px; }
+    /* Cabeçalho: @ da compra + botão "Ver pedidos" (só aparece com pedido no banco) */
+    .t-ig { color:#0f766e; font-weight:600; margin-left:6px; }
+    .btn-pedidos { margin-left:8px; border:1px solid #25d366; background:#fff; color:#128c4a; border-radius:999px;
+      padding:2px 9px; font-size:0.7rem; font-weight:700; cursor:pointer; vertical-align:middle; }
+    .btn-pedidos:hover { background:#eafaf0; }
+    /* Modal de pedidos */
+    .ped-back { position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:80; display:flex; align-items:center; justify-content:center; padding:16px; }
+    .ped-box { background:#fff; border-radius:12px; width:min(680px,100%); max-height:82vh; display:flex; flex-direction:column; overflow:hidden; }
+    .ped-head { padding:12px 16px; border-bottom:1px solid #e9edef; display:flex; align-items:center; gap:10px; }
+    .ped-head h3 { margin:0; font-size:1rem; }
+    .ped-head .sub { font-size:0.76rem; color:#667781; }
+    .ped-head button { margin-left:auto; border:0; background:transparent; font-size:1.1rem; cursor:pointer; color:#667781; }
+    .ped-body { overflow:auto; padding:10px 14px 16px; }
+    .ped-item { border:1px solid #eceff1; border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+    .ped-l1 { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.86rem; }
+    .ped-l1 b { font-size:0.9rem; }
+    .ped-l2 { font-size:0.76rem; color:#667781; margin-top:3px; }
+    .ped-st { font-size:0.68rem; font-weight:700; padding:1px 7px; border-radius:999px; }
+    .ped-st.pago { background:#dcfce7; color:#166534; }
+    .ped-st.outro { background:#f3f4f6; color:#4b5563; }
     /* Anexo colado/escolhido aguardando o envio (igual ao WhatsApp: só vai ao clicar em ➤) */
     .pend-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #fff; border-top: 1px solid #e9edef; }
     .pend-thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; }
@@ -211,7 +233,11 @@
             <div class="avatar" id="tAvatar" style="width:38px;height:38px;font-size:0.85rem;">?</div>
             <div>
               <div class="t-name" id="tName">—</div>
-              <div class="t-phone" id="tPhone"></div>
+              <div class="t-phone">
+                <span id="tPhone"></span>
+                <span class="t-ig" id="tIg" style="display:none;"></span>
+                <button type="button" class="btn-pedidos" id="pedidosBtn" style="display:none;">🧾 Ver pedidos</button>
+              </div>
             </div>
             <div class="actions">
               <button class="btn-bot on" id="botBtn">🤖 Bot ligado</button>
@@ -417,7 +443,7 @@
       // Volta pra lista de conversas (celular).
       function voltarLista(){
         $('crm').classList.remove('show-thread');
-        state.current=null; state.replyTo=null; $('replyBar').style.display='none'; try{ clearPending(); }catch(_){}
+        state.current=null; state.replyTo=null; $('replyBar').style.display='none'; try{ clearPending(); }catch(_){} try{ fecharPedidos(); limparPedidos(); }catch(_){}
         renderConvs();
         try{ window.scrollTo(0,0); }catch(_){}
       }
@@ -437,7 +463,49 @@
         renderConvs();
         var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(phone));
         if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
+        carregarResumoPedidos(phone);   // depois das mensagens: não atrasa o chat
       }
+
+      // ── Pedidos do telefone (botão ao lado do número) ───────────────────────
+      // Consulta própria, feita depois das mensagens. Não passa pelo envio nem pelo bot.
+      function limparPedidos(){ $('tIg').style.display='none'; $('tIg').textContent=''; $('pedidosBtn').style.display='none'; state.pedidosTotal=0; }
+      async function carregarResumoPedidos(phone){
+        limparPedidos();
+        var d=await api('/api/painel/ia-crm/pedidos?resumo=1&phone='+encodeURIComponent(phone));
+        if(!d||!d.ok||state.current!==phone||!d.total) return;   // sem pedido: não mostra nada
+        state.pedidosTotal=d.total;
+        if(d.usuarios&&d.usuarios[0]){ $('tIg').textContent='@'+d.usuarios[0]; $('tIg').style.display='inline'; }
+        $('pedidosBtn').textContent='🧾 Ver pedidos ('+d.total+')';
+        $('pedidosBtn').style.display='inline-block';
+      }
+      function fecharPedidos(){ var b=document.getElementById('pedBack'); if(b) b.remove(); }
+      async function abrirPedidos(){
+        if(!state.current) return;
+        fecharPedidos();
+        var back=document.createElement('div'); back.className='ped-back'; back.id='pedBack';
+        back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+'</div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
+        document.body.appendChild(back);
+        back.addEventListener('click', function(ev){ if(ev.target===back||ev.target.closest('.ped-head button')) fecharPedidos(); });
+        var d=await api('/api/painel/ia-crm/pedidos?phone='+encodeURIComponent(state.current));
+        var body=document.getElementById('pedBody'); if(!body) return;
+        if(!d||!d.ok){ body.textContent='Não consegui carregar os pedidos.'; return; }
+        var lista=d.orders||[];
+        if(!lista.length){ body.textContent='Nenhum pedido para este telefone.'; return; }
+        body.innerHTML=lista.map(function(o){
+          var dt=o.pagoEm||o.criadoEm||'';
+          var data=dt?new Date(dt).toLocaleString('pt-BR',{ day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }):'-';
+          var pago=(o.status==='pago');
+          var srv=[o.categoria,o.tipo].filter(Boolean).join(' · ')||'-';
+          var val=o.valor?('R$ '+o.valor.toFixed(2).replace('.',',')):'';
+          return '<div class="ped-item">'
+            +'<div class="ped-l1"><b>'+(o.quantidade?o.quantidade.toLocaleString('pt-BR'):'-')+'</b> <span>'+esc(srv)+'</span>'
+            +'<span class="ped-st '+(pago?'pago':'outro')+'">'+esc(o.status||'—')+'</span>'
+            +(o.instagram?'<span class="t-ig">@'+esc(o.instagram)+'</span>':'')+'</div>'
+            +'<div class="ped-l2">'+esc(data)+(val?(' · '+val):'')+(o.bumps?(' · bumps: '+esc(o.bumps)):'')+' · <a href="/pedido?t='+encodeURIComponent(o.identifier)+'" target="_blank" rel="noopener">'+esc(o.identifier)+'</a></div>'
+            +'</div>';
+        }).join('');
+      }
+      $('pedidosBtn').addEventListener('click', abrirPedidos);
 
       // force=true só quando VOCÊ acabou de enviar/agir (aí desce pro fim de propósito).
       async function refreshOpen(force){
@@ -550,7 +618,7 @@
         if(ignoraProxClique){ ignoraProxClique=false; return; }
         if(menuMsg && !menuMsg.contains(e.target) && !e.target.closest('.msg-menu-btn')) fecharMenuMsg();
       }, true);
-      document.addEventListener('keydown', function(e){ if(e.key==='Escape') fecharMenuMsg(); });
+      document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ fecharMenuMsg(); try{ fecharPedidos(); }catch(_){} } });
       $('msgs').addEventListener('scroll', fecharMenuMsg, { passive:true });
       // ── Visualizador de imagem ───────────────────────────────────────────────
       function abrirImagem(src){
@@ -563,25 +631,9 @@
       // clicar no fundo (fora da imagem) fecha
       $('lightbox').addEventListener('click', function(ev){ if(ev.target===this) fecharImagem(); });
       document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('lightbox').style.display==='flex') fecharImagem(); });
-      // Sem duplo-clique (marcava resposta sem querer). No celular, toque longo no
-      // balão abre o MESMO menu da seta — nunca responde direto.
-      var pressTimer=null, pressX=0, pressY=0;
-      function cancelPress(){ if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; } }
-      $('msgs').addEventListener('touchstart', function(ev){
-        var b=ev.target.closest('.b'); if(!b || !b.getAttribute('data-wamid')) return;
-        var t=ev.touches[0]; pressX=t.clientX; pressY=t.clientY;
-        cancelPress();
-        pressTimer=setTimeout(function(){
-          pressTimer=null;
-          try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
-          ignoraProxClique=true; setTimeout(function(){ ignoraProxClique=false; }, 700);
-          abrirMenuMsg(b.getAttribute('data-wamid'), b.querySelector('.msg-menu-btn') || b);
-        }, 450);
-      }, { passive:true });
-      $('msgs').addEventListener('touchmove', function(ev){
-        if(!pressTimer) return; var t=ev.touches[0];
-        if(Math.abs(t.clientX-pressX)>8 || Math.abs(t.clientY-pressY)>8) cancelPress();  // rolou a tela: não é toque longo
-      }, { passive:true });
+      // Nada de duplo-clique nem toque longo abrindo menu: segurar/arrastar e o duplo-clique
+      // servem para SELECIONAR e copiar o texto, como no WhatsApp. A seta ⌄ só abre no clique nela.
+      function cancelPress(){}
       $('msgs').addEventListener('touchend', cancelPress, { passive:true });
       $('msgs').addEventListener('touchcancel', cancelPress, { passive:true });
       $('sendBtn').addEventListener('click', send);
