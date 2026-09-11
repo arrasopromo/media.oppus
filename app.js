@@ -15352,7 +15352,75 @@ app.get('/api/paghiper/charge-status', async (req, res) => {
     }
 });
 
+// Custo COMPLETO de um pedido para a TrackCombo:
+//   fornecedor (charge REAL do action=status: principal + cada bump; o que ainda não tem
+//   charge — ex.: bump não despachado — entra pela estimativa da tabela cost_settings)
+//   + taxa do gateway (value_fee_cents da PagHiper; 0,99 se não vier)
+//   + imposto (DASH_IMPOSTO_PCT = 13% do valor total da venda).
+async function computeTrackComboOrderCost(order, opts = {}) {
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const sources = [];
+  let rc = null;
+  try { rc = await computeOrderRealCost(order, { live: opts.live === true, col: opts.col }); } catch (_) {}
+  const bd = (rc && Array.isArray(rc.breakdown)) ? rc.breakdown : [];
+
+  // Principal
+  let service = null;
+  if (rc && rc.baseCounted > 0) { service = rc.base; sources.push('service:real'); }
+  if (service == null) {
+    const est = Number(order && order.costs && order.costs.estimatedServiceCost);
+    if (Number.isFinite(est) && est > 0) { service = est; sources.push('service:estimate'); }
+  }
+
+  // Bumps: charge real por slot; bump comprado sem charge ainda → estimativa.
+  let bumps = 0;
+  const bumpSlots = { views: ['fama24h_views'], likes: ['fama24h_likes', 'fornecedor_social_likes', 'topfama_likes'], comments: ['worldsmm_comments'] };
+  const realBySlot = {};
+  for (const b of bd) { if (b && b.role === 'bump') realBySlot[b.slot] = (realBySlot[b.slot] || 0) + (Number(b.charge) || 0); }
+  const bumpsStr = (function () {
+    for (const m of [order && order.additionalInfoMapPaid, order && order.additionalInfoMap]) { if (m && m.order_bumps) return String(m.order_bumps); }
+    for (const arr of [order && order.additionalInfoPaid, order && order.additionalInfo]) {
+      if (!Array.isArray(arr)) continue;
+      const it = arr.find(x => x && x.key === 'order_bumps');
+      if (it && it.value) return String(it.value);
+    }
+    return '';
+  })().toLowerCase();
+  const bumpQty = (name) => { const m = bumpsStr.match(new RegExp(name + '\\s*:\\s*(\\d+)')); return m ? Number(m[1]) : 0; };
+  let cs = null;
+  const costSettings = async () => {
+    if (cs) return cs;
+    cs = Object.assign({}, DEFAULT_COST_SETTINGS);
+    try { const sc = await getCollection('settings'); const d = await sc.findOne({ _id: 'cost_settings' }); if (d && d.values && typeof d.values === 'object') cs = Object.assign({}, DEFAULT_COST_SETTINGS, d.values); } catch (_) {}
+    return cs;
+  };
+  for (const kind of Object.keys(bumpSlots)) {
+    const realSlot = bumpSlots[kind].find(s => realBySlot[s] != null);
+    if (realSlot) { bumps += bumpSlots[kind].reduce((a, s) => a + (realBySlot[s] || 0), 0); sources.push(`${kind}:real`); continue; }
+    const q = bumpQty(kind);
+    if (!(q > 0)) continue;
+    const c = await costSettings();
+    const est = kind === 'views' ? (q / 1000) * Number(c.visualizacoes || 0)
+      : kind === 'likes' ? (q / 1000) * Number(c.curtidas || 0)
+      : q * Number(c.comentarios || 0);
+    if (est > 0) { bumps += est; sources.push(`${kind}:estimate`); }
+  }
+
+  const valueCents = Number(opts.valueCents);
+  const saleValue = Number.isFinite(valueCents) && valueCents > 0 ? valueCents / 100 : (Number(order && order.valueCents) || 0) / 100;
+  const feeCents = Number(opts.feeCents);
+  const gatewayFee = Number.isFinite(feeCents) && feeCents >= 0 ? feeCents / 100 : 0.99;
+  const tax = saleValue * (DASH_IMPOSTO_PCT / 100);
+  const total = (service || 0) + bumps + gatewayFee + tax;
+  return {
+    total: r2(total), service: r2(service || 0), bumps: r2(bumps), gatewayFee: r2(gatewayFee),
+    tax: r2(tax), taxPct: DASH_IMPOSTO_PCT, saleValue: r2(saleValue),
+    source: sources.join(',') || 'none', hasService: service != null
+  };
+}
+
 app.post('/api/paghiper/notification', async (req, res) => {
+    let forwardOnError = null;
     try {
         try { res.set('Cache-Control', 'no-store'); } catch (_) {}
         const apiKey = String(process.env.PAGHIPER_API_KEY || '').trim();
@@ -15386,40 +15454,51 @@ app.post('/api/paghiper/notification', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'missing_notification_fields' });
         }
 
-        try {
+        // Encaminha o body da PagHiper para a TrackCombo, ENRIQUECIDO com o nome do cliente
+        // (payer_name) e o CUSTO COMPLETO da venda em `cost` (fornecedor principal + bumps +
+        // taxa do gateway + 13% de imposto sobre o valor da venda). No pagamento, o envio sai
+        // DEPOIS do despacho, com espera curta, para o charge real do action=status já existir
+        // (antes saía no início do webhook e só levava a estimativa). Fire-and-forget.
+        let tcForwarded = false;
+        const forwardToTrackCombo = (ctx = {}) => {
+            if (tcForwarded) return;
+            tcForwarded = true;
             const tcUrl = String(process.env.TRACKCOMBO_NOTIFICATION_URL || 'https://server.trackcombo.com/integration/MXERC7WMHA/mNa2IGe5qj7gaPyO67Ip/').trim();
-            if (tcUrl) {
-                // Encaminha o body da PagHiper para a TrackCombo, ENRIQUECIDO com o nome do
-                // cliente (payer_name). O body cru da PagHiper só traz transaction_id/notification_id,
-                // então buscamos o pedido para anexar o nome. Fire-and-forget (não trava o webhook).
-                (async () => {
-                    let payerName = ''; let costReais = null; let costSource = '';
-                    try {
-                        const col0 = await getCollection('checkout_orders');
-                        const o0 = await col0.findOne(
-                            { $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] },
-                            { projection: { 'customer.name': 1, costs: 1, fama24h: 1, fama24h_views: 1, fama24h_likes: 1, fornecedor_social: 1, fornecedor_social_likes: 1, topfama: 1, worldsmm_comments: 1, fama24h_multi: 1, fornecedor_social_multi: 1 } }
-                        );
-                        payerName = sanitizeText(String((o0 && o0.customer && o0.customer.name) || '').trim());
-                        if (o0) {
-                            // Custo do pedido: CHARGE REAL (action=status, base + TODOS os bumps) se já
-                            // houver; senão calcula ao vivo; por último a estimativa. (Na hora do
-                            // pagamento o pedido pode ainda não estar despachado → cai na estimativa.)
-                            const cached = Number(o0.costs && o0.costs.providerChargeTotal);
-                            if (Number.isFinite(cached) && cached > 0) { costReais = cached; costSource = 'real_cached'; }
-                            if (costReais == null) { try { const rc = await computeOrderRealCost(o0, { live: true, col: col0 }); if (rc && rc.total > 0) { costReais = rc.total; costSource = 'real_live'; } } catch (_) {} }
-                            if (costReais == null) { const est = Number(o0.costs && o0.costs.estimatedServiceCost); if (Number.isFinite(est) && est > 0) { costReais = est; costSource = 'estimate'; } }
+            if (!tcUrl) return;
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            (async () => {
+                if (ctx.delayMs > 0) await sleep(ctx.delayMs);
+                let payerName = ''; let cost = null;
+                try {
+                    const col0 = await getCollection('checkout_orders');
+                    const find0 = () => col0.findOne({ $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] }, { projection: { 'paghiper.statusPayload': 0 } });
+                    let o0 = await find0();
+                    payerName = sanitizeText(String((o0 && o0.customer && o0.customer.name) || '').trim());
+                    if (o0) {
+                        const costOpts = { live: ctx.live === true, col: col0, valueCents: ctx.valueCents, feeCents: ctx.feeCents };
+                        cost = await computeTrackComboOrderCost(o0, costOpts);
+                        // Pago e o principal ainda sem charge (fornecedor lento): tenta mais uma vez.
+                        if (ctx.live === true && cost && !/service:real/.test(cost.source)) {
+                            await sleep(45000);
+                            o0 = (await find0()) || o0;
+                            cost = await computeTrackComboOrderCost(o0, costOpts);
                         }
-                    } catch (_) {}
-                    const extra = payerName ? { payer_name: payerName } : {};
-                    if (costReais != null) { extra.product_cost = costReais; extra.cost = costReais; extra.custo = costReais; extra.cost_cents = Math.round(costReais * 100); extra.cost_source = costSource; }
-                    const tcBody = Object.assign({}, body, extra);
-                    try {
-                        await axios.post(tcUrl, tcBody, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
-                    } catch (_) {}
-                })().catch(() => {});
-            }
-        } catch (_) {}
+                    }
+                } catch (_) {}
+                const extra = payerName ? { payer_name: payerName } : {};
+                if (cost) {
+                    Object.assign(extra, {
+                        cost: cost.total, custo: cost.total, product_cost: cost.total, cost_cents: Math.round(cost.total * 100),
+                        cost_service: cost.service, cost_bumps: cost.bumps, cost_gateway_fee: cost.gatewayFee,
+                        cost_tax: cost.tax, cost_tax_pct: cost.taxPct, sale_value: cost.saleValue, cost_source: cost.source
+                    });
+                }
+                try {
+                    await axios.post(tcUrl, Object.assign({}, body, extra), { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
+                } catch (_) {}
+            })().catch(() => {});
+        };
+        forwardOnError = forwardToTrackCombo;
 
         const resp = await axios.post('https://pix.paghiper.com/invoice/notification/', { token, apiKey, transaction_id: transactionId, notification_id: notificationId }, {
             headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -15441,6 +15520,11 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 if (Number.isFinite(n)) paidValueCents = n;
             }
         } catch (_) {}
+
+        const feeCents = (function () {
+            const n = parseInt(String(stRoot?.value_fee_cents ?? '').trim(), 10);
+            return Number.isFinite(n) && n >= 0 ? n : null;
+        })();
 
         const pixCode = stRoot?.pix_code || {};
         const brCode = String(pixCode?.emv || '').trim() || null;
@@ -15588,14 +15672,21 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     }
                 } else {
                     await processOrderFulfillment(record, col, req);
+                    // Despachado: espera o fornecedor registrar o pedido e manda com o charge real.
+                    forwardToTrackCombo({ live: true, delayMs: 15000, valueCents: paidValueCents, feeCents });
                 }
             } catch (_) {}
             try { await broadcastPaymentPaid(existingOrder?.identifier, existingOrder?.correlationID); } catch (_) {}
         }
 
+        // Demais notificações (pendente, estorno, upsell aguardando o pai...) seguem na hora.
+        forwardToTrackCombo({ valueCents: paidValueCents, feeCents });
+
         return res.status(200).json({ ok: true });
     } catch (err) {
         try { console.error('❌ PagHiper notification error:', err?.message || String(err)); } catch (_) {}
+        // Falhou antes de encaminhar (ex.: consulta à PagHiper): a TrackCombo recebe mesmo assim.
+        try { if (forwardOnError) forwardOnError({}); } catch (_) {}
         // Não retornar 200 em falha: a PagHiper tenta novamente automaticamente.
         return res.status(500).json({ ok: false, error: 'notification_processing_failed' });
     }
