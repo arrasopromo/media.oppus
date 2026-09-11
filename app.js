@@ -4025,8 +4025,11 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
     const semDdi = digits.replace(/^55/, '');
     const d11 = semDdi.slice(-11);
     const d10 = d11.length === 11 && d11[2] === '9' ? d11.slice(0, 2) + d11.slice(3) : '';
+    // O WhatsApp manda alguns números SEM o 9 (ex.: 5571 9271-7539) e o pedido está salvo
+    // COM o 9 — por isso monta as duas formas. d9 = com o 9 inserido depois do DDD.
+    const d9 = (semDdi.length === 10) ? (semDdi.slice(0, 2) + '9' + semDdi.slice(2)) : '';
     const cands = [];
-    for (const base of [d11, d10].filter(Boolean)) {
+    for (const base of [d11, d10, d9].filter(Boolean)) {
       cands.push(base, '55' + base, '+55' + base, '+' + base);
       const ddd = base.slice(0, 2), resto = base.slice(2);
       cands.push(`(${ddd}) ${resto.slice(0, resto.length - 4)}-${resto.slice(-4)}`);
@@ -4041,8 +4044,19 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
     }
     const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
     const proj = { identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
-    const docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
-    const total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
+    let docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+    let total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
+    // Nada pelas formas exatas (telefone salvo truncado/formatado diferente): tenta pelos
+    // 8 últimos dígitos, que é como a IA de vendas também procura. Mais lento, só no fallback.
+    if (!total) {
+      const last8 = d11.slice(-8);
+      if (last8.length === 8) {
+        const rx = new RegExp(last8 + '$');
+        const filtro8 = { $or: [{ 'customer.phone': { $regex: rx } }, { 'customer.telefone': { $regex: rx } }, { 'additionalInfoMapPaid.phone': { $regex: rx } }, { 'additionalInfoMap.phone': { $regex: rx } }] };
+        docs = await col.find(filtro8, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+        total = resumo ? await col.countDocuments(filtro8, { limit: 200 }) : docs.length;
+      }
+    }
     const info = (o, k) => {
       for (const m of [o.additionalInfoMapPaid, o.additionalInfoMap]) if (m && m[k] != null && String(m[k]).trim()) return String(m[k]).trim();
       return '';
