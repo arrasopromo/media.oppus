@@ -101,6 +101,7 @@ function systemPrompt() {
     'TIPO no fechamento (CRÍTICO p/ o preço): ao chamar gerar_pix, use EXATAMENTE o mesmo tipo que você cotou e o cliente confirmou. "brasileiros reais"/"reais"/"de verdade"/"orgânico" = tipo *organicos* — NUNCA mande como "brasileiros" (isso troca o produto e cobra o valor errado). "brasileiros" (sem "reais") = brasileiros simples. Na dúvida do tipo, confirme com o cliente antes de gerar. O valor do Pix TEM que ser o mesmo que você cotou.',
     'E-MAIL: para pedir o e-mail, pergunte de forma simples e direta (ex.: "Pra finalizar, me passa seu melhor e-mail?"). Como normalmente é a PRIMEIRA compra, você NÃO tem o e-mail do cliente — então NUNCA diga "parece que não recebi seu e-mail", "faltou seu e-mail" ou algo que sugira que ele já enviou. Só peça.',
     'ERRO NA REPOSIÇÃO (cliente diz que pediu a reposição e deu erro, erro interno, não consegue, não funciona, manda print de erro): NUNCA mande o link de reposição de novo e NUNCA responda com status do pedido ("está em andamento") — ele JÁ tentou pelo link. Diga que vai acionar o suporte para verificar e resolver, e chame chamar_suporte com o motivo.',
+    'PAGAMENTO JÁ CONFIRMADO: se no histórico já existe a mensagem de *Pagamento confirmado* deste pedido, NUNCA peça o pagamento de novo, não reenvie o Pix e não diga que está aguardando a confirmação. Trate o pedido como pago: agradeça e fale da entrega.',
     'Se o cliente pedir atendente humano ou fizer reclamação séria, use chamar_suporte e pare de vender.',
   ].join('\n');
 }

@@ -5577,14 +5577,23 @@ async function notifyWppAgentPaidWhatsapp(doc) {
     const tipoLabel = ehOrganico ? 'brasileiros reais' : (/brasileir/.test(tipo) ? 'brasileiros' : (/misto/.test(tipo) ? 'mistos' : ''));
     const desc = [getAdd('quantidade'), getAdd('categoria_servico'), tipoLabel].filter(Boolean).join(' ') || getAdd('pacote') || 'seu pedido';
 
-    let msg = 'Pagamento confirmado! Seu pedido de *' + desc + '* já foi liberado';
+    let msg = 'Pagamento confirmado, obrigado pela confiança! Seu pedido de *' + desc + '* já foi liberado';
     msg += ehOrganico
       ? ' e vai começar a entrar aos poucos — a entrega dos *brasileiros reais* é gradual e natural, com prazo de até 48h.'
       : ' e vai começar a entrar em instantes.';
-    msg += ' Qualquer dúvida, é só chamar!';
+    msg += ' Qualquer dúvida, é só chamar por aqui. Obrigado por comprar com a Oppus!';
 
     const wa = require('./whatsappCloud.js');
     await wa.sendWhatsAppText(phone, msg);
+    // Avisa o AGENTE que o pagamento entrou: sem isto ele seguia dizendo "fico no aguardo
+    // da confirmação do pagamento" e até remandava o Pix para quem já tinha pago.
+    try {
+      const chats = await getCollection('whatsapp_agent_chats');
+      await chats.updateOne(
+        { _id: String(phone) },
+        { $push: { messages: { $each: [{ role: 'assistant', content: msg }], $slice: -20 } }, $set: { updatedAt: new Date().toISOString() } }
+      );
+    } catch (_) {}
     try { console.log('✅ [IA] confirmação de pagamento enviada no WhatsApp para ' + phone); } catch (_) {}
   } catch (_) {}
 }
