@@ -375,6 +375,9 @@ function ebookEnabled() {
   }
   return flag && confirma;
 }
+// NÃO USADA hoje (set/2026): por decisão do negócio, TODA nota de serviço sai SEM TOMADOR
+// e sem CPF. Mantida só para quando se decidir identificar o tomador. Nenhum caminho de
+// emissão a chama — confira antes de voltar a usá-la.
 // Tomador (receiver) da NFS-e. A NFS-e IDENTIFICA o tomador por nome + e-mail + telefone
 // mesmo SEM CPF (confirmado na Spedy/Vespasiano). Então montamos o tomador com o que
 // houver (+ CPF quando existir). Só fica "sem tomador" quando não há NENHUM dado real.

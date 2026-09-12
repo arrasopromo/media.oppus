@@ -47518,9 +47518,14 @@ app.post('/api/upsell/charge', publicIpLimit('upsell_charge', 10, 10), async (re
 
     // Reaproveita email e CPF do pedido pai (PagHiper exige ambos)
     const email = String(parent?.customer?.email || map['email'] || '').trim();
+    // CPF do upsell: HERDA o do pedido pai. Sem ele, gera um CPF válido NOVO para este
+    // pedido — antes caía num CPF fixo do .env (PAGHIPER_DEFAULT_CPF), que acabou usado em
+    // 415 cobranças de clientes diferentes. A nota de serviço não leva tomador de todo jeito.
     let cpfDigits = String(parent?.customer?.cpf || parent?.customer?.cpfCnpj || map['cpf'] || map['cpf_cnpj'] || '').replace(/\D/g, '');
-    const envCpf = String(process.env.PAGHIPER_DEFAULT_CPF || '').replace(/\D/g, '').trim();
-    if ((!cpfDigits || cpfDigits.length !== 11) && envCpf && envCpf.length === 11) cpfDigits = envCpf;
+    let cpfHerdado = cpfDigits.length === 11;
+    if (!cpfHerdado) {
+      try { cpfDigits = require('./whatsappSales.js').generateValidCPF(); } catch (_) { cpfDigits = ''; }
+    }
     if (!email) { try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'missing_email', parentIdentifier, at: new Date().toISOString() }); } catch (_) {} return res.status(400).json({ ok: false, error: 'missing_email' }); }
     if (!cpfDigits || cpfDigits.length !== 11) { try { const ec = await getCollection('upsell_errors'); await ec.insertOne({ reason: 'missing_cpf', parentIdentifier, at: new Date().toISOString() }); } catch (_) {} return res.status(400).json({ ok: false, error: 'missing_cpf' }); }
 
@@ -47536,6 +47541,7 @@ app.post('/api/upsell/charge', publicIpLimit('upsell_charge', 10, 10), async (re
       { key: 'parent_identifier', value: parentIdentifier },
       { key: 'email',             value: email },
       { key: 'cpf',               value: cpfDigits },
+      { key: 'cpf_origem',        value: cpfHerdado ? 'pedido_pai' : 'gerado' },
       ...(offer.postLink ? [{ key: 'post_link', value: offer.postLink }] : []),
     ].filter(it => it.value);
     if (phone) additionalInfo.push({ key: 'phone', value: phone });
