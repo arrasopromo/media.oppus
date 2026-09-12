@@ -188,6 +188,41 @@ async function runAgent(phone, text) {
   return res;
 }
 
+// ── Áudio do cliente → texto ────────────────────────────────────────────────
+// Antes, quem mandava áudio ficava SEM resposta: a mídia era só registrada como "[áudio]"
+// e não chegava no agente (que é texto). Agora baixa da Meta e transcreve na OpenAI, o
+// texto vai pro CRM e pro agente. Se falhar, cai no comportamento antigo.
+const TRANSCREVER_AUDIO = String(process.env.WHATSAPP_IA_TRANSCREVER_AUDIO || 'true').toLowerCase() !== 'false';
+const TRANSCRIBE_MODEL = String(process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1').trim();
+const AUDIO_MAX_BYTES = Math.max(1, Number(process.env.WHATSAPP_IA_AUDIO_MAX_MB || 12) || 12) * 1024 * 1024;
+
+async function transcreverAudio(mediaId, mimeIn) {
+  const c = CFG();
+  const openai = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!TRANSCREVER_AUDIO || !openai || !c.token || !mediaId) return '';
+  if (typeof FormData === 'undefined' || typeof Blob === 'undefined') return '';   // Node antigo: segue sem transcrição
+  try {
+    const meta = await axios.get(`https://graph.facebook.com/${c.version}/${encodeURIComponent(String(mediaId))}`, { headers: { Authorization: 'Bearer ' + c.token }, timeout: 20000, validateStatus: () => true });
+    const url = (meta && meta.status === 200 && meta.data && meta.data.url) ? String(meta.data.url) : '';
+    if (!url) return '';
+    const tamanho = Number((meta.data && meta.data.file_size) || 0);
+    if (tamanho && tamanho > AUDIO_MAX_BYTES) { try { console.warn('🎧 [IA] áudio grande demais, não transcrito:', tamanho); } catch (_) {} return ''; }
+    const bin = await axios.get(url, { headers: { Authorization: 'Bearer ' + c.token }, responseType: 'arraybuffer', timeout: 45000, validateStatus: () => true });
+    if (bin.status !== 200 || !bin.data) return '';
+    const buf = Buffer.from(bin.data);
+    if (buf.length > AUDIO_MAX_BYTES) return '';
+    const mime = String((meta.data && meta.data.mime_type) || mimeIn || 'audio/ogg').split(';')[0];
+    const ext = /ogg/i.test(mime) ? 'ogg' : (/mp4|m4a|aac/i.test(mime) ? 'm4a' : (/mpeg|mp3/i.test(mime) ? 'mp3' : 'wav'));
+    const fd = new FormData();
+    fd.append('file', new Blob([buf], { type: mime }), 'audio.' + ext);
+    fd.append('model', TRANSCRIBE_MODEL);
+    fd.append('language', 'pt');
+    const r = await axios.post('https://api.openai.com/v1/audio/transcriptions', fd, { headers: { Authorization: 'Bearer ' + openai }, timeout: 90000, validateStatus: () => true });
+    if (r.status !== 200) { try { console.warn('🎧 [IA] transcrição falhou:', r.status, JSON.stringify(r.data || {}).slice(0, 160)); } catch (_) {} return ''; }
+    return String((r.data && r.data.text) || '').trim().slice(0, 1500);
+  } catch (e) { try { console.warn('🎧 [IA] erro ao transcrever:', e && e.message); } catch (_) {} return ''; }
+}
+
 // dedup de wamids reentregues pela Meta
 const seenWamids = new Set();
 
@@ -214,6 +249,17 @@ async function handleInboundMessage(m, contactName) {
   if (MEDIA_TYPES.includes(m.type)) {
     const md = m[m.type] || {};
     const kind = (m.type === 'voice') ? 'audio' : m.type;
+    // Áudio: transcreve e trata como se o cliente tivesse escrito — o CRM mostra o texto
+    // junto do player e o agente responde normalmente.
+    if (kind === 'audio') {
+      const transcricao = await transcreverAudio(String(md.id || ''), String(md.mime_type || ''));
+      if (transcricao) {
+        try { console.log('🎧 [IA] áudio transcrito de ' + from + ': ' + transcricao.slice(0, 120)); } catch (_) {}
+        await logIaMessage({ phone: from, direction: 'in', type: 'audio', text: '[áudio] ' + transcricao, mediaId: String(md.id || ''), mime: String(md.mime_type || ''), wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') });
+        if (c.autoReply && !(await isBotPaused(from))) { await runAgent(from, transcricao); }
+        return;
+      }
+    }
     const label = kind === 'image' ? '[imagem]' : kind === 'audio' ? '[áudio]' : kind === 'video' ? '[vídeo]' : kind === 'document' ? ('[documento] ' + (md.filename || '')) : kind === 'sticker' ? '[figurinha]' : '[mídia]';
     logIaMessage({ phone: from, direction: 'in', type: kind, text: (md.caption ? (label + ' ' + md.caption) : label), mediaId: String(md.id || ''), mime: String(md.mime_type || ''), filename: String(md.filename || ''), wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') }).catch(() => {});
     return;
@@ -292,4 +338,4 @@ function registerWhatsappIa(app) {
   try { console.log(`🤖 IA WhatsApp: webhook em ${path} | ${configured() ? 'configurado' : 'SEM credenciais (WHATSAPP_IA_*)'} | OpenAI ${agent.isEnabled() ? 'on' : 'off (fallback regras)'}`); } catch (_) {}
 }
 
-module.exports = { registerWhatsappIa, sendWhatsAppText, sendWhatsAppMedia, sendWhatsAppButtons, isBotPaused, handleInboundMessage, configured, isTriggerMessage, isSalesTrigger, buildConfirmNudgeText, CONFIRM_NUDGE_MS, MENU_BUTTONS, WELCOME_TEXT, logIaMessage, getIaConfig: CFG };
+module.exports = { transcreverAudio, registerWhatsappIa, sendWhatsAppText, sendWhatsAppMedia, sendWhatsAppButtons, isBotPaused, handleInboundMessage, configured, isTriggerMessage, isSalesTrigger, buildConfirmNudgeText, CONFIRM_NUDGE_MS, MENU_BUTTONS, WELCOME_TEXT, logIaMessage, getIaConfig: CFG };
