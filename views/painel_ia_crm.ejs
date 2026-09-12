@@ -107,7 +107,11 @@
     .ped-st.outro { background:#f3f4f6; color:#4b5563; }
     /* Anexo colado/escolhido aguardando o envio (igual ao WhatsApp: só vai ao clicar em ➤) */
     .pend-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #fff; border-top: 1px solid #e9edef; }
-    .pend-thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; flex: 0 0 auto; }
+    .pend-list { display: flex; gap: 6px; overflow-x: auto; max-width: 60%; padding-bottom: 2px; }
+    .pend-item { position: relative; flex: 0 0 auto; }
+    .pend-thumb { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; display: block; background: #f0f2f5; }
+    .pend-file { width: 46px; height: 46px; border-radius: 6px; background: #f0f2f5; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; }
+    .pend-x { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: #54656f; color: #fff; font-size: 0.62rem; line-height: 1; cursor: pointer; padding: 0; }
     .pend-ico { font-size: 1.6rem; width: 46px; text-align: center; flex: 0 0 auto; }
     .pend-body { flex: 1; min-width: 0; }
     .pend-name { font-size: 0.86rem; font-weight: 600; color: #111b21; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -250,14 +254,13 @@
             <button type="button" id="rbCancel" title="Cancelar resposta">✕</button>
           </div>
           <div id="pendBar" class="pend-bar" style="display:none;">
-            <img id="pendThumb" class="pend-thumb" alt="" style="display:none;">
-            <span id="pendIco" class="pend-ico" style="display:none;">📄</span>
+            <div class="pend-list" id="pendList"></div>
             <div class="pend-body"><div class="pend-name" id="pendName"></div><div class="pend-sub" id="pendSub">Escreva uma legenda (opcional) e toque em ➤ para enviar</div></div>
-            <button type="button" id="pendCancel" title="Remover anexo">✕</button>
+            <button type="button" id="pendCancel" title="Remover todos os anexos">✕</button>
           </div>
           <div class="composer">
             <button type="button" class="icon-btn" id="attachBtn" title="Anexar imagem, documento ou áudio" aria-label="Anexar">📎</button>
-            <input type="file" id="fileInput" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" style="display:none">
+            <input type="file" id="fileInput" multiple accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" style="display:none">
             <textarea id="msgInput" placeholder="Mensagem" rows="1" autocomplete="off"></textarea>
             <button type="button" class="icon-btn" id="micBtn" title="Gravar áudio" aria-label="Gravar áudio">🎤</button>
             <button type="button" id="sendBtn" title="Enviar" aria-label="Enviar">➤</button>
@@ -551,13 +554,22 @@
       });
       async function send(){
         // Anexo aguardando envio (colado ou escolhido no 📎): vai agora, com o texto de legenda.
-        if(state.pending){
+        if((state.pendings||[]).length){
           if(!state.current) return;
-          var f=state.pending, cap=$('msgInput').value.trim();
+          var fila=state.pendings.slice(), cap=$('msgInput').value.trim();
           $('sendBtn').disabled=true;
-          var okUp=await uploadFile(f, cap);
+          var enviados=0;
+          for(var i=0;i<fila.length;i++){
+            if(fila.length>1) upmsg('Enviando '+(i+1)+' de '+fila.length+'…');
+            var okUp=await uploadFile(fila[i].file, i===0?cap:'');
+            if(!okUp) break;
+            enviados++;
+          }
           $('sendBtn').disabled=false;
-          if(okUp){ clearPending(); $('msgInput').value=''; $('msgInput').style.height='auto'; }
+          if(enviados){
+            for(var j=0;j<enviados;j++) removePending(0);
+            if(!(state.pendings||[]).length){ $('msgInput').value=''; $('msgInput').style.height='auto'; }
+          }
           return;
         }
         var txt=$('msgInput').value.trim(); if(!txt||!state.current) return;
@@ -675,54 +687,76 @@
       // ── Anexo pendente (colar imagem ou escolher no 📎) ────────────────────
       // Fica na prévia acima da barra e só é enviado quando você clica em ➤ — o texto
       // digitado vira legenda da imagem, como no WhatsApp.
+      // Vários anexos de uma vez: cada um vira uma mensagem, na ordem. A legenda
+      // digitada vai no PRIMEIRO (é assim que o WhatsApp trata um envio em lote).
+      var MAX_ANEXOS=10;
       function clearPending(){
-        state.pending=null;
-        try { if(state.pendingUrl) URL.revokeObjectURL(state.pendingUrl); } catch(_){}
-        state.pendingUrl=null;
-        $('pendBar').style.display='none';
-        $('pendThumb').style.display='none'; $('pendThumb').removeAttribute('src');
-        $('pendIco').style.display='none';
-        $('msgInput').placeholder='Mensagem';
+        try { (state.pendings||[]).forEach(function(p){ if(p.url) URL.revokeObjectURL(p.url); }); } catch(_){}
+        state.pendings=[];
+        renderPending();
       }
-      function setPending(file){
-        if(!file) return;
-        if(!state.current){ alert('Abra uma conversa primeiro.'); return; }
-        if(file.size && file.size > 16*1024*1024){ alert('Arquivo grande demais (máx 16MB).'); return; }
-        clearPending();
-        state.pending=file;
-        var ehImg=/^image\//i.test(file.type||'');
-        if(ehImg){
-          state.pendingUrl=URL.createObjectURL(file);
-          $('pendThumb').src=state.pendingUrl; $('pendThumb').style.display='block';
-        } else {
-          $('pendIco').textContent=/^video\//i.test(file.type||'')?'🎬':(/^audio\//i.test(file.type||'')?'🎵':'📄');
-          $('pendIco').style.display='block';
-        }
-        $('pendName').textContent=file.name||(ehImg?'Imagem colada':'Arquivo');
+      function removePending(i){
+        var p=(state.pendings||[])[i]; if(!p) return;
+        try { if(p.url) URL.revokeObjectURL(p.url); } catch(_){}
+        state.pendings.splice(i,1);
+        renderPending();
+      }
+      function renderPending(){
+        var lista=state.pendings||[];
+        if(!lista.length){ $('pendBar').style.display='none'; $('pendList').innerHTML=''; $('msgInput').placeholder='Mensagem'; return; }
+        $('pendList').innerHTML=lista.map(function(p,i){
+          var mini=p.url ? ('<img class="pend-thumb" src="'+p.url+'" alt="">') : ('<div class="pend-file">'+p.ico+'</div>');
+          return '<div class="pend-item" title="'+esc(p.file.name||'')+'">'+mini+'<button type="button" class="pend-x" data-i="'+i+'" title="Remover">✕</button></div>';
+        }).join('');
+        $('pendName').textContent = lista.length===1 ? (lista[0].file.name||'Imagem colada') : (lista.length+' anexos');
+        $('pendSub').textContent = lista.length===1 ? 'Escreva uma legenda (opcional) e toque em ➤ para enviar' : ('Vão em '+lista.length+' mensagens, na ordem. A legenda vai na primeira.');
         $('pendBar').style.display='flex';
         $('msgInput').placeholder='Legenda (opcional)';
+      }
+      function setPending(files){
+        var arr=(files && files.length!=null) ? Array.prototype.slice.call(files) : (files?[files]:[]);
+        if(!arr.length) return;
+        if(!state.current){ alert('Abra uma conversa primeiro.'); return; }
+        state.pendings=state.pendings||[];
+        var ignorados=0;
+        for(var k=0;k<arr.length;k++){
+          var file=arr[k]; if(!file) continue;
+          if(state.pendings.length>=MAX_ANEXOS){ ignorados++; continue; }
+          if(file.size && file.size > 16*1024*1024){ ignorados++; continue; }
+          var ehImg=/^image\//i.test(file.type||'');
+          state.pendings.push({ file:file, url: ehImg?URL.createObjectURL(file):'', ico: /^video\//i.test(file.type||'')?'🎬':(/^audio\//i.test(file.type||'')?'🎵':'📄') });
+        }
+        if(ignorados) alert(ignorados+' arquivo(s) não entraram (máximo de '+MAX_ANEXOS+' por vez e 16MB cada).');
+        renderPending();
         $('msgInput').focus();
       }
       $('pendCancel').addEventListener('click', clearPending);
+      $('pendList').addEventListener('click', function(ev){
+        var b=ev.target.closest('.pend-x'); if(!b) return;
+        removePending(Number(b.getAttribute('data-i')));
+      });
       $('attachBtn').addEventListener('click', function(){ if(!state.current){ alert('Abra uma conversa primeiro.'); return; } $('fileInput').click(); });
-      $('fileInput').addEventListener('change', function(){ var f=this.files&&this.files[0]; if(f) setPending(f); this.value=''; });
+      $('fileInput').addEventListener('change', function(){ if(this.files && this.files.length) setPending(this.files); this.value=''; });
       // Colar (Ctrl+V) imagem da área de transferência, em qualquer lugar do chat.
       document.addEventListener('paste', function(ev){
         var dt=ev.clipboardData; if(!dt || !state.current) return;
         var itens=dt.items?Array.prototype.slice.call(dt.items):[];
-        var it=itens.find(function(x){ return x && x.kind==='file' && /^image\//i.test(x.type||''); });
-        var f=it?it.getAsFile():((dt.files&&dt.files[0]&&/^image\//i.test(dt.files[0].type||''))?dt.files[0]:null);
-        if(!f) return;                     // texto normal segue colando no campo
+        var arquivos=itens.filter(function(x){ return x && x.kind==='file' && /^image\//i.test(x.type||''); }).map(function(x){ return x.getAsFile(); }).filter(Boolean);
+        if(!arquivos.length && dt.files && dt.files.length) arquivos=Array.prototype.slice.call(dt.files).filter(function(f){ return /^image\//i.test(f.type||''); });
+        if(!arquivos.length) return;        // texto normal segue colando no campo
         ev.preventDefault();
-        var ext=(f.type.split('/')[1]||'png').split('+')[0];
-        setPending(f.name?f:new File([f],'imagem-colada.'+ext,{ type:f.type }));
+        setPending(arquivos.map(function(f,i){
+          if(f.name) return f;
+          var ext=(String(f.type||'').split('/')[1]||'png').split('+')[0];
+          return new File([f],'imagem-colada'+(i?('-'+(i+1)):'')+'.'+ext,{ type:f.type });
+        }));
       });
       // Arrastar e soltar arquivo no chat também cai na prévia.
       var dropArea=document.querySelector('.thread') || document;
       dropArea.addEventListener('dragover', function(ev){ if(ev.dataTransfer && ev.dataTransfer.types && Array.prototype.indexOf.call(ev.dataTransfer.types,'Files')>=0){ ev.preventDefault(); } });
       dropArea.addEventListener('drop', function(ev){
-        var f=ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
-        if(!f) return; ev.preventDefault(); setPending(f);
+        var fs=ev.dataTransfer && ev.dataTransfer.files;
+        if(!fs || !fs.length) return; ev.preventDefault(); setPending(fs);
       });
 
       // Gravar áudio (voz)
