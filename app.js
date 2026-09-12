@@ -17465,7 +17465,8 @@ app.post('/api/admin/fiscal/set-cpf/:orderId', requireAdmin, async (req, res) =>
 app.get('/painel/notas-fiscais', requireAdmin, async (req, res) => {
   try {
     const col = await getCollection('checkout_orders');
-    const state = String(req.query.state || 'held');
+    // Abre em TODAS (antes abria em 'represados', dando impressão de fila travada).
+    const state = String(req.query.state || 'all');
     const q = state === 'all'
       ? { 'notaFiscal': { $exists: true } }
       : { 'notaFiscal.emissionState': state };
@@ -17525,6 +17526,24 @@ app.get('/painel/notas-fiscais', requireAdmin, async (req, res) => {
   } catch (e) {
     return res.status(500).send(String((e && e.message) || e));
   }
+});
+
+// Sincroniza AGORA um lote de notas presas em fila (botão da tela de Notas Fiscais).
+app.post('/api/painel/notas-fiscais/sincronizar', requireAdmin, async (req, res) => {
+  try {
+    const lote = Math.max(1, Math.min(200, Number((req.body && req.body.limite) || req.query.limite || 60) || 60));
+    const col = await getCollection('checkout_orders');
+    const pend = await col.find({ 'notaFiscal.emissionState': { $in: ['enqueued', 'processing'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } }, { projection: { identifier: 1, notaFiscal: 1 } }).sort({ 'notaFiscal.requestedAt': 1 }).limit(lote).toArray();
+    let atualizadas = 0, erros = 0;
+    for (const rec of pend) {
+      try {
+        const r = await notaFiscalManager.sincronizarStatus(rec, col);
+        if (r && r.ok && String(r.status || '') !== 'enqueued') atualizadas++; else if (!r || !r.ok) erros++;
+      } catch (_) { erros++; }
+      await new Promise((r2) => setTimeout(r2, 350));
+    }
+    return res.json({ ok: true, consultadas: pend.length, atualizadas, erros });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'erro' }); }
 });
 
 // Consulta/sincroniza o status da nota de um pedido (admin).
@@ -47700,6 +47719,42 @@ app.get('/api/upsell/status', async (req, res) => {
 //  NÃO re-despacha sozinho (evita duplicar um pedido que possa ter sido
 //  entregue). Kill switch: STUCK_BUMP_SWEEPER_ENABLED=false.
 // ═══════════════════════════════════════════════════════════════════
+// ── Sincroniza o status das notas com a Spedy ──────────────────────────────
+// A nota é gravada como "enqueued" e a Spedy autoriza segundos depois. Sem webhook
+// chegando, o estado local ficava parado para sempre e a tela mostrava centenas de
+// notas "na fila" que, na Spedy, já estavam autorizadas. Este job consulta em lotes.
+function startSpedyStatusSyncLoop() {
+  const ligado = String(process.env.SPEEDY_SYNC_ENABLED || 'true').toLowerCase() !== 'false';
+  if (!ligado) { try { console.log("⏸️ [nf-sync] DESLIGADO (SPEEDY_SYNC_ENABLED=false)"); } catch (_) {} return; }
+  const minutos = Math.max(2, Number(process.env.SPEEDY_SYNC_MINUTES || 10) || 10);
+  const lote = Math.max(1, Math.min(200, Number(process.env.SPEEDY_SYNC_BATCH || 40) || 40));
+  const gapMs = Math.max(100, Number(process.env.SPEEDY_SYNC_GAP_MS || 400) || 400);   // respeita o limite da Spedy (429)
+  const tick = async () => {
+    if (!backgroundJobsEnabled()) return;
+    try {
+      if (!notaFiscalManager || typeof notaFiscalManager.sincronizarStatus !== "function") return;
+      const col = await getCollection('checkout_orders');
+      const pendentes = await col.find(
+        { 'notaFiscal.emissionState': { $in: ['enqueued', 'processing'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } },
+        { projection: { identifier: 1, notaFiscal: 1 } }
+      ).sort({ 'notaFiscal.requestedAt': 1 }).limit(lote).toArray();
+      if (!pendentes.length) return;
+      let atualizadas = 0;
+      for (const rec of pendentes) {
+        try {
+          const r = await notaFiscalManager.sincronizarStatus(rec, col);
+          if (r && r.ok && String(r.status || '') && String(r.status) !== 'enqueued') atualizadas++;
+        } catch (_) {}
+        await new Promise((res) => setTimeout(res, gapMs));
+      }
+      if (atualizadas) { try { console.log(`🧾 [nf-sync] ${atualizadas}/${pendentes.length} notas atualizadas pela Spedy.`); } catch (_) {} }
+    } catch (e) { try { console.warn('[nf-sync] erro:', e && e.message); } catch (_) {} }
+  };
+  setTimeout(() => { tick().catch(() => {}); }, 60 * 1000);
+  setInterval(() => { tick().catch(() => {}); }, minutos * 60 * 1000);
+  try { console.log(`🧾 [nf-sync] ligado: a cada ${minutos}min, até ${lote} notas por rodada.`); } catch (_) {}
+}
+
 function startStuckBumpSweeper() {
   const enabled = String(process.env.STUCK_BUMP_SWEEPER_ENABLED || 'true').trim().toLowerCase() !== 'false';
   if (!enabled) { try { console.log('🧹 stuck-bump sweeper DESATIVADO (STUCK_BUMP_SWEEPER_ENABLED=false)'); } catch (_) {} return; }
@@ -47760,6 +47815,7 @@ const server = app.listen(port, () => {
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
   try { startCostRecalibrateLoop(); } catch (_) {} // Auto-calibra cost_settings pelo custo real dos últimos N pedidos de cada tipo (a cada 6h)
+  try { startSpedyStatusSyncLoop(); } catch (_) {} // Notas 'na fila' → consulta a Spedy e atualiza o estado real
 
   // ── Garante índices em checkout_orders (idempotente) — evita varredura completa (COLLSCAN) ──
   (async function ensureCheckoutOrdersIndexes() {

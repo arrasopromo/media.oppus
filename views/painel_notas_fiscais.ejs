@@ -46,6 +46,7 @@
     <h1>Notas Fiscais</h1>
     <p class="sub">Pedidos represados (sem CPF), com erro ou já emitidos. Corrija o CPF dos represados e reemita.</p>
 
+    <p style="margin:-6px 0 12px;"><button type="button" onclick="sincronizarFila()" style="padding:7px 12px;border:1px solid #0369a1;background:#0369a1;color:#fff;border-radius:8px;cursor:pointer;font-size:0.85rem;">Atualizar status na Spedy</button> <span id="syncMsg" style="color:#64748b;font-size:0.82rem;"></span></p>
     <div class="tabs">
       <% var tabs = [['held','Represados','held'],['error','Com erro','error'],['enqueued','Na fila','enqueued'],['authorized','Autorizadas','authorized'],['rejected','Rejeitadas','rejected'],['all','Todas','']]; %>
       <% tabs.forEach(function(t){ %>
@@ -113,6 +114,13 @@
     async function post(url) {
       const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       return r.json().catch(function(){ return { ok:false, error:'resposta inválida' }; });
+    }
+    async function sincronizarFila() {
+      var m = document.getElementById('syncMsg');
+      m.textContent = 'Consultando a Spedy…';
+      var j = await post('/api/painel/notas-fiscais/sincronizar');
+      if (j && j.ok) { m.textContent = j.atualizadas + ' de ' + j.consultadas + ' atualizadas.'; setTimeout(function(){ location.reload(); }, 900); }
+      else { m.textContent = 'Falha: ' + ((j && j.error) || 'erro'); }
     }
     async function salvarReemitir(id) {
       var cpf = (document.getElementById('cpf-' + id).value || '').replace(/\D/g, '');

@@ -361,7 +361,19 @@ function pickInvoiceFromOrderResponse(data) {
 // Liga o modo EBOOK (split na 1ª compra). Enquanto false (padrão), o sistema emite
 // SÓ nota de SERVIÇO do valor cheio para todo pedido pago. Ligar só após a troca de CNAE.
 function ebookEnabled() {
-  return String(process.env.SPEEDY_EBOOK_ENABLED || '').trim().toLowerCase() === 'true';
+  const flag = String(process.env.SPEEDY_EBOOK_ENABLED || '').trim().toLowerCase() === 'true';
+  // TRAVA EXTRA (set/2026): nenhuma nota pode referenciar ebook enquanto o CNAE não mudar.
+  // Além da flag antiga, exige SPEEDY_EBOOK_CONFIRM=cnae-ok — que NÃO existe em produção.
+  // Assim, mesmo que a flag esteja ligada em algum ambiente, o ebook continua desligado.
+  const confirma = String(process.env.SPEEDY_EBOOK_CONFIRM || '').trim().toLowerCase() === 'cnae-ok';
+  if (flag && !confirma) {
+    if (!ebookEnabled.__avisou) {
+      ebookEnabled.__avisou = true;
+      try { console.warn('⚠️ [Spedy] SPEEDY_EBOOK_ENABLED=true, mas o ebook está TRAVADO (falta SPEEDY_EBOOK_CONFIRM=cnae-ok). Emitindo só nota de SERVIÇO do valor cheio.'); } catch (_) {}
+    }
+    return false;
+  }
+  return flag && confirma;
 }
 // Tomador (receiver) da NFS-e. A NFS-e IDENTIFICA o tomador por nome + e-mail + telefone
 // mesmo SEM CPF (confirmado na Spedy/Vespasiano). Então montamos o tomador com o que
