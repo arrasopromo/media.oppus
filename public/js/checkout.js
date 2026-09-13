@@ -3383,6 +3383,9 @@
               try { emailEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
             }
           } catch (_) {}
+          // Página de engajamento: o campo de e-mail fica na etapa 2 (escondido aqui). Volta para
+          // ela, mostra o aviso e foca o campo — em vez de só um alerta sem onde corrigir.
+          try { if (typeof window.__validarContatoEngajamento === 'function') { window.__validarContatoEngajamento(); throw new Error('Confira seu e-mail: ele está incompleto ou vazio. Voltamos para a etapa de dados para você corrigir.'); } } catch (eEng) { if (eEng && /Confira seu e-mail/.test(eEng.message)) throw eEng; }
           throw new Error('Informe seu e-mail para pagar via Pix (PagHiper).');
         }
       }

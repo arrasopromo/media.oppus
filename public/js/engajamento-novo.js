@@ -1313,6 +1313,46 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Função Global para Step (Renomeada para evitar conflito com checkout.js)
+  // Confere e-mail e telefone da etapa 2. Mesma regra de e-mail que o checkout.js usa ao
+  // gerar o Pix — assim nada que passe daqui é recusado lá na frente.
+  window.__validarContatoEngajamento = function() {
+      const emailEl = document.getElementById('contactEmailInput');
+      const phoneEl = document.getElementById('checkoutPhoneInput') || document.getElementById('contactPhoneInput');
+      const emailErr = document.getElementById('emailErrorMsg');
+      const email = String((emailEl && emailEl.value) || '').trim().toLowerCase();
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      const phoneDigits = String((phoneEl && phoneEl.value) || '').replace(/\D/g, '');
+      const phoneOk = phoneDigits.length >= 10;
+      const marcar = (el) => {
+          if (!el) return;
+          el.classList.add('input-error');
+          try { el.focus(); } catch (_) {}
+          try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+          const limpar = () => { el.classList.remove('input-error'); if (el === emailEl && emailErr) emailErr.style.display = 'none'; el.removeEventListener('input', limpar); };
+          el.addEventListener('input', limpar);
+      };
+      if (!emailOk) {
+          if (emailErr) {
+              emailErr.textContent = email ? 'Confira seu e-mail — parece incompleto (ex.: nome@gmail.com)' : 'Por favor, informe seu e-mail';
+              emailErr.style.display = 'block';
+          }
+          // Se chegou aqui sem estar na etapa 2 (ex.: link com ?step=3), leva de volta para ela.
+          const step2 = document.getElementById('step2Container');
+          if (step2 && getComputedStyle(step2).display === 'none' && window.__voltarEtapa2ParaContato !== true) {
+              window.__voltarEtapa2ParaContato = true;
+              try { window.goToStepEngajamento(2); } finally { window.__voltarEtapa2ParaContato = false; }
+          }
+          setTimeout(() => marcar(emailEl), 50);
+          return false;
+      }
+      if (!phoneOk) {
+          alert('Por favor, informe um telefone válido com DDD.');
+          marcar(phoneEl);
+          return false;
+      }
+      return true;
+  };
+
   window.goToStepEngajamento = function(step, pushHistory = true) {
       console.log('goToStepEngajamento called with step:', step);
 
@@ -1410,6 +1450,11 @@ document.addEventListener('DOMContentLoaded', function() {
               // Como profileVisible é false no reload, ele cai no if anterior.
               return;
           }
+
+          // E-mail e telefone: o botão "Continuar" deixava passar vazio/errado e o erro só
+          // aparecia na etapa 3, ao gerar o Pix ("Informe seu e-mail..."), com o campo já
+          // escondido. Agora trava AQUI, mostra o aviso e foca o campo.
+          if (!window.__validarContatoEngajamento()) return;
 
           if (step1) step1.style.setProperty('display', 'none', 'important');
           if (step2) step2.style.setProperty('display', 'none', 'important');
