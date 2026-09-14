@@ -38850,7 +38850,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const col = await getCollection('checkout_orders');
     const settingsCol = await getCollection('settings');
 
-    const view = String(req.query.view || 'dashboard');
+    // Abre em VENDAS (período padrão da view vendas = hoje). Dashboard fica em ?view=dashboard.
+    const view = String(req.query.view || 'vendas');
 
     // Nunca deixa o BROWSER cachear o HTML do painel — o cache é SERVER-SIDE (SWR, __painelCache).
     // Sem isto, o navegador podia guardar um build antigo e mostrar cards já trocados como velhos

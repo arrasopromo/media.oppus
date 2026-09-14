@@ -195,7 +195,7 @@
         <% } %>
     </div>
     
-    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isServiceTypesView ? '/painel?view=service_types' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel'))))); %>
+    <% const baseUrl = isUnknownOrderIdView ? '/painel?view=unknown_orderid' : (isServiceTypesView ? '/painel?view=service_types' : (isRefil2View ? '/painel?view=refil2' : (isLtvView ? '/painel?view=ltv' : (isCouponsView ? '/painel?view=coupons' : (isVendasView ? '/painel?view=vendas' : '/painel?view=dashboard'))))); %>
     <% const sep = (String(baseUrl || '').includes('?')) ? '&' : '?'; %>
     <% const panelPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all'; %>
 
