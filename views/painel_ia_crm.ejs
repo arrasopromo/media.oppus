@@ -28,8 +28,9 @@
     .conv.active { background: #e9f7ef; }
     .avatar { width: 44px; height: 44px; border-radius: 50%; background: #d1d7db; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1rem; flex-shrink: 0; }
     .conv-main { flex: 1; min-width: 0; }
-    .conv-top { display: flex; justify-content: space-between; gap: 8px; }
-    .conv-name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .conv-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .conv-name { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+    .conv-tags { flex: 0 0 auto; display: inline-flex; align-items: center; white-space: nowrap; }
     .conv-time { font-size: 0.7rem; color: #667781; flex-shrink: 0; }
     .conv-sub { font-size: 0.82rem; color: #667781; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
     .badge-unread { background: #25d366; color: #fff; border-radius: 999px; font-size: 0.68rem; padding: 1px 7px; margin-left: 6px; }
@@ -365,7 +366,10 @@
           html+='<div class="conv'+(state.current===c.phone?' active':'')+(pendente?' pend':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
             +'<div class="avatar">'+esc(initials(c.name,c.phone))+'</div>'
             +'<div class="conv-main">'
-              +'<div class="conv-top"><span class="conv-name">'+esc(nm)+tag
+              // Nome e etiquetas em spans SEPARADOS: o nome encolhe com "…" e a etiqueta
+              // (bot/humano/antiga) fica sempre visível. Antes, nome comprido escondia a etiqueta.
+              +'<div class="conv-top"><span class="conv-name" title="'+esc(nm)+'">'+esc(nm)+'</span>'
+                +'<span class="conv-tags">'+tag
                 +(modoArroba && c.via ? c.via.map(function(v){ return '<span class="busca-via">'+(v==='pedido'?'pedido':'citou')+'</span>'; }).join('') : '')
                 +'</span></div>'
               +(modoArroba && c.usuarios && c.usuarios.length ? '<div class="conv-sub" style="color:#0f766e">@'+esc(c.usuarios.join(', @'))+'</div>' : '')
