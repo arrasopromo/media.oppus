@@ -87,6 +87,8 @@
     .b .cap { margin-top: 4px; }
     /* Cabeçalho: @ da compra + botão "Ver pedidos" (só aparece com pedido no banco) */
     .t-ig { color:#0f766e; font-weight:600; margin-left:6px; }
+    .busca-info { padding:8px 14px; font-size:0.76rem; color:#54656f; background:#f7f8fa; border-bottom:1px solid #eef0f2; }
+    .busca-via { font-size:0.6rem; background:#e0f2fe; color:#075985; padding:1px 5px; border-radius:4px; margin-left:6px; vertical-align:middle; }
     .btn-pedidos { margin-left:8px; border:1px solid #25d366; background:#fff; color:#128c4a; border-radius:999px;
       padding:2px 9px; font-size:0.7rem; font-weight:700; cursor:pointer; vertical-align:middle; }
     .btn-pedidos:hover { background:#eafaf0; }
@@ -219,7 +221,7 @@
           <h2>CRM IA WhatsApp</h2>
           <span class="pill" id="convCount">0</span>
         </div>
-        <div class="search"><input type="text" id="search" placeholder="Buscar conversa..." autocomplete="off"></div>
+        <div class="search"><input type="text" id="search" placeholder="Buscar conversa ou @perfil..." autocomplete="off"></div>
         <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
         <div class="tabs" id="tabs">
           <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente — atendimento só do bot continua aqui">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
@@ -324,7 +326,10 @@
       }
       function renderConvs(){
         var list=$('convList'); var q=state.filter.toLowerCase();
-        var items=state.convs.filter(function(c){
+        // Busca por @perfil: mostra o que o servidor achou (pedidos e conversas com esse @),
+        // independente da guia e da lista carregada.
+        var modoArroba=!!(state.arroba && state.arroba.q);
+        var items=modoArroba ? (state.arroba.resultados||[]).slice() : state.convs.filter(function(c){
           if(q && (c.name||'').toLowerCase().indexOf(q)<0 && (c.phone||'').indexOf(q)<0) return false;
           // "respondida" = VOCÊ respondeu manualmente em algum momento. Conversa
           // atendida só pelo BOT continua como não respondida. E o "ok" do cliente
@@ -346,6 +351,12 @@
         // Sem cabeçalho de grupo no meio da lista: a separação respondida/não
         // respondida é feita pelos BOTÕES lá em cima.
         var html='';
+        if(modoArroba){
+          var inf = state.arroba.carregando ? ('Procurando @'+esc(state.arroba.q)+'…')
+            : (items.length ? (items.length+' conversa(s) ligada(s) a @'+esc(state.arroba.q)) : ('Nenhuma conversa ligada a @'+esc(state.arroba.q)))
+              + (state.arroba.semConversa ? (' · '+state.arroba.semConversa+' telefone(s) de pedido sem conversa no CRM') : '');
+          html+='<div class="busca-info">'+inf+'</div>';
+        }
         items.forEach(function(c){
           var pendente=(c.lastDir!=='out');
           var nm=c.name || ('+'+c.phone);
@@ -354,7 +365,10 @@
           html+='<div class="conv'+(state.current===c.phone?' active':'')+(pendente?' pend':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
             +'<div class="avatar">'+esc(initials(c.name,c.phone))+'</div>'
             +'<div class="conv-main">'
-              +'<div class="conv-top"><span class="conv-name">'+esc(nm)+tag+'</span></div>'
+              +'<div class="conv-top"><span class="conv-name">'+esc(nm)+tag
+                +(modoArroba && c.via ? c.via.map(function(v){ return '<span class="busca-via">'+(v==='pedido'?'pedido':'citou')+'</span>'; }).join('') : '')
+                +'</span></div>'
+              +(modoArroba && c.usuarios && c.usuarios.length ? '<div class="conv-sub" style="color:#0f766e">@'+esc(c.usuarios.join(', @'))+'</div>' : '')
               +'<div class="conv-sub">'+esc(prefix)+esc(c.lastText||'')+'</div>'
             +'</div>'
             // Coluna de tempo à DIREITA (não embaixo): decorrido + hora/data
@@ -368,7 +382,7 @@
         var vazio = (state.tab==='pending')
           ? '<div class="empty" style="height:auto;padding:28px 20px;">✅ Nenhuma conversa sem resposta.</div>'
           : '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
-        var novo = html || vazio;
+        var novo = (modoArroba ? html : (html || vazio));
         // O polling redesenha a lista a cada 5s. Se nada mudou, não mexe no DOM
         // (senão o scroll do usuário volta pro topo enquanto ele está rolando).
         if(novo===state._convsHtml) return;
@@ -545,7 +559,27 @@
         state.tab=t; state.scope=cfg.scope; state.answer=cfg.answer;
         if(mudouEscopo) loadConvs(); else renderConvs();
       });
-      $('search').addEventListener('input', function(){ state.filter=this.value; renderConvs(); });
+      var buscaTimer=null, buscaSeq=0;
+      $('search').addEventListener('input', function(){
+        var v=String(this.value||'').trim();
+        if(v.charAt(0)==='@'){
+          var q=v.replace(/^@+/,'').toLowerCase();
+          state.filter='';
+          if(q.length<3){ state.arroba={ q:q, resultados:[], carregando:false }; renderConvs(); return; }
+          state.arroba={ q:q, resultados:(state.arroba&&state.arroba.q===q)?state.arroba.resultados:[], carregando:true };
+          renderConvs();
+          clearTimeout(buscaTimer);
+          var seq=++buscaSeq;
+          buscaTimer=setTimeout(async function(){
+            var d=await api('/api/painel/ia-crm/busca-arroba?u='+encodeURIComponent(q));
+            if(seq!==buscaSeq) return;   // chegou resposta de uma busca antiga
+            state.arroba={ q:q, resultados:(d&&d.ok&&d.resultados)||[], semConversa:(d&&d.telefonesSemConversa)||0, carregando:false };
+            state._convsHtml=null; renderConvs();
+          }, 400);
+          return;
+        }
+        state.arroba=null; state.filter=this.value; state._convsHtml=null; renderConvs();
+      });
       $('botBtn').addEventListener('click', async function(){
         if(!state.current) return;
         var target=!state.botPaused; // se ligado -> pausa (você atende); se pausado -> religa

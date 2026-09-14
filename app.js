@@ -4013,6 +4013,62 @@ app.get('/api/painel/ia-crm/messages', requireAdmin, async (req, res) => {
     return res.json({ ok: true, phone, name: (contact && contact.name) || '', botPaused: !!(contact && contact.botPaused), messages: msgs });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Busca de conversa pelo @ do Instagram (campo de busca do CRM começando com "@").
+// Acha as conversas por dois caminhos: (1) telefones dos PEDIDOS feitos com esse @ e
+// (2) conversas em que o @ foi CITADO. Não depende da lista carregada (que tem só as 300
+// mais recentes). Exato primeiro; sem resultado, busca quem começa com o texto digitado.
+app.get('/api/painel/ia-crm/busca-arroba', requireAdmin, async (req, res) => {
+  try {
+    const u = String(req.query.u || '').trim().toLowerCase().replace(/^@+/, '').replace(/\/+$/, '').split('/').pop().replace(/[^a-z0-9._]/g, '');
+    if (u.length < 3) return res.json({ ok: true, usuario: u, resultados: [] });
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const orders = await getCollection('checkout_orders');
+    const msgsCol = await getCollection('wa_ia_messages');
+    const contatos = await getCollection('whatsapp_contacts');
+    const achados = new Map();   // telefone(8 últimos) -> { via:Set, usuarios:Set }
+    const marca = (tel, via, usuario) => {
+      const d = String(tel || '').replace(/\D/g, '');
+      if (d.length < 8) return;
+      const k = d.slice(-8);
+      const a = achados.get(k) || { via: new Set(), usuarios: new Set() };
+      a.via.add(via); if (usuario) a.usuarios.add(usuario);
+      achados.set(k, a);
+    };
+    for (const modo of ['exato', 'comeca']) {
+      const rx = new RegExp('^@?' + esc(u) + (modo === 'exato' ? '$' : ''), 'i');
+      const peds = await orders.find({ $or: [{ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx }] },
+        { projection: { 'customer.phone': 1, 'additionalInfoMapPaid.phone': 1, 'additionalInfoMap.phone': 1, 'additionalInfoMapPaid.instagram_username': 1, instagramUsername: 1, instauser: 1 } }).limit(60).toArray();
+      for (const o of peds) {
+        const handle = String(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').toLowerCase();
+        marca(o.customer && o.customer.phone, 'pedido', handle);
+        marca(o.additionalInfoMapPaid && o.additionalInfoMapPaid.phone, 'pedido', handle);
+        marca(o.additionalInfoMap && o.additionalInfoMap.phone, 'pedido', handle);
+      }
+      const citou = await msgsCol.aggregate([
+        { $match: { text: { $regex: (modo === 'exato' ? '(^|[^a-z0-9._])@?' + esc(u) + '($|[^a-z0-9._])' : '@' + esc(u)), $options: 'i' } } },
+        { $group: { _id: '$phone' } }, { $limit: 60 }
+      ]).toArray();
+      for (const c of citou) marca(c._id, 'conversa', u);
+      if (achados.size) break;
+    }
+    if (!achados.size) return res.json({ ok: true, usuario: u, resultados: [] });
+
+    // Liga cada telefone à conversa existente no CRM (pelos 8 últimos dígitos).
+    const finais = [...achados.keys()];
+    const rxTel = new RegExp('(' + finais.map(esc).join('|') + ')$');
+    const convs = await contatos.find({ _id: { $regex: rxTel } }, { projection: { name: 1, lastMessageAt: 1, lastMessageText: 1, lastMessageDir: 1, botPaused: 1, legacy: 1, unread: 1 } }).limit(60).toArray();
+    const resultados = convs.map((c) => {
+      const a = achados.get(String(c._id).replace(/\D/g, '').slice(-8)) || { via: new Set(), usuarios: new Set() };
+      return {
+        phone: String(c._id), name: c.name || '', lastAt: c.lastMessageAt || null, lastText: c.lastMessageText || '', lastDir: c.lastMessageDir || '',
+        botPaused: !!c.botPaused, legacy: !!c.legacy, unread: !!c.unread,
+        via: [...a.via], usuarios: [...a.usuarios],
+      };
+    }).sort((x, y) => new Date(y.lastAt || 0) - new Date(x.lastAt || 0));
+    return res.json({ ok: true, usuario: u, resultados, telefonesSemConversa: Math.max(0, achados.size - resultados.length) });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
 // Pedidos do telefone aberto no CRM (botão "Ver pedidos" ao lado do número).
 // Consulta separada e sob demanda: não passa pelo fluxo de mensagens nem pelo bot.
 let __crmPhoneIndexOk = false;
