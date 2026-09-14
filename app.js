@@ -1058,6 +1058,17 @@ const isSoftReject = (t) => {
 // Números aqui NUNCA recebem LTV (nem o automático D+2 nem o envio manual da base).
 // Ao cadastrar, o painel busca o @ do cliente pelo telefone para o admin validar
 // que é o número certo. Chave = mesma do opt-out (dígitos sem o 55).
+// O mesmo celular aparece COM e SEM o 9 (o WhatsApp manda "55 61 8286-6708"; o pedido tem
+// "61 98286-6708"). A chave do opt-out é só os dígitos sem o 55, então as duas formas
+// viravam chaves diferentes: o lookup não achava o cliente e o bloqueio não pegava nos envios.
+function ltvPhoneKeyVariants(phone) {
+  const k = normOptoutPhone(phone);
+  if (!k) return [];
+  const out = new Set([k]);
+  if (k.length === 10 && /^[6-9]$/.test(k[2])) out.add(k.slice(0, 2) + '9' + k.slice(2));   // celular antigo sem o 9 → com 9
+  if (k.length === 11 && k[2] === '9' && /^[6-9]$/.test(k[3])) out.add(k.slice(0, 2) + k.slice(3)); // com 9 → sem 9
+  return [...out];
+}
 const __ltvBlacklistCache = new Set();
 let __ltvBlacklistLoaded = false;
 async function loadLtvBlacklistCache() {
@@ -1065,21 +1076,21 @@ async function loadLtvBlacklistCache() {
     const c = await getCollection('ltv_blacklist');
     const docs = await c.find({}, { projection: { phoneKey: 1 } }).toArray();
     __ltvBlacklistCache.clear();
-    for (const d of (docs || [])) { const k = String(d && d.phoneKey || '').trim(); if (k) __ltvBlacklistCache.add(k); }
+    for (const d of (docs || [])) { const k = String(d && d.phoneKey || '').trim(); if (k) for (const v of ltvPhoneKeyVariants(k)) __ltvBlacklistCache.add(v); }
     __ltvBlacklistLoaded = true;
   } catch (_) {}
 }
 async function isLtvBlacklisted(phone) {
-  const k = normOptoutPhone(phone);
-  if (!k) return false;
-  if (__ltvBlacklistCache.has(k)) return true;
-  if (!__ltvBlacklistLoaded) { await loadLtvBlacklistCache(); return __ltvBlacklistCache.has(k); }
-  return false;
+  const vs = ltvPhoneKeyVariants(phone);
+  if (!vs.length) return false;
+  if (!__ltvBlacklistLoaded) await loadLtvBlacklistCache();
+  return vs.some((v) => __ltvBlacklistCache.has(v));
 }
 // Acha nome/@ do cliente pelo telefone — usado para validar o cadastro na blacklist.
 async function ltvLookupByPhone(phone) {
   const e164 = normalizePhoneBR(phone);
   const key = normOptoutPhone(phone);
+  const __lookupVariants = ltvPhoneKeyVariants(phone);
   const out = { phoneE164: e164 || '', phoneKey: key || '', username: '', name: '', found: false };
   if (!key) return out;
   try {
@@ -1103,7 +1114,7 @@ async function ltvLookupByPhone(phone) {
         const getAdd = buildOrderFieldGetter(order);
         const customer = (order.customer && typeof order.customer === 'object') ? order.customer : {};
         const phoneRaw = getAdd('phone') || getAdd('telefone') || getAdd('whatsapp') || customer.phone || customer.telefone || customer.whatsapp || '';
-        if (normOptoutPhone(phoneRaw) !== key) continue;
+        if (!ltvPhoneKeyVariants(phoneRaw).some((v) => __lookupVariants.includes(v))) continue;
         const ig = String(getAdd('instagram_username') || getAdd('instagramUsername') || getAdd('username') || getAdd('perfil') || getAdd('instagram') || order.instagramUsername || order.instauser || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
         const nm = String(customer.name || customer.nome || getAdd('nome') || getAdd('name') || '').trim();
         if (nm && !out.name) out.name = nm;
@@ -9909,9 +9920,13 @@ app.post('/api/painel/ltv/blacklist/add', requireAdmin, async (req, res) => {
   try {
     const phone = String((req.body && req.body.phone) || '').trim();
     if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
-    const phoneKey = normOptoutPhone(phone);
-    const phoneE164 = normalizePhoneBR(phone);
+    const __vs = ltvPhoneKeyVariants(phone);
+    // chave canônica = a de 11 dígitos (com o 9), quando existir
+    const phoneKey = __vs.find((v) => v.length === 11) || __vs[0] || '';
+    const phoneE164 = normalizePhoneBR(phoneKey.length === 11 ? ('55' + phoneKey) : phone);
     if (!phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    // já bloqueado na outra forma (sem/com 9)? não duplica
+    try { const __c0 = await getCollection('ltv_blacklist'); const __ja = await __c0.findOne({ phoneKey: { $in: __vs } }); if (__ja) return res.json({ ok: true, phoneKey: __ja.phoneKey, phoneE164: __ja.phoneE164 || __ja.phoneKey, username: __ja.username || '', name: __ja.name || '', already: true }); } catch (_) {}
     // @ enviado pelo painel (validado no lookup); se vier vazio, tenta buscar de novo.
     let username = String((req.body && req.body.username) || '').replace(/^@+/, '').trim();
     let name = String((req.body && req.body.name) || '').trim();
@@ -9924,7 +9939,7 @@ app.post('/api/painel/ltv/blacklist/add', requireAdmin, async (req, res) => {
       { $set: { phoneKey, phoneE164: phoneE164 || phoneKey, username, name, updatedAt: new Date(), addedBy }, $setOnInsert: { addedAt: new Date() } },
       { upsert: true }
     );
-    __ltvBlacklistCache.add(phoneKey);
+    for (const v of ltvPhoneKeyVariants(phoneKey)) __ltvBlacklistCache.add(v);
     try { console.log('⛔ [ltv-blacklist] add', phoneKey, '@' + (username || '?'), 'by', addedBy); } catch (_) {}
     return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, username, name });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
@@ -9944,8 +9959,9 @@ app.post('/api/painel/ltv/blacklist/remove', requireAdmin, async (req, res) => {
     const phoneKey = normOptoutPhone(phone);
     if (!phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
     const c = await getCollection('ltv_blacklist');
-    await c.deleteOne({ phoneKey });
-    __ltvBlacklistCache.delete(phoneKey);
+    const __vsR = ltvPhoneKeyVariants(phone);
+    await c.deleteMany({ phoneKey: { $in: __vsR } });
+    for (const v of __vsR) __ltvBlacklistCache.delete(v);
     try { console.log('⛔ [ltv-blacklist] remove', phoneKey); } catch (_) {}
     return res.json({ ok: true, phoneKey });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
