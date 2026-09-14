@@ -99,7 +99,17 @@ async function validateProfile(usuario) {
     const resp = await axios.post(INTERNAL_BASE + '/api/internal/ia-check-profile', { username }, { timeout: 25000, validateStatus: () => true, headers });
     const d = resp && resp.data;
     const p = (d && d.profile) ? d.profile : null;
-    if (!d || d.success === false || !p) return { ok: false, error: 'nao_encontrado', username };
+    if (!d || d.success === false || !p) {
+      // A cadeia (RocketAPI/Apify) às vezes nega um perfil que existe — o bot dizia "não achei"
+      // e na mensagem seguinte "achei". Confere no scraper próprio antes de desistir.
+      try {
+        const ig = await require('./instagramScraper.js').getInstagramProfile(username, { fresh: true });
+        if (ig && ig.ok && ig.profile) {
+          return { ok: true, username: ig.profile.username || username, fullName: ig.profile.fullName || '', followers: Number(ig.profile.followers) || 0, isPrivate: !!ig.profile.isPrivate, postsCount: Number(ig.profile.posts) || 0, fonte: 'scraper' };
+        }
+      } catch (_) {}
+      return { ok: false, error: 'nao_encontrado', username };
+    }
     return {
       ok: true, username: p.username || username,
       fullName: p.fullName || '', followers: Number(p.followersCount != null ? p.followersCount : p.followers) || 0,
@@ -141,6 +151,39 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
     if (!links.length) return { ok: false, error: 'faltou_post', message: 'Esse serviço precisa do link do post.' };
     post_links = links;
   }
+  // Mesmo pedido (telefone + serviço + tipo + quantidade + @) nas últimas horas:
+  //  - JÁ PAGO  → não gera outro Pix (o bot cobrava de novo quem tinha acabado de pagar);
+  //  - EM ABERTO → devolve o MESMO Pix (antes cada pergunta do cliente gerava um código novo,
+  //    média de 2,4 Pix por cliente, e o lembrete de pagamento caía no Pix duplicado).
+  try {
+    const fim8 = String(phone || '').replace(/\D/g, '').slice(-8);
+    if (fim8.length === 8) {
+      const col = await getCollection('checkout_orders');
+      const desde = new Date(Date.now() - 12 * 3600e3).toISOString();
+      const iguais = await col.find({
+        correlationID: { $regex: '^WppAgent_' }, createdAt: { $gte: desde },
+        'customer.phone': { $regex: fim8 + '$' },
+        additionalInfo: { $all: [
+          { $elemMatch: { key: 'categoria_servico', value: cot.categoria } },
+          { $elemMatch: { key: 'tipo_servico', value: cot.tipo } },
+          { $elemMatch: { key: 'quantidade', value: String(cot.quantidade) } },
+          { $elemMatch: { key: 'instagram_username', value: username } },
+        ] },
+      }, { projection: { status: 1, identifier: 1, correlationID: 1, valueCents: 1, 'paghiper.brCode': 1, 'paghiper.qrCodeImage': 1, paidAt: 1 } }).sort({ createdAt: -1 }).limit(5).toArray();
+      const pago = iguais.find((o) => String(o.status || '').toLowerCase() === 'pago' || o.paidAt);
+      if (pago) {
+        return { ok: false, error: 'pedido_ja_pago', message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e está em andamento. NÃO gere outro Pix: confirme o pagamento para o cliente e fale da entrega. Só gere um novo se ele disser claramente que quer COMPRAR MAIS um pacote.' };
+      }
+      const aberto = iguais.find((o) => o.paghiper && o.paghiper.brCode);
+      if (aberto) {
+        return {
+          ok: true, reaproveitado: true, correlationID: aberto.correlationID, valorCents: cot.priceCents, valorLabel: cot.priceLabel,
+          pixCopiaECola: String(aberto.paghiper.brCode), qrCodeImage: String(aberto.paghiper.qrCodeImage || ''), identifier: String(aberto.identifier || ''),
+          resumo: `${cot.quantidade} ${cot.unit}${cot.tipo ? ' (' + cot.tipo + ')' : ''} para @${username} — ${cot.priceLabel}`,
+        };
+      }
+    }
+  } catch (_) {}
   const cpf = generateValidCPF();
   const correlationID = 'WppAgent_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
   const additionalInfo = [
@@ -289,6 +332,11 @@ async function consultarPedido({ telefone, usuario } = {}) {
   // Perfil PRIVADO? checa ao vivo (perfil privado bloqueia a entrega).
   let perfilPrivado = null;
   try { const vp = await validateProfile(usernameOrder); if (vp.ok) perfilPrivado = !!vp.isPrivate; } catch (_) {}
+  // Só afirma PRIVADO se o scraper próprio concordar — o bot repetia "seu perfil está privado"
+  // para cliente com perfil público e ele acabou pedindo reembolso.
+  if (perfilPrivado === true) {
+    try { const ig = await require('./instagramScraper.js').getInstagramProfile(usernameOrder, { fresh: true }); if (ig && ig.ok && ig.profile && ig.profile.isPrivate === false) perfilPrivado = false; } catch (_) {}
+  }
 
   // O cliente só pode ver "em andamento" ou "concluído". Qualquer outro status real
   // (entrega parcial, erro, cancelado, desconhecido) é tratado INTERNAMENTE (reposição

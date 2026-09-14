@@ -49056,6 +49056,15 @@ async function runIaPaymentRecoveryTick() {
       const phone = normalizePhoneBR((doc.customer && doc.customer.phone) || '');
       if (!phone || phone.length < 12) continue;
       if (await wa.isBotPaused(phone)) continue; // atendente assumiu → não perturba
+      // Já PAGOU outro pedido desse número por volta da mesma hora (ex.: o bot tinha gerado
+      // Pix duplicado e ele pagou o outro) → não manda "seu Pix ainda está aguardando".
+      // Antes o cliente pagava, mandava comprovante e recebia "Última chamada!".
+      try {
+        const fim8 = String(phone).replace(/\D/g, '').slice(-8);
+        const desdePago = new Date(createdMs - 60 * 60 * 1000).toISOString();
+        const pagoOutro = await col.findOne({ _id: { $ne: doc._id }, status: 'pago', 'customer.phone': { $regex: fim8 + '$' }, $or: [{ paidAt: { $gte: desdePago } }, { 'paghiper.paidAt': { $gte: desdePago } }] }, { projection: { _id: 1 } });
+        if (pagoOutro) continue;
+      } catch (_) {}
       for (const st of stages) {
         if (ageMin < st) continue;
         const flag = `iaPayRecovery.stage${st}At`;

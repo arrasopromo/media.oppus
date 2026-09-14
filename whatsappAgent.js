@@ -50,6 +50,58 @@ function stripPixFromText(text, code) {
   return t;
 }
 
+// ── Travas de conteúdo da resposta ────────────────────────────────────────────
+// O modelo às vezes INVENTA preço (1.000 visualizações por R$ 39,90; um pacote de 2.500
+// que não existe). Toda menção "N <serviço> ... R$ X" é conferida contra as tabelas oficiais.
+const { tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing.js');
+function _catDe(unidade) {
+  const u = String(unidade || '').toLowerCase();
+  if (/seguidor/.test(u)) return 'seguidores';
+  if (/curtida/.test(u)) return 'curtidas';
+  return 'visualizacoes';
+}
+function _tabelasDe(cat) {
+  if (cat === 'seguidores') return tabelaSeguidores;
+  if (cat === 'curtidas') return tabelaCurtidas;
+  return tabelaVisualizacoes;
+}
+function acharPrecosErrados(texto) {
+  const erros = [];
+  // O trecho entre a quantidade e o preço não pode ter OUTRA quantidade nem "total"/"soma":
+  // senão "1000 seguidores e 150 curtidas, total R$ 84,80" viraria preço errado.
+  const re = /(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(seguidor(?:es)?|curtidas?|visualiza[çc][õo]es|views)\b((?:(?!\d{2,}\s*(?:seguidor|curtida|visualiza|views)|total|soma|ao todo)[^\n]){0,45}?)R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/gi;
+  let m;
+  while ((m = re.exec(String(texto || '')))) {
+    const qtd = Number(String(m[1]).replace(/[.\s]/g, ''));
+    const cents = Number(String(m[4]).replace(/\./g, '').replace(',', ''));
+    const cat = _catDe(m[2]);
+    if (!(qtd > 0) || !(cents > 0)) continue;
+    const validos = new Set();
+    for (const tab of Object.values(_tabelasDe(cat))) for (const it of (tab || [])) if (Number(it.q) === qtd) validos.add(parsePrecoToCents(it.p));
+    if (!validos.has(cents)) erros.push({ cat, qtd, preco: m[4], trecho: m[0].slice(0, 80) });
+  }
+  return erros;
+}
+function tabelaOficialTexto(cat) {
+  const nomes = { mistos: '*Mistos*', brasileiros: '*Brasileiros*', organicos: '*Brasileiros reais* (orgânicos)', curtidas_brasileiras: '*Brasileiras*', visualizacoes_reels: '*Visualizações (reels)*' };
+  const partes = [];
+  for (const [tipo, tab] of Object.entries(_tabelasDe(cat))) {
+    const itens = (tab || []).filter((x) => Number(x.q) >= 150).map((x) => '- ' + Number(x.q).toLocaleString('pt-BR') + ': ' + x.p);
+    if (itens.length) partes.push((nomes[tipo] || ('*' + tipo + '*')) + '\n' + itens.join('\n'));
+  }
+  return partes.join('\n\n');
+}
+// Divide em frases mantendo as quebras de linha.
+function _frases(linha) { return String(linha).split(/(?<=[.!?])\s+/); }
+// "Queda de 5-6%" é SÓ dos brasileiros reais. O modelo atribuía isso a mistos/brasileiros.
+function corrigirTaxaQueda(texto) {
+  return String(texto || '').split('\n').map((linha) => _frases(linha).filter((f) => !(/5\s*(?:-|–|a)\s*6\s*%/.test(f) && !/reais|org[âa]nic|organic/i.test(f))).join(' ')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+// Link de reposição só quando o assunto é queda/reposição — não para quem espera a entrega.
+function tirarLinkReposicao(texto) {
+  return String(texto || '').split('\n').map((linha) => /refil\?token=/i.test(linha) ? _frases(linha).filter((f) => !/refil\?token=/i.test(f)).join(' ') : linha).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // ── Histórico por telefone (durável em Mongo, fallback em memória) ──
 const memHist = new Map();
 async function loadHistory(phone) {
@@ -102,6 +154,13 @@ function systemPrompt() {
     'E-MAIL: para pedir o e-mail, pergunte de forma simples e direta (ex.: "Pra finalizar, me passa seu melhor e-mail?"). Como normalmente é a PRIMEIRA compra, você NÃO tem o e-mail do cliente — então NUNCA diga "parece que não recebi seu e-mail", "faltou seu e-mail" ou algo que sugira que ele já enviou. Só peça.',
     'ERRO NA REPOSIÇÃO (cliente diz que pediu a reposição e deu erro, erro interno, não consegue, não funciona, manda print de erro): NUNCA mande o link de reposição de novo e NUNCA responda com status do pedido ("está em andamento") — ele JÁ tentou pelo link. Diga que vai acionar o suporte para verificar e resolver, e chame chamar_suporte com o motivo.',
     'PAGAMENTO JÁ CONFIRMADO: se no histórico já existe a mensagem de *Pagamento confirmado* deste pedido, NUNCA peça o pagamento de novo, não reenvie o Pix e não diga que está aguardando a confirmação. Trate o pedido como pago: agradeça e fale da entrega.',
+    'TAXA DE QUEDA: "5-6% em mais de um mês" vale SÓ para *brasileiros reais* (orgânicos). NUNCA diga isso de *mistos* ou *brasileiros* — desses diga que pode haver queda com o tempo e que seguidores têm reposição pelo link.',
+    'VÁRIAS TABELAS: ao mostrar mais de uma tabela de preço, SEMPRE coloque o título do tipo em cima de cada lista (*Mistos*, *Brasileiros*, *Brasileiros reais*). Nunca mande listas seguidas sem dizer de qual tipo é cada uma.',
+    'PREÇO SÓ DA FERRAMENTA: qualquer preço ou quantidade que você escrever tem que ter vindo de cotar_preco ou tabela_precos NESTA conversa. Nunca invente quantidade que não está na tabela (ex.: "2.500") nem combine preços.',
+    'LINK DE REPOSIÇÃO: mande o link de reposição SÓ quando o cliente falar de queda de seguidores ou pedir reposição. Para quem está esperando a entrega (pedido em andamento), NÃO mande o link.',
+    'PEDIDO JÁ PAGO: se gerar_pix responder pedido_ja_pago, ou se o cliente mandou comprovante/disse que pagou, NÃO gere outro Pix e NÃO diga que está aguardando pagamento. Confirme e fale da entrega. Se ele disser que pagou mas o sistema ainda não confirmou, diga que a confirmação pode levar alguns minutos.',
+    'PERFIL PRIVADO: se o cliente disser que o perfil está PÚBLICO, não repita que está privado. Agradeça, diga que vai verificar e acione chamar_suporte.',
+    'MAIS DE UM SERVIÇO: gere UM Pix por serviço, na ordem, e só depois de ter o link do post daquele serviço. Nunca diga que gerou um pedido que a ferramenta não confirmou. Ao dividir curtidas em vários posts, confirme a quantidade de links que o cliente REALMENTE enviou.',
     'Se o cliente pedir atendente humano ou fizer reclamação séria, use chamar_suporte e pare de vender.',
   ].join('\n');
 }
@@ -152,6 +211,24 @@ async function runTool(name, args, ctx) {
           }
         }
       }
+      // Cliente mandou LINK do perfil numa mensagem anterior (ex.: instagram.com/jhulieartes_) e o
+      // modelo passou o @ sem o "_" final → "não encontrado". Tenta os @ exatos dos links.
+      if (!vr || !vr.ok) {
+        const norm = (x) => String(x || '').toLowerCase().replace(/^@+/, '').replace(/[._]/g, '');
+        const vistos = new Set();
+        for (const t of (ctx.recentUserTexts || [])) {
+          for (const mm of String(t).matchAll(/instagram\.com\/([A-Za-z0-9_.]+)/gi)) {
+            const h = mm[1].toLowerCase();
+            if (vistos.has(h) || ['p', 'reel', 'reels', 'stories', 'tv'].includes(h)) continue;
+            vistos.add(h);
+            if (h === pedido.toLowerCase().replace(/^@+/, '')) continue;
+            if (norm(h) !== norm(pedido) && !norm(h).startsWith(norm(pedido))) continue;
+            const vr3 = await sales.validateProfile(h);
+            if (vr3 && vr3.ok) { try { console.log('🔁 [agent] @ corrigido pelo link do cliente:', pedido, '->', h); } catch (_) {} vr = vr3; break; }
+          }
+          if (vr && vr.ok) break;
+        }
+      }
       if (vr && vr.ok) { ctx.validated = true; ctx.validatedUsername = vr.username || String((args && args.usuario) || '').replace(/^@+/, ''); }
       return vr;
     }
@@ -169,8 +246,15 @@ async function runTool(name, args, ctx) {
     }
     if (name === 'chamar_suporte') { ctx.support = true; return await sales.flagSupport(ctx.phone, (args && args.motivo) || ''); }
     if (name === 'gerar_pix') {
-      const r = await sales.createPixOrder(Object.assign({ phone: ctx.phone }, args || {}));
+      const a2 = Object.assign({}, args || {});
+      // O @ do pedido é o que foi VALIDADO na conversa — o modelo chegou a gravar "@rafael.oliveira"
+      // (tirado do nome do cliente) em vez de @rafaelrobru, que ele tinha validado.
+      const validado = ctx.validatedUsername || ctx.histUsername || '';
+      const normU = (x) => String(x || '').toLowerCase().replace(/^@+/, '').trim();
+      if (validado && normU(a2.usuario) !== normU(validado)) { try { console.log('🔁 [agent] gerar_pix com @ validado:', a2.usuario, '->', validado); } catch (_) {} a2.usuario = validado; }
+      const r = await sales.createPixOrder(Object.assign({ phone: ctx.phone }, a2));
       if (r.ok && r.pixCopiaECola) ctx.pixToSend = r.pixCopiaECola; // enviado em mensagem separada
+      if (r.ok && r.reaproveitado) { ctx.pixReused = true; r.resumo = r.resumo + ' — é o MESMO Pix gerado antes para este pedido (não é pedido novo); diga isso ao cliente.'; }
       // NÃO exponha o copia-e-cola nem o link do QR ao modelo — senão ele cola no texto.
       // O sistema envia o código em mensagem separada + a instrução de como copiar.
       if (r.ok) return { ok: true, valor: r.valorLabel, resumo: r.resumo, codigo_e_instrucao_enviados_automaticamente: true, aviso: 'NÃO escreva o código Pix, QR Code ou qualquer link no texto — o sistema já envia o copia-e-cola e a instrução em mensagens separadas.' };
@@ -203,6 +287,11 @@ async function handleAgentMessage(msg, sendText) {
   // execução — se fosse pro histórico, o corte em MAX_TURNS podia quebrar o par
   // tool_call↔resultado e a OpenAI rejeitava (erro 400 → "instabilidade").
   const hist = await loadHistory(phone);
+  ctx.recentUserTexts = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-4).map((h) => String(h.content || '')));
+  try {
+    const achados = (hist || []).filter((h) => h && h.role === 'assistant').map((h) => String(h.content || '').match(/Achei seu perfil!?\s*@([A-Za-z0-9_.]+)/i)).filter(Boolean);
+    if (achados.length) ctx.histUsername = achados[achados.length - 1][1].replace(/[.,]+$/, '');
+  } catch (_) {}
   const work = [{ role: 'system', content: systemPrompt() }, ...hist, { role: 'user', content: text }];
   let finalText = '';
 
@@ -264,8 +353,11 @@ async function handleAgentMessage(msg, sendText) {
   try {
     const erroRe = /(erro|falhou|falha|deu ruim|travou|n[ãa]o (consigo|consegui|deu|vai|d[áa]|funciona|funcionou|carrega|abre|abriu|aceita|deixa)|n[ãa]o est[áa] funcionando|indispon[íi]vel|apareceu.*(erro|problema))/i;
     const refilRe = /(repos|refil|refill|reposi[çc][ãa]o|link)/i;
-    const ultimasDoCliente = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-3).map((h) => String(h.content || '')));
-    const jaMandamosLink = (hist || []).some((h) => h && h.role === 'assistant' && /refil\?token=/i.test(String(h.content || '')));
+    const ultimasDoCliente = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-2).map((h) => String(h.content || '')));
+    // Só conta o link se foi a ÚLTIMA coisa que o bot mandou (antes: qualquer link antigo na conversa
+    // fazia "o erro é de vocês", dito sobre curtidas, virar "a página de reposição deu erro").
+    const ultimaDoBot = (hist || []).filter((h) => h && h.role === 'assistant').slice(-1)[0];
+    const jaMandamosLink = !!(ultimaDoBot && /refil\?token=/i.test(String(ultimaDoBot.content || '')));
     // "o erro foi meu", "errei" = o cliente se corrigindo, não é falha do sistema.
     const culpaDoCliente = /(erro\s+(foi|é|e)\s+meu|meu\s+erro|errei|foi\s+mal)/i.test(String(text || ''));
     const falaDeErro = !culpaDoCliente && erroRe.test(String(text || ''));
@@ -330,6 +422,26 @@ async function handleAgentMessage(msg, sendText) {
     }
   } catch (_) {}
 
+  // Preço inventado → pede ao modelo para reescrever com a tabela oficial; se insistir,
+  // responde com a tabela oficial direto.
+  try {
+    let erradosP = acharPrecosErrados(finalText);
+    if (erradosP.length && !erroRefilTratado) {
+      try { console.warn('💸 [agent] preço fora da tabela:', JSON.stringify(erradosP)); } catch (_) {}
+      const cats = [...new Set(erradosP.map((e) => e.cat))];
+      const oficial = cats.map((c) => '### ' + c.toUpperCase() + '\n' + tabelaOficialTexto(c)).join('\n\n');
+      work.push({ role: 'system', content: 'CORREÇÃO OBRIGATÓRIA: sua resposta citou preço/quantidade que NÃO existe na tabela oficial (' + erradosP.map((e) => e.trecho).join(' | ') + '). Reescreva a MESMA resposta usando SOMENTE estes preços e quantidades oficiais (se a quantidade pedida não existe, diga quais existem):\n\n' + oficial });
+      try { const mC = await openaiChat(work, false); const novo = String((mC && mC.content) || '').trim(); if (novo) finalText = novo; } catch (_) {}
+      erradosP = acharPrecosErrados(finalText);
+      if (erradosP.length) finalText = 'Deixa eu te passar os valores oficiais certinhos:\n\n' + oficial.replace(/^### .*$/gm, '').trim() + '\n\nQual quantidade você quer?';
+    }
+  } catch (_) {}
+  try { finalText = corrigirTaxaQueda(finalText); } catch (_) {}
+  try {
+    const assuntoReposicao = /(ca[íi]ram|ca[íi]u|sumir|sumiram|sumiu|diminu|perdi|queda|despenc|baixaram|baixou|repos|refil|refill)/i.test((ctx.recentUserTexts || [text]).slice(0, 3).join(' '));
+    if (!assuntoReposicao && !ctx.quedaResolved) finalText = tirarLinkReposicao(finalText);
+  } catch (_) {}
+
   // Salva SÓ o turno de texto (user + resposta final) — histórico sempre válido.
   const newHist = hist.concat([{ role: 'user', content: text }]);
   if (finalText) newHist.push({ role: 'assistant', content: finalText });
@@ -355,7 +467,17 @@ async function handleAgentMessage(msg, sendText) {
   // Entrega do Pix em 3 mensagens SEPARADAS, com 2s entre cada (não despeja tudo de
   // uma vez): 1) instrução de como copiar; 2) o copia-e-cola SOZINHO num balão, pra o
   // cliente copiar tocando/segurando na mensagem (não em link — link não valida).
-  if (ctx.pixToSend) {
+  if (ctx.pixToSend && ctx.pixReused) {
+    const pedeCodigo = /(pix|c[óo]digo|copia|cola|qr|manda de novo|reenvi|mande novamente|n[ãa]o (recebi|chegou|veio)|n[ãa]o (est[áa] )?reconhec)/i.test(text);
+    if (!pedeCodigo) {
+      try {
+        const cm = await getCollection('wa_ia_messages');
+        const ja = await cm.findOne({ phone, direction: 'out', text: ctx.pixToSend, createdAt: { $gte: new Date(Date.now() - 2 * 3600e3) } }, { projection: { _id: 1 } });
+        if (ja) ctx.pixSkip = true;
+      } catch (_) {}
+    }
+  }
+  if (ctx.pixToSend && !ctx.pixSkip) {
     const gap = () => new Promise((r) => setTimeout(r, MSG_GAP_MS));
     const instrucao = 'Para pagar, copie a *mensagem abaixo* e cole na opção *Pix Copia e Cola* do seu banco.\n\nImportante: copie tocando e *segurando no balão* da mensagem abaixo e toque em *Copiar* — não clique como se fosse um link, senão o pagamento não valida.';
     await gap();
