@@ -4048,10 +4048,12 @@ app.get('/api/painel/ia-crm/busca-arroba', requireAdmin, async (req, res) => {
     for (const modo of ['exato', 'comeca']) {
       const rx = new RegExp('^@?' + esc(u) + (modo === 'exato' ? '$' : ''), 'i');
       const peds = await orders.find({ $or: [{ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx }] },
-        { projection: { 'customer.phone': 1, 'additionalInfoMapPaid.phone': 1, 'additionalInfoMap.phone': 1, 'additionalInfoMapPaid.instagram_username': 1, instagramUsername: 1, instauser: 1 } }).limit(60).toArray();
+        { projection: { 'customer.phone': 1, 'customer.phone_number': 1, telefone: 1, 'additionalInfoMapPaid.phone': 1, 'additionalInfoMap.phone': 1, 'additionalInfoMapPaid.instagram_username': 1, instagramUsername: 1, instauser: 1 } }).limit(60).toArray();
       for (const o of peds) {
         const handle = String(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').toLowerCase();
         marca(o.customer && o.customer.phone, 'pedido', handle);
+        marca(o.customer && o.customer.phone_number, 'pedido', handle);
+        marca(o.telefone, 'pedido', handle);
         marca(o.additionalInfoMapPaid && o.additionalInfoMapPaid.phone, 'pedido', handle);
         marca(o.additionalInfoMap && o.additionalInfoMap.phone, 'pedido', handle);
       }
@@ -4104,12 +4106,13 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
     const col = await getCollection('checkout_orders');
     // Índices dos 3 campos do $or (sem os três, o Mongo varre a coleção inteira a cada consulta).
     if (!__crmPhoneIndexOk) {
-      for (const campo of ['customer.phone', 'additionalInfoMapPaid.phone', 'additionalInfoMap.phone']) {
+      for (const campo of ['customer.phone', 'customer.phone_number', 'telefone', 'additionalInfoMapPaid.phone', 'additionalInfoMap.phone']) {
         try { await col.createIndex({ [campo]: 1 }, { sparse: true }); } catch (_) {}
       }
       __crmPhoneIndexOk = true;
     }
-    const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
+    // Pedido de CARTÃO grava o telefone em customer.phone_number/telefone (não em customer.phone).
+    const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'customer.phone_number': { $in: cands } }, { telefone: { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
     const proj = { identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
     let docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
     let total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
@@ -4119,7 +4122,7 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
       const last8 = d11.slice(-8);
       if (last8.length === 8) {
         const rx = new RegExp(last8 + '$');
-        const filtro8 = { $or: [{ 'customer.phone': { $regex: rx } }, { 'customer.telefone': { $regex: rx } }, { 'additionalInfoMapPaid.phone': { $regex: rx } }, { 'additionalInfoMap.phone': { $regex: rx } }] };
+        const filtro8 = { $or: [{ 'customer.phone': { $regex: rx } }, { 'customer.phone_number': { $regex: rx } }, { telefone: { $regex: rx } }, { 'customer.telefone': { $regex: rx } }, { 'additionalInfoMapPaid.phone': { $regex: rx } }, { 'additionalInfoMap.phone': { $regex: rx } }] };
         docs = await col.find(filtro8, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
         total = resumo ? await col.countDocuments(filtro8, { limit: 200 }) : docs.length;
       }
