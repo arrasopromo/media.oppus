@@ -4123,6 +4123,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
     // Pedido de CARTÃO grava o telefone em customer.phone_number/telefone (não em customer.phone).
     const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'customer.phone_number': { $in: cands } }, { telefone: { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
     const proj = { identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
+    let filtroUsado = filtro;   // filtro que achou os pedidos (telefone, 8 dígitos ou @) — usado p/ o link de reposição
     let docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
     let total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
     // Nada pelas formas exatas (telefone salvo truncado/formatado diferente): tenta pelos
@@ -4133,6 +4134,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
         const rx = new RegExp(last8 + '$');
         const filtro8 = { $or: [{ 'customer.phone': { $regex: rx } }, { 'customer.phone_number': { $regex: rx } }, { telefone: { $regex: rx } }, { 'customer.telefone': { $regex: rx } }, { 'additionalInfoMapPaid.phone': { $regex: rx } }, { 'additionalInfoMap.phone': { $regex: rx } }] };
         docs = await col.find(filtro8, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+        filtroUsado = filtro8;
         total = resumo ? await col.countDocuments(filtro8, { limit: 200 }) : docs.length;
       }
     }
@@ -4166,6 +4168,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
           const achados = await col.find(cond, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
           if (achados.length) {
             docs = achados;
+            filtroUsado = cond;
             total = resumo ? await col.countDocuments(cond, { limit: 200 }) : achados.length;
             achadoPor = 'arroba:' + h;
             break;
@@ -4195,7 +4198,20 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
       };
     });
     const usuarios = [...new Set(orders.map((o) => o.instagram).filter(Boolean))];
-    return res.json({ ok: true, total, usuarios, achadoPor, orders: resumo ? [] : orders });
+    // Link de reposição do cliente: o do pedido PAGO mais recente que tem link (botão "Reposição" do CRM).
+    let reposicao = null;
+    if (total) {
+      try {
+        const comLinks = await col.find({ $and: [filtroUsado, { status: 'pago' }, { refilLinkId: { $exists: true, $nin: ['', null] } }] }, { projection: { refilLinkId: 1, identifier: 1, instagramUsername: 1, instauser: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, tipo: 1, tipoServico: 1, createdAt: 1 } }).sort({ createdAt: -1, _id: -1 }).limit(10).toArray();
+        // Prefere pedido com reposição (brasileiros reais/orgânicos não têm refil); sem outro, usa o mais recente.
+        const comLink = comLinks.find((x) => !/organic|reais/i.test(info(x, 'tipo_servico') || String(x.tipoServico || x.tipo || ''))) || comLinks[0];
+        if (comLink) {
+          const base = String(process.env.PUBLIC_BASE_URL || 'https://agenciaoppus.site').replace(/\/+$/, '');
+          reposicao = { link: base + '/refil?token=' + encodeURIComponent(String(comLink.refilLinkId)), pedido: comLink.identifier || '', instagram: String(comLink.instagramUsername || comLink.instauser || info(comLink, 'instagram_username') || '').replace(/^@+/, ''), tipo: info(comLink, 'tipo_servico') || String(comLink.tipoServico || comLink.tipo || '') };
+        }
+      } catch (_) {}
+    }
+    return res.json({ ok: true, total, usuarios, achadoPor, reposicao, orders: resumo ? [] : orders });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 };
 app.get('/api/painel/ia-crm/pedidos', requireAdmin, crmPedidosHandler('ia'));

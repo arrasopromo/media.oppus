@@ -99,6 +99,9 @@
     .btn-pedidos { margin-left:8px; border:1px solid #25d366; background:#fff; color:#128c4a; border-radius:999px;
       padding:2px 9px; font-size:0.7rem; font-weight:700; cursor:pointer; vertical-align:middle; }
     .btn-pedidos:hover { background:#eafaf0; }
+    .btn-reposicao { border-color:#0ea5e9; color:#0369a1; }
+    .btn-reposicao:hover { background:#e0f2fe; }
+    .btn-reposicao.copiado { background:#0ea5e9; color:#fff; }
     /* Modal de pedidos */
     .ped-back { position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:80; display:flex; align-items:center; justify-content:center; padding:16px; }
     .ped-box { background:#fff; border-radius:12px; width:min(680px,100%); max-height:82vh; display:flex; flex-direction:column; overflow:hidden; }
@@ -253,6 +256,7 @@
                 <span id="tPhone"></span>
                 <span class="t-ig" id="tIg" style="display:none;"></span>
                 <button type="button" class="btn-pedidos" id="pedidosBtn" style="display:none;">🧾 Ver pedidos</button>
+                <button type="button" class="btn-pedidos btn-reposicao" id="reposicaoBtn" style="display:none;">♻️ Reposição</button>
               </div>
             </div>
             <div class="actions">
@@ -517,7 +521,7 @@
 
       // ── Pedidos do telefone (botão ao lado do número) ───────────────────────
       // Consulta própria, feita depois das mensagens. Não passa pelo envio nem pelo bot.
-      function limparPedidos(){ $('tIg').style.display='none'; $('tIg').textContent=''; $('pedidosBtn').style.display='none'; state.pedidosTotal=0; }
+      function limparPedidos(){ $('tIg').style.display='none'; $('tIg').textContent=''; $('pedidosBtn').style.display='none'; $('reposicaoBtn').style.display='none'; state.reposicao=null; state.pedidosTotal=0; }
       async function carregarResumoPedidos(phone){
         limparPedidos();
         var d=await api(API+'/pedidos?resumo=1&phone='+encodeURIComponent(phone));
@@ -528,6 +532,12 @@
         $('pedidosBtn').textContent='🧾 Ver pedidos ('+d.total+')';
         $('pedidosBtn').title=/^arroba:/.test(state.pedidosPor) ? ('Encontrado pelo @ citado na conversa (o telefone do pedido é outro)') : 'Pedidos deste telefone';
         $('pedidosBtn').style.display='inline-block';
+        // Link de reposição do perfil do cliente (pedido pago mais recente com link).
+        if(d.reposicao && d.reposicao.link){
+          state.reposicao=d.reposicao;
+          $('reposicaoBtn').title='Copiar link de reposição'+(d.reposicao.instagram?(' de @'+d.reposicao.instagram):'')+(d.reposicao.tipo?(' ('+d.reposicao.tipo+')'):'')+' — '+d.reposicao.link;
+          $('reposicaoBtn').style.display='inline-block';
+        }
       }
       function fecharPedidos(){ var b=document.getElementById('pedBack'); if(b) b.remove(); }
       async function abrirPedidos(){
@@ -558,6 +568,17 @@
         }).join('');
       }
       $('pedidosBtn').addEventListener('click', abrirPedidos);
+      // Copia o link de reposição (com fallback p/ navegador sem clipboard API).
+      $('reposicaoBtn').addEventListener('click', async function(){
+        var r=state.reposicao; if(!r||!r.link) return;
+        var btn=this, ok=false;
+        try{ await navigator.clipboard.writeText(r.link); ok=true; }catch(_){
+          try{ var ta=document.createElement('textarea'); ta.value=r.link; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); ok=document.execCommand('copy'); ta.remove(); }catch(__){}
+        }
+        if(!ok){ window.prompt('Copie o link de reposição:', r.link); return; }
+        btn.classList.add('copiado'); btn.textContent='✓ Link copiado';
+        setTimeout(function(){ btn.classList.remove('copiado'); btn.textContent='♻️ Reposição'; }, 1800);
+      });
 
       // force=true só quando VOCÊ acabou de enviar/agir (aí desce pro fim de propósito).
       async function refreshOpen(force){
