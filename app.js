@@ -15962,8 +15962,17 @@ app.post('/api/paghiper/notification', async (req, res) => {
                         cost_tax: cost.tax, cost_tax_pct: cost.taxPct, sale_value: cost.saleValue, cost_source: cost.source
                     });
                 }
+                const payloadTc = Object.assign({}, body, extra);
+                let httpTc = null, erroTc = '';
                 try {
-                    await axios.post(tcUrl, Object.assign({}, body, extra), { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
+                    const rTc = await axios.post(tcUrl, payloadTc, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
+                    httpTc = rTc && rTc.status;
+                } catch (eTc) { httpTc = (eTc && eTc.response && eTc.response.status) || null; erroTc = String((eTc && eTc.message) || eTc).slice(0, 200); }
+                // Registro do que foi repassado (pra conferir o cost que chegou na TrackCombo). Sem o apiKey.
+                try {
+                    const { apiKey: _k, apikey: _k2, api_key: _k3, ...semChave } = payloadTc;
+                    const lc = await getCollection('trackcombo_forwards');
+                    await lc.insertOne({ at: new Date(), transactionId, status: statusRaw, httpStatus: httpTc, erro: erroTc || null, live: ctx.live === true, temCost: payloadTc.cost != null, payload: semChave });
                 } catch (_) {}
             })().catch(() => {});
         };
