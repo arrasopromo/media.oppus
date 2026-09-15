@@ -76,18 +76,36 @@ function acharPrecosErrados(texto) {
     const cents = Number(String(m[4]).replace(/\./g, '').replace(',', ''));
     const cat = _catDe(m[2]);
     if (!(qtd > 0) || !(cents > 0)) continue;
+    // Tipo citado na própria frase → confere SÓ na tabela desse tipo. Antes valia qualquer
+    // tabela: "500 seguidores brasileiros reais por R$ 39,90" passava porque 39,90 é o
+    // preço de 500 *brasileiros*.
+    const trechoTipo = String(m[3] || '');
+    const chaves = /reais|real\b|org[âa]nic/i.test(trechoTipo) ? ['organicos', 'curtidas_reais']
+      : /brasileir/i.test(trechoTipo) ? ['brasileiros', 'curtidas_brasileiras']
+      : /mist|mundia|internac/i.test(trechoTipo) ? ['mistos'] : null;
+    const tabelas = _tabelasDe(cat);
+    const usar = chaves ? chaves.filter((k) => tabelas[k]).map((k) => tabelas[k]) : Object.values(tabelas);
     const validos = new Set();
-    for (const tab of Object.values(_tabelasDe(cat))) for (const it of (tab || [])) if (Number(it.q) === qtd) validos.add(parsePrecoToCents(it.p));
+    for (const tab of (usar.length ? usar : Object.values(tabelas))) for (const it of (tab || [])) if (Number(it.q) === qtd) validos.add(parsePrecoToCents(it.p));
     if (!validos.has(cents)) erros.push({ cat, qtd, preco: m[4], trecho: m[0].slice(0, 80) });
   }
   return erros;
 }
 function tabelaOficialTexto(cat) {
-  const nomes = { mistos: '*Mistos*', brasileiros: '*Brasileiros*', organicos: '*Brasileiros reais* (orgânicos)', curtidas_brasileiras: '*Brasileiras*', visualizacoes_reels: '*Visualizações (reels)*' };
+  const nomes = cat === 'curtidas'
+    ? { mistos: '*Curtidas mistas*', brasileiros: '*Curtidas brasileiras*', organicos: '*Curtidas brasileiras reais* (orgânicas)' }
+    : { mistos: '*Mistos*', brasileiros: '*Brasileiros*', organicos: '*Brasileiros reais* (orgânicos)', visualizacoes_reels: '*Visualizações (reels)*' };
   const partes = [];
+  const vistas = new Set();
   for (const [tipo, tab] of Object.entries(_tabelasDe(cat))) {
+    // Só os tipos vendidos (curtidas_brasileiras/curtidas_reais são apelidos internos
+    // das mesmas tabelas — antes saíam duplicadas e com o nome cru pro cliente).
+    if (!nomes[tipo]) continue;
     const itens = (tab || []).filter((x) => Number(x.q) >= 150).map((x) => '- ' + Number(x.q).toLocaleString('pt-BR') + ': ' + x.p);
-    if (itens.length) partes.push((nomes[tipo] || ('*' + tipo + '*')) + '\n' + itens.join('\n'));
+    const assinatura = itens.join('|');
+    if (!itens.length || vistas.has(assinatura)) continue;
+    vistas.add(assinatura);
+    partes.push(nomes[tipo] + '\n' + itens.join('\n'));
   }
   return partes.join('\n\n');
 }
@@ -170,6 +188,7 @@ function systemPrompt() {
     '"SÃO FALSOS/FAKE/ROBÔS?" (sobre mistos ou internacionais): responda CURTO e GENÉRICO, SEM detalhamento e SEM dizer que são falsos/fake. NÃO faça comparação longa entre os tipos e NÃO empurre os orgânicos. NUNCA afirme que algum tipo é falso, fake ou robô. Ex. de tom: "São contas reais que dão número e autoridade ao seu perfil. Quer que eu te mostre a tabela?". Não volunteie ressalvas nem defeitos.',
     'Pedido múltiplo (vários serviços numa mensagem): avise que faz um de cada vez, organizado, e comece pelo primeiro.',
     'TIPO ANTES DO PREÇO (CRÍTICO): NUNCA mostre tabela/valor de seguidores ou curtidas sem deixar claro DE QUAL TIPO são. Se o cliente ainda não escolheu, PERGUNTE primeiro (*mistos*, *brasileiros* ou *brasileiros reais*). Se as ferramentas retornarem tipoAssumido=true, os preços são de *mistos* (internacionais) — então ou você escreve isso explicitamente na mensagem, ou pergunta o tipo antes de cotar. Mostrar preço de *mistos* como se fosse "o preço" engana o cliente e gera reclamação depois.',
+    '@ OBRIGATÓRIO EM TODO PEDIDO (inclusive curtidas e visualizações, mesmo já tendo o link do post): peça o @ do Instagram e valide com validar_perfil ANTES de gerar o Pix. NUNCA use o e-mail (ex.: fulano@hotmail.com) nem o nome do cliente como @.',
     'O @ DO CLIENTE É LITERAL: ao chamar validar_perfil ou gerar_pix, copie o @ EXATAMENTE como o cliente escreveu, caractere por caractere. NUNCA corrija, complete, abrevie ou redigite o handle — trocar uma letra faz um perfil válido parecer inexistente.',
     'Fluxo de venda: 1) descubra serviço + tipo; 2) mostre a tabela e pergunte a quantidade; 3) cote o valor exato; 4) peça o @ e valide (confirme nome+seguidores); 5) se tem post, peça o link (+ split); 6) colete SÓ nome e e-mail; 7) confirme o resumo e gere o Pix.',
     'GERAR O PIX — REGRA CRÍTICA: assim que tiver serviço, quantidade, @ (validado), nome e e-mail, chame a ferramenta *gerar_pix* IMEDIATAMENTE, no MESMO turno. NUNCA diga "vou gerar o Pix", "aguarde um momento", "estou processando" e pare sem chamar a ferramenta — isso deixa o cliente esperando pra sempre e o pedido NÃO é criado. Não anuncie a intenção: execute (chame gerar_pix) e só então confirme. Se faltar algum dado, peça só o que falta.',
@@ -287,9 +306,25 @@ async function runTool(name, args, ctx) {
       const a2 = Object.assign({}, args || {});
       // O @ do pedido é o que foi VALIDADO na conversa — o modelo chegou a gravar "@rafael.oliveira"
       // (tirado do nome do cliente) em vez de @rafaelrobru, que ele tinha validado.
-      const validado = ctx.validatedUsername || ctx.histUsername || '';
+      let validado = ctx.validatedUsername || ctx.histUsername || '';
       const normU = (x) => String(x || '').toLowerCase().replace(/^@+/, '').trim();
-      if (validado && normU(a2.usuario) !== normU(validado)) { try { console.log('🔁 [agent] gerar_pix com @ validado:', a2.usuario, '->', validado); } catch (_) {} a2.usuario = validado; }
+      // Sem @ validado na conversa: só aceita o @ se o CLIENTE escreveu (como @, link ou
+      // handle solto) e ele passar na validação. O modelo gravou @marina_kill tirado do
+      // e-mail marina_kill@hotmail.com — perfil errado e privado, o despacho travou.
+      if (!validado) {
+        const h = normU(a2.usuario);
+        const escH = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const rxH = new RegExp('(^|[^a-z0-9._@])@?' + escH + '(?![a-z0-9._]|@)', 'i');
+        const escreveu = !!h && (ctx.allUserTexts || ctx.recentUserTexts || []).some((t) => rxH.test(String(t || '').replace(/\S+@\S+\.\S+/g, ' ')));
+        const vr = escreveu ? await sales.validateProfile(h).catch(() => null) : null;
+        if (!vr || !vr.ok) {
+          try { console.warn('🛑 [agent] gerar_pix sem @ validado:', a2.usuario, '| cliente escreveu:', escreveu); } catch (_) {}
+          return { ok: false, error: 'perfil_nao_validado', message: 'Não gere o Pix ainda: peça o @ do Instagram do cliente e valide com validar_perfil (confirme nome e seguidores). NUNCA use o e-mail ou o nome do cliente como @.' };
+        }
+        validado = vr.username || h;
+        ctx.validatedUsername = validado;
+      }
+      if (normU(a2.usuario) !== normU(validado)) { try { console.log('🔁 [agent] gerar_pix com @ validado:', a2.usuario, '->', validado); } catch (_) {} a2.usuario = validado; }
       const r = await sales.createPixOrder(Object.assign({ phone: ctx.phone }, a2));
       if (r.ok && r.pixCopiaECola) ctx.pixToSend = r.pixCopiaECola; // enviado em mensagem separada
       if (r.ok && r.reaproveitado) { ctx.pixReused = true; r.resumo = r.resumo + ' — é o MESMO Pix gerado antes para este pedido (não é pedido novo); diga isso ao cliente.'; }
@@ -326,6 +361,7 @@ async function handleAgentMessage(msg, sendText) {
   // tool_call↔resultado e a OpenAI rejeitava (erro 400 → "instabilidade").
   const hist = await loadHistory(phone);
   ctx.recentUserTexts = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-4).map((h) => String(h.content || '')));
+  ctx.allUserTexts = [text].concat((hist || []).filter((h) => h && h.role === 'user').map((h) => String(h.content || '')));
   try {
     const achados = (hist || []).filter((h) => h && h.role === 'assistant').map((h) => String(h.content || '').match(/Achei seu perfil!?\s*@([A-Za-z0-9_.]+)/i)).filter(Boolean);
     if (achados.length) ctx.histUsername = achados[achados.length - 1][1].replace(/[.,]+$/, '');

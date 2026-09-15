@@ -179,12 +179,29 @@ function scheduleConfirmNudge(phone, username) {
 }
 
 // Chama o agente e, se ele acabou pedindo a confirmação do @, agenda o cutucão.
+// UM turno por telefone de cada vez: mensagem que chega enquanto o agente ainda responde
+// espera e vai no turno seguinte, junto. Antes rodavam dois turnos em paralelo com o
+// histórico velho — o bot pedia nome/e-mail de novo depois do Pix e contradizia o preço.
+const turnosEmAndamento = new Map(); // phone -> { pendentes: [] }
 async function runAgent(phone, text) {
+  const p = String(phone || '');
+  const andamento = turnosEmAndamento.get(p);
+  if (andamento) { andamento.pendentes.push(text); try { console.log('⏳ [IA] ' + p + ' ainda respondendo — mensagem entra no próximo turno'); } catch (_) {} return null; }
+  const estado = { pendentes: [] };
+  turnosEmAndamento.set(p, estado);
   let res = null;
-  try { res = await agent.handleAgentMessage({ phone, text }, sendWhatsAppText); }
-  catch (e) { try { console.error('❌ IA erro:', e && e.message); } catch (_) {} }
-  try { console.log('🤖 [IA] turno ' + phone + ' → awaitingConfirm=' + !!(res && res.awaitingConfirm)); } catch (_) {}
-  try { if (res && res.awaitingConfirm) scheduleConfirmNudge(phone, res.username); } catch (_) {}
+  try {
+    let atual = text;
+    while (atual) {
+      res = null;
+      try { res = await agent.handleAgentMessage({ phone: p, text: atual }, sendWhatsAppText); }
+      catch (e) { try { console.error('❌ IA erro:', e && e.message); } catch (_) {} }
+      try { console.log('🤖 [IA] turno ' + p + ' → awaitingConfirm=' + !!(res && res.awaitingConfirm)); } catch (_) {}
+      try { if (res && res.awaitingConfirm) scheduleConfirmNudge(p, res.username); } catch (_) {}
+      atual = estado.pendentes.splice(0).join('\n').trim();
+      if (atual && await isBotPaused(p)) break;   // humano assumiu no meio: não responde o resto
+    }
+  } finally { turnosEmAndamento.delete(p); }
   return res;
 }
 
