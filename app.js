@@ -4271,9 +4271,8 @@ app.get('/api/painel/ltv-crm/conversations', requireAdmin, async (req, res) => {
         names: { $addToSet: '$name' }, igs: { $addToSet: '$ig' },
         manuais: { $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'out'] }, { $eq: ['$manualReply', true] }] }, 1, 0] } },
         recebidas: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } } } },
-      // Só conversa em que o cliente escreveu: disparo do LTV sem resposta não é atendimento
-      // (senão os milhares de envios enchem a lista e a fila de "não respondidas").
-      { $match: { recebidas: { $gt: 0 } } },
+      // Checkbox "Só conversas com resposta do cliente" (?withReply=1): tira os disparos sem resposta.
+      ...(String(req.query.withReply || '') === '1' ? [{ $match: { recebidas: { $gt: 0 } } }] : []),
       { $sort: { lastAt: -1 } },
       { $limit: 300 }
     ], { allowDiskUse: true }).toArray();
@@ -4289,11 +4288,13 @@ app.get('/api/painel/ltv-crm/conversations', requireAdmin, async (req, res) => {
       name: (c.names || []).filter(Boolean)[0] || ((c.igs || []).filter(Boolean)[0] ? '@' + (c.igs || []).filter(Boolean)[0] : ''),
       lastText: c.lastText || '', lastDir: c.lastDir, lastAt: c.lastAt,
       answered: Number(c.manuais || 0) > 0,
+      inCount: Number(c.recebidas || 0),
       // Nunca aberta: só marca "novo" se a mensagem é das últimas 48h (não acende o histórico inteiro).
       unread: c.lastDir === 'in' && (lidoEm[c._id] ? new Date(c.lastAt) > new Date(lidoEm[c._id]) : (Date.now() - new Date(c.lastAt).getTime()) < 48 * 3600e3),
       blocked: bloqueado.has(c._id),
     }));
-    return res.json({ ok: true, conversations: list, pendingNew: list.filter((c) => !c.answered).length });
+    // Fila = cliente escreveu e você ainda não respondeu (disparo sem resposta não entra).
+    return res.json({ ok: true, conversations: list, pendingNew: list.filter((c) => c.inCount > 0 && !c.answered).length });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 app.get('/api/painel/ltv-crm/messages', requireAdmin, async (req, res) => {

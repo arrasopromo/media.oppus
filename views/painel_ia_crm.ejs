@@ -25,6 +25,8 @@
     .convs-head h2 { margin: 0; font-size: 1.05rem; color: #111b21; }
     .convs-head .pill { margin-left: auto; font-size: 0.72rem; background: #25d366; color: #fff; padding: 2px 8px; border-radius: 999px; }
     .search { padding: 8px 12px; border-bottom: 1px solid #f0f2f5; }
+    .so-resposta { display:flex; align-items:center; gap:8px; padding:2px 14px 8px; font-size:0.8rem; color:#54656f; cursor:pointer; user-select:none; }
+    .so-resposta input { width:15px; height:15px; accent-color:#25d366; }
     .search input { width: 100%; padding: 8px 12px; border: none; background: #f0f2f5; border-radius: 8px; font-size: 0.9rem; outline: none; }
     .conv-list { flex: 1; overflow-y: auto; }
     .conv { display: flex; gap: 10px; padding: 11px 14px; cursor: pointer; border-bottom: 1px solid #f5f6f6; align-items: center; }
@@ -227,6 +229,9 @@
           <span class="pill" id="convCount">0</span>
         </div>
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa ou @perfil..." autocomplete="off"></div>
+        <% if (!C.temBot) { %>
+        <label class="so-resposta"><input type="checkbox" id="soResposta"> Só conversas com resposta do cliente</label>
+        <% } %>
         <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
         <div class="tabs" id="tabs">
           <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente<%= C.temBot ? ' — atendimento só do bot continua aqui' : '' %>">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
@@ -345,6 +350,9 @@
           // atendida só pelo BOT continua como não respondida. E o "ok" do cliente
           // depois da sua resposta não joga a conversa de volta pra fila.
           var respondida=(c.answered===undefined) ? (c.lastDir==='out') : !!c.answered;
+          // LTV: disparo que o cliente nunca respondeu não é pendência sua.
+          var semResposta=(c.inCount===0);
+          if(state.answer==='pending' && semResposta) return false;
           if(state.answer==='pending' && respondida) return false;
           if(state.answer==='done' && !respondida) return false;
           return true;
@@ -354,7 +362,7 @@
         // "sumia" lá pra baixo da lista.)
         items.sort(function(a,b){ return new Date(b.lastAt||0)-new Date(a.lastAt||0); });
         // Badge da guia "Não respondidas" = o que está na lista carregada.
-        var nPend=state.convs.filter(function(c){ return !c.answered; }).length;
+        var nPend=state.convs.filter(function(c){ return !c.answered && c.inCount!==0; }).length;
         $('convCount').textContent=state.convs.length;
         var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
 
@@ -406,7 +414,7 @@
       }
 
       async function loadConvs(){
-        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope));
+        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope)+(state.soResposta?'&withReply=1':''));
         if(d&&d.ok){ state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew; renderConvs(); }
       }
 
@@ -574,6 +582,7 @@
       // O menu do painel abre/fecha e muda a altura do topo: recalcula.
       var sbToggle=document.getElementById('sidebarToggle');
       if(sbToggle) sbToggle.addEventListener('change', function(){ setTimeout(fitHeight, 30); });
+      if($('soResposta')) $('soResposta').addEventListener('change', function(){ state.soResposta=this.checked; state._convsHtml=null; loadConvs(); });
       $('tabs').addEventListener('click', function(ev){
         var b=ev.target.closest('.tab'); if(!b) return;
         var t=b.getAttribute('data-tab'); var cfg=TABS[t]; if(!cfg) return;
