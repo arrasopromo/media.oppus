@@ -15929,6 +15929,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
         // DEPOIS do despacho, com espera curta, para o charge real do action=status já existir
         // (antes saía no início do webhook e só levava a estimativa). Fire-and-forget.
         let tcForwarded = false;
+        const notifUrlTc = (function () { try { return `${req.protocol}://${req.get('host')}${String(req.originalUrl || '').split('?')[0]}`; } catch (_) { return ''; } })();
         const forwardToTrackCombo = (ctx = {}) => {
             if (tcForwarded) return;
             tcForwarded = true;
@@ -15962,7 +15963,14 @@ app.post('/api/paghiper/notification', async (req, res) => {
                         cost_tax: cost.tax, cost_tax_pct: cost.taxPct, sale_value: cost.saleValue, cost_source: cost.source
                     });
                 }
-                const payloadTc = Object.assign({}, body, extra);
+                // Mesmo formato do registro da PagHiper (aviso + notification_response.status_request
+                // + url) com o custo junto — no topo e dentro do status_request.
+                const statusReq = (ctx.data && ctx.data.status_request) ? Object.assign({}, ctx.data.status_request) : null;
+                if (statusReq && cost) Object.assign(statusReq, { cost: extra.cost, cost_cents: extra.cost_cents, cost_service: extra.cost_service, cost_bumps: extra.cost_bumps, cost_gateway_fee: extra.cost_gateway_fee, cost_tax: extra.cost_tax, cost_tax_pct: extra.cost_tax_pct });
+                const formatoPaghiper = {};
+                if (statusReq) formatoPaghiper.notification_response = Object.assign({}, ctx.data, { status_request: statusReq });
+                formatoPaghiper.url = body.url || notifUrlTc;
+                const payloadTc = Object.assign({}, body, formatoPaghiper, extra);
                 let httpTc = null, erroTc = '';
                 try {
                     const rTc = await axios.post(tcUrl, payloadTc, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, timeout: 8000 });
@@ -16150,7 +16158,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 } else {
                     await processOrderFulfillment(record, col, req);
                     // Despachado: espera o fornecedor registrar o pedido e manda com o charge real.
-                    forwardToTrackCombo({ live: true, delayMs: 15000, valueCents: paidValueCents, feeCents });
+                    forwardToTrackCombo({ live: true, delayMs: 15000, valueCents: paidValueCents, feeCents, data });
                 }
             } catch (_) {}
             try { await broadcastPaymentPaid(existingOrder?.identifier, existingOrder?.correlationID); } catch (_) {}
@@ -16158,7 +16166,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
 
         // Demais notificações (pendente, estorno, upsell aguardando o pai...) seguem na hora —
         // só se a PagHiper reconheceu a notificação (status preenchido); forjada não vai.
-        if (statusRaw) forwardToTrackCombo({ valueCents: paidValueCents, feeCents });
+        if (statusRaw) forwardToTrackCombo({ valueCents: paidValueCents, feeCents, data });
 
         return res.status(200).json({ ok: true });
     } catch (err) {
