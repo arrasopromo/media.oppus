@@ -91,6 +91,30 @@ function tabelaOficialTexto(cat) {
   }
   return partes.join('\n\n');
 }
+// Cliente pediu "brasileiros": a resposta TEM que trazer as 2 opções (brasileiros e
+// brasileiros reais). Se o modelo mandou só a tabela de brasileiros, anexa a de reais.
+function garantirBrasileirosReais(texto) {
+  const t = String(texto || '');
+  if (/reais\b|org[âa]nic/i.test(t.replace(/R\$\s*[\d.,]+/g, '').replace(/\bs[óo] tenho \d+ reais/gi, ''))) return t;
+  const re = /(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(seguidor(?:es)?|curtidas?)\b[^\n]{0,20}?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/gi;
+  const hits = { seguidores: 0, curtidas: 0 };
+  let m;
+  while ((m = re.exec(t))) {
+    const cat = _catDe(m[2]);
+    const tab = (_tabelasDe(cat) || {}).brasileiros || [];
+    const qtd = Number(String(m[1]).replace(/[.\s]/g, ''));
+    const it = tab.find((x) => Number(x.q) === qtd);
+    if (it && parsePrecoToCents(it.p) === Number(String(m[3]).replace(/\./g, '').replace(',', ''))) hits[cat]++;
+  }
+  const cat = hits.seguidores >= 3 ? 'seguidores' : (hits.curtidas >= 3 ? 'curtidas' : '');
+  if (!cat) return t;
+  const itens = ((_tabelasDe(cat) || {}).organicos || []).filter((x) => Number(x.q) >= 150).map((x) => '- ' + Number(x.q).toLocaleString('pt-BR') + ' ' + cat + ': ' + x.p);
+  if (!itens.length) return t;
+  const bloco = 'Também temos os *Brasileiros reais* (orgânicos) — perfis reais e ativos, o serviço mais estável:\n' + itens.join('\n');
+  // Mantém a pergunta final ("Qual quantidade…?") no fim da mensagem.
+  const idx = t.search(/\n[^\n]*\?\s*$/);
+  return idx > 0 ? (t.slice(0, idx).trimEnd() + '\n\n' + bloco + '\n\n' + t.slice(idx).trim()) : (t.trimEnd() + '\n\n' + bloco);
+}
 // Divide em frases mantendo as quebras de linha.
 function _frases(linha) { return String(linha).split(/(?<=[.!?])\s+/); }
 // "Queda de 5-6%" é SÓ dos brasileiros reais. O modelo atribuía isso a mistos/brasileiros.
@@ -155,7 +179,8 @@ function systemPrompt() {
     'ERRO NA REPOSIÇÃO (cliente diz que pediu a reposição e deu erro, erro interno, não consegue, não funciona, manda print de erro): NUNCA mande o link de reposição de novo e NUNCA responda com status do pedido ("está em andamento") — ele JÁ tentou pelo link. Diga que vai acionar o suporte para verificar e resolver, e chame chamar_suporte com o motivo.',
     'PAGAMENTO JÁ CONFIRMADO: se no histórico já existe a mensagem de *Pagamento confirmado* deste pedido, NUNCA peça o pagamento de novo, não reenvie o Pix e não diga que está aguardando a confirmação. Trate o pedido como pago: agradeça e fale da entrega.',
     'TAXA DE QUEDA: "5-6% em mais de um mês" vale SÓ para *brasileiros reais* (orgânicos). NUNCA diga isso de *mistos* ou *brasileiros* — desses diga que pode haver queda com o tempo e que seguidores têm reposição pelo link.',
-    'VÁRIAS TABELAS: ao mostrar mais de uma tabela de preço, SEMPRE coloque o título do tipo em cima de cada lista (*Mistos*, *Brasileiros*, *Brasileiros reais*). Nunca mande listas seguidas sem dizer de qual tipo é cada uma.',
+    'CLIENTE PEDIU "BRASILEIROS" (seguidores ou curtidas): mostre SEMPRE as 2 opções — *Brasileiros* e *Brasileiros reais* (orgânicos, perfis reais, o mais estável) — cada tabela com seu título, e pergunte qual tipo e quantidade. Não escolha por ele nem mostre só uma. Se ele já escolheu um dos dois depois de ver as duas, siga com o escolhido.',
+    'VÁRIAS TABELAS:ao mostrar mais de uma tabela de preço, SEMPRE coloque o título do tipo em cima de cada lista (*Mistos*, *Brasileiros*, *Brasileiros reais*). Nunca mande listas seguidas sem dizer de qual tipo é cada uma.',
     'PREÇO SÓ DA FERRAMENTA: qualquer preço ou quantidade que você escrever tem que ter vindo de cotar_preco ou tabela_precos NESTA conversa. Nunca invente quantidade que não está na tabela (ex.: "2.500") nem combine preços.',
     'LINK DE REPOSIÇÃO: mande o link de reposição SÓ quando o cliente falar de queda de seguidores ou pedir reposição. Para quem está esperando a entrega (pedido em andamento), NÃO mande o link.',
     'PEDIDO JÁ PAGO: se gerar_pix responder pedido_ja_pago, ou se o cliente mandou comprovante/disse que pagou, NÃO gere outro Pix e NÃO diga que está aguardando pagamento. Confirme e fale da entrega. Se ele disser que pagou mas o sistema ainda não confirmou, diga que a confirmação pode levar alguns minutos.',
@@ -191,7 +216,20 @@ async function runTool(name, args, ctx) {
       return r;
     };
     if (name === 'cotar_preco') return avisaTipo(await sales.quote(args || {}), args);
-    if (name === 'tabela_precos') return avisaTipo(sales.priceTable(args || {}), args);
+    if (name === 'tabela_precos') {
+      const r = avisaTipo(sales.priceTable(args || {}), args);
+      // "brasileiros" → devolve junto a tabela de brasileiros reais: as 2 opções vão sempre.
+      try {
+        if (r && r.ok && r.tipo === 'brasileiros' && ['seguidores', 'curtidas'].includes(r.servico)) {
+          const reais = sales.priceTable({ servico: r.servico, tipo: 'organicos' });
+          if (reais && reais.ok) {
+            r.tabelaBrasileirosReais = reais.itens;
+            r.aviso = 'O cliente pediu brasileiros: mostre SEMPRE as 2 opções, cada uma com título — *Brasileiros* (itens) e *Brasileiros reais* (tabelaBrasileirosReais, perfis reais/orgânicos, o mais estável) — e pergunte qual tipo e quantidade.';
+          }
+        }
+      } catch (_) {}
+      return r;
+    }
     if (name === 'validar_perfil') {
       const pedido = String((args && args.usuario) || '').trim();
       let vr = await sales.validateProfile(pedido);
@@ -435,6 +473,10 @@ async function handleAgentMessage(msg, sendText) {
       erradosP = acharPrecosErrados(finalText);
       if (erradosP.length) finalText = 'Deixa eu te passar os valores oficiais certinhos:\n\n' + oficial.replace(/^### .*$/gm, '').trim() + '\n\nQual quantidade você quer?';
     }
+  } catch (_) {}
+  try {
+    const pediuReais = /reais|real\b|org[âa]nic|de verdade/i.test((ctx.recentUserTexts || [text]).slice(0, 2).join(' ').replace(/\d+\s*reais/gi, ''));
+    if (!erroRefilTratado && !pediuReais) finalText = garantirBrasileirosReais(finalText);
   } catch (_) {}
   try { finalText = corrigirTaxaQueda(finalText); } catch (_) {}
   try {

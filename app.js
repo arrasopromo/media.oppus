@@ -42041,20 +42041,23 @@ app.get('/painel', requireAdmin, async (req, res) => {
       // Valor pago por pedido (bruto = totalPaid), do relatório já calculado.
       const paidById = new Map();
       for (const r of paidReport) { const id = String((r && r._id) ? r._id : '').trim(); if (id) paidById.set(id, Number(r.totalPaid || 0)); }
-      let siteCount = 0, whatsCount = 0, siteRev = 0, whatsRev = 0;
+      let siteCount = 0, whatsCount = 0, botCount = 0, siteRev = 0, whatsRev = 0, botRev = 0;
       for (const o of filteredOrders) {
         const pmArr = Array.isArray(o?.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o?.additionalInfo) ? o.additionalInfo : []);
         const pmMap = (o?.additionalInfoMapPaid && typeof o.additionalInfoMapPaid === 'object') ? o.additionalInfoMapPaid : (o?.additionalInfoMap || {});
         const pm = String(pmArr.find(x => x?.key === 'payment_method')?.value || pmMap['payment_method'] || o?.paymentMethod || o?.payment_method || '').toLowerCase();
         const src = String(pmArr.find(x => x?.key === 'source')?.value || pmMap['source'] || o?.source || '').toLowerCase();
         const rev = Number(paidById.get(String((o && o._id) ? o._id : '')) || 0);
-        if (pm === 'whatsapp' || src.includes('whatsapp') || src === 'whatsapp') { whatsCount++; whatsRev += rev; }
+        // Vendas fechadas pela IA no WhatsApp (Pix gerado pelo bot).
+        if (src === 'wpp_agent' || /^WppAgent_/.test(String(o?.correlationID || ''))) { botCount++; botRev += rev; }
+        else if (pm === 'whatsapp' || src.includes('whatsapp') || src === 'whatsapp') { whatsCount++; whatsRev += rev; }
         else { siteCount++; siteRev += rev; }
       }
-      const chTotal = siteCount + whatsCount;
+      const chTotal = siteCount + whatsCount + botCount;
       channelPie = [
         { label: 'Site', count: siteCount, revenue: siteRev, color: '#6B46C1', pct: chTotal > 0 ? (siteCount / chTotal) * 100 : 0 },
         { label: 'WhatsApp', count: whatsCount, revenue: whatsRev, color: '#16a34a', pct: chTotal > 0 ? (whatsCount / chTotal) * 100 : 0 },
+        { label: 'Bot WhatsApp', count: botCount, revenue: botRev, color: '#0ea5e9', pct: chTotal > 0 ? (botCount / chTotal) * 100 : 0 },
       ];
     }
 
