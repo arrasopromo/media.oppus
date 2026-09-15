@@ -233,12 +233,11 @@
         if (!comp || !note) return;
         if (canReplyNow){
           comp.classList.remove('disabled');
-          note.textContent = 'Janela de resposta aberta' + (data.hoursLeft ? (' · ' + data.hoursLeft + 'h restantes') : '') + '. A Meta cobra por conversa de atendimento.';
+          note.textContent = (data.blocked ? 'Cliente descadastrou dos envios automáticos, mas você pode responder. ' : '') + 'Janela de resposta aberta' + (data.hoursLeft ? (' · ' + data.hoursLeft + 'h restantes') : '') + '. A Meta cobra por conversa de atendimento.';
           note.style.color = '#059669';
         } else {
           comp.classList.add('disabled');
-          if (data && data.blocked) { note.textContent = 'Cliente descadastrou (opt-out) — não dá pra enviar.'; }
-          else { note.textContent = 'Fora da janela de 24h da Meta — o cliente precisa mandar uma mensagem primeiro (ou usar template). Só respondo texto livre até 24h após a última mensagem dele.'; }
+          { note.textContent = 'Fora da janela de 24h da Meta — o cliente precisa mandar uma mensagem primeiro (ou usar template). Só respondo texto livre até 24h após a última mensagem dele.'; }
           note.style.color = 'var(--faint)';
         }
       }

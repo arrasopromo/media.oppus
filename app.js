@@ -10328,7 +10328,9 @@ app.get('/api/painel/whatsapp-crm/thread', requireAdmin, async (req, res) => {
     let lastInboundMs = 0;
     for (const d of docs) { if (d.direction === 'in') { const t = d.createdAt ? new Date(d.createdAt).getTime() : 0; if (t > lastInboundMs) lastInboundMs = t; } }
     const withinWindow = lastInboundMs > 0 && (Date.now() - lastInboundMs) < 24 * 60 * 60 * 1000;
-    const canReply = withinWindow && !blocked;
+    // Opt-out bloqueia só os disparos automáticos (LTV/campanhas). Resposta manual do
+    // atendente continua liberada dentro da janela de 24h.
+    const canReply = withinWindow;
     const hoursLeft = withinWindow ? Math.max(0, Math.round((24 * 60 * 60 * 1000 - (Date.now() - lastInboundMs)) / 3600000 * 10) / 10) : 0;
     return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, name, ig, blocked, messages, lastInboundAt: lastInboundMs ? new Date(lastInboundMs).toISOString() : null, canReply, withinWindow, hoursLeft });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
