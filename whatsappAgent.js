@@ -189,6 +189,8 @@ function systemPrompt() {
     'Pedido múltiplo (vários serviços numa mensagem): avise que faz um de cada vez, organizado, e comece pelo primeiro.',
     'TIPO ANTES DO PREÇO (CRÍTICO): NUNCA mostre tabela/valor de seguidores ou curtidas sem deixar claro DE QUAL TIPO são. Se o cliente ainda não escolheu, PERGUNTE primeiro (*mistos*, *brasileiros* ou *brasileiros reais*). Se as ferramentas retornarem tipoAssumido=true, os preços são de *mistos* (internacionais) — então ou você escreve isso explicitamente na mensagem, ou pergunta o tipo antes de cotar. Mostrar preço de *mistos* como se fosse "o preço" engana o cliente e gera reclamação depois.',
     '@ OBRIGATÓRIO EM TODO PEDIDO (inclusive curtidas e visualizações, mesmo já tendo o link do post): peça o @ do Instagram e valide com validar_perfil ANTES de gerar o Pix. NUNCA use o e-mail (ex.: fulano@hotmail.com) nem o nome do cliente como @.',
+    'IMAGEM DO CLIENTE: mensagens "[O cliente enviou uma IMAGEM… Conteúdo da imagem: …]" trazem o que está na foto. Use isso: se aparecer o @ do Instagram, use esse @ (ex.: consultar_pedido com usuario); se for print da página de reposição com erro, trate como ERRO NA REPOSIÇÃO; se for comprovante, trate como pagamento enviado. Não diga que não consegue ver imagens.',
+    'LINK DE REPOSIÇÃO: só envie o refilLink que a ferramenta consultar_pedido devolveu. NUNCA monte ou invente link (ex.: token=abc). Se não achar o pedido pelo telefone, peça o nome de usuário (@) do Instagram e consulte de novo.',
     'O @ DO CLIENTE É LITERAL: ao chamar validar_perfil ou gerar_pix, copie o @ EXATAMENTE como o cliente escreveu, caractere por caractere. NUNCA corrija, complete, abrevie ou redigite o handle — trocar uma letra faz um perfil válido parecer inexistente.',
     'Fluxo de venda: 1) descubra serviço + tipo; 2) mostre a tabela e pergunte a quantidade; 3) cote o valor exato; 4) peça o @ e valide (confirme nome+seguidores); 5) se tem post, peça o link (+ split); 6) colete SÓ nome e e-mail; 7) confirme o resumo e gere o Pix.',
     'GERAR O PIX — REGRA CRÍTICA: assim que tiver serviço, quantidade, @ (validado), nome e e-mail, chame a ferramenta *gerar_pix* IMEDIATAMENTE, no MESMO turno. NUNCA diga "vou gerar o Pix", "aguarde um momento", "estou processando" e pare sem chamar a ferramenta — isso deixa o cliente esperando pra sempre e o pedido NÃO é criado. Não anuncie a intenção: execute (chame gerar_pix) e só então confirme. Se faltar algum dado, peça só o que falta.',
@@ -464,7 +466,7 @@ async function handleAgentMessage(msg, sendText) {
   // o tom seco pedido, independente do que ele escreveu. Só quando: intenção de queda
   // (nesta msg ou nas últimas do cliente) + pedido encontrado, NÃO orgânico e com refil.
   try {
-    const quedaRe = /(ca[íi]ram|ca[íi]u|sumir|sumiram|sumiu|diminu[íi]|perdi[^.]*seguidor|queda|despenc|baixaram|baixou)/i;
+    const quedaRe = /(ca[íi]ram|ca[íi]u|sumir|sumiram|sumiu|diminu[íi]|perdi[^.]*seguidor|queda|despenc|baixaram|baixou|reposi[çc][ãa]o|repor\b|refil)/i;
     const userMsgs = [text].concat((hist || []).filter((h) => h && h.role === 'user').slice(-2).map((h) => String(h.content || '')));
     const isQueda = userMsgs.some((t) => quedaRe.test(t));
     const cp = ctx.lastConsulta;
@@ -492,6 +494,34 @@ async function handleAgentMessage(msg, sendText) {
         // Não-orgânico: só o link, sem status/entrega/justificativa.
         finalText = 'Claro! Você pode repor os seguidores que caíram por aqui: ' + cp.refilLink;
         ctx.quedaResolved = true;
+      }
+    }
+    // Queda/reposição e o pedido NÃO foi achado pelo telefone: pede o @ (não inventa link).
+    if (isQueda && cp && cp.ok && !cp.encontrado && cp.buscaPor === 'telefone' && !ctx.support && !ctx.pixToSend && !erroRefilTratado) {
+      finalText = 'Pra eu localizar seu pedido, me passa o *nome de usuário* (@) do perfil do Instagram em que você fez a compra?';
+      ctx.quedaResolved = true;
+    }
+  } catch (_) {}
+
+  // Link de reposição INVENTADO: o modelo mandou "refil?token=abc" copiando o formato do
+  // prompt. Só passa token que existe num pedido; o resto sai e, se não sobrar nada útil,
+  // pede o @ para localizar o pedido.
+  try {
+    const reLink = /https?:\/\/(?:www\.)?agenciaoppus\.site\/refil\?token=([A-Za-z0-9_-]*)/gi;
+    const tokens = [...new Set([...String(finalText || '').matchAll(reLink)].map((mm) => mm[1]))];
+    if (tokens.length) {
+      const orders = await getCollection('checkout_orders');
+      const invalidos = [];
+      for (const tk of tokens) {
+        const ok = tk.length >= 8 && !!(await orders.findOne({ refilLinkId: tk }, { projection: { _id: 1 } }).catch(() => null));
+        if (!ok) invalidos.push(tk);
+      }
+      if (invalidos.length) {
+        try { console.warn('🛑 [agent] link de refil inventado removido:', invalidos.join(',')); } catch (_) {}
+        const semLink = String(finalText).replace(reLink, (full, tk) => (invalidos.includes(tk) ? '' : full)).replace(/[ \t]+\n/g, '\n').trim();
+        finalText = /agenciaoppus\.site\/refil\?token=/i.test(semLink)
+          ? semLink
+          : 'Pra eu localizar seu pedido e liberar a reposição, me passa o *nome de usuário* (@) do perfil do Instagram em que você fez a compra?';
       }
     }
   } catch (_) {}

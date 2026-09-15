@@ -39,6 +39,7 @@ async function logIaMessage(d) {
       wamid, name: String(d.name || '').slice(0, 120),
       replyTo: String(d.replyTo || '').slice(0, 200),   // wamid da mensagem citada
       agent: !!d.agent, // true = enviado por atendente humano no CRM; false = bot
+      ...(d.imagemDescricao ? { imagemDescricao: String(d.imagemDescricao).slice(0, 1500) } : {}),   // o que a IA leu na imagem
       createdAt: new Date(),
     };
     if (wamid) { try { const r = await col.updateOne({ wamid }, { $setOnInsert: doc }, { upsert: true }); if (!r.upsertedCount && !r.modifiedCount && r.matchedCount) { /* já existia */ } } catch (_) { try { await col.insertOne(doc); } catch (_) {} } }
@@ -240,6 +241,37 @@ async function transcreverAudio(mediaId, mimeIn) {
   } catch (e) { try { console.warn('🎧 [IA] erro ao transcrever:', e && e.message); } catch (_) {} return ''; }
 }
 
+// ── Imagem do cliente → texto ───────────────────────────────────────────────
+// Print de tela (página de refil com erro, perfil, comprovante): a IA não via nada e
+// respondia às cegas. Baixa da Meta e pede à OpenAI uma descrição curta com os textos
+// importantes (@ do Instagram, mensagens de erro, valores).
+const LER_IMAGEM = String(process.env.WHATSAPP_IA_LER_IMAGEM || 'true').toLowerCase() !== 'false';
+const VISION_MODEL = String(process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini').trim();
+const IMAGEM_MAX_BYTES = 5 * 1024 * 1024;
+async function descreverImagem(mediaId, mimeIn, legenda) {
+  const c = CFG();
+  const openai = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!LER_IMAGEM || !openai || !c.token || !mediaId) return '';
+  try {
+    const meta = await axios.get(`https://graph.facebook.com/${c.version}/${encodeURIComponent(String(mediaId))}`, { headers: { Authorization: 'Bearer ' + c.token }, timeout: 20000, validateStatus: () => true });
+    const url = (meta && meta.status === 200 && meta.data && meta.data.url) ? String(meta.data.url) : '';
+    if (!url) return '';
+    const bin = await axios.get(url, { headers: { Authorization: 'Bearer ' + c.token }, responseType: 'arraybuffer', timeout: 45000, validateStatus: () => true });
+    if (bin.status !== 200 || !bin.data) return '';
+    const buf = Buffer.from(bin.data);
+    if (buf.length > IMAGEM_MAX_BYTES) return '';
+    const mime = String((meta.data && meta.data.mime_type) || mimeIn || 'image/jpeg').split(';')[0];
+    const pedido = 'Um cliente de uma loja de seguidores/curtidas para Instagram mandou esta imagem no WhatsApp' + (legenda ? (' com a legenda: "' + String(legenda).slice(0, 300) + '"') : '') + '. Em português, em até 3 frases: diga o que a imagem mostra e TRANSCREVA exatamente os textos importantes — nome de usuário do Instagram (@), mensagens de erro, valores, números de seguidores, códigos de pedido. Não invente o que não dá para ler.';
+    const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: VISION_MODEL, temperature: 0, max_tokens: 250,
+      messages: [{ role: 'user', content: [{ type: 'text', text: pedido }, { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + buf.toString('base64'), detail: 'high' } }] }]
+    }, { headers: { Authorization: 'Bearer ' + openai, 'Content-Type': 'application/json' }, timeout: 60000, validateStatus: () => true });
+    if (r.status !== 200) { try { console.warn('🖼️ [IA] leitura de imagem falhou:', r.status, JSON.stringify(r.data || {}).slice(0, 160)); } catch (_) {} return ''; }
+    const msg = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message;
+    return String((msg && msg.content) || '').trim().slice(0, 1200);
+  } catch (e) { try { console.warn('🖼️ [IA] erro ao ler imagem:', e && e.message); } catch (_) {} return ''; }
+}
+
 // dedup de wamids reentregues pela Meta
 const seenWamids = new Set();
 
@@ -274,6 +306,20 @@ async function handleInboundMessage(m, contactName) {
         try { console.log('🎧 [IA] áudio transcrito de ' + from + ': ' + transcricao.slice(0, 120)); } catch (_) {}
         await logIaMessage({ phone: from, direction: 'in', type: 'audio', text: '[áudio] ' + transcricao, mediaId: String(md.id || ''), mime: String(md.mime_type || ''), wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') });
         if (c.autoReply && !(await isBotPaused(from))) { await runAgent(from, transcricao); }
+        return;
+      }
+    }
+    // Imagem: a IA lê o conteúdo (print com @, erro, comprovante) e responde com base nele.
+    // O CRM continua mostrando a foto; a descrição fica guardada junto da mensagem.
+    if (kind === 'image') {
+      const legenda = String(md.caption || '');
+      if (c.autoReply && !(await isBotPaused(from))) {
+        const descricao = await descreverImagem(String(md.id || ''), String(md.mime_type || ''), legenda);
+        await logIaMessage({ phone: from, direction: 'in', type: 'image', text: legenda ? ('[imagem] ' + legenda) : '[imagem]', imagemDescricao: descricao || '', mediaId: String(md.id || ''), mime: String(md.mime_type || ''), wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') });
+        if (descricao) {
+          try { console.log('🖼️ [IA] imagem lida de ' + from + ': ' + descricao.slice(0, 120)); } catch (_) {}
+          await runAgent(from, '[O cliente enviou uma IMAGEM' + (legenda ? (' com a legenda "' + legenda + '"') : '') + '. Conteúdo da imagem: ' + descricao + ']');
+        }
         return;
       }
     }
