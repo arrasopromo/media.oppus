@@ -1,9 +1,13 @@
+<%
+  // Mesma tela para o número da IA e o do LTV (config vem da rota; padrão = IA).
+  const C = (typeof crm !== 'undefined' && crm) ? crm : { modo: 'ia', titulo: 'CRM IA WhatsApp', page: 'ia-crm', api: '/api/painel/ia-crm', sendMedia: '/api/painel/ia-crm/send-media', temBot: true };
+%>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CRM IA WhatsApp</title>
+  <title><%= C.titulo %></title>
   <link href="/css/style.css" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; }
@@ -213,19 +217,19 @@
   </style>
 </head>
 <body>
-  <%- include('partials/painel_sidebar', { page: 'ia-crm' }) %>
+  <%- include('partials/painel_sidebar', { page: C.page }) %>
   <div class="main-content" style="padding:0;">
     <div class="crm" id="crm">
       <!-- Lista -->
       <div class="convs">
         <div class="convs-head">
-          <h2>CRM IA WhatsApp</h2>
+          <h2><%= C.titulo %></h2>
           <span class="pill" id="convCount">0</span>
         </div>
         <div class="search"><input type="text" id="search" placeholder="Buscar conversa ou @perfil..." autocomplete="off"></div>
         <!-- Uma linha de guias: fila de trabalho + separação novas/histórico importado. -->
         <div class="tabs" id="tabs">
-          <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente — atendimento só do bot continua aqui">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
+          <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente<%= C.temBot ? ' — atendimento só do bot continua aqui' : '' %>">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
           <button type="button" class="tab" data-tab="done" title="Você já respondeu manualmente em algum momento">✓ Respondidas</button>
           <button type="button" class="tab active" data-tab="all">Todas</button>
         </div>
@@ -247,10 +251,11 @@
               </div>
             </div>
             <div class="actions">
-              <button class="btn-bot on" id="botBtn">🤖 Bot ligado</button>
+              <button class="btn-bot on" id="botBtn"<%- C.temBot ? '' : ' style="display:none;"' %>>🤖 Bot ligado</button>
             </div>
           </div>
           <div class="hint" id="pausedHint" style="display:none;">⏸ IA pausada neste chat — ela NÃO responde. Só você atende. Clique em "▶ Dar Play (IA)" para a IA voltar a responder.</div>
+          <div class="hint" id="janelaHint" style="display:none;"></div>
           <div class="msgs" id="msgs"></div>
           <div id="replyBar" class="reply-bar" style="display:none;">
             <div class="rb-body"><div class="rb-who" id="rbWho"></div><div class="rb-txt" id="rbTxt"></div></div>
@@ -283,6 +288,10 @@
 
   <script>
     (function(){
+      var CRM = <%- JSON.stringify({ modo: C.modo, api: C.api, sendMedia: C.sendMedia, temBot: !!C.temBot }) %>;
+      var API = CRM.api;
+      // Mensagem automática: na IA é o bot; no LTV é o disparo do LTV.
+      var AUTO = CRM.temBot ? 'Bot' : 'LTV';
       function $(id){ return document.getElementById(id); }
       function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
       function initials(name, phone){ var n=String(name||'').trim(); if(n) return n.slice(0,2).toUpperCase(); var p=String(phone||'').replace(/\D/g,''); return p.slice(-2) || '?'; }
@@ -362,7 +371,7 @@
           var pendente=(c.lastDir!=='out');
           var nm=c.name || ('+'+c.phone);
           var prefix=(c.lastDir==='out')?'Você: ':'';
-          var tag=c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
+          var tag=!CRM.temBot ? (c.blocked?'<span class="tag-paused" title="Descadastrou dos envios automáticos — você ainda pode responder">opt-out</span>':'') : c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
           html+='<div class="conv'+(state.current===c.phone?' active':'')+(pendente?' pend':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
             +'<div class="avatar">'+esc(initials(c.name,c.phone))+'</div>'
             +'<div class="conv-main">'
@@ -397,12 +406,12 @@
       }
 
       async function loadConvs(){
-        var d=await api('/api/painel/ia-crm/conversations?scope='+encodeURIComponent(state.scope));
+        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope));
         if(d&&d.ok){ state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew; renderConvs(); }
       }
 
       function mediaHtml(m){
-        var src='/api/painel/ia-crm/media?id='+encodeURIComponent(m.mediaId||'');
+        var src=API+'/media?id='+encodeURIComponent(m.mediaId||'');
         // sem onclick inline: as aspas escapadas quebravam o atributo e o clique
         // não fazia nada. Quem abre é o visualizador (delegação de clique em #msgs).
         // A imagem fica dentro de um link: o clique normal abre o visualizador (JS
@@ -426,7 +435,7 @@
         var html=state.msgs.map(function(m){
           var isMedia = MEDIA.indexOf(m.type)>=0 && m.mediaId;
           var cls='b '+(m.direction==='out'?('out'+(m.agent?' agent':'')):'in')+((m.type==='image'||m.type==='sticker'||m.type==='video')&&m.mediaId?' media':'');
-          var who=(m.direction==='out')?(m.agent?'Atendente':'Bot'):'';
+          var who=(m.direction==='out')?(m.agent?'Atendente':AUTO):'';
           var inner;
           if(isMedia){ var cap=String(m.text||'').replace(/^\[[^\]]*\]\s*/,''); inner=mediaHtml(m)+(cap?('<div class="cap">'+esc(cap)+'</div>'):''); }
           else inner=esc(m.text);
@@ -434,7 +443,7 @@
           var quote='';
           if(m.replyTo && porWamid[m.replyTo]){
             var q=porWamid[m.replyTo];
-            var qwho=(q.direction==='out')?(q.agent?'Atendente':'Bot'):'Cliente';
+            var qwho=(q.direction==='out')?(q.agent?'Atendente':AUTO):'Cliente';
             quote='<div class="quoted"><div class="q-who">'+qwho+'</div><div class="q-txt">'+esc(String(q.text||'').slice(0,120))+'</div></div>';
           }
           // Só mensagem com ID REAL do WhatsApp pode ser citada. As importadas do
@@ -456,11 +465,22 @@
 
       function setBotBtn(paused){
         state.botPaused=paused;
+        if(!CRM.temBot) return;   // LTV não tem bot
         var b=$('botBtn');
         if(paused){ b.className='btn-bot off'; b.textContent='▶ Dar Play (IA)'; $('pausedHint').style.display='block'; }
         else { b.className='btn-bot on'; b.textContent='⏸ Pausar IA'; $('pausedHint').style.display='none'; }
       }
 
+      // LTV: avisa quando passou das 24h da Meta (texto livre não é entregue) e quando
+      // o cliente descadastrou (só bloqueia disparo automático; responder continua liberado).
+      function pintarJanela(d){
+        var h=$('janelaHint'); if(!h) return;
+        if(CRM.temBot || typeof d.canReply==='undefined'){ h.style.display='none'; return; }
+        var partes=[];
+        if(!d.canReply) partes.push('⏱ Fora da janela de 24h da Meta: o cliente precisa mandar mensagem antes. Texto livre não é entregue.');
+        if(d.blocked) partes.push('🚫 Cliente descadastrou dos envios automáticos — você ainda pode responder.');
+        h.textContent=partes.join(' '); h.style.display=partes.length?'block':'none';
+      }
       // Volta pra lista de conversas (celular).
       function voltarLista(){
         $('crm').classList.remove('show-thread');
@@ -482,8 +502,8 @@
         fitHeight();
         $('tName').textContent=name || ('+'+phone); $('tPhone').textContent='+'+phone; $('tAvatar').textContent=initials(name,phone);
         renderConvs();
-        var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(phone));
-        if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
+        var d=await api(API+'/messages?phone='+encodeURIComponent(phone));
+        if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); pintarJanela(d); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
         carregarResumoPedidos(phone);   // depois das mensagens: não atrasa o chat
       }
 
@@ -492,7 +512,7 @@
       function limparPedidos(){ $('tIg').style.display='none'; $('tIg').textContent=''; $('pedidosBtn').style.display='none'; state.pedidosTotal=0; }
       async function carregarResumoPedidos(phone){
         limparPedidos();
-        var d=await api('/api/painel/ia-crm/pedidos?resumo=1&phone='+encodeURIComponent(phone));
+        var d=await api(API+'/pedidos?resumo=1&phone='+encodeURIComponent(phone));
         if(!d||!d.ok||state.current!==phone||!d.total) return;   // sem pedido: não mostra nada
         state.pedidosTotal=d.total;
         if(d.usuarios&&d.usuarios[0]){ $('tIg').textContent='@'+d.usuarios[0]; $('tIg').style.display='inline'; }
@@ -510,7 +530,7 @@
         back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+comoAchou+'</div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
         document.body.appendChild(back);
         back.addEventListener('click', function(ev){ if(ev.target===back||ev.target.closest('.ped-head button')) fecharPedidos(); });
-        var d=await api('/api/painel/ia-crm/pedidos?phone='+encodeURIComponent(state.current));
+        var d=await api(API+'/pedidos?phone='+encodeURIComponent(state.current));
         var body=document.getElementById('pedBody'); if(!body) return;
         if(!d||!d.ok){ body.textContent='Não consegui carregar os pedidos.'; return; }
         var lista=d.orders||[];
@@ -534,8 +554,8 @@
       // force=true só quando VOCÊ acabou de enviar/agir (aí desce pro fim de propósito).
       async function refreshOpen(force){
         if(!state.current) return;
-        var d=await api('/api/painel/ia-crm/messages?phone='+encodeURIComponent(state.current));
-        if(d&&d.ok){ renderMsgs(d.messages, force===true); setBotBtn(d.botPaused); }
+        var d=await api(API+'/messages?phone='+encodeURIComponent(state.current));
+        if(d&&d.ok){ renderMsgs(d.messages, force===true); setBotBtn(d.botPaused); pintarJanela(d); }
       }
 
       // Eventos
@@ -575,7 +595,7 @@
           clearTimeout(buscaTimer);
           var seq=++buscaSeq;
           buscaTimer=setTimeout(async function(){
-            var d=await api('/api/painel/ia-crm/busca-arroba?u='+encodeURIComponent(q));
+            var d=await api(API+'/busca-arroba?u='+encodeURIComponent(q));
             if(seq!==buscaSeq) return;   // chegou resposta de uma busca antiga
             state.arroba={ q:q, resultados:(d&&d.ok&&d.resultados)||[], semConversa:(d&&d.telefonesSemConversa)||0, carregando:false };
             state._convsHtml=null; renderConvs();
@@ -587,7 +607,7 @@
       $('botBtn').addEventListener('click', async function(){
         if(!state.current) return;
         var target=!state.botPaused; // se ligado -> pausa (você atende); se pausado -> religa
-        var d=await api('/api/painel/ia-crm/bot', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, paused: target }) });
+        var d=await api(API+'/bot', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, paused: target }) });
         if(d&&d.ok){ setBotBtn(d.botPaused); loadConvs(); }
       });
       async function send(){
@@ -612,16 +632,16 @@
         }
         var txt=$('msgInput').value.trim(); if(!txt||!state.current) return;
         $('sendBtn').disabled=true;
-        var d=await api('/api/painel/ia-crm/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) });
+        var d=await api(API+'/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) });
         $('sendBtn').disabled=false;
         if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(true); loadConvs(); }
-        else { alert('Falha ao enviar: '+((d&&(d.detail||d.error))||'erro')); }
+        else { alert('Falha ao enviar: '+((d&&(d.detail||d.message||d.error))||'erro')); }
       }
       // Responder mensagem específica (citação) — vale p/ mensagem do cliente e nossa.
       function setReply(wamid){
         var m=(state.msgs||[]).find(function(x){ return x.wamid===wamid; }); if(!m) return;
         state.replyTo=wamid;
-        $('rbWho').textContent=(m.direction==='out')?(m.agent?'Atendente':'Bot'):'Cliente';
+        $('rbWho').textContent=(m.direction==='out')?(m.agent?'Atendente':AUTO):'Cliente';
         $('rbTxt').textContent=String(m.text||'').slice(0,140);
         $('replyBar').style.display='flex';
         $('msgInput').focus();
@@ -715,7 +735,7 @@
         var fd=new FormData(); fd.append('file', file); fd.append('phone', state.current);
         if(caption) fd.append('caption', caption);
         try {
-          var r=await fetch('/api/painel/ia-crm/send-media', { method:'POST', credentials:'same-origin', body: fd });
+          var r=await fetch(CRM.sendMedia, { method:'POST', credentials:'same-origin', body: fd });
           var d=await r.json().catch(function(){ return null; });
           if(d&&d.ok){ upmsg(''); setBotBtn(true); await refreshOpen(true); loadConvs(); return true; }
           upmsg('Falha: '+((d&&d.message)||(d&&d.error)||'erro'), true); return false;

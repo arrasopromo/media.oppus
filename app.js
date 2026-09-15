@@ -1159,6 +1159,8 @@ async function logWaMessage(msg) {
       // mime, para o CRM exibir/tocar via proxy autenticado (a URL da Meta expira e exige token).
       mediaId: String(msg && msg.mediaId || '').slice(0, 200),
       mime: String(msg && msg.mime || '').slice(0, 100),
+      replyTo: String(msg && msg.replyTo || '').slice(0, 200),
+      filename: String(msg && msg.filename || '').slice(0, 240),
       createdAt: (msg && msg.createdAt instanceof Date) ? msg.createdAt : new Date(),
       ts: (msg && msg.ts) ? Number(msg.ts) : null
     };
@@ -3957,8 +3959,14 @@ app.post('/api/whatsapp-ia/agent-test', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 //  CRM da IA WhatsApp — inbox estilo WhatsApp (substitui o DataCrazy no número da IA)
 // ═══════════════════════════════════════════════════════════════════════════
+// A mesma tela (painel_ia_crm.ejs) serve os dois números: IA e LTV. Muda só a base das
+// rotas e o que é exclusivo da IA (botão do bot).
+const CRM_TELAS = {
+  ia: { modo: 'ia', titulo: 'CRM IA WhatsApp', page: 'ia-crm', api: '/api/painel/ia-crm', sendMedia: '/api/painel/ia-crm/send-media', temBot: true },
+  ltv: { modo: 'ltv', titulo: 'CRM WhatsApp — LTV', page: 'whatsapp-crm', api: '/api/painel/ltv-crm', sendMedia: '/api/painel/whatsapp-crm/send-media', temBot: false },
+};
 app.get('/painel/ia-crm', requireAdmin, (req, res) => {
-  try { return res.render('painel_ia_crm', { page: 'ia-crm' }); }
+  try { return res.render('painel_ia_crm', { page: 'ia-crm', crm: CRM_TELAS.ia }); }
   catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
 // Lista de conversas (última mensagem, nome, bot pausado, não lidas)
@@ -4085,7 +4093,8 @@ app.get('/api/painel/ia-crm/busca-arroba', requireAdmin, async (req, res) => {
 // Pedidos do telefone aberto no CRM (botão "Ver pedidos" ao lado do número).
 // Consulta separada e sob demanda: não passa pelo fluxo de mensagens nem pelo bot.
 let __crmPhoneIndexOk = false;
-app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
+// fonte: 'ia' (wa_ia_messages, número da IA) ou 'ltv' (wa_messages, número do LTV).
+const crmPedidosHandler = (fonte) => async (req, res) => {
   try {
     const digits = String(req.query.phone || '').replace(/\D/g, '');
     if (!digits) return res.status(400).json({ ok: false, error: 'no_phone' });
@@ -4134,9 +4143,11 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
     if (!total) {
       const handles = [];
       try {
-        const waCol = await getCollection('wa_ia_messages');
-        const msgs = await waCol.find({ phone: String(req.query.phone || '').trim() }, { projection: { text: 1, direction: 1 } }).sort({ createdAt: -1 }).limit(120).toArray();
+        const waCol = await getCollection(fonte === 'ltv' ? 'wa_messages' : 'wa_ia_messages');
+        const filtroMsgs = fonte === 'ltv' ? { phoneKey: normOptoutPhone(req.query.phone) } : { phone: String(req.query.phone || '').trim() };
+        const msgs = await waCol.find(filtroMsgs, { projection: { text: 1, direction: 1, ig: 1 } }).sort({ createdAt: -1 }).limit(120).toArray();
         for (const m of msgs) {
+          if (m.ig) handles.push(String(m.ig).replace(/^@+/, '').toLowerCase());   // LTV: @ do contato gravado na mensagem
           const t = String((m && m.text) || '');
           for (const mt of t.matchAll(/@([a-zA-Z0-9._]{2,30})/g)) handles.push(mt[1].toLowerCase());
           for (const mt of t.matchAll(/instagram\.com\/([a-zA-Z0-9._]{2,30})/gi)) handles.push(mt[1].toLowerCase());
@@ -4186,7 +4197,9 @@ app.get('/api/painel/ia-crm/pedidos', requireAdmin, async (req, res) => {
     const usuarios = [...new Set(orders.map((o) => o.instagram).filter(Boolean))];
     return res.json({ ok: true, total, usuarios, achadoPor, orders: resumo ? [] : orders });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
-});
+};
+app.get('/api/painel/ia-crm/pedidos', requireAdmin, crmPedidosHandler('ia'));
+app.get('/api/painel/ltv-crm/pedidos', requireAdmin, crmPedidosHandler('ltv'));
 
 // Atendente envia mensagem manual (assume o chat: pausa o bot)
 app.post('/api/painel/ia-crm/send', requireAdmin, async (req, res) => {
@@ -4242,6 +4255,166 @@ app.post('/api/painel/ia-crm/bot', requireAdmin, async (req, res) => {
     await cc.updateOne({ _id: phone }, { $set: { botPaused: paused } }, { upsert: true });
     if (!paused) { try { require('./whatsappAgent.js').clearHistory(phone); } catch (_) {} }
     return res.json({ ok: true, botPaused: paused });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// ── CRM do número do LTV: mesmas respostas das rotas da IA, lendo wa_messages ──
+// Telefone da conversa = dígitos do E.164 (55…); no banco a chave é o phoneKey (sem 55).
+// "Lida" fica em wa_ltv_reads (o LTV não tem ficha de contato como a IA).
+const __ltvCrmPhone = (d) => String((d && d.phoneE164) || '').replace(/\D/g, '') || ('55' + String((d && d._id) || (d && d.phoneKey) || ''));
+app.get('/api/painel/ltv-crm/conversations', requireAdmin, async (req, res) => {
+  try {
+    const col = await getCollection('wa_messages');
+    const convs = await col.aggregate([
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: '$phoneKey', phoneE164: { $first: '$phoneE164' }, lastText: { $first: '$text' }, lastDir: { $first: '$direction' }, lastAt: { $first: '$createdAt' },
+        names: { $addToSet: '$name' }, igs: { $addToSet: '$ig' },
+        manuais: { $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'out'] }, { $eq: ['$manualReply', true] }] }, 1, 0] } },
+        recebidas: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } } } },
+      // Só conversa em que o cliente escreveu: disparo do LTV sem resposta não é atendimento
+      // (senão os milhares de envios enchem a lista e a fila de "não respondidas").
+      { $match: { recebidas: { $gt: 0 } } },
+      { $sort: { lastAt: -1 } },
+      { $limit: 300 }
+    ], { allowDiskUse: true }).toArray();
+    const keys = convs.map((c) => c._id);
+    const [reads, opt] = await Promise.all([
+      getCollection('wa_ltv_reads').then((c) => c.find({ _id: { $in: keys } }).toArray()).catch(() => []),
+      getCollection('wa_optout').then((c) => c.find({ phoneKey: { $in: keys }, blocked: true }, { projection: { phoneKey: 1 } }).toArray()).catch(() => []),
+    ]);
+    const lidoEm = {}; for (const r of reads) lidoEm[r._id] = r.readAt;
+    const bloqueado = new Set(opt.map((o) => o.phoneKey));
+    const list = convs.map((c) => ({
+      phone: __ltvCrmPhone(c),
+      name: (c.names || []).filter(Boolean)[0] || ((c.igs || []).filter(Boolean)[0] ? '@' + (c.igs || []).filter(Boolean)[0] : ''),
+      lastText: c.lastText || '', lastDir: c.lastDir, lastAt: c.lastAt,
+      answered: Number(c.manuais || 0) > 0,
+      // Nunca aberta: só marca "novo" se a mensagem é das últimas 48h (não acende o histórico inteiro).
+      unread: c.lastDir === 'in' && (lidoEm[c._id] ? new Date(c.lastAt) > new Date(lidoEm[c._id]) : (Date.now() - new Date(c.lastAt).getTime()) < 48 * 3600e3),
+      blocked: bloqueado.has(c._id),
+    }));
+    return res.json({ ok: true, conversations: list, pendingNew: list.filter((c) => !c.answered).length });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+app.get('/api/painel/ltv-crm/messages', requireAdmin, async (req, res) => {
+  try {
+    const phoneKey = normOptoutPhone(req.query.phone);
+    if (!phoneKey) return res.status(400).json({ ok: false, error: 'no_phone' });
+    const col = await getCollection('wa_messages');
+    const docs = await col.find({ phoneKey }, { projection: { text: 1, direction: 1, createdAt: 1, type: 1, mediaId: 1, mime: 1, filename: 1, wamid: 1, replyTo: 1, manualReply: 1, name: 1, ig: 1 } }).sort({ createdAt: 1 }).limit(600).toArray();
+    try { const rc = await getCollection('wa_ltv_reads'); await rc.updateOne({ _id: phoneKey }, { $set: { readAt: new Date() } }, { upsert: true }); } catch (_) {}
+    let name = '', lastInMs = 0;
+    const messages = docs.map((d) => {
+      if (d.name && !name) name = d.name;
+      if (d.direction === 'in') { const t = new Date(d.createdAt).getTime(); if (t > lastInMs) lastInMs = t; }
+      // "voice" do WhatsApp é áudio; a tela só conhece os tipos da IA.
+      const type = d.type === 'voice' ? 'audio' : d.type;
+      return { text: d.text, direction: d.direction, createdAt: d.createdAt, type, mediaId: d.mediaId || '', mime: d.mime || '', filename: d.filename || '', wamid: d.wamid || '', replyTo: d.replyTo || '', agent: !!d.manualReply };
+    });
+    const blocked = await isWhatsappOptedOut(phoneKey).catch(() => false);
+    const dentroJanela = lastInMs > 0 && (Date.now() - lastInMs) < 24 * 3600e3;
+    const horasRestantes = dentroJanela ? Math.round((24 * 3600e3 - (Date.now() - lastInMs)) / 360000) / 10 : 0;
+    return res.json({ ok: true, phone: String(req.query.phone || ''), name, botPaused: false, blocked, canReply: dentroJanela, hoursLeft: horasRestantes, messages });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+app.post('/api/painel/ltv-crm/send', requireAdmin, async (req, res) => {
+  try {
+    const phoneKey = normOptoutPhone((req.body && req.body.phone) || '');
+    const text = String((req.body && req.body.text) || '').trim();
+    const replyTo = String((req.body && req.body.replyTo) || '').trim();
+    if (!phoneKey || !text) return res.status(400).json({ ok: false, error: 'missing' });
+    const cfg = await getWabaConfig();
+    if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured', detail: 'Sem credenciais WABA no .env.' });
+    const c = await getCollection('wa_messages');
+    const lastIn = await c.find({ phoneKey, direction: 'in' }, { projection: { createdAt: 1, phoneE164: 1 } }).sort({ createdAt: -1 }).limit(1).toArray().catch(() => []);
+    const lastInMs = (lastIn[0] && lastIn[0].createdAt) ? new Date(lastIn[0].createdAt).getTime() : 0;
+    if (!lastInMs || (Date.now() - lastInMs) >= 24 * 3600e3) {
+      return res.status(409).json({ ok: false, error: 'outside_24h_window', detail: 'Passou de 24h desde a última mensagem do cliente. Nesse caso o WhatsApp só permite mensagem modelo (template) — texto livre não é entregue.' });
+    }
+    const phoneE164 = String((lastIn[0] && lastIn[0].phoneE164) || ('55' + phoneKey)).trim();
+    let resp = await sendWhatsappText(cfg, phoneE164, text, { replyTo });
+    let ok = resp && resp.status >= 200 && resp.status < 300;
+    let citou = ok && /^wamid\./.test(replyTo);
+    // Citação recusada (mensagem antiga/apagada): manda sem citar.
+    if (!ok && /^wamid\./.test(replyTo)) { resp = await sendWhatsappText(cfg, phoneE164, text); ok = resp && resp.status >= 200 && resp.status < 300; citou = false; }
+    if (!ok) {
+      const metaErr = (resp && resp.data && resp.data.error) || {};
+      return res.status(502).json({ ok: false, error: 'send_failed', code: Number(metaErr.code) || 0, detail: explainWhatsAppSendError(metaErr, resp) });
+    }
+    const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
+    const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: 'text', text, wamid, replyTo: citou ? replyTo : '', campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
+    try { await c.updateOne({ wamid }, { $set: { agent: admin, manualReply: true } }); } catch (_) {}
+    return res.json({ ok: true, wamid, semCitacao: /^wamid\./.test(replyTo) && !citou });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Mídia do LTV pelo media id (a tela usa ?id=, igual à da IA).
+app.get('/api/painel/ltv-crm/media', requireAdmin, async (req, res) => {
+  try {
+    const mediaId = String(req.query.id || '').trim();
+    if (!/^[0-9]+$/.test(mediaId)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const c = await getCollection('wa_messages');
+    const doc = await c.findOne({ mediaId }, { projection: { mime: 1 } });
+    if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+    const cfg = await getWabaConfig();
+    if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured' });
+    const axios = require('axios');
+    const metaResp = await axios.get(`https://graph.facebook.com/${cfg.version}/${encodeURIComponent(mediaId)}`, { headers: { Authorization: 'Bearer ' + cfg.token }, timeout: 20000, validateStatus: () => true });
+    const mediaUrl = (metaResp && metaResp.data && metaResp.data.url) ? String(metaResp.data.url) : '';
+    const mime = String((metaResp && metaResp.data && metaResp.data.mime_type) || doc.mime || 'application/octet-stream');
+    if (!mediaUrl) return res.status(502).json({ ok: false, error: 'media_url_unavailable' });
+    const bin = await axios.get(mediaUrl, { headers: { Authorization: 'Bearer ' + cfg.token }, responseType: 'arraybuffer', timeout: 30000, validateStatus: () => true });
+    if (!bin || bin.status < 200 || bin.status >= 300) return res.status(502).json({ ok: false, error: 'media_fetch_failed' });
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Disposition', 'inline');
+    return res.end(Buffer.from(bin.data));
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error' }); }
+});
+// Busca por @ no LTV: pedidos com esse @ + conversas em que o @ aparece (campo ig ou texto).
+app.get('/api/painel/ltv-crm/busca-arroba', requireAdmin, async (req, res) => {
+  try {
+    const u = String(req.query.u || '').trim().toLowerCase().replace(/^@+/, '').replace(/\/+$/, '').split('/').pop().replace(/[^a-z0-9._]/g, '');
+    if (u.length < 3) return res.json({ ok: true, usuario: u, resultados: [] });
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const orders = await getCollection('checkout_orders');
+    const msgsCol = await getCollection('wa_messages');
+    const achados = new Map();
+    const marca = (tel, via, usuario) => {
+      const d = String(tel || '').replace(/\D/g, '');
+      if (d.length < 8) return;
+      const a = achados.get(d.slice(-8)) || { via: new Set(), usuarios: new Set() };
+      a.via.add(via); if (usuario) a.usuarios.add(usuario);
+      achados.set(d.slice(-8), a);
+    };
+    for (const modo of ['exato', 'comeca']) {
+      const rx = new RegExp('^@?' + esc(u) + (modo === 'exato' ? '$' : ''), 'i');
+      const peds = await orders.find({ $or: [{ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx }] },
+        { projection: { 'customer.phone': 1, 'customer.phone_number': 1, telefone: 1, 'additionalInfoMapPaid.phone': 1, 'additionalInfoMap.phone': 1, 'additionalInfoMapPaid.instagram_username': 1, instagramUsername: 1, instauser: 1 } }).limit(60).toArray();
+      for (const o of peds) {
+        const handle = String(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').toLowerCase();
+        for (const t of [o.customer && o.customer.phone, o.customer && o.customer.phone_number, o.telefone, o.additionalInfoMapPaid && o.additionalInfoMapPaid.phone, o.additionalInfoMap && o.additionalInfoMap.phone]) marca(t, 'pedido', handle);
+      }
+      const citou = await msgsCol.aggregate([
+        { $match: { $or: [{ ig: rx }, { text: { $regex: (modo === 'exato' ? '(^|[^a-z0-9._])@?' + esc(u) + '($|[^a-z0-9._])' : '@' + esc(u)), $options: 'i' } }] } },
+        { $group: { _id: '$phoneKey', ig: { $first: '$ig' } } }, { $limit: 60 }
+      ]).toArray();
+      for (const c of citou) marca(c._id, 'conversa', c.ig || u);
+      if (achados.size) break;
+    }
+    if (!achados.size) return res.json({ ok: true, usuario: u, resultados: [] });
+    const finais = [...achados.keys()];
+    const convs = await msgsCol.aggregate([
+      { $match: { phoneKey: { $regex: new RegExp('(' + finais.map(esc).join('|') + ')$') } } },
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: '$phoneKey', phoneE164: { $first: '$phoneE164' }, lastText: { $first: '$text' }, lastDir: { $first: '$direction' }, lastAt: { $first: '$createdAt' }, names: { $addToSet: '$name' } } },
+      { $limit: 60 }
+    ]).toArray();
+    const resultados = convs.map((c) => {
+      const a = achados.get(String(c._id).slice(-8)) || { via: new Set(), usuarios: new Set() };
+      return { phone: __ltvCrmPhone(c), name: (c.names || []).filter(Boolean)[0] || '', lastAt: c.lastAt, lastText: c.lastText || '', lastDir: c.lastDir, via: [...a.via], usuarios: [...a.usuarios] };
+    }).sort((x, y) => new Date(y.lastAt || 0) - new Date(x.lastAt || 0));
+    return res.json({ ok: true, usuario: u, resultados, telefonesSemConversa: Math.max(0, achados.size - resultados.length) });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 
@@ -8860,10 +9033,12 @@ const sendWabaTemplate = async (cfg, to, slug, bodyValues) => {
 
 // Envia mensagem de TEXTO LIVRE (só permitido dentro da janela de 24h da Meta —
 // quando o cliente mandou mensagem nas últimas 24h). Usado pela resposta do CRM.
-const sendWhatsappText = async (cfg, to, text) => {
+const sendWhatsappText = async (cfg, to, text, opts = {}) => {
   const axios = require('axios');
   const url = `https://graph.facebook.com/${cfg.version}/${cfg.phoneId}/messages`;
   const payload = { messaging_product: 'whatsapp', to: String(to), type: 'text', text: { preview_url: false, body: String(text || '').slice(0, 4096) } };
+  // Responder citando uma mensagem (só wamid real do WhatsApp).
+  if (opts && /^wamid\./.test(String(opts.replyTo || ''))) payload.context = { message_id: String(opts.replyTo) };
   return axios.post(url, payload, { headers: { Authorization: 'Bearer ' + cfg.token, 'Content-Type': 'application/json' }, timeout: 20000, validateStatus: () => true });
 };
 
@@ -10250,7 +10425,7 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
             // CRM: salva a resposta recebida (best-effort, nunca quebra o webhook).
             try {
               const ctx = await lookupWaContact(String(from), normOptoutPhone(from));
-              await logWaMessage({ phone: String(from), phoneE164: String(from), direction: 'in', type: mtype, text, mediaId, mime, wamid: (m && m.id), campaign: 'ltv', name: ctx.name || profileNameByWa[String(from)] || '', ig: ctx.ig, ts: (m && m.timestamp) ? Number(m.timestamp) * 1000 : null });
+              await logWaMessage({ phone: String(from), phoneE164: String(from), direction: 'in', type: mtype, text, mediaId, mime, replyTo: (m && m.context && m.context.id) || '', filename: (m && m.document && m.document.filename) || '', wamid: (m && m.id), campaign: 'ltv', name: ctx.name || profileNameByWa[String(from)] || '', ig: ctx.ig, ts: (m && m.timestamp) ? Number(m.timestamp) * 1000 : null });
             } catch (_) {}
           }
         }
@@ -10264,107 +10439,9 @@ app.get('/api/painel/whatsapp/optout-stats', requireAdmin, async (req, res) => {
 });
 
 // ── CRM de WhatsApp (LTV): inbox somente-leitura das conversas ─────────────────
+// Mesma tela do CRM IA (painel_ia_crm.ejs), apontando para as rotas do número do LTV.
 app.get('/painel/whatsapp-crm', requireAdmin, (req, res) => {
-  try { return res.render('painel_whatsapp_crm'); } catch (e) { return res.status(500).send(String(e && e.message || e)); }
-});
-// Lista de conversas: 1 por telefone, com última mensagem, contadores e contexto.
-// ?withReply=1 → só conversas em que o cliente respondeu. ?q= busca por telefone/nome/@.
-app.get('/api/painel/whatsapp-crm/threads', requireAdmin, async (req, res) => {
-  try {
-    const c = await getCollection('wa_messages');
-    const withReply = String(req.query.withReply || '') === '1';
-    const q = String(req.query.q || '').trim();
-    const limit = Math.max(1, Math.min(500, parseInt(String(req.query.limit || '200'), 10) || 200));
-    const pipeline = [
-      { $sort: { createdAt: 1 } },
-      { $group: {
-          _id: '$phoneKey',
-          phoneE164: { $last: '$phoneE164' },
-          name: { $last: '$name' },
-          ig: { $last: '$ig' },
-          lastText: { $last: '$text' },
-          lastDirection: { $last: '$direction' },
-          lastAt: { $last: '$createdAt' },
-          total: { $sum: 1 },
-          inCount: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
-          outCount: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
-          lastInAt: { $max: { $cond: [{ $eq: ['$direction', 'in'] }, '$createdAt', null] } }
-      } },
-    ];
-    if (withReply) pipeline.push({ $match: { inCount: { $gt: 0 } } });
-    if (q) {
-      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      pipeline.push({ $match: { $or: [{ _id: re }, { phoneE164: re }, { name: re }, { ig: re }] } });
-    }
-    pipeline.push({ $sort: { lastAt: -1 } });
-    pipeline.push({ $limit: limit });
-    const rows = await c.aggregate(pipeline).toArray().catch(() => []);
-    const threads = rows.map(r => ({
-      phoneKey: r._id, phoneE164: r.phoneE164 || r._id, name: r.name || '', ig: r.ig || '',
-      lastText: r.lastText || '', lastDirection: r.lastDirection || 'in',
-      lastAt: r.lastAt || null, lastInAt: r.lastInAt || null,
-      total: r.total || 0, inCount: r.inCount || 0, outCount: r.outCount || 0
-    }));
-    return res.json({ ok: true, threads, count: threads.length });
-  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
-});
-// Mensagens de UMA conversa (por phoneKey ou telefone).
-app.get('/api/painel/whatsapp-crm/thread', requireAdmin, async (req, res) => {
-  try {
-    const phoneKey = normOptoutPhone(String(req.query.phone || req.query.phoneKey || ''));
-    if (!phoneKey) return res.status(400).json({ ok: false, error: 'missing_phone' });
-    const c = await getCollection('wa_messages');
-    const docs = await c.find({ phoneKey }, { projection: { direction: 1, type: 1, text: 1, createdAt: 1, name: 1, ig: 1, phoneE164: 1, mediaId: 1, mime: 1, wamid: 1 } }).sort({ createdAt: 1 }).limit(1000).toArray().catch(() => []);
-    let name = '', ig = '', phoneE164 = '';
-    for (const d of docs) { if (d.name && !name) name = d.name; if (d.ig && !ig) ig = d.ig; if (d.phoneE164 && !phoneE164) phoneE164 = d.phoneE164; }
-    const blocked = await isWhatsappOptedOut(phoneKey).catch(() => false);
-    const messages = docs.map(d => {
-      const hasMedia = !!(d.mediaId && d.wamid);
-      const mediaKind = hasMedia ? (/^image|sticker/.test(String(d.type)) ? 'image' : (/^video/.test(String(d.type)) ? 'video' : ((/^audio|voice/.test(String(d.type))) ? 'audio' : 'file'))) : '';
-      return { direction: d.direction, type: d.type, text: d.text, at: d.createdAt, hasMedia, mediaKind, mime: d.mime || '', mediaUrl: hasMedia ? ('/api/painel/whatsapp-crm/media?wamid=' + encodeURIComponent(String(d.wamid))) : '' };
-    });
-    // Janela de 24h da Meta: só dá pra responder TEXTO LIVRE se o cliente mandou
-    // mensagem nas últimas 24h. lastInboundAt = última mensagem recebida.
-    let lastInboundMs = 0;
-    for (const d of docs) { if (d.direction === 'in') { const t = d.createdAt ? new Date(d.createdAt).getTime() : 0; if (t > lastInboundMs) lastInboundMs = t; } }
-    const withinWindow = lastInboundMs > 0 && (Date.now() - lastInboundMs) < 24 * 60 * 60 * 1000;
-    // Opt-out bloqueia só os disparos automáticos (LTV/campanhas). Resposta manual do
-    // atendente continua liberada dentro da janela de 24h.
-    const canReply = withinWindow;
-    const hoursLeft = withinWindow ? Math.max(0, Math.round((24 * 60 * 60 * 1000 - (Date.now() - lastInboundMs)) / 3600000 * 10) / 10) : 0;
-    return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, name, ig, blocked, messages, lastInboundAt: lastInboundMs ? new Date(lastInboundMs).toISOString() : null, canReply, withinWindow, hoursLeft });
-  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
-});
-// ADMIN: RESPONDER pelo CRM (texto livre) — só dentro da janela de 24h da Meta.
-app.post('/api/painel/whatsapp-crm/send', requireAdmin, async (req, res) => {
-  try {
-    const b = (req.body && typeof req.body === 'object') ? req.body : {};
-    const phoneKey = normOptoutPhone(String(b.phone || b.phoneKey || ''));
-    const text = String(b.text || '').trim();
-    if (!phoneKey) return res.status(400).json({ ok: false, error: 'missing_phone' });
-    if (!text) return res.status(400).json({ ok: false, error: 'empty_text' });
-    const cfg = await getWabaConfig();
-    if (!cfg.configured) return res.status(400).json({ ok: false, error: 'not_configured', message: 'Sem credenciais WABA no .env.' });
-    // Janela de 24h: precisa de mensagem recebida do cliente nas últimas 24h.
-    const c = await getCollection('wa_messages');
-    const lastIn = await c.find({ phoneKey, direction: 'in' }, { projection: { createdAt: 1, phoneE164: 1 } }).sort({ createdAt: -1 }).limit(1).toArray().catch(() => []);
-    const lastInMs = (lastIn[0] && lastIn[0].createdAt) ? new Date(lastIn[0].createdAt).getTime() : 0;
-    if (!lastInMs || (Date.now() - lastInMs) >= 24 * 60 * 60 * 1000) {
-      return res.status(409).json({ ok: false, error: 'outside_24h_window', message: 'Fora da janela de 24h da Meta — o cliente não mandou mensagem nas últimas 24h. Só dá pra responder com template.' });
-    }
-    const phoneE164 = String((lastIn[0] && lastIn[0].phoneE164) || phoneKey).trim();
-    const resp = await sendWhatsappText(cfg, phoneE164, text);
-    const ok = resp && resp.status >= 200 && resp.status < 300;
-    if (!ok) {
-      const em = (resp && resp.data && resp.data.error) ? (resp.data.error.message || JSON.stringify(resp.data.error)) : ('HTTP ' + (resp && resp.status));
-      return res.status(502).json({ ok: false, error: 'send_failed', message: String(em).slice(0, 300) });
-    }
-    const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
-    const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
-    try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: 'text', text, wamid, campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
-    try { const wm = await getCollection('wa_messages'); await wm.updateOne({ wamid }, { $set: { agent: admin, manualReply: true } }); } catch (_) {}
-    return res.json({ ok: true, wamid });
-  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+  try { return res.render('painel_ia_crm', { page: 'whatsapp-crm', crm: CRM_TELAS.ltv }); } catch (e) { return res.status(500).send(String(e && e.message || e)); }
 });
 
 // ── CRM: PROXY de mídia — busca a mídia na Meta com o token do servidor e devolve o
@@ -10438,7 +10515,7 @@ app.post('/api/painel/whatsapp-crm/send-media', requireAdmin, (req, res) => {
       const wamid = (resp.data && Array.isArray(resp.data.messages) && resp.data.messages[0]) ? resp.data.messages[0].id : '';
       const admin = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
       const label = kind === 'image' ? '[imagem]' : (kind === 'video' ? '[vídeo]' : (kind === 'audio' ? '[áudio]' : ('[documento]' + (file.originalname ? ' ' + file.originalname : ''))));
-      try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: kind, text: caption ? (label + ' ' + caption) : label, mediaId: up.id, mime, wamid, campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
+      try { await logWaMessage({ phone: phoneE164, phoneE164, direction: 'out', type: kind, text: caption ? (label + ' ' + caption) : label, mediaId: up.id, mime, filename: file.originalname || '', wamid, campaign: 'ltv', name: '', ig: '' }); } catch (_) {}
       try { await c.updateOne({ wamid }, { $set: { agent: admin, manualReply: true } }); } catch (_) {}
       return res.json({ ok: true, wamid });
     } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
