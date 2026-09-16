@@ -15990,14 +15990,13 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     try { console.error('[TrackCombo] falha ao calcular o cost de', transactionId, '→', erroCusto); } catch (_) {}
                 }
                 const extra = payerName ? { payer_name: payerName } : {};
-                // DESLIGADO por padrão (16/09/2026): com o cost no payload, a TrackCombo passou a
-                // mandar ao Meta o LUCRO (venda − custo) como valor da compra, no lugar da venda.
-                // Todos os conjuntos otimizam por VALOR — a conta inteira passou a aprender com
-                // ~metade do valor real e o ROAS no Gerenciador despencou. O custo continua sendo
-                // calculado e gravado em trackcombo_forwards.custoCalculado; só não vai no payload.
-                // Para voltar a enviar: TRACKCOMBO_ENVIAR_CUSTO=true (só depois de garantir, na
-                // TrackCombo, que o valor enviado ao Meta continua sendo o da venda).
-                const enviarCusto = String(process.env.TRACKCOMBO_ENVIAR_CUSTO || '').trim().toLowerCase() === 'true';
+                // Com o cost no payload, a TrackCombo manda ao Meta o LUCRO (venda − custo) como
+                // valor da compra — decisão do negócio (16/09/2026): as campanhas otimizam por VALOR
+                // e devem buscar lucro, não faturamento. Efeito colateral: o "ROAS" do Gerenciador
+                // vira lucro/gasto, com ponto de equilíbrio em 1,0. Ligado por padrão; para mandar
+                // só a venda: TRACKCOMBO_ENVIAR_CUSTO=false. Evite alternar — cada troca faz o Meta
+                // reaprender. O custo fica sempre em trackcombo_forwards.custoCalculado.
+                const enviarCusto = String(process.env.TRACKCOMBO_ENVIAR_CUSTO || 'true').trim().toLowerCase() !== 'false';
                 if (cost && enviarCusto) {
                     Object.assign(extra, {
                         cost: cost.total, custo: cost.total, product_cost: cost.total, cost_cents: Math.round(cost.total * 100),
