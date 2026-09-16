@@ -15958,12 +15958,20 @@ app.post('/api/paghiper/notification', async (req, res) => {
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
             (async () => {
                 if (ctx.delayMs > 0) await sleep(ctx.delayMs);
-                let payerName = ''; let cost = null;
+                let payerName = ''; let cost = null; let erroCusto = '';
+                // Limpeza do nome aqui dentro: o sanitizeText das outras rotas é local a
+                // elas e não existe neste escopo — chamá-lo derrubava o bloco inteiro num
+                // ReferenceError, e o repasse saía sem payer_name e sem cost.
+                const limpaNome = (s) => String(s || '')
+                    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
+                    .replace(/[‒-―]/g, '-')
+                    .replace(/\s+/g, ' ')
+                    .trim();
                 try {
                     const col0 = await getCollection('checkout_orders');
                     const find0 = () => col0.findOne({ $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] }, { projection: { 'paghiper.statusPayload': 0 } });
                     let o0 = await find0();
-                    payerName = sanitizeText(String((o0 && o0.customer && o0.customer.name) || '').trim());
+                    payerName = limpaNome((o0 && o0.customer && o0.customer.name) || '');
                     if (o0) {
                         const costOpts = { live: ctx.live === true, col: col0, valueCents: ctx.valueCents, feeCents: ctx.feeCents };
                         cost = await computeTrackComboOrderCost(o0, costOpts);
@@ -15973,8 +15981,14 @@ app.post('/api/paghiper/notification', async (req, res) => {
                             o0 = (await find0()) || o0;
                             cost = await computeTrackComboOrderCost(o0, costOpts);
                         }
+                    } else {
+                        erroCusto = 'pedido_nao_encontrado';
                     }
-                } catch (_) {}
+                } catch (e) {
+                    // Nunca engolir calado: sem isto, o repasse ia sem cost e ninguém via o porquê.
+                    erroCusto = String((e && e.message) || e).slice(0, 200);
+                    try { console.error('[TrackCombo] falha ao calcular o cost de', transactionId, '→', erroCusto); } catch (_) {}
+                }
                 const extra = payerName ? { payer_name: payerName } : {};
                 if (cost) {
                     Object.assign(extra, {
@@ -16000,7 +16014,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 try {
                     const { apiKey: _k, apikey: _k2, api_key: _k3, ...semChave } = payloadTc;
                     const lc = await getCollection('trackcombo_forwards');
-                    await lc.insertOne({ at: new Date(), transactionId, status: statusRaw, httpStatus: httpTc, erro: erroTc || null, live: ctx.live === true, temCost: payloadTc.cost != null, payload: semChave });
+                    await lc.insertOne({ at: new Date(), transactionId, status: statusRaw, httpStatus: httpTc, erro: erroTc || null, erroCusto: erroCusto || null, live: ctx.live === true, temCost: payloadTc.cost != null, payload: semChave });
                 } catch (_) {}
             })().catch(() => {});
         };
