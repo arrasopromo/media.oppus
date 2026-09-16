@@ -21668,7 +21668,7 @@ app.post('/api/track-audio-10p', async (req, res) => {
 // Meta CAPI: Track InitiateCheckout
 app.post('/api/meta/track', async (req, res) => {
   try {
-    const PIXEL_ID = process.env.PIXEL_ID || '1019661457030791';
+    const PIXEL_ID = process.env.PIXEL_ID || '';
     const ACCESS_TOKEN = process.env.META_CAPI_TOKEN || '';
     const {
       eventName = 'InitiateCheckout',

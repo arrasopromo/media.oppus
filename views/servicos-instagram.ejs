@@ -78,30 +78,6 @@
     })();
   </script>
   <!-- End TRACK COMBO -->
-  <!--
-  <script>
-    try { localStorage.removeItem('oppus_selected_oid'); } catch(_) {}
-    (function(){
-      var PIXEL_ID = '<%= PIXEL_ID %>';
-      var isValid = !!PIXEL_ID && /^\d+$/.test(PIXEL_ID);
-      if (!isValid) { window._oppusPixelReady = false; return; }
-      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-      n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
-      n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
-      t.src='https://connect.facebook.net/en_US/fbevents.js';s=b.getElementsByTagName(e)[0];
-      s.parentNode.insertBefore(t,s)}(window, document,'script');
-      fbq('init', PIXEL_ID);
-      fbq('consent', 'grant');
-      fbq('track', 'PageView');
-      window._oppusPixelReady = true;
-    })();
-  </script>
-  <% if (PIXEL_ID && /^\d+$/.test(PIXEL_ID)) { %>
-    <noscript>
-      <img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=<%= PIXEL_ID %>&ev=PageView&noscript=1" />
-    </noscript>
-  <% } %>
-  -->
 </head>
 <body class="theme-light has-fixed-menu page-instagram-services">
   <%- include('partials/menu', { logoLink: '/engajamento' }) %>
