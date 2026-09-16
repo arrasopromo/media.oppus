@@ -10931,10 +10931,12 @@ const getServiceTypeServiceIdsCached = async () => {
 };
 
 const loadServiceTypeProviders = async () => {
+  // A fama24h saiu do ar: sem configuração salva, o padrão passa a ser o Nuvra.
   const fallback = {
-    seguidores: { mistos: 'fama24h', brasileiros: 'fama24h', organicos: 'fornecedor_social' },
-    curtidas: { mistos: 'fama24h', curtidas_brasileiras: 'fama24h', organicos: 'topfama' },
-    visualizacoes: { visualizacoes_reels: 'fama24h' }
+    seguidores: { mistos: 'nuvra', brasileiros: 'nuvra', organicos: 'fornecedor_social' },
+    curtidas: { mistos: 'nuvra', curtidas_brasileiras: 'nuvra', organicos: 'fornecedor_social' },
+    visualizacoes: { visualizacoes_reels: 'nuvra' },
+    comentarios: { comentarios: 'worldsmm' }
   };
   try {
     const { getCollection } = require('./mongodbClient');
@@ -10942,7 +10944,7 @@ const loadServiceTypeProviders = async () => {
     const doc = settingsCol ? await settingsCol.findOne({ _id: 'service_type_providers' }, { projection: { _id: 0, values: 1 } }) : null;
     const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
     const out = JSON.parse(JSON.stringify(fallback));
-    for (const ctx of ['seguidores', 'curtidas', 'visualizacoes']) {
+    for (const ctx of Object.keys(values || {})) {
       const vCtx = (values && values[ctx] && typeof values[ctx] === 'object') ? values[ctx] : null;
       if (!vCtx) continue;
       for (const k of Object.keys(vCtx)) {
@@ -11022,6 +11024,7 @@ const SMM_PROVIDERS = {
   fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY', label: 'Fornecedor Social' },
   topfama:           { url: 'https://topfama.com/api/v2',          keyEnv: 'TOPFAMA_API_KEY',           label: 'TopFama' },
   smmhustle:         { url: 'https://smmhustle.com/api/v2',        keyEnv: 'SMMHUSTLE_API_KEY',         label: 'SMMHustle' },
+  worldsmm:          { url: 'https://worldsmm.com.br/api/v2',      keyEnv: 'WORLDSMM_API_KEY',          label: 'WorldSMM' },
 };
 const SMM_PROVIDER_IDS = Object.keys(SMM_PROVIDERS);
 const normalizeSmmProvider = (v) => {
@@ -11031,6 +11034,7 @@ const normalizeSmmProvider = (v) => {
   if (s === 'fornecedorsocial' || s === 'fornecedor_social') return 'fornecedor_social';
   if (s === 'topfama' || s === 'top_fama') return 'topfama';
   if (s === 'smmhustle' || s === 'smm_hustle' || s === 'hustle') return 'smmhustle';
+  if (s === 'worldsmm' || s === 'world_smm') return 'worldsmm';
   return s;
 };
 const smmProviderUrl = (p) => (SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).url;
@@ -11044,7 +11048,7 @@ const resolveMainProvider = async ({ ctx, key, fallback = 'fama24h' }) => {
     if (v && SMM_PROVIDERS[v]) return v;
   } catch (_) {}
   const fb = normalizeSmmProvider(fallback);
-  return SMM_PROVIDERS[fb] ? fb : 'fama24h';
+  return SMM_PROVIDERS[fb] ? fb : 'nuvra';
 };
 // Resolve tudo do slot principal de um tipo de uma vez: provedor + endpoint + chave + serviceId.
 // `fallbackId` é o ID antigo (fama) usado só se não houver ID salvo pro provedor escolhido.
@@ -43034,7 +43038,7 @@ app.post('/api/painel/service-type-service-ids', requireAdmin, async (req, res) 
       if (!clean[ctx][key]) clean[ctx][key] = {};
       clean[ctx][key][provider] = Math.trunc(n);
     };
-    for (const ctx of ['seguidores', 'curtidas', 'visualizacoes']) {
+    for (const ctx of Object.keys(next || {})) {
       const vCtx = (next && next[ctx] && typeof next[ctx] === 'object') ? next[ctx] : null;
       if (!vCtx) continue;
       for (const key of Object.keys(vCtx)) {
@@ -43072,7 +43076,7 @@ app.post('/api/painel/service-type-providers', requireAdmin, async (req, res) =>
       if (!clean[ctx]) clean[ctx] = {};
       clean[ctx][key] = v;
     };
-    for (const ctx of ['seguidores', 'curtidas', 'visualizacoes']) {
+    for (const ctx of Object.keys(next || {})) {
       const vCtx = (next && next[ctx] && typeof next[ctx] === 'object') ? next[ctx] : null;
       if (!vCtx) continue;
       for (const key of Object.keys(vCtx)) {
