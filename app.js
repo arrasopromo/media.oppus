@@ -15990,7 +15990,15 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     try { console.error('[TrackCombo] falha ao calcular o cost de', transactionId, '→', erroCusto); } catch (_) {}
                 }
                 const extra = payerName ? { payer_name: payerName } : {};
-                if (cost) {
+                // DESLIGADO por padrão (16/09/2026): com o cost no payload, a TrackCombo passou a
+                // mandar ao Meta o LUCRO (venda − custo) como valor da compra, no lugar da venda.
+                // Todos os conjuntos otimizam por VALOR — a conta inteira passou a aprender com
+                // ~metade do valor real e o ROAS no Gerenciador despencou. O custo continua sendo
+                // calculado e gravado em trackcombo_forwards.custoCalculado; só não vai no payload.
+                // Para voltar a enviar: TRACKCOMBO_ENVIAR_CUSTO=true (só depois de garantir, na
+                // TrackCombo, que o valor enviado ao Meta continua sendo o da venda).
+                const enviarCusto = String(process.env.TRACKCOMBO_ENVIAR_CUSTO || '').trim().toLowerCase() === 'true';
+                if (cost && enviarCusto) {
                     Object.assign(extra, {
                         cost: cost.total, custo: cost.total, product_cost: cost.total, cost_cents: Math.round(cost.total * 100),
                         cost_service: cost.service, cost_bumps: cost.bumps, cost_gateway_fee: cost.gatewayFee,
@@ -16000,7 +16008,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 // Mesmo formato do registro da PagHiper (aviso + notification_response.status_request
                 // + url) com o custo junto — no topo e dentro do status_request.
                 const statusReq = (ctx.data && ctx.data.status_request) ? Object.assign({}, ctx.data.status_request) : null;
-                if (statusReq && cost) Object.assign(statusReq, { cost: extra.cost, cost_cents: extra.cost_cents, cost_service: extra.cost_service, cost_bumps: extra.cost_bumps, cost_gateway_fee: extra.cost_gateway_fee, cost_tax: extra.cost_tax, cost_tax_pct: extra.cost_tax_pct });
+                if (statusReq && cost && enviarCusto) Object.assign(statusReq, { cost: extra.cost, cost_cents: extra.cost_cents, cost_service: extra.cost_service, cost_bumps: extra.cost_bumps, cost_gateway_fee: extra.cost_gateway_fee, cost_tax: extra.cost_tax, cost_tax_pct: extra.cost_tax_pct });
                 const formatoPaghiper = {};
                 if (statusReq) formatoPaghiper.notification_response = Object.assign({}, ctx.data, { status_request: statusReq });
                 formatoPaghiper.url = body.url || notifUrlTc;
@@ -16014,7 +16022,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
                 try {
                     const { apiKey: _k, apikey: _k2, api_key: _k3, ...semChave } = payloadTc;
                     const lc = await getCollection('trackcombo_forwards');
-                    await lc.insertOne({ at: new Date(), transactionId, status: statusRaw, httpStatus: httpTc, erro: erroTc || null, erroCusto: erroCusto || null, live: ctx.live === true, temCost: payloadTc.cost != null, payload: semChave });
+                    await lc.insertOne({ at: new Date(), transactionId, status: statusRaw, httpStatus: httpTc, erro: erroTc || null, erroCusto: erroCusto || null, live: ctx.live === true, temCost: payloadTc.cost != null, custoEnviado: enviarCusto, custoCalculado: cost || null, payload: semChave });
                 } catch (_) {}
             })().catch(() => {});
         };
