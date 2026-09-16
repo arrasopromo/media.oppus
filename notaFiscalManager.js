@@ -754,7 +754,7 @@ async function cancelarNotaDoPedido(record, col, reason) {
       cancelError: null,
     });
     console.log(`🧾❌ [Spedy] nota CANCELADA — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId} (motivo: ${motivo})`);
-    return { ok: true, invoiceId: nf.invoiceId, number: nf.number, status: d.status || 'canceled' };
+    return { ok: true, invoiceId: nf.invoiceId, number: nf.number, status: 'canceled' };
   } catch (e) {
     console.error('[Spedy] cancelarNotaDoPedido erro:', e?.message);
     return { ok: false, reason: 'exception', message: e?.message };
