@@ -15990,24 +15990,27 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     try { console.error('[TrackCombo] falha ao calcular o cost de', transactionId, '→', erroCusto); } catch (_) {}
                 }
                 const extra = payerName ? { payer_name: payerName } : {};
-                // Com o cost no payload, a TrackCombo manda ao Meta o LUCRO (venda − custo) como
-                // valor da compra — decisão do negócio (16/09/2026): as campanhas otimizam por VALOR
-                // e devem buscar lucro, não faturamento. Efeito colateral: o "ROAS" do Gerenciador
-                // vira lucro/gasto, com ponto de equilíbrio em 1,0. Ligado por padrão; para mandar
-                // só a venda: TRACKCOMBO_ENVIAR_CUSTO=false. Evite alternar — cada troca faz o Meta
-                // reaprender. O custo fica sempre em trackcombo_forwards.custoCalculado.
-                const enviarCusto = String(process.env.TRACKCOMBO_ENVIAR_CUSTO || 'true').trim().toLowerCase() !== 'false';
-                if (cost && enviarCusto) {
+                // A TrackCombo desconta o cost do valor que manda ao Meta (venda − custo). Padrão
+                // (16/09/2026): cost ZERADO — o Meta recebe o valor cheio da venda e as campanhas
+                // (otimizadas por VALOR) buscam faturamento. Os campos vão com 0 em vez de sumirem,
+                // para funcionar mesmo que a fórmula deles exija a variável. Com
+                // TRACKCOMBO_ENVIAR_CUSTO=true vai o custo real e o Meta passa a receber o LUCRO
+                // (o "ROAS" do Gerenciador vira lucro/gasto, empate em 1,0). Evite alternar — cada
+                // troca faz o Meta reaprender. O custo real fica sempre em
+                // trackcombo_forwards.custoCalculado.
+                const enviarCusto = String(process.env.TRACKCOMBO_ENVIAR_CUSTO || 'false').trim().toLowerCase() === 'true';
+                if (cost) {
+                    const c = enviarCusto ? cost : { total: 0, service: 0, bumps: 0, gatewayFee: 0, tax: 0, taxPct: 0, saleValue: cost.saleValue, source: 'zerado' };
                     Object.assign(extra, {
-                        cost: cost.total, custo: cost.total, product_cost: cost.total, cost_cents: Math.round(cost.total * 100),
-                        cost_service: cost.service, cost_bumps: cost.bumps, cost_gateway_fee: cost.gatewayFee,
-                        cost_tax: cost.tax, cost_tax_pct: cost.taxPct, sale_value: cost.saleValue, cost_source: cost.source
+                        cost: c.total, custo: c.total, product_cost: c.total, cost_cents: Math.round(c.total * 100),
+                        cost_service: c.service, cost_bumps: c.bumps, cost_gateway_fee: c.gatewayFee,
+                        cost_tax: c.tax, cost_tax_pct: c.taxPct, sale_value: c.saleValue, cost_source: c.source
                     });
                 }
                 // Mesmo formato do registro da PagHiper (aviso + notification_response.status_request
                 // + url) com o custo junto — no topo e dentro do status_request.
                 const statusReq = (ctx.data && ctx.data.status_request) ? Object.assign({}, ctx.data.status_request) : null;
-                if (statusReq && cost && enviarCusto) Object.assign(statusReq, { cost: extra.cost, cost_cents: extra.cost_cents, cost_service: extra.cost_service, cost_bumps: extra.cost_bumps, cost_gateway_fee: extra.cost_gateway_fee, cost_tax: extra.cost_tax, cost_tax_pct: extra.cost_tax_pct });
+                if (statusReq && cost) Object.assign(statusReq, { cost: extra.cost, cost_cents: extra.cost_cents, cost_service: extra.cost_service, cost_bumps: extra.cost_bumps, cost_gateway_fee: extra.cost_gateway_fee, cost_tax: extra.cost_tax, cost_tax_pct: extra.cost_tax_pct });
                 const formatoPaghiper = {};
                 if (statusReq) formatoPaghiper.notification_response = Object.assign({}, ctx.data, { status_request: statusReq });
                 formatoPaghiper.url = body.url || notifUrlTc;
