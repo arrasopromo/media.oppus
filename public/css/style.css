@@ -1039,11 +1039,9 @@ body.theme-light .logo-light { display: inline; }
     animation: fadeIn 1s ease-out 0.6s both;
 }
 
-.footer .footer-bar { display: flex; justify-content: space-between; align-items: center; max-width: 60vw; min-width: 420px; margin: 0 auto; padding: 0.5rem 1rem; }
+.footer .footer-bar { display: flex; justify-content: center; align-items: center; gap: 1.25rem; max-width: 60vw; min-width: 420px; margin: 0 auto; padding: 0.5rem 1rem; flex-wrap: wrap; }
 @media (max-width: 640px) {
-  .footer .footer-bar { max-width: 92vw; min-width: 0; }
-  /* Ocultar link/ícone do Instagram no rodapé no mobile */
-  .footer .instagram-link { display: none !important; }
+  .footer .footer-bar { max-width: 92vw; min-width: 0; gap: 0.4rem 1rem; }
 }
 .footer .footer-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-secondary); text-decoration: none; }
 .footer .footer-link:hover { color: var(--text-primary); }
