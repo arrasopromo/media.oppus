@@ -652,6 +652,16 @@ async function sincronizarStatus(record, col) {
 
     const data = resp.data || {};
     const status = String(data.status || '');
+
+    // Cancelamento já pedido e aguardando a prefeitura: resolve por aqui, senão o
+    // mapeamento abaixo devolveria o estado a 'authorized' e perderíamos o rastro.
+    if (String(nf.emissionState || '').toLowerCase() === 'canceling') {
+      const conf = await confirmarCancelamento(col, record, nf, nf.cancelReason || 'Pedido estornado.');
+      if (conf.estado === 'canceled') { console.log(`🧾❌ [Spedy] cancelamento confirmado — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId}`); }
+      else if (conf.estado === 'recusado') { console.warn(`🧾⚠️ [Spedy] cancelamento RECUSADO — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId}: ${conf.mensagem}`); }
+      return { ok: true, status, data, cancelamento: conf.estado };
+    }
+
     const emissionState =
       status === 'authorized' ? 'authorized'
       : status === 'rejected' ? 'rejected'
@@ -692,6 +702,61 @@ async function sincronizarStatus(record, col) {
  * @param {string} [reason] justificativa (a Spedy exige)
  * @returns {Promise<{ok:boolean, skipped?:boolean, reason?:string, message?:string}>}
  */
+/**
+ * Motivo de cancelamento no formato que a NFS-e aceita (xMotivo / TSMotivo).
+ * A prefeitura recusa caractere fora da tabela — foi o que derrubou o
+ * cancelamento da nota 1447 (erro E1235): o travessão "—" de
+ * "Estorno PagHiper (refunded) — transação ...". Aqui tiramos acento e
+ * qualquer símbolo especial, sobrando ASCII imprimível, com o mínimo de 15
+ * caracteres que o schema exige.
+ */
+function motivoDeCancelamento(reason) {
+  let s = String(reason || '').normalize('NFD').replace(/[̀-ͯ]/g, '');  // remove acentos
+  s = s.replace(/[‐-―−]/g, '-')                                    // travessões → hífen
+       .replace(/[‘’‚‛]/g, "'")
+       .replace(/[“”„‟]/g, '"')
+       .replace(/[^\x20-\x7E]/g, ' ')                                             // só ASCII imprimível
+       .replace(/\s+/g, ' ')
+       .trim();
+  if (!s) s = 'Pedido estornado pelo cliente/gateway.';
+  if (s.length < 15) s = (s + ' - cancelamento automatico do pedido').slice(0, 255);
+  return s.slice(0, 255);
+}
+
+/**
+ * Reconsulta a nota na Spedy e resolve o cancelamento pendente.
+ * @returns {Promise<{estado:'canceled'|'recusado'|'pendente', mensagem?:string}>}
+ */
+async function confirmarCancelamento(col, record, nf, motivo) {
+  let q = null;
+  try { q = await spedy.getInvoice(nf.model || 'serviceInvoice', nf.invoiceId); } catch (_) {}
+  const data = (q && q.ok && q.data) ? q.data : null;
+  if (!data) return { estado: 'pendente' };
+  const st = String(data.status || '').toLowerCase();
+  const pd = data.processingDetail || null;
+  if (st === 'canceled' || st === 'cancelled') {
+    await persistNota(col, record._id, {
+      emissionState: 'canceled', status: 'canceled', canceledAt: nowIso(),
+      cancelReason: motivo, cancelError: null, processingDetail: pd,
+    });
+    return { estado: 'canceled' };
+  }
+  // A prefeitura recusou o cancelamento: a nota CONTINUA valendo. Volta o estado
+  // real e guarda o motivo, para aparecer na auditoria em vez de sumir.
+  if (pd && String(pd.status || '').toLowerCase() === 'failed') {
+    const msg = String(pd.message || pd.code || 'cancelamento recusado').slice(0, 500);
+    await persistNota(col, record._id, {
+      emissionState: st === 'authorized' ? 'authorized' : (nf.emissionState || 'authorized'),
+      status: String(data.status || ''),
+      cancelError: msg, cancelErrorCode: pd.code || null,
+      cancelRequestedAt: nf.cancelRequestedAt || nowIso(), cancelReason: motivo,
+      processingDetail: pd,
+    });
+    return { estado: 'recusado', mensagem: msg };
+  }
+  return { estado: 'pendente' };
+}
+
 async function cancelarNotaDoPedido(record, col, reason) {
   try {
     if (!spedy.isConfigured()) return { ok: false, skipped: true, reason: 'not_configured' };
@@ -735,26 +800,37 @@ async function cancelarNotaDoPedido(record, col, reason) {
       await persistNota(col, record._id, { cancelRequestedAt: nowIso(), cancelReason: String(reason || '').slice(0, 255) });
       return { ok: false, skipped: true, reason: 'modelo_nao_suportado', model };
     }
-    const motivo = String(reason || 'Pedido estornado pelo cliente/gateway.').trim().slice(0, 255);
+    const motivo = motivoDeCancelamento(reason);
     const resp = await spedy.cancelServiceInvoice(nf.invoiceId, motivo);
     if (!resp.ok) {
       await persistNota(col, record._id, { cancelError: resp.message || resp.error || 'erro', cancelHttpStatus: resp.status, cancelRequestedAt: nowIso(), cancelReason: motivo });
       console.warn(`[Spedy] cancelamento FALHOU pedido ${record.identifier || record._id} nota ${nf.invoiceId}: ${resp.message || resp.error}`);
       return { ok: false, reason: resp.error, message: resp.message, status: resp.status };
     }
-    // A Spedy processa o cancelamento de forma ASSÍNCRONA: a resposta do DELETE devolve
-    // a nota ainda com o status ANTERIOR ('authorized'), e só depois ela vira 'canceled'.
-    // Portanto NÃO derivamos o estado desse retorno — um 2xx já significa cancelamento
-    // aceito. (Confiar no status do DELETE deixava a nota marcada como autorizada.)
+    // A Spedy só ACEITA o pedido no DELETE; quem cancela de fato é a prefeitura,
+    // de forma assíncrona. Um 2xx aqui NÃO é cancelamento concluído — a nota pode
+    // voltar com processingDetail.status='failed' (ex.: E1235, motivo com caractere
+    // fora do padrão) e continuar valendo. Por isso reconsultamos antes de dar por
+    // encerrado; enquanto não confirma, o estado fica 'canceling' e a rotina de
+    // sincronização continua acompanhando.
     await persistNota(col, record._id, {
-      emissionState: 'canceled',
-      status: 'canceled',
-      canceledAt: nowIso(),
+      emissionState: 'canceling',
+      cancelRequestedAt: nowIso(),
       cancelReason: motivo,
       cancelError: null,
     });
-    console.log(`🧾❌ [Spedy] nota CANCELADA — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId} (motivo: ${motivo})`);
-    return { ok: true, invoiceId: nf.invoiceId, number: nf.number, status: 'canceled' };
+    await new Promise((r) => setTimeout(r, 6000));
+    const conf = await confirmarCancelamento(col, record, nf, motivo);
+    if (conf.estado === 'canceled') {
+      console.log(`🧾❌ [Spedy] nota CANCELADA — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId} (motivo: ${motivo})`);
+      return { ok: true, invoiceId: nf.invoiceId, number: nf.number, status: 'canceled' };
+    }
+    if (conf.estado === 'recusado') {
+      console.warn(`🧾⚠️ [Spedy] cancelamento RECUSADO — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId}: ${conf.mensagem}`);
+      return { ok: false, reason: 'cancelamento_recusado', message: conf.mensagem, invoiceId: nf.invoiceId, number: nf.number };
+    }
+    console.log(`🧾⏳ [Spedy] cancelamento aceito, aguardando a prefeitura — pedido ${record.identifier || record._id} nota nº ${nf.number || nf.invoiceId}`);
+    return { ok: true, pendente: true, invoiceId: nf.invoiceId, number: nf.number, status: 'canceling' };
   } catch (e) {
     console.error('[Spedy] cancelarNotaDoPedido erro:', e?.message);
     return { ok: false, reason: 'exception', message: e?.message };

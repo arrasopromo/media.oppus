@@ -17739,7 +17739,7 @@ app.post('/api/painel/notas-fiscais/sincronizar', requireAdmin, async (req, res)
   try {
     const lote = Math.max(1, Math.min(200, Number((req.body && req.body.limite) || req.query.limite || 60) || 60));
     const col = await getCollection('checkout_orders');
-    const pend = await col.find({ 'notaFiscal.emissionState': { $in: ['enqueued', 'processing'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } }, { projection: { identifier: 1, notaFiscal: 1 } }).sort({ 'notaFiscal.requestedAt': 1 }).limit(lote).toArray();
+    const pend = await col.find({ 'notaFiscal.emissionState': { $in: ['enqueued', 'processing', 'canceling'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } }, { projection: { identifier: 1, notaFiscal: 1 } }).sort({ 'notaFiscal.requestedAt': 1 }).limit(lote).toArray();
     let atualizadas = 0, erros = 0;
     for (const rec of pend) {
       try {
@@ -47951,7 +47951,7 @@ function startSpedyStatusSyncLoop() {
       if (!notaFiscalManager || typeof notaFiscalManager.sincronizarStatus !== "function") return;
       const col = await getCollection('checkout_orders');
       const pendentes = await col.find(
-        { 'notaFiscal.emissionState': { $in: ['enqueued', 'processing'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } },
+        { 'notaFiscal.emissionState': { $in: ['enqueued', 'processing', 'canceling'] }, 'notaFiscal.invoiceId': { $exists: true, $nin: [null, ''] } },
         { projection: { identifier: 1, notaFiscal: 1 } }
       ).sort({ 'notaFiscal.requestedAt': 1 }).limit(lote).toArray();
       if (!pendentes.length) return;
