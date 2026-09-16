@@ -134,7 +134,25 @@ function generateValidCPF() {
 
 // Cria o pedido + Pix chamando o MESMO endpoint do site (/api/paghiper/charge).
 // A fulfillment (webhook do Pix pago) despacha o serviço igual a um pedido do site.
-async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email, phone, post_links }) {
+// Código do post (reel/p/tv) — usado para comparar links sem se importar com
+// ?stkn=, barra final ou www.
+function _postCode(u) {
+  const m = String(u || '').match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  return m ? m[1] : '';
+}
+function _linksDoPedido(o) {
+  const pega = (arr) => { const it = Array.isArray(arr) ? arr.find((x) => x && x.key === 'post_links') : null; return it ? String(it.value || '') : ''; };
+  const s = pega(o && o.additionalInfoPaid) || pega(o && o.additionalInfo) || String((o && o.additionalInfoMap && o.additionalInfoMap.post_links) || '');
+  return s.split(',').map((x) => x.trim()).filter(Boolean);
+}
+// Junta listas de links sem repetir o mesmo post.
+function _juntaLinks(...listas) {
+  const out = []; const vistos = new Set();
+  for (const l of listas) for (const u of (l || [])) { const c = _postCode(u) || String(u); if (!vistos.has(c)) { vistos.add(c); out.push(u); } }
+  return out;
+}
+
+async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email, phone, post_links, comprar_mais }) {
   // Seguidores/curtidas: o PREÇO depende do tipo. Nunca feche sem tipo explícito —
   // senão cai no default "mistos" e cobra/entrega o produto errado (ex.: "brasileiros
   // reais" R$49,90 viram "brasileiros" R$24,90). Força a IA a especificar o tipo.
@@ -147,19 +165,23 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
   const username = parseIgUsername(usuario);
   if (!username) return { ok: false, error: 'usuario_invalido' };
   if (cot.needsPost) {
-    const links = Array.isArray(post_links) ? post_links.filter(Boolean) : String(post_links || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const links = _juntaLinks(Array.isArray(post_links) ? post_links.filter(Boolean) : String(post_links || '').split(',').map((s) => s.trim()).filter(Boolean));
     if (!links.length) return { ok: false, error: 'faltou_post', message: 'Esse serviço precisa do link do post.' };
     post_links = links;
   }
-  // Mesmo pedido (telefone + serviço + tipo + quantidade + @) nas últimas horas:
-  //  - JÁ PAGO  → não gera outro Pix (o bot cobrava de novo quem tinha acabado de pagar);
-  //  - EM ABERTO → devolve o MESMO Pix (antes cada pergunta do cliente gerava um código novo,
-  //    média de 2,4 Pix por cliente, e o lembrete de pagamento caía no Pix duplicado).
+  // Mesmo pedido (telefone + serviço + tipo + quantidade + @):
+  //  - JÁ PAGO (últimos 7 dias) → não gera outro Pix. Antes a janela era de 12h: o cliente
+  //    que reclamou "não chegou nada" 13h depois de pagar recebeu um Pix NOVO do mesmo
+  //    pacote. Só passa se o modelo marcar comprar_mais (cliente pediu outro pacote).
+  //  - EM ABERTO (últimas 12h) → devolve o MESMO Pix e ACRESCENTA os links novos ao pedido.
+  //    Antes os links mandados depois do 1º eram descartados: o cliente mandou 3 posts
+  //    pra dividir 10.000 curtidas e o pedido saiu com 1.
   try {
     const fim8 = String(phone || '').replace(/\D/g, '').slice(-8);
     if (fim8.length === 8) {
       const col = await getCollection('checkout_orders');
-      const desde = new Date(Date.now() - 12 * 3600e3).toISOString();
+      const desde = new Date(Date.now() - 7 * 24 * 3600e3).toISOString();
+      const limiteAberto = Date.now() - 12 * 3600e3;
       const iguais = await col.find({
         correlationID: { $regex: '^WppAgent_' }, createdAt: { $gte: desde },
         'customer.phone': { $regex: fim8 + '$' },
@@ -169,17 +191,42 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
           { $elemMatch: { key: 'quantidade', value: String(cot.quantidade) } },
           { $elemMatch: { key: 'instagram_username', value: username } },
         ] },
-      }, { projection: { status: 1, identifier: 1, correlationID: 1, valueCents: 1, 'paghiper.brCode': 1, 'paghiper.qrCodeImage': 1, paidAt: 1 } }).sort({ createdAt: -1 }).limit(5).toArray();
+      }, { projection: { status: 1, identifier: 1, correlationID: 1, valueCents: 1, createdAt: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, 'paghiper.brCode': 1, 'paghiper.qrCodeImage': 1, paidAt: 1 } }).sort({ createdAt: -1 }).limit(10).toArray();
       const pago = iguais.find((o) => String(o.status || '').toLowerCase() === 'pago' || o.paidAt);
-      if (pago) {
-        return { ok: false, error: 'pedido_ja_pago', message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e está em andamento. NÃO gere outro Pix: confirme o pagamento para o cliente e fale da entrega. Só gere um novo se ele disser claramente que quer COMPRAR MAIS um pacote.' };
+      if (pago && comprar_mais !== true) {
+        const jaNoPedido = new Set(_linksDoPedido(pago).map(_postCode).filter(Boolean));
+        const novos = (post_links || []).filter((u) => { const c = _postCode(u); return c && !jaNoPedido.has(c); });
+        if (novos.length) {
+          return { ok: false, error: 'links_apos_pagamento', linksNovos: novos, message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e já foi enviado com os links que estavam nele. NÃO gere outro Pix e NÃO diga que vai cobrar de novo. Diga ao cliente que você vai encaminhar os posts para a equipe distribuir, e chame chamar_suporte com o motivo "dividir curtidas/visualizações do pedido pago em mais posts" e os links novos.' };
+        }
+        return { ok: false, error: 'pedido_ja_pago', message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e está em andamento. NÃO gere outro Pix: confirme o pagamento para o cliente e fale da entrega. Reclamação ou pergunta sobre a entrega NUNCA é motivo para Pix novo. Só gere outro se o cliente disser claramente que quer COMPRAR MAIS um pacote — aí chame gerar_pix com comprar_mais=true.' };
       }
-      const aberto = iguais.find((o) => o.paghiper && o.paghiper.brCode);
+      const aberto = iguais.find((o) => o.paghiper && o.paghiper.brCode && !(String(o.status || '').toLowerCase() === 'pago' || o.paidAt) && new Date(o.createdAt).getTime() >= limiteAberto);
       if (aberto) {
+        let linksFinal = _linksDoPedido(aberto);
+        if (cot.needsPost && post_links && post_links.length) {
+          const juntos = _juntaLinks(linksFinal, post_links);
+          if (juntos.length !== linksFinal.length) {
+            // Acrescenta no pedido em aberto — é o que o despacho lê para dividir.
+            const troca = (arr) => {
+              const a = (Array.isArray(arr) ? arr : []).filter((x) => x && x.key !== 'post_link' && x.key !== 'post_links');
+              a.push({ key: 'post_link', value: juntos[0] });
+              a.push({ key: 'post_links', value: juntos.join(',') });
+              return a;
+            };
+            const set = { additionalInfo: troca(aberto.additionalInfo) };
+            // O despacho usa additionalInfoMap INTEIRO quando ele existe (no lugar do array):
+            // só atualiza o map se já houver um, senão criaria um map só com os links.
+            if (aberto.additionalInfoMap && typeof aberto.additionalInfoMap === 'object') { set['additionalInfoMap.post_link'] = juntos[0]; set['additionalInfoMap.post_links'] = juntos.join(','); }
+            try { await col.updateOne({ _id: aberto._id, status: { $ne: 'pago' }, paidAt: { $exists: false } }, { $set: set }); linksFinal = juntos; } catch (_) {}
+          }
+        }
+        const nLinks = linksFinal.length;
         return {
           ok: true, reaproveitado: true, correlationID: aberto.correlationID, valorCents: cot.priceCents, valorLabel: cot.priceLabel,
           pixCopiaECola: String(aberto.paghiper.brCode), qrCodeImage: String(aberto.paghiper.qrCodeImage || ''), identifier: String(aberto.identifier || ''),
-          resumo: `${cot.quantidade} ${cot.unit}${cot.tipo ? ' (' + cot.tipo + ')' : ''} para @${username} — ${cot.priceLabel}`,
+          linksNoPedido: nLinks,
+          resumo: `${cot.quantidade} ${cot.unit}${cot.tipo ? ' (' + cot.tipo + ')' : ''} para @${username} — ${cot.priceLabel}` + (cot.needsPost ? ` — ${nLinks} post(s) no pedido${nLinks > 1 ? ', a quantidade será dividida igualmente entre eles' : ''}` : ''),
         };
       }
     }
@@ -267,6 +314,50 @@ async function fetchProviderOrderStatus(provider, orderId) {
 }
 
 // Descobre o provedor + orderId da ordem-BASE do pedido (single ou multi).
+// Tem QUALQUER pedido criado em algum fornecedor? Varre todos os campos do pedido
+// (fama24h, fornecedor_social, topfama, worldsmm_*, *_multi…) atrás de um orderId.
+function temEnvioNoFornecedor(o) {
+  const temId = (v) => v != null && /^[0-9]+$/.test(String(v));
+  for (const [k, v] of Object.entries(o || {})) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    if (/^(paghiper|woovi|pagarme|customer|costs|utms|geolocation|emails|notaFiscal|profilePrivacy|fulfillmentCalc|additionalInfoMap(Paid)?|upsell)$/.test(k)) continue;
+    if (temId(v.orderId) || temId(v.id)) return true;
+    if (Array.isArray(v.orders) && v.orders.some((x) => x && (temId(x.orderId) || temId(x.id)))) return true;
+  }
+  return false;
+}
+
+// Avisa a equipe (ntfy) sobre pedidos pagos há mais de 15 min sem nenhum pedido no
+// fornecedor. Marca o pedido para não repetir o alerta em menos de 6h.
+async function alertaPedidosSemEnvio(col, orders, telefone) {
+  const agora = Date.now();
+  for (const x of (orders || []).slice(0, 10)) {
+    const pagoMs = _orderPaidMs(x);
+    if (!pagoMs || agora - pagoMs < 15 * 60e3 || agora - pagoMs > 15 * 24 * 3600e3) continue;
+    if (String(x.status || '').toLowerCase() === 'estornado') continue;
+    if (x.upsell && x.upsell.isUpsell === true && /waiting/.test(String(x.upsell.dispatchStatus || ''))) continue;
+    if (temEnvioNoFornecedor(x)) continue;
+    const ultimo = x.alertaSemEnvio && x.alertaSemEnvio.at ? new Date(x.alertaSemEnvio.at).getTime() : 0;
+    if (ultimo && agora - ultimo < 6 * 3600e3) continue;
+    const erro = (() => { for (const v of Object.values(x)) { if (v && typeof v === 'object' && v.error) return typeof v.error === 'string' ? v.error : JSON.stringify(v.error); } return 'sem pedido no fornecedor'; })();
+    const qtd = orderGetAny(x, 'quantidade') || x.quantidade || x.qtd || '';
+    const cat = orderGetAny(x, 'categoria_servico') || '';
+    const user = x.instagramUsername || x.instauser || orderGetAny(x, 'instagram_username') || '';
+    try {
+      await col.updateOne({ _id: x._id }, { $set: { alertaSemEnvio: { at: new Date().toISOString(), erro: String(erro).slice(0, 200), origem: 'consultar_pedido' } } });
+      const base = String(process.env.PUBLIC_BASE_URL || process.env.INTERNAL_BASE || '').replace(/\/+$/, '');
+      await sendNtfy({
+        title: 'Pago sem envio: ' + (x.identifier || x._id),
+        message: `@${user} ${qtd} ${cat} R$ ${((Number(x.valueCents) || 0) / 100).toFixed(2)} — ${String(erro).slice(0, 80)}. Cliente perguntou no WhatsApp (+${String(telefone || '').replace(/\D/g, '')}).`,
+        priority: 'high',
+        tags: 'warning',
+        click: base ? (base + '/painel') : undefined,
+      });
+      try { console.warn('⚠️ [consultar_pedido] pedido pago sem envio ao fornecedor:', x.identifier, erro); } catch (_) {}
+    } catch (_) {}
+  }
+}
+
 function baseProviderOrder(o) {
   const singles = [['fornecedor_social', o.fornecedor_social], ['fama24h', o.fama24h], ['topfama', o.topfama]];
   for (const [prov, sub] of singles) { if (sub && sub.orderId && /^[0-9]+$/.test(String(sub.orderId))) return { provider: prov, orderId: String(sub.orderId) }; }
@@ -300,6 +391,12 @@ async function consultarPedido({ telefone, usuario } = {}) {
   if (!orders.length) return { ok: true, encontrado: false, buscaPor: uname ? 'usuario' : 'telefone' };
   orders.sort((a, b) => _orderPaidMs(b) - _orderPaidMs(a));
   const o = orders[0];
+
+  // Pedido pago que NÃO chegou ao fornecedor (erro no envio, "Duplicate link"...): o cliente
+  // continua vendo "em andamento" (regra do atendimento), mas a EQUIPE precisa saber — antes
+  // ninguém era avisado e o bot tranquilizava o cliente com o pedido parado. Olha todos os
+  // pedidos pagos recentes do cliente, não só o último.
+  try { await alertaPedidosSemEnvio(col, orders, telefone); } catch (_) {}
 
   const categoria = String(orderGetAny(o, 'categoria_servico') || '').toLowerCase().trim();
   const tipo = String(orderGetAny(o, 'tipo_servico') || o.tipoServico || o.tipo || '').toLowerCase().trim();
