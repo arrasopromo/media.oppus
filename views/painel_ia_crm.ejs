@@ -874,6 +874,8 @@
 
       // Polling
       loadConvs();
+      // Link direto (ex.: vindo do Follow-up do bot): /painel/ia-crm?phone=55...
+      try { var _ph = String(new URLSearchParams(location.search).get('phone') || '').replace(/\D/g, ''); if (_ph) openChat(_ph, ''); } catch(_){}
       setInterval(loadConvs, 5000);
       setInterval(refreshOpen, 3000);
     })();

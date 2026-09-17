@@ -3925,6 +3925,9 @@ app.post('/api/painel/testes-servicos/check-all', requireAdmin, async (req, res)
   catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 
+// Follow-up diário do bot (IA WhatsApp): /painel/ia-followup + geração sob demanda.
+try { require('./iaFollowup.js').registerIaFollowup(app, { requireAdmin, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (e) { try { console.error('⚠️ ia-followup não registrado:', e && e.message); } catch (_) {} }
+
 // Página de teste (playground) da IA — chat no painel, usa o harness abaixo.
 app.get('/painel/whatsapp-ia-teste', requireAdmin, (req, res) => {
   try { return res.render('painel_whatsapp_ia_teste', { page: 'whatsapp-ia-teste' }); }
@@ -48047,6 +48050,7 @@ const server = app.listen(port, () => {
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
+  try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
   try { startCostRecalibrateLoop(); } catch (_) {} // Auto-calibra cost_settings pelo custo real dos últimos N pedidos de cada tipo (a cada 6h)
   try { startSpedyStatusSyncLoop(); } catch (_) {} // Notas 'na fila' → consulta a Spedy e atualiza o estado real

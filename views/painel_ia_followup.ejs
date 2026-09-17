@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Follow-up do bot</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #1f2937; margin: 0; }
+    .main-content h1 { margin: 0 0 4px; }
+    .sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; }
+    .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+    .dia { padding: 6px 10px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff; color: #374151; text-decoration: none; font-size: 13px; }
+    .dia.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+    .dia .pill { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 5px; border-radius: 999px; background: #fee2e2; color: #b91c1c; font-size: 11px; font-weight: 700; }
+    .dia.on .pill { background: #fff; }
+    .btn { padding: 8px 14px; border-radius: 8px; border: 0; background: #111827; color: #fff; cursor: pointer; font-size: 13px; }
+    .btn:disabled { opacity: .6; cursor: default; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    .card .n { font-size: 22px; font-weight: 800; }
+    .card .l { font-size: 12px; color: #6b7280; }
+    .card.alerta .n { color: #b91c1c; }
+    .card.ok .n { color: #15803d; }
+    h2 { font-size: 16px; margin: 22px 0 10px; }
+    .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .ponto h3 { margin: 0 0 4px; font-size: 14px; }
+    .ponto .oc { font-size: 12px; color: #6b7280; }
+    .ponto p { margin: 6px 0 0; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    th { background: #f9fafb; color: #6b7280; font-size: 12px; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .t-sem_resposta, .t-pago_sem_envio, .t-cancelado_fornecedor { background: #fee2e2; color: #b91c1c; }
+    .t-privado_segurando, .t-parcial, .t-reclamacao, .t-adicional_cancelado, .t-na_fila { background: #ffedd5; color: #9a3412; }
+    .t-suporte { background: #e0e7ff; color: #3730a3; }
+    .t-ia { background: #f3f4f6; color: #374151; }
+    .s-entregue { background: #dcfce7; color: #166534; } .s-em_andamento { background: #e0f2fe; color: #075985; }
+    .s-pix_nao_pago { background: #f3f4f6; color: #4b5563; } .s-estornado { background: #f3f4f6; color: #4b5563; }
+    details.conv { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 8px; }
+    details.conv > summary { cursor: pointer; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; list-style: none; }
+    details.conv > summary::-webkit-details-marker { display: none; }
+    details.conv .corpo { padding: 0 14px 12px; font-size: 13px; }
+    .sat-negativa { color: #b91c1c; } .sat-positiva { color: #15803d; } .sat-neutra { color: #6b7280; }
+    .muted { color: #6b7280; } a.crm { font-size: 12px; }
+    ul { margin: 4px 0 8px 18px; padding: 0; }
+    .scroll { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'ia-followup' }) %>
+  <div class="main-content">
+    <h1>Follow-up do bot</h1>
+    <div class="sub">Todo dia às <%= (process.env.IA_FOLLOWUP_HORA || '23:30') %> o sistema lê as conversas do bot, confere os pedidos no fornecedor e aponta o que ficou pendente e o que melhorar.</div>
+
+    <div class="bar">
+      <% (dias || []).forEach(function(d){ var t = d.totais || {}; var pend = t.conversasComPendencia || 0; %>
+        <a class="dia <%= d._id === diaSelecionado ? 'on' : '' %>" href="/painel/ia-followup?dia=<%= d._id %>"><%= d._id.slice(8,10) %>/<%= d._id.slice(5,7) %><% if (pend) { %><span class="pill"><%= pend %></span><% } %><% if (d.gerando) { %> ⏳<% } %></a>
+      <% }); %>
+      <button class="btn" id="gerar" data-dia="<%= hoje %>">Gerar o de hoje agora</button>
+      <% if (diaSelecionado && diaSelecionado !== hoje) { %><button class="btn" id="regerar" data-dia="<%= diaSelecionado %>" style="background:#4b5563">Refazer <%= diaSelecionado.slice(8,10) %>/<%= diaSelecionado.slice(5,7) %></button><% } %>
+      <span id="msg" class="muted"></span>
+    </div>
+
+    <% if (!rel) { %>
+      <div class="box">Ainda não há relatório. Clique em <strong>Gerar o de hoje agora</strong>.</div>
+    <% } else if (rel.gerando && !rel.conversas) { %>
+      <div class="box">Gerando o relatório de <%= rel._id %>… recarregue em instantes.</div>
+    <% } else {
+         var t = rel.totais || {};
+         var todasPend = [];
+         (rel.conversas || []).forEach(function(c){ (c.pendencias || []).forEach(function(p){ todasPend.push({ c: c, p: p }); }); });
+         var ordemTipo = { pago_sem_envio: 0, cancelado_fornecedor: 1, sem_resposta: 2, parcial: 3, adicional_cancelado: 4, privado_segurando: 5, na_fila: 6, reclamacao: 7, suporte: 8, ia: 9 };
+         todasPend.sort(function(a, b){ return (ordemTipo[a.p.tipo] ?? 9) - (ordemTipo[b.p.tipo] ?? 9); });
+         var nomeTipo = { sem_resposta: 'sem resposta', pago_sem_envio: 'pago sem envio', privado_segurando: 'perfil privado', cancelado_fornecedor: 'fornecedor cancelou', adicional_cancelado: 'adicional cancelado', na_fila: 'parado na fila', parcial: 'entrega parcial', suporte: 'suporte', reclamacao: 'reclamação', ia: 'apontado pela IA' };
+         var nomeSit = { entregue: 'entregue', em_andamento: 'em andamento', pix_nao_pago: 'Pix não pago', estornado: 'estornado', pago_sem_envio: 'pago sem envio', privado_segurando: 'perfil privado', cancelado_fornecedor: 'cancelado no fornecedor', adicional_cancelado: 'adicional cancelado', na_fila: 'na fila', parcial: 'parcial', upsell_aguardando_pai: 'upsell aguardando' };
+         var brl = function(v){ return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); };
+         var hh = function(d){ try { return new Date(new Date(d).getTime() - 3*3600e3).toISOString().slice(11,16); } catch(_) { return ''; } };
+    %>
+      <div class="muted" style="margin-bottom:10px;font-size:12px">Relatório de <strong><%= rel._id.slice(8,10) %>/<%= rel._id.slice(5,7) %></strong> gerado às <%= hh(rel.geradoEm) %><%= rel.modelo ? ' · análise: ' + rel.modelo : '' %></div>
+      <div class="cards">
+        <div class="card"><div class="n"><%= t.conversas || 0 %></div><div class="l">conversas</div></div>
+        <div class="card ok"><div class="n"><%= t.vendas || 0 %></div><div class="l">vendas do bot · <%= brl(t.receita) %></div></div>
+        <div class="card"><div class="n"><%= t.pixNaoPago || 0 %></div><div class="l">Pix gerado e não pago</div></div>
+        <div class="card <%= t.conversasComPendencia ? 'alerta' : 'ok' %>"><div class="n"><%= t.conversasComPendencia || 0 %></div><div class="l">conversas com pendência</div></div>
+        <div class="card <%= t.semResposta ? 'alerta' : '' %>"><div class="n"><%= t.semResposta || 0 %></div><div class="l">cliente sem resposta</div></div>
+        <div class="card <%= (t.pagoSemEnvio || t.canceladoFornecedor) ? 'alerta' : '' %>"><div class="n"><%= (t.pagoSemEnvio || 0) + (t.canceladoFornecedor || 0) %></div><div class="l">pago sem envio / cancelado no fornecedor</div></div>
+        <div class="card"><div class="n"><%= t.privadoSegurando || 0 %></div><div class="l">travado por perfil privado</div></div>
+        <div class="card"><div class="n"><%= t.suporte || 0 %></div><div class="l">suporte acionado</div></div>
+        <div class="card <%= t.satisfacaoNegativa ? 'alerta' : '' %>"><div class="n"><%= t.satisfacaoNegativa || 0 %></div><div class="l">clientes insatisfeitos</div></div>
+        <div class="card"><div class="n"><%= t.errosDoBot || 0 %></div><div class="l">erros do bot apontados</div></div>
+      </div>
+
+      <h2>Pontos de melhoria do dia</h2>
+      <% if (!(rel.melhorias || []).length) { %><div class="box muted">Nenhum ponto recorrente.</div><% } %>
+      <% (rel.melhorias || []).forEach(function(m){ %>
+        <div class="box ponto">
+          <h3><%= m.titulo %></h3>
+          <div class="oc"><%= m.ocorrencias %> ocorrência(s)</div>
+          <p><strong>O que acontece:</strong> <%= m.o_que_acontece %></p>
+          <p><strong>Como corrigir:</strong> <%= m.como_corrigir %></p>
+        </div>
+      <% }); %>
+
+      <h2>Pendências (<%= todasPend.length %>)</h2>
+      <% if (!todasPend.length) { %><div class="box muted">Nada pendente. 🎉</div><% } else { %>
+      <div class="box scroll"><table>
+        <tr><th>Tipo</th><th>Cliente</th><th>Detalhe</th><th></th></tr>
+        <% todasPend.forEach(function(x){ %>
+          <tr>
+            <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
+            <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span></td>
+            <td><%= x.p.detalhe %><%= x.p.identifier ? ' · ' + x.p.identifier : '' %></td>
+            <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
+          </tr>
+        <% }); %>
+      </table></div>
+      <% } %>
+
+      <h2>Conversas (<%= (rel.conversas || []).length %>)</h2>
+      <% (rel.conversas || []).forEach(function(c){ var a = c.ia || {}; %>
+        <details class="conv">
+          <summary>
+            <strong><%= c.nome || ('+' + c.telefone) %></strong>
+            <span class="muted"><%= hh(c.primeira) %>–<%= hh(c.ultima) %> · <%= c.mensagens %> msgs</span>
+            <% if (a.resultado) { %><span class="tag t-ia"><%= a.resultado.replace('_', ' ') %></span><% } %>
+            <% if (a.satisfacao) { %><span class="sat-<%= a.satisfacao %>" style="font-size:12px"><%= a.satisfacao %></span><% } %>
+            <% (c.pendencias || []).filter(function(p){ return p.tipo !== 'ia'; }).forEach(function(p){ %><span class="tag t-<%= p.tipo %>"><%= nomeTipo[p.tipo] || p.tipo %></span><% }); %>
+          </summary>
+          <div class="corpo">
+            <% if (a.resumo) { %><p><%= a.resumo %></p><% } %>
+            <% if ((c.pedidos || []).length) { %>
+              <strong>Pedidos</strong>
+              <ul><% c.pedidos.forEach(function(p){ %>
+                <li><%= p.pacote %> <%= p.tipo ? '(' + p.tipo + ')' : '' %> · <%= brl(p.valor) %> · <%= p.origem %> · <span class="tag s-<%= p.situacao %> t-<%= p.situacao %>"><%= nomeSit[p.situacao] || p.situacao %></span>
+                  <% if (p.fornecedor) { %><span class="muted"> — <%= p.fornecedor.map(function(f){ return f.provider + ' ' + f.orderId + ': ' + f.status; }).join(' · ') %></span><% } %>
+                </li>
+              <% }); %></ul>
+            <% } %>
+            <% if ((c.pendencias || []).length) { %><strong>Pendências</strong><ul><% c.pendencias.forEach(function(p){ %><li><%= p.detalhe %></li><% }); %></ul><% } %>
+            <% if ((a.erros_do_bot || []).length) { %><strong>Erros do bot</strong><ul><% a.erros_do_bot.forEach(function(e){ %><li><em><%= e.tipo %></em>: <%= e.descricao %></li><% }); %></ul><% } %>
+            <% if ((a.melhorias || []).length) { %><strong>Melhorias</strong><ul><% a.melhorias.forEach(function(m){ %><li><%= m %></li><% }); %></ul><% } %>
+            <a class="crm" href="/painel/ia-crm?phone=<%= c.telefone %>" target="_blank">abrir conversa no CRM →</a>
+          </div>
+        </details>
+      <% }); %>
+    <% } %>
+  </div>
+  <script>
+    (function(){
+      var msg = document.getElementById('msg');
+      function iniciar(btn){
+        var dia = btn.getAttribute('data-dia');
+        btn.disabled = true; msg.textContent = 'Gerando… (leva 1–2 min)';
+        fetch('/api/painel/ia-followup/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ dia: dia }) })
+          .then(function(r){ return r.json(); })
+          .then(function(){
+            var tentativas = 0;
+            var t = setInterval(function(){
+              tentativas++;
+              fetch('/api/painel/ia-followup/status?dia=' + dia, { credentials: 'same-origin' }).then(function(r){ return r.json(); }).then(function(s){
+                if (s && s.ok && !s.gerando && s.geradoEm) { clearInterval(t); location.href = '/painel/ia-followup?dia=' + dia; }
+                else if (s && s.erro && !s.gerando) { clearInterval(t); msg.textContent = 'Erro: ' + s.erro; btn.disabled = false; }
+                else if (tentativas > 60) { clearInterval(t); msg.textContent = 'Ainda gerando — recarregue daqui a pouco.'; }
+              }).catch(function(){});
+            }, 5000);
+          })
+          .catch(function(){ msg.textContent = 'Falha ao iniciar.'; btn.disabled = false; });
+      }
+      ['gerar', 'regerar'].forEach(function(id){ var b = document.getElementById(id); if (b) b.addEventListener('click', function(){ iniciar(b); }); });
+    })();
+  </script>
+</body>
+</html>

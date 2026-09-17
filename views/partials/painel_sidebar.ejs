@@ -5,7 +5,7 @@
         geral:       ['dashboard','vendas'],
         financeiro:  ['controladoria','notas-fiscais'],
         operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
-        marketing:   ['coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm'],
+        marketing:   ['coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm','ia-followup'],
         ferramentas: ['consulta-perfil','service_types','testes-servicos','whatsapp-ia-teste']
     };
     function _open(list){ return (list.indexOf(_p) >= 0) ? 'open' : ''; }
@@ -63,6 +63,7 @@
                 <li><a href="/painel/ltv" class="<%= _a('ltv') %>">LTV (Disparo)</a></li>
                 <li><a href="/painel/whatsapp-crm" class="<%= _a('whatsapp-crm') %>">CRM WhatsApp (LTV)</a></li>
                 <li><a href="/painel/ia-crm" class="<%= _a('ia-crm') %>">CRM IA WhatsApp</a></li>
+                <li><a href="/painel/ia-followup" class="<%= _a('ia-followup') %>">Follow-up do bot</a></li>
             </ul>
         </details>
 
