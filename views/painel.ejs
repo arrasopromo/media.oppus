@@ -4094,14 +4094,63 @@
           <div class="summary-label">Custo Total no Período</div>
           <div class="summary-value">R$ <%= totalCost.toFixed(2).replace('.', ',') %></div>
         </div>
-        <% var _vendasOper = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _lucroOper = _vendasOper - Number(totalCost || 0); %>
+        <% var _vendasOper = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _lucroOper = _vendasOper - Number(totalCost || 0);
+           var _aj = (typeof ajustesLucro !== 'undefined' && ajustesLucro) ? ajustesLucro : { total: 0, itens: [], comAsterisco: false };
+           var _ajTotal = Number(_aj.total || 0); %>
         <div class="summary-card">
           <div class="summary-label">Lucro Líquido (período)</div>
-          <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %><% if (_aj.comAsterisco) { %><span id="dashAjusteAsterisco" title="Tem um débito extraordinário no período. Clique para ver o motivo." style="cursor:pointer; color:#dc2626; font-weight:800; margin-left:2px;">*</span><% } %></div>
           <div id="dashLucroMargem" style="margin-top:4px; font-size:0.85rem; font-weight:700; color:#6b7280;"></div>
           <div class="summary-sub" id="dashLucroOperSub" style="margin-top:6px;">Total de Vendas − Custo Total</div>
           <button type="button" id="dashMetaTaxToggle" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">c/ imposto Meta (13,8%)</button>
         </div>
+        <% if (_aj.comAsterisco) { %>
+        <div id="dashAjusteModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; padding:16px;">
+          <div style="background:#fff; border-radius:14px; max-width:620px; width:100%; max-height:82vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25);">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid #eef0f5;">
+              <div>
+                <div style="font-size:1.05rem; font-weight:800; color:#111827;">Débito extraordinário no período</div>
+                <div style="font-size:.82rem; color:#6b7280; margin-top:2px;">Gasto fora da operação normal, descontado do lucro do mês em que aconteceu.</div>
+              </div>
+              <button type="button" id="dashAjusteClose" style="border:none; background:#f3f4f6; width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:1.1rem; color:#374151;">×</button>
+            </div>
+            <div style="padding:16px 18px;">
+              <% _aj.itens.forEach(function(it){ %>
+              <div style="border:1px solid #fee2e2; background:#fff7f7; border-radius:12px; padding:14px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                  <div style="font-weight:800; color:#111827;"><%= it.titulo %></div>
+                  <div style="font-weight:800; color:#dc2626; white-space:nowrap;">− R$ <%= Number(it.valor||0).toFixed(2).replace('.', ',') %></div>
+                </div>
+                <div style="font-size:.8rem; color:#6b7280; margin-top:2px;"><%= it.data ? String(it.data).slice(8,10) + '/' + String(it.data).slice(5,7) + '/' + String(it.data).slice(0,4) : it.mes %></div>
+                <div style="font-size:.9rem; color:#374151; margin-top:8px; line-height:1.5;"><%= it.motivo %></div>
+                <% if ((it.detalhes || []).length) { %>
+                <ul style="margin:10px 0 0 18px; padding:0; font-size:.85rem; color:#4b5563; line-height:1.6;">
+                  <% it.detalhes.forEach(function(d){ %><li><%= d %></li><% }); %>
+                </ul>
+                <% } %>
+              </div>
+              <% }); %>
+              <div style="display:flex; justify-content:space-between; font-weight:800; color:#111827; border-top:1px solid #eef0f5; padding-top:12px;">
+                <span>Total descontado do lucro</span>
+                <span style="color:#dc2626;">− R$ <%= _ajTotal.toFixed(2).replace('.', ',') %></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var ast = document.getElementById('dashAjusteAsterisco');
+            var modal = document.getElementById('dashAjusteModal');
+            if (!ast || !modal) return;
+            try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch(_) {}
+            var close = document.getElementById('dashAjusteClose');
+            ast.addEventListener('click', function(){ modal.style.display = 'flex'; });
+            if (close) close.addEventListener('click', function(){ modal.style.display = 'none'; });
+            modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display = 'none'; });
+            document.addEventListener('keydown', function(e){ if (e.key === 'Escape') modal.style.display = 'none'; });
+          })();
+        </script>
+        <% } %>
         <% var _fbOk = (typeof fbSpendOk !== 'undefined' && fbSpendOk); var _fb = _fbOk ? Number(fbSpend || 0) : 0; var _fbTax = _fb * 0.138; var _fbTotal = _fb + _fbTax; var _brl = function(n){ return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ','); }; %>
         <div class="summary-card">
           <div class="summary-label">Gasto Facebook (período)</div>
@@ -4115,7 +4164,7 @@
           <div class="summary-sub" style="margin-top:6px;">Não configurado / sem dados</div>
           <% } %>
         </div>
-        <div class="summary-card" id="dashImpostoCard" data-vendas="<%= _vendasOper.toFixed(2) %>" data-lucrobruto="<%= _lucroOper.toFixed(2) %>" data-ads-base="<%= _fb.toFixed(2) %>" data-ads-tax="<%= _fbTax.toFixed(2) %>">
+        <div class="summary-card" id="dashImpostoCard" data-vendas="<%= _vendasOper.toFixed(2) %>" data-lucrobruto="<%= _lucroOper.toFixed(2) %>" data-ads-base="<%= _fb.toFixed(2) %>" data-ads-tax="<%= _fbTax.toFixed(2) %>" data-ajuste="<%= _ajTotal.toFixed(2) %>">
           <div class="summary-label">Imposto (período)</div>
           <div class="summary-value" id="dashImpostoValue" style="color:#dc2626;">R$ 0,00</div>
           <div class="summary-sub" style="margin-top:8px;">
@@ -4140,6 +4189,7 @@
             var lucroBruto = Number(card.getAttribute('data-lucrobruto') || 0) || 0;
             var adsBase = Number(card.getAttribute('data-ads-base') || 0) || 0;  // gasto Facebook
             var adsTax = Number(card.getAttribute('data-ads-tax') || 0) || 0;    // imposto Meta (13,8%)
+            var ajuste = Number(card.getAttribute('data-ajuste') || 0) || 0;     // débito extraordinário do período
             var metaBtn = document.getElementById('dashMetaTaxToggle');
             var KEY = 'oppus_imposto_aliquota';
             var KEY_META = 'oppus_lucro_meta_tax'; // '1' = considera imposto Meta, '0' = não
@@ -4152,7 +4202,7 @@
               if (rateLabel) rateLabel.textContent = rateStr + '%';
               var imposto = vendas * (rate / 100);
               var ads = adsBase + (includeMeta ? adsTax : 0);
-              var lucro = lucroBruto - imposto - ads;
+              var lucro = lucroBruto - imposto - ads - ajuste;
               if (impostoEl) impostoEl.textContent = '− ' + fmt(imposto);
               if (lucroEl) { lucroEl.textContent = fmt(lucro); lucroEl.style.color = lucro >= 0 ? '#16a34a' : '#dc2626'; }
               if (margemEl) {
@@ -4162,7 +4212,8 @@
               }
               if (lucroSub) {
                 var adsTxt = adsBase > 0 ? (' − Anúncios' + (includeMeta && adsTax > 0 ? ' (c/ imposto Meta)' : '')) : '';
-                lucroSub.textContent = 'Vendas − Custo' + adsTxt + ' − Imposto (' + rateStr + '%)';
+                var ajTxt = ajuste > 0 ? (' − Ajuste (' + fmt(ajuste) + ')') : '';
+                lucroSub.textContent = 'Vendas − Custo' + adsTxt + ' − Imposto (' + rateStr + '%)' + ajTxt;
               }
               if (metaBtn) {
                 metaBtn.textContent = includeMeta ? 'c/ imposto Meta (13,8%)' : 's/ imposto Meta';

@@ -9822,6 +9822,43 @@ function resolvePanelPeriodRange(period, startDate, endDate) {
   if (p === 'custom' || p === 'max') return customRange();
   return { start: null, endExclusive: null }; // 'all' / padrão = sem filtro
 }
+// ══════════════════════════════════════════════════════════════════════════
+// AJUSTES DE LUCRO — débitos extraordinários (gasto fora da operação normal)
+// que precisam sair do lucro do mês em que aconteceram. Ficam na coleção
+// `ajustes_lucro`: { _id, titulo, motivo, valor, data (ISO), mes 'YYYY-MM' }.
+// Regra de exibição, combinada com o dono:
+//   • o débito entra em QUALQUER filtro que encoste no mês do ajuste;
+//   • o asterisco (com o modal do motivo) só aparece quando o filtro está
+//     DENTRO daquele mês — filtro que atravessa meses debita calado.
+// ══════════════════════════════════════════════════════════════════════════
+function mesRangeBrt(mes) {
+  const [y, m] = String(mes || '').split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return null;
+  return { ini: Date.UTC(y, m - 1, 1, 3, 0, 0, 0), fimEx: Date.UTC(y, m, 1, 3, 0, 0, 0) };
+}
+async function ajustesDeLucroDoPeriodo(startMs, endMs) {
+  const out = { total: 0, itens: [], comAsterisco: false };
+  try {
+    const col = await getCollection('ajustes_lucro');
+    const docs = await col.find({}).sort({ data: 1 }).toArray();
+    for (const d of docs) {
+      const valor = Number(d.valor || 0);
+      if (!(valor > 0)) continue;
+      const r = mesRangeBrt(d.mes || String(d.data || '').slice(0, 7));
+      if (!r) continue;
+      const semFiltro = !Number.isFinite(startMs) || !Number.isFinite(endMs);
+      const encosta = semFiltro || (startMs < r.fimEx && endMs > r.ini);
+      if (!encosta) continue;
+      const dentroDoMes = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
+      out.total += valor;
+      out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes });
+      if (dentroDoMes) out.comAsterisco = true;
+    }
+    out.total = Math.round(out.total * 100) / 100;
+  } catch (_) {}
+  return out;
+}
+
 // Chave de dia (YYYY-MM-DD) no fuso BRT, para agrupar séries diárias.
 function brtDayKey(dateLike) {
   const t = dateLike ? new Date(dateLike).getTime() : NaN;
@@ -42987,7 +43024,14 @@ app.get('/painel', requireAdmin, async (req, res) => {
       } catch (_) {}
     }
 
-    const __painelRenderData = { view, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    // Débitos extraordinários do período (saem do lucro; asterisco só dentro do mês).
+    let ajustesLucro = { total: 0, itens: [], comAsterisco: false };
+    try {
+      const _pr = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
+      ajustesLucro = await ajustesDeLucroDoPeriodo(_pr.start ? _pr.start.getTime() : NaN, _pr.endExclusive ? _pr.endExclusive.getTime() : NaN);
+    } catch (_) {}
+
+    const __painelRenderData = { view, ajustesLucro, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
