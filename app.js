@@ -3204,6 +3204,9 @@ async function placeProviderAdd(provider, service, link, quantity) {
 // Avalia UM bloco de curtidas (a ponta da cadeia) e reenvia se parcial/cancelado.
 async function autoReorderEvaluateBlock(col, o, field, cfg) {
   const sub = o[field]; if (!sub || !sub.orderId) return null;
+  // TRAVA: esta esteira é só de CURTIDAS. Pedido de seguidores (312 e afins) nunca é
+  // reenviado aqui — nem parcial, nem cancelado. Seguidores se resolvem pelo refil.
+  if (!ehPedidoDeCurtidas(sub, field)) return null;
   if (sub.reorderChainDone) return null;
   const provider = refilProviderOf(field);
   const rp = sub.requestPayload || {};
@@ -3588,6 +3591,7 @@ app.post('/api/painel/topfama/audit-bulk', requireAdmin, async (req, res) => {
       try {
         const o = await col.findOne({ _id: it._id }, { projection: { [it.field]: 1 } });
         const sub = (o && o[it.field]) || {};
+        if (!ehPedidoDeCurtidas(sub, it.field)) { out.skipped++; continue; } // seguidores não entram aqui
         if (!TOPFAMA_DONE.has(String(sub.status || '').toLowerCase().trim())) { out.skipped++; continue; }
         const link = String((sub.requestPayload && sub.requestPayload.link) || '');
         if (!link) { out.skipped++; continue; }
