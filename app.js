@@ -3779,7 +3779,8 @@ function startServiceTestsDailyLoop() {
 app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
   try {
     const col = await getCollection('service_tests');
-    const docs = await col.find({}).sort({ dataPedidoMs: -1, createdAt: -1, _id: -1 }).limit(2000).toArray();
+    // Mais antiga em cima, mais nova embaixo: a linha criada aparece junto do "+ nova linha".
+    const docs = await col.find({}).sort({ dataPedidoMs: 1, createdAt: 1, _id: 1 }).limit(2000).toArray();
     const ENTREGA_VALS = ['Mais', 'Igual', 'Menos'];
     const allRows = docs.map((d) => ({
       id: String(d._id),
@@ -3856,8 +3857,10 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
     };
     const col = await getCollection('service_tests');
     const ins = await col.insertOne(doc);
-    // Checagem inicial (best-effort) para já mostrar a quantidade atual.
-    try { const rec = await col.findOne({ _id: ins.insertedId }); if (rec) await serviceTestCheckOne(col, rec); } catch (_) {}
+    // Checagem inicial (best-effort) só se já veio com perfil. Linha criada vazia não tem o
+    // que medir: a medição falhava, a linha nascia vermelha ("falha ao medir") e a checagem
+    // diária passava a ignorá-la mesmo depois de preenchida.
+    if (perfil) { try { const rec = await col.findOne({ _id: ins.insertedId }); if (rec) await serviceTestCheckOne(col, rec); } catch (_) {} }
     return res.json({ ok: true, id: String(ins.insertedId) });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
@@ -3882,8 +3885,13 @@ app.post('/api/painel/testes-servicos/update', requireAdmin, async (req, res) =>
     if (b.perfil != null) $set.perfil = String(b.perfil).replace(/^@+/, '').replace(/\/+$/g, '').trim();
     if (b.dataPedido != null && /^\d{4}-\d{2}-\d{2}/.test(String(b.dataPedido))) { $set.dataPedido = String(b.dataPedido).slice(0, 10); $set.dataPedidoMs = new Date($set.dataPedido + 'T12:00:00-03:00').getTime(); }
     const col = await getCollection('service_tests');
+    const antes = (b.perfil != null) ? await col.findOne({ _id: new ObjectId(id) }, { projection: { perfil: 1 } }) : null;
+    const perfilMudou = !!(antes && $set.perfil && $set.perfil !== String(antes.perfil || ''));
+    // Perfil preenchido/trocado: tira a marca de falha antiga e mede na hora.
+    if (perfilMudou) { $set.measureFailed = false; $set.measureFailReason = ''; }
     await col.updateOne({ _id: new ObjectId(id) }, { $set });
-    return res.json({ ok: true });
+    if (perfilMudou) { try { const rec = await col.findOne({ _id: new ObjectId(id) }); if (rec) await serviceTestCheckOne(col, rec); } catch (_) {} }
+    return res.json({ ok: true, medido: perfilMudou });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Remove um teste

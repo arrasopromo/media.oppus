@@ -81,6 +81,7 @@
     /* Perfil caiu/sumiu: linha com fundo vermelho SUTIL (baixo contraste), sem pintar cada
        célula. O acento vermelho + o X ficam só na 1ª célula (#). Estas linhas NÃO são mais
        consultadas nas checagens em lote. */
+    tr.row-new td { background: #eef2ff !important; transition: background .8s; }
     tr.row-failed td { background: #f7e0e0 !important; color: #7b6b6b !important; }
     tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7b6b6b; }
     tr.row-failed:hover td { background: #f2d3d3 !important; }
@@ -314,6 +315,8 @@
             td.setAttribute('data-raw', val); renderCell(td);
             var body = { id: id }; body[field] = val;
             post('/api/painel/testes-servicos/update', body);
+            // Perfil preenchido: o servidor tira a marca de falha e mede na hora.
+            if (field === 'perfil' && val) { var trp = td.closest('tr'); if (trp) { trp.classList.remove('row-failed'); trp.removeAttribute('data-failed'); trp.removeAttribute('title'); } }
           } else { renderCell(td); }
         }
         input.addEventListener('blur', function(){ finish(true); });
@@ -364,7 +367,7 @@
         if (addr) {
           addr.querySelector('td').textContent = 'criando…';
           var d = await post('/api/painel/testes-servicos/create', {});
-          if (d && d.ok) { location.reload(); } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
+          if (d && d.ok) { try { sessionStorage.setItem('svcNovaLinha', String(d.id || '')); } catch(_){} location.reload(); } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
           return;
         }
         var btn = ev.target.closest('button');
@@ -428,6 +431,17 @@
         }
         else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); btn.disabled = false; }
       });
+
+      // Linha recém-criada: rola até ela (fica embaixo, junto do "+ nova linha") e destaca.
+      (function(){
+        var nid; try { nid = sessionStorage.getItem('svcNovaLinha'); sessionStorage.removeItem('svcNovaLinha'); } catch(_){ nid = null; }
+        if (!nid) return;
+        var tr = document.querySelector('tr[data-id="' + nid + '"]');
+        if (!tr) return;
+        try { tr.scrollIntoView({ block: 'center' }); } catch(_){}
+        tr.classList.add('row-new');
+        setTimeout(function(){ tr.classList.remove('row-new'); }, 2500);
+      })();
 
       // Após o reload, mostra QUAIS linhas falharam no último "Checar todos" (# da linha) e destaca.
       (function(){
