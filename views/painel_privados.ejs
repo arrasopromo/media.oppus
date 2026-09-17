@@ -186,6 +186,15 @@
                  } catch (_) {
                      tipoDisplay = tipo;
                  }
+                 // Sempre deixa o serviço explícito: "brasileiros" sozinho parecia seguidores
+                 // mesmo quando o pedido era de curtidas.
+                 try {
+                     const catNome = c.includes('curtida') ? 'curtidas' : (c.includes('seguidor') ? 'seguidores' : (/visualiz|view|reel/.test(c) ? 'visualizações' : ''));
+                     const tdl = String(tipoDisplay || '').toLowerCase().trim();
+                     if (catNome && (tdl === '' || tdl === '-')) tipoDisplay = catNome;
+                     else if (catNome && !/^(curtidas|seguidores|visualiza)/.test(tdl)) tipoDisplay = catNome + ' ' + String(tipoDisplay).replace(/_/g, ' ');
+                     if (/^curtidas brasileiros\b/i.test(tipoDisplay)) tipoDisplay = tipoDisplay.replace(/brasileiros/i, 'brasileiras');
+                 } catch (_) {}
                               
                  const qtd = order.quantidade || order.qtd || 
                              (order.additionalInfoPaid && order.additionalInfoPaid.find(i => i.key === 'quantidade')?.value) || 
