@@ -2939,6 +2939,22 @@ const REFIL_PROVIDER_CFG = {
   fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY' },
 };
 function refilProviderOf(field) { return REFIL_FIELD_PROVIDER[field] || 'topfama'; }
+// A Gestão Parcial é SÓ de curtidas: mede curtidas do post e reenvia o que faltou.
+// O campo principal (fornecedor_social/topfama) carrega os dois tipos — 312 = seguidores
+// brasileiros, 194/233 = curtidas — então o filtro é pelo serviço e pelo link, não pelo campo.
+const SERVICOS_CURTIDAS = new Set([194, 233]);
+const SERVICOS_SEGUIDORES = new Set([312, 314, 315, 2, 47, 174, 227, 510]);
+function ehPedidoDeCurtidas(sub, field) {
+  if (!sub) return false;
+  const rp = sub.requestPayload || {};
+  const svc = Number(rp.service || sub.service || 0);
+  if (SERVICOS_SEGUIDORES.has(svc)) return false;
+  if (SERVICOS_CURTIDAS.has(svc)) return true;
+  const link = String(rp.link || sub.link || '');
+  if (/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\//i.test(link)) return true;
+  if (link) return false;                       // link de perfil sem serviço conhecido → seguidores
+  return /_likes$/.test(String(field || ''));   // bump de curtidas antigo, sem link gravado
+}
 const TOPFAMA_DONE = new Set(['completed', 'concluido', 'concluído', 'complete']);
 
 // Consulta status/remains de UM orderId no provider indicado. { status, remains, startCount, charge, raw } | { error }.
@@ -3076,6 +3092,7 @@ async function auditTopfamaCompletedLikes({ cooldownHours = 24 } = {}) {
     for (const o of orders) {
       for (const f of TOPFAMA_FIELDS) {
         const sub = o[f]; if (!sub || !sub.orderId) continue;
+        if (!ehPedidoDeCurtidas(sub, f)) continue;                                      // seguidores não têm curtidas para auditar
         if (!TOPFAMA_DONE.has(String(sub.status || '').toLowerCase().trim())) continue; // só concluídos
         const link = String((sub.requestPayload && sub.requestPayload.link) || ''); if (!link) continue;
         const at = sub.auditLikesAt ? new Date(sub.auditLikesAt).getTime() : 0;
@@ -3250,6 +3267,7 @@ async function processTopfamaAutoReorders() {
     for (const o of orders) {
       for (const f of TOPFAMA_FIELDS) {
         const sub = o[f]; if (!sub || !sub.orderId || sub.reorderChainDone) continue;
+        if (!ehPedidoDeCurtidas(sub, f)) continue; // reenvio automático é só de curtidas
         try {
           const res = await autoReorderEvaluateBlock(col, o, f, cfg);
           if (res) { out.evaluated++; if (res.reordered) out.reordered++; if (res.stopped || res.done) out.stopped++; if (res.error) out.errors++; }
@@ -3451,6 +3469,7 @@ app.post('/api/painel/topfama/reorder', requireAdmin, async (req, res) => {
     const o = await col.findOne({ _id: new ObjectId(id) });
     if (!o) return res.status(404).json({ ok: false, error: 'not_found' });
     const sub = o[field] || {};
+    if (!ehPedidoDeCurtidas(sub, field)) return res.status(400).json({ ok: false, error: 'nao_e_curtidas', message: 'A Gestão Parcial repõe só pedidos de curtidas. Seguidores se resolvem pelo refil.' });
     const remains = Math.floor(Number(sub.remains || 0) || 0);
     if (remains <= 0) return res.status(400).json({ ok: false, error: 'no_remains', message: 'Sem quantidade faltando para repor.' });
     const rp = sub.requestPayload || {};
@@ -3599,6 +3618,7 @@ app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
       let dataMs = 0; for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt, o.criado]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) { dataMs = t; break; } }
       for (const f of TOPFAMA_FIELDS) {
         const sub = o[f]; if (!sub || !sub.orderId) continue;
+        if (!ehPedidoDeCurtidas(sub, f)) continue; // a tela é só de curtidas (seguidores 312 ficam de fora)
         const rp = sub.requestPayload || {};
         rows.push({
           id: String(o._id), field: f, dataMs,
