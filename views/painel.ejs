@@ -4101,7 +4101,6 @@
           <div class="summary-label">Lucro Líquido (período)</div>
           <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
           <div id="dashLucroMargem" style="margin-top:4px; font-size:0.85rem; font-weight:700; color:#6b7280;"></div>
-          <div class="summary-sub" id="dashLucroOperSub" style="margin-top:6px;">Total de Vendas − Custo Total</div>
           <button type="button" id="dashMetaTaxToggle" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">c/ imposto Meta (13,8%)</button>
           <% if (_ajTotal > 0) { %>
           <button type="button" id="dashAjusteToggle" style="margin-top:6px; display:block; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">considerar gasto adicional</button>
@@ -4194,7 +4193,6 @@
             var rateLabel = document.getElementById('dashImpostoRateLabel');
             var impostoEl = document.getElementById('dashImpostoValue');
             var lucroEl = document.getElementById('dashLucroOperValue');
-            var lucroSub = document.getElementById('dashLucroOperSub');
             var margemEl = document.getElementById('dashLucroMargem');
             var vendas = Number(card.getAttribute('data-vendas') || 0) || 0;
             var lucroBruto = Number(card.getAttribute('data-lucrobruto') || 0) || 0;
@@ -4225,11 +4223,6 @@
                 var margem = vendas > 0 ? (lucro / vendas * 100) : 0;
                 margemEl.textContent = margem.toFixed(1).replace('.', ',') + '% das vendas';
                 margemEl.style.color = margem >= 0 ? '#16a34a' : '#dc2626';
-              }
-              if (lucroSub) {
-                var adsTxt = adsBase > 0 ? (' − Anúncios' + (includeMeta && adsTax > 0 ? ' (c/ imposto Meta)' : '')) : '';
-                var ajTxt = ajusteAplicado > 0 ? (' − Gasto adicional (' + fmt(ajusteAplicado) + ')') : '';
-                lucroSub.textContent = 'Vendas − Custo' + adsTxt + ' − Imposto (' + rateStr + '%)' + ajTxt;
               }
               if (ajusteBtn) {
                 ajusteBtn.textContent = includeAjuste ? 'c/ gasto adicional (' + fmt(ajuste) + ')' : 'considerar gasto adicional';
