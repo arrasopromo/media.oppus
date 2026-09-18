@@ -84,6 +84,7 @@
         </select>
       </label>
       <button type="submit" class="btn btn-green">Filtrar</button>
+      <button type="button" id="exportBtn" class="btn" style="background:#0f766e;color:#fff;">⬇ Exportar Excel</button>
       <a href="/painel/gestao-parcial-topfama" class="sub" style="margin:0;">limpar</a>
       <span class="sub" style="margin-left:auto;"><strong><%= (rows || []).length %></strong><% if (typeof totalAll !== 'undefined' && totalAll !== (rows||[]).length) { %> de <%= totalAll %><% } %> pedido(s)</span>
     </form>
@@ -192,6 +193,14 @@
       var refreshBtn = document.getElementById('refreshBtn');
       var refreshMsg = document.getElementById('refreshMsg');
       function say(m){ try { if (refreshMsg) refreshMsg.textContent = m || ''; } catch(_){} }
+
+      // Exportar Excel: leva o filtro ATUAL do formulário para a rota de exportação (CSV que abre no Excel).
+      var exportBtn = document.getElementById('exportBtn');
+      if (exportBtn) exportBtn.addEventListener('click', function(){
+        var form = exportBtn.closest('form');
+        var qs = form ? new URLSearchParams(new FormData(form)).toString() : '';
+        window.location.href = '/painel/gestao-parcial-topfama/export' + (qs ? ('?' + qs) : '');
+      });
       if (refreshBtn) {
         refreshBtn.addEventListener('click', async function(){
           refreshBtn.disabled = true; say('Consultando TopFama… (pode levar alguns segundos)');

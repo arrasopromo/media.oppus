@@ -3608,9 +3608,8 @@ app.post('/api/painel/topfama/audit-bulk', requireAdmin, async (req, res) => {
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 
-// Página: Gestão Parcial (TopFama)
-app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
-  try {
+// Monta e FILTRA as linhas da Gestão Parcial (usada pela página e pela exportação).
+async function gestaoParcialFiltrado(query) {
     const col = await getCollection('checkout_orders');
     const orQ = TOPFAMA_FIELDS.map((f) => ({ [`${f}.orderId`]: { $exists: true, $nin: [null, ''] } }));
     const orders = await col.find({ $or: orQ }, { projection: Object.assign({ customer: 1, instagramUsername: 1, instauser: 1, additionalInfoMapPaid: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfo: 1, createdAt: 1, criado: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1 }, TOPFAMA_PROJ) }).sort({ createdAt: -1, _id: -1 }).limit(3000).toArray();
@@ -3683,15 +3682,15 @@ app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
     }
     // Filtro por data (De/Até), no fuso de Brasília.
     const parseDay = (s, endOfDay) => { const v = String(s || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null; const t = new Date(v + 'T' + (endOfDay ? '23:59:59' : '00:00:00') + '-03:00').getTime(); return Number.isFinite(t) ? t : null; };
-    const startMs = parseDay(req.query.start, false);
-    const endMs = parseDay(req.query.end, true);
-    const statusFilter = String(req.query.status || '').toLowerCase().trim();
+    const startMs = parseDay(query.start, false);
+    const endMs = parseDay(query.end, true);
+    const statusFilter = String(query.status || '').toLowerCase().trim();
     const validStatus = ['done', 'partial', 'prog', 'canc', 'unverified'];
-    const resultFilter = String(req.query.result || '').toLowerCase().trim();
+    const resultFilter = String(query.result || '').toLowerCase().trim();
     const validResult = ['ok', 'nok', 'oculto'];
     // Sempre oferece os 2 provedores no filtro (mesmo sem pedidos ainda) + quaisquer outros nos dados.
     const fornecedores = Array.from(new Set([...Object.values(REFIL_FIELD_PROVIDER), ...rows.map((r) => r.fornecedor)].filter(Boolean))).sort();
-    const fornecedorFilter = String(req.query.fornecedor || '').toLowerCase().trim();
+    const fornecedorFilter = String(query.fornecedor || '').toLowerCase().trim();
     const filtered = rows.filter((r) =>
       (startMs == null || r.dataMs >= startMs) &&
       (endMs == null || r.dataMs <= endMs) &&
@@ -3699,19 +3698,47 @@ app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
       (!resultFilter || !validResult.includes(resultFilter) || r.okNok === resultFilter) &&
       (!fornecedorFilter || !fornecedores.includes(fornecedorFilter) || r.fornecedor === fornecedorFilter)
     );
-    return res.render('painel_gestao_parcial_topfama', {
-      page: 'gestao-parcial-topfama',
+    return {
       rows: filtered,
       totalAll: rows.length,
       fornecedores,
       filter: {
-        start: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.start || '')) ? String(req.query.start).slice(0, 10) : '',
-        end: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || '')) ? String(req.query.end).slice(0, 10) : '',
+        start: /^\d{4}-\d{2}-\d{2}$/.test(String(query.start || '')) ? String(query.start).slice(0, 10) : '',
+        end: /^\d{4}-\d{2}-\d{2}$/.test(String(query.end || '')) ? String(query.end).slice(0, 10) : '',
         result: validResult.includes(resultFilter) ? resultFilter : '',
         status: validStatus.includes(statusFilter) ? statusFilter : '',
         fornecedor: fornecedores.includes(fornecedorFilter) ? fornecedorFilter : '',
       },
-    });
+    };
+}
+
+// Página: Gestão Parcial (Curtidas)
+app.get('/painel/gestao-parcial-topfama', requireAdmin, async (req, res) => {
+  try {
+    const dados = await gestaoParcialFiltrado(req.query);
+    return res.render('painel_gestao_parcial_topfama', Object.assign({ page: 'gestao-parcial-topfama' }, dados));
+  } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
+});
+
+// Exporta o filtro atual da Gestão Parcial em CSV (abre no Excel; UTF-8 + separador ";").
+app.get('/painel/gestao-parcial-topfama/export', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await gestaoParcialFiltrado(req.query);
+    const dtBR = (ms) => { if (!ms) return ''; const d = new Date(ms - 3 * 3600e3); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; };
+    const nomeStatus = { done: 'Concluído', partial: 'Parcial', prog: 'Em andamento', canc: 'Cancelado/erro', unverified: 'Não verificado', other: '—' };
+    const cel = (v) => { const s = String(v == null ? '' : v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const cab = ['Data solicitação', 'Usuário', 'OrderID', 'Fornecedor', 'Link do post', 'Qtd contratada', 'Status', 'Qtd faltando', 'Curtidas atuais', 'Entregue', 'Resultado'];
+    const linhas = rows.map((r) => [
+      dtBR(r.dataMs), r.usuario ? '@' + r.usuario : '', r.orderIdOriginal, r.fornecedor, r.linkPost,
+      r.qtdContratada || '', nomeStatus[r.statusCat] || r.status || '', (r.remains != null ? r.remains : ''),
+      (r.auditLikes != null ? r.auditLikes : ''), (r.entregue != null ? r.entregue : ''),
+      (r.okNok === 'ok' ? 'OK' : r.okNok === 'nok' ? 'NOK (entregou < contratado)' : r.okNok === 'oculto' ? 'curtidas ocultas' : ''),
+    ].map(cel).join(';'));
+    const csv = '﻿' + cab.join(';') + '\r\n' + linhas.join('\r\n') + '\r\n';
+    const hoje = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="gestao-parcial-curtidas-${hoje}.csv"`);
+    return res.send(csv);
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
 
