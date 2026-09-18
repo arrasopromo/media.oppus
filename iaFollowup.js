@@ -186,6 +186,11 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     // 1) cliente sem resposta (só quando o BOT está ativo; ignora fechamento tipo "ok", "obrigado", "👍")
     const FECHAMENTO = /^\s*(ok+|okay|blz|beleza|valeu+|vlw|obrigad[oa]s?( ?mesmo)?|obg|grat[ao]|show|top|perfeito|certo|t[aá] ?bom|tudo bem|amém|am[eé]m|combinado|entendi|entendido|sim|👍+|🙏+|❤️+|😊+|🥰+|🙌+|[\p{Emoji}\s]+)[\s!.]*$/iu;
     const clienteEsperando = ultima.direction === 'in' && !FECHAMENTO.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 15 * 60e3;
+    // "prometeu verificar e não voltou": última mensagem é do ATENDENTE humano, prometendo retorno,
+    // e não teve mais nada depois. Só do atendente (o bot usa "vou verificar" como frase pronta) e só
+    // se já passou tempo suficiente (1h) para não marcar uma promessa feita minutos antes da geração.
+    const PROMESSA = /(vou|vamos|irei|vou j[áa]|j[áa] vou)\s+(verificar|checar|conferir|olhar|ver isso|apurar|consultar|confirmar|analisar|dar uma olhada|retornar)|deixa eu (verificar|ver|checar)|(j[áa]|logo|assim que).{0,20}(retorno|te retorno|te falo|te aviso|volto|te dou (um )?retorno)|aguard[ea].{0,15}(momento|retorno|verific)/i;
+    const atendentePrometeu = ultima.direction === 'out' && ultima.agent && PROMESSA.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 60 * 60e3;
     if (clienteEsperando) {
       if (!botPausado) {
         // bot ativo e cliente sem resposta = o bot deveria ter respondido
@@ -195,6 +200,9 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
         // fica pendente do RETORNO da equipe (se um humano já tivesse respondido por último, não cai aqui).
         pendencias.push({ tipo: 'aguardando_retorno', detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
       }
+    } else if (atendentePrometeu) {
+      // atendente disse que ia verificar e não voltou mais
+      pendencias.push({ tipo: 'aguardando_retorno', detalhe: `Atendente disse que ia verificar às ${hhmm(ultima.createdAt)} e não retornou: "${String(ultima.text || '').slice(0, 120)}"` });
     }
     // 2) suporte acionado NESTE dia (a marca de suporte não é limpa sozinha; antigas não contam)
     const suporteEm = contato.supportAt ? new Date(contato.supportAt).getTime() : 0;
