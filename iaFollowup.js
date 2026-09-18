@@ -34,13 +34,22 @@ const ai = (o, k) => {
 const pago = (o) => ['pago', 'paid'].includes(String(o.status || '').toLowerCase()) || !!o.paidAt || !!(o.paghiper && o.paghiper.paidAt);
 
 // Pedidos no fornecedor gravados no pedido (principal, bumps, multi-post).
+// orderId ATUAL de um campo: se o pedido foi cancelado e reenviado, o que vale é o ÚLTIMO reorder
+// (a esteira ou o reenvio manual), não o base cancelado. Sem isso, pedido já re-entregue aparecia
+// como "cancelado no fornecedor".
+function orderIdAtual(v) {
+  if (!v) return null;
+  if (Array.isArray(v.reorders) && v.reorders.length) { const r = v.reorders[v.reorders.length - 1]; if (r && r.orderId) return String(r.orderId); }
+  if (v.reorderId) return String(v.reorderId);
+  return v.orderId != null ? String(v.orderId) : null;
+}
 function enviosDoPedido(o) {
   const out = [];
   const fama = (id) => (Number(id) >= 1000000 ? 'fama24h' : 'nuvra');
-  for (const k of ['fama24h', 'fama24h_views', 'fama24h_likes']) { const v = o[k]; if (v && v.orderId) out.push({ slot: k, provider: fama(v.orderId), orderId: String(v.orderId) }); else if (v && v.status === 'error') out.push({ slot: k, erro: JSON.stringify(v.error || v.response || 'erro').slice(0, 120) }); }
+  for (const k of ['fama24h', 'fama24h_views', 'fama24h_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: fama(id), orderId: id }); else if (v && v.status === 'error') out.push({ slot: k, erro: JSON.stringify(v.error || v.response || 'erro').slice(0, 120) }); }
   if (o.fama24h_multi && Array.isArray(o.fama24h_multi.orders)) for (const x of o.fama24h_multi.orders) { if (x && x.orderId) out.push({ slot: 'fama24h_multi', provider: x.provider || fama(x.orderId), orderId: String(x.orderId) }); else if (x) out.push({ slot: 'fama24h_multi', erro: String(x.status || 'erro') }); }
-  for (const k of ['fornecedor_social', 'fornecedor_social_likes']) { const v = o[k]; if (v && v.orderId) out.push({ slot: k, provider: 'fornecedor_social', orderId: String(v.orderId) }); }
-  for (const k of ['topfama', 'topfama_likes']) { const v = o[k]; if (v && v.orderId) out.push({ slot: k, provider: 'topfama', orderId: String(v.orderId) }); }
+  for (const k of ['fornecedor_social', 'fornecedor_social_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: 'fornecedor_social', orderId: id }); }
+  for (const k of ['topfama', 'topfama_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: 'topfama', orderId: id }); }
   if (o.worldsmm_comments && o.worldsmm_comments.orderId) out.push({ slot: 'worldsmm_comments', provider: 'worldsmm', orderId: String(o.worldsmm_comments.orderId) });
   return out;
 }
