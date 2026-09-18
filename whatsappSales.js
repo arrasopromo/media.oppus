@@ -400,7 +400,16 @@ async function consultarPedido({ telefone, usuario } = {}) {
 
   const categoria = String(orderGetAny(o, 'categoria_servico') || '').toLowerCase().trim();
   const tipo = String(orderGetAny(o, 'tipo_servico') || o.tipoServico || o.tipo || '').toLowerCase().trim();
-  const quantidade = Number(orderGetAny(o, 'quantidade') || o.quantidade || o.qtd || 0) || 0;
+  // Quantidade TOTAL, já com o upgrade (order bump). O campo "quantidade" do pedido é só a base
+  // (ex.: 150), então o bot dizia 150 mesmo quando o cliente pagou o upgrade para 300. Usa, nesta
+  // ordem: fulfillmentCalc.finalQty (base+upgrade, calculado no despacho) → quantidade despachada
+  // no fornecedor → base. Assim o bot passa a considerar o upgrade.
+  const quantidadeBase = Number(orderGetAny(o, 'quantidade') || o.quantidade || o.qtd || 0) || 0;
+  const qtdDespachada = (function () {
+    for (const p of [o.fornecedor_social, o.fama24h, o.nuvra, o.topfama]) { const q = Number(p && p.requestPayload && p.requestPayload.quantity); if (q > 0) return q; }
+    return 0;
+  })();
+  const quantidade = Number((o.fulfillmentCalc && o.fulfillmentCalc.finalQty) || qtdDespachada || quantidadeBase) || quantidadeBase;
   const usernameOrder = String(o.instagramUsername || o.instauser || orderGetAny(o, 'instagram_username') || uname || '').replace(/^@+/, '');
   const paidMs = _orderPaidMs(o);
   const horasDesdePagamento = paidMs ? Math.round((Date.now() - paidMs) / 3600000) : null;

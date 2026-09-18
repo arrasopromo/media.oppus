@@ -22,6 +22,10 @@
     .card .l { font-size: 12px; color: #6b7280; }
     .card.alerta .n { color: #b91c1c; }
     .card.ok .n { color: #15803d; }
+    .card.clicavel { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
+    .card.clicavel:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.10); border-color: #c7cbd3; }
+    @keyframes flashPend { 0% { background:#fff7ed; } 50% { background:#ffedd5; } 100% { background:#fff; } }
+    .flash { animation: flashPend 1.1s ease; }
     h2 { font-size: 16px; margin: 22px 0 10px; }
     .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
     .ponto h3 { margin: 0 0 4px; font-size: 14px; }
@@ -84,7 +88,7 @@
         <div class="card ok"><div class="n"><%= t.vendas || 0 %></div><div class="l">vendas do bot · <%= brl(t.receita) %></div></div>
         <div class="card ok"><div class="n"><%= (t.conversaoPct != null ? t.conversaoPct : 0) %>%</div><div class="l">conversão (conversas × pago)</div></div>
         <div class="card"><div class="n"><%= t.pixNaoPago || 0 %></div><div class="l">Pix gerado e não pago</div></div>
-        <div class="card <%= t.conversasComPendencia ? 'alerta' : 'ok' %>"><div class="n"><%= t.conversasComPendencia || 0 %></div><div class="l">conversas com pendência</div></div>
+        <div class="card clicavel <%= t.conversasComPendencia ? 'alerta' : 'ok' %>" id="cardPendencia" title="Clique para ver as pendências"><div class="n"><%= t.conversasComPendencia || 0 %></div><div class="l">conversas com pendência ›</div></div>
         <div class="card <%= t.semResposta ? 'alerta' : '' %>"><div class="n"><%= t.semResposta || 0 %></div><div class="l">cliente sem resposta (bot ativo)</div></div>
         <div class="card <%= (t.pagoSemEnvio || t.canceladoFornecedor) ? 'alerta' : '' %>"><div class="n"><%= (t.pagoSemEnvio || 0) + (t.canceladoFornecedor || 0) %></div><div class="l">pago sem envio / cancelado no fornecedor</div></div>
         <div class="card"><div class="n"><%= t.privadoSegurando || 0 %></div><div class="l">travado por perfil privado</div></div>
@@ -105,7 +109,7 @@
         </div>
       <% }); %>
 
-      <h2>Pendências (<span id="pendCount"><%= todasPend.length %></span>)</h2>
+      <h2 id="secPendencias">Pendências (<span id="pendCount"><%= todasPend.length %></span>)</h2>
       <% if (!todasPend.length) { %><div class="box muted">Nada pendente. 🎉</div><% } else {
            var tiposPend = {}; todasPend.forEach(function(x){ tiposPend[x.p.tipo] = (tiposPend[x.p.tipo] || 0) + 1; });
            var tiposOrd = Object.keys(tiposPend).sort(function(a,b){ return (ordemTipo[a] ?? 9) - (ordemTipo[b] ?? 9); }); %>
@@ -185,6 +189,17 @@
       // seletor de data → abre o relatório daquele dia
       var dp = document.getElementById('dataPicker');
       if (dp) dp.addEventListener('change', function(){ if (dp.value) location.href = '/painel/ia-followup?dia=' + dp.value; });
+
+      // card "conversas com pendência" → rola até a lista de pendências e dá um flash
+      var cardPend = document.getElementById('cardPendencia');
+      if (cardPend) cardPend.addEventListener('click', function(){
+        var sec = document.getElementById('secPendencias');
+        if (!sec) return;
+        sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        var box = sec.nextElementSibling; // a caixa da tabela (ou os chips de filtro)
+        var alvo = document.querySelector('.box.scroll') || box;
+        if (alvo) { alvo.classList.remove('flash'); void alvo.offsetWidth; alvo.classList.add('flash'); }
+      });
 
       // filtro por tipo nas pendências
       var filtro = document.getElementById('pendFiltro');
