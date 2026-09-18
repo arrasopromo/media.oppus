@@ -57,6 +57,7 @@
       <% (dias || []).forEach(function(d){ var t = d.totais || {}; var pend = t.conversasComPendencia || 0; %>
         <a class="dia <%= d._id === diaSelecionado ? 'on' : '' %>" href="/painel/ia-followup?dia=<%= d._id %>"><%= d._id.slice(8,10) %>/<%= d._id.slice(5,7) %><% if (pend) { %><span class="pill"><%= pend %></span><% } %><% if (d.gerando) { %> ⏳<% } %></a>
       <% }); %>
+      <input type="date" id="dataPicker" value="<%= diaSelecionado || hoje %>" max="<%= hoje %>" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;color:#374151;" title="Escolher data">
       <button class="btn" id="gerar" data-dia="<%= hoje %>">Gerar o de hoje agora</button>
       <% if (diaSelecionado && diaSelecionado !== hoje) { %><button class="btn" id="regerar" data-dia="<%= diaSelecionado %>" style="background:#4b5563">Refazer <%= diaSelecionado.slice(8,10) %>/<%= diaSelecionado.slice(5,7) %></button><% } %>
       <span id="msg" class="muted"></span>
@@ -79,17 +80,19 @@
     %>
       <div class="muted" style="margin-bottom:10px;font-size:12px">Relatório de <strong><%= rel._id.slice(8,10) %>/<%= rel._id.slice(5,7) %></strong> gerado às <%= hh(rel.geradoEm) %><%= rel.modelo ? ' · análise: ' + rel.modelo : '' %></div>
       <div class="cards">
-        <div class="card"><div class="n"><%= t.conversas || 0 %></div><div class="l">conversas</div></div>
+        <div class="card"><div class="n"><%= t.conversas || 0 %></div><div class="l">conversas<% if (t.botPausadas) { %> · <%= t.botAtivas %> com bot ativo<% } %></div></div>
         <div class="card ok"><div class="n"><%= t.vendas || 0 %></div><div class="l">vendas do bot · <%= brl(t.receita) %></div></div>
+        <div class="card ok"><div class="n"><%= (t.conversaoPct != null ? t.conversaoPct : 0) %>%</div><div class="l">conversão (conversas × pago)</div></div>
         <div class="card"><div class="n"><%= t.pixNaoPago || 0 %></div><div class="l">Pix gerado e não pago</div></div>
         <div class="card <%= t.conversasComPendencia ? 'alerta' : 'ok' %>"><div class="n"><%= t.conversasComPendencia || 0 %></div><div class="l">conversas com pendência</div></div>
-        <div class="card <%= t.semResposta ? 'alerta' : '' %>"><div class="n"><%= t.semResposta || 0 %></div><div class="l">cliente sem resposta</div></div>
+        <div class="card <%= t.semResposta ? 'alerta' : '' %>"><div class="n"><%= t.semResposta || 0 %></div><div class="l">cliente sem resposta (bot ativo)</div></div>
         <div class="card <%= (t.pagoSemEnvio || t.canceladoFornecedor) ? 'alerta' : '' %>"><div class="n"><%= (t.pagoSemEnvio || 0) + (t.canceladoFornecedor || 0) %></div><div class="l">pago sem envio / cancelado no fornecedor</div></div>
         <div class="card"><div class="n"><%= t.privadoSegurando || 0 %></div><div class="l">travado por perfil privado</div></div>
         <div class="card"><div class="n"><%= t.suporte || 0 %></div><div class="l">suporte acionado</div></div>
-        <div class="card <%= t.satisfacaoNegativa ? 'alerta' : '' %>"><div class="n"><%= t.satisfacaoNegativa || 0 %></div><div class="l">clientes insatisfeitos</div></div>
+        <div class="card <%= t.satisfacaoNegativa ? 'alerta' : '' %>"><div class="n"><%= t.satisfacaoNegativa || 0 %></div><div class="l">clientes insatisfeitos (bot ativo)</div></div>
         <div class="card"><div class="n"><%= t.errosDoBot || 0 %></div><div class="l">erros do bot apontados</div></div>
       </div>
+      <% if (t.botPausadas) { %><div class="muted" style="font-size:12px;margin:-8px 0 16px">Os cards do bot (sem resposta, insatisfeitos, erros) contam só as <strong><%= t.botAtivas %></strong> conversas com o bot ativo. <%= t.botPausadas %> estavam com atendimento humano (bot pausado) e ficam de fora.</div><% } %>
 
       <h2>Pontos de melhoria do dia</h2>
       <% if (!(rel.melhorias || []).length) { %><div class="box muted">Nenhum ponto recorrente.</div><% } %>
@@ -102,12 +105,18 @@
         </div>
       <% }); %>
 
-      <h2>Pendências (<%= todasPend.length %>)</h2>
-      <% if (!todasPend.length) { %><div class="box muted">Nada pendente. 🎉</div><% } else { %>
+      <h2>Pendências (<span id="pendCount"><%= todasPend.length %></span>)</h2>
+      <% if (!todasPend.length) { %><div class="box muted">Nada pendente. 🎉</div><% } else {
+           var tiposPend = {}; todasPend.forEach(function(x){ tiposPend[x.p.tipo] = (tiposPend[x.p.tipo] || 0) + 1; });
+           var tiposOrd = Object.keys(tiposPend).sort(function(a,b){ return (ordemTipo[a] ?? 9) - (ordemTipo[b] ?? 9); }); %>
+      <div class="bar" id="pendFiltro" style="margin-bottom:10px">
+        <a class="dia on" data-tipo="" href="javascript:void(0)">todos <span class="pill" style="background:#e5e7eb;color:#374151"><%= todasPend.length %></span></a>
+        <% tiposOrd.forEach(function(tp){ %><a class="dia" data-tipo="<%= tp %>" href="javascript:void(0)"><%= nomeTipo[tp] || tp %> <span class="pill" style="background:#e5e7eb;color:#374151"><%= tiposPend[tp] %></span></a><% }); %>
+      </div>
       <div class="box scroll"><table>
         <tr><th>Tipo</th><th>Cliente</th><th>Detalhe</th><th></th></tr>
         <% todasPend.forEach(function(x){ %>
-          <tr>
+          <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
             <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span></td>
             <td><%= x.p.detalhe %><%= x.p.identifier ? ' · ' + x.p.identifier : '' %></td>
@@ -117,12 +126,16 @@
       </table></div>
       <% } %>
 
-      <h2>Conversas (<%= (rel.conversas || []).length %>)</h2>
-      <% (rel.conversas || []).forEach(function(c){ var a = c.ia || {}; %>
+      <% var convProblema = (rel.conversas || []).filter(function(c){ return (c.pendencias || []).length; }); %>
+      <h2>Conversas com problema (<%= convProblema.length %>)</h2>
+      <div class="muted" style="font-size:12px;margin:-4px 0 10px">Só as conversas que tiveram pendência. As outras <%= (rel.conversas || []).length - convProblema.length %> correram normais e ficam de fora.</div>
+      <% if (!convProblema.length) { %><div class="box muted">Nenhuma conversa com problema. 🎉</div><% } %>
+      <% convProblema.forEach(function(c){ var a = c.ia || {}; %>
         <details class="conv">
           <summary>
             <strong><%= c.nome || ('+' + c.telefone) %></strong>
             <span class="muted"><%= hh(c.primeira) %>–<%= hh(c.ultima) %> · <%= c.mensagens %> msgs</span>
+            <% if (c.botPausado) { %><span class="tag" style="background:#e5e7eb;color:#374151">bot pausado</span><% } %>
             <% if (a.resultado) { %><span class="tag t-ia"><%= a.resultado.replace('_', ' ') %></span><% } %>
             <% if (a.satisfacao) { %><span class="sat-<%= a.satisfacao %>" style="font-size:12px"><%= a.satisfacao %></span><% } %>
             <% (c.pendencias || []).filter(function(p){ return p.tipo !== 'ia'; }).forEach(function(p){ %><span class="tag t-<%= p.tipo %>"><%= nomeTipo[p.tipo] || p.tipo %></span><% }); %>
@@ -168,6 +181,26 @@
           .catch(function(){ msg.textContent = 'Falha ao iniciar.'; btn.disabled = false; });
       }
       ['gerar', 'regerar'].forEach(function(id){ var b = document.getElementById(id); if (b) b.addEventListener('click', function(){ iniciar(b); }); });
+
+      // seletor de data → abre o relatório daquele dia
+      var dp = document.getElementById('dataPicker');
+      if (dp) dp.addEventListener('change', function(){ if (dp.value) location.href = '/painel/ia-followup?dia=' + dp.value; });
+
+      // filtro por tipo nas pendências
+      var filtro = document.getElementById('pendFiltro');
+      if (filtro) {
+        filtro.addEventListener('click', function(e){
+          var a = e.target.closest('a[data-tipo]'); if (!a) return;
+          var tipo = a.getAttribute('data-tipo');
+          filtro.querySelectorAll('a[data-tipo]').forEach(function(x){ x.classList.toggle('on', x === a); });
+          var vis = 0;
+          document.querySelectorAll('tr.pendRow').forEach(function(row){
+            var ok = !tipo || row.getAttribute('data-tipo') === tipo;
+            row.style.display = ok ? '' : 'none'; if (ok) vis++;
+          });
+          var cnt = document.getElementById('pendCount'); if (cnt) cnt.textContent = vis;
+        });
+      }
     })();
   </script>
 </body>

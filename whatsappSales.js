@@ -438,8 +438,12 @@ async function consultarPedido({ telefone, usuario } = {}) {
   // O cliente só pode ver "em andamento" ou "concluído". Qualquer outro status real
   // (entrega parcial, erro, cancelado, desconhecido) é tratado INTERNAMENTE (reposição
   // com novos pedidos) → para o cliente vira "em andamento". Não expõe o status cru
-  // nem quanto falta/entrou (evita revelar entrega parcial).
-  const statusCliente = (statusFornecedor === 'concluído') ? 'concluído' : 'em andamento';
+  // nem quanto falta/entrou (evita revelar entrega parcial ou cancelamento).
+  // Exceção: se JÁ ENTREGOU TUDO (remains === 0), é "concluído" mesmo que o fornecedor
+  // ainda não tenha virado o rótulo para "completed" — assim o bot para de dizer
+  // "em andamento" para pedido que já caiu inteiro.
+  const entregouTudo = remains != null && remains === 0 && statusFornecedor !== 'cancelado' && statusFornecedor !== 'reembolsado';
+  const statusCliente = (statusFornecedor === 'concluído' || entregouTudo) ? 'concluído' : 'em andamento';
 
   // Link de REPOSIÇÃO (refil) do cliente — token = refilLinkId do pedido.
   // NÃO devolve p/ brasileiros reais (orgânicos): esse tipo é estável e o fluxo é

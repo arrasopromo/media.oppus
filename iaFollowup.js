@@ -78,6 +78,7 @@ async function avaliarComIA(transcricao, fatos) {
   const sistema = [
     'Você audita conversas do atendente virtual de vendas (bot) de uma empresa que vende seguidores, curtidas e visualizações para Instagram pelo WhatsApp.',
     'Leia a transcrição e os FATOS (pedidos e status reais no fornecedor, conferidos pelo sistema). Os FATOS mandam: se o bot disse algo que contradiz os fatos, é erro do bot.',
+    'POLÍTICA DA EMPRESA (não é erro do bot seguir isso): ao cliente o bot NUNCA revela "parcial", "cancelado", "reembolsado", "erro" nem quantos seguidores faltam/entraram — pedido com problema é sempre tratado internamente e comunicado como "em andamento". Portanto, dizer "em andamento" para um pedido que na verdade está parcial ou cancelado é o comportamento CORRETO e NÃO deve ser marcado como "informacao_falsa". Só marque erro de status quando o pedido já foi ENTREGUE por completo e mesmo assim o bot disse que está em andamento, ou quando o bot inventou um dado que prejudica o cliente.',
     'Responda SOMENTE em JSON, em português, com as chaves:',
     '"resumo" (1–2 frases: o que o cliente queria e como terminou),',
     '"resultado" (uma de: "venda", "sem_venda", "pos_venda", "suporte", "outro"),',
@@ -179,10 +180,13 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     const ultimaIn = [...lista].reverse().find((m) => m.direction === 'in');
     const pendencias = [];
     const contato = contatos.get(fim8(tel)) || {};
-    // 1) cliente sem resposta (ignora fechamento tipo "ok", "obrigado", "👍")
+    // Bot pausado nesse contato = um humano assumiu. O follow-up é sobre o BOT, então tudo que
+    // depende dele (sem resposta, parecer da IA, erros do bot) NÃO conta quando ele está pausado.
+    const botPausado = !!contato.botPaused;
+    // 1) cliente sem resposta (só quando o BOT está ativo; ignora fechamento tipo "ok", "obrigado", "👍")
     const FECHAMENTO = /^\s*(ok+|okay|blz|beleza|valeu+|vlw|obrigad[oa]s?( ?mesmo)?|obg|grat[ao]|show|top|perfeito|certo|t[aá] ?bom|tudo bem|amém|am[eé]m|combinado|entendi|entendido|sim|👍+|🙏+|❤️+|😊+|🥰+|🙌+|[\p{Emoji}\s]+)[\s!.]*$/iu;
-    if (ultima.direction === 'in' && !FECHAMENTO.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 15 * 60e3) {
-      pendencias.push({ tipo: 'sem_resposta', detalhe: `Última mensagem do cliente às ${hhmm(ultima.createdAt)} sem resposta${contato.botPaused ? ' (bot PAUSADO nesse contato)' : ''}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+    if (!botPausado && ultima.direction === 'in' && !FECHAMENTO.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 15 * 60e3) {
+      pendencias.push({ tipo: 'sem_resposta', detalhe: `Última mensagem do cliente às ${hhmm(ultima.createdAt)} sem resposta: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
     }
     // 2) suporte acionado NESTE dia (a marca de suporte não é limpa sozinha; antigas não contam)
     const suporteEm = contato.supportAt ? new Date(contato.supportAt).getTime() : 0;
@@ -245,7 +249,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     }
 
     const conv = {
-      telefone: tel, nome, mensagens: lista.length,
+      telefone: tel, nome, mensagens: lista.length, botPausado,
       doCliente: lista.filter((m) => m.direction === 'in').length,
       doBot: lista.filter((m) => m.direction === 'out' && !m.agent).length,
       doAtendente: lista.filter((m) => m.direction === 'out' && m.agent).length,
@@ -253,7 +257,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
       pedidos: resumoPedidos, pendencias,
     };
 
-    if (comIA) {
+    if (comIA && !botPausado) {
       const linhas = lista.slice(-80).map((m) => `[${hhmm(m.createdAt)}] ${m.direction === 'in' ? 'CLIENTE' : (m.agent ? 'ATENDENTE' : 'BOT')}: ${m.imagemDescricao ? '[imagem] ' + m.imagemDescricao : String(m.text || '[' + m.type + ']')}`.replace(/\s+/g, ' ').slice(0, 600));
       let transcricao = linhas.join('\n');
       if (transcricao.length > 12000) transcricao = transcricao.slice(-12000);
@@ -262,10 +266,12 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     conversas.push(conv);
   }
 
-  // Parecer da IA: 6 conversas em paralelo (sequencial levaria minutos com ~70 conversas)
+  // Parecer da IA: só nas conversas com o BOT ATIVO (as pausadas são atendimento humano — não
+  // fazem parte da avaliação do bot). 6 em paralelo (sequencial levaria minutos com ~70 conversas).
   if (comIA) {
-    for (let i = 0; i < conversas.length; i += 6) {
-      await Promise.all(conversas.slice(i, i + 6).map(async (conv) => {
+    const paraIA = conversas.filter((c) => !c.botPausado && c._transcricao);
+    for (let i = 0; i < paraIA.length; i += 6) {
+      await Promise.all(paraIA.slice(i, i + 6).map(async (conv) => {
         conv.ia = await avaliarComIA(conv._transcricao, { pedidos: conv.pedidos.map((p) => ({ pacote: p.pacote, tipo: p.tipo, valor: p.valor, pago: p.pago, situacao: p.situacao, usuario: p.usuario })), pendencias_detectadas: conv.pendencias.map((p) => p.tipo) });
         // até 2 pendências apontadas pela IA que o sistema não detectou sozinho
         if (conv.ia && Array.isArray(conv.ia.pendencias)) for (const p of conv.ia.pendencias.slice(0, 2)) if (p) conv.pendencias.push({ tipo: 'ia', detalhe: String(p).slice(0, 200) });
@@ -276,11 +282,18 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
   conversas.sort((a, b) => b.pendencias.length - a.pendencias.length || String(b.ultima).localeCompare(String(a.ultima)));
   const todosPedidos = conversas.flatMap((c) => c.pedidos);
   const conta = (f) => conversas.reduce((n, c) => n + c.pendencias.filter(f).length, 0);
+  const vendeu = (p) => p.origem === 'bot' && p.pago && String(p.criado) >= ini.toISOString();
+  const conversasComVenda = conversas.filter((c) => c.pedidos.some(vendeu)).length;
+  const botAtivas = conversas.filter((c) => !c.botPausado).length;
   const totais = {
     conversas: conversas.length,
+    botAtivas,                        // conversas com o bot atendendo (não pausado)
+    botPausadas: conversas.length - botAtivas,
     mensagens: msgs.length,
-    vendas: todosPedidos.filter((p) => p.origem === 'bot' && p.pago && String(p.criado) >= ini.toISOString()).length,
-    receita: Math.round(todosPedidos.filter((p) => p.origem === 'bot' && p.pago && String(p.criado) >= ini.toISOString()).reduce((a, p) => a + p.valor, 0) * 100) / 100,
+    vendas: todosPedidos.filter(vendeu).length,
+    conversasComVenda,
+    conversaoPct: conversas.length ? Math.round((conversasComVenda / conversas.length) * 1000) / 10 : 0,
+    receita: Math.round(todosPedidos.filter(vendeu).reduce((a, p) => a + p.valor, 0) * 100) / 100,
     pixNaoPago: todosPedidos.filter((p) => p.situacao === 'pix_nao_pago').length,
     conversasComPendencia: conversas.filter((c) => c.pendencias.length).length,
     semResposta: conta((p) => p.tipo === 'sem_resposta'),
@@ -292,8 +305,9 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     parcial: conta((p) => p.tipo === 'parcial'),
     suporte: conta((p) => p.tipo === 'suporte'),
     reclamacoes: conta((p) => p.tipo === 'reclamacao'),
-    satisfacaoNegativa: conversas.filter((c) => c.ia && c.ia.satisfacao === 'negativa').length,
-    errosDoBot: conversas.reduce((n, c) => n + ((c.ia && c.ia.erros_do_bot) || []).length, 0),
+    // satisfação e erros do bot: só valem onde o bot estava ativo (a IA nem roda nas pausadas)
+    satisfacaoNegativa: conversas.filter((c) => !c.botPausado && c.ia && c.ia.satisfacao === 'negativa').length,
+    errosDoBot: conversas.reduce((n, c) => n + ((!c.botPausado && c.ia && c.ia.erros_do_bot) || []).length, 0),
   };
   const melhorias = comIA ? await consolidarMelhorias(conversas) : [];
   return { _id: dia, dia, geradoEm: new Date().toISOString(), modelo: comIA ? MODELO() : null, totais, melhorias, conversas };
