@@ -3727,11 +3727,15 @@ app.get('/painel/gestao-parcial-topfama/export', requireAdmin, async (req, res) 
     const dtBR = (ms) => { if (!ms) return ''; const d = new Date(ms - 3 * 3600e3); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; };
     const nomeStatus = { done: 'Concluído', partial: 'Parcial', prog: 'Em andamento', canc: 'Cancelado/erro', unverified: 'Não verificado', other: '—' };
     const cel = (v) => { const s = String(v == null ? '' : v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    const cab = ['Data solicitação', 'Usuário', 'OrderID', 'Fornecedor', 'Link do post', 'Qtd contratada', 'Status', 'Qtd faltando', 'Curtidas atuais', 'Entregue', 'Resultado'];
+    const cab = ['Data solicitação', 'Usuário', 'OrderID', 'Fornecedor', 'Link do post', 'Qtd contratada', 'Curtidas iniciais', 'Curtidas atuais', 'Entregue (atual − inicial)', 'Status', 'Falta no fornecedor', 'Resultado'];
     const linhas = rows.map((r) => [
       dtBR(r.dataMs), r.usuario ? '@' + r.usuario : '', r.orderIdOriginal, r.fornecedor, r.linkPost,
-      r.qtdContratada || '', nomeStatus[r.statusCat] || r.status || '', (r.remains != null ? r.remains : ''),
-      (r.auditLikes != null ? r.auditLikes : ''), (r.entregue != null ? r.entregue : ''),
+      r.qtdContratada || '',
+      (r.initialLikes != null ? r.initialLikes : ''),
+      (r.auditLikes != null ? r.auditLikes : (r.auditLikesHidden ? 'ocultas' : '')),
+      (r.entregue != null ? r.entregue : ''),
+      nomeStatus[r.statusCat] || r.status || '',
+      (r.remains != null ? r.remains : ''),
       (r.okNok === 'ok' ? 'OK' : r.okNok === 'nok' ? 'NOK (entregou < contratado)' : r.okNok === 'oculto' ? 'curtidas ocultas' : ''),
     ].map(cel).join(';'));
     const csv = '﻿' + cab.join(';') + '\r\n' + linhas.join('\r\n') + '\r\n';
