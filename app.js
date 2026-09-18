@@ -3979,6 +3979,27 @@ app.post('/api/painel/testes-servicos/check-all', requireAdmin, async (req, res)
   try { const r = await runServiceTestsDailyCheck(); return res.json({ ok: true, result: r }); }
   catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Checa os SELECIONADOS agora (checkboxes das linhas)
+app.post('/api/painel/testes-servicos/check-bulk', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).filter((x) => /^[0-9a-fA-F]{24}$/.test(String(x))).slice(0, 500);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids' });
+    const col = await getCollection('service_tests');
+    const out = { pedidos: ids.length, checados: 0, falhas: 0, linhas: [] };
+    for (const id of ids) {
+      try {
+        const rec = await col.findOne({ _id: new ObjectId(id) });
+        if (!rec) { out.falhas++; continue; }
+        const r = await serviceTestCheckOne(col, rec);
+        if (r && r.ok) { out.checados++; out.linhas.push({ id, count: r.count, pico: r.pico, quedaPct: r.quedaPct, source: r.source }); }
+        else { out.falhas++; out.linhas.push({ id, erro: true }); }
+      } catch (_) { out.falhas++; out.linhas.push({ id, erro: true }); }
+      await new Promise((r2) => setTimeout(r2, 200)); // rate-limit gentil no RocketAPI
+    }
+    return res.json({ ok: true, result: out });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
 
 // Follow-up diário do bot (IA WhatsApp): /painel/ia-followup + geração sob demanda.
 try { require('./iaFollowup.js').registerIaFollowup(app, { requireAdmin, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (e) { try { console.error('⚠️ ia-followup não registrado:', e && e.message); } catch (_) {} }

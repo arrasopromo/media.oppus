@@ -114,6 +114,7 @@
 
     <div class="toolbar">
       <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
+      <button type="button" id="checkSelBtn" class="btn" style="background:#0f766e;color:#fff;" disabled>↻ Checar selecionados (<span id="selCount">0</span>)</button>
       <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem; color:#374151; user-select:none;">
         <input type="checkbox" id="hideDeadChk"> Ocultar perfis mortos
       </label>
@@ -164,7 +165,7 @@
       <table>
         <thead>
           <tr>
-            <th class="rownum">#</th>
+            <th class="rownum"><input type="checkbox" id="selAll" title="Selecionar todos os visíveis"> #</th>
             <th>Id serviço</th>
             <th>Tipo</th>
             <th class="col-perfil">Perfil teste</th>
@@ -215,7 +216,7 @@
 <%# Saida escapada transformava as aspas do atributo em entidade: o class virava texto
       solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
           <tr data-id="<%= r.id %>"<% if (r.measureFailed) { %> class="row-failed" data-failed="1" title="Falha ao medir<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — ignorada nas checagens em lote"<% } %>>
-            <td class="rownum"><%= _i + 1 %></td>
+            <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <%= _i + 1 %></td>
             <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %></td>
             <td class="selcell">
               <select class="cell-select" data-field="tipo">
@@ -431,6 +432,35 @@
         }
         else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); btn.disabled = false; }
       });
+
+      // ── Seleção de linhas + checar selecionados ────────────────────────────
+      function selecionadas(){ return Array.prototype.filter.call(document.querySelectorAll('.selRow'), function(cb){ return cb.checked && cb.offsetParent !== null; }); }
+      function atualizaSel(){
+        var n = selecionadas().length;
+        var el = $('selCount'); if (el) el.textContent = n;
+        var b = $('checkSelBtn'); if (b) b.disabled = !n;
+      }
+      var tb = $('tbody');
+      if (tb) tb.addEventListener('change', function(ev){ if (ev.target && ev.target.classList.contains('selRow')) atualizaSel(); });
+      var selAll = $('selAll');
+      if (selAll) selAll.addEventListener('change', function(){
+        Array.prototype.forEach.call(document.querySelectorAll('.selRow'), function(cb){ if (cb.offsetParent !== null) cb.checked = selAll.checked; });
+        atualizaSel();
+      });
+      var checkSelBtn = $('checkSelBtn');
+      if (checkSelBtn) checkSelBtn.addEventListener('click', async function(){
+        var ids = selecionadas().map(function(cb){ return cb.getAttribute('data-id'); });
+        if (!ids.length) return;
+        var msg = $('checkAllMsg');
+        checkSelBtn.disabled = true; msg.textContent = 'Medindo seguidores de ' + ids.length + ' selecionado(s)…';
+        var d = await post('/api/painel/testes-servicos/check-bulk', { ids: ids });
+        if (d && d.ok) {
+          var r = d.result || {};
+          msg.textContent = 'Ok: ' + (r.checados||0) + ' medido(s)' + (r.falhas ? (' · ' + r.falhas + ' falha(s)') : '') + '. Recarregando…';
+          setTimeout(function(){ location.reload(); }, 900);
+        } else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); checkSelBtn.disabled = false; }
+      });
+      atualizaSel();
 
       // Linha recém-criada: rola até ela (fica embaixo, junto do "+ nova linha") e destaca.
       (function(){
