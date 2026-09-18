@@ -3727,17 +3727,23 @@ app.get('/painel/gestao-parcial-topfama/export', requireAdmin, async (req, res) 
     const dtBR = (ms) => { if (!ms) return ''; const d = new Date(ms - 3 * 3600e3); const p = (n) => String(n).padStart(2, '0'); return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`; };
     const nomeStatus = { done: 'Concluído', partial: 'Parcial', prog: 'Em andamento', canc: 'Cancelado/erro', unverified: 'Não verificado', other: '—' };
     const cel = (v) => { const s = String(v == null ? '' : v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    const cab = ['Data solicitação', 'Usuário', 'OrderID', 'Fornecedor', 'Link do post', 'Qtd contratada', 'Curtidas iniciais', 'Curtidas atuais', 'Entregue (atual − inicial)', 'Status', 'Falta no fornecedor', 'Resultado'];
-    const linhas = rows.map((r) => [
-      dtBR(r.dataMs), r.usuario ? '@' + r.usuario : '', r.orderIdOriginal, r.fornecedor, r.linkPost,
-      r.qtdContratada || '',
-      (r.initialLikes != null ? r.initialLikes : ''),
-      (r.auditLikes != null ? r.auditLikes : (r.auditLikesHidden ? 'ocultas' : '')),
-      (r.entregue != null ? r.entregue : ''),
-      nomeStatus[r.statusCat] || r.status || '',
-      (r.remains != null ? r.remains : ''),
-      (r.okNok === 'ok' ? 'OK' : r.okNok === 'nok' ? 'NOK (entregou < contratado)' : r.okNok === 'oculto' ? 'curtidas ocultas' : ''),
-    ].map(cel).join(';'));
+    const cab = ['Data solicitação', 'Usuário', 'OrderID', 'Fornecedor', 'Link do post', 'Qtd contratada', 'Curtidas iniciais', 'Curtidas atuais', 'Entregue (atual − inicial)', 'Falta (contratado − entregue)', 'Status', 'Remains fornecedor', 'Resultado'];
+    const linhas = rows.map((r) => {
+      // Falta REAL = contratado − (curtidas atuais − iniciais). Se ainda não medimos (sem atual/
+      // inicial), fica em branco. Positivo = ainda falta; 0 = entregou tudo (ou mais).
+      const falta = (r.entregue != null && r.qtdContratada > 0) ? Math.max(0, r.qtdContratada - r.entregue) : null;
+      return [
+        dtBR(r.dataMs), r.usuario ? '@' + r.usuario : '', r.orderIdOriginal, r.fornecedor, r.linkPost,
+        r.qtdContratada || '',
+        (r.initialLikes != null ? r.initialLikes : ''),
+        (r.auditLikes != null ? r.auditLikes : (r.auditLikesHidden ? 'ocultas' : '')),
+        (r.entregue != null ? r.entregue : ''),
+        (falta != null ? falta : ''),
+        nomeStatus[r.statusCat] || r.status || '',
+        (r.remains != null ? r.remains : ''),
+        (r.okNok === 'ok' ? 'OK' : r.okNok === 'nok' ? 'NOK (entregou < contratado)' : r.okNok === 'oculto' ? 'curtidas ocultas' : ''),
+      ].map(cel).join(';');
+    });
     const csv = '﻿' + cab.join(';') + '\r\n' + linhas.join('\r\n') + '\r\n';
     const hoje = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
