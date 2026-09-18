@@ -3873,7 +3873,10 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       if (favF && !r.favorito) return false;
       if (tipoF && r.tipo !== tipoF) return false;
       if (fornF && r.fornecedor !== fornF) return false;
-      const q = (r.quedaPct != null) ? r.quedaPct : null;
+      // Queda = quanto o ATUAL está abaixo do CONTRATADO (o mesmo número que a coluna "Qtd atual"
+      // mostra). Positivo/acima do contratado = queda negativa (entra em qualquer "até X"). Assim
+      // "até 10%" pega positivos e quedas ≤10; 11% de queda fica de fora.
+      const q = (r.atual != null && r.quantidade > 0) ? Math.round(((r.quantidade - r.atual) / r.quantidade) * 1000) / 10 : null;
       if (qMin != null && (q == null || q < qMin)) return false;
       if (qMax != null && (q == null || q > qMax)) return false;
       return true;
