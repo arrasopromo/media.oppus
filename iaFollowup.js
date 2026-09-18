@@ -23,7 +23,14 @@ const PROVEDORES = {
 };
 
 const diaBRT = (ms) => new Date(ms - BRT).toISOString().slice(0, 10);
-const janela = (dia) => { const ini = new Date(dia + 'T03:00:00.000Z'); return { ini, fim: new Date(ini.getTime() + DIA) }; };
+// Aceita um dia ('YYYY-MM-DD') ou um intervalo ({ de, ate }) — o intervalo dá a visão cumulativa.
+const janela = (dia) => {
+  if (dia && typeof dia === 'object' && dia.de && dia.ate) {
+    return { ini: new Date(dia.de + 'T03:00:00.000Z'), fim: new Date(new Date(dia.ate + 'T03:00:00.000Z').getTime() + DIA) };
+  }
+  const ini = new Date(dia + 'T03:00:00.000Z');
+  return { ini, fim: new Date(ini.getTime() + DIA) };
+};
 const fim8 = (p) => String(p || '').replace(/\D/g, '').slice(-8);
 const hhmm = (d) => new Date(new Date(d).getTime() - BRT).toISOString().slice(11, 16);
 const ai = (o, k) => {
@@ -132,6 +139,8 @@ async function consolidarMelhorias(conversas) {
 
 async function gerarRelatorio(dia, { comIA = true } = {}) {
   const { ini, fim } = janela(dia);
+  const ehIntervalo = dia && typeof dia === 'object' && dia.de && dia.ate;
+  const idRel = ehIntervalo ? `${dia.de}..${dia.ate}` : dia;
   const agora = Date.now();
   const msgsCol = await getCollection('wa_ia_messages');
   const pedidosCol = await getCollection('checkout_orders');
@@ -355,7 +364,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     errosDoBot: conversas.reduce((n, c) => n + ((!c.botPausado && c.ia && c.ia.erros_do_bot) || []).length, 0),
   };
   const melhorias = comIA ? await consolidarMelhorias(conversas) : [];
-  return { _id: dia, dia, geradoEm: new Date().toISOString(), modelo: comIA ? MODELO() : null, totais, melhorias, conversas };
+  return { _id: idRel, dia: idRel, intervalo: ehIntervalo ? { de: dia.de, ate: dia.ate } : null, geradoEm: new Date().toISOString(), modelo: comIA ? MODELO() : null, totais, melhorias, conversas };
 }
 
 async function rodarESalvar(dia, { sendNtfy, publico, comIA = true } = {}) {
@@ -394,10 +403,17 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
   app.get('/painel/ia-followup', requireAdmin, async (req, res) => {
     try {
       const col = await getCollection('ia_followup_reports');
-      const dias = await col.find({}, { projection: { dia: 1, totais: 1, geradoEm: 1, gerando: 1, erro: 1 } }).sort({ _id: -1 }).limit(45).toArray();
-      const pedido = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || '')) ? String(req.query.dia) : (dias[0] && dias[0]._id);
+      const dias = await col.find({ _id: /^\d{4}-\d{2}-\d{2}$/ }, { projection: { dia: 1, totais: 1, geradoEm: 1, gerando: 1, erro: 1 } }).sort({ _id: -1 }).limit(45).toArray();
+      const dOk = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+      // Visão CUMULATIVA (intervalo de datas): calcula na hora, com status ao vivo, sem IA (rápido).
+      if (dOk(req.query.de) && dOk(req.query.ate)) {
+        const de = String(req.query.de), ate = String(req.query.ate);
+        const rel = await gerarRelatorio({ de: de <= ate ? de : ate, ate: de <= ate ? ate : de }, { comIA: false });
+        return res.render('painel_ia_followup', { page: 'ia-followup', dias, rel, diaSelecionado: '', intervalo: rel.intervalo, hoje: diaBRT(Date.now()) });
+      }
+      const pedido = dOk(req.query.dia) ? String(req.query.dia) : (dias[0] && dias[0]._id);
       const rel = pedido ? await col.findOne({ _id: pedido }) : null;
-      return res.render('painel_ia_followup', { page: 'ia-followup', dias, rel, diaSelecionado: pedido || '', hoje: diaBRT(Date.now()) });
+      return res.render('painel_ia_followup', { page: 'ia-followup', dias, rel, diaSelecionado: pedido || '', intervalo: null, hoje: diaBRT(Date.now()) });
     } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
   });
   app.post('/api/painel/ia-followup/gerar', requireAdmin, async (req, res) => {

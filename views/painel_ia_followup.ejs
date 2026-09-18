@@ -75,7 +75,11 @@
       <% (dias || []).forEach(function(d){ var t = d.totais || {}; var pend = t.conversasComPendencia || 0; %>
         <a class="dia <%= d._id === diaSelecionado ? 'on' : '' %>" href="/painel/ia-followup?dia=<%= d._id %>"><%= d._id.slice(8,10) %>/<%= d._id.slice(5,7) %><% if (pend) { %><span class="pill"><%= pend %></span><% } %><% if (d.gerando) { %> ⏳<% } %></a>
       <% }); %>
-      <input type="date" id="dataPicker" value="<%= diaSelecionado || hoje %>" max="<%= hoje %>" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;color:#374151;" title="Escolher data">
+      <input type="date" id="dataPicker" value="<%= diaSelecionado || hoje %>" max="<%= hoje %>" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;color:#374151;" title="Escolher um dia">
+      <span class="muted" style="font-size:12px">acumular:</span>
+      <input type="date" id="deData" value="<%= (typeof intervalo !== 'undefined' && intervalo) ? intervalo.de : '' %>" max="<%= hoje %>" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;color:#374151;" title="De">
+      <input type="date" id="ateData" value="<%= (typeof intervalo !== 'undefined' && intervalo) ? intervalo.ate : hoje %>" max="<%= hoje %>" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;color:#374151;" title="Até">
+      <button class="btn" id="acumular" style="background:#4f46e5">Ver período</button>
       <button class="btn" id="gerar" data-dia="<%= hoje %>">Gerar o de hoje agora</button>
       <% if (diaSelecionado && diaSelecionado !== hoje) { %><button class="btn" id="regerar" data-dia="<%= diaSelecionado %>" style="background:#4b5563">Refazer <%= diaSelecionado.slice(8,10) %>/<%= diaSelecionado.slice(5,7) %></button><% } %>
       <span id="msg" class="muted"></span>
@@ -96,7 +100,11 @@
          var brl = function(v){ return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); };
          var hh = function(d){ try { return new Date(new Date(d).getTime() - 3*3600e3).toISOString().slice(11,16); } catch(_) { return ''; } };
     %>
-      <div class="muted" style="margin-bottom:10px;font-size:12px">Relatório de <strong><%= rel._id.slice(8,10) %>/<%= rel._id.slice(5,7) %></strong> gerado às <%= hh(rel.geradoEm) %><%= rel.modelo ? ' · análise: ' + rel.modelo : '' %></div>
+      <% if (rel.intervalo) { %>
+        <div class="muted" style="margin-bottom:10px;font-size:12px">Acumulado de <strong><%= rel.intervalo.de.slice(8,10) %>/<%= rel.intervalo.de.slice(5,7) %></strong> a <strong><%= rel.intervalo.ate.slice(8,10) %>/<%= rel.intervalo.ate.slice(5,7) %></strong> · status conferido ao vivo agora (sem análise da IA neste modo)</div>
+      <% } else { %>
+        <div class="muted" style="margin-bottom:10px;font-size:12px">Relatório de <strong><%= rel._id.slice(8,10) %>/<%= rel._id.slice(5,7) %></strong> gerado às <%= hh(rel.geradoEm) %><%= rel.modelo ? ' · análise: ' + rel.modelo : '' %></div>
+      <% } %>
       <div class="cards">
         <div class="card"><div class="n"><%= t.conversas || 0 %></div><div class="l">conversas<% if (t.botPausadas) { %> · <%= t.botAtivas %> com bot ativo<% } %></div></div>
         <div class="card ok"><div class="n"><%= t.vendas || 0 %></div><div class="l">vendas do bot · <%= brl(t.receita) %></div></div>
@@ -194,6 +202,15 @@
       // seletor de data → abre o relatório daquele dia
       var dp = document.getElementById('dataPicker');
       if (dp) dp.addEventListener('change', function(){ if (dp.value) location.href = '/painel/ia-followup?dia=' + dp.value; });
+
+      // "Ver período" → visão cumulativa (intervalo de datas, status ao vivo)
+      var btnAcum = document.getElementById('acumular');
+      if (btnAcum) btnAcum.addEventListener('click', function(){
+        var de = document.getElementById('deData').value, ate = document.getElementById('ateData').value;
+        if (!de || !ate) { alert('Escolha as duas datas do período.'); return; }
+        btnAcum.disabled = true; btnAcum.textContent = 'calculando…';
+        location.href = '/painel/ia-followup?de=' + de + '&ate=' + ate;
+      });
 
       // card "conversas com pendência" → rola até a lista de pendências e dá um flash
       var cardPend = document.getElementById('cardPendencia');
