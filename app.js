@@ -38472,6 +38472,11 @@ app.get('/api/painel/refil2/export', requireAdmin, async (req, res) => {
         // Só cobra a força MANUAL (Order ID / novo pedido) — que tem forcedAt.
         // Refil automático legado (sem forcedAt) NÃO entra na cobrança.
         if (!oid || !(forceObj && forceObj.forcedAt)) continue;
+        // Só reposição forçada na NUVRA (orderId < 200.000). SMMHustle e Fama24h (id ≥ 1M) ficam de fora.
+        const _prov = String(forceObj.provider || '').toLowerCase();
+        const _oidNum = Number(oid);
+        const _ehNuvra = _prov === 'nuvra' || (Number.isFinite(_oidNum) && _oidNum > 0 && _oidNum < 200000);
+        if (!_ehNuvra) continue;
         const chargeRaw = (forceObj && (forceObj.charge !== null && typeof forceObj.charge !== 'undefined')) ? forceObj.charge : '';
         const charge = (chargeRaw === null || typeof chargeRaw === 'undefined') ? '' : String(chargeRaw).trim();
         const charged = !!(forceObj && (forceObj.charged === true || forceObj.chargedAt)) ? 'OK' : '';
