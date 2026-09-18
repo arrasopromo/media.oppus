@@ -38,6 +38,8 @@
     .mitem .dt { font-size: 12px; color: #9ca3af; white-space: nowrap; }
     .mitem .det { font-size: 13px; color: #4b5563; margin-top: 4px; }
     .mono { font-family: ui-monospace, Consolas, monospace; }
+    .btnReenviar { margin-left: 6px; padding: 3px 9px; border: 1px solid #fecaca; border-radius: 999px; background: #fff5f5; color: #b91c1c; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .btnReenviar:disabled { opacity: .6; cursor: default; }
     h2 { font-size: 16px; margin: 22px 0 10px; }
     .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
     .ponto h3 { margin: 0 0 4px; font-size: 14px; }
@@ -157,8 +159,8 @@
         <% todasPend.forEach(function(x){ %>
           <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
-            <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span></td>
-            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% } %></td>
+            <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span><% if (x.p.usuario) { %><br><a class="mono" href="https://instagram.com/<%= x.p.usuario %>" target="_blank" style="font-size:12px">@<%= x.p.usuario %></a><% } %></td>
+            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %></td>
             <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
           </tr>
         <% }); %>
@@ -240,6 +242,22 @@
             + '<div class="det">' + idLink + ' · <a href="/painel/ia-crm?phone=' + esc(it.telefone) + '" target="_blank">abrir conversa</a></div></div>';
         }).join('') : '<div class="muted" style="padding:12px 0">Nenhum pedido pago sem envio ou cancelado no fornecedor. 🎉</div>';
         document.getElementById('modalEnvioBody').innerHTML = html; abrir('modalEnvio');
+      });
+
+      // botão "revisar e enviar" nas pendências de pago-sem-envio (duplicate) / adicional cancelado
+      document.querySelectorAll('.btnReenviar').forEach(function(b){
+        b.addEventListener('click', function(){
+          var id = b.getAttribute('data-id'), motivo = b.getAttribute('data-motivo');
+          if (!confirm('Revisar e reenviar o pedido ' + id + '?\nO sistema confere o status no fornecedor e, se preciso, envia um novo pedido (gera custo).')) return;
+          b.disabled = true; var txt = b.textContent; b.textContent = 'enviando…';
+          fetch('/api/painel/ia-followup/reenviar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ identifier: id, motivo: motivo }) })
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+              if (d && d.ok) { b.textContent = '✓ ' + d.provider + ' ' + d.orderId; b.style.background = '#e9f7ee'; b.style.borderColor = '#bbf7d0'; b.style.color = '#166534'; }
+              else { b.disabled = false; b.textContent = txt; alert('Não reenviou: ' + ((d && d.error) || 'erro')); }
+            })
+            .catch(function(){ b.disabled = false; b.textContent = txt; alert('Falha na chamada.'); });
+        });
       });
 
       var cardInsat = document.getElementById('cardInsat');

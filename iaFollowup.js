@@ -180,6 +180,10 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     const ultimaIn = [...lista].reverse().find((m) => m.direction === 'in');
     const pendencias = [];
     const contato = contatos.get(fim8(tel)) || {};
+    // Perfil e pagamento desta conversa (usados na reclamação — só quem pagou — e para mostrar o @).
+    const pedidosConversa = pedidosPorFim8.get(fim8(tel)) || [];
+    const temPedidoPago = pedidosConversa.some((o) => pago(o));
+    const usuarioConversa = (function () { for (const o of pedidosConversa) { const u = o.instagramUsername || o.instauser || ai(o, 'instagram_username'); if (u) return String(u).replace(/^@+/, ''); } return ''; })();
     // Bot pausado nesse contato = um humano assumiu. O follow-up é sobre o BOT, então tudo que
     // depende dele (sem resposta, parecer da IA, erros do bot) NÃO conta quando ele está pausado.
     const botPausado = !!contato.botPaused;
@@ -198,20 +202,20 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
       } else {
         // atendimento humano em andamento, mas o cliente escreveu por último e segue esperando:
         // fica pendente do RETORNO da equipe (se um humano já tivesse respondido por último, não cai aqui).
-        pendencias.push({ tipo: 'aguardando_retorno', detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+        pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
       }
     } else if (atendentePrometeu) {
       // atendente disse que ia verificar e não voltou mais
-      pendencias.push({ tipo: 'aguardando_retorno', detalhe: `Atendente disse que ia verificar às ${hhmm(ultima.createdAt)} e não retornou: "${String(ultima.text || '').slice(0, 120)}"` });
+      pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, detalhe: `Atendente disse que ia verificar às ${hhmm(ultima.createdAt)} e não retornou: "${String(ultima.text || '').slice(0, 120)}"` });
     }
     // 2) suporte acionado NESTE dia (a marca de suporte não é limpa sozinha; antigas não contam)
     const suporteEm = contato.supportAt ? new Date(contato.supportAt).getTime() : 0;
     if ((contato.flag === 'suporte' || contato.botPaused) && suporteEm >= ini.getTime() && suporteEm < fim.getTime()) {
       pendencias.push({ tipo: 'suporte', detalhe: `Suporte humano acionado às ${hhmm(contato.supportAt)}` + (contato.supportReason ? `: ${String(contato.supportReason).slice(0, 140)}` : '') + (contato.botPaused ? ' (bot pausado)' : '') });
     }
-    // 3) reclamação
+    // 3) reclamação — SÓ de quem realmente pagou por um pedido (lead que xinga sem ter comprado não conta)
     const recl = lista.filter((m) => m.direction === 'in' && RECLAMACAO.test(String(m.text || '')));
-    if (recl.length) pendencias.push({ tipo: 'reclamacao', detalhe: `Cliente reclamou: "${String(recl[recl.length - 1].text).slice(0, 140)}"` });
+    if (recl.length && temPedidoPago) pendencias.push({ tipo: 'reclamacao', usuario: usuarioConversa, detalhe: `Cliente reclamou: "${String(recl[recl.length - 1].text).slice(0, 140)}"` });
 
     // 4) pedidos
     const pedidosDoTel = (pedidosPorFim8.get(fim8(tel)) || []).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
@@ -237,12 +241,16 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
           item.situacao = privado ? 'privado_segurando' : (upsellEsperando ? 'upsell_aguardando_pai' : (fila ? 'na_fila' : 'pago_sem_envio'));
           const erro = ev.find((e) => e.erro);
           if (erro) item.erroEnvio = erro.erro;
+          const ehSeguidores = /seguidor/i.test(ai(o, 'categoria_servico') || item.tipo || '');
+          const usuarioPed = ehSeguidores ? (item.usuario || usuarioConversa) : '';
           if (fila) {
             item.fila = { desde: fila.heldAt, atrasDe: fila.blockedBy || '' };
             // só vira pendência se a fila não andou em 24h
-            if (presoHa > DIA) pendencias.push({ tipo: 'na_fila', identifier: o.identifier, detalhe: `${item.pacote} está na fila há ${Math.floor(presoHa / 3600e3)}h, esperando terminar o pedido ${fila.blockedBy || 'anterior'} do mesmo perfil` });
+            if (presoHa > DIA) pendencias.push({ tipo: 'na_fila', identifier: o.identifier, usuario: usuarioPed, detalhe: `${item.pacote} está na fila há ${Math.floor(presoHa / 3600e3)}h, esperando terminar o pedido ${fila.blockedBy || 'anterior'} do mesmo perfil` });
           } else if (!upsellEsperando) {
-            pendencias.push({ tipo: item.situacao, identifier: o.identifier, detalhe: `${item.pacote} (R$ ${item.valor.toFixed(2)}) pago e NÃO enviado ao fornecedor${privado ? ' — perfil marcado como privado' : ''}${item.erroEnvio ? ' — erro: ' + item.erroEnvio : ''}` });
+            // erro "Duplicate link" costuma ser só o fornecedor recusando reenvio — dá pra reverificar e reenviar.
+            const duplicado = /duplicate/i.test(String(item.erroEnvio || ''));
+            pendencias.push({ tipo: item.situacao, identifier: o.identifier, usuario: usuarioPed, reenviavel: duplicado, motivoReenvio: duplicado ? 'duplicate' : 'sem_envio', detalhe: `${item.pacote} (R$ ${item.valor.toFixed(2)}) pago e NÃO enviado ao fornecedor${privado ? ' — perfil marcado como privado' : ''}${item.erroEnvio ? ' — erro: ' + item.erroEnvio : ''}` });
           }
         } else {
           item.fornecedor = comId.map((e) => { const s = vivo[e.provider + ':' + e.orderId]; return { provider: e.provider, orderId: e.orderId, slot: e.slot, status: s ? s.status : '?', remains: s ? s.remains : null }; });
@@ -253,11 +261,12 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
             item.situacao = soAdicional ? 'adicional_cancelado' : 'cancelado_fornecedor';
             const oQue = cancelados.map((f) => ITEM_DO_SLOT(f.slot)).filter((v, i, a) => a.indexOf(v) === i).join(' e ');
             const quais = cancelados.map((f) => (PROVEDORES[f.provider] ? PROVEDORES[f.provider].label + ' ' + f.orderId : f.orderId)).join(', ');
-            pendencias.push({ tipo: item.situacao, identifier: o.identifier, detalhe: soAdicional
+            const ehSeguidoresC = /seguidor/i.test(ai(o, 'categoria_servico') || item.tipo || '');
+            pendencias.push({ tipo: item.situacao, identifier: o.identifier, usuario: ehSeguidoresC ? (item.usuario || usuarioConversa) : '', reenviavel: soAdicional, motivoReenvio: soAdicional ? 'adicional' : 'principal', detalhe: soAdicional
               ? `${item.pacote}: o fornecedor CANCELOU ${oQue} (${quais}) — o resto do pedido segue normal`
               : `${item.pacote} pago, mas o fornecedor CANCELOU ${oQue} (${quais})` });
           } else if (sts.every((s) => s === 'completed')) item.situacao = 'entregue';
-          else if (sts.some((s) => s === 'partial')) { item.situacao = 'parcial'; pendencias.push({ tipo: 'parcial', identifier: o.identifier, detalhe: `${item.pacote}: entrega PARCIAL no fornecedor` }); }
+          else if (sts.some((s) => s === 'partial')) { item.situacao = 'parcial'; pendencias.push({ tipo: 'parcial', identifier: o.identifier, usuario: /seguidor/i.test(ai(o, 'categoria_servico') || item.tipo || '') ? (item.usuario || usuarioConversa) : '', detalhe: `${item.pacote}: entrega PARCIAL no fornecedor` }); }
           else item.situacao = 'em_andamento';
         }
       }
@@ -293,6 +302,16 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
         if (conv.ia && Array.isArray(conv.ia.pendencias)) for (const p of conv.ia.pendencias.slice(0, 2)) if (p) conv.pendencias.push({ tipo: 'ia', detalhe: String(p).slice(0, 200) });
       }));
     }
+  }
+
+  // Uma conversa não deve aparecer em VÁRIAS categorias de pendência (evita "duplicadas" na lista).
+  // Fica só a categoria de MAIOR prioridade; dentro dela, mantém todos os itens (ex.: 3 pedidos
+  // cancelados do mesmo cliente continuam como 3 linhas de "fornecedor cancelou").
+  const PRIORIDADE = { pago_sem_envio: 0, cancelado_fornecedor: 1, adicional_cancelado: 2, parcial: 3, na_fila: 4, reclamacao: 5, aguardando_retorno: 6, sem_resposta: 7, suporte: 8, ia: 9 };
+  for (const c of conversas) {
+    if (c.pendencias.length <= 1) continue;
+    const topo = Math.min(...c.pendencias.map((p) => (PRIORIDADE[p.tipo] != null ? PRIORIDADE[p.tipo] : 99)));
+    c.pendencias = c.pendencias.filter((p) => (PRIORIDADE[p.tipo] != null ? PRIORIDADE[p.tipo] : 99) === topo);
   }
 
   conversas.sort((a, b) => b.pendencias.length - a.pendencias.length || String(b.ultima).localeCompare(String(a.ultima)));
@@ -385,6 +404,74 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       const d = await col.findOne({ _id: String(req.query.dia || '') }, { projection: { gerando: 1, geradoEm: 1, erro: 1 } });
       return res.json({ ok: true, gerando: !!(d && d.gerando), geradoEm: d && d.geradoEm, erro: d && d.erro });
     } catch (e) { return res.status(500).json({ ok: false }); }
+  });
+
+  // Revisar e reenviar um pedido que ficou pago-sem-envio (erro "Duplicate link") ou com adicional
+  // cancelado. Reusa o service/link/quantity gravados na tentativa que falhou, reconsulta o status
+  // antes (para não duplicar) e grava o novo orderId no mesmo campo.
+  const provAdd = async (provKey, service, link, quantity) => {
+    const p = PROVEDORES[provKey]; const key = p && String(process.env[p.keyEnv] || '').trim();
+    if (!p || !key) return { ok: false, error: 'sem chave do ' + provKey };
+    try {
+      const r = await axios.post(p.url, new URLSearchParams({ key, action: 'add', service: String(service), link: String(link), quantity: String(Math.floor(quantity)) }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000, validateStatus: () => true });
+      const d = (r && r.data && typeof r.data === 'object') ? r.data : {};
+      const order = d.order || d.orderId || (d.data && d.data.order);
+      if (!order) return { ok: false, error: String(d.error || d.Error || 'fornecedor não retornou orderId') };
+      return { ok: true, order: String(order) };
+    } catch (e) { return { ok: false, error: (e && e.message) || 'erro de rede' }; }
+  };
+  const provKeyDoCampo = (campo, service) => {
+    if (/^fornecedor_social/.test(campo)) return 'fornecedor_social';
+    if (/^topfama/.test(campo)) return 'topfama';
+    if (/^worldsmm/.test(campo)) return 'worldsmm';
+    // fama24h está fora do ar: seguidores/curtidas atuais vão pela Nuvra
+    return 'nuvra';
+  };
+  app.post('/api/painel/ia-followup/reenviar', requireAdmin, async (req, res) => {
+    try {
+      const identifier = String((req.body && req.body.identifier) || '').trim();
+      const motivo = String((req.body && req.body.motivo) || '').trim(); // 'duplicate' | 'adicional'
+      if (!identifier) return res.status(400).json({ ok: false, error: 'sem identifier' });
+      const col = await getCollection('checkout_orders');
+      const o = await col.findOne({ identifier });
+      if (!o) return res.status(404).json({ ok: false, error: 'pedido não encontrado' });
+      // escolhe o sub-pedido a reenviar
+      const camposPrincipais = ['fornecedor_social', 'fama24h', 'nuvra'];
+      const camposAdicional = ['fornecedor_social_likes', 'fama24h_likes', 'nuvra_likes', 'fama24h_views'];
+      const alvos = motivo === 'adicional' ? camposAdicional : camposPrincipais;
+      let campo = null, sub = null;
+      for (const c of alvos) { const v = o[c]; if (!v) continue; const rp = v.requestPayload || {}; if (rp.service && rp.link) { campo = c; sub = v; if (/error|cancel|refund|duplicate/i.test(String(v.status || v.error || '')) || !v.orderId) break; } }
+      if (!campo || !sub) return res.status(400).json({ ok: false, error: 'não achei o sub-pedido para reenviar' });
+      if (sub.reenviando) return res.status(409).json({ ok: false, error: 'já há um reenvio em andamento' });
+      const rp = sub.requestPayload || {};
+      const provKey = provKeyDoCampo(campo, rp.service);
+      // trava
+      const trava = await col.updateOne({ _id: o._id, [`${campo}.reenviando`]: { $ne: true } }, { $set: { [`${campo}.reenviando`]: true } });
+      if (!trava.modifiedCount) return res.status(409).json({ ok: false, error: 'não travou (reenvio concorrente?)' });
+      const add = await provAdd(provKey, rp.service, rp.link, rp.quantity);
+      if (!add.ok) { await col.updateOne({ _id: o._id }, { $unset: { [`${campo}.reenviando`]: '' } }); return res.json({ ok: false, error: add.error }); }
+      // consulta status do novo
+      let st = {};
+      try { const p = PROVEDORES[provKey]; const r = await axios.post(p.url, new URLSearchParams({ key: process.env[p.keyEnv], action: 'status', orders: add.order }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true }); st = (r.data && r.data[add.order]) || {}; } catch (_) {}
+      const agora = new Date().toISOString();
+      const antigo = sub.orderId || null;
+      const chain = Array.isArray(sub.reorders) ? sub.reorders.slice() : [];
+      chain.push({ orderId: String(add.order), quantity: Number(rp.quantity) || null, reason: motivo === 'adicional' ? 'adicional_reenviado' : 'reenvio_manual', at: agora, status: st.status || 'created', de: antigo });
+      await col.updateOne({ _id: o._id }, {
+        $set: {
+          [`${campo}.orderId`]: /^\d+$/.test(String(add.order)) ? Number(add.order) : String(add.order),
+          [`${campo}.status`]: st.status || 'In progress',
+          [`${campo}.remains`]: st.remains != null ? Number(st.remains) : undefined,
+          [`${campo}.statusPayload`]: st && st.status ? st : undefined,
+          [`${campo}.statusCheckedAt`]: agora,
+          [`${campo}.reorders`]: chain,
+          [`${campo}.reenvioManualPainel`]: { de: antigo, para: String(add.order), em: agora, por: 'ia-followup', motivo },
+        },
+        $unset: { [`${campo}.reenviando`]: '', [`${campo}.error`]: '' },
+      });
+      try { if (typeof sendNtfy === 'function') await sendNtfy({ title: 'Reenvio pelo follow-up', message: `${identifier}: novo pedido ${provKey} ${add.order} (${st.status || 'enviado'})`, tags: 'repeat' }); } catch (_) {}
+      return res.json({ ok: true, orderId: String(add.order), provider: provKey, status: st.status || 'In progress', antigo });
+    } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'erro' }); }
   });
 }
 
