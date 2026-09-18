@@ -26,6 +26,18 @@
     .card.clicavel:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.10); border-color: #c7cbd3; }
     @keyframes flashPend { 0% { background:#fff7ed; } 50% { background:#ffedd5; } 100% { background:#fff; } }
     .flash { animation: flashPend 1.1s ease; }
+    .modalbg { position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modalcard { background: #fff; border-radius: 14px; max-width: 720px; width: 100%; max-height: 82vh; overflow: auto; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+    .modalhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #eef0f5; position: sticky; top: 0; background: #fff; }
+    .modalx { cursor: pointer; font-size: 20px; color: #6b7280; line-height: 1; }
+    .modalbody { padding: 6px 18px 16px; }
+    .mitem { border-bottom: 1px solid #f1f2f6; padding: 12px 0; }
+    .mitem:last-child { border-bottom: 0; }
+    .mitem .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    .mitem .cli { font-weight: 700; color: #111827; }
+    .mitem .dt { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+    .mitem .det { font-size: 13px; color: #4b5563; margin-top: 4px; }
+    .mono { font-family: ui-monospace, Consolas, monospace; }
     h2 { font-size: 16px; margin: 22px 0 10px; }
     .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
     .ponto h3 { margin: 0 0 4px; font-size: 14px; }
@@ -36,7 +48,7 @@
     th { background: #f9fafb; color: #6b7280; font-size: 12px; }
     .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
     .t-sem_resposta, .t-pago_sem_envio, .t-cancelado_fornecedor { background: #fee2e2; color: #b91c1c; }
-    .t-privado_segurando, .t-parcial, .t-reclamacao, .t-adicional_cancelado, .t-na_fila { background: #ffedd5; color: #9a3412; }
+    .t-privado_segurando, .t-parcial, .t-reclamacao, .t-adicional_cancelado, .t-na_fila, .t-aguardando_retorno { background: #ffedd5; color: #9a3412; }
     .t-suporte { background: #e0e7ff; color: #3730a3; }
     .t-ia { background: #f3f4f6; color: #374151; }
     .s-entregue { background: #dcfce7; color: #166534; } .s-em_andamento { background: #e0f2fe; color: #075985; }
@@ -75,9 +87,9 @@
          var t = rel.totais || {};
          var todasPend = [];
          (rel.conversas || []).forEach(function(c){ (c.pendencias || []).forEach(function(p){ todasPend.push({ c: c, p: p }); }); });
-         var ordemTipo = { pago_sem_envio: 0, cancelado_fornecedor: 1, sem_resposta: 2, parcial: 3, adicional_cancelado: 4, privado_segurando: 5, na_fila: 6, reclamacao: 7, suporte: 8, ia: 9 };
+         var ordemTipo = { pago_sem_envio: 0, cancelado_fornecedor: 1, sem_resposta: 2, aguardando_retorno: 3, parcial: 4, adicional_cancelado: 5, privado_segurando: 6, na_fila: 7, reclamacao: 8, suporte: 9, ia: 10 };
          todasPend.sort(function(a, b){ return (ordemTipo[a.p.tipo] ?? 9) - (ordemTipo[b.p.tipo] ?? 9); });
-         var nomeTipo = { sem_resposta: 'sem resposta', pago_sem_envio: 'pago sem envio', privado_segurando: 'perfil privado', cancelado_fornecedor: 'fornecedor cancelou', adicional_cancelado: 'adicional cancelado', na_fila: 'parado na fila', parcial: 'entrega parcial', suporte: 'suporte', reclamacao: 'reclamação', ia: 'apontado pela IA' };
+         var nomeTipo = { sem_resposta: 'sem resposta', aguardando_retorno: 'aguardando retorno', pago_sem_envio: 'pago sem envio', privado_segurando: 'perfil privado', cancelado_fornecedor: 'fornecedor cancelou', adicional_cancelado: 'adicional cancelado', na_fila: 'parado na fila', parcial: 'entrega parcial', suporte: 'suporte', reclamacao: 'reclamação', ia: 'apontado pela IA' };
          var nomeSit = { entregue: 'entregue', em_andamento: 'em andamento', pix_nao_pago: 'Pix não pago', estornado: 'estornado', pago_sem_envio: 'pago sem envio', privado_segurando: 'perfil privado', cancelado_fornecedor: 'cancelado no fornecedor', adicional_cancelado: 'adicional cancelado', na_fila: 'na fila', parcial: 'parcial', upsell_aguardando_pai: 'upsell aguardando' };
          var brl = function(v){ return 'R$ ' + Number(v || 0).toFixed(2).replace('.', ','); };
          var hh = function(d){ try { return new Date(new Date(d).getTime() - 3*3600e3).toISOString().slice(11,16); } catch(_) { return ''; } };
@@ -90,13 +102,36 @@
         <div class="card"><div class="n"><%= t.pixNaoPago || 0 %></div><div class="l">Pix gerado e não pago</div></div>
         <div class="card clicavel <%= t.conversasComPendencia ? 'alerta' : 'ok' %>" id="cardPendencia" title="Clique para ver as pendências"><div class="n"><%= t.conversasComPendencia || 0 %></div><div class="l">conversas com pendência ›</div></div>
         <div class="card <%= t.semResposta ? 'alerta' : '' %>"><div class="n"><%= t.semResposta || 0 %></div><div class="l">cliente sem resposta (bot ativo)</div></div>
-        <div class="card <%= (t.pagoSemEnvio || t.canceladoFornecedor) ? 'alerta' : '' %>"><div class="n"><%= (t.pagoSemEnvio || 0) + (t.canceladoFornecedor || 0) %></div><div class="l">pago sem envio / cancelado no fornecedor</div></div>
+        <div class="card clicavel <%= (t.pagoSemEnvio || t.canceladoFornecedor) ? 'alerta' : '' %>" id="cardEnvio" title="Clique para ver os pedidos"><div class="n"><%= (t.pagoSemEnvio || 0) + (t.canceladoFornecedor || 0) + (t.adicionalCancelado || 0) %></div><div class="l">pago sem envio / cancelado no fornecedor ›</div></div>
         <div class="card"><div class="n"><%= t.privadoSegurando || 0 %></div><div class="l">travado por perfil privado</div></div>
         <div class="card"><div class="n"><%= t.suporte || 0 %></div><div class="l">suporte acionado</div></div>
-        <div class="card <%= t.satisfacaoNegativa ? 'alerta' : '' %>"><div class="n"><%= t.satisfacaoNegativa || 0 %></div><div class="l">clientes insatisfeitos (bot ativo)</div></div>
-        <div class="card"><div class="n"><%= t.errosDoBot || 0 %></div><div class="l">erros do bot apontados</div></div>
+        <div class="card clicavel <%= t.satisfacaoNegativa ? 'alerta' : '' %>" id="cardInsat" title="Clique para ver os motivos"><div class="n"><%= t.satisfacaoNegativa || 0 %></div><div class="l">clientes insatisfeitos (bot ativo) ›</div></div>
       </div>
-      <% if (t.botPausadas) { %><div class="muted" style="font-size:12px;margin:-8px 0 16px">Os cards do bot (sem resposta, insatisfeitos, erros) contam só as <strong><%= t.botAtivas %></strong> conversas com o bot ativo. <%= t.botPausadas %> estavam com atendimento humano (bot pausado) e ficam de fora.</div><% } %>
+      <% if (t.botPausadas) { %><div class="muted" style="font-size:12px;margin:-8px 0 16px">Os cards do bot (sem resposta, insatisfeitos) contam só as <strong><%= t.botAtivas %></strong> conversas com o bot ativo. <%= t.botPausadas %> estavam com atendimento humano (bot pausado) e ficam de fora.</div><% } %>
+
+      <%
+        var tiposEnvio = { pago_sem_envio: 1, cancelado_fornecedor: 1, adicional_cancelado: 1, na_fila: 1 };
+        var envioItens = todasPend.filter(function(x){ return tiposEnvio[x.p.tipo]; }).map(function(x){
+          var ped = (x.c.pedidos || []).find(function(p){ return p.identifier === x.p.identifier; }) || {};
+          return { tipo: x.p.tipo, cliente: x.c.nome || '—', telefone: x.c.telefone, detalhe: x.p.detalhe, identifier: x.p.identifier || '', data: ped.criado || x.c.ultima || null };
+        });
+        var insatItens = (rel.conversas || []).filter(function(c){ return !c.botPausado && c.ia && c.ia.satisfacao === 'negativa'; }).map(function(c){
+          return { nome: c.nome || ('+' + c.telefone), telefone: c.telefone, motivo: (c.ia && c.ia.resumo) || 'Cliente demonstrou insatisfação.' };
+        });
+      %>
+      <script>
+        window.__envioItens = <%- JSON.stringify(envioItens) %>;
+        window.__insatItens = <%- JSON.stringify(insatItens) %>;
+      </script>
+
+      <div id="modalEnvio" class="modalbg" style="display:none"><div class="modalcard">
+        <div class="modalhead"><strong>Pago sem envio / cancelado no fornecedor</strong><span class="modalx" data-close="modalEnvio">×</span></div>
+        <div class="modalbody" id="modalEnvioBody"></div>
+      </div></div>
+      <div id="modalInsat" class="modalbg" style="display:none"><div class="modalcard">
+        <div class="modalhead"><strong>Clientes insatisfeitos — motivo</strong><span class="modalx" data-close="modalInsat">×</span></div>
+        <div class="modalbody" id="modalInsatBody"></div>
+      </div></div>
 
       <h2>Pontos de melhoria do dia</h2>
       <% if (!(rel.melhorias || []).length) { %><div class="box muted">Nenhum ponto recorrente.</div><% } %>
@@ -123,44 +158,12 @@
           <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
             <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span></td>
-            <td><%= x.p.detalhe %><%= x.p.identifier ? ' · ' + x.p.identifier : '' %></td>
+            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% } %></td>
             <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
           </tr>
         <% }); %>
       </table></div>
       <% } %>
-
-      <% var convProblema = (rel.conversas || []).filter(function(c){ return (c.pendencias || []).length; }); %>
-      <h2>Conversas com problema (<%= convProblema.length %>)</h2>
-      <div class="muted" style="font-size:12px;margin:-4px 0 10px">Só as conversas que tiveram pendência. As outras <%= (rel.conversas || []).length - convProblema.length %> correram normais e ficam de fora.</div>
-      <% if (!convProblema.length) { %><div class="box muted">Nenhuma conversa com problema. 🎉</div><% } %>
-      <% convProblema.forEach(function(c){ var a = c.ia || {}; %>
-        <details class="conv">
-          <summary>
-            <strong><%= c.nome || ('+' + c.telefone) %></strong>
-            <span class="muted"><%= hh(c.primeira) %>–<%= hh(c.ultima) %> · <%= c.mensagens %> msgs</span>
-            <% if (c.botPausado) { %><span class="tag" style="background:#e5e7eb;color:#374151">bot pausado</span><% } %>
-            <% if (a.resultado) { %><span class="tag t-ia"><%= a.resultado.replace('_', ' ') %></span><% } %>
-            <% if (a.satisfacao) { %><span class="sat-<%= a.satisfacao %>" style="font-size:12px"><%= a.satisfacao %></span><% } %>
-            <% (c.pendencias || []).filter(function(p){ return p.tipo !== 'ia'; }).forEach(function(p){ %><span class="tag t-<%= p.tipo %>"><%= nomeTipo[p.tipo] || p.tipo %></span><% }); %>
-          </summary>
-          <div class="corpo">
-            <% if (a.resumo) { %><p><%= a.resumo %></p><% } %>
-            <% if ((c.pedidos || []).length) { %>
-              <strong>Pedidos</strong>
-              <ul><% c.pedidos.forEach(function(p){ %>
-                <li><%= p.pacote %> <%= p.tipo ? '(' + p.tipo + ')' : '' %> · <%= brl(p.valor) %> · <%= p.origem %> · <span class="tag s-<%= p.situacao %> t-<%= p.situacao %>"><%= nomeSit[p.situacao] || p.situacao %></span>
-                  <% if (p.fornecedor) { %><span class="muted"> — <%= p.fornecedor.map(function(f){ return f.provider + ' ' + f.orderId + ': ' + f.status; }).join(' · ') %></span><% } %>
-                </li>
-              <% }); %></ul>
-            <% } %>
-            <% if ((c.pendencias || []).length) { %><strong>Pendências</strong><ul><% c.pendencias.forEach(function(p){ %><li><%= p.detalhe %></li><% }); %></ul><% } %>
-            <% if ((a.erros_do_bot || []).length) { %><strong>Erros do bot</strong><ul><% a.erros_do_bot.forEach(function(e){ %><li><em><%= e.tipo %></em>: <%= e.descricao %></li><% }); %></ul><% } %>
-            <% if ((a.melhorias || []).length) { %><strong>Melhorias</strong><ul><% a.melhorias.forEach(function(m){ %><li><%= m %></li><% }); %></ul><% } %>
-            <a class="crm" href="/painel/ia-crm?phone=<%= c.telefone %>" target="_blank">abrir conversa no CRM →</a>
-          </div>
-        </details>
-      <% }); %>
     <% } %>
   </div>
   <script>
@@ -216,6 +219,39 @@
           var cnt = document.getElementById('pendCount'); if (cnt) cnt.textContent = vis;
         });
       }
+
+      // ── Modais dos cards ──────────────────────────────────────────────
+      function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]; }); }
+      function dataBR(iso){ if (!iso) return ''; try { var d = new Date(new Date(iso).getTime() - 3*3600e3); var p = function(n){ return String(n).padStart(2,'0'); }; return p(d.getUTCDate())+'/'+p(d.getUTCMonth()+1)+' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes()); } catch(_) { return ''; } }
+      var nomeTipoJs = { pago_sem_envio: 'pago sem envio', cancelado_fornecedor: 'fornecedor cancelou', adicional_cancelado: 'adicional cancelado', na_fila: 'parado na fila' };
+      function abrir(id){ var m = document.getElementById(id); if (m) m.style.display = 'flex'; }
+      function fechar(id){ var m = document.getElementById(id); if (m) m.style.display = 'none'; }
+      document.querySelectorAll('.modalx').forEach(function(x){ x.addEventListener('click', function(){ fechar(x.getAttribute('data-close')); }); });
+      document.querySelectorAll('.modalbg').forEach(function(bg){ bg.addEventListener('click', function(e){ if (e.target === bg) bg.style.display = 'none'; }); });
+      document.addEventListener('keydown', function(e){ if (e.key === 'Escape') document.querySelectorAll('.modalbg').forEach(function(b){ b.style.display='none'; }); });
+
+      var cardEnvio = document.getElementById('cardEnvio');
+      if (cardEnvio) cardEnvio.addEventListener('click', function(){
+        var itens = window.__envioItens || [];
+        var html = itens.length ? itens.map(function(it){
+          var idLink = it.identifier ? '<a class="mono" href="/pedido?identifier=' + encodeURIComponent(it.identifier) + '" target="_blank">' + esc(it.identifier) + '</a>' : '';
+          return '<div class="mitem"><div class="top"><span class="cli">' + esc(it.cliente) + ' <span class="tag t-' + it.tipo + '">' + (nomeTipoJs[it.tipo] || it.tipo) + '</span></span><span class="dt">' + dataBR(it.data) + '</span></div>'
+            + '<div class="det">' + esc(it.detalhe) + '</div>'
+            + '<div class="det">' + idLink + ' · <a href="/painel/ia-crm?phone=' + esc(it.telefone) + '" target="_blank">abrir conversa</a></div></div>';
+        }).join('') : '<div class="muted" style="padding:12px 0">Nenhum pedido pago sem envio ou cancelado no fornecedor. 🎉</div>';
+        document.getElementById('modalEnvioBody').innerHTML = html; abrir('modalEnvio');
+      });
+
+      var cardInsat = document.getElementById('cardInsat');
+      if (cardInsat) cardInsat.addEventListener('click', function(){
+        var itens = window.__insatItens || [];
+        var html = itens.length ? itens.map(function(it){
+          return '<div class="mitem"><div class="top"><span class="cli">' + esc(it.nome) + '</span></div>'
+            + '<div class="det">' + esc(it.motivo) + '</div>'
+            + '<div class="det"><a href="/painel/ia-crm?phone=' + esc(it.telefone) + '" target="_blank">abrir conversa →</a></div></div>';
+        }).join('') : '<div class="muted" style="padding:12px 0">Nenhum cliente insatisfeito com o bot ativo. 🎉</div>';
+        document.getElementById('modalInsatBody').innerHTML = html; abrir('modalInsat');
+      });
     })();
   </script>
 </body>

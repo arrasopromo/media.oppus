@@ -185,8 +185,16 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     const botPausado = !!contato.botPaused;
     // 1) cliente sem resposta (só quando o BOT está ativo; ignora fechamento tipo "ok", "obrigado", "👍")
     const FECHAMENTO = /^\s*(ok+|okay|blz|beleza|valeu+|vlw|obrigad[oa]s?( ?mesmo)?|obg|grat[ao]|show|top|perfeito|certo|t[aá] ?bom|tudo bem|amém|am[eé]m|combinado|entendi|entendido|sim|👍+|🙏+|❤️+|😊+|🥰+|🙌+|[\p{Emoji}\s]+)[\s!.]*$/iu;
-    if (!botPausado && ultima.direction === 'in' && !FECHAMENTO.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 15 * 60e3) {
-      pendencias.push({ tipo: 'sem_resposta', detalhe: `Última mensagem do cliente às ${hhmm(ultima.createdAt)} sem resposta: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+    const clienteEsperando = ultima.direction === 'in' && !FECHAMENTO.test(String(ultima.text || '')) && (Math.min(agora, fim.getTime()) - new Date(ultima.createdAt).getTime()) > 15 * 60e3;
+    if (clienteEsperando) {
+      if (!botPausado) {
+        // bot ativo e cliente sem resposta = o bot deveria ter respondido
+        pendencias.push({ tipo: 'sem_resposta', detalhe: `Última mensagem do cliente às ${hhmm(ultima.createdAt)} sem resposta: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+      } else {
+        // atendimento humano em andamento, mas o cliente escreveu por último e segue esperando:
+        // fica pendente do RETORNO da equipe (se um humano já tivesse respondido por último, não cai aqui).
+        pendencias.push({ tipo: 'aguardando_retorno', detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+      }
     }
     // 2) suporte acionado NESTE dia (a marca de suporte não é limpa sozinha; antigas não contam)
     const suporteEm = contato.supportAt ? new Date(contato.supportAt).getTime() : 0;
@@ -297,6 +305,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     pixNaoPago: todosPedidos.filter((p) => p.situacao === 'pix_nao_pago').length,
     conversasComPendencia: conversas.filter((c) => c.pendencias.length).length,
     semResposta: conta((p) => p.tipo === 'sem_resposta'),
+    aguardandoRetorno: conta((p) => p.tipo === 'aguardando_retorno'),
     pagoSemEnvio: conta((p) => p.tipo === 'pago_sem_envio'),
     privadoSegurando: conta((p) => p.tipo === 'privado_segurando'),
     canceladoFornecedor: conta((p) => p.tipo === 'cancelado_fornecedor'),
