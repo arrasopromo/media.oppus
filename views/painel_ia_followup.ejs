@@ -157,7 +157,8 @@
       <h2 id="secPendencias">Pendências (<span id="pendCount"><%= todasPend.length %></span>)</h2>
       <% if (!todasPend.length) { %><div class="box muted">Nada pendente. 🎉</div><% } else {
            var tiposPend = {}; todasPend.forEach(function(x){ tiposPend[x.p.tipo] = (tiposPend[x.p.tipo] || 0) + 1; });
-           var tiposOrd = Object.keys(tiposPend).sort(function(a,b){ return (ordemTipo[a] ?? 9) - (ordemTipo[b] ?? 9); }); %>
+           var tiposOrd = Object.keys(tiposPend).sort(function(a,b){ return (ordemTipo[a] ?? 9) - (ordemTipo[b] ?? 9); });
+           var fmtDataBR = function(iso){ try { if(!iso) return ''; var d=new Date(iso); if(isNaN(d.getTime())) return ''; var b=new Date(d.getTime()-3*3600000); var p=function(n){return String(n).padStart(2,'0');}; return p(b.getUTCDate())+'/'+p(b.getUTCMonth()+1)+' '+p(b.getUTCHours())+':'+p(b.getUTCMinutes()); } catch(e){ return ''; } }; %>
       <div class="bar" id="pendFiltro" style="margin-bottom:10px">
         <a class="dia on" data-tipo="" href="javascript:void(0)">todos <span class="pill" style="background:#e5e7eb;color:#374151"><%= todasPend.length %></span></a>
         <% tiposOrd.forEach(function(tp){ %><a class="dia" data-tipo="<%= tp %>" href="javascript:void(0)"><%= nomeTipo[tp] || tp %> <span class="pill" style="background:#e5e7eb;color:#374151"><%= tiposPend[tp] %></span></a><% }); %>
@@ -168,7 +169,7 @@
           <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
             <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span><% if (x.p.usuario) { %><br><a class="mono" href="https://instagram.com/<%= x.p.usuario %>" target="_blank" style="font-size:12px">@<%= x.p.usuario %></a><% } %></td>
-            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %></td>
+            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %><% if (x.p.tipo === 'reclamacao' && x.p.data) { %> <span class="muted" style="font-size:12px">· última msg do cliente: <%= fmtDataBR(x.p.data) %></span><% } %></td>
             <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
           </tr>
         <% }); %>

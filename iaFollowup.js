@@ -233,7 +233,13 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     }
     // 3) reclamação — SÓ de quem realmente pagou por um pedido (lead que xinga sem ter comprado não conta)
     const recl = lista.filter((m) => m.direction === 'in' && RECLAMACAO.test(String(m.text || '')));
-    if (recl.length && temPedidoPago) pendencias.push({ tipo: 'reclamacao', usuario: usuarioConversa, detalhe: `Cliente reclamou: "${String(recl[recl.length - 1].text).slice(0, 140)}"` });
+    if (recl.length && temPedidoPago) {
+      // data do ÚLTIMO envio de mensagem pelo cliente (última mensagem inbound da conversa;
+      // se não houver, cai na última reclamação).
+      const inbounds = lista.filter((m) => m.direction === 'in');
+      const ultimaDoCliente = inbounds.length ? inbounds[inbounds.length - 1] : recl[recl.length - 1];
+      pendencias.push({ tipo: 'reclamacao', usuario: usuarioConversa, data: ultimaDoCliente ? ultimaDoCliente.createdAt : null, detalhe: `Cliente reclamou: "${String(recl[recl.length - 1].text).slice(0, 140)}"` });
+    }
 
     // 4) pedidos
     const pedidosDoTel = (pedidosPorFim8.get(fim8(tel)) || []).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
