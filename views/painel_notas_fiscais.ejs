@@ -46,9 +46,38 @@
     <h1>Notas Fiscais</h1>
     <p class="sub">Pedidos represados (sem CPF), com erro ou já emitidos. Corrija o CPF dos represados e reemita.</p>
 
+    <% var _rz = (typeof resumo !== 'undefined' && resumo) ? resumo : null; %>
+    <% if (_rz) { %>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 16px;">
+      <div style="flex:1;min-width:150px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;">
+        <div style="font-size:.78rem;color:#64748b;font-weight:600;">Notas emitidas</div>
+        <div style="font-size:1.6rem;font-weight:800;color:#0f172a;"><%= _rz.emitidas %></div>
+        <div style="font-size:.72rem;color:#94a3b8;">autorizadas + canceladas</div>
+      </div>
+      <div style="flex:1;min-width:150px;background:#fff;border:1px solid #dcfce7;border-radius:12px;padding:14px 16px;">
+        <div style="font-size:.78rem;color:#166534;font-weight:600;">Autorizadas</div>
+        <div style="font-size:1.6rem;font-weight:800;color:#16a34a;"><%= _rz.autorizadas %></div>
+        <div style="font-size:.72rem;color:#94a3b8;">R$ <%= Number(_rz.valorAutorizadas||0).toFixed(2).replace('.', ',') %> faturado</div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid #fee2e2;border-radius:12px;padding:14px 16px;">
+        <div style="font-size:.78rem;color:#991b1b;font-weight:600;">Canceladas</div>
+        <div style="font-size:1.6rem;font-weight:800;color:#dc2626;"><%= _rz.canceladas %></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid #fed7aa;border-radius:12px;padding:14px 16px;">
+        <div style="font-size:.78rem;color:#9a3412;font-weight:600;">Rejeitadas</div>
+        <div style="font-size:1.6rem;font-weight:800;color:#ea580c;"><%= _rz.rejeitadas %></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;">
+        <div style="font-size:.78rem;color:#64748b;font-weight:600;">Pendentes</div>
+        <div style="font-size:1.6rem;font-weight:800;color:#64748b;"><%= _rz.pendentes %></div>
+        <div style="font-size:.72rem;color:#94a3b8;">represadas + erro + fila</div>
+      </div>
+    </div>
+    <% } %>
+
     <p style="margin:-6px 0 12px;"><button type="button" onclick="sincronizarFila()" style="padding:7px 12px;border:1px solid #0369a1;background:#0369a1;color:#fff;border-radius:8px;cursor:pointer;font-size:0.85rem;">Atualizar status na Spedy</button> <span id="syncMsg" style="color:#64748b;font-size:0.82rem;"></span></p>
     <div class="tabs">
-      <% var tabs = [['held','Represados','held'],['error','Com erro','error'],['enqueued','Na fila','enqueued'],['authorized','Autorizadas','authorized'],['rejected','Rejeitadas','rejected'],['all','Todas','']]; %>
+      <% var tabs = [['held','Represados','held'],['error','Com erro','error'],['enqueued','Na fila','enqueued'],['authorized','Autorizadas','authorized'],['canceled','Canceladas','canceled'],['rejected','Rejeitadas','rejected'],['all','Todas','']]; %>
       <% tabs.forEach(function(t){ %>
         <a class="tab <%= state === t[0] ? 'active' : '' %>" href="/painel/notas-fiscais?state=<%= t[0] %>"><%= t[1] %><% if (t[2] && counts[t[2]] != null) { %><span class="n"><%= counts[t[2]] %></span><% } %></a>
       <% }); %>
@@ -67,7 +96,7 @@
             <% rows.forEach(function(r){ %>
               <tr id="row-<%= r.id %>">
                 <td class="mono"><%= r.date ? new Date(r.date).toLocaleDateString('pt-BR') : '-' %></td>
-                <td><%= r.name %><div class="mono" style="color:#94a3b8;">Pedido: <%= r.identifier || ('#' + r.id.slice(-6)) %></div></td>
+                <td><%= r.name %><div class="mono" style="color:#94a3b8;">Pedido: <% if (r.identifier) { %><a href="/pedido?identifier=<%= encodeURIComponent(r.identifier) %>" target="_blank" style="color:#0369a1;text-decoration:none;font-weight:600;"><%= r.identifier %></a><% } else { %>#<%= r.id.slice(-6) %><% } %></div></td>
                 <td class="mono"><%= r.phone || '-' %></td>
                 <td>
                   <% if (r.cpf) { %><span class="mono ok"><%= r.cpf %></span><% } else { %><span class="miss">sem CPF</span><% } %>

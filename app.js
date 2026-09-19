@@ -17845,7 +17845,19 @@ app.get('/painel/notas-fiscais', requireAdmin, async (req, res) => {
       enqueued: await countBy('enqueued'),
       authorized: await countBy('authorized'),
       rejected: await countBy('rejected'),
+      canceled: (await countBy('canceled')) + (await countBy('cancelled')),
     };
+    // Resumo do topo: total de notas emitidas (autorizadas + canceladas, pois ambas
+    // receberam número na prefeitura) + valor faturado das autorizadas.
+    let resumo = { emitidas: 0, autorizadas: counts.authorized, canceladas: counts.canceled, rejeitadas: counts.rejected, pendentes: counts.held + counts.error + counts.enqueued, valorAutorizadas: 0 };
+    resumo.emitidas = resumo.autorizadas + resumo.canceladas;
+    try {
+      const agg = await col.aggregate([
+        { $match: { 'notaFiscal.emissionState': 'authorized' } },
+        { $group: { _id: null, v: { $sum: '$valueCents' } } },
+      ]).toArray();
+      resumo.valorAutorizadas = agg && agg[0] ? Number(agg[0].v || 0) / 100 : 0;
+    } catch (_) {}
 
     const rows = docs.map((o) => {
       const getAdd = buildOrderFieldGetter(o);
@@ -17882,7 +17894,7 @@ app.get('/painel/notas-fiscais', requireAdmin, async (req, res) => {
       };
     });
 
-    return res.render('painel_notas_fiscais', { page: 'notas-fiscais', rows, state, counts });
+    return res.render('painel_notas_fiscais', { page: 'notas-fiscais', rows, state, counts, resumo });
   } catch (e) {
     return res.status(500).send(String((e && e.message) || e));
   }
