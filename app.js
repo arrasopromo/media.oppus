@@ -3622,6 +3622,13 @@ async function gestaoParcialFiltrado(query) {
       for (const f of TOPFAMA_FIELDS) {
         const sub = o[f]; if (!sub || !sub.orderId) continue;
         if (!ehPedidoDeCurtidas(sub, f)) continue; // a tela é só de curtidas (seguidores 312 ficam de fora)
+        // Envio de curtidas que FALHOU (ex.: link_duplicate) e ficou com um orderId "vazado"
+        // de outro pedido (às vezes de seguidores). Sem reorder válido, esse orderId não é
+        // confiável → fica de fora da Gestão Parcial (o status/qtd lidos são de outro pedido).
+        const _envErr = (sub.response && sub.response.error) || sub.error || null;
+        const _temReorderOk = (sub.reorderId && String(sub.reorderId) !== String(sub.orderId)) ||
+          (Array.isArray(sub.reorders) && sub.reorders.some((rr) => rr && rr.orderId));
+        if (_envErr && !_temReorderOk) continue;
         const rp = sub.requestPayload || {};
         rows.push({
           id: String(o._id), field: f, dataMs,
