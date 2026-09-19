@@ -9903,101 +9903,28 @@ async function ajustesDeLucroDoPeriodo(startMs, endMs) {
   try {
     const col = await getCollection('ajustes_lucro');
     const docs = await col.find({}).sort({ data: 1 }).toArray();
+    const semFiltro = !Number.isFinite(startMs) || !Number.isFinite(endMs);
     for (const d of docs) {
       const valor = Number(d.valor || 0);
       if (!(valor > 0)) continue;
-      const r = mesRangeBrt(d.mes || String(d.data || '').slice(0, 7));
-      if (!r) continue;
-      const semFiltro = !Number.isFinite(startMs) || !Number.isFinite(endMs);
-      const encosta = semFiltro || (startMs < r.fimEx && endMs > r.ini);
-      if (!encosta) continue;
-      const dentroDoMes = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
-      out.total += valor;
-      out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes });
-      if (dentroDoMes) out.comAsterisco = true;
-    }
-    out.total = Math.round(out.total * 100) / 100;
-  } catch (_) {}
-  return out;
-}
-
-// Custo REAL de fornecedor efetivamente ENTREGUE de um pedido (base + TODOS os bumps).
-//  - sub completed / in progress → cobra o charge cheio da linha do breakdown;
-//  - sub parcial → cobra só a fração entregue (qtySent - remains)/qtySent;
-//  - sub cancelado sem entrega → 0.
-// Usa costs.providerChargeBreakdown (que já traz base + bumps) e cruza com o status/remains
-// gravado no sub-pedido (fornecedor_social/fama24h/nuvra/..._likes/_views/_multi).
-function custoFornecedorEntregue(o) {
-  try {
-    const costs = (o && o.costs) || {};
-    const bd = Array.isArray(costs.providerChargeBreakdown) ? costs.providerChargeBreakdown : [];
-    const subFields = ['fornecedor_social', 'fama24h', 'nuvra', 'fama24h_multi', 'fama24h_views', 'fornecedor_social_likes', 'fama24h_likes', 'nuvra_likes'];
-    const byOid = {};
-    for (const f of subFields) { const v = o && o[f]; if (v && v.orderId != null) byOid[String(v.orderId)] = v; }
-    if (!bd.length) {
-      const tot = Number(costs.providerChargeTotal != null ? costs.providerChargeTotal : costs.estimatedServiceCost);
-      return Number.isFinite(tot) && tot > 0 ? Math.round(tot * 100) / 100 : 0;
-    }
-    let soma = 0;
-    for (const e of bd) {
-      const charge = Number(e && e.charge || 0);
-      const qty = Number(e && e.qtySent || 0);
-      if (!(charge > 0)) continue;
-      const sub = byOid[String(e && e.orderId)];
-      const st = String((sub && (sub.status || '')) || '').toLowerCase();
-      const remains = (sub && sub.remains != null) ? Number(sub.remains) : null;
-      if (/partial|parcial/.test(st) && remains != null && qty > 0) {
-        soma += charge * Math.max(0, Math.min(qty, qty - remains)) / qty; // só o entregue
-      } else if (/cancel|refund|error|duplicate/.test(st) && !(remains != null && remains < qty)) {
-        soma += 0; // sub cancelado/sem envio → nada gasto
+      // Quando o lançamento tem DATA exata, respeita o DIA (BRT); senão, cai no mês.
+      const dataStr = /^\d{4}-\d{2}-\d{2}/.test(String(d.data || '')) ? String(d.data).slice(0, 10) : '';
+      let ini, fimEx, encosta, dentro;
+      if (dataStr) {
+        ini = new Date(dataStr + 'T03:00:00.000Z').getTime(); // 00:00 BRT do dia
+        fimEx = ini + 24 * 3600000;
+        encosta = semFiltro || (startMs < fimEx && endMs > ini);
+        dentro = !semFiltro && startMs <= ini && endMs >= fimEx; // dia todo dentro do filtro
       } else {
-        soma += charge; // completed / in progress / sem status → charge cheio
+        const r = mesRangeBrt(d.mes || String(d.data || '').slice(0, 7));
+        if (!r) continue;
+        encosta = semFiltro || (startMs < r.fimEx && endMs > r.ini);
+        dentro = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
       }
-    }
-    return Math.round(soma * 100) / 100;
-  } catch (_) { return 0; }
-}
-
-// Perdas por ESTORNO/CANCELAMENTO no período. Cada pedido estornado vira um lançamento
-// de custo adicional = valor devolvido ao cliente + custo do fornecedor JÁ ENTREGUE
-// (completed = cheio; parcial = quantidade entregue; considerando os order bumps).
-async function perdasPorEstornoDoPeriodo(startMs, endMs) {
-  const out = { total: 0, itens: [], comAsterisco: false };
-  try {
-    const col = await getCollection('checkout_orders');
-    const estornados = await col.find({ status: { $in: ['estornado', 'cancelado', 'canceled', 'cancelled'] } }).toArray();
-    const semFiltro = !Number.isFinite(startMs) || !Number.isFinite(endMs);
-    for (const o of estornados) {
-      // Só conta estorno de pedido que REALMENTE foi pago (tem devolução/refund registrado).
-      // Cancelamento de pedido nunca pago (PIX/boleto expirado) não é prejuízo — ignora.
-      const foiPagoEstornado = (o.refundedValueCents != null) || !!o.refundedAt || !!(o.paghiper && o.paghiper.refundedAt) || !!o.refundedPaidAt;
-      if (!foiPagoEstornado) continue;
-      const dtRaw = o.refundedAt || (o.paghiper && o.paghiper.refundedAt) || o.canceledAt || o.refundedPaidAt || o.paidAt || o.createdAt;
-      const t = dtRaw ? new Date(dtRaw).getTime() : NaN;
-      const dentro = semFiltro || (Number.isFinite(t) && t >= startMs && t < endMs);
-      if (!dentro) continue;
-      const valor = Number((o.refundedValueCents != null ? o.refundedValueCents : o.valueCents) || 0) / 100;
-      const custoForn = custoFornecedorEntregue(o);
-      const perda = Math.round((valor + custoForn) * 100) / 100;
-      if (!(perda > 0)) continue;
-      const mesKey = dtRaw ? brtDayKey(dtRaw).slice(0, 7) : '';
-      const dentroDoMes = !semFiltro; // ponto dentro do filtro → asterisco quando filtrado
-      out.total += perda;
-      out.itens.push({
-        titulo: 'Estorno — ' + String(o.identifier || o._id),
-        motivo: 'Pedido estornado/cancelado: valor devolvido ao cliente + custo do fornecedor já entregue.',
-        valor: perda,
-        data: dtRaw ? String(new Date(dtRaw).toISOString()).slice(0, 10) : null,
-        mes: mesKey,
-        detalhes: [
-          'Valor devolvido ao cliente: R$ ' + valor.toFixed(2).replace('.', ','),
-          'Custo do fornecedor entregue: R$ ' + custoForn.toFixed(2).replace('.', ','),
-        ],
-        dentroDoMes,
-        auto: true,
-        tipo: 'estorno',
-      });
-      if (dentroDoMes) out.comAsterisco = true;
+      if (!encosta) continue;
+      out.total += valor;
+      out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes: dentro });
+      if (dentro) out.comAsterisco = true;
     }
     out.total = Math.round(out.total * 100) / 100;
   } catch (_) {}
@@ -40490,6 +40417,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
     };
 
     let filteredOrders = orders.filter(o => {
+      // Estorno/cancelamento SAI do faturamento (mesmo que reste um woovi.paidAt/paidAt antigo).
+      // Não é custo: some da receita e o lucro cai naturalmente.
+      const _st = String((o && o.status) || '').toLowerCase();
+      if (_st === 'estornado' || _st === 'cancelado' || _st === 'canceled' || _st === 'cancelled' || _st === 'refunded') return false;
       const dateStr = resolvePaidAtIsoForPanel(o);
       if (!dateStr) return false;
       const orderDateUTC = parseOrderDateUTC(dateStr);
@@ -43177,20 +43108,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
 
     // Débitos extraordinários do período (saem do lucro; asterisco só dentro do mês).
-    // = ajustes manuais (coleção ajustes_lucro) + perdas automáticas por ESTORNO/cancelamento
-    //   (valor devolvido ao cliente + custo do fornecedor já entregue; parcial conta só o entregue).
+    // Só ajustes manuais (coleção ajustes_lucro). Estorno NÃO é custo: sai do faturamento
+    // (filtro em filteredOrders), o que já reduz o lucro naturalmente.
     let ajustesLucro = { total: 0, itens: [], comAsterisco: false };
     try {
       const _pr = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
-      const _ini = _pr.start ? _pr.start.getTime() : NaN;
-      const _fim = _pr.endExclusive ? _pr.endExclusive.getTime() : NaN;
-      ajustesLucro = await ajustesDeLucroDoPeriodo(_ini, _fim);
-      const _est = await perdasPorEstornoDoPeriodo(_ini, _fim);
-      if (_est && Array.isArray(_est.itens) && _est.itens.length) {
-        ajustesLucro.itens = ajustesLucro.itens.concat(_est.itens);
-        ajustesLucro.total = Math.round((Number(ajustesLucro.total || 0) + Number(_est.total || 0)) * 100) / 100;
-        ajustesLucro.comAsterisco = ajustesLucro.comAsterisco || _est.comAsterisco;
-      }
+      ajustesLucro = await ajustesDeLucroDoPeriodo(_pr.start ? _pr.start.getTime() : NaN, _pr.endExclusive ? _pr.endExclusive.getTime() : NaN);
     } catch (_) {}
 
     const __painelRenderData = { view, ajustesLucro, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
