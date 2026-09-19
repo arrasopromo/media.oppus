@@ -455,7 +455,8 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
     if (/^fornecedor_social/.test(campo)) return 'fornecedor_social';
     if (/^topfama/.test(campo)) return 'topfama';
     if (/^worldsmm/.test(campo)) return 'worldsmm';
-    // fama24h está fora do ar: seguidores/curtidas atuais vão pela Nuvra
+    // Não usamos mais o fama24h. Seguidores/curtidas/visualizações atuais (inclusive os
+    // campos legados fama24h*/nuvra*) são despachados pela NUVRA.
     return 'nuvra';
   };
   app.post('/api/painel/ia-followup/reenviar', requireAdmin, async (req, res) => {
@@ -466,25 +467,57 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       const col = await getCollection('checkout_orders');
       const o = await col.findOne({ identifier });
       if (!o) return res.status(404).json({ ok: false, error: 'pedido não encontrado' });
-      // escolhe o sub-pedido a reenviar
-      const camposPrincipais = ['fornecedor_social', 'fama24h', 'nuvra'];
-      const camposAdicional = ['fornecedor_social_likes', 'fama24h_likes', 'nuvra_likes', 'fama24h_views'];
+      // escolhe o sub-pedido a reenviar (aceita LINK ÚNICO ou PLANO multi-link)
+      // Inclui os campos *_multi (ex.: visualizações em vários reels) e os campos legados fama24h*.
+      const camposPrincipais = ['fornecedor_social', 'fornecedor_social_multi', 'nuvra', 'nuvra_multi', 'fama24h', 'fama24h_multi'];
+      const camposAdicional = ['fornecedor_social_likes', 'nuvra_likes', 'fama24h_likes', 'nuvra_views', 'fama24h_views', 'nuvra_multi', 'fama24h_multi'];
       const alvos = motivo === 'adicional' ? camposAdicional : camposPrincipais;
+      const temLink = (v) => { const rp = (v && v.requestPayload) || {}; return !!(rp.service && rp.link); };
+      const temPlano = (v) => { const rp = (v && v.requestPayload) || {}; return !!rp.service && Array.isArray(rp.plan) && rp.plan.length > 0; };
       let campo = null, sub = null;
-      for (const c of alvos) { const v = o[c]; if (!v) continue; const rp = v.requestPayload || {}; if (rp.service && rp.link) { campo = c; sub = v; if (/error|cancel|refund|duplicate/i.test(String(v.status || v.error || '')) || !v.orderId) break; } }
+      for (const c of alvos) { const v = o[c]; if (!v) continue; if (temLink(v) || temPlano(v)) { campo = c; sub = v; if (/error|cancel|refund|duplicate/i.test(String(v.status || v.error || '')) || !v.orderId) break; } }
       if (!campo || !sub) return res.status(400).json({ ok: false, error: 'não achei o sub-pedido para reenviar' });
       if (sub.reenviando) return res.status(409).json({ ok: false, error: 'já há um reenvio em andamento' });
       const rp = sub.requestPayload || {};
-      const provKey = provKeyDoCampo(campo, rp.service);
+      const provKey = provKeyDoCampo(campo, rp.service); // hoje sempre Nuvra p/ seguidores/curtidas/views
       // trava
       const trava = await col.updateOne({ _id: o._id, [`${campo}.reenviando`]: { $ne: true } }, { $set: { [`${campo}.reenviando`]: true } });
       if (!trava.modifiedCount) return res.status(409).json({ ok: false, error: 'não travou (reenvio concorrente?)' });
+      const agora = new Date().toISOString();
+
+      // ── PLANO MULTI-LINK (ex.: 100k views divididos em vários reels) ──
+      // Dispara cada link do plano na NUVRA e guarda os novos orderIds em `${campo}.orders`.
+      if (temPlano(sub)) {
+        const novos = [];
+        const erros = [];
+        for (const item of rp.plan) {
+          const link = item && item.link;
+          const qty = Number(item && item.quantity) || 0;
+          if (!link || !(qty > 0)) continue;
+          const addM = await provAdd(provKey, rp.service, link, qty);
+          if (addM.ok) novos.push({ link, quantity: qty, orderId: /^\d+$/.test(String(addM.order)) ? Number(addM.order) : String(addM.order), status: 'created', at: agora });
+          else erros.push({ link, quantity: qty, error: addM.error });
+        }
+        if (!novos.length) { await col.updateOne({ _id: o._id }, { $unset: { [`${campo}.reenviando`]: '' } }); return res.json({ ok: false, error: 'nenhum link reenviado: ' + (erros.map((e) => e.error).join(' | ') || 'sem itens no plano') }); }
+        const orders = (Array.isArray(sub.orders) ? sub.orders.slice() : []).concat(novos);
+        await col.updateOne({ _id: o._id }, {
+          $set: {
+            [`${campo}.orders`]: orders,
+            [`${campo}.status`]: erros.length ? 'partial' : 'In progress',
+            [`${campo}.reenvioManualPainel`]: { plano: novos.length, erros: erros.length, em: agora, por: 'ia-followup', motivo, provider: provKey },
+          },
+          $unset: { [`${campo}.reenviando`]: '', [`${campo}.error`]: '' },
+        });
+        try { if (typeof sendNtfy === 'function') await sendNtfy({ title: 'Reenvio multi pelo follow-up', message: `${identifier}: ${novos.length} link(s) reenviado(s) na ${provKey}${erros.length ? ' (' + erros.length + ' com erro)' : ''}`, tags: 'repeat' }); } catch (_) {}
+        return res.json({ ok: true, multi: true, provider: provKey, enviados: novos.length, erros: erros.length, orderIds: novos.map((n) => n.orderId), detalheErros: erros });
+      }
+
+      // ── LINK ÚNICO (comportamento original) ──
       const add = await provAdd(provKey, rp.service, rp.link, rp.quantity);
       if (!add.ok) { await col.updateOne({ _id: o._id }, { $unset: { [`${campo}.reenviando`]: '' } }); return res.json({ ok: false, error: add.error }); }
       // consulta status do novo
       let st = {};
       try { const p = PROVEDORES[provKey]; const r = await axios.post(p.url, new URLSearchParams({ key: process.env[p.keyEnv], action: 'status', orders: add.order }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true }); st = (r.data && r.data[add.order]) || {}; } catch (_) {}
-      const agora = new Date().toISOString();
       const antigo = sub.orderId || null;
       const chain = Array.isArray(sub.reorders) ? sub.reorders.slice() : [];
       chain.push({ orderId: String(add.order), quantity: Number(rp.quantity) || null, reason: motivo === 'adicional' ? 'adicional_reenviado' : 'reenvio_manual', at: agora, status: st.status || 'created', de: antigo });
