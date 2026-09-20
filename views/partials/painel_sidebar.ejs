@@ -6,7 +6,7 @@
         financeiro:  ['controladoria','notas-fiscais'],
         operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
         marketing:   ['coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm','ia-followup'],
-        ferramentas: ['consulta-perfil','service_types','testes-servicos','whatsapp-ia-teste']
+        ferramentas: ['consulta-perfil','service_types','testes-servicos','auditoria-smmhustle','whatsapp-ia-teste']
     };
     function _open(list){ return (list.indexOf(_p) >= 0) ? 'open' : ''; }
 %>
@@ -73,6 +73,7 @@
                 <li><a href="/painel/consulta-perfil" class="<%= _a('consulta-perfil') %>">Consulta de Perfil</a></li>
                 <li><a href="/painel?view=service_types" class="<%= _a('service_types') %>">Gerenciamento Tipos</a></li>
                 <li><a href="/painel/testes-servicos" class="<%= _a('testes-servicos') %>">Testes de Serviços</a></li>
+                <li><a href="/painel/auditoria-smmhustle" class="<%= _a('auditoria-smmhustle') %>">Auditoria SMMHustle</a></li>
             </ul>
         </details>
 

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel — Auditoria SMMHustle</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6fa; color: #1f2937; display: flex; }
+    .main-content { flex: 1; padding: 24px; min-width: 0; }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .sub { color: #64748b; font-size: 0.9rem; margin: 0 0 16px; }
+    .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; min-width: 150px; flex: 1; }
+    .card .lbl { font-size: .78rem; color: #64748b; font-weight: 600; }
+    .card .val { font-size: 1.6rem; font-weight: 800; color: #0f172a; }
+    .toolbar { margin: 8px 0 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .btn { padding: 8px 14px; border: 1px solid #4f46e5; background: #4f46e5; color: #fff; border-radius: 8px; cursor: pointer; font-size: .85rem; font-weight: 600; }
+    .msg { color: #64748b; font-size: .82rem; }
+    .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f1f2f6; white-space: nowrap; }
+    th { background: #312e81; color: #fff; position: sticky; top: 0; font-weight: 700; }
+    tr:nth-child(even) td { background: #fafafe; }
+    .mono { font-family: ui-monospace, monospace; }
+    .q0 { color: #16a34a; font-weight: 700; }
+    .q1 { color: #d97706; font-weight: 700; }
+    .q2 { color: #dc2626; font-weight: 800; }
+    .muted { color: #94a3b8; }
+    a { color: #4f46e5; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'auditoria-smmhustle' }) %>
+  <div class="main-content">
+    <h1>Auditoria SMMHustle — queda de seguidores</h1>
+    <p class="sub">Mede todo dia (13h BRT) a quantidade atual de seguidores dos perfis com pedido enviado pelo SMMHustle e calcula a queda vs. o pico.</p>
+
+    <div class="cards">
+      <div class="card"><div class="lbl">Pedidos auditados</div><div class="val"><%= resumo.total %></div></div>
+      <div class="card"><div class="lbl">Medidos</div><div class="val"><%= resumo.medidos %></div></div>
+      <div class="card"><div class="lbl">Com queda</div><div class="val"><%= resumo.comQueda %></div></div>
+      <div class="card"><div class="lbl">Queda média</div><div class="val"><%= resumo.quedaMedia %>%</div></div>
+    </div>
+
+    <div class="toolbar">
+      <button type="button" class="btn" id="rodarBtn">Rodar auditoria agora</button>
+      <span class="msg" id="msg"></span>
+    </div>
+
+    <div class="box">
+      <table>
+        <thead>
+          <tr>
+            <th>Perfil</th><th>SMMHustle #</th><th>Serviço</th><th>Enviado</th>
+            <th>Pico</th><th>Atual</th><th>Sumiram</th><th>Queda %</th><th>Queda vs enviado</th>
+            <th>Pedido</th><th>Última medição</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% rows.forEach(function(r){ var qc = (r.quedaPct==null)?'':(r.quedaPct<=5?'q0':(r.quedaPct<=15?'q1':'q2')); %>
+          <tr>
+            <td><% if (r.perfil) { %><a href="https://instagram.com/<%= r.perfil %>" target="_blank">@<%= r.perfil %></a><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="mono"><%= r.smmOrderId %></td>
+            <td class="mono"><%= r.service != null ? r.service : '—' %></td>
+            <td class="mono"><%= r.quantity ? r.quantity.toLocaleString('pt-BR') : '—' %></td>
+            <td class="mono"><%= r.pico != null ? r.pico.toLocaleString('pt-BR') : '—' %></td>
+            <td class="mono"><%= r.atual != null ? r.atual.toLocaleString('pt-BR') : (r.measureFailed ? '<span class="q2">X</span>' : '—') %></td>
+            <td class="mono"><%= r.quedaAbs != null ? r.quedaAbs.toLocaleString('pt-BR') : '—' %></td>
+            <td class="mono <%= qc %>"><%= r.quedaPct != null ? r.quedaPct + '%' : '—' %></td>
+            <td class="mono <%= qc %>"><%= r.quedaVsEntregue != null ? r.quedaVsEntregue + '%' : '—' %></td>
+            <td><% if (r.checkoutIdentifier) { %><a class="mono" href="/pedido?identifier=<%= encodeURIComponent(r.checkoutIdentifier) %>" target="_blank"><%= r.checkoutIdentifier %></a><% } else { %>—<% } %></td>
+            <td class="mono muted"><%= r.lastCheckAt ? new Date(r.lastCheckAt).toLocaleString('pt-BR') : 'nunca' %></td>
+          </tr>
+          <% }); %>
+          <% if (!rows.length) { %>
+          <tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:26px;">Nenhum pedido do SMMHustle ainda. Clique em "Rodar auditoria agora" após enviar pedidos pelo SMMHustle.</td></tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('rodarBtn').addEventListener('click', async function () {
+      var m = document.getElementById('msg'); var b = this;
+      b.disabled = true; m.textContent = 'Medindo seguidores… pode levar 1-2 min.';
+      try {
+        var r = await fetch('/api/painel/auditoria-smmhustle/rodar', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        var j = await r.json();
+        if (j && j.ok) { m.textContent = j.ok + ' medidos, ' + j.fail + ' falharam de ' + j.total + '. Recarregando…'; setTimeout(function () { location.reload(); }, 1000); }
+        else { m.textContent = 'Falha: ' + ((j && j.error) || 'erro'); b.disabled = false; }
+      } catch (e) { m.textContent = 'Erro de rede.'; b.disabled = false; }
+    });
+  </script>
+</body>
+</html>

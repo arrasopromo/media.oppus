@@ -3843,6 +3843,128 @@ function startServiceTestsDailyLoop() {
   scheduleNext();
 }
 
+// ── AUDITORIA DIÁRIA DOS PEDIDOS ENVIADOS PELO SMMHUSTLE ──────────────────────
+//  Todo dia mede a quantidade ATUAL de seguidores do perfil de cada pedido
+//  despachado no SMMHustle (reorder/provider = 'smmhustle') e calcula a QUEDA
+//  em relação ao pico (baseline logo após a entrega). Coleção: smmhustle_audits.
+const SMM_AUDIT_FIELDS = ['fama24h', 'nuvra', 'fornecedor_social', 'topfama'];
+function _perfilFromAny(o, sub) {
+  const raw = String((o && (o.instagramUsername || o.instauser)) || (sub && sub.requestPayload && sub.requestPayload.link) || '').trim();
+  return raw.replace(/^@+/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/+$/, '').trim();
+}
+async function coletarPedidosSmmhustle() {
+  const col = await getCollection('checkout_orders');
+  const or = SMM_AUDIT_FIELDS.flatMap((f) => [{ [`${f}.provider`]: 'smmhustle' }, { [`${f}.reorders.provider`]: 'smmhustle' }]);
+  const docs = await col.find({ $or: or }).limit(5000).toArray();
+  const out = [];
+  for (const o of docs) {
+    for (const f of SMM_AUDIT_FIELDS) {
+      const sub = o[f]; if (!sub) continue;
+      let smm = null;
+      const reorders = Array.isArray(sub.reorders) ? sub.reorders : [];
+      for (const r of reorders) if (r && String(r.provider) === 'smmhustle' && r.orderId) smm = r; // último smmhustle
+      if (!smm && String(sub.provider) === 'smmhustle' && sub.orderId) {
+        const rmp = sub.reenvioManualPainel || {};
+        smm = { orderId: sub.orderId, quantity: rmp.quantity, service: rmp.service, at: rmp.em };
+      }
+      if (!smm) continue;
+      const perfil = _perfilFromAny(o, sub);
+      out.push({
+        key: `${o.identifier || o._id}:${f}:${smm.orderId}`,
+        smmOrderId: String(smm.orderId), checkoutIdentifier: String(o.identifier || o._id), campo: f,
+        perfil, quantity: Number(smm.quantity || 0) || 0, service: (smm.service != null ? Number(smm.service) : null), dispatchedAt: smm.at || null,
+      });
+    }
+  }
+  return out;
+}
+let __smmAuditRunning = false;
+async function runSmmhustleAuditDaily() {
+  if (__smmAuditRunning) return { skipped: true, reason: 'running' };
+  __smmAuditRunning = true;
+  try {
+    const col = await getCollection('smmhustle_audits');
+    const pedidos = await coletarPedidosSmmhustle();
+    let ok = 0, fail = 0;
+    for (const p of pedidos) {
+      const existing = await col.findOne({ _id: p.key });
+      if (!existing) await col.updateOne({ _id: p.key }, { $setOnInsert: Object.assign({}, p, { createdAt: new Date().toISOString(), history: [] }) }, { upsert: true });
+      if (!p.perfil) { fail++; continue; }
+      const r = await fetchFollowerCount(p.perfil);
+      if (!r || !Number.isFinite(Number(r.count))) { fail++; try { await col.updateOne({ _id: p.key }, { $set: { lastCheckAt: new Date().toISOString(), measureFailed: true, measureFailReason: 'profile_fetch_failed' } }); } catch (_) {} continue; }
+      const count = Number(r.count);
+      const rec = existing || {};
+      const baseline = (rec.baseline != null) ? Number(rec.baseline) : count; // 1ª medição = pico logo após entrega
+      const pico = Math.max(Number(rec.pico || 0) || 0, count, baseline);
+      const quedaAbs = Math.max(0, pico - count);
+      const quedaPct = pico > 0 ? Math.round((quedaAbs / pico) * 1000) / 10 : 0;
+      // queda vs o que a gente ENTREGOU (dos seguidores comprados, quantos sumiram)
+      const quedaVsEntregue = (p.quantity > 0) ? Math.min(100, Math.round((quedaAbs / p.quantity) * 1000) / 10) : null;
+      let hist = Array.isArray(rec.history) ? rec.history.slice() : [];
+      const today = brtDayKey(Date.now());
+      const point = { at: new Date().toISOString(), count, source: r.source };
+      if (hist.length && brtDayKey(hist[hist.length - 1].at) === today) hist[hist.length - 1] = point; else hist.push(point);
+      if (hist.length > 180) hist = hist.slice(-180);
+      await col.updateOne({ _id: p.key }, { $set: Object.assign({}, p, { baseline, atual: count, atualSource: r.source, pico, quedaAbs, quedaPct, quedaVsEntregue, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString() }) });
+      ok++;
+      await new Promise((res) => setTimeout(res, 250));
+    }
+    return { total: pedidos.length, ok, fail };
+  } finally { __smmAuditRunning = false; }
+}
+let __smmAuditTimer = null;
+function startSmmhustleAuditLoop() {
+  const scheduleNext = () => {
+    const now = Date.now();
+    const brt = new Date(now - 3 * 3600000);
+    let target = Date.UTC(brt.getUTCFullYear(), brt.getUTCMonth(), brt.getUTCDate(), 13, 0, 0) + 3 * 3600000; // 13h BRT
+    if (target <= now) target += 24 * 3600000;
+    __smmAuditTimer = setTimeout(async () => {
+      try { const r = await runSmmhustleAuditDaily(); console.log('📉 [auditoria-smmhustle] check diário 13h:', JSON.stringify(r)); } catch (_) {}
+      scheduleNext();
+    }, Math.max(1000, target - now));
+    try { __smmAuditTimer.unref && __smmAuditTimer.unref(); } catch (_) {}
+  };
+  scheduleNext();
+}
+
+// Página: Auditoria SMMHustle (queda diária dos pedidos enviados pelo SMMHustle)
+app.get('/painel/auditoria-smmhustle', requireAdmin, async (req, res) => {
+  try {
+    const col = await getCollection('smmhustle_audits');
+    const docs = await col.find({}).sort({ quedaPct: -1, dispatchedAt: -1, _id: 1 }).limit(3000).toArray();
+    const rows = docs.map((d) => ({
+      perfil: String(d.perfil || ''),
+      smmOrderId: String(d.smmOrderId || ''),
+      checkoutIdentifier: String(d.checkoutIdentifier || ''),
+      quantity: Number(d.quantity || 0) || 0,
+      service: (d.service != null) ? Number(d.service) : null,
+      baseline: (d.baseline != null) ? Number(d.baseline) : null,
+      atual: (d.atual != null) ? Number(d.atual) : null,
+      pico: (d.pico != null) ? Number(d.pico) : null,
+      quedaAbs: (d.quedaAbs != null) ? Number(d.quedaAbs) : null,
+      quedaPct: (d.quedaPct != null) ? Number(d.quedaPct) : null,
+      quedaVsEntregue: (d.quedaVsEntregue != null) ? Number(d.quedaVsEntregue) : null,
+      dispatchedAt: d.dispatchedAt || null,
+      lastCheckAt: d.lastCheckAt || null,
+      measureFailed: !!d.measureFailed,
+      histLen: Array.isArray(d.history) ? d.history.length : 0,
+    }));
+    const resumo = {
+      total: rows.length,
+      medidos: rows.filter((r) => r.atual != null).length,
+      comQueda: rows.filter((r) => (r.quedaPct || 0) > 0).length,
+      quedaMedia: rows.length ? Math.round((rows.reduce((a, r) => a + (r.quedaPct || 0), 0) / rows.length) * 10) / 10 : 0,
+    };
+    return res.render('painel_auditoria_smmhustle', { page: 'auditoria-smmhustle', rows, resumo });
+  } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
+});
+// Roda a auditoria AGORA (botão da tela).
+app.post('/api/painel/auditoria-smmhustle/rodar', requireAdmin, async (req, res) => {
+  try { const r = await runSmmhustleAuditDaily(); return res.json(Object.assign({ ok: true }, r)); }
+  catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'erro' }); }
+});
+
 // Página
 app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
   try {
@@ -48222,6 +48344,7 @@ const server = app.listen(port, () => {
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
+  try { startSmmhustleAuditLoop(); } catch (_) {} // Auditoria SMMHustle: mede seguidores/queda dos pedidos enviados pelo SMMHustle todo dia às 13h BRT
   try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
   try { require('./precosTestes.js').startPrecosTestesLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Testes de serviços: preço atual de cada serviço todo dia às 23:30 BRT
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
