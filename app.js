@@ -3032,6 +3032,32 @@ async function fetchPostLikeCount(postUrl) {
   return null;
 }
 
+// Contagem ATUAL de seguidores usando SOMENTE a RocketAPI (sem self-api, que estava
+// devolvendo número furado). Tenta get_info e, se falhar, get_web_profile_info.
+// Usado na auditoria do SMMHustle. Retorna { count, source } ou null.
+async function fetchFollowerCountRocket(username) {
+  const u = String(username || '').replace(/^@+/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/+$/g, '').trim().toLowerCase();
+  if (!u) return null;
+  const tk = process.env.ROCKETAPI_TOKEN;
+  if (!tk) return null;
+  const endpoints = [
+    ['https://v1.rocketapi.io/instagram/user/get_info', (d) => d && d.response && d.response.body && d.response.body.data && d.response.body.data.user],
+    ['https://v1.rocketapi.io/instagram/user/get_web_profile_info', (d) => d && d.response && d.response.body && d.response.body.data && d.response.body.data.user],
+  ];
+  for (const [url, pick] of endpoints) {
+    try {
+      const resp = await axios.post(url, { username: u }, { headers: { Authorization: `Token ${tk}` }, timeout: 15000, validateStatus: () => true });
+      const user = pick(resp && resp.data);
+      if (user) {
+        let c = (user.edge_followed_by && user.edge_followed_by.count != null) ? user.edge_followed_by.count : user.follower_count;
+        c = Number(c);
+        if (Number.isFinite(c) && c >= 0) return { count: c, source: 'rocketapi' };
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
 // Contagem ATUAL de seguidores de um perfil: ROCKETAPI (primário) → APIFY (fallback).
 // Retorna { count, source } ou null. Best-effort, nunca lança.
 async function fetchFollowerCount(username) {
@@ -3890,7 +3916,7 @@ async function runSmmhustleAuditDaily() {
       const existing = await col.findOne({ _id: p.key });
       if (!existing) await col.updateOne({ _id: p.key }, { $setOnInsert: Object.assign({}, p, { createdAt: new Date().toISOString(), history: [] }) }, { upsert: true });
       if (!p.perfil) { fail++; continue; }
-      const r = await fetchFollowerCount(p.perfil);
+      const r = await fetchFollowerCountRocket(p.perfil);
       if (!r || !Number.isFinite(Number(r.count))) { fail++; try { await col.updateOne({ _id: p.key }, { $set: { lastCheckAt: new Date().toISOString(), measureFailed: true, measureFailReason: 'profile_fetch_failed' } }); } catch (_) {} continue; }
       const count = Number(r.count);
       const rec = existing || {};
