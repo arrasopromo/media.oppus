@@ -297,6 +297,18 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
       resumoPedidos.push(item);
     }
 
+    // "Sem resposta" que NÃO é pendência real: se o(s) pedido(s) do cliente já foram ENTREGUES
+    // e não há nenhum problema de pedido em aberto, a última mensagem sem resposta (ex.: comprovante
+    // de pagamento, agradecimento) não precisa de ação → remove o sem_resposta.
+    try {
+      const temEntregue = resumoPedidos.some((p) => p && p.situacao === 'entregue');
+      const PROBLEMAS_PEDIDO = ['pago_sem_envio', 'cancelado_fornecedor', 'adicional_cancelado', 'parcial', 'na_fila', 'privado_segurando'];
+      const temProblema = resumoPedidos.some((p) => p && PROBLEMAS_PEDIDO.includes(p.situacao));
+      if (temEntregue && !temProblema) {
+        for (let i = pendencias.length - 1; i >= 0; i--) if (pendencias[i] && pendencias[i].tipo === 'sem_resposta') pendencias.splice(i, 1);
+      }
+    } catch (_) {}
+
     const conv = {
       telefone: tel, nome, mensagens: lista.length, botPausado,
       doCliente: lista.filter((m) => m.direction === 'in').length,
