@@ -286,7 +286,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
             const oQue = cancelados.map((f) => ITEM_DO_SLOT(f.slot)).filter((v, i, a) => a.indexOf(v) === i).join(' e ');
             const quais = cancelados.map((f) => (PROVEDORES[f.provider] ? PROVEDORES[f.provider].label + ' ' + f.orderId : f.orderId)).join(', ');
             const ehSeguidoresC = /seguidor/i.test(ai(o, 'categoria_servico') || item.tipo || '');
-            pendencias.push({ tipo: item.situacao, identifier: o.identifier, usuario: ehSeguidoresC ? (item.usuario || usuarioConversa) : '', reenviavel: soAdicional, motivoReenvio: soAdicional ? 'adicional' : 'principal', detalhe: soAdicional
+            if (doBot) pendencias.push({ tipo: item.situacao, identifier: o.identifier, usuario: ehSeguidoresC ? (item.usuario || usuarioConversa) : '', reenviavel: soAdicional, motivoReenvio: soAdicional ? 'adicional' : 'principal', detalhe: soAdicional
               ? `${item.pacote}: o fornecedor CANCELOU ${oQue} (${quais}) — o resto do pedido segue normal`
               : `${item.pacote} pago, mas o fornecedor CANCELOU ${oQue} (${quais})` });
           } else if (sts.every((s) => s === 'completed')) item.situacao = 'entregue';
