@@ -19999,7 +19999,7 @@ async function processOrderFulfillment(record, col, req) {
                                         const orderIdAlt = extractProviderOrderId(famaDataAlt);
                                         const hasErrAlt = (famaDataAlt && (famaDataAlt.error || (famaDataAlt.data && famaDataAlt.data.error)));
                                         const stAlt = orderIdAlt ? 'created' : (hasErrAlt ? 'error' : 'unknown');
-                                        const setObjAlt = { fama24h: { orderId: orderIdAlt || undefined, status: stAlt, requestPayload: { service: altServiceId, link: linkForFama, quantity: qtd }, response: famaDataAlt, requestedAt: new Date().toISOString() } };
+                                        const setObjAlt = { fama24h: { orderId: orderIdAlt || undefined, provider: mainProvider, status: stAlt, requestPayload: { service: altServiceId, link: linkForFama, quantity: qtd }, response: famaDataAlt, requestedAt: new Date().toISOString() } };
                                         await col.updateOne(filter, { $set: setObjAlt });
                                         retried = true;
                                         if (orderIdAlt) {
@@ -20014,7 +20014,7 @@ async function processOrderFulfillment(record, col, req) {
                         } else {
                             const st = orderId ? 'created' : 'unknown';
                             const errObj = orderId ? undefined : { code: 'missing_order_id' };
-                            await col.updateOne(filter, { $set: { fama24h: { orderId, status: st, error: errObj, requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                            await col.updateOne(filter, { $set: { fama24h: { orderId, provider: mainProvider, status: st, error: errObj, requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
                         }
                         try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                     } catch (err) {
@@ -22780,7 +22780,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                     const famaResp = await axios.post(mainApiUrl, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
                     const famaData = famaResp.data || {};
                     const orderId = famaData.order || famaData.id || null;
-                    await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+                    await col.updateOne(filter, { $set: { fama24h: { orderId, provider: mainProvider, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, response: famaData, requestedAt: new Date().toISOString() } } });
                     try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
                   } catch (fErr) {
                     await col.updateOne(filter, { $set: { fama24h: { error: fErr?.response?.data || fErr?.message || String(fErr), requestPayload: { service: serviceId, link: linkForFama, quantity: qtd }, requestedAt: new Date().toISOString() } } });
@@ -25486,7 +25486,7 @@ app.post('/session/mark-paid', async (req, res) => {
                       const orderIdAlt = extractProviderOrderId(famaDataAlt);
                       const hasErrAlt = !!(famaDataAlt && (famaDataAlt.error || famaDataAlt.errors));
                       status = orderIdAlt ? 'created' : (hasErrAlt ? 'error' : 'unknown');
-                      const setObjAlt = { 'fama24h.status': status, 'fama24h.requestPayload': { service: altService, link: linkForFama, quantity: qtd }, 'fama24h.response': famaDataAlt, 'fama24h.requestedAt': new Date().toISOString() };
+                      const setObjAlt = { 'fama24h.provider': mainProvider, 'fama24h.status': status, 'fama24h.requestPayload': { service: altService, link: linkForFama, quantity: qtd }, 'fama24h.response': famaDataAlt, 'fama24h.requestedAt': new Date().toISOString() };
                       if (orderIdAlt) setObjAlt['fama24h.orderId'] = orderIdAlt;
                       if (!orderIdAlt && hasErrAlt) setObjAlt['fama24h.error'] = famaDataAlt;
                       await col.updateOne(filter, { $set: setObjAlt });
@@ -25495,7 +25495,7 @@ app.post('/session/mark-paid', async (req, res) => {
                     } catch(_) {}
                   }
                 }
-                const setObj = { 'fama24h.status': status, 'fama24h.requestPayload': { service: serviceId, link: linkForFama, quantity: qtd }, 'fama24h.response': famaData, 'fama24h.requestedAt': new Date().toISOString() };
+                const setObj = { 'fama24h.provider': mainProvider, 'fama24h.status': status, 'fama24h.requestPayload': { service: serviceId, link: linkForFama, quantity: qtd }, 'fama24h.response': famaData, 'fama24h.requestedAt': new Date().toISOString() };
                 if (orderId) setObj['fama24h.orderId'] = orderId;
                 if (!orderId && hasErr) setObj['fama24h.error'] = famaData;
                 await col.updateOne(filter, { $set: setObj });
@@ -49888,7 +49888,7 @@ app.post('/api/payment/confirm', async (req, res) => {
         const famaResp = await axios.post(mainApiUrl, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 });
         const famaData = famaResp.data || {};
         const orderId = famaData.order || famaData.id || null;
-      await col.updateOne(filter, { $set: { fama24h: { orderId, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
+      await col.updateOne(filter, { $set: { fama24h: { orderId, provider: mainProvider, status: orderId ? 'created' : 'unknown', requestPayload: { service: serviceId, link: linkForFama, quantity: resolvedQtd }, response: famaData, requestedAt: new Date().toISOString() } } });
     }
     // Disparo para FornecedorSocial quando for orgânicos
     try {
