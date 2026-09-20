@@ -3904,6 +3904,38 @@ async function coletarPedidosSmmhustle() {
   }
   return out;
 }
+// ── API do SMMHustle (status/refil) e medição com Apify de reforço ────────────
+async function _smmPost(action, params) {
+  const key = String(process.env.SMMHUSTLE_API_KEY || '').trim();
+  if (!key) return null;
+  try {
+    const body = new URLSearchParams(Object.assign({ key, action }, params || {})).toString();
+    const r = await axios.post('https://smmhustle.com/api/v2', body, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true });
+    return (r && r.data && typeof r.data === 'object') ? r.data : null;
+  } catch (_) { return null; }
+}
+async function smmhustleStatus(orderId) { return _smmPost('status', { order: String(orderId) }); }
+async function smmhustleRefill(orderId) { return _smmPost('refill', { order: String(orderId) }); }
+// Contagem de seguidores para a auditoria: RocketAPI e, se falhar (ex.: conta BUSINESS
+// que a RocketAPI não lê por causa do bug ig_business_category_subvertical), cai no APIFY.
+async function fetchFollowerCountAudit(username) {
+  const r = await fetchFollowerCountRocket(username);
+  if (r && Number.isFinite(Number(r.count))) return r;
+  try {
+    const token = process.env.APIFY_TOKEN;
+    if (token && !(global.apifyDisabledUntil && Date.now() < global.apifyDisabledUntil)) {
+      const u = String(username || '').replace(/^@+/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/+$/g, '').trim().toLowerCase();
+      const apiUrl = `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
+      const resp = await axios.post(apiUrl, { usernames: [u] }, { timeout: 120000, validateStatus: () => true });
+      if (resp.status >= 200 && resp.status < 300 && Array.isArray(resp.data) && resp.data.length) {
+        const it = resp.data[0];
+        const c = Number(it && (it.followersCount != null ? it.followersCount : it.followers));
+        if (Number.isFinite(c) && c >= 0) return { count: c, source: 'apify' };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
 let __smmAuditRunning = false;
 async function runSmmhustleAuditDaily() {
   if (__smmAuditRunning) return { skipped: true, reason: 'running' };
@@ -3911,31 +3943,72 @@ async function runSmmhustleAuditDaily() {
   try {
     const col = await getCollection('smmhustle_audits');
     const pedidos = await coletarPedidosSmmhustle();
-    let ok = 0, fail = 0;
+    const REFIL_COOLDOWN_MS = Math.max(1, Number(process.env.SMM_REFILL_COOLDOWN_DAYS || 20)) * 24 * 3600e3;
+    let ok = 0, fail = 0, refis = 0;
     for (const p of pedidos) {
       const existing = await col.findOne({ _id: p.key });
       if (!existing) await col.updateOne({ _id: p.key }, { $setOnInsert: Object.assign({}, p, { createdAt: new Date().toISOString(), history: [] }) }, { upsert: true });
-      if (!p.perfil) { fail++; continue; }
-      const r = await fetchFollowerCountRocket(p.perfil);
-      if (!r || !Number.isFinite(Number(r.count))) { fail++; try { await col.updateOne({ _id: p.key }, { $set: { lastCheckAt: new Date().toISOString(), measureFailed: true, measureFailReason: 'profile_fetch_failed' } }); } catch (_) {} continue; }
-      const count = Number(r.count);
       const rec = existing || {};
-      const baseline = (rec.baseline != null) ? Number(rec.baseline) : count; // 1ª medição = pico logo após entrega
+      // Status do pedido no SMMHustle (entregue/inicial) — só pra pedidos com id numérico.
+      let smmStatus = rec.smmStatus || '', smmStart = rec.smmStart != null ? Number(rec.smmStart) : null, smmEntregue = rec.smmEntregue != null ? Number(rec.smmEntregue) : null, esperado = rec.esperado != null ? Number(rec.esperado) : null, completedAt = rec.completedAt || null;
+      if (/^\d+$/.test(String(p.smmOrderId))) {
+        const s = await smmhustleStatus(p.smmOrderId);
+        if (s && (s.status || s.start_count != null)) {
+          smmStatus = String(s.status || smmStatus || '');
+          const st = Number(String(s.start_count != null ? s.start_count : s.startCount).replace(',', '.'));
+          const rem = Number(String(s.remains != null ? s.remains : s.Remains).replace(',', '.'));
+          if (Number.isFinite(st)) smmStart = st;
+          if (Number.isFinite(rem) && p.quantity > 0) smmEntregue = p.quantity - rem;
+          if (smmStart != null && smmEntregue != null) esperado = smmStart + smmEntregue;
+          if (/complet|conclu/i.test(smmStatus) && !completedAt) completedAt = new Date().toISOString(); // 1ª vez que virou concluído
+        }
+      }
+      if (!p.perfil) { fail++; continue; }
+      const r = await fetchFollowerCountAudit(p.perfil);
+      if (!r || !Number.isFinite(Number(r.count))) { fail++; try { await col.updateOne({ _id: p.key }, { $set: { smmStatus, smmStart, smmEntregue, esperado, completedAt, lastCheckAt: new Date().toISOString(), measureFailed: true, measureFailReason: 'profile_fetch_failed' } }); } catch (_) {} continue; }
+      const count = Number(r.count);
+      const baseline = (rec.baseline != null) ? Number(rec.baseline) : count;
       const pico = Math.max(Number(rec.pico || 0) || 0, count, baseline);
       const quedaAbs = Math.max(0, pico - count);
       const quedaPct = pico > 0 ? Math.round((quedaAbs / pico) * 1000) / 10 : 0;
-      // queda vs o que a gente ENTREGOU (dos seguidores comprados, quantos sumiram)
       const quedaVsEntregue = (p.quantity > 0) ? Math.min(100, Math.round((quedaAbs / p.quantity) * 1000) / 10) : null;
+      // Queda vs ESPERADO (inicial + entregue) — base pra decidir refil.
+      const quedaVsEsperado = (esperado != null) ? Math.max(0, esperado - count) : null;
       let hist = Array.isArray(rec.history) ? rec.history.slice() : [];
       const today = brtDayKey(Date.now());
       const point = { at: new Date().toISOString(), count, source: r.source };
       if (hist.length && brtDayKey(hist[hist.length - 1].at) === today) hist[hist.length - 1] = point; else hist.push(point);
       if (hist.length > 180) hist = hist.slice(-180);
-      await col.updateOne({ _id: p.key }, { $set: Object.assign({}, p, { baseline, atual: count, atualSource: r.source, pico, quedaAbs, quedaPct, quedaVsEntregue, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString() }) });
+      const set = Object.assign({}, p, { baseline, atual: count, atualSource: r.source, pico, quedaAbs, quedaPct, quedaVsEntregue, smmStatus, smmStart, smmEntregue, esperado, quedaVsEsperado, completedAt, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString() });
+
+      // ── REFIL AUTOMÁTICO ── só pedido CONCLUÍDO, passado 24h da conclusão, com queda
+      // relevante (≥5% do entregue ou ≥30) e sem refil recente (cooldown).
+      try {
+        const passou24h = completedAt && (Date.now() - new Date(completedAt).getTime()) >= 24 * 3600e3;
+        const limiteQueda = Math.max(30, Math.round((smmEntregue || 0) * 0.05));
+        const temQueda = quedaVsEsperado != null && quedaVsEsperado >= limiteQueda;
+        const semRefilRecente = !rec.refilSolicitadoAt || (Date.now() - new Date(rec.refilSolicitadoAt).getTime()) >= REFIL_COOLDOWN_MS;
+        if (/^\d+$/.test(String(p.smmOrderId)) && /complet|conclu/i.test(smmStatus) && passou24h && temQueda && semRefilRecente) {
+          const rf = await smmhustleRefill(p.smmOrderId);
+          const refilId = rf && (rf.refill || rf.order || rf.id);
+          if (refilId && !(rf && rf.error)) {
+            set.refilSolicitadoAt = new Date().toISOString();
+            set.refilId = String(refilId);
+            set.refilQueda = quedaVsEsperado;
+            set.refilHist = (Array.isArray(rec.refilHist) ? rec.refilHist : []).concat([{ at: set.refilSolicitadoAt, refilId: String(refilId), queda: quedaVsEsperado }]).slice(-30);
+            refis++;
+          } else {
+            set.refilUltimoErro = (rf && rf.error) ? String(rf.error) : 'sem_refill_id';
+            set.refilUltimoErroAt = new Date().toISOString();
+          }
+        }
+      } catch (_) {}
+
+      await col.updateOne({ _id: p.key }, { $set: set });
       ok++;
       await new Promise((res) => setTimeout(res, 250));
     }
-    return { total: pedidos.length, ok, fail };
+    return { total: pedidos.length, ok, fail, refis };
   } finally { __smmAuditRunning = false; }
 }
 let __smmAuditTimer = null;
