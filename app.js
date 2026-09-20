@@ -30621,10 +30621,20 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         return '';
       };
 
-      const fsOid = pickProviderOrderId(o && o.fornecedor_social ? o.fornecedor_social : null);
-      if (fsOid) return 'Fornecedor Social';
-      const famaOid = pickProviderOrderId(o && o.fama24h ? o.fama24h : null);
-      if (famaOid) return 'Fama24h';
+      // Rótulo do provedor REAL. O campo (fama24h/fornecedor_social) é só o "slot" legado;
+      // o provedor de verdade vem do `.provider` gravado no despacho/reenvio (ou do último
+      // reorder). Assim aparece Nuvra/SMMHustle/TopFama corretamente, não "Fama24h" pra tudo.
+      const LABEL = { fornecedor_social: 'Fornecedor Social', fama24h: 'Fama24h', nuvra: 'Nuvra', smmhustle: 'SMMHustle', topfama: 'TopFama', worldsmm: 'WorldSMM' };
+      const CAMPOS = ['fornecedor_social', 'fama24h', 'nuvra', 'topfama'];
+      for (const f of CAMPOS) {
+        const sub = o && o[f];
+        if (!sub || !pickProviderOrderId(sub)) continue;
+        let prov = '';
+        if (sub.provider) prov = String(sub.provider).toLowerCase().trim();
+        if (!prov && Array.isArray(sub.reorders)) { for (let i = sub.reorders.length - 1; i >= 0; i--) { const p = sub.reorders[i] && sub.reorders[i].provider; if (p) { prov = String(p).toLowerCase().trim(); break; } } }
+        if (!prov) prov = f; // sem provider gravado → infere pelo slot
+        return LABEL[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
+      }
       return '-';
     };
 
@@ -31451,7 +31461,11 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const qNorm = String(q || '').trim().toLowerCase().replace(/^@+/, '').replace(/\/+$/, '');
     const qTypeNorm = String(qType || 'username').trim().toLowerCase();
 
+    // Filtro por FORNECEDOR (dropdown). Lista de opções tirada de todas as linhas antes do filtro.
+    const fornecedorFilter = String(req.query.fornecedor || '').trim();
+    const fornecedoresDisponiveis = Array.from(new Set((allRows || []).map((r) => r && r.fornecedor).filter((v) => v && v !== '-'))).sort();
     const filtered = allRows.filter((r) => {
+      if (fornecedorFilter && String(r.fornecedor || '') !== fornecedorFilter) return false;
       if (errorsOnly) {
         const e = String(r.lastError || '').trim();
         if (!e) return false;
@@ -31571,6 +31585,10 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const s = String(sortBy || '').trim();
       if (s === 'diffAbs') return 'diffAbs';
       if (s === 'diffPct') return 'diffPct';
+      if (s === 'inicial' || s === 'initial' || s === 'initialFollowersCount') return 'initialFollowersCount';
+      if (s === 'contratado' || s === 'contracted') return 'contracted';
+      if (s === 'resultado') return 'resultado';
+      if (s === 'atual' || s === 'current' || s === 'currentFollowersCount') return 'currentFollowersCount';
       if (s === 'lastPurchaseAtMs') return 'lastPurchaseAtMs';
       if (s === 'currentCheckedAtMs' || s === 'checkedAt' || s === 'checado' || s === 'checked') return 'currentCheckedAtMs';
       return 'lastPurchaseAtMs';
@@ -31759,7 +31777,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       view: 'gerenciamento_seguidores',
       followersOrders: pageRows,
       pagination: { page: safePage, pageSize, totalRows, totalPages },
-      filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, refil2Auto: refil2AutoFilter, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir },
+      filters: { minPct, maxPct, minDiffAbs, q, qType, filled: filledOnly, errors: errorsOnly, emailFailed: emailFailedOnly, notifiedOnly, refilExpired: refilExpiredOnly, ok: okOnly, hiddenOnly, lifetime: lifetimeOnly, refil2Auto: refil2AutoFilter, warranty: warrantyUi, startDate, endDate, dateField, tipo: tipoFilters.join(','), sortBy: sortKey, sortDir, fornecedor: fornecedorFilter },
+      fornecedoresDisponiveis,
       followersReport,
       followersFilteredTargets,
       followersMgmtSettings,

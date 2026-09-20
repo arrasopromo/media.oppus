@@ -718,6 +718,16 @@
               </select>
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span>Fornecedor:</span>
+              <% const fornSel = (filters && filters.fornecedor) ? String(filters.fornecedor) : ''; %>
+              <select id="followersFornecedor" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
+                <option value="" <%= (!fornSel) ? 'selected' : '' %>>Todos</option>
+                <% (typeof fornecedoresDisponiveis !== 'undefined' ? fornecedoresDisponiveis : []).forEach(function(fn){ %>
+                <option value="<%= fn %>" <%= (fornSel === fn) ? 'selected' : '' %>><%= fn %></option>
+                <% }); %>
+              </select>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
               <span>Diferença mín:</span>
               <input id="followersMinDiffAbs" type="number" min="0" step="1" value="<%= (filters && typeof filters.minDiffAbs === 'number') ? String(filters.minDiffAbs) : '' %>" placeholder="ex: 100" style="width:120px; padding:6px; border:1px solid #ccc; border-radius:4px;" />
             </label>
@@ -792,10 +802,10 @@
               <th>Reposição</th>
               <th>Tipo</th>
               <th>Fornecedor</th>
-              <th style="text-align:right;">Inicial</th>
-              <th style="text-align:right;">Contratado</th>
-              <th style="text-align:right;">Resultado</th>
-              <th style="text-align:right;">Atual</th>
+              <th style="text-align:right;"><a href="#" class="followers-sort" data-sort="initialFollowersCount" style="color:inherit; text-decoration:none;">Inicial<span id="followersSortIconInicial" style="margin-left:6px; color:#6b7280;"></span></a></th>
+              <th style="text-align:right;"><a href="#" class="followers-sort" data-sort="contracted" style="color:inherit; text-decoration:none;">Contratado<span id="followersSortIconContratado" style="margin-left:6px; color:#6b7280;"></span></a></th>
+              <th style="text-align:right;"><a href="#" class="followers-sort" data-sort="resultado" style="color:inherit; text-decoration:none;">Resultado<span id="followersSortIconResultado" style="margin-left:6px; color:#6b7280;"></span></a></th>
+              <th style="text-align:right;"><a href="#" class="followers-sort" data-sort="currentFollowersCount" style="color:inherit; text-decoration:none;">Atual<span id="followersSortIconAtual" style="margin-left:6px; color:#6b7280;"></span></a></th>
               <th style="text-align:right;">
                 <a href="#" class="followers-sort" data-sort="diffAbs" style="color:inherit; text-decoration:none;">Diferença<span id="followersSortIconAbs" style="margin-left:6px; color:#6b7280;"></span></a>
               </th>
@@ -3036,6 +3046,7 @@
                 var refil2AutoEl = el('followersRefil2Auto');
                 var minDiffEl = el('followersMinDiffAbs');
                 var pctBucketEl = el('followersPctBucket');
+                var fornecedorEl = el('followersFornecedor');
                 var qV = qEl ? String(qEl.value || '').trim() : '';
                 var qtV = qtEl ? String(qtEl.value || '').trim() : '';
                 var sdV = sdEl ? String(sdEl.value || '').trim() : '';
@@ -3065,6 +3076,7 @@
                 var refil2AutoV = refil2AutoEl ? String(refil2AutoEl.value || '').trim().toLowerCase() : '';
                 var minDiffV = minDiffEl ? String(minDiffEl.value || '').trim() : '';
                 var pctBucketV = pctBucketEl ? String(pctBucketEl.value || '').trim() : '';
+                var fornecedorV = fornecedorEl ? String(fornecedorEl.value || '').trim() : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
                 if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
@@ -3083,6 +3095,7 @@
                 if (warrantyV === 'expired') urlParams.set('refilExpired', '1'); else { urlParams.delete('refilExpired'); urlParams.delete('refil_expired'); }
                 if (refil2AutoV && refil2AutoV !== 'all') urlParams.set('refil2Auto', refil2AutoV); else urlParams.delete('refil2Auto');
                 if (minDiffV) urlParams.set('minDiffAbs', minDiffV); else { urlParams.delete('minDiffAbs'); urlParams.delete('minDiff'); urlParams.delete('minDropAbs'); }
+                if (fornecedorV) urlParams.set('fornecedor', fornecedorV); else urlParams.delete('fornecedor');
                 // Intervalo personalizado (mín a máx) — sempre visível — tem PRIORIDADE
                 // sobre o dropdown de faixas. Se estiver vazio, usa a faixa do dropdown.
                 var pctMinEl = el('followersPctMin');
@@ -3186,6 +3199,12 @@
               try { applyBtn.click(); } catch (_) {}
             });
           }
+          var fornecedorEl2 = el('followersFornecedor');
+          if (fornecedorEl2 && applyBtn) {
+            fornecedorEl2.addEventListener('change', function(){
+              try { applyBtn.click(); } catch (_) {}
+            });
+          }
           var pctBucketEl2 = el('followersPctBucket');
           if (pctBucketEl2 && applyBtn) {
             pctBucketEl2.addEventListener('change', function(){
@@ -3270,6 +3289,10 @@
             if (dEl) dEl.textContent = (sb === 'diffPct') ? arrow : '';
             if (cEl) cEl.textContent = (sb === 'lastPurchaseAtMs') ? arrow : '';
             if (chkEl) chkEl.textContent = (sb === 'currentCheckedAtMs') ? arrow : '';
+            var iniEl = el('followersSortIconInicial'); if (iniEl) iniEl.textContent = (sb === 'initialFollowersCount') ? arrow : '';
+            var ctrEl = el('followersSortIconContratado'); if (ctrEl) ctrEl.textContent = (sb === 'contracted') ? arrow : '';
+            var resEl = el('followersSortIconResultado'); if (resEl) resEl.textContent = (sb === 'resultado') ? arrow : '';
+            var atEl = el('followersSortIconAtual'); if (atEl) atEl.textContent = (sb === 'currentFollowersCount') ? arrow : '';
           } catch (_) {}
 
           try {
