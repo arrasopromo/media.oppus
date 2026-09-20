@@ -169,7 +169,7 @@
           <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
             <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span><% if (x.p.usuario) { %><br><a class="mono" href="https://instagram.com/<%= x.p.usuario %>" target="_blank" style="font-size:12px">@<%= x.p.usuario %></a><% } %></td>
-            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %><% if (x.p.tipo === 'reclamacao' && x.p.data) { %> <span class="muted" style="font-size:12px">· última msg do cliente: <%= fmtDataBR(x.p.data) %></span><% } %></td>
+            <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %><% if ((x.p.tipo === 'reclamacao' || x.p.tipo === 'aguardando_retorno') && x.p.data) { %> <span class="muted" style="font-size:12px">· última mensagem: <%= fmtDataBR(x.p.data) %></span><% } %></td>
             <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
           </tr>
         <% }); %>

@@ -220,11 +220,11 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
       } else {
         // atendimento humano em andamento, mas o cliente escreveu por último e segue esperando:
         // fica pendente do RETORNO da equipe (se um humano já tivesse respondido por último, não cai aqui).
-        pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
+        pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, data: ultima.createdAt, detalhe: `Atendimento humano — cliente aguardando retorno desde ${hhmm(ultima.createdAt)}: "${String(ultima.text || ultima.type).slice(0, 120)}"` });
       }
     } else if (atendentePrometeu) {
       // atendente disse que ia verificar e não voltou mais
-      pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, detalhe: `Atendente disse que ia verificar às ${hhmm(ultima.createdAt)} e não retornou: "${String(ultima.text || '').slice(0, 120)}"` });
+      pendencias.push({ tipo: 'aguardando_retorno', usuario: usuarioConversa, data: ultima.createdAt, detalhe: `Atendente disse que ia verificar às ${hhmm(ultima.createdAt)} e não retornou: "${String(ultima.text || '').slice(0, 120)}"` });
     }
     // 2) suporte acionado NESTE dia (a marca de suporte não é limpa sozinha; antigas não contam)
     const suporteEm = contato.supportAt ? new Date(contato.supportAt).getTime() : 0;
