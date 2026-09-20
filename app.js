@@ -3944,7 +3944,7 @@ async function runSmmhustleAuditDaily() {
     const col = await getCollection('smmhustle_audits');
     const pedidos = await coletarPedidosSmmhustle();
     const REFIL_COOLDOWN_MS = Math.max(1, Number(process.env.SMM_REFILL_COOLDOWN_DAYS || 20)) * 24 * 3600e3;
-    let ok = 0, fail = 0, refis = 0;
+    let ok = 0, fail = 0, refis = 0, andamento = 0;
     for (const p of pedidos) {
       const existing = await col.findOne({ _id: p.key });
       if (!existing) await col.updateOne({ _id: p.key }, { $setOnInsert: Object.assign({}, p, { createdAt: new Date().toISOString(), history: [] }) }, { upsert: true });
@@ -3963,6 +3963,23 @@ async function runSmmhustleAuditDaily() {
           if (/complet|conclu/i.test(smmStatus) && !completedAt) completedAt = new Date().toISOString(); // 1ª vez que virou concluído
         }
       }
+      // Se o pedido AINDA está EM ANDAMENTO no SMMHustle, não mede seguidores agora:
+      // medir no meio da entrega mostraria uma falsa "queda" e fixaria um baseline errado.
+      // Marca "Em andamento" na data do check; quando virar Completed, mede de verdade e
+      // limpa o flag (ver emAndamento:false no set de sucesso abaixo).
+      const emAndamento = /progress|pending|processing|andamento|aguard/i.test(String(smmStatus || '')) && !/complet|conclu|partial|parcial|cancel/i.test(String(smmStatus || ''));
+      if (emAndamento) {
+        andamento++;
+        try {
+          await col.updateOne({ _id: p.key }, {
+            $set: { smmStatus, smmStart, smmEntregue, esperado, completedAt, emAndamento: true, lastCheckAt: new Date().toISOString() },
+            // limpa medição/queda antigas: enquanto entrega, qualquer número é falso.
+            // Baseline será capturado fresco quando o pedido virar Completed.
+            $unset: { baseline: '', pico: '', atual: '', quedaAbs: '', quedaPct: '', quedaVsEntregue: '', quedaVsEsperado: '', measureFailed: '' }
+          });
+        } catch (_) {}
+        continue;
+      }
       if (!p.perfil) { fail++; continue; }
       const r = await fetchFollowerCountAudit(p.perfil);
       if (!r || !Number.isFinite(Number(r.count))) { fail++; try { await col.updateOne({ _id: p.key }, { $set: { smmStatus, smmStart, smmEntregue, esperado, completedAt, lastCheckAt: new Date().toISOString(), measureFailed: true, measureFailReason: 'profile_fetch_failed' } }); } catch (_) {} continue; }
@@ -3979,7 +3996,7 @@ async function runSmmhustleAuditDaily() {
       const point = { at: new Date().toISOString(), count, source: r.source };
       if (hist.length && brtDayKey(hist[hist.length - 1].at) === today) hist[hist.length - 1] = point; else hist.push(point);
       if (hist.length > 180) hist = hist.slice(-180);
-      const set = Object.assign({}, p, { baseline, atual: count, atualSource: r.source, pico, quedaAbs, quedaPct, quedaVsEntregue, smmStatus, smmStart, smmEntregue, esperado, quedaVsEsperado, completedAt, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString() });
+      const set = Object.assign({}, p, { baseline, atual: count, atualSource: r.source, pico, quedaAbs, quedaPct, quedaVsEntregue, smmStatus, smmStart, smmEntregue, esperado, quedaVsEsperado, completedAt, history: hist, measureFailed: false, emAndamento: false, lastCheckAt: new Date().toISOString() });
 
       // ── REFIL AUTOMÁTICO ── só pedido CONCLUÍDO, passado 24h da conclusão, com queda
       // relevante (≥5% do entregue ou ≥30) e sem refil recente (cooldown).
@@ -4008,7 +4025,7 @@ async function runSmmhustleAuditDaily() {
       ok++;
       await new Promise((res) => setTimeout(res, 250));
     }
-    return { total: pedidos.length, ok, fail, refis };
+    return { total: pedidos.length, ok, fail, refis, andamento };
   } finally { __smmAuditRunning = false; }
 }
 let __smmAuditTimer = null;
@@ -4047,13 +4064,18 @@ app.get('/painel/auditoria-smmhustle', requireAdmin, async (req, res) => {
       dispatchedAt: d.dispatchedAt || null,
       lastCheckAt: d.lastCheckAt || null,
       measureFailed: !!d.measureFailed,
+      emAndamento: !!d.emAndamento,
+      smmStatus: String(d.smmStatus || ''),
       histLen: Array.isArray(d.history) ? d.history.length : 0,
     }));
+    const emAndamentoCount = rows.filter((r) => r.emAndamento).length;
+    const medidosRows = rows.filter((r) => !r.emAndamento);
     const resumo = {
       total: rows.length,
       medidos: rows.filter((r) => r.atual != null).length,
+      emAndamento: emAndamentoCount,
       comQueda: rows.filter((r) => (r.quedaPct || 0) > 0).length,
-      quedaMedia: rows.length ? Math.round((rows.reduce((a, r) => a + (r.quedaPct || 0), 0) / rows.length) * 10) / 10 : 0,
+      quedaMedia: medidosRows.length ? Math.round((medidosRows.reduce((a, r) => a + (r.quedaPct || 0), 0) / medidosRows.length) * 10) / 10 : 0,
     };
     return res.render('painel_auditoria_smmhustle', { page: 'auditoria-smmhustle', rows, resumo });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }

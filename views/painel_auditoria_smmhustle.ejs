@@ -39,6 +39,7 @@
     <div class="cards">
       <div class="card"><div class="lbl">Pedidos auditados</div><div class="val"><%= resumo.total %></div></div>
       <div class="card"><div class="lbl">Medidos</div><div class="val"><%= resumo.medidos %></div></div>
+      <div class="card"><div class="lbl">Em andamento</div><div class="val" style="color:#d97706;"><%= resumo.emAndamento != null ? resumo.emAndamento : 0 %></div></div>
       <div class="card"><div class="lbl">Com queda</div><div class="val"><%= resumo.comQueda %></div></div>
       <div class="card"><div class="lbl">Queda média</div><div class="val"><%= resumo.quedaMedia %>%</div></div>
     </div>
@@ -66,12 +67,12 @@
             <td class="mono"><%= r.service != null ? r.service : '—' %></td>
             <td class="mono"><%= r.quantity ? r.quantity.toLocaleString('pt-BR') : '—' %></td>
             <td class="mono"><%= r.pico != null ? r.pico.toLocaleString('pt-BR') : '—' %></td>
-            <td class="mono"><% if (r.atual != null) { %><%= r.atual.toLocaleString('pt-BR') %><% } else if (r.measureFailed) { %><span class="q2" title="não foi possível medir (conta business/API)">X</span><% } else { %>—<% } %></td>
+            <td class="mono"><% if (r.emAndamento) { %><span class="q1" title="pedido ainda em entrega no SMMHustle — medição adiada">⏳</span><% } else if (r.atual != null) { %><%= r.atual.toLocaleString('pt-BR') %><% } else if (r.measureFailed) { %><span class="q2" title="não foi possível medir (conta business/API)">X</span><% } else { %>—<% } %></td>
             <td class="mono"><%= r.quedaAbs != null ? r.quedaAbs.toLocaleString('pt-BR') : '—' %></td>
             <td class="mono <%= qc %>"><%= r.quedaPct != null ? r.quedaPct + '%' : '—' %></td>
             <td class="mono <%= qc %>"><%= r.quedaVsEntregue != null ? r.quedaVsEntregue + '%' : '—' %></td>
             <td><% if (r.checkoutIdentifier) { %><a class="mono" href="/pedido?identifier=<%= encodeURIComponent(r.checkoutIdentifier) %>" target="_blank"><%= r.checkoutIdentifier %></a><% } else { %>—<% } %></td>
-            <td class="mono muted"><%= fmtBR(r.lastCheckAt) %></td>
+            <td class="mono"><% if (r.emAndamento) { %><span class="q1" title="orderId <%= r.smmOrderId %> ainda em andamento no SMMHustle — mede quando concluir">Em andamento</span><% } else { %><span class="muted"><%= fmtBR(r.lastCheckAt) %></span><% } %></td>
           </tr>
           <% }); %>
           <% if (!rows.length) { %>
@@ -89,7 +90,7 @@
       try {
         var r = await fetch('/api/painel/auditoria-smmhustle/rodar', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
         var j = await r.json();
-        if (j && j.ok) { m.textContent = j.ok + ' medidos, ' + j.fail + ' falharam de ' + j.total + '. Recarregando…'; setTimeout(function () { location.reload(); }, 1000); }
+        if (j && j.ok) { m.textContent = j.ok + ' medidos, ' + (j.andamento || 0) + ' em andamento, ' + j.fail + ' falharam de ' + j.total + '. Recarregando…'; setTimeout(function () { location.reload(); }, 1000); }
         else { m.textContent = 'Falha: ' + ((j && j.error) || 'erro'); b.disabled = false; }
       } catch (e) { m.textContent = 'Erro de rede.'; b.disabled = false; }
     });
