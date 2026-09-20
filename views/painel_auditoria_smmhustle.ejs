@@ -58,6 +58,7 @@
           </tr>
         </thead>
         <tbody>
+          <% var fmtBR = function(iso){ try { if(!iso) return 'nunca'; var d=new Date(iso); if(isNaN(d.getTime())) return 'nunca'; var b=new Date(d.getTime()-3*3600000); var p=function(n){return String(n).padStart(2,'0');}; return p(b.getUTCDate())+'/'+p(b.getUTCMonth()+1)+'/'+b.getUTCFullYear()+' '+p(b.getUTCHours())+':'+p(b.getUTCMinutes()); } catch(e){ return 'nunca'; } }; %>
           <% rows.forEach(function(r){ var qc = (r.quedaPct==null)?'':(r.quedaPct<=5?'q0':(r.quedaPct<=15?'q1':'q2')); %>
           <tr>
             <td><% if (r.perfil) { %><a href="https://instagram.com/<%= r.perfil %>" target="_blank">@<%= r.perfil %></a><% } else { %><span class="muted">—</span><% } %></td>
@@ -65,12 +66,12 @@
             <td class="mono"><%= r.service != null ? r.service : '—' %></td>
             <td class="mono"><%= r.quantity ? r.quantity.toLocaleString('pt-BR') : '—' %></td>
             <td class="mono"><%= r.pico != null ? r.pico.toLocaleString('pt-BR') : '—' %></td>
-            <td class="mono"><%= r.atual != null ? r.atual.toLocaleString('pt-BR') : (r.measureFailed ? '<span class="q2">X</span>' : '—') %></td>
+            <td class="mono"><% if (r.atual != null) { %><%= r.atual.toLocaleString('pt-BR') %><% } else if (r.measureFailed) { %><span class="q2" title="não foi possível medir (conta business/API)">X</span><% } else { %>—<% } %></td>
             <td class="mono"><%= r.quedaAbs != null ? r.quedaAbs.toLocaleString('pt-BR') : '—' %></td>
             <td class="mono <%= qc %>"><%= r.quedaPct != null ? r.quedaPct + '%' : '—' %></td>
             <td class="mono <%= qc %>"><%= r.quedaVsEntregue != null ? r.quedaVsEntregue + '%' : '—' %></td>
             <td><% if (r.checkoutIdentifier) { %><a class="mono" href="/pedido?identifier=<%= encodeURIComponent(r.checkoutIdentifier) %>" target="_blank"><%= r.checkoutIdentifier %></a><% } else { %>—<% } %></td>
-            <td class="mono muted"><%= r.lastCheckAt ? new Date(r.lastCheckAt).toLocaleString('pt-BR') : 'nunca' %></td>
+            <td class="mono muted"><%= fmtBR(r.lastCheckAt) %></td>
           </tr>
           <% }); %>
           <% if (!rows.length) { %>
