@@ -3544,7 +3544,7 @@
         (function(){
           var body = document.getElementById('panelBalancesBody');
           if (!body) return;
-          function fmt(v){ try { return 'R$ ' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); } catch(_){ return 'R$ ' + v; } }
+          function fmt(v, cur){ var c=String(cur||'BRL').toUpperCase(); var sym=(c==='USD')?'US$ ':(c==='BRL'?'R$ ':(c+' ')); try { return sym + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); } catch(_){ return sym + v; } }
           function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
           function bindToggles(){
             Array.prototype.slice.call(document.querySelectorAll('.panelAlertChk')).forEach(function(chk){
@@ -3561,12 +3561,12 @@
             if (!rows || !rows.length){ body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#777;">Nenhum painel</td></tr>'; return; }
             body.innerHTML = rows.map(function(r){
               var saldo = !r.configured ? '<span style="color:#9ca3af;">sem chave</span>'
-                : (r.ok ? '<strong style="color:'+(r.low?'#b91c1c':'#166534')+'">'+fmt(r.balance)+'</strong>'+(r.low?' <span style="font-size:0.7rem;color:#b91c1c;">baixo</span>':'') : '<span style="color:#b45309;" title="'+esc(r.error)+'">erro</span>');
+                : (r.ok ? '<strong style="color:'+(r.low?'#b91c1c':'#166534')+'">'+fmt(r.balance, r.currency)+'</strong>'+(r.low?' <span style="font-size:0.7rem;color:#b91c1c;">baixo</span>':'') : '<span style="color:#b45309;" title="'+esc(r.error)+'">erro</span>');
               var on = (r.alertEnabled !== false);
               return '<tr>'
                 + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;color:#111827;">'+esc(r.label)+'</td>'
                 + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;">'+saldo+'</td>'
-                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;color:#6b7280;">'+fmt(r.threshold)+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;color:#6b7280;">'+fmt(r.threshold, r.currency)+'</td>'
                 + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:center;">'
                 +   '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">'
                 +     '<input type="checkbox" class="panelAlertChk" data-panel="'+esc(r.panel)+'" '+(on?'checked':'')+'>'

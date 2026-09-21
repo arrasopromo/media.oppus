@@ -3322,7 +3322,7 @@ function panelBalanceRegistry() {
     { name: 'nuvra', label: 'NuvraSMM', url: process.env.NUVRASMM_API_URL || 'https://nuvrasmm.com/api/v2', keyEnv: 'NUVRASMM_API_KEY', link: 'https://nuvrasmm.com', threshold: n(process.env.SALDO_MIN_NUVRA, 100), alertDefault: true },
     { name: 'worldsmm', label: 'WorldSMM', url: 'https://worldsmm.com.br/api/v2', keyEnv: 'WORLDSMM_API_KEY', link: 'https://worldsmm.com.br', threshold: n(process.env.SALDO_MIN_WORLDSMM, 50), alertDefault: true },
     { name: 'topfama', label: 'TopFama', url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', link: 'https://topfama.com', threshold: n(process.env.SALDO_MIN_TOPFAMA, 100), alertDefault: false },
-    { name: 'fama24h', label: 'Fama24h', url: 'https://fama24h.net/api/v2', keyEnv: 'FAMA24H_API_KEY', link: 'https://fama24h.net', threshold: n(process.env.SALDO_MIN_FAMA24H, 100), alertDefault: false },
+    { name: 'smmhustle', label: 'SMMHustle', url: 'https://smmhustle.com/api/v2', keyEnv: 'SMMHUSTLE_API_KEY', link: 'https://smmhustle.com', threshold: n(process.env.SALDO_MIN_SMMHUSTLE, 10), alertDefault: true },
   ];
 }
 // Config por-painel de alerta (liga/desliga) salva no settings (_id 'panel_balance_config').
@@ -3394,7 +3394,7 @@ async function runPanelBalanceCheck({ force = false } = {}) {
     const col = await getCollection('panel_balance_alerts');
     const alertCfg = await loadPanelBalanceAlertConfig();
     const now = Date.now();
-    const fmt = (v) => 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt = (v, cur) => { const c = String(cur || 'BRL').toUpperCase(); const sym = c === 'USD' ? 'US$ ' : (c === 'BRL' ? 'R$ ' : (c + ' ')); return sym + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
     for (const p of panelBalanceRegistry()) {
       const key = String(process.env[p.keyEnv] || '').trim();
       if (!key) continue; // painel sem chave → ignora
@@ -3413,7 +3413,7 @@ async function runPanelBalanceCheck({ force = false } = {}) {
       const lastAlertMs = state && state.lastAlertAt ? new Date(state.lastAlertAt).getTime() : 0;
       const cooled = force || !lastAlertMs || (now - lastAlertMs) >= cooldownH * 3600000;
       if (enabled && alertOn && cooled && phone) {
-        const text = `⚠️ *Saldo baixo no painel ${p.label}*\n\nSaldo atual: ${fmt(b.balance)}\nLimite de alerta: ${fmt(p.threshold)}\n\nRecarregue o painel: ${p.link}`;
+        const text = `⚠️ *Saldo baixo no painel ${p.label}*\n\nSaldo atual: ${fmt(b.balance, b.currency)}\nLimite de alerta: ${fmt(p.threshold, b.currency)}\n\nRecarregue o painel: ${p.link}`;
         const s = await sendEvolutionText(phone, text);
         if (s.ok) { out.alerted.push(p.name); try { await col.updateOne({ _id: p.name }, { $set: { lastAlertAt: new Date(), lastBalance: b.balance, lowSince: (state && state.lowSince) || new Date(), threshold: p.threshold, updatedAt: new Date() } }, { upsert: true }); } catch (_) {} }
         else { out.errors.push({ panel: p.name, error: 'send:' + s.error }); }
