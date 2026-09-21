@@ -16347,7 +16347,7 @@ app.post('/api/paghiper/notification', async (req, res) => {
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
             (async () => {
                 if (ctx.delayMs > 0) await sleep(ctx.delayMs);
-                let payerName = ''; let cost = null; let erroCusto = '';
+                let payerName = ''; let payerPhone = ''; let cost = null; let erroCusto = '';
                 // Limpeza do nome aqui dentro: o sanitizeText das outras rotas é local a
                 // elas e não existe neste escopo — chamá-lo derrubava o bloco inteiro num
                 // ReferenceError, e o repasse saía sem payer_name e sem cost.
@@ -16361,6 +16361,15 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     const find0 = () => col0.findOne({ $or: [{ 'paghiper.transactionId': transactionId }, { identifier: transactionId }] }, { projection: { 'paghiper.statusPayload': 0 } });
                     let o0 = await find0();
                     payerName = limpaNome((o0 && o0.customer && o0.customer.name) || '');
+                    // Telefone do cliente (fallback pelos vários lugares onde é gravado
+                    // conforme o método de pagamento). Só dígitos, com DDI 55 para BR.
+                    payerPhone = String(
+                        (o0 && o0.customer && (o0.customer.phone || o0.customer.phone_number || o0.customer.telefone || o0.customer.whatsapp)) ||
+                        (o0 && o0.telefone) ||
+                        (o0 && o0.additionalInfoMapPaid && o0.additionalInfoMapPaid.phone) ||
+                        (o0 && o0.additionalInfoMap && o0.additionalInfoMap.phone) || ''
+                    ).replace(/\D/g, '');
+                    if (payerPhone && !payerPhone.startsWith('55') && (payerPhone.length === 10 || payerPhone.length === 11)) payerPhone = '55' + payerPhone;
                     if (o0) {
                         const costOpts = { live: ctx.live === true, col: col0, valueCents: ctx.valueCents, feeCents: ctx.feeCents };
                         cost = await computeTrackComboOrderCost(o0, costOpts);
@@ -16378,7 +16387,9 @@ app.post('/api/paghiper/notification', async (req, res) => {
                     erroCusto = String((e && e.message) || e).slice(0, 200);
                     try { console.error('[TrackCombo] falha ao calcular o cost de', transactionId, '→', erroCusto); } catch (_) {}
                 }
-                const extra = payerName ? { payer_name: payerName } : {};
+                const extra = {};
+                if (payerName) extra.payer_name = payerName;
+                if (payerPhone) { extra.payer_phone = payerPhone; extra.phone = payerPhone; }
                 // A TrackCombo desconta o cost do valor que manda ao Meta (venda − custo). Padrão
                 // (16/09/2026): cost ZERADO — o Meta recebe o valor cheio da venda e as campanhas
                 // (otimizadas por VALOR) buscam faturamento. Os campos vão com 0 em vez de sumirem,
