@@ -25280,6 +25280,12 @@ app.post('/session/mark-paid', async (req, res) => {
               const map = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
               upgradeAdd = map[qtdBase] || 0;
             }
+          } else if (isViewsBase) {
+            // FALTAVA a branch de VIEWS aqui: views com upgrade caíam com upgradeAdd=0
+            // e iam só com a base pro fornecedor (ex.: 5k comprou +5k mas só enviava 5k).
+            // Mapa alinhado aos demais blocos de despacho (19696/22456/23426).
+            const map = { 1000: 1500, 5000: 5000, 25000: 25000, 100000: 50000, 200000: 50000, 500000: 500000 };
+            upgradeAdd = map[qtdBase] || 0;
           }
         }
         const qtd = Math.max(0, Number(qtdBase) + Number(upgradeAdd));
@@ -49894,7 +49900,26 @@ app.post('/api/payment/confirm', async (req, res) => {
           serviceId = _md.serviceId; mainProvider = _md.provider; mainApiUrl = _md.url; mainApiKey = _md.key || key;
       }
 
-      const finalQtdFama = resolvedQtd;
+      // O envio fama24h deste caminho enviava só a BASE (resolvedQtd), ignorando o
+      // upgrade — então views/curtidas/seguidores com bump vinham curtos por aqui.
+      // Agora aplica o upgrade inline (mesmos mapas dos demais blocos de despacho).
+      const finalQtdFama = (function () {
+        const base = Number(resolvedQtd) || 0;
+        const bumps = String(infoMap['order_bumps'] || (record?.additionalInfoPaid || []).find(it => it && it.key === 'order_bumps')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'order_bumps')?.value || '');
+        if (!/(^|;)upgrade:\d+/i.test(bumps)) return base;
+        let add = 0;
+        if (isViewsBase) {
+          const m = { 1000: 1500, 5000: 5000, 25000: 25000, 100000: 50000, 200000: 50000, 500000: 500000 };
+          add = m[base] || 0;
+        } else if (isCurtidasBase) {
+          const t = { 150: 300, 300: 500, 500: 700, 700: 1000, 1000: 2000, 1200: 2000, 2000: 3000, 3000: 4000, 4000: 5000, 5000: 7500, 7500: 10000, 10000: 15000 };
+          add = (t[base] || 0) > base ? (t[base] - base) : 0;
+        } else {
+          if ((/brasileiros/i.test(resolvedTipo) || /organicos/i.test(resolvedTipo)) && base === 1000) add = 1000;
+          else { const m = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 }; add = m[base] || 0; }
+        }
+        return base + add;
+      })();
       let linkToSendRaw = '';
       if (isCurtidasBase) {
         const arrPaid0 = Array.isArray(record?.additionalInfoPaid) ? record.additionalInfoPaid : [];
