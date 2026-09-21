@@ -10157,20 +10157,15 @@ async function ajustesDeLucroDoPeriodo(startMs, endMs) {
     for (const d of docs) {
       const valor = Number(d.valor || 0);
       if (!(valor > 0)) continue;
-      // Quando o lançamento tem DATA exata, respeita o DIA (BRT); senão, cai no mês.
+      // Regra combinada com o dono: o débito entra em QUALQUER filtro que encoste no
+      // MÊS do ajuste (mesmo que o lançamento tenha DATA exata — a data serve só pro
+      // display/asterisco). Antes, lançamentos com data exata eram filtrados por DIA,
+      // então sumiam num filtro "hoje" quando o custo era de outro dia do mesmo mês.
       const dataStr = /^\d{4}-\d{2}-\d{2}/.test(String(d.data || '')) ? String(d.data).slice(0, 10) : '';
-      let ini, fimEx, encosta, dentro;
-      if (dataStr) {
-        ini = new Date(dataStr + 'T03:00:00.000Z').getTime(); // 00:00 BRT do dia
-        fimEx = ini + 24 * 3600000;
-        encosta = semFiltro || (startMs < fimEx && endMs > ini);
-        dentro = !semFiltro && startMs <= ini && endMs >= fimEx; // dia todo dentro do filtro
-      } else {
-        const r = mesRangeBrt(d.mes || String(d.data || '').slice(0, 7));
-        if (!r) continue;
-        encosta = semFiltro || (startMs < r.fimEx && endMs > r.ini);
-        dentro = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
-      }
+      const r = mesRangeBrt(d.mes || (dataStr ? dataStr.slice(0, 7) : String(d.data || '').slice(0, 7)));
+      if (!r) continue;
+      const encosta = semFiltro || (startMs < r.fimEx && endMs > r.ini);
+      const dentro = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
       if (!encosta) continue;
       out.total += valor;
       out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes: dentro });
