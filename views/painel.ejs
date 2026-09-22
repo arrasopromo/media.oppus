@@ -768,6 +768,15 @@
             </select>
           </div>
           <div id="followersStatus" style="font-size: 0.9rem; color:#555;"></div>
+          <div id="refil2ResultsModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:10000; align-items:center; justify-content:center; padding:16px;">
+            <div style="background:#fff; border-radius:12px; max-width:660px; width:100%; max-height:82vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25);">
+              <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid #eef0f5;">
+                <div id="refil2ResultsTitle" style="font-weight:800; color:#111827;">Resultados</div>
+                <button type="button" id="refil2ResultsClose" style="border:none; background:#f3f4f6; width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:1.1rem; color:#374151;">×</button>
+              </div>
+              <div id="refil2ResultsBody" style="padding:12px 16px;"></div>
+            </div>
+          </div>
           <div style="margin-left:auto; font-size:0.9rem; color:#555;">
             <% const p = (pagination && pagination.page) ? pagination.page : 1; %>
             <% const tp = (pagination && pagination.totalPages) ? pagination.totalPages : 1; %>
@@ -2590,6 +2599,39 @@
               } catch (_) {}
             }
           })();
+          function refil2Esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+          function refil2OpenResults(job, filter){
+            var results = (job && Array.isArray(job.results)) ? job.results : [];
+            var list = filter ? results.filter(function(r){ return r && r.st === filter; }) : results;
+            var titleMap = { ok:'OK (refil solicitado)', failed:'Falhas', skipped:'Pulados' };
+            var titleEl = el('refil2ResultsTitle'); if (titleEl) titleEl.textContent = (titleMap[filter]||'Resultados') + ' — ' + list.length;
+            var bodyEl = el('refil2ResultsBody');
+            if (bodyEl) {
+              if (!list.length) { bodyEl.innerHTML = '<div style="color:#6b7280;">Nada aqui.</div>'; }
+              else {
+                bodyEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.85rem;">'
+                  + '<thead><tr><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Usuário</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">OrderID</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Motivo</th></tr></thead><tbody>'
+                  + list.map(function(r){
+                      var cor = r.st==='failed' ? '#b91c1c' : (r.st==='ok' ? '#166534' : '#b45309');
+                      var u = r.u ? ('<a href="https://instagram.com/'+encodeURIComponent(r.u)+'" target="_blank">@'+refil2Esc(r.u)+'</a>') : '—';
+                      return '<tr><td style="padding:6px;border-bottom:1px solid #f3f4f6;">'+u+'</td>'
+                        + '<td style="padding:6px;border-bottom:1px solid #f3f4f6;font-family:monospace;">'+refil2Esc(r.orderId||'-')+'</td>'
+                        + '<td style="padding:6px;border-bottom:1px solid #f3f4f6;color:'+cor+';">'+refil2Esc(r.motivo||'-')+'</td></tr>';
+                    }).join('')
+                  + '</tbody></table>';
+              }
+            }
+            var m = el('refil2ResultsModal'); if (m) m.style.display = 'flex';
+          }
+          (function(){ var c=el('refil2ResultsClose'), m=el('refil2ResultsModal'); if(c) c.addEventListener('click', function(){ if(m) m.style.display='none'; }); if(m) m.addEventListener('click', function(ev){ if(ev.target===m) m.style.display='none'; }); })();
+          function renderRefil2Done(job){
+            var s = el('followersStatus'); if (!s) return;
+            var okN = Number(job.ok||0), failN = Number(job.failed||0), skipN = Number(job.skipped||0);
+            s.innerHTML = 'Refil2 automático concluído. OK: <a href="#" class="refil2ResLink" data-f="ok" style="color:#166534;font-weight:700;text-decoration:underline;">'+okN+'</a> | Falhas: <a href="#" class="refil2ResLink" data-f="failed" style="color:#b91c1c;font-weight:700;text-decoration:underline;">'+failN+'</a> | Pulados: <a href="#" class="refil2ResLink" data-f="skipped" style="color:#b45309;font-weight:700;text-decoration:underline;">'+skipN+'</a>';
+            Array.prototype.slice.call(s.querySelectorAll('.refil2ResLink')).forEach(function(a){
+              a.addEventListener('click', function(ev){ ev.preventDefault(); refil2OpenResults(bulkRefil2LastJob||job, a.getAttribute('data-f')); });
+            });
+          }
           async function pollBulkRefil2Status() {
             try {
               var resp = await fetch('/api/painel/gerenciamento-seguidores/refil2/bulk-status', { method: 'GET', headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
@@ -2603,7 +2645,7 @@
                 setStatus('Refil2 automático em andamento… (' + String(job.done || 0) + '/' + String(job.total || 0) + ')' + (job.lastUsername ? (' @' + String(job.lastUsername)) : ''));
                 if (!bulkRefil2PollTimer) bulkRefil2PollTimer = setInterval(pollBulkRefil2Status, 2000);
               } else if (job.status === 'done') {
-                setStatus('Refil2 automático concluído. OK: ' + String(job.ok || 0) + ' | Falhas: ' + String(job.failed || 0) + ' | Pulados: ' + String(job.skipped || 0));
+                renderRefil2Done(job);
                 if (bulkRefil2PollTimer) { try { clearInterval(bulkRefil2PollTimer); } catch(_) {} bulkRefil2PollTimer = null; }
               } else if (job.status === 'error') {
                 setStatus('Refil2 automático finalizou com erro: ' + String(job.lastError || ''));

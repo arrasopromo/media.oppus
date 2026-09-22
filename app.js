@@ -35298,7 +35298,8 @@ function followersMgmtSerializeRefil2BulkJob(jobRaw) {
     skipped: job.skipped,
     lastUsername: job.lastUsername || null,
     lastError: job.lastError || null,
-    batchId: job.batchId || null
+    batchId: job.batchId || null,
+    results: Array.isArray(job.results) ? job.results.slice(-3000) : []
   };
 }
 
@@ -35327,19 +35328,24 @@ function followersMgmtKickRefil2BulkJob() {
       while (job.status === 'running' && job.done < targets.length) {
         const t = targets[job.done] || {};
         const username = String(t.username || '').trim().replace(/^@+/, '').toLowerCase();
+        const orderId = String(t.fornecedorOrderId || t.orderId || '').trim();
+        if (!Array.isArray(job.results)) job.results = [];
         job.lastUsername = username || null;
         job.lastError = null;
         if (!username) {
+          job.results.push({ u: '', orderId, tipo: String(t.tipo || ''), st: 'skipped', motivo: 'sem @/username' });
           job.skipped += 1;
           job.done += 1;
           continue;
         }
         if (!isEligibleTipo(t.tipo)) {
+          job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'skipped', motivo: `tipo não elegível (${String(t.tipo || '-')})` });
           job.skipped += 1;
           job.done += 1;
           continue;
         }
         if (!isEligibleDropAbs(t.diffAbs)) {
+          job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'skipped', motivo: `queda abaixo do mínimo (${Number(t.diffAbs || 0)})` });
           job.skipped += 1;
           job.done += 1;
           continue;
@@ -35361,16 +35367,21 @@ function followersMgmtKickRefil2BulkJob() {
           const status = Number(resp && resp.status ? resp.status : 0) || 0;
           const body = resp ? resp.data : null;
           const ok = !!(status >= 200 && status < 300 && body && body.ok === true);
-          if (ok) job.ok += 1;
-          else job.failed += 1;
-          if (!ok) {
+          if (ok) {
+            job.ok += 1;
+            const refilId = String((body && (body.refilId || body.refill || body.orderId || (body.data && (body.data.refill || body.data.order)))) || '').trim();
+            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'ok', motivo: refilId ? ('refil ' + refilId) : 'refil solicitado' });
+          } else {
+            job.failed += 1;
             const msg = String((body && (body.message || body.error)) || '').trim();
             job.lastError = msg || (`HTTP ${status}`);
+            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'failed', motivo: job.lastError });
           }
           try { console.log(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${username} http=${status}`); } catch (_) {}
         } catch (e) {
           job.failed += 1;
           job.lastError = e?.message || String(e);
+          job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'failed', motivo: job.lastError });
           try { console.warn(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} fail @${username}:`, job.lastError); } catch (_) {}
         } finally {
           job.done += 1;
@@ -35575,6 +35586,7 @@ app.post('/api/painel/gerenciamento-seguidores/refil2/bulk-start', requireAdmin,
       ok: 0,
       failed: 0,
       skipped: 0,
+      results: [],
       lastUsername: null,
       lastError: null,
       batchId,
