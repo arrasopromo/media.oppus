@@ -836,9 +836,12 @@
                 const pct = (typeof row.diffPct === 'number') ? row.diffPct : ((diff !== null && contracted) ? ((diff / contracted) * 100) : null);
                 const oid = row.orderId ? String(row.orderId) : '';
                 const fid = row.fornecedorOrderId ? String(row.fornecedorOrderId) : '';
-                const diffAbs = (typeof diff === 'number' && Number.isFinite(diff)) ? Math.max(0, diff) : null;
-                const pctNum = (typeof pct === 'number' && Number.isFinite(pct)) ? pct : null;
-                const hasDrop = (resultado !== null && current !== null && current < resultado && diffAbs !== null && diffAbs >= 100);
+                // Pedido ainda NÃO entregue no fornecedor (checado por action=status no backend):
+                // não trata a diferença como queda nem alimenta o refil/bulk (data-diffabs vazio).
+                const entregaPendente = row.entregaPendente === true;
+                const diffAbs = entregaPendente ? null : ((typeof diff === 'number' && Number.isFinite(diff)) ? Math.max(0, diff) : null);
+                const pctNum = entregaPendente ? null : ((typeof pct === 'number' && Number.isFinite(pct)) ? pct : null);
+                const hasDrop = !entregaPendente && (resultado !== null && current !== null && current < resultado && diffAbs !== null && diffAbs >= 100);
                 let lastPurchase = '-';
                 try {
                   const t = Number(row.lastPurchaseAtMs || 0);
@@ -949,10 +952,12 @@
                 <td style="text-align:right;" class="cell-initial"><%= (init !== null ? init : '-') %></td>
                 <td style="text-align:right;"><%= contracted %></td>
                 <td style="text-align:right;" class="cell-resultado"><%= (resultado !== null ? resultado : '-') %></td>
-                <td style="text-align:right;" class="cell-current"><%= (current !== null ? current : '-') %></td>
-                <td style="text-align:right;" class="cell-diff"><%= (diff !== null ? diff : '-') %></td>
+                <td style="text-align:right;" class="cell-current"><% if (entregaPendente) { %><span style="color:#d97706; font-weight:700;" title="Pedido <%= (row.entregaStatus||'') %> no fornecedor — ainda não entregue">Em andamento</span><% } else { %><%= (current !== null ? current : '-') %><% } %></td>
+                <td style="text-align:right;" class="cell-diff"><% if (entregaPendente) { %><span class="muted" style="color:#94a3b8;">—</span><% } else { %><%= (diff !== null ? diff : '-') %><% } %></td>
                 <td style="text-align:right;" class="cell-pct">
-                  <% if (resultado !== null && current !== null) { %>
+                  <% if (entregaPendente) { %>
+                    <span style="color:#d97706; font-weight:700;" title="orderId <%= (row.fornecedorOrderId||'') %> ainda não concluído no fornecedor">Em andamento</span>
+                  <% } else if (resultado !== null && current !== null) { %>
                     <% if (current >= resultado) { %>
                       <span style="color:#16a34a; font-weight:700;">OK</span>
                     <% } else if (pct !== null) { %>

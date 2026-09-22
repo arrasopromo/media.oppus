@@ -31795,6 +31795,68 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const safePage = Math.min(totalPages, page);
     const start = (safePage - 1) * pageSize;
     const pageRows = filtered.slice(start, start + pageSize);
+
+    // ── Confirma ENTREGA no fornecedor (action=status) para as linhas da PÁGINA atual ──
+    // Se o pedido NÃO estiver concluído no fornecedor, não faz sentido mostrar a
+    // "diferença" vs a quantidade atual (pareceria queda, mas é NÃO-ENTREGA). Marca
+    // entregaPendente e zera diffAbs/diffPct dessas linhas. Batched por provedor + cache
+    // de 10min + timeout de 8s; qualquer falha mantém o comportamento antigo (silencioso).
+    try {
+      const LABEL_TO_PROV = { 'SMMHustle': 'smmhustle', 'Nuvra': 'nuvra', 'Fama24h': 'nuvra', 'TopFama': 'topfama', 'Fornecedor Social': 'fornecedor_social', 'WorldSMM': 'worldsmm' };
+      const nowMsEnt = Date.now();
+      if (!global.__entregaStatusCache) global.__entregaStatusCache = new Map();
+      const entCache = global.__entregaStatusCache;
+      const ENT_TTL = 10 * 60 * 1000;
+      const porProv = new Map();
+      for (const r of pageRows) {
+        const oid = String((r && r.fornecedorOrderId) || '').trim();
+        if (!oid || !/^\d+$/.test(oid)) continue;
+        const prov = LABEL_TO_PROV[String((r && r.fornecedor) || '')];
+        if (!prov) continue;
+        const c = entCache.get(prov + ':' + oid);
+        if (c && (nowMsEnt - c.at) < ENT_TTL) continue;
+        if (!porProv.has(prov)) porProv.set(prov, new Set());
+        porProv.get(prov).add(oid);
+      }
+      const fetchProvStatus = async (prov, ids) => {
+        const url = smmProviderUrl(prov); const key = smmProviderKey(prov);
+        if (!url || !key || !ids.length) return;
+        for (let i = 0; i < ids.length; i += 100) {
+          const chunk = ids.slice(i, i + 100);
+          try {
+            const body = new URLSearchParams({ key, action: 'status', orders: chunk.join(',') }).toString();
+            const resp = await axios.post(url, body, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000, validateStatus: () => true });
+            const data = resp && resp.data;
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+              for (const id of chunk) {
+                const d = data[id];
+                const st = d ? (d.status || d.error || '') : '';
+                entCache.set(prov + ':' + id, { at: nowMsEnt, status: String(st || '') });
+              }
+            }
+          } catch (_) {}
+        }
+      };
+      await Promise.race([
+        Promise.all(Array.from(porProv.entries()).map(([prov, set]) => fetchProvStatus(prov, Array.from(set)))),
+        new Promise((r) => setTimeout(r, 8000))
+      ]);
+      for (const r of pageRows) {
+        const oid = String((r && r.fornecedorOrderId) || '').trim();
+        const prov = LABEL_TO_PROV[String((r && r.fornecedor) || '')];
+        if (!oid || !prov) continue;
+        const c = entCache.get(prov + ':' + oid);
+        if (!c || !c.status) continue;
+        const st = String(c.status).toLowerCase();
+        const entregue = /complet|conclu/.test(st);
+        if (!entregue && !/cancel|refund|estorn/.test(st)) {
+          r.entregaPendente = true;
+          r.entregaStatus = c.status;
+          r.diffAbs = null; r.diffPct = null; // não trata como queda: pedido ainda não entregue
+        }
+      }
+    } catch (_) {}
+
     const followersFilteredTargets = filtered
       .map((r) => ({
         username: r && r.username ? String(r.username) : '',
