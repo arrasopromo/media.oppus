@@ -3325,19 +3325,41 @@ function panelBalanceRegistry() {
     { name: 'smmhustle', label: 'SMMHustle', url: 'https://smmhustle.com/api/v2', keyEnv: 'SMMHUSTLE_API_KEY', link: 'https://smmhustle.com', threshold: n(process.env.SALDO_MIN_SMMHUSTLE, 10), alertDefault: true },
   ];
 }
-// Config por-painel de alerta (liga/desliga) salva no settings (_id 'panel_balance_config').
-// Retorna { [panel]: boolean }. Cacheado por 20s.
-let __panelAlertCfgCache = { atMs: 0, values: null };
-async function loadPanelBalanceAlertConfig() {
+// Config do saldo de painéis salva no settings (_id 'panel_balance_config'):
+//   alerts: { [panel]: boolean } — liga/desliga o alerta por painel
+//   thresholds: { [panel]: number } — override do limite de aviso por painel
+//   custom: [{ name, label, url, key, link, threshold, alertDefault }] — fornecedores extras
+// Cacheado por 20s.
+let __panelCfgCache = { atMs: 0, doc: null };
+async function loadPanelBalanceFullConfig() {
   try {
-    if (__panelAlertCfgCache.values && (Date.now() - __panelAlertCfgCache.atMs) < 20000) return __panelAlertCfgCache.values;
+    if (__panelCfgCache.doc && (Date.now() - __panelCfgCache.atMs) < 20000) return __panelCfgCache.doc;
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('settings');
-    const doc = col ? await col.findOne({ _id: 'panel_balance_config' }, { projection: { _id: 0, alerts: 1 } }) : null;
-    const values = (doc && doc.alerts && typeof doc.alerts === 'object') ? doc.alerts : {};
-    __panelAlertCfgCache = { atMs: Date.now(), values };
-    return values;
-  } catch (_) { return __panelAlertCfgCache.values || {}; }
+    const doc = col ? await col.findOne({ _id: 'panel_balance_config' }, { projection: { _id: 0, alerts: 1, thresholds: 1, custom: 1 } }) : null;
+    const out = {
+      alerts: (doc && doc.alerts && typeof doc.alerts === 'object') ? doc.alerts : {},
+      thresholds: (doc && doc.thresholds && typeof doc.thresholds === 'object') ? doc.thresholds : {},
+      custom: (doc && Array.isArray(doc.custom)) ? doc.custom : []
+    };
+    __panelCfgCache = { atMs: Date.now(), doc: out };
+    return out;
+  } catch (_) { return __panelCfgCache.doc || { alerts: {}, thresholds: {}, custom: [] }; }
+}
+async function loadPanelBalanceAlertConfig() { return (await loadPanelBalanceFullConfig()).alerts; }
+// Registro FINAL = base (hardcoded) com override de limite + fornecedores customizados do banco.
+function getMergedPanelRegistry(cfg) {
+  const c = cfg || { thresholds: {}, custom: [] };
+  const base = panelBalanceRegistry().map((p) => {
+    const t = Number(c.thresholds && c.thresholds[p.name]);
+    return Object.assign({}, p, (Number.isFinite(t) && t > 0) ? { threshold: t } : {});
+  });
+  const baseNames = new Set(base.map((p) => p.name));
+  const custom = (c.custom || []).filter((x) => x && x.name && x.url && !baseNames.has(String(x.name))).map((x) => {
+    const t = Number((c.thresholds && c.thresholds[x.name]) != null ? c.thresholds[x.name] : x.threshold);
+    return { name: String(x.name), label: String(x.label || x.name), url: String(x.url), key: String(x.key || ''), keyEnv: '', link: String(x.link || ''), threshold: (Number.isFinite(t) && t > 0) ? t : 100, alertDefault: x.alertDefault !== false, custom: true };
+  });
+  return base.concat(custom);
 }
 // Alerta efetivo do painel: override salvo tem prioridade; senão o alertDefault do registro.
 function panelAlertEnabled(p, cfg) {
@@ -3347,7 +3369,7 @@ function panelAlertEnabled(p, cfg) {
 }
 async function fetchPanelBalance(p) {
   try {
-    const key = String(process.env[p.keyEnv] || '').trim();
+    const key = String((p && p.key) || process.env[p.keyEnv] || '').trim();
     if (!key) return { ok: false, error: 'missing_key' };
     const params = new URLSearchParams({ key, action: 'balance' });
     const r = await axios.post(p.url, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' }, timeout: 20000, validateStatus: () => true });
@@ -3392,11 +3414,12 @@ async function runPanelBalanceCheck({ force = false } = {}) {
     const phone = String(process.env.PANEL_BALANCE_ALERT_PHONE || '5531975938916').replace(/\D/g, '');
     const cooldownH = Math.max(1, Number(process.env.PANEL_BALANCE_ALERT_COOLDOWN_HOURS || 12) || 12);
     const col = await getCollection('panel_balance_alerts');
-    const alertCfg = await loadPanelBalanceAlertConfig();
+    const fullCfg = await loadPanelBalanceFullConfig();
+    const alertCfg = fullCfg.alerts;
     const now = Date.now();
     const fmt = (v, cur) => { const c = String(cur || 'BRL').toUpperCase(); const sym = c === 'USD' ? 'US$ ' : (c === 'BRL' ? 'R$ ' : (c + ' ')); return sym + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
-    for (const p of panelBalanceRegistry()) {
-      const key = String(process.env[p.keyEnv] || '').trim();
+    for (const p of getMergedPanelRegistry(fullCfg)) {
+      const key = String((p && p.key) || process.env[p.keyEnv] || '').trim();
       if (!key) continue; // painel sem chave → ignora
       const alertOn = panelAlertEnabled(p, alertCfg); // flag por-painel (Gerenciamento de Tipos)
       out.checked++;
@@ -3436,14 +3459,15 @@ function startPanelBalanceLoop() {
 // Só vê os saldos (sem alertar) — pro admin conferir a qualquer hora.
 app.get('/api/painel/saldo/list', requireAdmin, async (req, res) => {
   try {
-    const alertCfg = await loadPanelBalanceAlertConfig();
+    const fullCfg = await loadPanelBalanceFullConfig();
+    const alertCfg = fullCfg.alerts;
     const rows = [];
-    for (const p of panelBalanceRegistry()) {
+    for (const p of getMergedPanelRegistry(fullCfg)) {
       const alertOn = panelAlertEnabled(p, alertCfg);
-      const key = String(process.env[p.keyEnv] || '').trim();
-      if (!key) { rows.push({ panel: p.name, label: p.label, configured: false, link: p.link, threshold: p.threshold, alertEnabled: alertOn }); continue; }
+      const key = String((p && p.key) || process.env[p.keyEnv] || '').trim();
+      if (!key) { rows.push({ panel: p.name, label: p.label, configured: false, link: p.link, threshold: p.threshold, alertEnabled: alertOn, custom: !!p.custom }); continue; }
       const b = await fetchPanelBalance(p);
-      rows.push({ panel: p.name, label: p.label, configured: true, threshold: p.threshold, link: p.link, alertEnabled: alertOn, ok: b.ok, balance: b.ok ? b.balance : null, currency: b.ok ? b.currency : null, low: b.ok ? (b.balance < p.threshold) : null, error: b.ok ? null : b.error });
+      rows.push({ panel: p.name, label: p.label, configured: true, threshold: p.threshold, link: p.link, alertEnabled: alertOn, custom: !!p.custom, ok: b.ok, balance: b.ok ? b.balance : null, currency: b.ok ? b.currency : null, low: b.ok ? (b.balance < p.threshold) : null, error: b.ok ? null : b.error });
     }
     return res.json({ ok: true, rows });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
@@ -3452,13 +3476,14 @@ app.get('/api/painel/saldo/list', requireAdmin, async (req, res) => {
 app.post('/api/painel/saldo/alert-config', requireAdmin, async (req, res) => {
   try {
     const panel = String((req.body && req.body.panel) || '').trim();
-    const valid = panelBalanceRegistry().some((p) => p.name === panel);
+    const fullCfg = await loadPanelBalanceFullConfig();
+    const valid = getMergedPanelRegistry(fullCfg).some((p) => p.name === panel);
     if (!valid) return res.status(400).json({ ok: false, error: 'invalid_panel' });
     const alertEnabled = !(req.body && (req.body.alertEnabled === false || req.body.alertEnabled === 'false'));
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('settings');
     await col.updateOne({ _id: 'panel_balance_config' }, { $set: { [`alerts.${panel}`]: alertEnabled, updatedAt: new Date().toISOString() } }, { upsert: true });
-    __panelAlertCfgCache = { atMs: 0, values: null }; // invalida cache
+    __panelCfgCache = { atMs: 0, doc: null }; // invalida cache
     return res.json({ ok: true, panel, alertEnabled });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
@@ -3468,6 +3493,65 @@ app.post('/api/painel/saldo/check', requireAdmin, async (req, res) => {
     const force = String((req.body && req.body.force) || '') === 'true' || String(req.query.force || '') === '1';
     const r = await runPanelBalanceCheck({ force });
     return res.json({ ok: true, result: r });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Edita o LIMITE de aviso de UM painel (base ou customizado).
+app.post('/api/painel/saldo/threshold', requireAdmin, async (req, res) => {
+  try {
+    const panel = String((req.body && req.body.panel) || '').trim();
+    const threshold = Number(req.body && req.body.threshold);
+    if (!panel) return res.status(400).json({ ok: false, error: 'missing_panel' });
+    if (!Number.isFinite(threshold) || threshold <= 0) return res.status(400).json({ ok: false, error: 'threshold_invalido', message: 'Informe um limite maior que zero.' });
+    const fullCfg = await loadPanelBalanceFullConfig();
+    if (!getMergedPanelRegistry(fullCfg).some((p) => p.name === panel)) return res.status(400).json({ ok: false, error: 'invalid_panel' });
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    await col.updateOne({ _id: 'panel_balance_config' }, { $set: { [`thresholds.${panel}`]: Math.round(threshold * 100) / 100, updatedAt: new Date().toISOString() } }, { upsert: true });
+    __panelCfgCache = { atMs: 0, doc: null };
+    return res.json({ ok: true, panel, threshold: Math.round(threshold * 100) / 100 });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Cadastra/edita um fornecedor CUSTOMIZADO (nome, URL da API, chave, limite).
+app.post('/api/painel/saldo/provider', requireAdmin, async (req, res) => {
+  try {
+    const b = (req.body && typeof req.body === 'object') ? req.body : {};
+    const label = String(b.label || '').trim().slice(0, 60);
+    let url = String(b.url || '').trim();
+    const key = String(b.key || '').trim();
+    let link = String(b.link || '').trim();
+    const threshold = Number(b.threshold);
+    if (!label || !url || !key) return res.status(400).json({ ok: false, error: 'campos_obrigatorios', message: 'Preencha Nome, URL da API e a Chave.' });
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
+    if (!link) { try { link = new URL(url).origin; } catch (_) { link = url; } }
+    // slug estável: usa o enviado ou deriva do label; nunca colide com os base.
+    const baseNames = new Set(panelBalanceRegistry().map((p) => p.name));
+    let name = String(b.name || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (!name) name = 'custom_' + label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+    if (baseNames.has(name)) name = 'custom_' + name;
+    const prov = { name, label, url, key, link, threshold: (Number.isFinite(threshold) && threshold > 0) ? Math.round(threshold * 100) / 100 : 100, alertDefault: true };
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    const doc = await col.findOne({ _id: 'panel_balance_config' }, { projection: { custom: 1 } });
+    const custom = (doc && Array.isArray(doc.custom)) ? doc.custom : [];
+    const idx = custom.findIndex((x) => x && String(x.name) === name);
+    if (idx >= 0) custom[idx] = prov; else custom.push(prov);
+    await col.updateOne({ _id: 'panel_balance_config' }, { $set: { custom, updatedAt: new Date().toISOString() } }, { upsert: true });
+    __panelCfgCache = { atMs: 0, doc: null };
+    return res.json({ ok: true, name, label });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Remove um fornecedor customizado (não afeta os base).
+app.post('/api/painel/saldo/provider-remove', requireAdmin, async (req, res) => {
+  try {
+    const name = String((req.body && req.body.name) || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'missing_name' });
+    if (panelBalanceRegistry().some((p) => p.name === name)) return res.status(400).json({ ok: false, error: 'base_nao_removivel', message: 'Fornecedor base não pode ser removido (só customizados).' });
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    await col.updateOne({ _id: 'panel_balance_config' }, { $pull: { custom: { name } }, $unset: { [`thresholds.${name}`]: '', [`alerts.${name}`]: '' }, $set: { updatedAt: new Date().toISOString() } }, { upsert: true });
+    __panelCfgCache = { atMs: 0, doc: null };
+    return res.json({ ok: true, name });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 

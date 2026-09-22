@@ -3525,7 +3525,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
           <div>
             <div style="font-weight:800; color:#111827;">Saldo dos painéis (fornecedores)</div>
-            <div style="font-size:0.85rem; color:#6b7280;">Alerta de saldo baixo no WhatsApp. Ligue/desligue o alerta por painel.</div>
+            <div style="font-size:0.85rem; color:#6b7280;">Alerta de saldo baixo no WhatsApp. Edite o limite de aviso, ligue/desligue o alerta e cadastre novos fornecedores.</div>
           </div>
           <button type="button" id="panelBalancesReload" class="unknown-btn">Atualizar saldos</button>
         </div>
@@ -3535,14 +3535,35 @@
               <tr>
                 <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Painel</th>
                 <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Saldo</th>
-                <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite</th>
+                <th style="text-align:right; padding:8px; border-bottom:1px solid #eee;">Limite de aviso</th>
                 <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;">Alertar</th>
+                <th style="text-align:center; padding:8px; border-bottom:1px solid #eee;"></th>
               </tr>
             </thead>
             <tbody id="panelBalancesBody">
-              <tr><td colspan="4" style="padding:12px; text-align:center; color:#777;">Carregando saldos…</td></tr>
+              <tr><td colspan="5" style="padding:12px; text-align:center; color:#777;">Carregando saldos…</td></tr>
             </tbody>
           </table>
+        </div>
+        <div style="margin-top:14px; border-top:1px dashed #e5e7eb; padding-top:12px;">
+          <div style="font-weight:700; color:#111827; font-size:0.9rem; margin-bottom:8px;">Cadastrar fornecedor</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+            <label style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem; color:#6b7280;">Nome
+              <input type="text" id="npLabel" placeholder="Ex.: Peakerr" style="padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:130px;">
+            </label>
+            <label style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem; color:#6b7280;">URL da API
+              <input type="text" id="npUrl" placeholder="peakerr.com/api/v2" style="padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:190px;">
+            </label>
+            <label style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem; color:#6b7280;">Chave (API key)
+              <input type="text" id="npKey" placeholder="chave do painel" style="padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:190px;">
+            </label>
+            <label style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem; color:#6b7280;">Limite de aviso
+              <input type="number" id="npThreshold" placeholder="100" min="0" step="0.01" style="padding:6px 8px; border:1px solid #ccc; border-radius:6px; width:110px;">
+            </label>
+            <button type="button" id="npSalvar" class="unknown-btn" style="background:#4f46e5; color:#fff;">Adicionar</button>
+            <span id="npMsg" style="font-size:0.8rem; color:#6b7280;"></span>
+          </div>
+          <div style="font-size:0.72rem; color:#9ca3af; margin-top:6px;">A chave fica salva no servidor (não aparece de volta na tela). Considera os que já temos — se o nome coincidir com um base, vira "custom_".</div>
         </div>
       </div>
       <script>
@@ -3562,33 +3583,78 @@
               });
             });
           }
+          function bindThresholds(){
+            Array.prototype.slice.call(document.querySelectorAll('.panelThreshInput')).forEach(function(inp){
+              var salvar = function(){
+                var panel = inp.getAttribute('data-panel'); var v = Number(inp.value);
+                if (!(v > 0)) { inp.style.borderColor='#dc2626'; return; }
+                inp.style.borderColor='#d1d5db'; inp.disabled = true;
+                fetch('/api/painel/saldo/threshold', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ panel: panel, threshold: v }) })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){ inp.disabled=false; if(d&&d.ok){ inp.style.background='#ecfdf5'; setTimeout(function(){ inp.style.background=''; },700); } else { inp.style.borderColor='#dc2626'; alert('Falha ao salvar limite: '+((d&&d.message)||(d&&d.error)||'erro')); } })
+                  .catch(function(){ inp.disabled=false; inp.style.borderColor='#dc2626'; alert('Erro de rede.'); });
+              };
+              inp.addEventListener('keydown', function(ev){ if(ev.key==='Enter'){ ev.preventDefault(); inp.blur(); } });
+              inp.addEventListener('change', salvar);
+            });
+          }
+          function bindRemoves(){
+            Array.prototype.slice.call(document.querySelectorAll('.panelProvRemove')).forEach(function(btn){
+              btn.addEventListener('click', function(){
+                var panel = btn.getAttribute('data-panel'); var label = btn.getAttribute('data-label')||panel;
+                if (!confirm('Remover o fornecedor "'+label+'" do monitoramento de saldo?')) return;
+                btn.disabled = true;
+                fetch('/api/painel/saldo/provider-remove', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ name: panel }) })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){ if(d&&d.ok){ load(); } else { btn.disabled=false; alert('Falha ao remover: '+((d&&d.message)||(d&&d.error)||'erro')); } })
+                  .catch(function(){ btn.disabled=false; alert('Erro de rede.'); });
+              });
+            });
+          }
           function render(rows){
-            if (!rows || !rows.length){ body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#777;">Nenhum painel</td></tr>'; return; }
+            if (!rows || !rows.length){ body.innerHTML='<tr><td colspan="5" style="padding:12px;text-align:center;color:#777;">Nenhum painel</td></tr>'; return; }
             body.innerHTML = rows.map(function(r){
               var saldo = !r.configured ? '<span style="color:#9ca3af;">sem chave</span>'
                 : (r.ok ? '<strong style="color:'+(r.low?'#b91c1c':'#166534')+'">'+fmt(r.balance, r.currency)+'</strong>'+(r.low?' <span style="font-size:0.7rem;color:#b91c1c;">baixo</span>':'') : '<span style="color:#b45309;" title="'+esc(r.error)+'">erro</span>');
               var on = (r.alertEnabled !== false);
+              var cur = String(r.currency||'BRL').toUpperCase(); var sym=(cur==='USD')?'US$':(cur==='BRL'?'R$':cur);
+              var lim = '<span style="color:#9ca3af;font-size:0.75rem;">'+sym+'</span> <input type="number" class="panelThreshInput" data-panel="'+esc(r.panel)+'" value="'+(Number(r.threshold)||0)+'" min="0" step="0.01" style="width:80px;padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;text-align:right;">';
+              var acao = r.custom ? '<button type="button" class="panelProvRemove" data-panel="'+esc(r.panel)+'" data-label="'+esc(r.label)+'" title="Remover fornecedor" style="border:1px solid #fecaca;background:#fff5f5;color:#b91c1c;border-radius:6px;cursor:pointer;padding:2px 8px;font-weight:700;">✕</button>' : '';
               return '<tr>'
-                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;color:#111827;">'+esc(r.label)+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;color:#111827;">'+esc(r.label)+(r.custom?' <span style="font-size:0.65rem;color:#8b5cf6;border:1px solid #ddd6fe;background:#f5f3ff;border-radius:4px;padding:0 4px;">custom</span>':'')+'</td>'
                 + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;">'+saldo+'</td>'
-                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;color:#6b7280;">'+fmt(r.threshold, r.currency)+'</td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:right;white-space:nowrap;">'+lim+'</td>'
                 + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:center;">'
                 +   '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">'
                 +     '<input type="checkbox" class="panelAlertChk" data-panel="'+esc(r.panel)+'" '+(on?'checked':'')+'>'
                 +     '<span class="panelAlertLbl" style="font-size:0.8rem;color:#6b7280;">'+(on?'ligado':'desligado')+'</span>'
                 +   '</label></td>'
+                + '<td style="padding:8px;border-bottom:1px solid #f3f4f6;text-align:center;">'+acao+'</td>'
                 + '</tr>';
             }).join('');
-            bindToggles();
+            bindToggles(); bindThresholds(); bindRemoves();
           }
           function load(){
-            body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#777;">Carregando saldos…</td></tr>';
+            body.innerHTML='<tr><td colspan="5" style="padding:12px;text-align:center;color:#777;">Carregando saldos…</td></tr>';
             fetch('/api/painel/saldo/list', { credentials:'same-origin' })
               .then(function(r){ return r.json(); })
-              .then(function(d){ if(d&&d.ok) render(d.rows||[]); else body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#b91c1c;">Erro ao carregar</td></tr>'; })
-              .catch(function(){ body.innerHTML='<tr><td colspan="4" style="padding:12px;text-align:center;color:#b91c1c;">Erro de rede</td></tr>'; });
+              .then(function(d){ if(d&&d.ok) render(d.rows||[]); else body.innerHTML='<tr><td colspan="5" style="padding:12px;text-align:center;color:#b91c1c;">Erro ao carregar</td></tr>'; })
+              .catch(function(){ body.innerHTML='<tr><td colspan="5" style="padding:12px;text-align:center;color:#b91c1c;">Erro de rede</td></tr>'; });
           }
           var rl=document.getElementById('panelBalancesReload'); if(rl) rl.addEventListener('click', load);
+          // Cadastrar fornecedor
+          var npBtn=document.getElementById('npSalvar');
+          if(npBtn){ npBtn.addEventListener('click', function(){
+            var label=(document.getElementById('npLabel')||{}).value||''; var url=(document.getElementById('npUrl')||{}).value||'';
+            var key=(document.getElementById('npKey')||{}).value||''; var thr=(document.getElementById('npThreshold')||{}).value||'';
+            var msg=document.getElementById('npMsg');
+            if(!label.trim()||!url.trim()||!key.trim()){ if(msg){msg.style.color='#dc2626'; msg.textContent='Preencha Nome, URL e Chave.';} return; }
+            npBtn.disabled=true; if(msg){msg.style.color='#6b7280'; msg.textContent='Salvando…';}
+            fetch('/api/painel/saldo/provider', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({ label:label, url:url, key:key, threshold:Number(thr)||undefined }) })
+              .then(function(r){ return r.json(); })
+              .then(function(d){ npBtn.disabled=false; if(d&&d.ok){ if(msg){msg.style.color='#166534'; msg.textContent='Adicionado!';} ['npLabel','npUrl','npKey','npThreshold'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; }); load(); } else { if(msg){msg.style.color='#dc2626'; msg.textContent='Falha: '+((d&&d.message)||(d&&d.error)||'erro');} } })
+              .catch(function(){ npBtn.disabled=false; if(msg){msg.style.color='#dc2626'; msg.textContent='Erro de rede.';} });
+          }); }
           load();
         })();
       </script>
