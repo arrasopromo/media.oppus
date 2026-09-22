@@ -406,16 +406,19 @@ async function emitirNotaServico(record, col, amount, opts = {}) {
     await persistNota(col, record._id, { emissionState: 'claimed', environment: cfg.environment, requestedAt: nowIso() });
   }
   await persistNota(col, record._id, { kind: 'servico', orderAmount: resolveAmountReais(record), serviceAmount: amount });
-  // Nota de SERVIÇO é emitida SEM TOMADOR (sem receiver) — decisão do negócio.
+  // TOMADOR: a NFS-e identifica o cliente por NOME + EMAIL + TELEFONE (CPF só quando houver).
+  // O campo na Spedy é `receiver`. Quando não há nenhum dado real → nota sai sem tomador.
+  const receiver = buildServiceReceiver(record);
   const desc = String(process.env.SPEEDY_SERVICE_DESCRIPTION || DEFAULT_SERVICE_DESCRIPTION).trim() || DEFAULT_SERVICE_DESCRIPTION;
   // integrationId = id do PEDIDO (atrela a nota ao pedido na Spedy; máx 36 chars).
   const integrationId = String(record.identifier || record._id || '').trim().slice(0, 36);
   const payload = {
     description: desc,
     issue: true,
-    sendEmailToCustomer: envBool(process.env.SPEEDY_SEND_EMAIL, false),
+    sendEmailToCustomer: false, // por decisão: NÃO envia a nota por email ao cliente.
     effectiveDate: new Date(orderDateMs(record) || Date.now()).toISOString(),
     total: { invoiceAmount: amount, netAmount: amount },
+    ...(receiver ? { receiver } : {}),
     ...(integrationId ? { integrationId } : {}),
   };
   const resp = await spedy.createServiceInvoice(payload);
@@ -432,10 +435,10 @@ async function emitirNotaServico(record, col, amount, opts = {}) {
     invoiceId: String(d.id || ''),
     number: (d.number != null ? d.number : null),
     status: String(d.status || ''),
-    semTomador: true,
+    semTomador: !receiver,
     error: null,
   });
-  return { ok: true, invoiceId: d.id, number: d.number, status: d.status, amount, semTomador: true };
+  return { ok: true, invoiceId: d.id, number: d.number, status: d.status, amount, semTomador: !receiver };
 }
 
 /**
