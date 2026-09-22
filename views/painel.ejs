@@ -576,7 +576,6 @@
           </div>
           <span id="followersRefilCostResult" style="font-size:0.85rem; color:#111827;"></span>
           <button type="button" id="followersUseMongoInitialBtn" style="padding: 6px 12px; background: #111827; color: white; border: none; border-radius: 4px; cursor: pointer;">Usar inicial do Mongo (marcados)</button>
-          <button type="button" id="followersFixCheckedGlobalBtn" style="padding: 6px 12px; background: #991b1b; color: white; border: none; border-radius: 4px; cursor: pointer;">Corrigir checados (global)</button>
           <div style="position:relative; display:flex; align-items:center;">
             <button type="button" id="followersExtendRefilExpiredBtn" style="padding: 6px 12px; background: #16a34a; color: white; border: none; border-radius: 4px 0 0 4px; cursor: pointer;">Estender reposição expirada (+30d)</button>
             <button type="button" id="followersExtendRefilMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding: 6px 10px; background: #16a34a; color: white; border: none; border-left: 1px solid rgba(255,255,255,0.3); border-radius: 0 4px 4px 0; cursor: pointer;">▾</button>
@@ -710,13 +709,12 @@
                 <option value="no" <%= (r2a === 'no') ? 'selected' : '' %>>Não solicitado</option>
               </select>
             </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#444; margin:0;">
-              <span>Fornecedor:</span>
-              <% const fornSel = (filters && filters.fornecedor) ? String(filters.fornecedor) : ''; %>
-              <select id="followersFornecedor" style="padding:6px; border:1px solid #ccc; border-radius:4px;">
-                <option value="" <%= (!fornSel) ? 'selected' : '' %>>Todos</option>
+            <label style="display:flex; align-items:flex-start; gap:6px; font-size:0.9rem; color:#444; margin:0;">
+              <span style="padding-top:4px;">Fornecedor:</span>
+              <% const fornSelList = (filters && filters.fornecedor) ? String(filters.fornecedor).split(',').map(function(s){return s.trim();}).filter(Boolean) : []; %>
+              <select id="followersFornecedor" multiple size="4" title="Segure Ctrl (ou Cmd) para escolher mais de um; nada marcado = todos" style="padding:4px; border:1px solid #ccc; border-radius:4px; min-width:150px;">
                 <% (typeof fornecedoresDisponiveis !== 'undefined' ? fornecedoresDisponiveis : []).forEach(function(fn){ %>
-                <option value="<%= fn %>" <%= (fornSel === fn) ? 'selected' : '' %>><%= fn %></option>
+                <option value="<%= fn %>" <%= (fornSelList.indexOf(String(fn)) !== -1) ? 'selected' : '' %>><%= fn %></option>
                 <% }); %>
               </select>
             </label>
@@ -2879,7 +2877,7 @@
                 ids.push(fid);
               }
               if (!ids.length) { say('Nenhum OrderId nas linhas marcadas.'); return; }
-              var text = ids.join(', ');
+              var text = ids.join(',');
               try {
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                   await navigator.clipboard.writeText(text);
@@ -3074,7 +3072,7 @@
                 var refil2AutoV = refil2AutoEl ? String(refil2AutoEl.value || '').trim().toLowerCase() : '';
                 var minDiffV = minDiffEl ? String(minDiffEl.value || '').trim() : '';
                 var pctBucketV = pctBucketEl ? String(pctBucketEl.value || '').trim() : '';
-                var fornecedorV = fornecedorEl ? String(fornecedorEl.value || '').trim() : '';
+                var fornecedorV = fornecedorEl ? Array.prototype.slice.call(fornecedorEl.selectedOptions || []).map(function(o){ return String(o.value || '').trim(); }).filter(Boolean).join(',') : '';
                 if (qV) urlParams.set('q', qV); else urlParams.delete('q');
                 if (qtV) urlParams.set('qType', qtV); else urlParams.delete('qType');
                 if (sdV) urlParams.set('startDate', sdV); else urlParams.delete('startDate');
@@ -3199,7 +3197,8 @@
           }
           var fornecedorEl2 = el('followersFornecedor');
           if (fornecedorEl2 && applyBtn) {
-            fornecedorEl2.addEventListener('change', function(){
+            // Multi-seleção: aplica quando sai do campo (blur), pra dar pra escolher mais de um antes.
+            fornecedorEl2.addEventListener('blur', function(){
               try { applyBtn.click(); } catch (_) {}
             });
           }

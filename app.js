@@ -31579,11 +31579,12 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     const qNorm = String(q || '').trim().toLowerCase().replace(/^@+/, '').replace(/\/+$/, '');
     const qTypeNorm = String(qType || 'username').trim().toLowerCase();
 
-    // Filtro por FORNECEDOR (dropdown). Lista de opções tirada de todas as linhas antes do filtro.
+    // Filtro por FORNECEDOR (dropdown MULTI). Aceita 1+ fornecedores separados por vírgula.
     const fornecedorFilter = String(req.query.fornecedor || '').trim();
+    const fornecedorFilterList = fornecedorFilter ? fornecedorFilter.split(',').map((s) => s.trim()).filter(Boolean) : [];
     const fornecedoresDisponiveis = Array.from(new Set((allRows || []).map((r) => r && r.fornecedor).filter((v) => v && v !== '-'))).sort();
     const filtered = allRows.filter((r) => {
-      if (fornecedorFilter && String(r.fornecedor || '') !== fornecedorFilter) return false;
+      if (fornecedorFilterList.length && !fornecedorFilterList.includes(String(r.fornecedor || ''))) return false;
       if (errorsOnly) {
         const e = String(r.lastError || '').trim();
         if (!e) return false;
