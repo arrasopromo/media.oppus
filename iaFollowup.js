@@ -416,6 +416,29 @@ async function rodarESalvar(dia, { sendNtfy, publico, comIA = true } = {}) {
   }
 }
 
+// Id estável de uma pendência (telefone + tipo + identifier + detalhe). Usado pra excluir
+// pendências da listagem sem alterar o relatório salvo.
+function _pidPendencia(telefone, p) {
+  const crypto = require('crypto');
+  return crypto.createHash('md5').update([String(telefone || ''), String((p && p.tipo) || ''), String((p && p.identifier) || ''), String((p && p.detalhe) || '')].join('|')).digest('hex').slice(0, 16);
+}
+// Carimba __pid em cada pendência e REMOVE as que foram excluídas (coleção
+// ia_followup_pendencias_excluidas). Recalcula o total de conversas com pendência.
+async function aplicarExclusoesPendencias(rel) {
+  try {
+    if (!rel || !Array.isArray(rel.conversas)) return rel;
+    const col = await getCollection('ia_followup_pendencias_excluidas');
+    const docs = await col.find({}, { projection: { _id: 1 } }).toArray().catch(() => []);
+    const excl = new Set((docs || []).map((d) => String(d._id)));
+    for (const c of rel.conversas) {
+      if (!Array.isArray(c.pendencias)) continue;
+      c.pendencias = c.pendencias.filter((p) => { p.__pid = _pidPendencia(c.telefone, p); return !excl.has(p.__pid); });
+    }
+    if (rel.totais) rel.totais.conversasComPendencia = rel.conversas.filter((c) => c.pendencias && c.pendencias.length).length;
+  } catch (_) {}
+  return rel;
+}
+
 function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
   const publico = () => String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
   app.get('/painel/ia-followup', requireAdmin, async (req, res) => {
@@ -427,10 +450,12 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       if (dOk(req.query.de) && dOk(req.query.ate)) {
         const de = String(req.query.de), ate = String(req.query.ate);
         const rel = await gerarRelatorio({ de: de <= ate ? de : ate, ate: de <= ate ? ate : de }, { comIA: false });
+        await aplicarExclusoesPendencias(rel);
         return res.render('painel_ia_followup', { page: 'ia-followup', dias, rel, diaSelecionado: '', intervalo: rel.intervalo, hoje: diaBRT(Date.now()) });
       }
       const pedido = dOk(req.query.dia) ? String(req.query.dia) : (dias[0] && dias[0]._id);
       const rel = pedido ? await col.findOne({ _id: pedido }) : null;
+      await aplicarExclusoesPendencias(rel);
       return res.render('painel_ia_followup', { page: 'ia-followup', dias, rel, diaSelecionado: pedido || '', intervalo: null, hoje: diaBRT(Date.now()) });
     } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
   });
@@ -447,6 +472,17 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       const d = await col.findOne({ _id: String(req.query.dia || '') }, { projection: { gerando: 1, geradoEm: 1, erro: 1 } });
       return res.json({ ok: true, gerando: !!(d && d.gerando), geradoEm: d && d.geradoEm, erro: d && d.erro });
     } catch (e) { return res.status(500).json({ ok: false }); }
+  });
+  // Exclui uma pendência da listagem (não altera o relatório salvo). Recebe o __pid (id
+  // estável da pendência). A partir daí ela não aparece mais no follow-up.
+  app.post('/api/painel/ia-followup/excluir-pendencia', requireAdmin, async (req, res) => {
+    try {
+      const pid = String((req.body && req.body.pid) || '').trim().toLowerCase();
+      if (!/^[a-f0-9]{8,32}$/.test(pid)) return res.status(400).json({ ok: false, error: 'pid_invalido' });
+      const col = await getCollection('ia_followup_pendencias_excluidas');
+      await col.updateOne({ _id: pid }, { $set: { _id: pid, at: new Date().toISOString() } }, { upsert: true });
+      return res.json({ ok: true, pid });
+    } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'erro' }); }
   });
 
   // Revisar e reenviar um pedido que ficou pago-sem-envio (erro "Duplicate link") ou com adicional

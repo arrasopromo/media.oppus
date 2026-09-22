@@ -166,11 +166,11 @@
       <div class="box scroll"><table>
         <tr><th>Tipo</th><th>Cliente</th><th>Detalhe</th><th></th></tr>
         <% todasPend.forEach(function(x){ %>
-          <tr class="pendRow" data-tipo="<%= x.p.tipo %>">
+          <tr class="pendRow" data-tipo="<%= x.p.tipo %>" data-pid="<%= x.p.__pid || '' %>">
             <td><span class="tag t-<%= x.p.tipo %>"><%= nomeTipo[x.p.tipo] || x.p.tipo %></span></td>
             <td><%= x.c.nome || '—' %><br><span class="muted">+<%= x.c.telefone %></span><% if (x.p.usuario) { %><br><a class="mono" href="https://instagram.com/<%= x.p.usuario %>" target="_blank" style="font-size:12px">@<%= x.p.usuario %></a><% } %></td>
             <td><%= x.p.detalhe %><% if (x.p.identifier) { %> · <a class="mono" href="/pedido?identifier=<%= encodeURIComponent(x.p.identifier) %>" target="_blank" title="Abrir pedido no site"><%= x.p.identifier %></a><% if (x.p.reenviavel) { %> <button class="btnReenviar" data-id="<%= x.p.identifier %>" data-motivo="<%= x.p.motivoReenvio || '' %>">revisar e enviar</button><% } %><% } %><% if ((x.p.tipo === 'reclamacao' || x.p.tipo === 'aguardando_retorno') && x.p.data) { %> <span class="muted" style="font-size:12px">· última mensagem: <%= fmtDataBR(x.p.data) %></span><% } %></td>
-            <td><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a></td>
+            <td style="white-space:nowrap;"><a class="crm" href="/painel/ia-crm?phone=<%= x.c.telefone %>" target="_blank">abrir conversa</a> <button type="button" class="btnExcluirPend" data-pid="<%= x.p.__pid || '' %>" title="Excluir esta pendência da lista" style="border:1px solid #fecaca;background:#fff5f5;color:#b91c1c;border-radius:6px;cursor:pointer;padding:2px 8px;font-weight:700;line-height:1;">✕</button></td>
           </tr>
         <% }); %>
       </table></div>
@@ -180,6 +180,24 @@
   <script>
     (function(){
       var msg = document.getElementById('msg');
+      // Excluir pendência (X) — some da lista e não volta a aparecer.
+      document.addEventListener('click', function(ev){
+        var b = ev.target && ev.target.closest ? ev.target.closest('.btnExcluirPend') : null;
+        if (!b) return;
+        var pid = b.getAttribute('data-pid') || '';
+        if (!pid) return;
+        if (!confirm('Excluir esta pendência da lista? Ela não vai mais aparecer.')) return;
+        b.disabled = true;
+        fetch('/api/painel/ia-followup/excluir-pendencia', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pid: pid }) })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d && d.ok) {
+              var row = b.closest('tr'); if (row && row.parentNode) row.parentNode.removeChild(row);
+              var cnt = document.getElementById('pendCount'); if (cnt) { var n = parseInt(cnt.textContent,10)||0; cnt.textContent = Math.max(0, n-1); }
+            } else { b.disabled=false; alert('Falha ao excluir: '+((d&&d.error)||'erro')); }
+          })
+          .catch(function(){ b.disabled=false; alert('Erro de rede.'); });
+      });
       function iniciar(btn){
         var dia = btn.getAttribute('data-dia');
         btn.disabled = true; msg.textContent = 'Gerando… (leva 1–2 min)';
