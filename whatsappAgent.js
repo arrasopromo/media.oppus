@@ -160,10 +160,15 @@ async function clearHistory(phone) {
   try { const c = await getCollection('whatsapp_agent_chats'); await c.deleteOne({ _id: String(phone) }); } catch (_) {}
 }
 
-function systemPrompt() {
+function systemPrompt(dispTipos) {
+  const _nomeT = { mistos: 'mistos', brasileiros: 'brasileiros', organicos: 'orgânicos (brasileiros reais)' };
+  const _d = dispTipos || { seguidores: ['mistos', 'brasileiros', 'organicos'], curtidas: ['mistos', 'brasileiros', 'organicos'] };
+  const _seg = (_d.seguidores || []).map((t) => _nomeT[t] || t).join(', ') || 'nenhum tipo';
+  const _cur = (_d.curtidas || []).map((t) => _nomeT[t] || t).join(', ') || 'nenhum tipo';
   return [
+    `DISPONIBILIDADE ATUAL (REGRA ACIMA DE TUDO): em SEGUIDORES só trabalhamos com ${_seg}; em CURTIDAS só com ${_cur}. NUNCA ofereça, cite tabela ou cote um tipo que NÃO esteja nessa lista — as ferramentas recusam tipo indisponível. Se o cliente pedir um tipo indisponível, diga com gentileza que no momento só temos os tipos acima e ofereça esses. VISUALIZAÇÕES (reels) seguem normais.`,
     'Você é um atendente de vendas do Instagram pelo WhatsApp da Agência Oppus. Feche a venda AQUI, pela conversa — nunca mande o cliente pro site.',
-    'Serviços que você vende: SEGUIDORES (mistos, brasileiros ou orgânicos), CURTIDAS (mistos, brasileiros ou orgânicos) e VISUALIZAÇÕES (reels). Só esses três.',
+    'Serviços que você vende: SEGUIDORES, CURTIDAS e VISUALIZAÇÕES (reels). Os TIPOS disponíveis de seguidores/curtidas são SEMPRE os listados na regra de DISPONIBILIDADE ATUAL acima — nunca ofereça um tipo fora dela.',
     'GRAFIA: escreva os tipos SEMPRE exatamente assim: *mistos*, *brasileiros*, *orgânicos* (ou "brasileiros reais"). Nunca escreva "mistoss", "misto s" ou variações. A marca é sempre *Oppus* (nunca OPPUS ou Oppuss).',
     'Dados internos/cadastrais da empresa (CNPJ, razão social, endereço, contratos, documentos): NÃO compartilhe — mas NUNCA recuse de forma seca ("não posso fornecer"). Responda de forma PROFISSIONAL e acolhedora, sem expor o documento: reforce que a Oppus é uma empresa séria e atuante no mercado, que o pagamento é 100% seguro (Pix via gateway) e a entrega é garantida, e conduza de volta pro pedido. Ex.: "Nossos dados cadastrais são internos, mas pode ficar tranquilo(a): a Oppus é uma empresa séria, o pagamento é 100% seguro por Pix e a entrega é garantida. Posso te ajudar a escolher o pacote ideal?".',
     'Se o cliente insistir muito em documentos/CNPJ ou demonstrar desconfiança séria, ofereça acionar o suporte humano (chamar_suporte) em vez de repetir a recusa.',
@@ -241,11 +246,11 @@ async function runTool(name, args, ctx) {
     };
     if (name === 'cotar_preco') return avisaTipo(await sales.quote(args || {}), args);
     if (name === 'tabela_precos') {
-      const r = avisaTipo(sales.priceTable(args || {}), args);
+      const r = avisaTipo(await sales.priceTable(args || {}), args);
       // "brasileiros" → devolve junto a tabela de brasileiros reais: as 2 opções vão sempre.
       try {
         if (r && r.ok && r.tipo === 'brasileiros' && ['seguidores', 'curtidas'].includes(r.servico)) {
-          const reais = sales.priceTable({ servico: r.servico, tipo: 'organicos' });
+          const reais = await sales.priceTable({ servico: r.servico, tipo: 'organicos' });
           if (reais && reais.ok) {
             r.tabelaBrasileirosReais = reais.itens;
             r.aviso = 'O cliente pediu brasileiros: mostre SEMPRE as 2 opções, cada uma com título — *Brasileiros* (itens) e *Brasileiros reais* (tabelaBrasileirosReais, perfis reais/orgânicos, o mais estável) — e pergunte qual tipo e quantidade.';
@@ -371,7 +376,8 @@ async function handleAgentMessage(msg, sendText) {
     const achados = (hist || []).filter((h) => h && h.role === 'assistant').map((h) => String(h.content || '').match(/Achei seu perfil!?\s*@([A-Za-z0-9_.]+)/i)).filter(Boolean);
     if (achados.length) ctx.histUsername = achados[achados.length - 1][1].replace(/[.,]+$/, '');
   } catch (_) {}
-  const work = [{ role: 'system', content: systemPrompt() }, ...hist, { role: 'user', content: text }];
+  let _dispTipos = null; try { _dispTipos = await sales.tiposDisponiveis(); } catch (_) {}
+  const work = [{ role: 'system', content: systemPrompt(_dispTipos) }, ...hist, { role: 'user', content: text }];
   let finalText = '';
 
   try {

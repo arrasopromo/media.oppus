@@ -37,6 +37,41 @@ function normalizeTipo(tipo) {
   return 'mistos';
 }
 
+// ── Tipos OCULTOS (Gerenciamento de Tipo → settings.service_visibility). O bot NÃO
+// oferta/cota/vende tipo oculto. Cache de 60s pra não bater no Mongo a cada mensagem.
+let __hiddenTypesCache = { at: 0, data: null };
+async function loadHiddenTypes() {
+  const now = Date.now();
+  if (__hiddenTypesCache.data && (now - __hiddenTypesCache.at) < 60000) return __hiddenTypesCache.data;
+  const out = { seguidores: [], curtidas: [], visualizacoes: [] };
+  try {
+    const col = await getCollection('settings');
+    const doc = col ? await col.findOne({ _id: 'service_visibility' }, { projection: { _id: 0, values: 1 } }) : null;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    const hidden = (values && values.hidden && typeof values.hidden === 'object') ? values.hidden : ((values && typeof values === 'object') ? values : {});
+    for (const k of ['seguidores', 'curtidas', 'visualizacoes']) {
+      out[k] = Array.isArray(hidden[k]) ? hidden[k].map((x) => String(x || '').trim().toLowerCase()).filter(Boolean) : [];
+    }
+  } catch (_) {}
+  __hiddenTypesCache = { at: now, data: out };
+  return out;
+}
+// Chave do tipo na config de visibilidade (curtidas brasileiras = 'curtidas_brasileiras').
+function _configTipoKey(servicoKey, tipoKey) {
+  if (servicoKey === 'curtidas' && tipoKey === 'brasileiros') return 'curtidas_brasileiras';
+  return tipoKey;
+}
+function _tipoOculto(hidden, servicoKey, tipoKey) {
+  const arr = (hidden && hidden[servicoKey]) || [];
+  return arr.includes(_configTipoKey(servicoKey, tipoKey));
+}
+// Tipos DISPONÍVEIS (não ocultos) de seguidores/curtidas — pra o bot ofertar só o que vale.
+async function tiposDisponiveis() {
+  const hidden = await loadHiddenTypes();
+  const todos = ['mistos', 'brasileiros', 'organicos'];
+  return { seguidores: todos.filter((t) => !_tipoOculto(hidden, 'seguidores', t)), curtidas: todos.filter((t) => !_tipoOculto(hidden, 'curtidas', t)) };
+}
+
 function tableFor(svc, tipo) {
   const t = svc.tipos ? (svc.table(normalizeTipo(tipo)) || svc.table('mistos')) : svc.table();
   // A IA NUNCA oferta pacote abaixo do mínimo da tabela (remove o "pacote de teste"
@@ -49,6 +84,14 @@ async function quote({ servico, tipo, quantidade }) {
   const key = normalizeServico(servico);
   const svc = CATALOG[key];
   if (!svc) return { ok: false, error: 'servico_invalido', message: 'Serviço inválido. Vendo seguidores, curtidas e visualizações.' };
+  if (svc.tipos) {
+    const tipoKey = normalizeTipo(tipo);
+    const hidden = await loadHiddenTypes();
+    if (_tipoOculto(hidden, key, tipoKey)) {
+      const disp = ['mistos', 'brasileiros', 'organicos'].filter((t) => !_tipoOculto(hidden, key, t));
+      return { ok: false, error: 'tipo_indisponivel', tipo: tipoKey, tiposDisponiveis: disp, message: `O tipo *${tipoKey}* não está disponível no momento. Disponíveis: ${disp.length ? disp.join(', ') : 'nenhum'}.` };
+    }
+  }
   const q = parseInt(quantidade, 10);
   const table = tableFor(svc, tipo);
   if (!(q > 0)) return { ok: false, error: 'quantidade_invalida', available: table.map((x) => x.q) };
@@ -64,10 +107,18 @@ async function quote({ servico, tipo, quantidade }) {
 }
 
 // Tabela inteira (quantidades + preços) de um serviço/tipo.
-function priceTable({ servico, tipo }) {
+async function priceTable({ servico, tipo }) {
   const key = normalizeServico(servico);
   const svc = CATALOG[key];
   if (!svc) return { ok: false, error: 'servico_invalido' };
+  if (svc.tipos) {
+    const tipoKey = normalizeTipo(tipo);
+    const hidden = await loadHiddenTypes();
+    if (_tipoOculto(hidden, key, tipoKey)) {
+      const disp = ['mistos', 'brasileiros', 'organicos'].filter((t) => !_tipoOculto(hidden, key, t));
+      return { ok: false, error: 'tipo_indisponivel', tipo: tipoKey, tiposDisponiveis: disp, message: `O tipo *${tipoKey}* não está disponível. Disponíveis: ${disp.length ? disp.join(', ') : 'nenhum'}.` };
+    }
+  }
   const table = tableFor(svc, tipo);
   return {
     ok: true, servico: svc.key, tipo: svc.tipos ? normalizeTipo(tipo) : svc.tipoFixo,
@@ -521,4 +572,5 @@ async function flagSupport(phone, motivo) {
 module.exports = {
   CATALOG, normalizeServico, normalizeTipo, parseIgUsername,
   quote, priceTable, validateProfile, createPixOrder, generateValidCPF, flagSupport, consultarPedido, brl, sendNtfy,
+  loadHiddenTypes, tiposDisponiveis,
 };
