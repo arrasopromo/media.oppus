@@ -2610,12 +2610,13 @@
               if (!list.length) { bodyEl.innerHTML = '<div style="color:#6b7280;">Nada aqui.</div>'; }
               else {
                 bodyEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.85rem;">'
-                  + '<thead><tr><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Usuário</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">OrderID</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Motivo</th></tr></thead><tbody>'
+                  + '<thead><tr><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Usuário</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">OrderID</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Tipo</th><th style="text-align:left;padding:6px;border-bottom:1px solid #eee;">Motivo</th></tr></thead><tbody>'
                   + list.map(function(r){
                       var cor = r.st==='failed' ? '#b91c1c' : (r.st==='ok' ? '#166534' : '#b45309');
                       var u = r.u ? ('<a href="https://instagram.com/'+encodeURIComponent(r.u)+'" target="_blank">@'+refil2Esc(r.u)+'</a>') : '—';
                       return '<tr><td style="padding:6px;border-bottom:1px solid #f3f4f6;">'+u+'</td>'
                         + '<td style="padding:6px;border-bottom:1px solid #f3f4f6;font-family:monospace;">'+refil2Esc(r.orderId||'-')+'</td>'
+                        + '<td style="padding:6px;border-bottom:1px solid #f3f4f6;">'+refil2Esc(r.tipo||'-')+'</td>'
                         + '<td style="padding:6px;border-bottom:1px solid #f3f4f6;color:'+cor+';">'+refil2Esc(r.motivo||'-')+'</td></tr>';
                     }).join('')
                   + '</tbody></table>';

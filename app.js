@@ -35563,6 +35563,8 @@ app.post('/api/painel/gerenciamento-seguidores/refil2/bulk-start', requireAdmin,
       unique.push({
         username: u,
         tipo: String(r && r.tipo ? r.tipo : ''),
+        fornecedorOrderId: String(r && r.fornecedorOrderId ? r.fornecedorOrderId : ''),
+        orderId: String(r && r.orderId ? r.orderId : ''),
         lastPurchaseAtMs: (r && typeof r.lastPurchaseAtMs === 'number' && Number.isFinite(r.lastPurchaseAtMs)) ? r.lastPurchaseAtMs : 0,
         diffAbs
       });
