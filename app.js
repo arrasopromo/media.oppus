@@ -4242,9 +4242,9 @@ async function pickAvailableTestProfile(col) {
   try {
     const docs = await col.find(
       { perfil: { $nin: [null, ''] } },
-      { projection: { perfil: 1, atual: 1, createdAt: 1, dataPedidoMs: 1 } }
+      { projection: { perfil: 1, atual: 1, createdAt: 1, dataPedidoMs: 1, measureFailed: 1 } }
     ).toArray();
-    const byPerfil = new Map(); // key normalizado -> { ms, atual, perfilRaw }
+    const byPerfil = new Map(); // key normalizado -> { ms, atual, perfilRaw, measureFailed }
     for (const d of docs) {
       const raw = String(d.perfil || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
       const key = raw.toLowerCase();
@@ -4254,13 +4254,14 @@ async function pickAvailableTestProfile(col) {
       if (/\/(p|reel|reels|tv|stories)\//i.test(raw)) continue;
       const ms = Number(d.dataPedidoMs || 0) || (d.createdAt ? new Date(d.createdAt).getTime() : 0) || 0;
       const prev = byPerfil.get(key);
-      if (!prev || ms > prev.ms) byPerfil.set(key, { ms, atual: (d.atual != null ? Number(d.atual) : null), perfilRaw: raw });
+      if (!prev || ms > prev.ms) byPerfil.set(key, { ms, atual: (d.atual != null ? Number(d.atual) : null), perfilRaw: raw, measureFailed: !!d.measureFailed });
     }
     const nowMs = Date.now();
     const cooldownMs = 48 * 60 * 60 * 1000;
     const cands = [];
     for (const info of byPerfil.values()) {
-      if (info.atual == null || !(info.atual < 10)) continue; // só as que lavaram (<10)
+      if (info.measureFailed) continue;                        // conta morta/ileível (profile_fetch_failed) → fora
+      if (info.atual == null || !(info.atual < 10)) continue;  // só as que lavaram (<10)
       if (nowMs - info.ms < cooldownMs) continue;              // atribuída há pouco → em uso
       cands.push(info);
     }
