@@ -232,7 +232,7 @@
                 <% if (pctTxt) { %> <span class="<%= pctCls %>" style="font-size:12px;">(<%= pctTxt %>)</span><% } %>
                 <% if (histRows) { %> <button type="button" class="hist-toggle" title="Ver histórico dia a dia">▾</button>
                   <div class="hist-panel" style="display:none;"><%- histRows %></div>
-                <% } else if (lastTxt) { %><br><span class="muted" style="font-size:11px;"><% if (r.pico!=null && r.pico>0) { %>pico <%= r.pico.toLocaleString('pt-BR') %> · <% } %><%= lastTxt %></span><% } %>
+                <% } else if (r.pico!=null && r.pico>0) { %><br><span class="muted" style="font-size:11px;">pico <%= r.pico.toLocaleString('pt-BR') %></span><% } %>
               <% } else { %><span class="muted">sem medição</span><% } %>
             </td>
             <td class="cycle" data-field="qualidade" data-raw="<%= r.qualidade || '' %>" data-options="<%= QUAL_OPTS.join('|') %>" title="Clique pra alternar"><span class="tag <%= _qcls %>"><%= r.qualidade || '—' %></span></td>
