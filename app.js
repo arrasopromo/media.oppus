@@ -4234,12 +4234,55 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
+// Escolhe um PERFIL DE TESTE disponível: uma conta que JÁ foi usada em testes-serviços cuja
+// última medição (`atual`) caiu abaixo de 10 (os seguidores de teste já lavaram → conta
+// "limpa" pra um novo teste) e que não foi atribuída nas últimas 48h (senão pegava a mesma
+// linha recém-criada de novo). Rotaciona pela menos usada recentemente. Retorna '' se nenhuma.
+async function pickAvailableTestProfile(col) {
+  try {
+    const docs = await col.find(
+      { perfil: { $nin: [null, ''] } },
+      { projection: { perfil: 1, atual: 1, createdAt: 1, dataPedidoMs: 1 } }
+    ).toArray();
+    const byPerfil = new Map(); // key normalizado -> { ms, atual, perfilRaw }
+    for (const d of docs) {
+      const raw = String(d.perfil || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+      const key = raw.toLowerCase();
+      if (!key) continue;
+      // Auto-pick é só de CONTAS de seguidores (burner). Testes de curtidas/views guardam um
+      // LINK DE POST no `perfil` — esses não são contas reutilizáveis, então ficam de fora.
+      if (/\/(p|reel|reels|tv|stories)\//i.test(raw)) continue;
+      const ms = Number(d.dataPedidoMs || 0) || (d.createdAt ? new Date(d.createdAt).getTime() : 0) || 0;
+      const prev = byPerfil.get(key);
+      if (!prev || ms > prev.ms) byPerfil.set(key, { ms, atual: (d.atual != null ? Number(d.atual) : null), perfilRaw: raw });
+    }
+    const nowMs = Date.now();
+    const cooldownMs = 48 * 60 * 60 * 1000;
+    const cands = [];
+    for (const info of byPerfil.values()) {
+      if (info.atual == null || !(info.atual < 10)) continue; // só as que lavaram (<10)
+      if (nowMs - info.ms < cooldownMs) continue;              // atribuída há pouco → em uso
+      cands.push(info);
+    }
+    if (!cands.length) return '';
+    cands.sort((a, b) => a.ms - b.ms); // menos recentemente usada primeiro
+    return cands[0].perfilRaw;
+  } catch (_) { return ''; }
+}
 // Cria um teste
 app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
+    const col = await getCollection('service_tests');
     // Baserow-style: pode criar linha vazia e preencher depois (edição inline).
-    const perfil = String(b.perfil || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+    let perfil = String(b.perfil || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+    // Sem perfil informado → puxa automaticamente uma conta de teste disponível (<10 seg).
+    let autoPicked = false, noProfile = false;
+    if (!perfil) {
+      const picked = await pickAvailableTestProfile(col);
+      if (picked) { perfil = picked; autoPicked = true; }
+      else noProfile = true;
+    }
     // Data do pedido = AGORA (registro automático, sem campo no formulário). Fuso BRT.
     const _nb = new Date(Date.now() - 3 * 3600000);
     const dataPedido = `${_nb.getUTCFullYear()}-${String(_nb.getUTCMonth() + 1).padStart(2, '0')}-${String(_nb.getUTCDate()).padStart(2, '0')}`;
@@ -4260,13 +4303,12 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
       atual: null, atualSource: '', pico: null, quedaPct: null, history: [],
       lastCheckAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
-    const col = await getCollection('service_tests');
     const ins = await col.insertOne(doc);
     // Checagem inicial (best-effort) só se já veio com perfil. Linha criada vazia não tem o
     // que medir: a medição falhava, a linha nascia vermelha ("falha ao medir") e a checagem
     // diária passava a ignorá-la mesmo depois de preenchida.
     if (perfil) { try { const rec = await col.findOne({ _id: ins.insertedId }); if (rec) await serviceTestCheckOne(col, rec); } catch (_) {} }
-    return res.json({ ok: true, id: String(ins.insertedId) });
+    return res.json({ ok: true, id: String(ins.insertedId), perfil, autoPicked, noProfile });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Edita campos manuais de um teste

@@ -249,7 +249,7 @@
             </td>
           </tr>
           <% }); %>
-          <tr class="addrow" id="addRow"><td colspan="14">+ nova linha</td></tr>
+          <tr class="addrow" id="addRow"><td colspan="14">+ nova linha (puxa perfil de teste disponível &lt;10 seg)</td></tr>
         </tbody>
       </table>
     </div>
@@ -368,7 +368,11 @@
         if (addr) {
           addr.querySelector('td').textContent = 'criando…';
           var d = await post('/api/painel/testes-servicos/create', {});
-          if (d && d.ok) { try { sessionStorage.setItem('svcNovaLinha', String(d.id || '')); } catch(_){} location.reload(); } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
+          if (d && d.ok) {
+            try { sessionStorage.setItem('svcNovaLinha', String(d.id || '')); } catch(_){}
+            if (d.noProfile) { alert('Nenhum perfil de teste disponível (<10 seguidores) no momento. Linha criada vazia — preencha o perfil manualmente. (Um perfil fica disponível quando os seguidores de teste dele caem abaixo de 10.)'); }
+            location.reload();
+          } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
           return;
         }
         var btn = ev.target.closest('button');
