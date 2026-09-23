@@ -711,9 +711,16 @@ function publicStatusResponse(req, res, next) {
 
 // Limite por IP nas rotas públicas que disparam consulta paga / pedido no fornecedor.
 // Folgado de propósito: clientes no 4G às vezes saem pelo mesmo IP.
+// Segredo de processo para chamadas INTERNAS (server->server, ex.: refil2 em massa e
+// special_auto batendo no próprio /api/refil/simple). Elas mandam este segredo no header
+// `x-internal-secret` e furam o rate-limit público — que é pra CLIENTE no site, não pra
+// chamada interna. O segredo é aleatório por processo e nunca é exposto, então não dá pra
+// forjar de fora.
+global.__internalApiSecret = global.__internalApiSecret || require('crypto').randomBytes(24).toString('hex');
 function publicIpLimit(bucket, limit, windowMin) {
     return function (req, res, next) {
         if (req.session && req.session.adminUser) return next();
+        if (global.__internalApiSecret && req.get('x-internal-secret') === global.__internalApiSecret) return next();
         const ip = req.realIP || req.ip || 'unknown';
         if (hitRateLimit(`${bucket}:${ip}`, limit, windowMin * 60 * 1000)) {
             logBlockedCall(req, bucket + '_rate_limit');
@@ -26911,7 +26918,7 @@ function refil1RefillByUsername(username) {
     try {
       const http = require('http');
       const bodyStr = JSON.stringify({ username: String(username || ''), via: 'special_auto', automated: true });
-      const r = http.request({ host: '127.0.0.1', port: port, path: '/api/refil/simple', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr), 'Accept': 'application/json' } }, (resp) => {
+      const r = http.request({ host: '127.0.0.1', port: port, path: '/api/refil/simple', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr), 'Accept': 'application/json', 'x-internal-secret': global.__internalApiSecret || '' } }, (resp) => {
         let d = '';
         resp.on('data', (c) => { d += c; });
         resp.on('end', () => { try { resolve(JSON.parse(d)); } catch (_) { resolve(null); } });
@@ -35362,7 +35369,7 @@ function followersMgmtKickRefil2BulkJob() {
           const resp = await axios.post(`${baseUrl}/api/refil/simple`, payload, {
             timeout: 120000,
             validateStatus: () => true,
-            headers: { 'Accept': 'application/json' }
+            headers: { 'Accept': 'application/json', 'x-internal-secret': global.__internalApiSecret || '' }
           });
           const status = Number(resp && resp.status ? resp.status : 0) || 0;
           const body = resp ? resp.data : null;
