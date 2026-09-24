@@ -3241,11 +3241,13 @@
               try { applyBtn.click(); } catch (_) {}
             });
           }
+          // Fornecedor é multi-seleção: NÃO aplica no blur (isso recarregava a página no 1º
+          // clique e zerava a escolha). Escolha o(s) fornecedor(es) — segure Ctrl/Cmd pra
+          // vários — e clique em "Aplicar". Só damos um atalho: Enter aplica.
           var fornecedorEl2 = el('followersFornecedor');
           if (fornecedorEl2 && applyBtn) {
-            // Multi-seleção: aplica quando sai do campo (blur), pra dar pra escolher mais de um antes.
-            fornecedorEl2.addEventListener('blur', function(){
-              try { applyBtn.click(); } catch (_) {}
+            fornecedorEl2.addEventListener('keydown', function(ev){
+              if (ev.key === 'Enter') { ev.preventDefault(); try { applyBtn.click(); } catch (_) {} }
             });
           }
           var pctBucketEl2 = el('followersPctBucket');
