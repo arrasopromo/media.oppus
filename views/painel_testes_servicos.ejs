@@ -123,7 +123,8 @@
     </div>
 
     <% var TIPO_OPTS = ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'];
-       var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'' };
+       var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'' };
+       var _svcGroups = (typeof svcGroups !== 'undefined' && svcGroups) ? svcGroups : {};
        var _forn = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
        var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
        function _tipoIcon(t){ t=String(t||''); if(/mundial/i.test(t)) return '🌍'; if(/brasileir/i.test(t)) return '🇧🇷'; return ''; }
@@ -152,13 +153,17 @@
           <% _forn.forEach(function(f){ %><option value="<%= f %>" <%= _ff.fornecedor===f?'selected':'' %>><%= f %></option><% }); %>
         </select>
       </label>
+      <label class="sub" style="margin:0;">De <input type="date" name="de" value="<%= _ff.de||'' %>" style="padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
+      <label class="sub" style="margin:0;">Até <input type="date" name="ate" value="<%= _ff.ate||'' %>" style="padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0;">Queda de <input type="number" name="quedaMin" value="<%= _ff.quedaMin %>" step="0.1" placeholder="10" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
       <label class="sub" style="margin:0;">até <input type="number" name="quedaMax" value="<%= _ff.quedaMax %>" step="0.1" placeholder="30" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
       <label class="sub" style="margin:0; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" name="fav" value="1" <%= (_ff.fav==='1')?'checked':'' %>> ★ Só favoritos</label>
+      <% if (_ff.svc) { %><span class="sub" style="margin:0;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:4px 8px;">serviço <strong><%= _ff.svc %></strong> <a href="#" id="clearSvcFilter" style="color:#dc2626;">✕</a></span><input type="hidden" name="svc" value="<%= _ff.svc %>"><% } %>
       <button type="submit" class="btn btn-purple">Filtrar</button>
       <a href="/painel/testes-servicos" class="sub" style="margin:0;">limpar</a>
       <span class="sub" style="margin-left:auto;"><strong><%= (rows||[]).length %></strong><% if (typeof totalAll!=='undefined' && totalAll!==(rows||[]).length) { %> de <%= totalAll %><% } %> teste(s)</span>
     </form>
+    <script>document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('clearSvcFilter');if(b)b.addEventListener('click',function(e){e.preventDefault();var f=b.closest('form');var h=f&&f.querySelector('input[name=svc]');if(h)h.remove();if(f)f.submit();});});</script>
 
     <div class="top-scroll" id="topScroll"><div class="top-scroll-inner" id="topScrollInner"></div></div>
     <div class="grid-wrap" id="gridWrap">
@@ -217,7 +222,7 @@
       solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
           <tr data-id="<%= r.id %>"<% if (r.measureFailed) { %> class="row-failed" data-failed="1" title="Falha ao medir<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — ignorada nas checagens em lote"<% } %>>
             <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <%= _i + 1 %></td>
-            <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %></td>
+            <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %><% var _gk = (r.fornecedor||'')+'|'+(r.serviceId||''); var _gn = (r.serviceId && _svcGroups[_gk]) ? _svcGroups[_gk] : 0; if (_gn > 1) { %> <a class="svc-link" href="/painel/testes-servicos?svc=<%= encodeURIComponent(r.serviceId) %>&fornecedor=<%= encodeURIComponent(r.fornecedor||'') %>" title="Ver os <%= _gn %> testes deste serviço" style="text-decoration:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1px 6px;font-size:11px;color:#4338ca;white-space:nowrap;">↔ <%= _gn %></a><% } %></td>
             <td class="selcell">
               <select class="cell-select" data-field="tipo">
                 <option value="" <%= (r.tipo||'')===''?'selected':'' %>>—</option>
@@ -364,6 +369,7 @@
       // Delegação de cliques na tabela
       $('tbody').addEventListener('click', async function(ev){
         if (ev.target.closest('a.ig-link')) return; // deixa a setinha abrir o IG em nova guia, sem editar
+        if (ev.target.closest('a.svc-link')) return; // link "↔ N" (testes do mesmo serviço) navega, não edita
         var addr = ev.target.closest('#addRow');
         if (addr) {
           addr.querySelector('td').textContent = 'criando…';

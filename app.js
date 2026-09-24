@@ -4211,15 +4211,28 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     const tipoF = String(req.query.tipo || '').trim();
     const fornF = String(req.query.fornecedor || '').trim();
     const favF = String(req.query.fav || '') === '1';
+    const svcF = String(req.query.svc || '').trim();
+    const deRaw = String(req.query.de || '').trim();
+    const ateRaw = String(req.query.ate || '').trim();
+    const de = /^\d{4}-\d{2}-\d{2}$/.test(deRaw) ? deRaw : '';
+    const ate = /^\d{4}-\d{2}-\d{2}$/.test(ateRaw) ? ateRaw : '';
     const qMinRaw = String(req.query.quedaMin != null ? req.query.quedaMin : '').trim();
     const qMaxRaw = String(req.query.quedaMax != null ? req.query.quedaMax : '').trim();
     const qMin = qMinRaw !== '' && Number.isFinite(Number(qMinRaw)) ? Number(qMinRaw) : null;
     const qMax = qMaxRaw !== '' && Number.isFinite(Number(qMaxRaw)) ? Number(qMaxRaw) : null;
     const fornecedores = Array.from(new Set(allRows.map((r) => r.fornecedor).filter(Boolean))).sort();
+    // Grupos de teste do MESMO serviço (fornecedor+serviceId): usado pra mostrar a seta "↔ N"
+    // que relaciona re-testes do mesmo serviço em perfis diferentes.
+    const svcGroups = {};
+    for (const r of allRows) { if (!r.serviceId) continue; const k = (r.fornecedor || '') + '|' + String(r.serviceId); svcGroups[k] = (svcGroups[k] || 0) + 1; }
     const rows = allRows.filter((r) => {
       if (favF && !r.favorito) return false;
       if (tipoF && r.tipo !== tipoF) return false;
       if (fornF && r.fornecedor !== fornF) return false;
+      if (svcF && String(r.serviceId) !== svcF) return false;
+      // Filtro por DATA do pedido (dataPedido é 'YYYY-MM-DD' → compara como string ISO).
+      if (de && (!r.dataPedido || String(r.dataPedido).slice(0, 10) < de)) return false;
+      if (ate && (!r.dataPedido || String(r.dataPedido).slice(0, 10) > ate)) return false;
       // Queda = quanto o ATUAL está abaixo do CONTRATADO (o mesmo número que a coluna "Qtd atual"
       // mostra). Positivo/acima do contratado = queda negativa (entra em qualquer "até X"). Assim
       // "até 10%" pega positivos e quedas ≤10; 11% de queda fica de fora.
@@ -4229,8 +4242,8 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       return true;
     });
     return res.render('painel_testes_servicos', {
-      page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores,
-      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw },
+      page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups,
+      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF },
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
