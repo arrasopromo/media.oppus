@@ -26511,7 +26511,25 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
       const anchorOid = (fr && /^[0-9]+$/.test(String(fr.orderId || '').trim())) ? String(fr.orderId).trim() : '';
       if (anchorOid) {
         const anchorMs = (() => { const s = String((fr.forcedAt || fr.finishedAt || fr.requestedAt) || '').trim(); const t = s ? new Date(s).getTime() : 0; return Number.isFinite(t) ? t : 0; })();
-        if (anchorMs && anchorMs >= orderRecencyMs(order)) {
+        // Um REENVIO manual pro fornecedor (Gerenciamento de Seguidores) atualiza o
+        // fama24h.orderId/provider e grava reorderAt/reorders[].at — mas NÃO mexe no paidAt.
+        // Sem considerar isso, uma âncora antiga (ex.: force-refil pro Nuvra em 09/11) ficava
+        // "mais recente" que o paidAt do pedido e sobrepunha o reenvio pro Hustle, mandando o
+        // refil pro Nuvra (→ "internal_error"). O reenvio mais novo tem que VENCER a âncora.
+        const reorderMs = (() => {
+          try {
+            let m = 0;
+            const f = order && order.fama24h;
+            if (f) {
+              const ra = f.reorderAt ? new Date(String(f.reorderAt)).getTime() : 0;
+              if (Number.isFinite(ra) && ra > m) m = ra;
+              if (Array.isArray(f.reorders)) for (const ro of f.reorders) { const t = (ro && ro.at) ? new Date(String(ro.at)).getTime() : 0; if (Number.isFinite(t) && t > m) m = t; }
+            }
+            return m;
+          } catch (_) { return 0; }
+        })();
+        const orderDispatchMs = Math.max(orderRecencyMs(order), reorderMs);
+        if (anchorMs && anchorMs >= orderDispatchMs) {
           famaOrderId = anchorOid;
           __refilLogOrderId = anchorOid;
           __usingAnchor = true;
@@ -26617,7 +26635,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     } catch (e) {
       await __releaseThrottle();
       await logRefilFalha({ username, motivo: 'provider_error', provider: __refillApi.provider, orderId: famaOrderId, detalhe: String((e && e.message) || e).slice(0, 300) });
-      return res.status(502).json({ ok: false, error: 'provider_error', message: 'Erro ao solicitar reposição. Tente novamente.' });
+      return res.status(502).json({ ok: false, error: 'provider_error', provider: __refillApi.provider, providerUrl: apiUrl, message: 'Erro ao solicitar reposição. Tente novamente.' });
     }
 
     // Sucesso = resposta com número (campo refill, ex: { "refill": "1" })
@@ -26643,7 +26661,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
       // ativo). Se foi erro genuíno, libera o slot para o cliente poder tentar de novo.
       if (!jaEmAndamento) await __releaseThrottle();
       await logRefilFalha({ username, motivo: jaEmAndamento ? 'refill_em_andamento' : 'refill_recusado', provider: __refillApi.provider, orderId: famaOrderId, providerError: errMsg || null, resposta: refillData || null });
-      return res.status(400).json({ ok: false, error: 'refill_failed', providerError: errMsg || null, refillInProgress: jaEmAndamento, message: friendly });
+      return res.status(400).json({ ok: false, error: 'refill_failed', provider: __refillApi.provider, providerUrl: apiUrl, providerError: errMsg || null, refillInProgress: jaEmAndamento, message: friendly });
     }
 
     try { await col.updateOne({ _id: order._id }, { $push: { refillHistory: { requestedAt: new Date().toISOString(), provider: __refillApi.provider, baseExternalOrderId: famaOrderId, usedAnchor: __usingAnchor, username, request: { action: 'refill', order: famaOrderId }, response: refillData, status: 'initiated', via: viaTag } } }); } catch (_) {}
@@ -26653,7 +26671,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
       await throttleCol.updateOne({ key: throttleKey }, { $set: { key: throttleKey, order_id: famaOrderId, username, lastRequestedAt: nowIso, nextAllowedAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), updatedAt: nowIso }, $setOnInsert: { createdAt: nowIso } }, { upsert: true });
     } catch (_) {}
 
-    return res.json({ ok: true, refill: refillId, message: 'Reposição solicitada' });
+    return res.json({ ok: true, refill: refillId, provider: __refillApi.provider, providerUrl: apiUrl, message: 'Reposição solicitada' });
   } catch (e) {
     await logRefilFalha({ motivo: 'server_error', detalhe: String((e && e.message) || e).slice(0, 300) });
     return res.status(500).json({ ok: false, error: 'server_error', message: 'Erro ao solicitar reposição.' });
@@ -35417,17 +35435,19 @@ function followersMgmtKickRefil2BulkJob() {
           const status = Number(resp && resp.status ? resp.status : 0) || 0;
           const body = resp ? resp.data : null;
           const ok = !!(status >= 200 && status < 300 && body && body.ok === true);
+          const provider = body && body.provider ? String(body.provider) : '';
+          const providerUrl = body && body.providerUrl ? String(body.providerUrl) : '';
           if (ok) {
             job.ok += 1;
             const refilId = String((body && (body.refilId || body.refill || body.orderId || (body.data && (body.data.refill || body.data.order)))) || '').trim();
-            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'ok', motivo: refilId ? ('refil ' + refilId) : 'refil solicitado' });
+            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'ok', provider, providerUrl, motivo: refilId ? ('refil ' + refilId) : 'refil solicitado' });
           } else {
             job.failed += 1;
             const msg = String((body && (body.message || body.error)) || '').trim();
             job.lastError = msg || (`HTTP ${status}`);
-            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'failed', motivo: job.lastError });
+            job.results.push({ u: username, orderId, tipo: String(t.tipo || ''), st: 'failed', provider, providerUrl, motivo: job.lastError });
           }
-          try { console.log(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${username} http=${status}`); } catch (_) {}
+          try { console.log(`🤖 [followers-refil2-bulk] job=${String(job.id || '')} i=${job.done + 1}/${targets.length} ok=${ok ? '1' : '0'} @${username} provider=${provider || '?'} http=${status}`); } catch (_) {}
         } catch (e) {
           job.failed += 1;
           job.lastError = e?.message || String(e);
