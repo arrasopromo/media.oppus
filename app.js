@@ -282,6 +282,25 @@ app.use(session({
   cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 }
 }));
 
+// ── Cabeçalhos de segurança (helmet) ─────────────────────────────────────────
+// CSP DESLIGADO de propósito: o site usa scripts inline e pixels/tracking externos
+// (TrackCombo, Meta Pixel etc.) que um Content-Security-Policy estrito quebraria. As
+// políticas cross-origin (COEP/CORP/COOP) também ficam OFF pra não atrapalhar embeds/
+// tracking. Ficam ativos os headers seguros e invisíveis pro usuário: X-Frame-Options
+// (anti-clickjacking), HSTS (força HTTPS), X-Content-Type-Options (nosniff), Referrer-Policy.
+const helmet = require('helmet');
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  // referrer padrão de navegador (preserva atribuição/tracking cross-origin como origin,
+  // em vez do 'no-referrer' agressivo do helmet).
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  // HSTS sem includeSubDomains: evita forçar HTTPS em algum subdomínio que seja HTTP.
+  hsts: { maxAge: 31536000 },
+}));
+
 // Middleware para parsing de JSON e URL encoded
 app.use(express.json({
   limit: process.env.EXPRESS_JSON_LIMIT || '5mb',
