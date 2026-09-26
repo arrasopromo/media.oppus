@@ -123,7 +123,7 @@
     </div>
 
     <% var TIPO_OPTS = ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'];
-       var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'' };
+       var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'', precoMin:'', precoMax:'' };
        var _svcGroups = (typeof svcGroups !== 'undefined' && svcGroups) ? svcGroups : {};
        var _forn = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
        var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
@@ -157,6 +157,8 @@
       <label class="sub" style="margin:0;">Até <input type="date" name="ate" value="<%= _ff.ate||'' %>" style="padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0;">Queda de <input type="number" name="quedaMin" value="<%= _ff.quedaMin %>" step="0.1" placeholder="10" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
       <label class="sub" style="margin:0;">até <input type="number" name="quedaMax" value="<%= _ff.quedaMax %>" step="0.1" placeholder="30" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
+      <label class="sub" style="margin:0;">Custo R$ <input type="number" name="precoMin" value="<%= _ff.precoMin||'' %>" step="0.01" placeholder="min" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
+      <label class="sub" style="margin:0;">até R$ <input type="number" name="precoMax" value="<%= _ff.precoMax||'' %>" step="0.01" placeholder="max" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" name="fav" value="1" <%= (_ff.fav==='1')?'checked':'' %>> ★ Só favoritos</label>
       <% if (_ff.svc) { %><span class="sub" style="margin:0;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:4px 8px;">serviço <strong><%= _ff.svc %></strong> <a href="#" id="clearSvcFilter" style="color:#dc2626;">✕</a></span><input type="hidden" name="svc" value="<%= _ff.svc %>"><% } %>
       <button type="submit" class="btn btn-purple">Filtrar</button>

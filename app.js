@@ -279,7 +279,10 @@ app.use(session({
   saveUninitialized: false,
   rolling: true, // renova o cookie de sessão a cada resposta (sliding) → não expira no meio do uso
   store: sessionStore,
-  cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 }
+  // secure:'auto' → cookie marcado Secure quando a conexão é HTTPS (respeita trust proxy do nginx).
+  // Não quebra HTTP interno; em produção (HTTPS) impede que o cookie de sessão trafegue sem TLS.
+  // SEM sameSite de propósito (igual ao cookie admin, ver ~linha 508: evita quebra de sobrevivência do cookie).
+  cookie: { secure: 'auto', httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000 }
 }));
 
 // ── Cabeçalhos de segurança (helmet) ─────────────────────────────────────────
@@ -774,6 +777,31 @@ function hideProviderCharge(req, res, next) {
         return orig(body);
     };
     next();
+}
+
+// ── Sanitização do pedido para o CLIENTE (anti-vazamento de fornecedor/custo) ──
+// Remove dos slots de fornecedor os campos internos que o cliente NUNCA vê na tela
+// mas que vazavam no JSON (F12): custo/charge, nome do provedor, service id,
+// requestPayload/statusPayload cru, reorders. Mantém orderId (é o "nº do pedido"
+// exibido) e status (progresso da entrega). Admin recebe o doc completo.
+function sanitizeOrderForClient(doc) {
+  if (!doc || typeof doc !== 'object') return doc;
+  let out;
+  try { out = JSON.parse(JSON.stringify(doc)); } catch (_) { return doc; }
+  const stripCharge = (o) => { if (o && typeof o === 'object') { delete o.charge; delete o.Charge; delete o.currency; delete o.cost; delete o.chargeBrl; delete o.fxRate; delete o.fxSource; } };
+  const scrub = (slot) => {
+    if (!slot || typeof slot !== 'object') return;
+    stripCharge(slot);
+    delete slot.provider; delete slot.service; delete slot.serviceId;
+    delete slot.requestPayload; delete slot.previousOrderId; delete slot.reorders;
+    delete slot.error; delete slot.errorMessage; delete slot.apiKey; delete slot.key;
+    if (slot.statusPayload && typeof slot.statusPayload === 'object') stripCharge(slot.statusPayload);
+    if (Array.isArray(slot.orders)) slot.orders.forEach((o) => { if (o && typeof o === 'object') { stripCharge(o); delete o.provider; delete o.service; delete o.serviceId; delete o.requestPayload; delete o.previousOrderId; if (o.statusPayload) stripCharge(o.statusPayload); } });
+  };
+  const SLOTS = ['fama24h','fama24h_multi','fama24h_views','fama24h_likes','fama24h_comments','fornecedor_social','fornecedor_social_multi','fornecedor_social_likes','topfama','topfama_likes','nuvra','worldsmm_comments','ggram'];
+  for (const k of SLOTS) if (out[k]) scrub(out[k]);
+  delete out.costs; delete out.cost; delete out.providerChargeTotal;
+  return out;
 }
 
 const onlinePresence = new Map();
@@ -4239,6 +4267,11 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     const qMaxRaw = String(req.query.quedaMax != null ? req.query.quedaMax : '').trim();
     const qMin = qMinRaw !== '' && Number.isFinite(Number(qMinRaw)) ? Number(qMinRaw) : null;
     const qMax = qMaxRaw !== '' && Number.isFinite(Number(qMaxRaw)) ? Number(qMaxRaw) : null;
+    // Filtro por PREÇO/custo (campo preco). Aceita vírgula ou ponto.
+    const pMinRaw = String(req.query.precoMin != null ? req.query.precoMin : '').trim().replace(',', '.');
+    const pMaxRaw = String(req.query.precoMax != null ? req.query.precoMax : '').trim().replace(',', '.');
+    const pMin = pMinRaw !== '' && Number.isFinite(Number(pMinRaw)) ? Number(pMinRaw) : null;
+    const pMax = pMaxRaw !== '' && Number.isFinite(Number(pMaxRaw)) ? Number(pMaxRaw) : null;
     const fornecedores = Array.from(new Set(allRows.map((r) => r.fornecedor).filter(Boolean))).sort();
     // Grupos de teste do MESMO serviço (fornecedor+serviceId): usado pra mostrar a seta "↔ N"
     // que relaciona re-testes do mesmo serviço em perfis diferentes.
@@ -4258,11 +4291,14 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       const q = (r.atual != null && r.quantidade > 0) ? Math.round(((r.quantidade - r.atual) / r.quantidade) * 1000) / 10 : null;
       if (qMin != null && (q == null || q < qMin)) return false;
       if (qMax != null && (q == null || q > qMax)) return false;
+      // Filtro por preço/custo
+      if (pMin != null && (r.preco == null || r.preco < pMin)) return false;
+      if (pMax != null && (r.preco == null || r.preco > pMax)) return false;
       return true;
     });
     return res.render('painel_testes_servicos', {
       page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups,
-      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF },
+      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw },
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
@@ -4315,6 +4351,18 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
       const picked = await pickAvailableTestProfile(col);
       if (picked) { perfil = picked; autoPicked = true; }
       else noProfile = true;
+    }
+    // ── REGRA ANTI-DUPLICADO ──────────────────────────────────────────────────
+    // Cada teste precisa de conta VIRGEM: um mesmo perfil nunca pode ter 2 linhas
+    // (senão a medição de entrega/queda fica contaminada por pedidos anteriores).
+    if (perfil) {
+      const jaExiste = await col.findOne(
+        { perfil: { $regex: '^' + String(perfil).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } },
+        { projection: { _id: 1, fornecedor: 1 } }
+      );
+      if (jaExiste) {
+        return res.status(409).json({ ok: false, error: 'perfil_duplicado', message: `O perfil @${perfil} já foi usado em outro teste — use uma conta NOVA (cada teste precisa de perfil virgem).` });
+      }
     }
     // Data do pedido = AGORA (registro automático, sem campo no formulário). Fuso BRT.
     const _nb = new Date(Date.now() - 3 * 3600000);
@@ -8200,6 +8248,11 @@ app.get('/avatar/instagram/:username', async (req, res) => {
 
 app.post('/cliente/login', async (req, res) => {
     try {
+        // Rate-limit anti brute-force: 15 tentativas / 15 min por IP (limite alto, não pega cliente real).
+        const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+        if (hitRateLimit('cliente_login_ip:' + ip, 15, 15 * 60 * 1000)) {
+            return res.status(429).json({ ok: false, error: 'rate_limited', message: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+        }
         const email = normalizeEmail(req.body && req.body.email);
         const password = String(req.body && req.body.password || '');
         if (!email || !password) return res.status(400).json({ ok: false, error: 'missing_fields' });
@@ -8217,10 +8270,12 @@ app.post('/cliente/login', async (req, res) => {
                     const refilOrder = await ordersCol.findOne(
                         {
                             refilLinkId: { $exists: true, $nin: [null, ''] },
-                            $or: [{ status: /^pago$/i }, { 'woovi.status': /^pago$/i }, { paidAt: { $exists: true, $ne: null } }],
-                            $or: [
-                                { 'customer.email': { $regex: new RegExp('^' + email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
-                                { additionalInfoPaid: { $elemMatch: { key: 'email', value: { $regex: new RegExp(email, 'i') } } } }
+                            $and: [
+                                { $or: [{ status: /^pago$/i }, { 'woovi.status': /^pago$/i }, { paidAt: { $exists: true, $ne: null } }] },
+                                { $or: [
+                                    { 'customer.email': { $regex: new RegExp('^' + email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
+                                    { additionalInfoPaid: { $elemMatch: { key: 'email', value: { $regex: new RegExp(email, 'i') } } } }
+                                ] }
                             ]
                         },
                         { projection: { refilLinkId: 1 } }
@@ -8269,6 +8324,11 @@ async function emailHasPaidOrder(email) {
 // Primeiro acesso: pelo e-mail, decide se a pessoa pode criar senha (tem compra paga e sem senha)
 app.post('/api/cliente/first-access', async (req, res) => {
   try {
+    // Rate-limit anti-enumeração de clientes: 20 checagens / 10 min por IP.
+    const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+    if (hitRateLimit('cliente_firstaccess_ip:' + ip, 20, 10 * 60 * 1000)) {
+      return res.status(429).json({ ok: false, error: 'rate_limited', message: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+    }
     const email = normalizeEmail(req.body?.email || '');
     if (!email || !email.includes('@')) return res.status(400).json({ ok: false, error: 'invalid_email' });
 
@@ -8377,6 +8437,11 @@ app.post('/cliente/change-password', async (req, res) => {
 
 app.post('/cliente/forgot', async (req, res) => {
     try {
+        // Rate-limit: evita enumeração e spam de email de reset. 10 / 15 min por IP.
+        const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+        if (hitRateLimit('cliente_forgot_ip:' + ip, 10, 15 * 60 * 1000)) {
+            return res.status(429).json({ ok: true }); // resposta neutra mesmo ao limitar (não revela nada)
+        }
         const email = normalizeEmail(req.body && req.body.email);
         if (!email) return res.status(400).json({ ok: false, error: 'missing_email' });
         const col = await getCollection('client_accounts');
@@ -21338,7 +21403,7 @@ app.get('/api/order/provider-status', publicIpLimit('provider_status', 120, 10),
     const isFinal = /cancel/.test(t) || /complete|success|finished|done|conclu/.test(t);
     if (persisted && isFinal) {
       try { console.log('🛰️ [provider-status] skip (final)', { t }); } catch(_) {}
-      return res.json({ ok: true, provider, data: persisted, skipped: true });
+      return res.json({ ok: true, provider: (req.session && req.session.adminUser) ? provider : null, data: persisted, skipped: true });
     }
     const key = provider === 'fama24h'
       ? (process.env.NUVRASMM_API_KEY || '')
@@ -21392,7 +21457,7 @@ app.get('/api/order/provider-status', publicIpLimit('provider_status', 120, 10),
       await col.updateOne({ _id: doc._id }, { $set: { 'topfama.statusPayload': data, 'topfama.status': normalized || doc?.topfama?.status || 'unknown', 'topfama.lastStatusAt': new Date().toISOString() } });
     }
     try { console.log('🛰️ [provider-status] stored', { normalized }); } catch(_) {}
-    return res.json({ ok: true, provider, data });
+    return res.json({ ok: true, provider: (req.session && req.session.adminUser) ? provider : null, data });
   } catch (err) {
     try { console.error('🛰️ [provider-status] error', err?.message || String(err)); } catch(_) {}
     return res.status(500).json({ ok: false, error: err.message });
@@ -24426,7 +24491,7 @@ app.get('/api/checkout/payment-state', async (req, res) => {
       const now = Date.now();
       const last = throttle.get(txId) || 0;
       if (last && now - last < 6500) {
-        return res.json({ ok: true, paid, order: doc || null, remote: { ok: true, skipped: true } });
+        return res.json({ ok: true, paid, order: doc ? ((req.session && req.session.adminUser) ? doc : sanitizeOrderForClient(doc)) : null, remote: { ok: true, skipped: true } });
       }
       throttle.set(txId, now);
       try {
@@ -24471,7 +24536,7 @@ app.get('/api/checkout/payment-state', async (req, res) => {
       }
     }
     
-    return res.json({ ok: true, paid, order: doc || null, remote });
+    return res.json({ ok: true, paid, order: doc ? ((req.session && req.session.adminUser) ? doc : sanitizeOrderForClient(doc)) : null, remote });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -24726,7 +24791,8 @@ app.get('/pedido', async (req, res) => {
         } catch (_) { return false; }
     })();
 
-    return res.render('pedido', { order, refilDaysLeft, PIXEL_ID: process.env.PIXEL_ID || '', logoLink: '/engajamento', esc: escFn, fromCliente, upsellOfferActive });
+    const _orderForView = (req.session && req.session.adminUser) ? order : sanitizeOrderForClient(order);
+    return res.render('pedido', { order: _orderForView, refilDaysLeft, PIXEL_ID: process.env.PIXEL_ID || '', logoLink: '/engajamento', esc: escFn, fromCliente, upsellOfferActive });
   } catch (e) {
     return res.status(500).type('text/plain').send('Erro ao carregar pedido');
   }
@@ -26140,7 +26206,8 @@ app.get('/api/order', async (req, res) => {
       logBlockedCall(req, 'api_order_chave_fraca');
       doc = null;
     }
-    return res.json({ ok: true, order: doc || null });
+    const _isAdm = !!(req.session && req.session.adminUser);
+    return res.json({ ok: true, order: doc ? (_isAdm ? doc : sanitizeOrderForClient(doc)) : null });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
@@ -26205,7 +26272,7 @@ app.get('/api/refil/order', async (req, res) => {
     };
     const arr = await col.find({ _id: { $in: ids } }).sort({ 'woovi.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 }).limit(20).toArray();
     const doc = arr.find(pickPaid) || (arr.length ? arr[0] : null);
-    return res.json({ ok: true, token: tokenRaw, order: doc || null });
+    return res.json({ ok: true, token: tokenRaw, order: doc ? ((req.session && req.session.adminUser) ? doc : sanitizeOrderForClient(doc)) : null });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }

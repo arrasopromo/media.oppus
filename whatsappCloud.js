@@ -184,10 +184,40 @@ function scheduleConfirmNudge(phone, username) {
 // espera e vai no turno seguinte, junto. Antes rodavam dois turnos em paralelo com o
 // histórico velho — o bot pedia nome/e-mail de novo depois do Pix e contradizia o preço.
 const turnosEmAndamento = new Map(); // phone -> { pendentes: [] }
+
+// ── Anti-loop / anti-flood ───────────────────────────────────────────────────
+// Se a IA responder demais para o MESMO número numa janela curta (ex.: outro bot
+// conversando com a gente num vai-e-vem infinito), pausa a IA nessa conversa e
+// passa pro humano. Conta 1 por TURNO da IA (não por mensagem mesclada).
+const IA_FLOOD_MAX = Math.max(0, Number(process.env.WHATSAPP_IA_FLOOD_MAX || 15) || 15);                 // 0 = desativado
+const IA_FLOOD_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD_WINDOW_MIN || 60) || 60) * 60000); // janela (default 60min)
+const iaReplyTimes = new Map(); // phone -> number[] timestamps das respostas da IA
+async function tripFloodGuard(phone) {
+  if (!(IA_FLOOD_MAX > 0)) return false; // desativado por config
+  const p = String(phone || '');
+  const now = Date.now();
+  const arr = (iaReplyTimes.get(p) || []).filter((t) => (now - t) < IA_FLOOD_WINDOW_MS);
+  arr.push(now);
+  iaReplyTimes.set(p, arr);
+  if (iaReplyTimes.size > 5000) { // limpeza defensiva de memória
+    for (const [k, v] of iaReplyTimes) { if (!v.length || (now - v[v.length - 1]) > IA_FLOOD_WINDOW_MS) iaReplyTimes.delete(k); }
+  }
+  if (arr.length <= IA_FLOOD_MAX) return false;
+  const mins = Math.round(IA_FLOOD_WINDOW_MS / 60000);
+  try {
+    const col = await getCollection('whatsapp_contacts');
+    await col.updateOne({ _id: p }, { $set: { botPaused: true, flag: 'suporte', supportReason: `IA pausada: anti-loop (${arr.length} respostas em ${mins}min)`, supportAt: new Date().toISOString() } }, { upsert: true });
+  } catch (_) {}
+  iaReplyTimes.delete(p); // já pausou; zera pra não re-disparar
+  try { console.warn(`🛑 [IA] anti-loop: ${p} estourou ${IA_FLOOD_MAX} respostas/${mins}min → IA pausada + flag suporte`); } catch (_) {}
+  return true;
+}
+
 async function runAgent(phone, text) {
   const p = String(phone || '');
   const andamento = turnosEmAndamento.get(p);
   if (andamento) { andamento.pendentes.push(text); try { console.log('⏳ [IA] ' + p + ' ainda respondendo — mensagem entra no próximo turno'); } catch (_) {} return null; }
+  if (await tripFloodGuard(p)) return null; // anti-loop: pausou a IA e sinalizou humano
   const estado = { pendentes: [] };
   turnosEmAndamento.set(p, estado);
   let res = null;

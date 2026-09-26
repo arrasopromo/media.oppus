@@ -252,7 +252,7 @@
             <!-- Senha (login) — aparece quando o e-mail já tem conta -->
             <input id="clientPasswordInput" type="password" class="select-input" placeholder="Sua senha" autocomplete="current-password" style="margin-top:10px; display:none;" />
             <!-- Criação de senha — aparece quando comprou mas não tem senha -->
-            <input id="clientNewPwInput" type="password" class="select-input" placeholder="Criar senha (mínimo 8 caracteres)" autocomplete="new-password" style="margin-top:10px; display:none;" />
+            <input id="clientNewPwInput" type="password" class="select-input" placeholder="Nova senha (mínimo 8 caracteres)" autocomplete="new-password" style="margin-top:10px; display:none;" />
             <input id="clientNewPwInput2" type="password" class="select-input" placeholder="Confirmar senha" autocomplete="new-password" style="margin-top:10px; display:none;" />
             <div id="clientAuthHint" style="display:none; margin-top:10px; font-size:0.85rem; color: var(--text-secondary);"></div>
             <div id="clientAuthMsg" class="status-message" style="display:none; margin-top:10px;"></div>
@@ -651,6 +651,20 @@
         var msg = document.getElementById('clientAuthMsg');
         function setBtn(txt){ var s = loginBtn.querySelector('.button-text'); if(s) s.textContent = txt; else loginBtn.textContent = txt; }
         function showHint(t){ if(hintEl){ hintEl.style.display=''; hintEl.textContent=t; } }
+        // Volta pra ETAPA 1 (e-mail): destrava o e-mail e esconde os campos de senha.
+        function resetToEmailStep(){
+          authStep = 'email';
+          if (emailEl) emailEl.removeAttribute('readonly');
+          if (passEl) { passEl.style.display='none'; passEl.value=''; }
+          if (newPwEl) { newPwEl.style.display='none'; newPwEl.value=''; }
+          if (newPw2El) { newPw2El.style.display='none'; newPw2El.value=''; }
+          if (hintEl) hintEl.style.display='none';
+          if (msg) msg.style.display='none';
+          setBtn('Continuar');
+        }
+        // Se o cliente EDITAR o e-mail depois de já ter avançado, volta a verificar o novo e-mail
+        // (antes o campo ficava travado em readonly e não dava pra trocar).
+        if (emailEl) emailEl.addEventListener('input', function(){ if (authStep !== 'email') resetToEmailStep(); });
         // Enter em qualquer campo aciona o botão
         [emailEl, passEl, newPwEl, newPw2El].forEach(function(el){
           if(el) el.addEventListener('keydown', function(ev){ if(ev.key === 'Enter'){ ev.preventDefault(); loginBtn.click(); } });
@@ -667,7 +681,6 @@
               loginBtn.disabled = false;
               if (dc && dc.ok && dc.action === 'has_password') {
                 authStep = 'login';
-                if (emailEl) emailEl.setAttribute('readonly','readonly');
                 if (passEl) { passEl.style.display=''; passEl.focus(); }
                 showHint('Bem-vindo de volta! Digite sua senha para entrar.');
                 setBtn('Entrar');
@@ -676,7 +689,6 @@
               }
               if (dc && dc.ok && dc.action === 'setup') {
                 authStep = 'setup';
-                if (emailEl) emailEl.setAttribute('readonly','readonly');
                 if (newPwEl) { newPwEl.style.display=''; newPwEl.focus(); }
                 if (newPw2El) newPw2El.style.display='';
                 showHint('Encontramos sua compra! Crie uma senha para acessar sua conta.');
