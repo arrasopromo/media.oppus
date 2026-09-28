@@ -383,13 +383,12 @@ function ebookEnabled() {
 // houver (+ CPF quando existir). Só fica "sem tomador" quando não há NENHUM dado real.
 function buildServiceReceiver(record) {
   const c = (record.customer && typeof record.customer === 'object') ? record.customer : {};
-  const cpf = resolveCpf(record);
   const name = resolveCustomerName(record); // nome real, ou 'Consumidor Final' se não houver
   const email = String(c.email || '').trim();
   const phone = onlyDigits(c.phone_number || c.phone || c.telefone || c.whatsapp);
-  if (!cpf && !email && !phone && name === 'Consumidor Final') return null; // anônimo → sem tomador
+  // DECISÃO: nota de SERVIÇO leva SÓ nome + e-mail + telefone. NUNCA CPF/CNPJ.
+  if (!email && !phone && name === 'Consumidor Final') return null; // anônimo → sem tomador
   const rec = { name };
-  if (cpf) rec.federalTaxNumber = cpf;
   if (email) rec.email = email;
   if (phone) rec.phoneNumber = phone;
   return rec;

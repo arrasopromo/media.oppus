@@ -4249,6 +4249,10 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       preco: (d.preco != null) ? Number(d.preco) : null,
       dataPedido: String(d.dataPedido || ''),
       fornecedor: String(d.fornecedor || ''),
+      providerOrderId: String(d.providerOrderId || ''),
+      refilLastAt: d.refilLastAt || null,
+      refilLastId: String(d.refilLastId || ''),
+      refilLastResult: String(d.refilLastResult || ''),
       lastCheckAt: d.lastCheckAt || null,
       measureFailed: !!d.measureFailed,
       measureFailReason: String(d.measureFailReason || ''),
@@ -4259,6 +4263,7 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     const fornF = String(req.query.fornecedor || '').trim();
     const favF = String(req.query.fav || '') === '1';
     const svcF = String(req.query.svc || '').trim();
+    const refilF = String(req.query.refil || '').trim(); // '' | 'sim' (temRefil) | 'solicitado' (refil já pedido)
     const deRaw = String(req.query.de || '').trim();
     const ateRaw = String(req.query.ate || '').trim();
     const de = /^\d{4}-\d{2}-\d{2}$/.test(deRaw) ? deRaw : '';
@@ -4282,6 +4287,8 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       if (tipoF && r.tipo !== tipoF) return false;
       if (fornF && r.fornecedor !== fornF) return false;
       if (svcF && String(r.serviceId) !== svcF) return false;
+      if (refilF === 'sim' && !r.temRefil) return false;
+      if (refilF === 'solicitado' && !(r.refilLastResult === 'ok' || r.refilLastAt)) return false;
       // Filtro por DATA do pedido (dataPedido é 'YYYY-MM-DD' → compara como string ISO).
       if (de && (!r.dataPedido || String(r.dataPedido).slice(0, 10) < de)) return false;
       if (ate && (!r.dataPedido || String(r.dataPedido).slice(0, 10) > ate)) return false;
@@ -4298,7 +4305,7 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     });
     return res.render('painel_testes_servicos', {
       page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups,
-      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw },
+      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw, refil: refilF },
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
@@ -4445,6 +4452,104 @@ app.post('/api/painel/testes-servicos/check', requireAdmin, async (req, res) => 
     const r = await serviceTestCheckOne(col, rec);
     if (!r.ok) return res.status(502).json({ ok: false, error: 'check_failed', message: 'Não foi possível obter os seguidores (RocketAPI e Apify falharam).' });
     return res.json({ ok: true, count: r.count, pico: r.pico, quedaPct: r.quedaPct, source: r.source });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Mapa domínio do fornecedor -> nome da env com a API key (v2). apiBase = origin + /api/v2.
+const REFIL_TESTE_PROVIDER_KEYS = {
+  'smmraja.com': 'SMMRAJA_API_KEY',
+  'topfama.com': 'TOPFAMA_API_KEY',
+  'smmturk.org': 'SMMTURK_API_KEY',
+  'fornecedorsocial.com': 'FORNECEDOR_SOCIAL_API_KEY',
+  'nuvrasmm.com': 'NUVRASMM_API_KEY',
+  'smmhustle.com': 'SMMHUSTLE_API_KEY',
+  'worldofsmm.com': 'WORLDOFSMM_API_KEY',
+  'worldsmm.com': 'WORLDSMM_API_KEY',
+  'justanotherpanel.com': 'JUSTANOTHERPANEL_API_KEY',
+  'peakerr.com': 'PEAKERR_API_KEY',
+  'n1panel.com': 'N1PANEL_API_KEY',
+  'bulkmedya.com': 'BULKMEDYA_API_KEY',
+  'followiz.com': 'FOLLOWIZ_API_KEY',
+  'smmcost.com': 'SMMCOST_API_KEY',
+  'losdados.com': 'LOSDADOS_API_KEY',
+};
+function resolveRefilProviderFromFornecedor(fornecedor) {
+  const raw = String(fornecedor || '').trim();
+  if (!raw) return null;
+  let host = '';
+  try { host = new URL(/^https?:\/\//i.test(raw) ? raw : ('https://' + raw)).hostname.replace(/^www\./, '').toLowerCase(); } catch (_) { host = raw.replace(/^https?:\/\//i, '').replace(/^www\./, '').split('/')[0].toLowerCase(); }
+  if (!host) return null;
+  const envName = REFIL_TESTE_PROVIDER_KEYS[host];
+  const key = envName ? process.env[envName] : '';
+  if (!key) return { host, envName: envName || null, key: null };
+  return { host, envName, key, apiBase: 'https://' + host + '/api/v2' };
+}
+// Solicita REFIL do teste ao fornecedor (action=refill&order=<providerOrderId>). Só faz sentido onde temRefil=Sim.
+app.post('/api/painel/testes-servicos/refil', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('service_tests');
+    const rec = await col.findOne({ _id: new ObjectId(id) });
+    if (!rec) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (!rec.temRefil) return res.status(400).json({ ok: false, error: 'sem_refil', message: 'Este teste não está marcado com refil (coluna Refil = Não).' });
+    const orderId = String(rec.providerOrderId || '').trim();
+    if (!orderId) return res.status(400).json({ ok: false, error: 'sem_order', message: 'Este teste não tem o ID do pedido no fornecedor (providerOrderId vazio).' });
+    const prov = resolveRefilProviderFromFornecedor(rec.fornecedor);
+    if (!prov) return res.status(400).json({ ok: false, error: 'fornecedor_invalido', message: 'Fornecedor não reconhecido: ' + (rec.fornecedor || '(vazio)') });
+    if (!prov.key) return res.status(400).json({ ok: false, error: 'sem_key', message: 'Sem API key no .env para ' + prov.host + (prov.envName ? (' (' + prov.envName + ')') : '') + '.' });
+    const _ax = require('axios'); const axios = (_ax && _ax.post) ? _ax : (_ax.default || _ax);
+    let data;
+    try {
+      const resp = await axios.post(prov.apiBase, new URLSearchParams({ key: prov.key, action: 'refill', order: orderId }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 25000, validateStatus: () => true });
+      data = resp.data;
+    } catch (e) { return res.status(502).json({ ok: false, error: 'provider_erro', message: (e && e.message) || 'erro na chamada ao fornecedor' }); }
+    const refilId = data && (data.refill != null ? data.refill : (data.refill_id != null ? data.refill_id : null));
+    const provErro = data && (data.error || (data.status && /error|fail/i.test(String(data.status))));
+    const now = new Date().toISOString();
+    if (provErro || refilId == null) {
+      await col.updateOne({ _id: rec._id }, { $set: { refilLastAt: now, refilLastResult: 'erro', refilLastError: String((data && data.error) || 'sem refill id') }, $push: { refils: { at: now, ok: false, order: orderId, host: prov.host, resp: data } } });
+      return res.status(502).json({ ok: false, error: 'refil_recusado', message: 'Fornecedor recusou o refil: ' + String((data && data.error) || JSON.stringify(data)), host: prov.host });
+    }
+    await col.updateOne({ _id: rec._id }, { $set: { refilLastAt: now, refilLastResult: 'ok', refilLastId: String(refilId), refilLastError: '' }, $push: { refils: { at: now, ok: true, order: orderId, host: prov.host, refilId: String(refilId) } } });
+    return res.json({ ok: true, refilId: String(refilId), host: prov.host, order: orderId });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Solicita refil em MASSA (botão do topo): recebe ids, pede refil de cada linha com temRefil.
+app.post('/api/painel/testes-servicos/refil-bulk', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).filter((x) => /^[0-9a-fA-F]{24}$/.test(String(x))).slice(0, 500);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids' });
+    const col = await getCollection('service_tests');
+    const _ax = require('axios'); const axios = (_ax && _ax.post) ? _ax : (_ax.default || _ax);
+    const out = { ok: true, ok_count: 0, fail_count: 0, skip_count: 0, linhas: [] };
+    for (const id of ids) {
+      try {
+        const rec = await col.findOne({ _id: new ObjectId(id) });
+        if (!rec || !rec.temRefil) { out.skip_count++; out.linhas.push({ id, skip: true }); continue; }
+        const orderId = String(rec.providerOrderId || '').trim();
+        const prov = resolveRefilProviderFromFornecedor(rec.fornecedor);
+        if (!orderId || !prov || !prov.key) { out.fail_count++; out.linhas.push({ id, erro: !orderId ? 'sem_order' : (!prov ? 'fornecedor_invalido' : 'sem_key') }); continue; }
+        let data;
+        try {
+          const resp = await axios.post(prov.apiBase, new URLSearchParams({ key: prov.key, action: 'refill', order: orderId }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 25000, validateStatus: () => true });
+          data = resp.data;
+        } catch (e) { out.fail_count++; out.linhas.push({ id, erro: 'provider_erro' }); continue; }
+        const refilId = data && (data.refill != null ? data.refill : (data.refill_id != null ? data.refill_id : null));
+        const provErro = data && (data.error || (data.status && /error|fail/i.test(String(data.status))));
+        const now = new Date().toISOString();
+        if (provErro || refilId == null) {
+          await col.updateOne({ _id: rec._id }, { $set: { refilLastAt: now, refilLastResult: 'erro', refilLastError: String((data && data.error) || 'sem refill id') }, $push: { refils: { at: now, ok: false, order: orderId, host: prov.host, resp: data } } });
+          out.fail_count++; out.linhas.push({ id, erro: String((data && data.error) || 'recusado') });
+        } else {
+          await col.updateOne({ _id: rec._id }, { $set: { refilLastAt: now, refilLastResult: 'ok', refilLastId: String(refilId), refilLastError: '' }, $push: { refils: { at: now, ok: true, order: orderId, host: prov.host, refilId: String(refilId) } } });
+          out.ok_count++; out.linhas.push({ id, refilId: String(refilId) });
+        }
+      } catch (_) { out.fail_count++; out.linhas.push({ id, erro: 'internal' }); }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return res.json(out);
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Checa TODOS agora (botão do topo)
@@ -6390,8 +6495,18 @@ async function notifyWppAgentPaidWhatsapp(doc) {
     const claim = await col.updateOne({ _id: doc._id, waPaidNotifiedAt: { $exists: false } }, { $set: { waPaidNotifiedAt: new Date() } });
     if (!(claim && claim.modifiedCount > 0)) return;
 
-    const phone = String((doc.customer && doc.customer.phone) || getAdd('phone') || getAdd('telefone') || '').replace(/\D/g, '');
-    if (!phone || phone.length < 10) return;
+    // Número BR com DDI 55: customer.phone às vezes vem SEM o 55 (ex.: "8592016588"),
+    // e o WhatsApp Cloud API exige o DDI — sem ele o envio falha silenciosamente.
+    // Prefere um candidato que já tenha 55 (12-13 dígitos); senão prefixa 55 em número de 10-11 dígitos.
+    const _phoneCands = [(doc.customer && doc.customer.phone), getAdd('phone'), getAdd('telefone')]
+      .map(x => String(x || '').replace(/\D/g, '')).filter(Boolean);
+    let phone = _phoneCands.find(p => p.startsWith('55') && p.length >= 12) || _phoneCands[0] || '';
+    if (phone && !(phone.startsWith('55') && phone.length >= 12) && (phone.length === 10 || phone.length === 11)) phone = '55' + phone;
+    if (!phone || phone.length < 12) {
+      // Sem número válido: desmarca o claim para permitir nova tentativa em webhook futuro.
+      try { await col.updateOne({ _id: doc._id }, { $unset: { waPaidNotifiedAt: '' } }); } catch (_) {}
+      return;
+    }
 
     const tipo = String(getAdd('tipo_servico') || doc.tipo || '').toLowerCase();
     const ehOrganico = /organic|orgânic|reais|real|de verdade/.test(tipo);
@@ -6405,7 +6520,13 @@ async function notifyWppAgentPaidWhatsapp(doc) {
     msg += ' Qualquer dúvida, é só chamar por aqui. Obrigado por comprar com a Oppus!';
 
     const wa = require('./whatsappCloud.js');
-    await wa.sendWhatsAppText(phone, msg);
+    const _sendRes = await wa.sendWhatsAppText(phone, msg);
+    if (!_sendRes || !_sendRes.ok) {
+      // Envio falhou: desmarca o claim para tentar de novo no próximo webhook (não deixa "notificado" fantasma).
+      try { await col.updateOne({ _id: doc._id }, { $unset: { waPaidNotifiedAt: '' } }); } catch (_) {}
+      try { console.log('⚠️ [IA] confirmação NÃO enviada (falha) p/ ' + phone + ' — ' + JSON.stringify(_sendRes && _sendRes.data || _sendRes)); } catch (_) {}
+      return;
+    }
     // Avisa o AGENTE que o pagamento entrou: sem isto ele seguia dizendo "fico no aguardo
     // da confirmação do pagamento" e até remandava o Pix para quem já tinha pago.
     try {

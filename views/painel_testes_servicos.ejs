@@ -7,6 +7,10 @@
   <link href="/css/style.css" rel="stylesheet" />
   <style>
     body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    /* style.css usa html,body{overflow-x:hidden} → isso força overflow-y:auto nos DOIS e cria
+       barra de rolagem vertical DUPLICADA. 'clip' corta o horizontal sem virar container de
+       scroll, então o overflow-y volta a 'visible' e sobra só a barra da viewport. */
+    html, body { overflow-x: clip; }
     h1 { margin: 0 0 6px; }
     .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
     .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
@@ -75,6 +79,12 @@
     .mb-check:hover { background: #7c3aed; color: #fff; }
     .mb-del { border-color: #dc2626; color: #dc2626; }
     .mb-del:hover { background: #dc2626; color: #fff; }
+    .mb-refil { border-color: #059669; color: #059669; }
+    .mb-refil:hover { background: #059669; color: #fff; }
+    .mb-refil[disabled] { cursor: default; }
+    .mb-refil.is-done { background: #059669; color: #fff; border-color: #059669; }
+    .mb-refil-off { border-color: #cbd5e1; color: #94a3b8; border-style: dashed; opacity: .7; cursor: not-allowed; }
+    .mb-refil-off:hover { background: transparent; color: #94a3b8; }
     .mb-fav { border-color: #e0a800; color: #e0a800; font-size: 14px; line-height: 1; padding: 3px 7px; }
     .mb-fav:hover { background: #fff8e1; }
     .mb-fav.is-fav { background: #fff3cd; color: #b8860b; }
@@ -115,6 +125,7 @@
     <div class="toolbar">
       <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
       <button type="button" id="checkSelBtn" class="btn" style="background:#0f766e;color:#fff;" disabled>↻ Checar selecionados (<span id="selCount">0</span>)</button>
+      <button type="button" id="refilSelBtn" class="btn" style="background:#059669;color:#fff;" disabled title="Solicita refil ao fornecedor das linhas selecionadas que têm Refil = Sim">♻ Solicitar refil dos selecionados (<span id="refilSelCount">0</span>)</button>
       <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem; color:#374151; user-select:none;">
         <input type="checkbox" id="hideDeadChk"> Ocultar perfis mortos
       </label>
@@ -159,13 +170,23 @@
       <label class="sub" style="margin:0;">até <input type="number" name="quedaMax" value="<%= _ff.quedaMax %>" step="0.1" placeholder="30" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
       <label class="sub" style="margin:0;">Custo R$ <input type="number" name="precoMin" value="<%= _ff.precoMin||'' %>" step="0.01" placeholder="min" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0;">até R$ <input type="number" name="precoMax" value="<%= _ff.precoMax||'' %>" step="0.01" placeholder="max" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
+      <label class="sub" style="margin:0;">Refil
+        <select name="refil" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
+          <option value="">Todos</option>
+          <option value="sim" <%= _ff.refil==='sim'?'selected':'' %>>♻ Com refil</option>
+          <option value="solicitado" <%= _ff.refil==='solicitado'?'selected':'' %>>✓ Refil solicitado</option>
+        </select>
+      </label>
       <label class="sub" style="margin:0; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" name="fav" value="1" <%= (_ff.fav==='1')?'checked':'' %>> ★ Só favoritos</label>
       <% if (_ff.svc) { %><span class="sub" style="margin:0;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:4px 8px;">serviço <strong><%= _ff.svc %></strong> <a href="#" id="clearSvcFilter" style="color:#dc2626;">✕</a></span><input type="hidden" name="svc" value="<%= _ff.svc %>"><% } %>
       <button type="submit" class="btn btn-purple">Filtrar</button>
-      <a href="/painel/testes-servicos" class="sub" style="margin:0;">limpar</a>
+      <a href="/painel/testes-servicos" id="clearAllFilters" class="sub" style="margin:0;">limpar</a>
       <span class="sub" style="margin-left:auto;"><strong><%= (rows||[]).length %></strong><% if (typeof totalAll!=='undefined' && totalAll!==(rows||[]).length) { %> de <%= totalAll %><% } %> teste(s)</span>
     </form>
-    <script>document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('clearSvcFilter');if(b)b.addEventListener('click',function(e){e.preventDefault();var f=b.closest('form');var h=f&&f.querySelector('input[name=svc]');if(h)h.remove();if(f)f.submit();});});</script>
+    <script>document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('clearSvcFilter');if(b)b.addEventListener('click',function(e){e.preventDefault();var f=b.closest('form');var h=f&&f.querySelector('input[name=svc]');if(h)h.remove();if(f)f.submit();});
+      // "limpar": vai pra URL sem filtros. Se já estamos na URL limpa (só filtros de coluna, que são
+      // client-side), o clique num link pra mesma URL não recarrega — então forçamos reload.
+      var la=document.getElementById('clearAllFilters');if(la)la.addEventListener('click',function(e){e.preventDefault();var base='/painel/testes-servicos';if(location.pathname===base&&!location.search){location.reload();}else{location.href=base;}});});</script>
 
     <div class="top-scroll" id="topScroll"><div class="top-scroll-inner" id="topScrollInner"></div></div>
     <div class="grid-wrap" id="gridWrap">
@@ -223,7 +244,7 @@
 <%# Saida escapada transformava as aspas do atributo em entidade: o class virava texto
       solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
           <tr data-id="<%= r.id %>"<% if (r.measureFailed) { %> class="row-failed" data-failed="1" title="Falha ao medir<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — ignorada nas checagens em lote"<% } %>>
-            <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <%= _i + 1 %></td>
+            <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <span class="rn-num"><%= _i + 1 %></span></td>
             <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %><% var _gk = (r.fornecedor||'')+'|'+(r.serviceId||''); var _gn = (r.serviceId && _svcGroups[_gk]) ? _svcGroups[_gk] : 0; if (_gn > 1) { %> <a class="svc-link" href="/painel/testes-servicos?svc=<%= encodeURIComponent(r.serviceId) %>&fornecedor=<%= encodeURIComponent(r.fornecedor||'') %>" title="Ver os <%= _gn %> testes deste serviço" style="text-decoration:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1px 6px;font-size:11px;color:#4338ca;white-space:nowrap;">↔ <%= _gn %></a><% } %></td>
             <td class="selcell">
               <select class="cell-select" data-field="tipo">
@@ -252,6 +273,16 @@
             <td>
               <button type="button" class="mini-btn mb-fav<%= r.favorito ? ' is-fav' : '' %>" data-id="<%= r.id %>" data-fav="<%= r.favorito ? 1 : 0 %>" title="<%= r.favorito ? 'Desfavoritar' : 'Favoritar' %>"><%= r.favorito ? '★' : '☆' %></button>
               <button type="button" class="mini-btn mb-check" data-id="<%= r.id %>" title="Medir seguidores agora">↻ checar</button>
+              <% if (r.temRefil) {
+                   var _refilRecent = false, _refilId = '';
+                   if (r.refilLastResult === 'ok' && r.refilLastAt) { try { if (Date.now() - new Date(r.refilLastAt).getTime() < 24*60*60*1000) { _refilRecent = true; _refilId = r.refilLastId || ''; } } catch(_){} }
+                   if (!r.providerOrderId) { %>
+                <button type="button" class="mini-btn mb-refil mb-refil-off" disabled title="Teste antigo sem o ID do pedido no fornecedor — refil por API indisponível (o fornecedor precisa do número do pedido).">♻ refil</button>
+              <% } else if (_refilRecent) { %>
+                <button type="button" class="mini-btn mb-refil is-done" disabled title="Refil solicitado — volta ao botão normal 24h após o pedido">✓ refil <%= _refilId %></button>
+              <% } else { %>
+                <button type="button" class="mini-btn mb-refil" data-id="<%= r.id %>" data-perfil="<%= r.perfil %>" data-order="<%= r.providerOrderId || '' %>" data-fornecedor="<%= r.fornecedor || '' %>" title="Solicitar refil ao fornecedor">♻ refil</button>
+              <% } } %>
               <button type="button" class="mini-btn mb-del" data-id="<%= r.id %>" title="Excluir linha">excluir</button>
             </td>
           </tr>
@@ -406,6 +437,14 @@
             var old = btn.textContent; btn.disabled = true; btn.textContent = 'medindo…';
             var d = await post('/api/painel/testes-servicos/check', { id: id });
             if (d && d.ok) { location.reload(); } else { alert('Falha: ' + ((d && d.message) || (d && d.error) || 'erro')); btn.disabled = false; btn.textContent = old; }
+          } else if (btn.classList.contains('mb-refil')) {
+            var _perf = btn.getAttribute('data-perfil') || ''; var _ord = btn.getAttribute('data-order') || ''; var _forn = btn.getAttribute('data-fornecedor') || '';
+            if (!_ord) { alert('Sem ID do pedido no fornecedor (providerOrderId) — não dá pra pedir refil desta linha.'); return; }
+            if (!confirm('Solicitar refil ao fornecedor?\n\nPerfil: ' + (_perf || '—') + '\nPedido: ' + _ord + '\nFornecedor: ' + (_forn || '—'))) return;
+            var oldR = btn.textContent; btn.disabled = true; btn.textContent = 'pedindo…';
+            var dR = await post('/api/painel/testes-servicos/refil', { id: id });
+            if (dR && dR.ok) { btn.textContent = '✓ refil ' + (dR.refilId || 'ok'); btn.classList.add('is-done'); btn.disabled = true; btn.title = 'Refil solicitado — volta ao botão normal 24h após o pedido'; }
+            else { alert('Falha no refil: ' + ((dR && dR.message) || (dR && dR.error) || 'erro')); btn.disabled = false; btn.textContent = oldR; }
           } else if (btn.classList.contains('mb-del')) {
             if (!confirm('Excluir esta linha?')) return;
             var d2 = await post('/api/painel/testes-servicos/delete', { id: id });
@@ -447,10 +486,22 @@
 
       // ── Seleção de linhas + checar selecionados ────────────────────────────
       function selecionadas(){ return Array.prototype.filter.call(document.querySelectorAll('.selRow'), function(cb){ return cb.checked && cb.offsetParent !== null; }); }
+      // Só as selecionadas cuja linha tem Refil = Sim (célula temRefil data-raw="1") e ainda não estão no estado "✓ refil" (24h).
+      function selecionadasComRefil(){
+        return selecionadas().filter(function(cb){
+          var tr = cb.closest('tr'); if (!tr) return false;
+          var cel = tr.querySelector('td[data-field="temRefil"]'); if (!cel || cel.getAttribute('data-raw') !== '1') return false;
+          var btn = tr.querySelector('.mb-refil'); if (btn && (btn.disabled || btn.classList.contains('is-done'))) return false; // já pediu (dentro das 24h)
+          return true;
+        });
+      }
       function atualizaSel(){
         var n = selecionadas().length;
         var el = $('selCount'); if (el) el.textContent = n;
         var b = $('checkSelBtn'); if (b) b.disabled = !n;
+        var nr = selecionadasComRefil().length;
+        var er = $('refilSelCount'); if (er) er.textContent = nr;
+        var br = $('refilSelBtn'); if (br) br.disabled = !nr;
       }
       var tb = $('tbody');
       if (tb) tb.addEventListener('change', function(ev){ if (ev.target && ev.target.classList.contains('selRow')) atualizaSel(); });
@@ -471,6 +522,19 @@
           msg.textContent = 'Ok: ' + (r.checados||0) + ' medido(s)' + (r.falhas ? (' · ' + r.falhas + ' falha(s)') : '') + '. Recarregando…';
           setTimeout(function(){ location.reload(); }, 900);
         } else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); checkSelBtn.disabled = false; }
+      });
+      var refilSelBtn = $('refilSelBtn');
+      if (refilSelBtn) refilSelBtn.addEventListener('click', async function(){
+        var ids = selecionadasComRefil().map(function(cb){ return cb.getAttribute('data-id'); });
+        if (!ids.length) return;
+        if (!confirm('Solicitar refil ao fornecedor de ' + ids.length + ' linha(s) selecionada(s) com Refil = Sim?')) return;
+        var msg = $('checkAllMsg');
+        refilSelBtn.disabled = true; msg.textContent = 'Solicitando refil de ' + ids.length + ' linha(s)…';
+        var d = await post('/api/painel/testes-servicos/refil-bulk', { ids: ids });
+        if (d && d.ok) {
+          msg.textContent = 'Refil: ' + (d.ok_count||0) + ' ok' + (d.fail_count ? (' · ' + d.fail_count + ' falha(s)') : '') + '. Recarregando…';
+          setTimeout(function(){ location.reload(); }, 1000);
+        } else { msg.textContent = 'Falha: ' + ((d && d.message) || (d && d.error) || 'erro'); refilSelBtn.disabled = false; }
       });
       atualizaSel();
 
@@ -496,7 +560,7 @@
           var tr = document.querySelector('tr[data-id="' + id + '"]');
           if (tr) {
             tr.classList.add('row-failed'); // fundo vermelho sutil + X na 1ª célula (via CSS)
-            var rn = tr.querySelector('.rownum'); nums.push(rn ? rn.textContent.trim() : '?');
+            var rn = tr.querySelector('.rn-num') || tr.querySelector('.rownum'); nums.push(rn ? rn.textContent.trim() : '?');
           }
           else fora++;
         });
@@ -528,7 +592,7 @@
           return (td.textContent || '').trim();
         }
         function numOf(s){ var t = String(s == null ? '' : s).trim().replace(/\s/g,'').replace(',', '.'); if (t === '') return null; var n = parseFloat(t); return isNaN(n) ? null : n; }
-        function renumber(){ var i = 1; dataRows().forEach(function(tr){ if (tr.style.display !== 'none') { var rn = tr.querySelector('.rownum'); if (rn) rn.textContent = i++; } }); }
+        function renumber(){ var i = 1; dataRows().forEach(function(tr){ if (tr.style.display !== 'none') { var rn = tr.querySelector('.rn-num'); if (rn) rn.textContent = i++; } }); }
 
         // filtros por coluna — cada coluna define um PREDICADO (função). Colunas sem filtro
         // (Tipo, Qtd contratada, Qtd atual) usam os filtros GERAIS do topo.
