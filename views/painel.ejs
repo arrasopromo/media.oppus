@@ -5053,7 +5053,7 @@
       <div id="bumpPieWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
           <strong style="font-size: 1rem; color:#111827;">Order bumps — qual vende mais</strong>
-          <div style="font-size:0.85rem; color:#6b7280;">Receita por bump · custo por tipo · período do painel</div>
+          <div style="font-size:0.85rem; color:#6b7280;">Faturamento por bump · período do painel</div>
         </div>
         <% var _bp = (typeof bumpPie !== 'undefined' && bumpPie) ? bumpPie : { ok:false, categories:[] }; %>
         <% if (!_bp.ok || !(_bp.categories && _bp.categories.length)) { %>
@@ -5063,20 +5063,18 @@
             <div style="flex:0 0 auto;"><canvas id="bumpPieChart" width="280" height="280" style="max-width:280px;"></canvas></div>
             <div style="flex:1 1 340px; min-width:0; overflow-x:auto;">
               <table class="dashboard-table" style="min-width:0; font-size:0.9rem;">
-                <thead><tr><th>Bump</th><th style="text-align:right;">Qtd pedidos</th><th style="text-align:right;">Receita</th><th style="text-align:right;">Custo</th><th style="text-align:right;">Lucro</th></tr></thead>
+                <thead><tr><th>Bump</th><th style="text-align:right;">Qtd pedidos</th><th style="text-align:right;">Faturamento</th></tr></thead>
                 <tbody>
                   <% _bp.categories.forEach(function(c){ %>
                     <tr>
                       <td style="white-space:nowrap;"><%= c.label %></td>
                       <td style="text-align:right;"><%= (c.count||0).toLocaleString('pt-BR') %></td>
                       <td style="text-align:right; font-weight:700;">R$ <%= (c.revenue||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
-                      <td style="text-align:right; color:#6b7280;">R$ <%= (c.cost||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
-                      <td style="text-align:right; font-weight:700; color:<%= (c.profit>=0?'#166534':'#991b1b') %>;">R$ <%= (c.profit||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
                     </tr>
                   <% }); %>
                 </tbody>
               </table>
-              <div style="font-size:0.75rem; color:#9ca3af; margin-top:8px;">Curtidas = mistas + brasileiras + reais juntas (custo calculado por subtipo). Custo de comentários é estimativa.</div>
+              <div style="font-size:0.75rem; color:#9ca3af; margin-top:8px;">Curtidas = mistas + brasileiras + reais juntas. Somente faturamento (o custo real vem do status do fornecedor).</div>
             </div>
           </div>
           <script type="application/json" id="bumpPieData"><%- JSON.stringify(_bp.categories) %></script>

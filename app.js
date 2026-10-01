@@ -30751,9 +30751,12 @@ app.get('/painel/privados', requireAdmin, async (req, res) => {
     }
 
     const unknownTokens = ['', null, 'unknown', 'unknow', 'null'];
-    const noFamaId = { $or: [{ 'fama24h.orderId': { $exists: false } }, { 'fama24h.orderId': { $in: unknownTokens } }] };
-    const noFsId = { $or: [{ 'fornecedor_social.orderId': { $exists: false } }, { 'fornecedor_social.orderId': { $in: unknownTokens } }] };
-    query.$and.push({ $or: [{ orderSent: { $ne: true } }, { $and: [{ orderSent: true }, noFamaId, noFsId] }] });
+    // Um pedido só "sai" da lista quando foi marcado enviado E tem orderId de fornecedor.
+    // Antes só olhava fama24h/fornecedor_social → curtidas e views (que despacham nos slots
+    // _likes/_views) ficavam presos como pendentes mesmo entregues. Agora aceita QUALQUER slot.
+    const idSlots = ['fama24h', 'fama24h_likes', 'fama24h_views', 'fama24h_comments', 'fornecedor_social', 'fornecedor_social_likes', 'topfama', 'topfama_likes', 'nuvra', 'worldsmm_comments', 'ggram'];
+    const hasProviderId = idSlots.map(s => ({ [`${s}.orderId`]: { $exists: true, $nin: unknownTokens } }));
+    query.$and.push({ $or: [{ orderSent: { $ne: true } }, { $and: [{ orderSent: true }, { $nor: hasProviderId }] }] });
     
     const orders = await col.find(query).sort({ createdAt: -1 }).limit(500).toArray();
     res.render('painel_privados', { orders, page: 'privados', startDate, endDate, orderSent, noContact, contactStatus, searchPhone, archived });
@@ -39846,11 +39849,8 @@ const _BP_CURTIDAS = {
 };
 const _BP_VIEWS = { 1000: 490, 2500: 990, 5000: 1490, 10000: 1990, 25000: 2490, 50000: 3490, 100000: 4990, 150000: 5990, 200000: 6990, 250000: 8990, 500000: 10990, 1000000: 15990 };
 const _BP_UPGRADE_ADD = { 50: 50, 150: 150, 300: 200, 500: 200, 700: 300, 1000: 1000, 1200: 800, 2000: 1000, 3000: 1000, 4000: 1000, 5000: 2500, 7500: 2500, 10000: 5000 };
-// Custo real por 1000 (derivado do histórico de providerCharge).
-const _BP_COST_CURTIDAS = { mistos: 0.533, curtidas_brasileiras: 2.404, organicos: 7.762 };
-const _BP_COST_VIEWS_PER_K = 0.042;
-const _BP_COST_FOLLOWERS = { organicos: 37.61, brasileiros: 6.92, mistos: 2.36 };
-const _BP_COST_COMMENT_UNIT = 0.08; // estimativa por comentário (WorldSMM)
+// (Custo removido: o gráfico de order bumps é somente de FATURAMENTO/receita.
+//  O custo real dos pedidos vem do action=status do fornecedor, não daqui.)
 async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
   const key = 'bp:' + (sinceMs || 0) + '|' + (untilMs || 0);
   const now = Date.now();
@@ -39862,7 +39862,7 @@ async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
     const q = { $and: [{ $or: paidOr }, { additionalInfo: { $elemMatch: { key: 'order_bumps', value: /\S/ } } }] };
     const rows = await col.find(q).project({ additionalInfo: 1, additionalInfoMap: 1, tipo: 1, tipoServico: 1, paidAt: 1, 'paghiper.paidAt': 1, createdAt: 1 }).limit(80000).toArray();
     const getA = (o, k) => { const m = o.additionalInfoMap || {}; if (m[k] != null) return m[k]; const it = (o.additionalInfo || []).find((x) => x && x.key === k); return it ? it.value : undefined; };
-    const cat = { upgrade: { label: 'Upgrade', count: 0, revenue: 0, cost: 0 }, curtidas: { label: 'Curtidas', count: 0, revenue: 0, cost: 0 }, views: { label: 'Visualizações', count: 0, revenue: 0, cost: 0 }, comentarios: { label: 'Comentários', count: 0, revenue: 0, cost: 0 }, garantia: { label: 'Garantia', count: 0, revenue: 0, cost: 0 } };
+    const cat = { upgrade: { label: 'Upgrade', count: 0, revenue: 0 }, curtidas: { label: 'Curtidas', count: 0, revenue: 0 }, views: { label: 'Visualizações', count: 0, revenue: 0 }, comentarios: { label: 'Comentários', count: 0, revenue: 0 }, garantia: { label: 'Garantia', count: 0, revenue: 0 } };
     for (const o of rows) {
       const dt = new Date(o.paidAt || (o.paghiper && o.paghiper.paidAt) || o.createdAt || 0).getTime();
       if (sinceMs && (!dt || dt < sinceMs)) continue;
@@ -39876,21 +39876,19 @@ async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
       for (const part of bs.split(/[;,]/)) {
         const [k0, v0] = part.split(':'); const k = String(k0 || '').trim().toLowerCase(); const qv = parseInt(v0, 10) || (k === 'upgrade' ? 1 : 0);
         if (k === 'upgrade') { hasUpgrade = true; upgradeBaseQty = Number(getA(o, 'quantidade')) || 0; }
-        else if (k === 'likes') { const rev = (_BP_CURTIDAS[variant] || _BP_CURTIDAS.mistos)[qv] || 0; othersCents += rev; if (rev || qv) { cat.curtidas.count++; cat.curtidas.revenue += rev / 100; cat.curtidas.cost += (qv / 1000) * (_BP_COST_CURTIDAS[variant] || _BP_COST_CURTIDAS.mistos); } }
-        else if (k === 'views') { const rev = _BP_VIEWS[qv] || 0; othersCents += rev; if (rev || qv) { cat.views.count++; cat.views.revenue += rev / 100; cat.views.cost += (qv / 1000) * _BP_COST_VIEWS_PER_K; } }
-        else if (k === 'comments') { const rev = qv * 150; othersCents += rev; if (qv) { cat.comentarios.count++; cat.comentarios.revenue += rev / 100; cat.comentarios.cost += qv * _BP_COST_COMMENT_UNIT; } }
+        else if (k === 'likes') { const rev = (_BP_CURTIDAS[variant] || _BP_CURTIDAS.mistos)[qv] || 0; othersCents += rev; if (rev || qv) { cat.curtidas.count++; cat.curtidas.revenue += rev / 100; } }
+        else if (k === 'views') { const rev = _BP_VIEWS[qv] || 0; othersCents += rev; if (rev || qv) { cat.views.count++; cat.views.revenue += rev / 100; } }
+        else if (k === 'comments') { const rev = qv * 150; othersCents += rev; if (qv) { cat.comentarios.count++; cat.comentarios.revenue += rev / 100; } }
         else if (/^warranty/.test(k)) { const wc = /^warranty_?4m$/.test(k) ? 1490 : 990; othersCents += wc; cat.garantia.count++; cat.garantia.revenue += wc / 100; }
       }
       if (hasUpgrade) {
         cat.upgrade.count++;
         const upRev = (totalCents > 0) ? Math.max(0, totalCents - othersCents) : 0;
         cat.upgrade.revenue += upRev / 100;
-        const add = _BP_UPGRADE_ADD[upgradeBaseQty] || 0;
-        cat.upgrade.cost += (add / 1000) * (_BP_COST_FOLLOWERS[follower] || _BP_COST_FOLLOWERS.mistos);
       }
     }
     const categories = Object.values(cat)
-      .map((c) => ({ label: c.label, count: c.count, revenue: Math.round(c.revenue * 100) / 100, cost: Math.round(c.cost * 100) / 100, profit: Math.round((c.revenue - c.cost) * 100) / 100 }))
+      .map((c) => ({ label: c.label, count: c.count, revenue: Math.round(c.revenue * 100) / 100 }))
       .filter((c) => c.count > 0)
       .sort((a, b) => b.revenue - a.revenue);
     const value = { ok: categories.length > 0, categories };
