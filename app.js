@@ -3035,6 +3035,17 @@ function instaShortcodeFromUrl(u) {
   return m ? m[1] : '';
 }
 
+// Canonicaliza qualquer link de post/reel/reels/tv para a MESMA forma (/p/<shortcode>/).
+// /p/, /reel/, /reels/ e /tv/ do mesmo código são o MESMO post. Os comentários do WorldSMM
+// são despachados por até 3 caminhos que pegavam o link de fontes diferentes (orderbump_post_comments
+// gravado como /p/ vs post_link de reel gravado como /reel/). Sem canonicalizar, um reenvio ia com
+// o formato oposto e o fornecedor NÃO deduplicava → comentários entregues 2x. Canonicalizar garante
+// que qualquer reenvio chegue com link idêntico e caia no dedup do fornecedor ("Duplicate link").
+function canonicalCommentLink(u) {
+  const sc = instaShortcodeFromUrl(u);
+  return sc ? `https://www.instagram.com/p/${sc}/` : String(u || '');
+}
+
 // Curtidas ATUAIS de um post do Instagram: ROCKETAPI (primário — rápido e barato) →
 // APIFY (fallback). Retorna:
 //   { likes: N, hidden: false, source }  → contagem normal
@@ -20836,6 +20847,9 @@ async function processOrderFulfillment(record, col, req) {
             try { console.warn('⚠️ likes_link_invalid', { likesLinkRaw, sanitized: likesLink }); } catch(_) {}
         }
 
+        // Canonicaliza /reel/,/reels/,/tv/ → /p/ antes de despachar: evita que um reenvio por outro
+        // caminho mande o formato oposto e o WorldSMM entregue os comentarios 2x (ver canonicalCommentLink).
+        commentsLink = canonicalCommentLink(commentsLink);
         const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
         if (commentsQty > 0 && commentsLink && !alreadyComments) {
             if (process.env.WORLDSMM_API_KEY) {
@@ -23528,7 +23542,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                 };
                 const mapPaid3 = record?.additionalInfoMapPaid || {};
                 const commentsLinkRaw = mapPaid3['orderbump_post_comments'] || additionalInfoMap['orderbump_post_comments'] || (arrPaid.find(it => it && it.key === 'orderbump_post_comments')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_comments')?.value) || '';
-                const commentsLinkSel = sanitizeLinkC(commentsLinkRaw);
+                const commentsLinkSel = canonicalCommentLink(sanitizeLinkC(commentsLinkRaw));
                 try { console.log('🔎 orderbump_comments_raw', { identifier: charge?.identifier, correlationID: charge?.correlationID, commentsLinkRaw, commentsQty }); } catch(_) {}
                 
                 const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
@@ -26178,8 +26192,8 @@ app.post('/session/mark-paid', async (req, res) => {
                                   (record?.additionalInfoPaid || []).find(it => it && it.key === 'post_link')?.value || 
                                   (record?.additionalInfo || []).find(it => it && it.key === 'post_link')?.value || 
                                   '';
-          const commentsLink = sanitizeLink(commentsLinkRaw);
-          
+          const commentsLink = canonicalCommentLink(sanitizeLink(commentsLinkRaw));
+
           const alreadyComments = !!(record && record.worldsmm_comments && (record.worldsmm_comments.orderId || record.worldsmm_comments.status === 'processing' || record.worldsmm_comments.status === 'created'));
           
           if ((process.env.WORLDSMM_API_KEY || '') && commentsQty > 0 && !alreadyComments) {
