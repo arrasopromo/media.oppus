@@ -11777,6 +11777,18 @@ const SMM_PROVIDERS = {
   topfama:           { url: 'https://topfama.com/api/v2',          keyEnv: 'TOPFAMA_API_KEY',           label: 'TopFama' },
   smmhustle:         { url: 'https://smmhustle.com/api/v2',        keyEnv: 'SMMHUSTLE_API_KEY',         label: 'SMMHustle' },
   worldsmm:          { url: 'https://worldsmm.com.br/api/v2',      keyEnv: 'WORLDSMM_API_KEY',          label: 'WorldSMM' },
+  // Fornecedores adicionais (testados em service_tests). URL = origin + /api/v2 (Perfect Panel).
+  smmraja:           { url: 'https://smmraja.com/api/v2',          keyEnv: 'SMMRAJA_API_KEY',           label: 'SMMRaja' },
+  smmturk:           { url: 'https://smmturk.org/api/v2',          keyEnv: 'SMMTURK_API_KEY',           label: 'SMMTurk' },
+  justanotherpanel:  { url: 'https://justanotherpanel.com/api/v2', keyEnv: 'JUSTANOTHERPANEL_API_KEY',  label: 'JustAnotherPanel' },
+  peakerr:           { url: 'https://peakerr.com/api/v2',          keyEnv: 'PEAKERR_API_KEY',           label: 'Peakerr' },
+  n1panel:           { url: 'https://n1panel.com/api/v2',          keyEnv: 'N1PANEL_API_KEY',           label: 'N1Panel' },
+  followiz:          { url: 'https://followiz.com/api/v2',         keyEnv: 'FOLLOWIZ_API_KEY',          label: 'Followiz' },
+  smmcost:           { url: 'https://smmcost.com/api/v2',          keyEnv: 'SMMCOST_API_KEY',           label: 'SMMCost' },
+  bulkfollows:       { url: 'https://bulkfollows.com/api/v2',      keyEnv: 'BULKFOLLOWS_API_KEY',       label: 'BulkFollows' },
+  worldofsmm:        { url: 'https://worldofsmm.com/api/v2',       keyEnv: 'WORLDOFSMM_API_KEY',        label: 'WorldOfSMM' },
+  dripfeedpanel:     { url: 'https://dripfeedpanel.com/api/v2',    keyEnv: 'DRIPFEEDPANEL_API_KEY',     label: 'DripFeedPanel' },
+  bulkmedya:         { url: 'https://bulkmedya.com/api/v2',        keyEnv: 'BULKMEDYA_API_KEY',         label: 'BulkMedya' },
 };
 const SMM_PROVIDER_IDS = Object.keys(SMM_PROVIDERS);
 const normalizeSmmProvider = (v) => {
@@ -11787,6 +11799,17 @@ const normalizeSmmProvider = (v) => {
   if (s === 'topfama' || s === 'top_fama') return 'topfama';
   if (s === 'smmhustle' || s === 'smm_hustle' || s === 'hustle') return 'smmhustle';
   if (s === 'worldsmm' || s === 'world_smm') return 'worldsmm';
+  if (s === 'smmraja' || s === 'raja') return 'smmraja';
+  if (s === 'smmturk' || s === 'turk') return 'smmturk';
+  if (s === 'justanotherpanel' || s === 'jap') return 'justanotherpanel';
+  if (s === 'peakerr') return 'peakerr';
+  if (s === 'n1panel' || s === 'n1') return 'n1panel';
+  if (s === 'followiz') return 'followiz';
+  if (s === 'smmcost') return 'smmcost';
+  if (s === 'bulkfollows') return 'bulkfollows';
+  if (s === 'worldofsmm' || s === 'world_of_smm') return 'worldofsmm';
+  if (s === 'dripfeedpanel' || s === 'dripfeed') return 'dripfeedpanel';
+  if (s === 'bulkmedya') return 'bulkmedya';
   return s;
 };
 const smmProviderUrl = (p) => (SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).url;

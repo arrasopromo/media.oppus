@@ -3451,12 +3451,16 @@
             return v || String(fallback || '').trim();
           } catch (_) { return String(fallback || '').trim(); }
         };
+        // Lista completa dos provedores cadastrados no backend (SMM_PROVIDERS). Mantida em
+        // sincronia manual com app.js. Qualquer um pode ser escolhido por tipo; cada um tem
+        // seu próprio "ID solicitação" por tipo (getSvcId por provider).
+        const ALL_PROVIDERS = ['fama24h', 'nuvra', 'topfama', 'fornecedor_social', 'smmhustle', 'worldsmm', 'smmraja', 'smmturk', 'justanotherpanel', 'peakerr', 'n1panel', 'followiz', 'smmcost', 'bulkfollows', 'worldofsmm', 'dripfeedpanel', 'bulkmedya'];
         const allowedProviders = (ctx, key) => {
           const k = String(key || '').trim();
           if (ctx === 'curtidas' && k === 'organicos') return ['topfama', 'fornecedor_social'];
           if (ctx === 'seguidores' && k === 'organicos') return ['fornecedor_social'];
           // Tipos principais (mundial/brasileiro/views/curtidas): todos os provedores cadastrados.
-          return ['fama24h', 'nuvra', 'topfama', 'fornecedor_social', 'smmhustle'];
+          return ALL_PROVIDERS;
         };
       %>
       <div id="serviceTypes" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 16px;">
