@@ -136,7 +136,7 @@
             <td><%= dataTxt %></td>
             <td><% if (r.fornecedor) { %><span class="muted" style="font-size:0.72rem;">"<%= r.fornecedor %>"</span> <% } %><%= r.orderIdOriginal || '—' %></td>
             <td><% if (r.usuario) { %><a class="link" href="https://instagram.com/<%= encodeURIComponent(r.usuario) %>" target="_blank" rel="noopener">@<%= r.usuario %></a><% } else { %>—<% } %></td>
-            <td><% if (r.linkPost) { %><a class="link" href="<%= r.linkPost %>" target="_blank" rel="noopener">abrir post</a> <button type="button" class="copy-btn" data-link="<%= r.linkPost %>" title="Copiar link do post">copiar link post</button><% } else { %>—<% } %></td>
+            <td><% if (r.linkPost) { %><a class="link" href="<%= r.linkPost %>" target="_blank" rel="noopener">abrir post</a> <button type="button" class="copy-btn" data-link="<%= r.linkPost %>" title="Copiar link do post" aria-label="Copiar link do post"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button><% } else { %>—<% } %></td>
             <td><%= (r.qtdContratada || 0).toLocaleString('pt-BR') %></td>
             <td><% if (!r.checkedAt && !/complet|conclu/.test(st)) { %><span class="pill pill-none" title="Ainda não consultado via action=status — clique em Verificar">não verificado</span><% } else { %><span class="pill <%= cls %>" title="<%= r.checkedAt ? 'verificado' : 'status do despacho' %>"><%= label || '—' %></span><% } %></td>
             <td><% if (r.remains == null) { %><span class="muted">—</span><% } else { %><strong style="<%= r.remains > 0 ? 'color:#b45309' : 'color:#166534' %>"><%= r.remains.toLocaleString('pt-BR') %></strong><% } %></td>
@@ -231,12 +231,12 @@
         btn.addEventListener('click', async function(){
           var link = btn.getAttribute('data-link') || '';
           if (!link) return;
-          var old = btn.textContent;
+          var old = btn.innerHTML;
           try {
             if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(link); }
             else { var ta = document.createElement('textarea'); ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
-            btn.textContent = '✓ copiado'; setTimeout(function(){ btn.textContent = old; }, 1400);
-          } catch (e) { btn.textContent = 'falhou'; setTimeout(function(){ btn.textContent = old; }, 1400); }
+            btn.innerHTML = '✓'; setTimeout(function(){ btn.innerHTML = old; }, 1400);
+          } catch (e) { btn.innerHTML = '✕'; setTimeout(function(){ btn.innerHTML = old; }, 1400); }
         });
       });
       // Auditar curtidas atuais (Apify → RocketAPI) — só concluídos
