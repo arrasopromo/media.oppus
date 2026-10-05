@@ -93,6 +93,7 @@
       <span><strong id="bulkCount">0</strong> marcado(s)</span>
       <button type="button" id="bulkVerify" class="btn btn-primary" disabled>✓ Verificar marcados</button>
       <button type="button" id="bulkAudit" class="btn" style="background:#7c3aed;" disabled>↻ Auditar curtidas marcadas</button>
+      <button type="button" id="bulkAuditFilter" class="btn" style="background:#6d28d9;">↻ Auditar curtidas do filtro</button>
       <button type="button" id="bulkCopy" class="btn" style="background:#0ea5e9;" disabled>⧉ Copiar marcados</button>
       <span id="bulkMsg" class="sub" style="margin:0;"></span>
     </div>
@@ -175,6 +176,7 @@
             </td>
             <td>
               <button type="button" class="verify-btn" data-id="<%= r.id %>" data-field="<%= r.field %>">Verificar</button>
+              <% if (r.statusDone) { %><button type="button" class="audit-btn" data-id="<%= r.id %>" data-field="<%= r.field %>" title="Conta as curtidas atuais do post via RocketAPI">↻ Curtidas</button><% } %>
               <% if (canReorder) { %>
                 <button type="button" class="reorder-btn" data-id="<%= r.id %>" data-field="<%= r.field %>" data-remains="<%= r.remains %>">Gerar novo orderid</button>
               <% } else if (hasChain || r.novoOrderId) { %>
@@ -269,6 +271,7 @@
       var bulkCount = document.getElementById('bulkCount');
       var bulkVerify = document.getElementById('bulkVerify');
       var bulkAudit = document.getElementById('bulkAudit');
+      var bulkAuditFilter = document.getElementById('bulkAuditFilter');
       var bulkCopy = document.getElementById('bulkCopy');
       var bulkMsg = document.getElementById('bulkMsg');
       function checkedRows(){ return Array.prototype.slice.call(document.querySelectorAll('.rowChk')).filter(function(c){ return c.checked; }); }
@@ -347,6 +350,7 @@
       async function runBulk(url, items, label){
         if (!items.length) return;
         bulkVerify.disabled = true; bulkAudit.disabled = true;
+        if (bulkAuditFilter) bulkAuditFilter.disabled = true;
         if (selAll) selAll.disabled = true;
         bulkMsg.textContent = label + ' ' + items.length + ' pedido(s)… (pode levar um tempo)';
         try {
@@ -364,6 +368,15 @@
         // só concluídos
         var items = checkedRows().filter(function(c){ return c.getAttribute('data-done') === '1'; }).map(function(c){ return { id: c.getAttribute('data-id'), field: c.getAttribute('data-field') }; });
         if (!items.length) { bulkMsg.textContent = 'Nenhum concluído marcado (auditoria só para concluídos).'; return; }
+        runBulk('/api/painel/topfama/audit-bulk', items, 'Auditando curtidas de');
+      });
+      // Auditar curtidas de TODO o filtro atual (todas as linhas concluídas, não só as marcadas)
+      if (bulkAuditFilter) bulkAuditFilter.addEventListener('click', function(){
+        var items = Array.prototype.slice.call(document.querySelectorAll('.rowChk'))
+          .filter(function(c){ return c.getAttribute('data-done') === '1'; })
+          .map(function(c){ return { id: c.getAttribute('data-id'), field: c.getAttribute('data-field') }; });
+        if (!items.length) { bulkMsg.textContent = 'Nenhum pedido concluído no filtro (auditoria só para concluídos).'; return; }
+        if (!confirm('Auditar curtidas de ' + items.length + ' pedido(s) concluído(s) do filtro atual? (consome RocketAPI)')) return;
         runBulk('/api/painel/topfama/audit-bulk', items, 'Auditando curtidas de');
       });
       refreshBulk();
