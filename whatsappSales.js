@@ -128,19 +128,39 @@ async function priceTable({ servico, tipo }) {
 }
 
 // Aceita @user, link instagram.com/user, ou texto cru; junta espaços ("cris tiano" → cristiano).
+// Respostas afirmativas/negativas/fillers que o cliente manda RESPONDENDO a uma pergunta
+// (ex.: "quer seguir com esse pacote?") — NUNCA são o @ do Instagram. Sem este filtro,
+// a cliente respondeu "Sim" ao pedido do @, o bot pegou "sim" como handle, achou a conta
+// real @sim (10k seguidores) e seguiu com o perfil ERRADO. Só filtra palavra "crua" (sem @
+// e sem URL): "@sim" ou um link ainda passam, porque aí é intenção explícita.
+const IG_USERNAME_STOPWORDS = new Set([
+  'sim','s','ss','simm','sim','simsim','simsenhor','ss','sii','siim',
+  'nao','não','n','nn','naao','naum','nope',
+  'ok','okk','okay','oka','blz','beleza','belezinha','fechado','fechou','combinado',
+  'isso','issomesmo','issoai','issoaí','exato','exatamente','certo','correto','positivo','afirmativo',
+  'claro','pode','podeser','podepode','poderia','quero','queroo','queremos','aceito','concordo',
+  'uhum','aham','aa','sei','entendi','entendido',
+  'bom','boa','otimo','ótimo','legal','massa','top','show','maneiro','dale',
+  'oi','ola','olá','opa','ei','eai','eaí','obrigado','obrigada','obg','vlw','valeu',
+  'vamos','vamola','bora','borala','simm','agora','esse','essa','este','esta','aqui'
+]);
 function parseIgUsername(raw) {
   let s = String(raw || '').trim();
   if (!s) return '';
   const m = s.match(/instagram\.com\/([A-Za-z0-9_.]+)/i);
   if (m) return m[1].toLowerCase();
+  const hadAt = /^@/.test(s);
   s = s.replace(/^@+/, '').replace(/\s+/g, '').replace(/\/+$/g, '');
-  return s.toLowerCase();
+  const low = s.toLowerCase();
+  // Palavra crua (digitada sem @) que é resposta/filler → não é usuário.
+  if (!hadAt && IG_USERNAME_STOPWORDS.has(low)) return '';
+  return low;
 }
 
 // Valida o @ via o MESMO endpoint do site (RocketAPI). Retorna nome + seguidores.
 async function validateProfile(usuario) {
   const username = parseIgUsername(usuario);
-  if (!username) return { ok: false, error: 'usuario_invalido' };
+  if (!username) return { ok: false, error: 'usuario_invalido', message: 'Isso parece uma resposta ("sim", "ok", etc.), não o @ do Instagram do cliente. NÃO valide nem crie o pedido: peça de novo, de forma clara, o @ (nome de usuário) do perfil que vai receber o serviço.' };
   try {
     // Endpoint INTERNO (sem trava de sessão) — o /api/check-instagram-profile exige
     // token de sessão e retornava 403 para a IA, deixando TODO perfil "não encontrado".
@@ -214,7 +234,7 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
   const cot = await quote({ servico, tipo, quantidade });
   if (!cot.ok) return { ok: false, error: cot.error || 'cotacao_falhou', available: cot.available };
   const username = parseIgUsername(usuario);
-  if (!username) return { ok: false, error: 'usuario_invalido' };
+  if (!username) return { ok: false, error: 'usuario_invalido', message: 'O @ informado parece ser uma resposta ("sim", "ok", etc.), não um usuário do Instagram. NÃO gere o Pix: peça o @ correto do perfil antes de criar o pedido.' };
   if (cot.needsPost) {
     const links = _juntaLinks(Array.isArray(post_links) ? post_links.filter(Boolean) : String(post_links || '').split(',').map((s) => s.trim()).filter(Boolean));
     if (!links.length) return { ok: false, error: 'faltou_post', message: 'Esse serviço precisa do link do post.' };
