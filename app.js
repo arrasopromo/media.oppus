@@ -4482,6 +4482,9 @@ const REFIL_TESTE_PROVIDER_KEYS = {
   'followiz.com': 'FOLLOWIZ_API_KEY',
   'smmcost.com': 'SMMCOST_API_KEY',
   'losdados.com': 'LOSDADOS_API_KEY',
+  'dripfeedpanel.com': 'DRIPFEEDPANEL_API_KEY',
+  'bulkfollows.com': 'BULKFOLLOWS_API_KEY',
+  'worldsmm.com.br': 'WORLDSMM_API_KEY',
 };
 function resolveRefilProviderFromFornecedor(fornecedor) {
   const raw = String(fornecedor || '').trim();
