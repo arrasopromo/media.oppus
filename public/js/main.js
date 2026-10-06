@@ -1,7 +1,5 @@
 // Landing page sem vídeo: navegação por cards de serviço
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Página carregada - Agência OPPUS');
-
     // Navegação por cards (landing)
     const cards = document.querySelectorAll('.service-card');
     cards.forEach(card => {
@@ -23,12 +21,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Tema escuro/claro com persistência
     const btn = document.getElementById('themeToggleBtn');
-    console.log('themeToggleBtn found:', btn);
     const applyTheme = (theme) => {
-        console.log('Applying theme:', theme);
         const isLight = theme === 'light';
         document.body.classList.toggle('theme-light', isLight);
-        console.log('Body classes:', document.body.className);
         if (btn) {
             btn.setAttribute('aria-pressed', String(isLight));
             const label = btn.querySelector('.theme-label');
@@ -41,12 +36,9 @@ document.addEventListener('DOMContentLoaded', function() {
     applyTheme(savedTheme);
 
     if (btn) {
-        console.log('Botão de tema encontrado e listener adicionado');
         btn.addEventListener('click', () => {
-            console.log('Botão de tema clicado');
             const currentTheme = document.body.classList.contains('theme-light') ? 'light' : 'dark';
             const next = currentTheme === 'light' ? 'dark' : 'light';
-            console.log('Trocando para:', next);
             localStorage.setItem('oppus_theme', next);
             applyTheme(next);
         });
