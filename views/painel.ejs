@@ -4314,7 +4314,10 @@
         </div>
         <% var _vendasOper = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _lucroOper = _vendasOper - Number(totalCost || 0);
            var _aj = (typeof ajustesLucro !== 'undefined' && ajustesLucro) ? ajustesLucro : { total: 0, itens: [], comAsterisco: false };
-           var _ajTotal = Number(_aj.total || 0); %>
+           var _ajTotal = Number(_aj.total || 0);
+           var _cf = (typeof custosFixos !== 'undefined' && custosFixos) ? custosFixos : { itens: [], mensal: 0, periodo: 0, dias: 30 };
+           var _cfMensal = Number(_cf.mensal || 0); var _cfPeriodo = Number(_cf.periodo || 0); var _cfDias = Number(_cf.dias || 30);
+           var _cfItens = Array.isArray(_cf.itens) ? _cf.itens : []; %>
         <div class="summary-card">
           <div class="summary-label">Lucro Líquido (período)</div>
           <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
@@ -4322,6 +4325,9 @@
           <button type="button" id="dashMetaTaxToggle" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">c/ imposto Meta (13,8%)</button>
           <% if (_ajTotal > 0) { %>
           <button type="button" id="dashAjusteToggle" style="margin-top:6px; display:block; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">considerar gasto adicional</button>
+          <% } %>
+          <% if (_cfPeriodo > 0) { %>
+          <button type="button" id="dashCustoFixoToggle" style="margin-top:6px; display:block; font-size:0.72rem; padding:4px 10px; border:1px solid #e0e0ea; border-radius:999px; background:#fff; cursor:pointer; color:#374151; font-weight:600;">considerar custo fixo</button>
           <% } %>
         </div>
         <% if (_ajTotal > 0) { %>
@@ -4332,6 +4338,83 @@
           <button type="button" id="dashAjusteDetalhe" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #fecaca; border-radius:999px; background:#fff5f5; cursor:pointer; color:#b91c1c; font-weight:600;">Detalhamento</button>
         </div>
         <% } %>
+        <div class="summary-card">
+          <div class="summary-label">Custos Fixos (mensal)</div>
+          <div class="summary-value" style="color:#dc2626;">R$ <%= _cfMensal.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-sub" id="dashCustoFixoSub" data-base="<%= _cfItens.length %> assinatura<%= _cfItens.length !== 1 ? 's' : '' %> · R$ <%= _cfPeriodo.toFixed(2).replace('.', ',') %> no período (<%= _cfDias %>d)" style="margin-top:6px;"><%= _cfItens.length %> assinatura<%= _cfItens.length !== 1 ? 's' : '' %> · R$ <%= _cfPeriodo.toFixed(2).replace('.', ',') %> no período (<%= _cfDias %>d)</div>
+          <button type="button" id="dashCustoFixoEditar" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #fecaca; border-radius:999px; background:#fff5f5; cursor:pointer; color:#b91c1c; font-weight:600;">Editar / Detalhar</button>
+        </div>
+        <div id="dashCustoFixoModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; padding:16px;">
+          <div style="background:#fff; border-radius:14px; max-width:520px; width:100%; max-height:84vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25);">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid #eef0f5;">
+              <div style="font-size:1.02rem; font-weight:800; color:#111827;">Custos fixos mensais</div>
+              <button type="button" id="dashCustoFixoClose" style="border:none; background:#f3f4f6; width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:1.1rem; color:#374151;">×</button>
+            </div>
+            <div style="padding:16px 18px;">
+              <div style="font-size:.82rem; color:#6b7280; margin-bottom:10px;">Assinaturas e custos recorrentes (R$/mês). O total é rateado por dia e descontado do lucro quando você liga <strong>"considerar custo fixo"</strong>.</div>
+              <div id="cfRows"></div>
+              <button type="button" id="cfAddRow" style="margin-top:8px; font-size:.8rem; padding:6px 12px; border:1px dashed #cbd5e1; border-radius:8px; background:#fff; cursor:pointer; color:#374151;">+ adicionar</button>
+              <div style="display:flex; justify-content:space-between; font-weight:800; color:#111827; padding-top:12px; margin-top:8px; border-top:1px solid #f1f2f6;">
+                <span>Total mensal</span>
+                <span id="cfTotal" style="color:#dc2626;">R$ 0,00</span>
+              </div>
+              <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:14px; align-items:center;">
+                <span id="cfMsg" style="font-size:.8rem; color:#6b7280;"></span>
+                <button type="button" id="cfSalvar" style="font-size:.85rem; padding:8px 16px; border:none; border-radius:8px; background:#16a34a; color:#fff; font-weight:700; cursor:pointer;">Salvar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <script>
+          (function(){
+            var editar = document.getElementById('dashCustoFixoEditar');
+            var modal = document.getElementById('dashCustoFixoModal');
+            if (!editar || !modal) return;
+            try { if (modal.parentNode !== document.body) document.body.appendChild(modal); } catch(_) {}
+            var closeBtn = document.getElementById('dashCustoFixoClose');
+            var rowsEl = document.getElementById('cfRows');
+            var totalEl = document.getElementById('cfTotal');
+            var msgEl = document.getElementById('cfMsg');
+            var addBtn = document.getElementById('cfAddRow');
+            var saveBtn = document.getElementById('cfSalvar');
+            var itens = <%- JSON.stringify(_cfItens).replace(/</g, '\\u003c') %> || [];
+            function brl(n){ return 'R$ ' + (Number(n)||0).toFixed(2).replace('.', ','); }
+            function recalc(){
+              var t = 0;
+              rowsEl.querySelectorAll('.cfRow').forEach(function(r){ var v = Number(String(r.querySelector('.cfVal').value||'').replace(',', '.'))||0; if (v>0) t+=v; });
+              if (totalEl) totalEl.textContent = brl(t);
+            }
+            function addRow(nome, valor){
+              var row = document.createElement('div');
+              row.className = 'cfRow';
+              row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px;';
+              row.innerHTML = '<input class="cfNome" type="text" placeholder="Nome (ex.: Vps)" style="flex:1; min-width:0; padding:7px 9px; border:1px solid #e5e7eb; border-radius:8px;">' +
+                '<input class="cfVal" type="text" inputmode="decimal" placeholder="0,00" style="width:110px; padding:7px 9px; border:1px solid #e5e7eb; border-radius:8px; text-align:right;">' +
+                '<button type="button" class="cfDel" title="remover" style="border:none; background:#fef2f2; color:#b91c1c; width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:1rem;">×</button>';
+              row.querySelector('.cfNome').value = nome || '';
+              row.querySelector('.cfVal').value = (valor!=null && valor!=='') ? String(valor).replace('.', ',') : '';
+              row.querySelector('.cfVal').addEventListener('input', recalc);
+              row.querySelector('.cfDel').addEventListener('click', function(){ row.remove(); recalc(); });
+              rowsEl.appendChild(row);
+            }
+            function render(){ rowsEl.innerHTML = ''; (itens.length ? itens : [{nome:'',valor:''}]).forEach(function(it){ addRow(it.nome, it.valor); }); recalc(); }
+            editar.addEventListener('click', function(){ render(); if (msgEl) msgEl.textContent=''; modal.style.display='flex'; });
+            if (closeBtn) closeBtn.addEventListener('click', function(){ modal.style.display='none'; });
+            modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display='none'; });
+            document.addEventListener('keydown', function(e){ if (e.key === 'Escape') modal.style.display='none'; });
+            if (addBtn) addBtn.addEventListener('click', function(){ addRow('', ''); });
+            if (saveBtn) saveBtn.addEventListener('click', function(){
+              var out = [];
+              rowsEl.querySelectorAll('.cfRow').forEach(function(r){ var nome=String(r.querySelector('.cfNome').value||'').trim(); var v=Number(String(r.querySelector('.cfVal').value||'').replace(',', '.'))||0; if (nome && v>0) out.push({nome:nome, valor:v}); });
+              try { saveBtn.disabled = true; } catch(_){}
+              if (msgEl) msgEl.textContent = 'Salvando...';
+              fetch('/api/painel/custos-fixos', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ itens: out }) })
+                .then(function(r){ return r.json().catch(function(){ return null; }); })
+                .then(function(j){ if (!j || j.ok !== true) throw new Error((j&&j.message)||'save_failed'); if (msgEl) msgEl.textContent='Salvo ✓ recarregando…'; try { var u=new URL(window.location.href); u.searchParams.set('nocache','1'); window.location.href=u.toString(); } catch(_){ location.reload(); } })
+                .catch(function(e){ if (msgEl) msgEl.textContent='Falha ao salvar.'; alert('Erro: '+(e&&e.message?e.message:e)); try { saveBtn.disabled=false; } catch(_){} });
+            });
+          })();
+        </script>
         <% if (_ajTotal > 0) { %>
         <div id="dashAjusteModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; padding:16px;">
           <div style="background:#fff; border-radius:14px; max-width:620px; width:100%; max-height:82vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25);">
@@ -4392,7 +4475,7 @@
           <div class="summary-sub" style="margin-top:6px;">Não configurado / sem dados</div>
           <% } %>
         </div>
-        <div class="summary-card" id="dashImpostoCard" data-vendas="<%= _vendasOper.toFixed(2) %>" data-lucrobruto="<%= _lucroOper.toFixed(2) %>" data-ads-base="<%= _fb.toFixed(2) %>" data-ads-tax="<%= _fbTax.toFixed(2) %>" data-ajuste="<%= _ajTotal.toFixed(2) %>">
+        <div class="summary-card" id="dashImpostoCard" data-vendas="<%= _vendasOper.toFixed(2) %>" data-lucrobruto="<%= _lucroOper.toFixed(2) %>" data-ads-base="<%= _fb.toFixed(2) %>" data-ads-tax="<%= _fbTax.toFixed(2) %>" data-ajuste="<%= _ajTotal.toFixed(2) %>" data-custofixo="<%= _cfPeriodo.toFixed(2) %>">
           <div class="summary-label">Imposto (período)</div>
           <div class="summary-value" id="dashImpostoValue" style="color:#dc2626;">R$ 0,00</div>
           <div class="summary-sub" style="margin-top:8px;">
@@ -4417,15 +4500,20 @@
             var adsBase = Number(card.getAttribute('data-ads-base') || 0) || 0;  // gasto Facebook
             var adsTax = Number(card.getAttribute('data-ads-tax') || 0) || 0;    // imposto Meta (13,8%)
             var ajuste = Number(card.getAttribute('data-ajuste') || 0) || 0;     // débito extraordinário do período
+            var custoFixo = Number(card.getAttribute('data-custofixo') || 0) || 0; // custo fixo rateado no período
             var metaBtn = document.getElementById('dashMetaTaxToggle');
             var ajusteBtn = document.getElementById('dashAjusteToggle');
+            var cfBtn = document.getElementById('dashCustoFixoToggle');
             var KEY = 'oppus_imposto_aliquota';
             var KEY_META = 'oppus_lucro_meta_tax'; // '1' = considera imposto Meta, '0' = não
             var KEY_AJUSTE = 'oppus_lucro_gasto_adicional'; // '1' = desconta o gasto adicional
+            var KEY_CUSTOFIXO = 'oppus_lucro_custo_fixo'; // '1' = desconta o custo fixo (rateado)
             var includeMeta = true;
             try { includeMeta = (localStorage.getItem(KEY_META) !== '0'); } catch(_){}
             var includeAjuste = false; // por padrão o gasto adicional NÃO entra no lucro
             try { includeAjuste = (localStorage.getItem(KEY_AJUSTE) === '1'); } catch(_){}
+            var includeCustoFixo = false; // por padrão o custo fixo NÃO entra no lucro
+            try { includeCustoFixo = (localStorage.getItem(KEY_CUSTOFIXO) === '1'); } catch(_){}
             function fmt(n){ return 'R$ ' + (Number(n) || 0).toFixed(2).replace('.', ','); }
             function apply(){
               var rate = Number(slider.value); if (!(rate >= 6 && rate <= 13)) rate = 6;
@@ -4434,7 +4522,8 @@
               var imposto = vendas * (rate / 100);
               var ads = adsBase + (includeMeta ? adsTax : 0);
               var ajusteAplicado = includeAjuste ? ajuste : 0;
-              var lucro = lucroBruto - imposto - ads - ajusteAplicado;
+              var custoFixoAplicado = includeCustoFixo ? custoFixo : 0;
+              var lucro = lucroBruto - imposto - ads - ajusteAplicado - custoFixoAplicado;
               if (impostoEl) impostoEl.textContent = '− ' + fmt(imposto);
               if (lucroEl) { lucroEl.textContent = fmt(lucro); lucroEl.style.color = lucro >= 0 ? '#16a34a' : '#dc2626'; }
               if (margemEl) {
@@ -4452,6 +4541,14 @@
               if (ajSub) ajSub.textContent = (includeAjuste ? 'Descontado do lucro' : 'NÃO descontado do lucro') + ' · ' + ajSub.getAttribute('data-base');
               var ajEstado = document.getElementById('dashAjusteEstado');
               if (ajEstado) ajEstado.textContent = includeAjuste ? 'Descontado do Lucro Líquido.' : 'Não descontado — ligue em "considerar gasto adicional".';
+              if (cfBtn) {
+                cfBtn.textContent = includeCustoFixo ? 'c/ custo fixo (' + fmt(custoFixo) + ')' : 'considerar custo fixo';
+                cfBtn.style.background = includeCustoFixo ? '#fff5f5' : '#fff';
+                cfBtn.style.borderColor = includeCustoFixo ? '#fecaca' : '#e0e0ea';
+                cfBtn.style.color = includeCustoFixo ? '#b91c1c' : '#374151';
+              }
+              var cfSub = document.getElementById('dashCustoFixoSub');
+              if (cfSub) cfSub.textContent = (includeCustoFixo ? 'Descontado do lucro' : 'NÃO descontado do lucro') + ' · ' + cfSub.getAttribute('data-base');
               if (metaBtn) {
                 metaBtn.textContent = includeMeta ? 'c/ imposto Meta (13,8%)' : 's/ imposto Meta';
                 metaBtn.style.background = includeMeta ? '#f5f3ff' : '#fff';
@@ -4464,6 +4561,7 @@
             slider.addEventListener('input', apply);
             if (metaBtn) metaBtn.addEventListener('click', function(){ includeMeta = !includeMeta; try { localStorage.setItem(KEY_META, includeMeta ? '1' : '0'); } catch(_){} apply(); });
             if (ajusteBtn) ajusteBtn.addEventListener('click', function(){ includeAjuste = !includeAjuste; try { localStorage.setItem(KEY_AJUSTE, includeAjuste ? '1' : '0'); } catch(_){} apply(); });
+            if (cfBtn) cfBtn.addEventListener('click', function(){ includeCustoFixo = !includeCustoFixo; try { localStorage.setItem(KEY_CUSTOFIXO, includeCustoFixo ? '1' : '0'); } catch(_){} apply(); });
             apply();
           })();
         </script>

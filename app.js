@@ -10543,6 +10543,23 @@ async function ajustesDeLucroDoPeriodo(startMs, endMs) {
   return out;
 }
 
+// Custos fixos mensais (assinaturas recorrentes) — settings _id 'custos_fixos',
+// formato { itens: [{ nome, valor }] }. valor em R$/mês.
+async function loadCustosFixos() {
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    const doc = col ? await col.findOne({ _id: 'custos_fixos' }, { projection: { _id: 0, itens: 1 } }) : null;
+    const raw = (doc && Array.isArray(doc.itens)) ? doc.itens : [];
+    const itens = raw.map((it) => ({
+      nome: String((it && it.nome) || '').trim(),
+      valor: Math.round((Number(String((it && it.valor) != null ? it.valor : '').replace(',', '.')) || 0) * 100) / 100
+    })).filter((it) => it.nome && it.valor > 0);
+    const mensal = Math.round(itens.reduce((a, it) => a + it.valor, 0) * 100) / 100;
+    return { itens, mensal };
+  } catch (_) { return { itens: [], mensal: 0 }; }
+}
+
 // Chave de dia (YYYY-MM-DD) no fuso BRT, para agrupar séries diárias.
 function brtDayKey(dateLike) {
   const t = dateLike ? new Date(dateLike).getTime() : NaN;
@@ -43906,7 +43923,20 @@ app.get('/painel', requireAdmin, async (req, res) => {
       ajustesLucro = await ajustesDeLucroDoPeriodo(_pr.start ? _pr.start.getTime() : NaN, _pr.endExclusive ? _pr.endExclusive.getTime() : NaN);
     } catch (_) {}
 
-    const __painelRenderData = { view, ajustesLucro, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    // Custos fixos mensais (assinaturas): total rateado por dia no período selecionado.
+    let custosFixos = { itens: [], mensal: 0, periodo: 0, dias: 30 };
+    try {
+      const _cf = await loadCustosFixos();
+      const _prc = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
+      let _dias = 30;
+      if (_prc && _prc.start && _prc.endExclusive) {
+        _dias = Math.max(1, Math.round((_prc.endExclusive.getTime() - _prc.start.getTime()) / 86400000));
+      }
+      const _periodo = Math.round((_cf.mensal / 30) * _dias * 100) / 100;
+      custosFixos = { itens: _cf.itens, mensal: _cf.mensal, periodo: _periodo, dias: _dias };
+    } catch (_) {}
+
+    const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
@@ -44100,6 +44130,27 @@ app.post('/api/painel/provider-currencies', requireAdmin, async (req, res) => {
     const reloaded = await loadProviderCurrencies();
     __providerCurrenciesCache = { atMs: Date.now(), values: reloaded };
     return res.json({ ok: true, values: reloaded });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
+  }
+});
+
+// Custos fixos mensais (assinaturas) — lista editável {nome, valor}, substitui tudo.
+app.post('/api/painel/custos-fixos', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const arr = Array.isArray(body.itens) ? body.itens : [];
+    const itens = [];
+    for (const it of arr) {
+      const nome = String((it && it.nome) || '').trim().slice(0, 80);
+      const valor = Math.round((Number(String((it && it.valor) != null ? it.valor : '').replace(',', '.')) || 0) * 100) / 100;
+      if (nome && valor > 0) itens.push({ nome, valor });
+    }
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('settings');
+    await col.updateOne({ _id: 'custos_fixos' }, { $set: { itens, updatedAt: new Date().toISOString() } }, { upsert: true });
+    const mensal = Math.round(itens.reduce((a, x) => a + x.valor, 0) * 100) / 100;
+    return res.json({ ok: true, itens, mensal });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
   }
