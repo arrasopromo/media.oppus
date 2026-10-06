@@ -1212,6 +1212,19 @@
     .service-card.card-curtidas { box-shadow: 0 20px 40px -12px rgba(255, 46, 147, 0.1) !important; }
     .service-card.card-visualizacoes { box-shadow: 0 20px 40px -12px rgba(122, 44, 255, 0.1) !important; }
 
+    /* Modo escuro: cards escuros (padrão do site) em vez de branco, com textos claros */
+    body:not(.theme-light) #engajamentoServiceCards .service-card {
+      background: #1A1A2E;
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.55);
+    }
+    body:not(.theme-light) #engajamentoServiceCards .card-subtitle,
+    body:not(.theme-light) #engajamentoServiceCards .card-security,
+    body:not(.theme-light) #engajamentoServiceCards .card-hint,
+    body:not(.theme-light) #engajamentoServiceCards .card-price span:first-child {
+      color: #cbd5e1;
+    }
+
     /* Tablet: 2 colunas (evita cards espremidos entre 640px e 1023px) */
     @media (max-width: 1023px) and (min-width: 640px) {
       #engajamentoServiceCards {

@@ -239,3 +239,12 @@ body.theme-light .why-us-card {
         max-width: 100%; /* Increased image size on mobile */
     }
 }
+
+/* ===== Modo escuro: contraste dos títulos/badges das seções ===== */
+body:not(.theme-light) .why-us-pill {
+    background: rgba(168, 85, 247, 0.22);
+    color: #d8b4fe;
+}
+body:not(.theme-light) .why-us-subtitle {
+    color: #cbd5e1;
+}
