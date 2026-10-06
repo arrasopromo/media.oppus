@@ -44841,7 +44841,7 @@ const PROVIDER_CURRENCY_DEFAULTS = {
   bulkmedya: 'USD', worldofsmm: 'USD', n1panel: 'USD', dripfeedpanel: 'USD',
   // Real (painéis brasileiros)
   nuvra: 'BRL', fornecedor_social: 'BRL', topfama: 'BRL', worldsmm: 'BRL',
-  hiperseguidores: 'BRL', revendaexclusiva: 'BRL', smmpix: 'BRL', fama24h: 'BRL'
+  hiperseguidores: 'BRL', revendaexclusiva: 'BRL', smmpix: 'BRL'
 };
 const loadProviderCurrencies = async () => {
   const out = { ...PROVIDER_CURRENCY_DEFAULTS };
