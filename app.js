@@ -18794,22 +18794,28 @@ async function computeOrderRealCost(order, opts = {}) {
   const payloadSets = {};
   for (const s of sources) {
     let ch = refetch ? null : _chargeOfStatusPayload(s.statusPayload);
+    let chCurrency = (s.statusPayload && (s.statusPayload.currency || s.statusPayload.Currency)) || null;
     if (ch == null && live) {
       const sp = await _fetchProviderStatusLive(s.provider, s.orderId, order, s.slot);
       ch = sp ? _parseChargeNum(sp.charge ?? sp.Charge ?? sp.cost ?? sp.Cost ?? sp.price ?? sp.Price) : null;
+      if (sp && (sp.currency || sp.Currency)) chCurrency = sp.currency || sp.Currency;
       // Cacheia o payload no próprio slot — próximas leituras não precisam ir ao fornecedor.
       if (sp && s.slot && !s.slot.endsWith('_multi')) {
         payloadSets[`${s.slot}.statusPayload`] = sp;
         payloadSets[`${s.slot}.lastStatusAt`] = new Date().toISOString();
       }
       // Fornecedor fora do ar / chave errada não pode zerar um charge já conhecido.
-      if (ch == null) ch = _chargeOfStatusPayload(s.statusPayload);
+      if (ch == null) { ch = _chargeOfStatusPayload(s.statusPayload); chCurrency = (s.statusPayload && (s.statusPayload.currency || s.statusPayload.Currency)) || chCurrency; }
     }
     if (ch != null && ch >= 0) {
-      total += ch; counted++;
-      if (s.role === 'bump') { bumps += ch; bumpCounted++; }
-      else { base += ch; baseCounted++; baseQty += s.qtySent; }
-      breakdown.push({ provider: s.provider, orderId: s.orderId, charge: ch, role: s.role, slot: s.slot, qtySent: s.qtySent || null });
+      // Fornecedor que cobra em DÓLAR (ex.: Followiz, SMMHustle, JAP) → converte pra BRL
+      // pela cotação do dia. Sem isto o charge em USD entrava como se fosse R$ (custo ~5x menor).
+      let chBrl = ch;
+      try { const conv = await providerChargeToBrl(s.provider, ch, chCurrency); if (conv && conv.brl != null) chBrl = conv.brl; } catch (_) {}
+      total += chBrl; counted++;
+      if (s.role === 'bump') { bumps += chBrl; bumpCounted++; }
+      else { base += chBrl; baseCounted++; baseQty += s.qtySent; }
+      breakdown.push({ provider: s.provider, orderId: s.orderId, charge: chBrl, chargeRaw: ch, currency: chCurrency || null, role: s.role, slot: s.slot, qtySent: s.qtySent || null });
     }
   }
   const r2 = (n) => Math.round(n * 100) / 100;
