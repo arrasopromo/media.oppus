@@ -5723,7 +5723,6 @@
                         <div class="refil2ForceMenu" role="menu">
                           <button type="button" class="refil2ForceOpt" data-via="nuvra_br" role="menuitem">Forçar BR Nuvra <small><%= (process.env.NUVRA_BR_FORCE_SERVICE_ID || '159') %></small></button>
                           <button type="button" class="refil2ForceOpt" data-via="smmhustle" role="menuitem">Forçar SMMHustle <small><%= (process.env.SMMHUSTLE_FORCE_SERVICE_ID || '367') %></small></button>
-                          <button type="button" class="refil2ForceOpt" data-via="followiz" role="menuitem">Forçar Followiz <small><%= (process.env.FOLLOWIZ_FORCE_SERVICE_ID || '1023') %></small></button>
                         </div>
                       </div>
                     </td>
@@ -7182,7 +7181,6 @@
                 } catch (_) {}
                 if (forceVia === 'smmhustle') msg = msg.replace('Forçar orderid agora', 'Forçar no SMMHustle agora') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele.';
                 if (forceVia === 'nuvra_br') msg = msg.replace('Forçar orderid agora', 'Forçar BR na Nuvra agora (serviço <%= (process.env.NUVRA_BR_FORCE_SERVICE_ID || "159") %>)') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele (serviço BR, com refil).';
-                if (forceVia === 'followiz') msg = msg.replace('Forçar orderid agora', 'Forçar no Followiz agora (serviço <%= (process.env.FOLLOWIZ_FORCE_SERVICE_ID || "1023") %>)') + '\n\nO pedido novo vira o último pedido deste perfil: as próximas reposições vão para ele (Followiz BR, com refil).';
                 if (!confirm(msg)) return;
                 forceBtn.disabled = true;
                 forceBtn.style.opacity = '0.7';
@@ -7224,8 +7222,8 @@
                   } catch (_) {}
                   if (oid) {
                     var viaResp = (dataF && dataF.via) || '';
-                    var provNome = (viaResp === 'followiz' || (dataF && dataF.provider === 'followiz')) ? 'Followiz (serviço ' + (dataF.serviceId || '') + ')' : ((dataF && dataF.provider === 'smmhustle') ? 'SMMHustle' : (viaResp === 'nuvra_br' ? 'Nuvra BR (serviço ' + (dataF.serviceId || '') + ')' : 'Nuvra'));
-                    forceBtn.textContent = (viaResp === 'followiz' || (dataF && dataF.provider === 'followiz')) ? ('Followiz (' + oid + ')') : ((dataF && dataF.provider === 'smmhustle') ? ('SMMHustle (' + oid + ')') : (viaResp === 'nuvra_br' ? ('BR Nuvra (' + oid + ')') : ('Enviado (' + oid + ')')));
+                    var provNome = (dataF && dataF.provider === 'smmhustle') ? 'SMMHustle' : (viaResp === 'nuvra_br' ? 'Nuvra BR (serviço ' + (dataF.serviceId || '') + ')' : 'Nuvra');
+                    forceBtn.textContent = (dataF && dataF.provider === 'smmhustle') ? ('SMMHustle (' + oid + ')') : (viaResp === 'nuvra_br' ? ('BR Nuvra (' + oid + ')') : ('Enviado (' + oid + ')'));
                     forceBtn.title = 'Pedido ' + provNome + ': ' + oid;
                   } else {
                     forceBtn.textContent = 'Enviado';
