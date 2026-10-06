@@ -9226,10 +9226,12 @@ app.get('/inicio', (req, res) => {
 app.get('/engajamento', async (req, res) => {
   console.log('📈 Acessando rota /engajamento');
   const serviceVisibility = await loadServiceVisibility();
-  res.render('engajamento', { 
-    PIXEL_ID: process.env.PIXEL_ID || '', 
+  const isFamaApp = /famaapp/i.test(String((req.headers && req.headers.host) || req.hostname || ''));
+  res.render('engajamento', {
+    PIXEL_ID: process.env.PIXEL_ID || '',
     queryParams: req.query,
-    serviceVisibility
+    serviceVisibility,
+    isFamaApp
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
@@ -21737,7 +21739,8 @@ app.get('/:slug', async (req, res, next) => {
         });
     }
     if (slug === 'engajamento') {
-        return res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true });
+        const isFamaApp = /famaapp/i.test(String((req.headers && req.headers.host) || req.hostname || ''));
+        return res.render('engajamento', { PIXEL_ID: process.env.PIXEL_ID || '', ENG_MODE: true, isFamaApp });
     }
     if (slug === 'servicos-instagram') {
         return res.render('servicos-instagram', { PIXEL_ID: process.env.PIXEL_ID || '' });
