@@ -39989,6 +39989,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const serviceVisibility = await loadServiceVisibility();
       const serviceTypeServiceIds = await loadServiceTypeServiceIds();
       const serviceTypeProviders = await loadServiceTypeProviders();
+      const providerCurrencies = await loadProviderCurrencies();
       const defs = {
         seguidores: [
           { key: 'mistos', label: 'Seguidores Mistos' },
@@ -40004,7 +40005,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           { key: 'visualizacoes_reels', label: 'Visualizações Reels' }
         ]
       };
-      return res.render('painel', { view: 'service_types', serviceVisibility, serviceTypeDefs: defs, serviceTypeServiceIds, serviceTypeProviders });
+      return res.render('painel', { view: 'service_types', serviceVisibility, serviceTypeDefs: defs, serviceTypeServiceIds, serviceTypeProviders, providerCurrencies });
     }
 
     const paidStatusRegex = '\\b(pago|paid|settled|captured|authorized|succeeded|aprovado|confirmado)\\b';
@@ -44076,6 +44077,34 @@ app.post('/api/painel/service-type-providers', requireAdmin, async (req, res) =>
   }
 });
 
+// Moeda por fornecedor (R$ / US$) — usada na captura de custo do /status.
+app.post('/api/painel/provider-currencies', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    const next = (body && body.values && typeof body.values === 'object') ? body.values : {};
+    const clean = {};
+    for (const k of Object.keys(next || {})) {
+      const prov = normalizeSmmProvider(String(k || '').trim());
+      const cur = String(next[k] || '').trim().toUpperCase();
+      if (!prov) continue;
+      if (cur === 'USD' || cur === 'BRL') clean[prov] = cur;
+    }
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    await settingsCol.updateOne(
+      { _id: 'provider_currencies' },
+      { $set: { values: clean, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    __providerCurrenciesCache = { atMs: Date.now(), values: null };
+    const reloaded = await loadProviderCurrencies();
+    __providerCurrenciesCache = { atMs: Date.now(), values: reloaded };
+    return res.json({ ok: true, values: reloaded });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
+  }
+});
+
 app.post('/api/painel/refil2/audit', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
@@ -44802,8 +44831,51 @@ async function getUsdBrlRate() {
   if (Number.isFinite(envRate) && envRate > 0) return { atMs: now, rate: envRate, source: 'env USD_BRL_RATE' };
   return __fxUsdBrl.rate ? __fxUsdBrl : { atMs: now, rate: null, source: 'indisponivel' };
 }
-// Moeda da CONTA no fornecedor (action=balance) — usada quando o /status não traz
-// "currency". Cache de 6h por fornecedor.
+// Moeda configurada por fornecedor no Gerenciamento de Tipo. É a fonte autoritativa
+// pra conversão de custo: o /status nem sempre traz "currency", então o admin define
+// aqui (followiz = US$, nuvra = R$, etc.). Defaults cobrem os fornecedores conhecidos.
+const PROVIDER_CURRENCY_DEFAULTS = {
+  // Dólar (painéis internacionais)
+  followiz: 'USD', smmhustle: 'USD', justanotherpanel: 'USD', peakerr: 'USD',
+  smmraja: 'USD', smmcost: 'USD', smmturk: 'USD', bulkfollows: 'USD',
+  bulkmedya: 'USD', worldofsmm: 'USD', n1panel: 'USD', dripfeedpanel: 'USD',
+  // Real (painéis brasileiros)
+  nuvra: 'BRL', fornecedor_social: 'BRL', topfama: 'BRL', worldsmm: 'BRL',
+  hiperseguidores: 'BRL', revendaexclusiva: 'BRL', smmpix: 'BRL', fama24h: 'BRL'
+};
+const loadProviderCurrencies = async () => {
+  const out = { ...PROVIDER_CURRENCY_DEFAULTS };
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const settingsCol = await getCollection('settings');
+    const doc = settingsCol ? await settingsCol.findOne({ _id: 'provider_currencies' }, { projection: { _id: 0, values: 1 } }) : null;
+    const values = (doc && doc.values && typeof doc.values === 'object') ? doc.values : {};
+    for (const k of Object.keys(values)) {
+      const cur = String(values[k] || '').trim().toUpperCase();
+      if (cur === 'USD' || cur === 'BRL') out[normalizeSmmProvider(k)] = cur;
+    }
+  } catch (_) {}
+  return out;
+};
+let __providerCurrenciesCache = { atMs: 0, values: null };
+const getProviderCurrenciesCached = async () => {
+  try {
+    const now = Date.now();
+    if (__providerCurrenciesCache.values && (now - __providerCurrenciesCache.atMs) < 30000) return __providerCurrenciesCache.values;
+    const values = await loadProviderCurrencies();
+    __providerCurrenciesCache = { atMs: now, values };
+    return values;
+  } catch (_) {
+    return __providerCurrenciesCache.values || { ...PROVIDER_CURRENCY_DEFAULTS };
+  }
+};
+async function getProviderCurrency(provider) {
+  const p = normalizeSmmProvider(provider);
+  try { const m = await getProviderCurrenciesCached(); if (m && m[p]) return m[p]; } catch (_) {}
+  return PROVIDER_CURRENCY_DEFAULTS[p] || null;
+}
+// Moeda da CONTA no fornecedor (action=balance) — usada quando nem a config nem o
+// /status trazem "currency". Cache de 6h por fornecedor.
 const __providerCurrencyCache = {};
 async function getProviderAccountCurrency(provider) {
   const p = normalizeSmmProvider(provider);
@@ -44821,7 +44893,10 @@ async function getProviderAccountCurrency(provider) {
 async function providerChargeToBrl(provider, charge, currencyFromStatus) {
   const raw = Number(String(charge == null ? '' : charge).replace(',', '.'));
   if (!Number.isFinite(raw)) return { raw: null, currency: currencyFromStatus || null, brl: null, rate: null, fxSource: null };
-  let currency = String(currencyFromStatus || '').trim().toUpperCase();
+  // Prioridade: moeda configurada no Gerenciamento de Tipo > currency do /status > conta.
+  let currency = '';
+  try { currency = String((await getProviderCurrency(provider)) || '').trim().toUpperCase(); } catch (_) {}
+  if (!currency) currency = String(currencyFromStatus || '').trim().toUpperCase();
   if (!currency) currency = (await getProviderAccountCurrency(provider)) || '';
   if (!currency || currency === 'BRL' || currency === 'R$') return { raw, currency: currency || 'BRL?', brl: Math.round(raw * 100) / 100, rate: 1, fxSource: currency ? 'mesma moeda' : 'moeda não informada (assumido BRL)' };
   if (currency === 'USD' || currency === '$') {

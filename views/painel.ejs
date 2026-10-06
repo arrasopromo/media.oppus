@@ -3565,6 +3565,47 @@
         </div>
       </div>
 
+      <%
+        const curMap = (typeof providerCurrencies !== 'undefined' && providerCurrencies && typeof providerCurrencies === 'object') ? providerCurrencies : {};
+        const curOf = (p) => { const v = String(curMap[p] || '').trim().toUpperCase(); return (v === 'USD' || v === 'BRL') ? v : 'BRL'; };
+        const CUR_PROVIDERS = ALL_PROVIDERS.slice();
+      %>
+      <div id="providerCurrencies" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:800; color:#111827;">Moeda dos fornecedores</div>
+            <div style="font-size:0.85rem; color:#6b7280;">Em que moeda cada fornecedor cobra. Usada pra converter o custo do <code>/status</code> pra reais (US$ → R$ pela cotação do dia).</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div id="providerCurrenciesStatus" style="font-size:0.85rem; color:#6b7280;"></div>
+            <button type="button" id="providerCurrenciesSaveBtn" class="unknown-btn" style="background:#16a34a;">Salvar moedas</button>
+          </div>
+        </div>
+        <div class="panel-table-scroll" style="margin-top:12px; overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:360px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Fornecedor</th>
+                <th style="text-align:left; padding:8px; border-bottom:1px solid #eee;">Moeda</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% CUR_PROVIDERS.forEach(p => { %>
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6; color:#111827;"><%= p %></td>
+                  <td style="padding:8px; border-bottom:1px solid #f3f4f6;">
+                    <select class="providerCurrencySel" data-provider="<%= p %>" style="min-width:150px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px;">
+                      <option value="BRL" <%= curOf(p) === 'BRL' ? 'selected' : '' %>>R$ Real (BRL)</option>
+                      <option value="USD" <%= curOf(p) === 'USD' ? 'selected' : '' %>>US$ Dólar (USD)</option>
+                    </select>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="panelBalances" style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
           <div>
@@ -3847,6 +3888,45 @@
               .finally(function(){
                 try { btn.disabled = false; } catch(_) {}
               });
+          });
+
+          // ---- Moeda por fornecedor ----
+          function collectCurrencies(){
+            var out = {};
+            var nodes = document.querySelectorAll('.providerCurrencySel');
+            for (var i=0;i<nodes.length;i++){
+              var n = nodes[i];
+              if (!n) continue;
+              var prov = String(n.getAttribute('data-provider') || '').trim();
+              var cur = String(n.value || '').trim().toUpperCase();
+              if (!prov) continue;
+              if (cur === 'USD' || cur === 'BRL') out[prov] = cur;
+            }
+            return out;
+          }
+          var curBtn = el('providerCurrenciesSaveBtn');
+          var curStatusEl = el('providerCurrenciesStatus');
+          function setCurStatus(t){ try { if (curStatusEl) curStatusEl.textContent = t || ''; } catch(_){} }
+          if (curBtn) curBtn.addEventListener('click', function(){
+            try { curBtn.disabled = true; } catch(_) {}
+            setCurStatus('Salvando...');
+            fetch('/api/painel/provider-currencies', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ values: collectCurrencies() })
+            }).then(function(r){
+              return r.json().catch(function(){ return null; }).then(function(j){ return { status: r.status, json: j }; });
+            }).then(function(out){
+              var data = out && out.json ? out.json : null;
+              if (!data || data.ok !== true) throw new Error((data && data.message) ? data.message : 'save_failed');
+              setCurStatus('Moedas salvas ✓');
+            }).catch(function(e){
+              setCurStatus('Falha ao salvar.');
+              alert('Erro: ' + (e && e.message ? e.message : e));
+            }).finally(function(){
+              try { curBtn.disabled = false; } catch(_) {}
+            });
           });
         })();
       </script>
