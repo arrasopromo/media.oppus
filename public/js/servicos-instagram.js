@@ -23,7 +23,10 @@
 })();
 
 document.addEventListener('DOMContentLoaded', function() {
-  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas');
+  const isCommentsContext = window.location.pathname.startsWith('/servicos-comentarios');
+  // Comentários herdam TODO o fluxo de post das curtidas (picker @→posts, kind 'likes').
+  // Só divergem no preço, na categoria enviada (comentarios) e nos rótulos.
+  const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas') || isCommentsContext;
   const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
   const serviceVisibility = (function(){
     try {
@@ -39,7 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
       return { seguidores: [], curtidas: [], visualizacoes: [] };
     }
   })();
-  const serviceCategoryKey = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+  const serviceCategoryKey = isCommentsContext ? 'comentarios' : (isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores'));
   // Formata a data de um post de forma robusta: aceita unix em segundos, em ms OU string ISO
   // (o Apify devolve ISO). Evita o "Invalid Date" que aparecia embaixo dos posts no order bump.
   function fmtPostDateBR(takenAt) {
@@ -366,7 +369,19 @@ document.addEventListener('DOMContentLoaded', function() {
     ]
   };
 
-  const tabela = isViewsContext ? tabelaVisualizacoes : (isCurtidasContext ? tabelaCurtidas : tabelaSeguidores);
+  const tabelaComentarios = {
+    comentarios: [
+      { q: 10, p: 'R$ 15,00' },
+      { q: 25, p: 'R$ 37,50' },
+      { q: 50, p: 'R$ 75,00' },
+      { q: 100, p: 'R$ 150,00' },
+      { q: 250, p: 'R$ 375,00' },
+      { q: 500, p: 'R$ 750,00' },
+      { q: 1000, p: 'R$ 1.500,00' },
+    ]
+  };
+
+  const tabela = isCommentsContext ? tabelaComentarios : (isViewsContext ? tabelaVisualizacoes : (isCurtidasContext ? tabelaCurtidas : tabelaSeguidores));
 
   const promoPricing = {
     likes: { old: 'R$ 49,90', price: 'R$ 9,90', discount: 80 },
@@ -1341,7 +1356,7 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Nome de usuário do Instagram não identificado.');
       }
 
-      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+      const serviceCategory = isCommentsContext ? 'comentarios' : (isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores'));
 
       const tipo = tipoSelect ? tipoSelect.value : '';
       const qtdSelectVal = qtdSelect ? qtdSelect.value : '0';
@@ -1578,8 +1593,8 @@ document.addEventListener('DOMContentLoaded', function() {
           if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
         }
 
-        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
-          const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+        if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes' || serviceCategory === 'comentarios') {
+          const baseKind = serviceCategory === 'visualizacoes' ? 'views' : 'likes';
           const links = getLinksForKind(baseKind);
           if (links.length) {
             payload.additionalInfo.push({ key: 'post_link', value: links[0] });
@@ -1885,6 +1900,10 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getLabelForTipo(tipo) {
+    if (isCommentsContext) {
+      const mapCom = { comentarios: 'Comentários' };
+      return mapCom[tipo] || tipo;
+    }
     if (isViewsContext) {
       const mapViews = {
         visualizacoes_reels: 'Visualizações Reels'
@@ -1908,6 +1927,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getUnitForTipo(tipo) {
+    if (isCommentsContext || tipo === 'comentarios') return 'comentários';
     if (isViewsContext || tipo === 'visualizacoes_reels') return 'visualizações';
     return isCurtidasContext ? 'curtidas' : 'seguidores';
   }
@@ -2361,6 +2381,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return '';
     }
 
+    if (isCommentsContext) { return html.replace(/seguidores/g, 'comentários').replace(/Seguidores/g, 'Comentários'); }
     if (isCurtidasContext) { return html.replace(/seguidores/g, 'curtidas').replace(/Seguidores/g, 'Curtidas'); }
     return html;
   }
@@ -4113,7 +4134,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // direto para o Pix gerado, em vez de reiniciar todo o checkout.
   function _pixSessionKey() {
     try {
-      var cat = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+      var cat = isCommentsContext ? 'comentarios' : (isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores'));
       return 'oppus_pix_session_' + cat;
     } catch (_) { return 'oppus_pix_session'; }
   }
@@ -4448,7 +4469,7 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Nome de usuário do Instagram não identificado.');
       }
 
-      const serviceCategory = isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores');
+      const serviceCategory = isCommentsContext ? 'comentarios' : (isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores'));
 
       const payload = {
         correlationID,
@@ -4576,8 +4597,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
           }
 
-          if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes') {
-            const baseKind = serviceCategory === 'curtidas' ? 'likes' : 'views';
+          if (serviceCategory === 'curtidas' || serviceCategory === 'visualizacoes' || serviceCategory === 'comentarios') {
+            const baseKind = serviceCategory === 'visualizacoes' ? 'views' : 'likes';
             const links = getLinksForKind(baseKind);
             if (links.length) {
               payload.additionalInfo.push({ key: 'post_link', value: links[0] });

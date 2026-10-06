@@ -11962,14 +11962,33 @@ app.get('/servicos-curtidas', async (req, res) => {
   try { await markRecoveryEmailClickIfNeeded(req); } catch (_) {}
   trackPageView(req, '/servicos-curtidas');
   const serviceVisibility = await loadServiceVisibility();
-  res.render('servicos-curtidas', { 
-    PIXEL_ID: process.env.PIXEL_ID || '', 
+  res.render('servicos-curtidas', {
+    PIXEL_ID: process.env.PIXEL_ID || '',
     queryParams: req.query,
     serviceVisibility
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar servicos-curtidas:', err.message);
       return res.status(500).send('Erro ao renderizar servicos-curtidas');
+    }
+    res.type('text/html');
+    res.send(html);
+  });
+});
+
+app.get('/servicos-comentarios', async (req, res) => {
+  console.log('💬 Acessando rota /servicos-comentarios');
+  try { await markRecoveryEmailClickIfNeeded(req); } catch (_) {}
+  trackPageView(req, '/servicos-comentarios');
+  const serviceVisibility = await loadServiceVisibility();
+  res.render('servicos-comentarios', {
+    PIXEL_ID: process.env.PIXEL_ID || '',
+    queryParams: req.query,
+    serviceVisibility
+  }, (err, html) => {
+    if (err) {
+      console.error('❌ Erro ao renderizar servicos-comentarios:', err.message);
+      return res.status(500).send('Erro ao renderizar servicos-comentarios');
     }
     res.type('text/html');
     res.send(html);
@@ -19856,10 +19875,11 @@ async function processOrderFulfillment(record, col, req) {
             categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
         }
     }
-    const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
-    const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
+    const isCommentsBase = categoriaServ === 'comentarios' || categoriaServ === 'comentario';
+    const isViewsBase = !isCommentsBase && (categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo));
+    const isCurtidasBase = !isCommentsBase && (pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras');
     const isCurtidasOrganicosStrict = /organicos/i.test(tipo) && categoriaServ === 'curtidas';
-    const isFollowersService = categoriaServ === 'seguidores' || (!isViewsBase && !isCurtidasBase && /seguidores/i.test(String(tipo || '')));
+    const isFollowersService = !isCommentsBase && (categoriaServ === 'seguidores' || (!isViewsBase && !isCurtidasBase && /seguidores/i.test(String(tipo || ''))));
 
     // ── FILA DE SEGUIDORES ────────────────────────────────────────────────
     // Segura o despacho enquanto houver outro pedido de seguidores do MESMO
@@ -19929,7 +19949,7 @@ async function processOrderFulfillment(record, col, req) {
         }
         return '';
     };
-    const desiredMainKind = (isViewsBase || isCurtidasBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
+    const desiredMainKind = (isViewsBase || isCurtidasBase || isCommentsBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
     const existingKind = inferExistingMainKind();
     const blockMainDispatch = !!(existingKind && desiredMainKind && existingKind !== desiredMainKind);
     if (blockMainDispatch) {
@@ -19981,6 +20001,10 @@ async function processOrderFulfillment(record, col, req) {
             mainDispatchKey = 'curtidas_brasileiras'; mainDispatchFallbackId = (Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0 ? envCurtidasBrasileiras : 679);
         }
         linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+    } else if (isCommentsBase) {
+        mainDispatchCtx = 'comentarios'; mainDispatchKey = 'comentarios';
+        mainDispatchFallbackId = Number(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90') || 90;
+        linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['link'] || additionalInfoMap['orderbump_post_comments'] || instaUser;
     } else {
         mainDispatchCtx = 'seguidores';
         if (/^mistos$/i.test(tipo)) {
@@ -20058,7 +20082,7 @@ async function processOrderFulfillment(record, col, req) {
     // tentar usar o último post disponível em validated_insta_users.
     // NÃO vale para upsell: ali o post é o do pedido de referência (tratado acima).
     // O cache devolve o post mais recente do perfil, que já causou entrega no post errado.
-    if ((isViewsBase || isCurtidasBase) && record?.upsell?.isUpsell !== true && (!linkToSend || linkToSend === instaUser) && instaUser) {
+    if ((isViewsBase || isCurtidasBase || isCommentsBase) && record?.upsell?.isUpsell !== true && (!linkToSend || linkToSend === instaUser) && instaUser) {
         try {
             const { getCollection } = require('./mongodbClient');
             const vu = await getCollection('validated_insta_users');
@@ -20409,7 +20433,7 @@ async function processOrderFulfillment(record, col, req) {
                         if (code.length > 15) code = code.slice(0, 11);
                         return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
                     };
-                    const linkForFama = (isViewsBase || isCurtidasBase) ? sanitizeLink(linkToSend) : String(linkToSend || '').replace(/[`\s]/g, '').trim();
+                    const linkForFama = (isViewsBase || isCurtidasBase || isCommentsBase) ? sanitizeLink(linkToSend) : String(linkToSend || '').replace(/[`\s]/g, '').trim();
                     if (!linkForFama) {
                         await col.updateOne(filter, { $set: { 'fama24h.status': 'invalid_link', 'fama24h.error': { code: 'invalid_link' }, 'fama24h.requestPayload': { service: serviceId, link: String(linkToSend || ''), quantity: qtd }, 'fama24h.requestedAt': new Date().toISOString() } });
                         return;
@@ -22748,8 +22772,9 @@ app.post('/api/openpix/webhook', async (req, res) => {
               categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
             }
           }
-          const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
-          const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
+          const isCommentsBase = categoriaServ === 'comentarios' || categoriaServ === 'comentario';
+          const isViewsBase = !isCommentsBase && (categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo));
+          const isCurtidasBase = !isCommentsBase && (pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras');
           const isCurtidasOrganicosStrict = /organicos/i.test(tipo) && categoriaServ === 'curtidas';
           let serviceId = null;
           let linkToSend = instaUser;
@@ -22774,6 +22799,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
                   mainDispatchKey = 'curtidas_brasileiras'; mainDispatchFallbackId = 679;
               }
               linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_likes'] || additionalInfoMap['orderbump_post_views'] || instaUser;
+          } else if (isCommentsBase) {
+              mainDispatchCtx = 'comentarios'; mainDispatchKey = 'comentarios';
+              mainDispatchFallbackId = Number(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90') || 90;
+              linkToSend = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_comments'] || instaUser;
           } else {
               mainDispatchCtx = 'seguidores';
               if (/^mistos$/i.test(tipo)) {
@@ -22802,7 +22831,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
             }
             return '';
           };
-          const desiredMainKind = (isViewsBase || isCurtidasBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
+          const desiredMainKind = (isViewsBase || isCurtidasBase || isCommentsBase) ? 'post' : (categoriaServ === 'seguidores' ? 'followers' : '');
           const existingKind = inferExistingMainKind();
           const blockMainDispatch = !!(existingKind && desiredMainKind && existingKind !== desiredMainKind);
           if (blockMainDispatch) {
@@ -22822,7 +22851,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
 
           // Fallback: se serviço é de curtidas/visualizações e não há post selecionado,
           // tentar usar o último post disponível em validated_insta_users
-          if ((isViewsBase || isCurtidasBase) && (!linkToSend || linkToSend === instaUser) && instaUser) {
+          if ((isViewsBase || isCurtidasBase || isCommentsBase) && (!linkToSend || linkToSend === instaUser) && instaUser) {
               try {
                   const { getCollection } = require('./mongodbClient');
                   const vu = await getCollection('validated_insta_users');
@@ -23794,8 +23823,9 @@ app.post('/api/services/dispatch', adminOnly, async (req, res) => {
       categoriaServ = /(visualizacoes|views|reels)/i.test(String(tipo || '')) ? 'visualizacoes' : 'curtidas';
     }
   }
-  const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
-  const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
+  const isCommentsBase = categoriaServ === 'comentarios' || categoriaServ === 'comentario';
+  const isViewsBase = !isCommentsBase && (categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo));
+  const isCurtidasBase = !isCommentsBase && (pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras');
   const sanitizeLink = (s) => {
     let v = String(s || '').replace(/[`\s]/g, '').trim();
     if (!v) return '';
@@ -25646,9 +25676,10 @@ app.post('/session/mark-paid', async (req, res) => {
           || '';
         const pacoteStr = String(additionalInfoMap['pacote'] || '').toLowerCase();
         const categoriaServ = String(additionalInfoMap['categoria_servico'] || '').toLowerCase();
-        const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo);
-        const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
-        const isFollowersUpgradeEligible = !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
+        const isCommentsBase = categoriaServ === 'comentarios' || categoriaServ === 'comentario';
+        const isViewsBase = !isCommentsBase && (categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(tipo));
+        const isCurtidasBase = !isCommentsBase && (pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras');
+        const isFollowersUpgradeEligible = !isCommentsBase && !isCurtidasBase && !isViewsBase && /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipo);
         const isCurtidasBrasileirasUpgradeEligible = isCurtidasBase && /^curtidas_brasileiras$/i.test(tipo);
         const isCurtidasOrganicosUpgradeEligible = isCurtidasBase && /(organicos|curtidas_reais|curtidas_organicos)/i.test(String(tipo || '').trim());
         const isCurtidasMistosUpgradeEligible = isCurtidasBase && /^(mistos|curtidas_mistos)$/i.test(String(tipo || '').trim());
@@ -25795,6 +25826,9 @@ app.post('/session/mark-paid', async (req, res) => {
             mainDispatchCtx = 'curtidas';
             if (/^mistos$/i.test(tipo)) { mainDispatchKey = 'mistos'; mainDispatchFallbackId = ((Number.isFinite(envCurtidasMistas) && envCurtidasMistas > 0) ? envCurtidasMistas : 671); }
             else if (/brasileir/i.test(tipo) || /curtidas[\s_]?brasileiras?/i.test(tipo)) { mainDispatchKey = 'curtidas_brasileiras'; mainDispatchFallbackId = ((Number.isFinite(envCurtidasBrasileiras) && envCurtidasBrasileiras > 0) ? envCurtidasBrasileiras : 679); }
+          } else if (isCommentsBase) {
+            mainDispatchCtx = 'comentarios'; mainDispatchKey = 'comentarios';
+            mainDispatchFallbackId = Number(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90') || 90;
           } else {
             mainDispatchCtx = 'seguidores';
             if (/^mistos$/i.test(tipo)) { mainDispatchKey = 'mistos'; mainDispatchFallbackId = 663; }
@@ -25816,6 +25850,11 @@ app.post('/session/mark-paid', async (req, res) => {
             const selectedForLikes = (req.session && req.session.selectedFor && req.session.selectedFor.likes && req.session.selectedFor.likes.link) ? String(req.session.selectedFor.likes.link) : '';
             const selectedForViews = (req.session && req.session.selectedFor && req.session.selectedFor.views && req.session.selectedFor.views.link) ? String(req.session.selectedFor.views.link) : '';
             const raw = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_likes'] || selectedForLikes || additionalInfoMap['orderbump_post_views'] || selectedForViews || '';
+            linkForFama = sanitizeIgPostLink(raw);
+          } else if (isCommentsBase) {
+            const selectedForComments = (req.session && req.session.selectedFor && req.session.selectedFor.comments && req.session.selectedFor.comments.link) ? String(req.session.selectedFor.comments.link) : '';
+            const selectedForLikes = (req.session && req.session.selectedFor && req.session.selectedFor.likes && req.session.selectedFor.likes.link) ? String(req.session.selectedFor.likes.link) : '';
+            const raw = additionalInfoMap['post_link'] || additionalInfoMap['orderbump_post_comments'] || selectedForComments || selectedForLikes || '';
             linkForFama = sanitizeIgPostLink(raw);
           } else {
             linkForFama = String(instaUser || '').replace(/[`\s]/g, '').trim();
@@ -50474,9 +50513,10 @@ app.post('/api/payment/confirm', async (req, res) => {
       }, {});
       const pacoteStr = String(infoMap['pacote'] || '').toLowerCase();
       const categoriaServ = String(infoMap['categoria_servico'] || '').toLowerCase();
-      const isViewsBase = categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(resolvedTipo);
-      const isCurtidasBase = pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras';
-      const isOrganicosFollowers = /organicos/i.test(resolvedTipo) && !isCurtidasBase && !isViewsBase;
+      const isCommentsBase = categoriaServ === 'comentarios' || categoriaServ === 'comentario';
+      const isViewsBase = !isCommentsBase && (categoriaServ === 'visualizacoes' || /^visualizacoes_reels$/i.test(resolvedTipo));
+      const isCurtidasBase = !isCommentsBase && (pacoteStr.includes('curtida') || categoriaServ === 'curtidas' || categoriaServ === 'curtidas_brasileiras');
+      const isOrganicosFollowers = /organicos/i.test(resolvedTipo) && !isCurtidasBase && !isViewsBase && !isCommentsBase;
       const isOrganicosCurtidas = /(organicos|curtidas_reais|curtidas_organicos)/i.test(resolvedTipo) && isCurtidasBase;
       if (isOrganicosCurtidas) {
         try { await col.updateOne({ _id: record._id }, { $unset: { fama24h: '' } }); } catch (_) {}
@@ -50508,6 +50548,9 @@ app.post('/api/payment/confirm', async (req, res) => {
           } else if (/brasileir/i.test(resolvedTipo) || /curtidas[\s_]?brasileiras?/i.test(resolvedTipo)) {
               mainDispatchKey = 'curtidas_brasileiras'; mainDispatchFallbackId = 679;
           }
+      } else if (isCommentsBase) {
+          mainDispatchCtx = 'comentarios'; mainDispatchKey = 'comentarios';
+          mainDispatchFallbackId = Number(process.env.WORLDSMM_SERVICE_ID_COMMENTS || '90') || 90;
       } else {
           mainDispatchCtx = 'seguidores';
           if (/^mistos$/i.test(resolvedTipo)) {
@@ -50552,10 +50595,16 @@ app.post('/api/payment/confirm', async (req, res) => {
         const selLikes = (req.session && req.session.selectedFor && req.session.selectedFor.likes && req.session.selectedFor.likes.link) || '';
         const selViews = (req.session && req.session.selectedFor && req.session.selectedFor.views && req.session.selectedFor.views.link) || '';
         linkToSendRaw = infoMap['post_link'] || obLikes || selLikes || obViews || selViews || '';
+      } else if (isCommentsBase) {
+        const mapPaidC = record?.additionalInfoMapPaid || {};
+        const obComments = mapPaidC['orderbump_post_comments'] || infoMap['orderbump_post_comments'] || '';
+        const selComments = (req.session && req.session.selectedFor && req.session.selectedFor.comments && req.session.selectedFor.comments.link) || '';
+        const selLikesC = (req.session && req.session.selectedFor && req.session.selectedFor.likes && req.session.selectedFor.likes.link) || '';
+        linkToSendRaw = infoMap['post_link'] || obComments || selComments || selLikesC || '';
       } else {
         linkToSendRaw = String(resolvedUser || '');
       }
-      const linkForFama = isCurtidasBase ? sanitizeLink(linkToSendRaw) : String(linkToSendRaw || '').replace(/[`\s]/g, '').trim();
+      const linkForFama = (isCurtidasBase || isCommentsBase) ? sanitizeLink(linkToSendRaw) : String(linkToSendRaw || '').replace(/[`\s]/g, '').trim();
       const canSend = !!key && !!serviceId && !!linkForFama && finalQtdFama > 0 && !alreadySent && !isOrganicosCurtidas;
       if (canSend) {
         const axios = require('axios');
