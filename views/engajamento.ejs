@@ -440,7 +440,24 @@
                       <!-- Card Comentários -->
                       <div class="service-card premium-card card-curtidas" onclick="window.location.href = (function(){ try { const qs = (function(){ const p=new URLSearchParams(window.location.search); const s=new URLSearchParams(window.SERVER_UTMS_QUERY||''); s.forEach((v,k)=>{ if(!p.has(k)) p.set(k,v); }); const st=sessionStorage.getItem('oppus_utms'); if(st){ try{ const o=JSON.parse(st); Object.keys(o).forEach(k=>{ if(!p.has(k)) p.set(k,o[k]); }); }catch(_){}} const str=p.toString(); return str ? ('?'+str) : ''; })(); return '/servicos-comentarios'+qs; } catch(_){ return '/servicos-comentarios'; } })()">
                         <div class="card-content">
-                          <div class="card-icon-3d" style="font-size:60px; line-height:80px; width:80px; height:80px; text-align:center;" aria-hidden="true">💬</div>
+                          <svg class="card-icon-3d" width="80" height="80" viewBox="0 0 64 64" fill="none" aria-hidden="true" style="display:block;">
+                            <defs>
+                              <linearGradient id="cmtGrad" x1="8" y1="6" x2="56" y2="52" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#ff7eb3"/>
+                                <stop offset="0.5" stop-color="#ff2e93"/>
+                                <stop offset="1" stop-color="#ff7a18"/>
+                              </linearGradient>
+                              <linearGradient id="cmtGloss" x1="0" y1="6" x2="0" y2="30" gradientUnits="userSpaceOnUse">
+                                <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+                                <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+                              </linearGradient>
+                            </defs>
+                            <path d="M16 7h32a11 11 0 0 1 11 11v16a11 11 0 0 1-11 11H30l-11 9.5a1.4 1.4 0 0 1-2.3-1.2l1.1-8.4A11 11 0 0 1 5 34V18A11 11 0 0 1 16 7z" fill="url(#cmtGrad)"/>
+                            <path d="M16 7h32a11 11 0 0 1 11 11v4H5v-4A11 11 0 0 1 16 7z" fill="url(#cmtGloss)"/>
+                            <circle cx="21" cy="26" r="3.6" fill="#fff"/>
+                            <circle cx="32" cy="26" r="3.6" fill="#fff"/>
+                            <circle cx="43" cy="26" r="3.6" fill="#fff"/>
+                          </svg>
                           <div class="card-title text-gradient-curtidas">Comentários</div>
                           <div class="card-subtitle">Comentários em posts/reels</div>
                           <div class="card-price"><span>A partir de</span> <span class="price-value">R$ 1,50</span></div>
