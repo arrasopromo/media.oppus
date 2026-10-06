@@ -373,7 +373,7 @@
                         <div class="card-subtitle">
                           <span class="badge-seguidores-br">Seguidores brasileiros e reais</span>
                         </div>
-                        <div class="card-price"><span>Pacotes a partir de</span> <span class="price-value">R$ 7,90</span></div>
+                        <div class="card-price"><span>Pacotes a partir de</span> <span class="price-value">R$ 12,90</span></div>
                         <div class="card-security">
                           Não precisamos da sua senha
                         </div>
@@ -428,7 +428,7 @@
                           <img src="/images/visualizacao-icon.png" alt="Visualizações" class="card-icon-3d" onerror="this.style.display='none'">
                           <div class="card-title text-gradient-visualizacoes">Visualizações</div>
                           <div class="card-subtitle">Visualizações no Reels</div>
-                          <div class="card-price"><span>Pacote a partir de</span> <span class="price-value">R$ 3,90</span></div>
+                          <div class="card-price"><span>Pacote a partir de</span> <span class="price-value">R$ 4,90</span></div>
                           <div class="card-security">
                             Não precisamos da sua senha
                           </div>
@@ -1016,10 +1016,10 @@
     @media (min-width: 1024px) { .cards-grid.checkout-grid { grid-template-columns: 1fr; max-width: 1440px; margin: 0 auto; } }
     #engajamentoServiceCards {
       display: grid;
-      grid-template-columns: repeat(3, 1fr) !important;
+      grid-template-columns: repeat(4, 1fr) !important;
       gap: 1.25rem;
       margin-top: 6rem;
-      max-width: 1080px;
+      max-width: 1320px;
       margin-left: auto;
       margin-right: auto;
       padding: 1rem 0.75rem;
@@ -1194,6 +1194,14 @@
     .service-card.card-seguidores { box-shadow: 0 20px 40px -12px rgba(255, 165, 0, 0.1) !important; }
     .service-card.card-curtidas { box-shadow: 0 20px 40px -12px rgba(255, 46, 147, 0.1) !important; }
     .service-card.card-visualizacoes { box-shadow: 0 20px 40px -12px rgba(122, 44, 255, 0.1) !important; }
+
+    /* Tablet: 2 colunas (evita cards espremidos entre 640px e 1023px) */
+    @media (max-width: 1023px) and (min-width: 640px) {
+      #engajamentoServiceCards {
+        grid-template-columns: repeat(2, 1fr) !important;
+        max-width: 720px;
+      }
+    }
 
     /* Ajustes Mobile */
     @media (max-width: 639px) {
