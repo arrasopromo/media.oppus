@@ -44966,12 +44966,19 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     // que tem refil disponível — o de mundiais não tem) e esse pedido vira a âncora do perfil.
     const forceVia = normalizeSmmProvider(body.provider || '');
     const viaNuvraBr = String(body.via || '').trim().toLowerCase() === 'nuvra_br';
-    const viaSmmHustle = !viaNuvraBr && forceVia === 'smmhustle';
+    // Opção "Forçar Followiz": reposição de seguidores vai pro Followiz no serviço
+    // FOLLOWIZ_FORCE_SERVICE_ID (padrão 1023 — Brasil r30, com refil) e esse pedido vira a âncora.
+    const viaFollowiz = !viaNuvraBr && (String(body.via || '').trim().toLowerCase() === 'followiz' || forceVia === 'followiz');
+    const viaSmmHustle = !viaNuvraBr && !viaFollowiz && forceVia === 'smmhustle';
     let serviceId = null, forceProvider = 'fama24h', forceApiUrl = smmProviderUrl('fama24h'), forceApiKey = '';
     if (viaNuvraBr) {
       serviceId = Math.trunc(Number(process.env.NUVRA_BR_FORCE_SERVICE_ID || 159)) || 159;
       forceProvider = 'nuvra'; forceApiUrl = smmProviderUrl('nuvra'); forceApiKey = smmProviderKey('nuvra');
       if (!forceApiKey) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'NUVRASMM_API_KEY', message: 'API key da Nuvra não configurada (NUVRASMM_API_KEY no .env).' });
+    } else if (viaFollowiz) {
+      serviceId = Math.trunc(Number(process.env.FOLLOWIZ_FORCE_SERVICE_ID || 1023)) || 1023;
+      forceProvider = 'followiz'; forceApiUrl = smmProviderUrl('followiz'); forceApiKey = smmProviderKey('followiz');
+      if (!forceApiKey) return res.status(500).json({ ok: false, error: 'missing_api_key', env: 'FOLLOWIZ_API_KEY', message: 'API key do Followiz não configurada (FOLLOWIZ_API_KEY no .env).' });
     } else if (viaSmmHustle) {
       serviceId = Math.trunc(Number(process.env.SMMHUSTLE_FORCE_SERVICE_ID || 367)) || 367;
       forceProvider = 'smmhustle'; forceApiUrl = smmProviderUrl('smmhustle'); forceApiKey = smmProviderKey('smmhustle');
@@ -45051,6 +45058,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     // é uma decisão deliberada — não bloqueia pela janela de 24h do força anterior.
     const __prevForceService = Number(already && already.requestPayload && already.requestPayload.service);
     const trocaFornecedor = (viaSmmHustle && normalizeSmmProvider(already && already.provider) !== 'smmhustle') ||
+      (viaFollowiz && !(normalizeSmmProvider(already && already.provider) === 'followiz' && __prevForceService === serviceId)) ||
       (viaNuvraBr && !(normalizeSmmProvider(already && already.provider) === 'nuvra' && __prevForceService === serviceId));
     if ((hasOrderId || isCreated) && recentForce && !trocaFornecedor) return res.status(409).json({ ok: false, error: 'already_forced', message: 'Já existe um Forçar refil registrado para este item nas últimas 24h.' });
     if (isProcessing) {
@@ -45104,7 +45112,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
             provider: forceProvider,
             // providerVerified: o provider deste registro é CONFIÁVEL (registros antigos
             // gravavam 'fama24h' fixo). Só com ele a reposição segue o provider gravado.
-            ...((viaSmmHustle || viaNuvraBr) ? { providerVerified: true } : {}),
+            ...((viaSmmHustle || viaNuvraBr || viaFollowiz) ? { providerVerified: true } : {}),
             requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
             startedAt: nowIso,
             requestedAt: nowIso,
@@ -45198,10 +45206,10 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
         charge = pickCharge(statusPayload);
       } catch (_) {}
     }
-    // Custo em reais (SMMHustle pode cobrar em dólar → converte pela cotação do dia).
+    // Custo em reais (SMMHustle/Followiz podem cobrar em dólar → converte pela cotação do dia).
     let chargeFx = null;
-    if (viaSmmHustle && charge !== null) {
-      try { chargeFx = await providerChargeToBrl('smmhustle', charge, statusPayload && statusPayload.currency); } catch (_) {}
+    if ((viaSmmHustle || viaFollowiz) && charge !== null) {
+      try { chargeFx = await providerChargeToBrl(viaFollowiz ? 'followiz' : 'smmhustle', charge, statusPayload && statusPayload.currency); } catch (_) {}
     }
     await col.updateOne(
       { _id: new ObjectId(id) },
@@ -45228,7 +45236,7 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
     // pedido forçado que acabou de ser criado (baseline não muda — força repõe queda).
     try { if (orderId) await syncSpecialProfileAnchor(uname); } catch (_) {}
 
-    return res.json({ ok: true, provider: forceProvider, via: viaNuvraBr ? 'nuvra_br' : (viaSmmHustle ? 'smmhustle' : 'default'), orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, chargeFx, data, statusPayload });
+    return res.json({ ok: true, provider: forceProvider, via: viaNuvraBr ? 'nuvra_br' : (viaFollowiz ? 'followiz' : (viaSmmHustle ? 'smmhustle' : 'default')), orderId, serviceId, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, link: linkForFama, auditedCurrent, final: finalQty, dropOriginal: dropQtyOriginal, charge, chargeFx, data, statusPayload });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'force_refil_failed', message: e?.message || String(e) });
   }
