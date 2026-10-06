@@ -371,6 +371,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabelaComentarios = {
     comentarios: [
+      { q: 1, p: 'R$ 1,50' },
+      { q: 5, p: 'R$ 7,50' },
       { q: 10, p: 'R$ 15,00' },
       { q: 25, p: 'R$ 37,50' },
       { q: 50, p: 'R$ 75,00' },
