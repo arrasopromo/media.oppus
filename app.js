@@ -3388,6 +3388,7 @@ function panelBalanceRegistry() {
     { name: 'worldsmm', label: 'WorldSMM', url: 'https://worldsmm.com.br/api/v2', keyEnv: 'WORLDSMM_API_KEY', link: 'https://worldsmm.com.br', threshold: n(process.env.SALDO_MIN_WORLDSMM, 50), alertDefault: true },
     { name: 'topfama', label: 'TopFama', url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', link: 'https://topfama.com', threshold: n(process.env.SALDO_MIN_TOPFAMA, 100), alertDefault: false },
     { name: 'smmhustle', label: 'SMMHustle', url: 'https://smmhustle.com/api/v2', keyEnv: 'SMMHUSTLE_API_KEY', link: 'https://smmhustle.com', threshold: n(process.env.SALDO_MIN_SMMHUSTLE, 10), alertDefault: true },
+    { name: 'followiz', label: 'Followiz', url: 'https://followiz.com/api/v2', keyEnv: 'FOLLOWIZ_API_KEY', link: 'https://followiz.com', threshold: n(process.env.SALDO_MIN_FOLLOWIZ, 10), alertDefault: true },
   ];
 }
 // Config do saldo de painéis salva no settings (_id 'panel_balance_config'):
