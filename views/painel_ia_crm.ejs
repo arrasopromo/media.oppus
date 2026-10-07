@@ -654,6 +654,11 @@
         if(d&&d.ok){ setBotBtn(d.botPaused); loadConvs(); }
       });
       async function send(){
+        // Trava de reentrada: o Enter (keydown) chama send() ignorando o botão desabilitado,
+        // e os anexos só saem da fila DEPOIS do upload. Sem isso, um 2º Enter/clique durante
+        // o upload (lento) reenviava a MESMA imagem — foi o que gerou 2 mensagens iguais.
+        if(state.sending) return; state.sending=true;
+        try {
         // Anexo aguardando envio (colado ou escolhido no 📎): vai agora, com o texto de legenda.
         if((state.pendings||[]).length){
           if(!state.current) return;
@@ -679,6 +684,7 @@
         $('sendBtn').disabled=false;
         if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(true); loadConvs(); }
         else { alert('Falha ao enviar: '+((d&&(d.detail||d.message||d.error))||'erro')); }
+        } finally { state.sending=false; }
       }
       // Responder mensagem específica (citação) — vale p/ mensagem do cliente e nossa.
       function setReply(wamid){
