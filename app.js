@@ -23239,7 +23239,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                     if (code.length > 15) code = code.slice(0, 11);
                     return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
                   };
-                  const linkForFama = (isViewsBase || isCurtidasBase)
+                  const linkForFama = (isViewsBase || isCurtidasBase || isCommentsBase)
                     ? sanitizeLink(linkToSend)
                     : (function () {
                         let v = String(linkToSend || '').replace(/[`\s]/g, '').trim();
