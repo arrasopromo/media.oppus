@@ -2383,7 +2383,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <ul>
             <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
             <li>💬 Comentários para gerar prova social e movimento no post.</li>
-            <li>📈 Ideal pra dar engajamento e autoridade na publicação.</li>
+            <li>🇧🇷 Comentários positivos, de perfis com estética brasileira e privados.</li>
           </ul>
         `;
         break;
