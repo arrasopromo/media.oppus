@@ -303,6 +303,13 @@
       var AUTO = CRM.temBot ? 'Bot' : 'LTV';
       function $(id){ return document.getElementById(id); }
       function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+      // Escapa e transforma URLs (http(s):// e www.) em links clicáveis.
+      function linkify(s){
+        return esc(s).replace(/((?:https?:\/\/|www\.)[^\s<>"]+)/gi, function(url){
+          var href = /^www\./i.test(url) ? ('https://'+url) : url;
+          return '<a href="'+href+'" target="_blank" rel="noopener noreferrer" style="color:#2563eb; text-decoration:underline; word-break:break-all;">'+url+'</a>';
+        });
+      }
       function initials(name, phone){ var n=String(name||'').trim(); if(n) return n.slice(0,2).toUpperCase(); var p=String(phone||'').replace(/\D/g,''); return p.slice(-2) || '?'; }
       function fmtTime(d){ try{ var x=new Date(d); var now=new Date(); var sameDay=x.toDateString()===now.toDateString(); return sameDay ? (('0'+x.getHours()).slice(-2)+':'+('0'+x.getMinutes()).slice(-2)) : (('0'+x.getDate()).slice(-2)+'/'+('0'+(x.getMonth()+1)).slice(-2)); }catch(_){ return ''; } }
       async function api(url, opts){ var r=await fetch(url, Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts||{})); return await r.json().catch(function(){return null;}); }
@@ -433,7 +440,7 @@
         if(m.type==='audio') return '<audio class="media-audio" controls preload="none" src="'+src+'"></audio>';
         if(m.type==='video') return '<video class="media-video" controls preload="metadata" src="'+src+'"></video>';
         if(m.type==='document') return '<a class="media-doc" href="'+src+'" target="_blank"><span class="doc-ico">📄</span><span class="doc-name">'+esc(m.filename||'documento')+'</span><span class="doc-dl">abrir</span></a>';
-        return esc(m.text||'');
+        return linkify(m.text||'');
       }
       // force=true só quando ABRE a conversa (aí sim vai pro fim).
       // Nos refreshes automáticos NUNCA arrasta a tela: só desce sozinho se o
@@ -449,8 +456,8 @@
           var cls='b '+(m.direction==='out'?('out'+(m.agent?' agent':'')):'in')+((m.type==='image'||m.type==='sticker'||m.type==='video')&&m.mediaId?' media':'');
           var who=(m.direction==='out')?(m.agent?'Atendente':AUTO):'';
           var inner;
-          if(isMedia){ var cap=String(m.text||'').replace(/^\[[^\]]*\]\s*/,''); inner=mediaHtml(m)+(cap?('<div class="cap">'+esc(cap)+'</div>'):''); }
-          else inner=esc(m.text);
+          if(isMedia){ var cap=String(m.text||'').replace(/^\[[^\]]*\]\s*/,''); inner=mediaHtml(m)+(cap?('<div class="cap">'+linkify(cap)+'</div>'):''); }
+          else inner=linkify(m.text);
           // Bloco da mensagem CITADA (quando esta responde a outra)
           var quote='';
           if(m.replyTo && porWamid[m.replyTo]){
