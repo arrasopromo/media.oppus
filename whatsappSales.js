@@ -545,11 +545,24 @@ async function consultarPedido({ telefone, usuario } = {}) {
   const refilId = String(o.refilLinkId || (orders.find((x) => x && x.refilLinkId) || {}).refilLinkId || '').trim();
   const refilLink = (!ehBrasileirosReais && refilId) ? ('https://agenciaoppus.site/refil?token=' + encodeURIComponent(refilId)) : null;
 
+  // ── Estado-problema: NÃO pode virar um "em andamento" tranquilizador pro cliente.
+  // Nos relatórios do followup, "informação falsa sobre status do pedido" é a causa
+  // #1 de reclamação (o bot dizia "em andamento" para pedido CANCELADO, pago SEM envio,
+  // ou travado). Aqui a gente sinaliza esses casos com precisaSuporte=true pra IA
+  // escalar em vez de afirmar status. Pedidos entregues/em processamento normal ficam
+  // com precisaSuporte=false (fluxo normal "em andamento"/"concluído").
+  const temDespacho = !!bp || [o.fornecedor_social, o.fama24h, o.nuvra, o.topfama, o.fornecedor_social_multi, o.fama24h_multi]
+    .some((p) => p && (p.orderId || (Array.isArray(p.orders) && p.orders.some((x) => x && x.orderId))));
+  const statusRuim = ['cancelado', 'reembolsado', 'erro no fornecedor'].includes(statusFornecedor);
+  const pagoSemEnvio = !temDespacho && (horasDesdePagamento == null || horasDesdePagamento >= 1);
+  const travado = !entregouTudo && horasDesdePagamento != null && horasDesdePagamento > 48 && (entregues === 0 || entregues == null) && !statusRuim;
+  const precisaSuporte = statusRuim || pagoSemEnvio || travado;
+
   return {
     ok: true, encontrado: true, usuario: usernameOrder,
     servico: categoria || 'seguidores', tipo: tipo || '(não informado)', quantidade,
     horasDesdePagamento, dentroPrazo48h: horasDesdePagamento != null ? (horasDesdePagamento <= 48) : null,
-    ehBrasileirosReais, perfilPrivado, status: statusCliente, refilLink,
+    ehBrasileirosReais, perfilPrivado, status: statusCliente, precisaSuporte, refilLink,
   };
 }
 
