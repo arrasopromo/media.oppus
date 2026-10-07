@@ -367,7 +367,7 @@
                     <label class="promo-item upgrade">
                       <input type="checkbox" id="orderBumpCheckboxInline" />
                       <div class="promo-content">
-                        <div class="promo-highlight" id="orderBumpHighlight">Upgrade de curtidas</div>
+                        <div class="promo-highlight" id="orderBumpHighlight">Upgrade de comentários</div>
                         <div class="promo-title">Upgrade de pacote</div>
                         <div id="orderBumpText" class="promo-desc">Selecione um pacote para ver o upgrade disponível.</div>
                         <div class="promo-prices" data-promo="upgrade">
@@ -377,7 +377,26 @@
                         </div>
                       </div>
                     </label>
-                    
+
+                    <label class="promo-item likes">
+                      <input type="checkbox" id="promoLikes" data-promo="likes" />
+                      <div class="promo-content">
+                        <div class="promo-highlight">+ CURTIDAS REAIS</div>
+                        <div class="promo-title">Curtidas reais promocionais</div>
+                        <div class="promo-desc">Adicionar curtidas reais ao post.</div>
+                        <div class="promo-prices" data-promo="likes">
+                          <span class="old-price">R$ 49,90</span>
+                          <span class="discount-badge">80% OFF</span>
+                          <span class="new-price">R$ 9,90</span>
+                        </div>
+                        <div class="likes-control" id="likesControl" aria-label="Quantidade de curtidas">
+                          <button type="button" id="likesDec" class="likes-arrow" aria-label="Diminuir">−</button>
+                          <span id="likesQty" class="likes-qty">150</span>
+                          <button type="button" id="likesInc" class="likes-arrow" aria-label="Aumentar">+</button>
+                        </div>
+                      </div>
+                    </label>
+
                     <label class="promo-item views">
                       <input type="checkbox" id="promoViews" data-promo="views" />
                       <div class="promo-content">

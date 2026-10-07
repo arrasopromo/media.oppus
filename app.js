@@ -20821,6 +20821,7 @@ async function processOrderFulfillment(record, col, req) {
         
         const likesBumpConf = (() => {
           const t = String(tipo || '').toLowerCase();
+          if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
           const isFollowersBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBase && !isViewsBase;
           const isFollowerOrg = isFollowersBase && /organicos/.test(t);
           const isFollowerBr = isFollowersBase && /brasileir/.test(t);
@@ -23504,6 +23505,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
               const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoPaid) && !isCurtidasBaseLocal && !isViewsBaseLocal;
               const likesBumpConf = (() => {
                 const t = String(tipoPaid || '').toLowerCase();
+                if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
                 const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
                 const isFollowerOrg = isFollowerBase && /organicos/.test(t);
                 const isFollowerBr = isFollowerBase && /brasileir/.test(t);
@@ -24233,6 +24235,7 @@ app.post('/api/orderbump/resend', adminOnly, async (req, res) => {
       const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
       const likesBumpConf = (() => {
         const t = String(tipoLocal || '').toLowerCase();
+        if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
         const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const isFollowerOrg = isFollowerBase && /organicos/.test(t);
         const isFollowerBr = isFollowerBase && /brasileir/.test(t);
@@ -24425,6 +24428,7 @@ app.post('/api/orderbump/fix-latest', adminOnly, async (req, res) => {
         const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const likesBumpConf = (() => {
           const t = String(tipoLocal || '').toLowerCase();
+          if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
           const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
           const isFollowerOrg = isFollowerBase && /organicos/.test(t);
           const isFollowerBr = isFollowerBase && /brasileir/.test(t);
@@ -26193,6 +26197,7 @@ app.post('/session/mark-paid', async (req, res) => {
           const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
           const likesBumpConf = (() => {
             const t = String(tipoLocal || '').toLowerCase();
+            if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
             const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
             const isFollowerOrg = isFollowerBase && /organicos/.test(t);
             const isFollowerBr = isFollowerBase && /brasileir/.test(t);
@@ -50831,6 +50836,7 @@ app.post('/api/payment/confirm', async (req, res) => {
         const isCurtidasBaseLocal = pacoteStrLocal.includes('curtida') || categoriaServLocal === 'curtidas' || categoriaServLocal === 'curtidas_brasileiras';
         const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const likesBumpConf = (() => {
+          if (/coment|visualizacoes|views|reels/i.test(String(tipoLocal || '').toLowerCase())) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
           const isCurtidasReais = isCurtidasBaseLocal && /(organicos|curtidas_reais|curtidas_organicos)/i.test(tipoLocal);
           if (isCurtidasReais) return __orgLikesBumpMd; // segue a config curtidas.organicos (era hardcoded topfama:233)
           if (tipoLocal.includes('brasileiros') || tipoLocal.includes('curtidas_brasileiras')) return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };

@@ -378,8 +378,6 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 50, p: 'R$ 75,00' },
       { q: 100, p: 'R$ 150,00' },
       { q: 250, p: 'R$ 375,00' },
-      { q: 500, p: 'R$ 750,00' },
-      { q: 1000, p: 'R$ 1.500,00' },
     ]
   };
 
@@ -2379,6 +2377,16 @@ document.addEventListener('DOMContentLoaded', function() {
           </ul>
         `;
         break;
+      case 'comentarios':
+        html = `
+          <p>Comentários para seus posts e Reels, com entrega natural pra aquecer a publicação.</p>
+          <ul>
+            <li>✅ 100% seguro e confidencial, sem precisar da sua senha.</li>
+            <li>💬 Comentários para gerar prova social e movimento no post.</li>
+            <li>📈 Ideal pra dar engajamento e autoridade na publicação.</li>
+          </ul>
+        `;
+        break;
       default:
         return '';
     }
@@ -2532,6 +2540,16 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
+    // Comentários: mostra o card de ofertas (curtidas reais + visualizações), mas
+    // esconde o item de UPGRADE (o incremento de qtd de comentário ainda não é
+    // tratado no backend de despacho — evita cobrar upgrade sem entregar).
+    if (isCommentsContext && tipo === 'comentarios' && baseQtd) {
+      orderInline.style.display = 'block';
+      if (checkbox) checkbox.checked = false;
+      try { const upItem = document.querySelector('.promo-item.upgrade'); if (upItem) upItem.style.display = 'none'; } catch (_) {}
+      return;
+    }
+
     const isUpgradeEligible = isFollowersTipo(tipo) || (isCurtidasContext && tipo === 'curtidas_brasileiras');
     if (!isUpgradeEligible || !baseQtd) { orderInline.style.display = 'none'; return; }
     orderInline.style.display = 'block';
@@ -2595,6 +2613,8 @@ document.addEventListener('DOMContentLoaded', function() {
   function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
   function getLikesVariantKey() {
+    // Nas páginas de comentários e visualizações o bump de curtidas é sempre REAIS (orgânicas).
+    if (isCommentsContext || isViewsContext) return 'organicos';
     const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     if (tipo === 'organicos') return 'organicos';
     if (tipo === 'curtidas_brasileiras') return 'curtidas_brasileiras';
@@ -2747,7 +2767,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const current = Number(commentsQtyEl?.textContent || 1);
     let next = current + dir;
     if (next < 1) next = 1;
-    if (next > 100) next = 100;
+    if (next > 250) next = 250;
     if (commentsQtyEl) commentsQtyEl.textContent = String(next);
     updateCommentsPrice(next);
     try { updatePromosSummary(); } catch(_) {}
@@ -2830,7 +2850,7 @@ document.addEventListener('DOMContentLoaded', function() {
         viewsQtyEl.textContent = String(viewsQ);
         updateViewsPrice(viewsQ);
       }
-      const commQ = Math.max(1, Math.min(100, Math.trunc(Number(p.comments || 1)) || 1));
+      const commQ = Math.max(1, Math.min(250, Math.trunc(Number(p.comments || 1)) || 1));
       if (commentsQtyEl) {
         commentsQtyEl.textContent = String(commQ);
         updateCommentsPrice(commQ);
@@ -5360,7 +5380,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (commCb && map.comments) {
             commCb.checked = true;
             const qEl = document.getElementById('commentsQty');
-            const qty = Math.max(1, Math.min(100, map.comments));
+            const qty = Math.max(1, Math.min(250, map.comments));
             if (qEl) qEl.textContent = String(qty);
             try { updateCommentsPrice(qty); } catch (_) {}
           }
