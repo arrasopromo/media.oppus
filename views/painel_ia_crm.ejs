@@ -552,13 +552,19 @@
         fecharPedidos();
         var back=document.createElement('div'); back.className='ped-back'; back.id='pedBack';
         var comoAchou=/^arroba:/.test(String(state.pedidosPor||'')) ? (' · pelo @'+esc(String(state.pedidosPor).replace('arroba:',''))+' da conversa') : '';
-        back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+comoAchou+'</div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
+        back.innerHTML='<div class="ped-box"><div class="ped-head"><div><h3>Pedidos</h3><div class="sub">+'+esc(state.current)+comoAchou+'</div><div class="sub" id="pedStats" style="margin-top:3px; font-weight:700; color:#0f766e;"></div></div><button type="button" title="Fechar">✕</button></div><div class="ped-body" id="pedBody">Carregando…</div></div>';
         document.body.appendChild(back);
         back.addEventListener('click', function(ev){ if(ev.target===back||ev.target.closest('.ped-head button')) fecharPedidos(); });
         var d=await api(API+'/pedidos?phone='+encodeURIComponent(state.current));
         var body=document.getElementById('pedBody'); if(!body) return;
         if(!d||!d.ok){ body.textContent='Não consegui carregar os pedidos.'; return; }
         var lista=d.orders||[];
+        try {
+          var _pagos=lista.filter(function(o){ return o.status==='pago'; });
+          var _valPago=_pagos.reduce(function(s,o){ return s+(Number(o.valor)||0); },0);
+          var _st=document.getElementById('pedStats');
+          if(_st) _st.textContent=lista.length+' pedido'+(lista.length!==1?'s':'')+' · '+_pagos.length+' pago'+(_pagos.length!==1?'s':'')+(_valPago>0?(' · R$ '+_valPago.toFixed(2).replace('.',',')):'');
+        } catch(_){}
         if(!lista.length){ body.textContent='Nenhum pedido para este telefone.'; return; }
         body.innerHTML=lista.map(function(o){
           var dt=o.pagoEm||o.criadoEm||'';
