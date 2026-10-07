@@ -9242,23 +9242,7 @@ app.get('/engajamento', async (req, res) => {
   });
 });
 
-// Página Engajamento Novo (com seletor de contexto e cards unificados)
-app.get('/engajamento-novo', async (req, res) => {
-  console.log('✨ Acessando rota /engajamento-novo');
-  const serviceVisibility = await loadServiceVisibility();
-  res.render('engajamento-novo', { 
-    PIXEL_ID: process.env.PIXEL_ID || '', 
-    queryParams: req.query,
-    serviceVisibility
-  }, (err, html) => {
-    if (err) {
-      console.error('❌ Erro ao renderizar engajamento-novo:', err.message);
-      return res.status(500).send('Erro ao renderizar engajamento-novo');
-    }
-    res.type('text/html');
-    res.send(html);
-  });
-});
+// Página /engajamento-novo removida (órfã, sem links; usava woovi).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REMARKETING WABA — deep-link "engajamento" para quem JÁ COMPROU.
