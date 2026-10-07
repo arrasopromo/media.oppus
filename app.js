@@ -8729,19 +8729,13 @@ const markRecoveryEmailClickIfNeeded = async (req) => {
 };
 
 app.get('/checkout', async (req, res) => {
-    console.log('🛒 Acessando rota /checkout');
+    // Página /checkout descontinuada (gateway woovi morto; fluxo principal é paghiper nas
+    // páginas de serviço). Redireciona pra /engajamento preservando a query, pra não
+    // quebrar nenhum link legado (rodapé, posts, fallback de recuperação).
+    console.log('🛒 /checkout -> redirect /engajamento (descontinuada)');
     try { await markRecoveryEmailClickIfNeeded(req); } catch (_) {}
-    try {
-        if (req.session) {
-            req.session.selectedFor = {};
-            req.session.selectedPosts = [];
-        }
-    } catch (_) {}
-    return res.render('checkout', {
-        CARD_PROVIDER: 'pagarme',
-        PIXEL_ID: process.env.PIXEL_ID || '',
-        EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
-    });
+    const qs = (function () { try { const u = String(req.originalUrl || req.url || ''); const i = u.indexOf('?'); return i >= 0 ? u.slice(i) : ''; } catch (_) { return ''; } })();
+    return res.redirect('/engajamento' + qs);
 });
 
 app.get('/pix', async (req, res) => {
@@ -21717,11 +21711,7 @@ app.get('/:slug', async (req, res, next) => {
     console.log('🔎 Capturado em /:slug:', slug);
     // EXCEÇÕES explícitas devem ser tratadas antes de qualquer validação
     if (slug === 'checkout') {
-        return res.render('checkout', { 
-            CARD_PROVIDER: 'pagarme',
-            PIXEL_ID: process.env.PIXEL_ID || '',
-            EXPAY_DEFAULT_CPF_ENABLED: (process.env.NODE_ENV !== 'production') && !!String(process.env.EXPAY_DEFAULT_CPF || '').trim()
-        });
+        return res.redirect('/engajamento');
     }
     if (slug === 'engajamento') {
         const isFamaApp = /famaapp/i.test(String((req.headers && req.headers.host) || req.hostname || ''));
