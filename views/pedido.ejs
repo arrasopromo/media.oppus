@@ -1388,18 +1388,8 @@
         var btnClose2 = document.getElementById('upsellFollowersClose2');
         if (btnClose1) btnClose1.addEventListener('click', closeUpsellModal);
         if (btnClose2) btnClose2.addEventListener('click', closeUpsellModal);
-        try {
-          var qsDebug = new URLSearchParams((location && location.search) || '');
-          var debugT = String(qsDebug.get('t') || qsDebug.get('identifier') || '').trim();
-          var debugRef = String(qsDebug.get('ref') || qsDebug.get('correlationID') || '').trim();
-          var debugOid = String(qsDebug.get('oid') || '').trim();
-          var isDebugUpsell = (debugT === 'ecd2a0873a5040488234acfead241250') ||
-                              (debugRef === 'wer-tw4-23444444442') ||
-                              (debugOid === '3199169');
-          if (isDebugUpsell) {
-            setTimeout(function(){ try { openUpsellModal(); } catch(_){ } }, 1200);
-          }
-        } catch(_) {}
+        // Upsell woovi (#upsellFollowersModal) descontinuado: era debug-only (0 pedidos
+        // na história) e usava /api/woovi/charge. Trigger removido — não abre mais.
         
         var statusStr = String((orderData && (orderData.status || (orderData.paghiper && orderData.paghiper.status) || (orderData.expay && orderData.expay.status) || (orderData.woovi && orderData.woovi.status))) || '').toLowerCase();
         var isPaidNow = (statusStr === 'pago' || statusStr === 'paid' || !!paidRaw);
