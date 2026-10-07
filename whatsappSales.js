@@ -222,6 +222,19 @@ function _juntaLinks(...listas) {
   for (const l of listas) for (const u of (l || [])) { const c = _postCode(u) || String(u); if (!vistos.has(c)) { vistos.add(c); out.push(u); } }
   return out;
 }
+// Link REAL de post (reel/p/tv). Barra dois problemas que ja despacharam pedido pro lixo:
+//  1) o bot inventar um placeholder ("https://instagram.com/p/SEU_POST_AQUI/") so pra
+//     passar na checagem de "precisa do post" — o pedido saiu e o fornecedor cancelou;
+//  2) o bot mandar o link do PERFIL (instagram.com/usuario) no lugar do post — curtidas
+//     num perfil nao existem, o pedido cai cancelado.
+// So aceita URL com /p//reel//reels//tv/ + codigo que NAO seja um placeholder.
+function _isRealPostUrl(u) {
+  const c = _postCode(u);
+  if (!c) return false; // sem /p//reel//tv/ -> perfil ou lixo
+  if (/^(seu[_-]?post|post[_-]?aqui|seu[_-]?link|link[_-]?aqui|codigo[_-]?aqui|cod[_-]?aqui|exemplo|placeholder|aqui|xxx+|abcd(e|ef)?|123+|teste|test)$/i.test(c)) return false;
+  if (/seu[_-]?post|post[_-]?aqui|seu[_-]?link|link[_-]?aqui|codigo[_-]?aqui|placeholder|cole[_-]?aqui/i.test(String(u))) return false;
+  return true;
+}
 
 async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email, phone, post_links, comprar_mais }) {
   // Seguidores/curtidas: o PREÇO depende do tipo. Nunca feche sem tipo explícito —
@@ -236,8 +249,9 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
   const username = parseIgUsername(usuario);
   if (!username) return { ok: false, error: 'usuario_invalido', message: 'O @ informado parece ser uma resposta ("sim", "ok", etc.), não um usuário do Instagram. NÃO gere o Pix: peça o @ correto do perfil antes de criar o pedido.' };
   if (cot.needsPost) {
-    const links = _juntaLinks(Array.isArray(post_links) ? post_links.filter(Boolean) : String(post_links || '').split(',').map((s) => s.trim()).filter(Boolean));
-    if (!links.length) return { ok: false, error: 'faltou_post', message: 'Esse serviço precisa do link do post.' };
+    const brutos = _juntaLinks(Array.isArray(post_links) ? post_links.filter(Boolean) : String(post_links || '').split(',').map((s) => s.trim()).filter(Boolean));
+    const links = brutos.filter(_isRealPostUrl);
+    if (!links.length) return { ok: false, error: 'faltou_post', message: 'Esse serviço precisa do LINK REAL do post/reel (ex.: https://www.instagram.com/p/XXXXXXXXXXX/ ou /reel/...). NÃO invente um link, NÃO use placeholder (tipo "SEU_POST_AQUI") e NÃO mande o link do perfil — peça ao cliente que cole o link do post. Só gere o Pix depois de ter o link real.' };
     post_links = links;
   }
   // Mesmo pedido (telefone + serviço + tipo + quantidade + @):
