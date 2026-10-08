@@ -44913,17 +44913,41 @@ app.post('/api/painel/refil2/manual-initial-bulk', requireAdmin, async (req, res
 // falhar, usa USD_BRL_RATE do .env; se nada existir, devolve rate null (o painel
 // mostra o valor em USD e avisa que não converteu — nunca inventa cotação).
 let __fxUsdBrl = { atMs: 0, rate: null, source: '' };
+// Persiste a última cotação boa no banco (settings _id:'fx_usd_brl') — sobrevive ao
+// restart do processo, então a conversão de custo nunca fica sem cotação de reserva.
+async function _persistFxUsdBrl(rate, source) {
+  try { const col = await getCollection('settings'); await col.updateOne({ _id: 'fx_usd_brl' }, { $set: { rate, source, atMs: Date.now(), atIso: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+}
+async function _loadFxUsdBrlFromDb() {
+  try { const col = await getCollection('settings'); const d = await col.findOne({ _id: 'fx_usd_brl' }); const r = Number(d && d.rate); if (Number.isFinite(r) && r > 1 && r < 20) return { atMs: Number(d.atMs) || Date.now(), rate: r, source: (d.source || 'db') + ' (cache banco)' }; } catch (_) {}
+  return null;
+}
+// Cotação USD→BRL DINÂMICA: live (awesomeapi → er-api backup), com a última boa
+// persistida no banco como reserva. O .env USD_BRL_RATE é só o último recurso.
 async function getUsdBrlRate() {
   const now = Date.now();
   if (__fxUsdBrl.rate && (now - __fxUsdBrl.atMs) < 3600 * 1000) return __fxUsdBrl;
+  // 1) awesomeapi (live)
   try {
     const r = await axios.get('https://economia.awesomeapi.com.br/json/last/USD-BRL', { timeout: 8000, validateStatus: () => true });
     const bid = Number(r && r.data && r.data.USDBRL && r.data.USDBRL.bid);
-    if (Number.isFinite(bid) && bid > 1 && bid < 20) { __fxUsdBrl = { atMs: now, rate: bid, source: 'awesomeapi' }; return __fxUsdBrl; }
+    if (Number.isFinite(bid) && bid > 1 && bid < 20) { __fxUsdBrl = { atMs: now, rate: bid, source: 'awesomeapi' }; _persistFxUsdBrl(bid, 'awesomeapi'); return __fxUsdBrl; }
   } catch (_) {}
+  // 2) open.er-api.com (backup live)
+  try {
+    const r = await axios.get('https://open.er-api.com/v6/latest/USD', { timeout: 8000, validateStatus: () => true });
+    const brl = Number(r && r.data && r.data.rates && r.data.rates.BRL);
+    if (Number.isFinite(brl) && brl > 1 && brl < 20) { __fxUsdBrl = { atMs: now, rate: brl, source: 'er-api' }; _persistFxUsdBrl(brl, 'er-api'); return __fxUsdBrl; }
+  } catch (_) {}
+  // 3) última boa em memória
+  if (__fxUsdBrl.rate) return __fxUsdBrl;
+  // 4) última boa no banco (sobrevive restart)
+  const fromDb = await _loadFxUsdBrlFromDb();
+  if (fromDb) { __fxUsdBrl = fromDb; return fromDb; }
+  // 5) reserva do .env (último recurso)
   const envRate = Number(String(process.env.USD_BRL_RATE || '').replace(',', '.'));
   if (Number.isFinite(envRate) && envRate > 0) return { atMs: now, rate: envRate, source: 'env USD_BRL_RATE' };
-  return __fxUsdBrl.rate ? __fxUsdBrl : { atMs: now, rate: null, source: 'indisponivel' };
+  return { atMs: now, rate: null, source: 'indisponivel' };
 }
 // Moeda configurada por fornecedor no Gerenciamento de Tipo. É a fonte autoritativa
 // pra conversão de custo: o /status nem sempre traz "currency", então o admin define
