@@ -4862,6 +4862,28 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
       for (const m of [o.additionalInfoMapPaid, o.additionalInfoMap]) if (m && m[k] != null && String(m[k]).trim()) return String(m[k]).trim();
       return '';
     };
+    // ── Mescla pedidos do MESMO @, mesmo feitos com OUTRO telefone ──────────────
+    // Antes, o fallback por @ só rodava quando o telefone NÃO achava nada. Muitos
+    // clientes compram com o telefone digitado errado (ex.: jerinha_colares tinha 4
+    // pedidos num número com 1 dígito trocado; o telefone achava só os 2 do número da
+    // conversa e parava). Agora, achando por telefone, também busca os pedidos do(s)
+    // mesmo(s) @ e mescla sem duplicar — o cliente vê TODOS os pedidos do perfil dele.
+    try {
+      const handlesMerge = new Set();
+      for (const d of docs) { const h = String(d.instagramUsername || d.instauser || info(d, 'instagram_username') || '').replace(/^@+/, '').toLowerCase(); if (h && h.length >= 2) handlesMerge.add(h); }
+      if (handlesMerge.size) {
+        const jaTem = new Set(docs.map((d) => d.identifier));
+        const orCond = [];
+        for (const h of [...handlesMerge].slice(0, 5)) {
+          const rx = new RegExp('^@?' + h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+          orCond.push({ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx });
+        }
+        const porArroba = await col.find({ $or: orCond }, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(60).toArray();
+        for (const e of porArroba) if (!jaTem.has(e.identifier)) { docs.push(e); jaTem.add(e.identifier); }
+        docs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        if (resumo) { total = jaTem.size; } else { docs = docs.slice(0, 40); total = docs.length; }
+      }
+    } catch (_) {}
     const orders = docs.map((o) => {
       const pagoEm = o.paidAt || (o.paghiper && o.paghiper.paidAt) || (o.woovi && o.woovi.paidAt) || '';
       return {
