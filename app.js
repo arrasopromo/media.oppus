@@ -1622,7 +1622,14 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         t = t.replace(/^\d+\s+/, '').trim();
         return t.charAt(0).toLowerCase() + t.slice(1);
     })();
-    const productTitle = `${qtd || 0} ${serviceLabelLower} - ${valueLabel}`;
+    // Pedido de refil/reposição (refil_extensao) não tem quantidade — antes saía
+    // "0 seguidores - R$ 14,90" (QTD 0), que não faz sentido. Mostra "Reposição de
+    // seguidores" e QTD "—".
+    const isRefilExt = /refil|reposic/.test(String(tipoKey0 || '').toLowerCase()) || !!(record && record.refilExtension);
+    const qtdLabel = isRefilExt ? '—' : String(qtd || 0);
+    const productTitle = isRefilExt
+        ? `Reposição de seguidores - ${valueLabel}`
+        : `${qtd || 0} ${serviceLabelLower} - ${valueLabel}`;
     const extraLines = (function () {
         const lines = [];
         if (upgradeAdd0 > 0) lines.push(`Upgrade: +${upgradeAdd0} (total ${qtdTotal || qtdBase})`);
@@ -1680,7 +1687,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
         'Para concluir, finalize o pagamento pelo link abaixo:',
         '',
         `Produto: ${productTitle}`,
-        `QTD: ${qtd || 0}`,
+        `QTD: ${qtdLabel}`,
         extraTextBlock,
         `Valor: ${valueLabel}`,
         '',
@@ -1727,7 +1734,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
                 </tr>
                 <tr>
                   <td style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(productTitle)}</td>
-                  <td align="center" style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(String(qtd || 0))}</td>
+                  <td align="center" style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(qtdLabel)}</td>
                   <td align="right" style="padding:10px;border:1px solid #e5e7eb;font-weight:600;color:#111827;">${escapeHtml(valueLabel)}</td>
                 </tr>
               </table>
@@ -1932,7 +1939,10 @@ const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, s
         t = t.replace(/^\d+\s+/, '').trim();
         return t.charAt(0).toLowerCase() + t.slice(1);
     })();
-    const productTitle = `${qtd || 0} ${serviceLabelLower}`;
+    // Refil/reposição não tem quantidade — evita "0 seguidores".
+    const isRefilExt = /refil|reposic/.test(String(getAdd('tipo_servico') || (record && (record.tipoServico || record.tipo)) || '').toLowerCase()) || !!(record && record.refilExtension);
+    const qtdLabel = isRefilExt ? '—' : String(qtd || 0);
+    const productTitle = isRefilExt ? 'Reposição de seguidores' : `${qtd || 0} ${serviceLabelLower}`;
     const identifier = safe(record && (record.identifier || (record.paghiper && (record.paghiper.transactionId || record.paghiper.identifier)) || (record.expay && (record.expay.transactionId || record.expay.identifier)) || (record.woovi && record.woovi.identifier) || ''));
     const correlationID = safe(record && record.correlationID);
     const baseUrl = (function () {
@@ -2033,7 +2043,7 @@ const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, s
         couponLabel ? `Total com desconto: ${discountedValueLabel} (antes: ${valueLabel}).` : `Total: ${valueLabel}.`,
         '',
         `Produto: ${productTitle}`,
-        `QTD: ${qtd || 0}`,
+        `QTD: ${qtdLabel}`,
         couponLabel ? `Valor: ${discountedValueLabel} (antes: ${valueLabel})` : `Valor: ${valueLabel}`,
         '',
         couponLabel ? 'Concluir pagamento:' : 'Pagamento Pix:',
@@ -2088,7 +2098,7 @@ const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, s
                 </tr>
                 <tr>
                   <td style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(productTitle)}</td>
-                  <td align="center" style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(String(qtd || 0))}</td>
+                  <td align="center" style="padding:10px;border:1px solid #e5e7eb;">${escapeHtml(qtdLabel)}</td>
                   <td align="right" style="padding:10px;border:1px solid #e5e7eb;font-weight:${couponLabel ? '500' : '600'};color:#111827;">${escapeHtml(couponLabel ? discountedValueLabel : valueLabel)}</td>
                 </tr>
               </table>
