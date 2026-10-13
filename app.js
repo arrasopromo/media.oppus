@@ -32295,7 +32295,17 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
     // entregaPendente e zera diffAbs/diffPct dessas linhas. Batched por provedor + cache
     // de 10min + timeout de 8s; qualquer falha mantém o comportamento antigo (silencioso).
     try {
-      const LABEL_TO_PROV = { 'SMMHustle': 'smmhustle', 'Nuvra': 'nuvra', 'Fama24h': 'nuvra', 'TopFama': 'topfama', 'Fornecedor Social': 'fornecedor_social', 'WorldSMM': 'worldsmm' };
+      // Mapeia o RÓTULO do fornecedor (resolveFornecedor) de volta pro provider-key do SMM.
+      // Antes era um objeto fixo que ESQUECIA o Followiz (e outros): aí pedido em andamento
+      // no Followiz nunca era consultado e aparecia como QUEDA no painel. Agora cobre todos
+      // (os casos especiais + qualquer provider do SMM_PROVIDERS via normalize).
+      const PROV_SPECIAL = { 'SMMHustle': 'smmhustle', 'Nuvra': 'nuvra', 'Fama24h': 'nuvra', 'TopFama': 'topfama', 'Fornecedor Social': 'fornecedor_social', 'WorldSMM': 'worldsmm', 'Followiz': 'followiz' };
+      const labelToProv = (label) => {
+        const L = String(label || '').trim();
+        if (PROV_SPECIAL[L]) return PROV_SPECIAL[L];
+        const norm = normalizeSmmProvider(L.toLowerCase().replace(/\s+/g, '_'));
+        return (norm && SMM_PROVIDERS[norm]) ? norm : '';
+      };
       const nowMsEnt = Date.now();
       if (!global.__entregaStatusCache) global.__entregaStatusCache = new Map();
       const entCache = global.__entregaStatusCache;
@@ -32304,7 +32314,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       for (const r of pageRows) {
         const oid = String((r && r.fornecedorOrderId) || '').trim();
         if (!oid || !/^\d+$/.test(oid)) continue;
-        const prov = LABEL_TO_PROV[String((r && r.fornecedor) || '')];
+        const prov = labelToProv(String((r && r.fornecedor) || ''));
         if (!prov) continue;
         const c = entCache.get(prov + ':' + oid);
         if (c && (nowMsEnt - c.at) < ENT_TTL) continue;
@@ -32336,7 +32346,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       ]);
       for (const r of pageRows) {
         const oid = String((r && r.fornecedorOrderId) || '').trim();
-        const prov = LABEL_TO_PROV[String((r && r.fornecedor) || '')];
+        const prov = labelToProv(String((r && r.fornecedor) || ''));
         if (!oid || !prov) continue;
         const c = entCache.get(prov + ':' + oid);
         if (!c || !c.status) continue;
