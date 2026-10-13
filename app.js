@@ -3872,6 +3872,12 @@ async function gestaoParcialFiltrado(query) {
         if (r.auditLikesHidden) r.okNok = 'oculto';                 // pessoa ocultou as curtidas
         else if (r.entregue != null && r.qtdContratada > 0) r.okNok = (r.entregue >= r.qtdContratada) ? 'ok' : 'nok';
       }
+      // Qtd faltando = contratado − entregue (o buraco REAL). Para pedido Completed que
+      // entregou menos (a queda veio depois), o remains do fornecedor é 0 e enganava;
+      // aqui usa o entregue medido. Sem medição de entrega, cai no remains do fornecedor.
+      r.faltando = (r.entregue != null && r.qtdContratada > 0)
+        ? Math.max(0, r.qtdContratada - r.entregue)
+        : (r.remains != null ? Math.max(0, r.remains) : null);
     }
     // Filtro por data (De/Até), no fuso de Brasília.
     const parseDay = (s, endOfDay) => { const v = String(s || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null; const t = new Date(v + 'T' + (endOfDay ? '23:59:59' : '00:00:00') + '-03:00').getTime(); return Number.isFinite(t) ? t : null; };
