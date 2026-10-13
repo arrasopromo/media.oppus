@@ -44897,6 +44897,87 @@ app.get('/api/painel/refil2/smmhustle-spend', requireAdmin, async (req, res) => 
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal', message: (e && e.message) || String(e) }); }
 });
 
+// Atualiza, ao vivo, o status da REPOSIÇÃO no fornecedor para as linhas do Gerenciamento de Refil.
+// Força MANUAL/legado (forceRefil.orderId) => action=status (em lote por fornecedor, até 100 IDs).
+// Refil NATIVO (lastRefilId) => action=refill_status (individual). Persiste em forceRefil.* e devolve
+// { statuses: { "<_id>": { status, remains, provider, checkedAt } } } para pintar a coluna no front.
+app.post('/api/painel/refil2/refresh-provider-status', requireAdmin, async (req, res) => {
+  try {
+    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
+    let ids = Array.isArray(body.ids) ? body.ids.map(s => String(s || '').trim()).filter(s => /^[a-fA-F0-9]{24}$/.test(s)) : [];
+    ids = Array.from(new Set(ids)).slice(0, 400);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids', message: 'Nenhum id válido.' });
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('refil2_requests');
+    const objIds = ids.map(s => { try { return new ObjectId(s); } catch (_) { return null; } }).filter(Boolean);
+    const docs = await col.find(
+      { _id: { $in: objIds } },
+      { projection: { username: 1, forceRefil: 1, lastRefilId: 1, lastRefilProvider: 1 } }
+    ).toArray();
+
+    const now = new Date().toISOString();
+    const statuses = {};
+    const byProvOrders = new Map(); // provider -> [{ id, docId, orderId, frStatus }]
+    const refillJobs = [];          // refil nativo: { id, docId, provider, refillId }
+    for (const d of docs) {
+      const fr = (d && d.forceRefil && typeof d.forceRefil === 'object') ? d.forceRefil : {};
+      const oid = (fr.orderId !== null && typeof fr.orderId !== 'undefined') ? String(fr.orderId).trim() : '';
+      if (oid) {
+        const prov = normalizeSmmProvider(fr.provider || d.lastRefilProvider || 'fama24h');
+        if (!byProvOrders.has(prov)) byProvOrders.set(prov, []);
+        byProvOrders.get(prov).push({ id: String(d._id), docId: d._id, orderId: oid, frStatus: fr.status || '' });
+      } else if (d.lastRefilId) {
+        refillJobs.push({ id: String(d._id), docId: d._id, provider: normalizeSmmProvider(d.lastRefilProvider || 'fama24h'), refillId: String(d.lastRefilId).trim() });
+      } else {
+        statuses[String(d._id)] = { status: '(sem order/refil id)', provider: '', remains: null, checkedAt: now };
+      }
+    }
+
+    // 1) action=status em lote por fornecedor
+    for (const [prov, list] of byProvOrders.entries()) {
+      const key = smmProviderKey(prov);
+      if (!key) { for (const it of list) statuses[it.id] = { status: '(sem API key ' + prov + ')', provider: prov, remains: null, checkedAt: now }; continue; }
+      const url = smmProviderUrl(prov);
+      for (let i = 0; i < list.length; i += 100) {
+        const chunk = list.slice(i, i + 100);
+        const orderIds = chunk.map(x => x.orderId);
+        let data = {};
+        try {
+          const r = await axios.post(url, new URLSearchParams({ key, action: 'status', orders: orderIds.join(',') }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 25000, validateStatus: () => true });
+          data = (r && r.data && typeof r.data === 'object') ? r.data : {};
+        } catch (_) {}
+        for (const x of chunk) {
+          let sp = null;
+          if (orderIds.length === 1 && (data.status !== undefined || data.charge !== undefined || data.error !== undefined)) sp = data;
+          else if (data[x.orderId] && typeof data[x.orderId] === 'object') sp = data[x.orderId];
+          if (!sp) { statuses[x.id] = { status: '(sem resposta)', provider: prov, remains: null, checkedAt: now }; continue; }
+          const stTxt = String(sp.status || sp.error || '').trim();
+          const remRaw = sp.remains;
+          const remains = (remRaw !== undefined && remRaw !== null && remRaw !== '') ? Number(remRaw) : null;
+          statuses[x.id] = { status: stTxt || '—', provider: prov, remains: Number.isFinite(remains) ? remains : null, checkedAt: now };
+          try { await col.updateOne({ _id: x.docId }, { $set: { 'forceRefil.statusPayload': sp, 'forceRefil.status': (stTxt || x.frStatus || 'unknown'), 'forceRefil.lastStatusAt': now } }); } catch (_) {}
+        }
+      }
+    }
+
+    // 2) action=refill_status (refil nativo)
+    for (const job of refillJobs) {
+      const key = smmProviderKey(job.provider);
+      if (!key || !job.refillId) { statuses[job.id] = { status: key ? '(sem refil id)' : ('(sem API key ' + job.provider + ')'), provider: job.provider, remains: null, checkedAt: now }; continue; }
+      let data = {};
+      try {
+        const r = await axios.post(smmProviderUrl(job.provider), new URLSearchParams({ key, action: 'refill_status', refill: job.refillId }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 25000, validateStatus: () => true });
+        data = (r && r.data && typeof r.data === 'object') ? r.data : {};
+      } catch (_) {}
+      const stTxt = String((typeof data.status === 'string' ? data.status : (data.status && data.status.status)) || data.error || '').trim();
+      statuses[job.id] = { status: stTxt || '—', provider: job.provider, remains: null, checkedAt: now };
+      try { await col.updateOne({ _id: job.docId }, { $set: { 'forceRefil.refillStatus': stTxt, 'forceRefil.refillStatusPayload': data, 'forceRefil.lastStatusAt': now } }); } catch (_) {}
+    }
+
+    return res.json({ ok: true, statuses, count: Object.keys(statuses).length });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal', message: (e && e.message) || String(e) }); }
+});
+
 app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};

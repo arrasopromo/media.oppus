@@ -5339,6 +5339,8 @@
             <button type="button" id="refil2ForceBulkBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#111827; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">Forçar selecionados</button>
             <button type="button" id="refil2SpecialBtn" style="padding:6px 10px; border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">⭐ Perfis especiais</button>
             <button type="button" id="refil2SmmSpendBtn" style="padding:6px 10px; border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">💵 Gastos SMMHustle</button>
+            <button type="button" id="refil2RefreshRepoBtn" title="Consulta no fornecedor o status da reposição (action=status/refill_status) das linhas da página e atualiza a coluna" style="padding:6px 10px; border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:700;">↻ Status reposição</button>
+            <span id="refil2RefreshRepoStatus" style="font-size:0.85rem; color:#6b7280;"></span>
             <script>
               // Modal "Gastos SMMHustle": lista os Forçar orderid feitos no SMMHustle com o
               // valor cobrado (action=status), convertido pra R$ quando a conta é em dólar.
@@ -5409,6 +5411,84 @@
                 document.addEventListener('keydown',function(e){ if(e.key==='Escape'&&modal&&modal.style.display!=='none') fechar(); });
                 // menus da seta ▾ (position:fixed) fecham ao rolar a página/tabela
                 window.addEventListener('scroll',function(){ document.querySelectorAll('.refil2ForceMenu').forEach(function(m){ m.style.display='none'; }); },true);
+              })();
+            </script>
+            <script>
+              // Atualiza a coluna "Status Reposição (fornecedor)" consultando o fornecedor ao vivo.
+              (function(){
+                var BADGE = { done:'refil2-badge--green', partial:'refil2-badge--yellow', error:'refil2-badge--red', progress:'refil2-badge--blue', other:'refil2-badge--gray' };
+                function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+                function keyOf(txt){
+                  var k = String(txt||'').toLowerCase(); if(!k) return '';
+                  if(/complet/.test(k)) return 'done';
+                  if(/partial/.test(k)) return 'partial';
+                  if(/cancel|refund|reject|recus|error|fail|not found|sem api|sem resposta|sem refil/.test(k)) return 'error';
+                  if(/pending|progress|processing|created|initiated|queue|andamento/.test(k)) return 'progress';
+                  return 'other';
+                }
+                function cellOf(tr){ return tr ? tr.querySelector('td[data-refil2-repo-provider]') : null; }
+                function paint(tr, s){
+                  var cell = cellOf(tr); if(!cell) return;
+                  var row = cell.querySelector('div'); if(!row) return;
+                  var txt = String((s && s.status) || '').trim();
+                  var cls = BADGE[keyOf(txt)] || 'refil2-badge--gray';
+                  var rem = (s && s.remains!=null && isFinite(s.remains) && Number(s.remains)>0) ? (' <span style="opacity:.75; font-weight:600;">(faltam '+Number(s.remains).toLocaleString('pt-BR')+')</span>') : '';
+                  var badge = tr.querySelector('.refil2RepoBadge');
+                  if(!badge){ badge=document.createElement('span'); row.insertBefore(badge, row.firstChild); }
+                  if(txt){ badge.className='refil2RepoBadge refil2-badge '+cls; badge.setAttribute('style','font-size:0.78rem; padding:3px 7px;'); badge.innerHTML=esc(txt)+rem; }
+                  else { badge.className='refil2RepoBadge'; badge.setAttribute('style','color:#9ca3af;'); badge.textContent='—'; }
+                  var when = cell.querySelector('.refil2RepoCheckedAt');
+                  var now = new Date().toLocaleString('pt-BR');
+                  if(!when){ when=document.createElement('div'); when.className='refil2RepoCheckedAt'; when.setAttribute('style','font-size:0.68rem; color:#9ca3af; margin-top:2px;'); cell.appendChild(when); }
+                  when.textContent = now;
+                }
+                async function refresh(ids, btn){
+                  if(!ids.length) return null;
+                  var resp = await fetch('/api/painel/refil2/refresh-provider-status', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ ids: ids }) });
+                  if(resp.status===401){ window.location.href='/login'; return null; }
+                  var data = await resp.json().catch(function(){ return null; });
+                  return data;
+                }
+                // Botão ↻ por linha
+                document.addEventListener('click', async function(ev){
+                  var b = ev.target && ev.target.closest ? ev.target.closest('.refil2RepoRefreshOne') : null;
+                  if(!b) return;
+                  ev.preventDefault();
+                  var tr = b.closest('tr'); if(!tr) return;
+                  var id = String(tr.getAttribute('data-refil2-id')||'').trim(); if(!id) return;
+                  var old = b.textContent; b.disabled=true; b.textContent='…';
+                  try {
+                    var data = await refresh([id], b);
+                    if(data && data.ok && data.statuses && data.statuses[id]) paint(tr, data.statuses[id]);
+                    else if(data && data.ok) paint(tr, { status:'—' });
+                  } catch(_){}
+                  finally { b.disabled=false; b.textContent=old; }
+                });
+                // Botão em massa (linhas visíveis da página)
+                var bulk = document.getElementById('refil2RefreshRepoBtn');
+                var bulkSt = document.getElementById('refil2RefreshRepoStatus');
+                if(bulk){
+                  bulk.addEventListener('click', async function(){
+                    var trs = Array.prototype.slice.call(document.querySelectorAll('tr[data-refil2-id]')).filter(function(tr){
+                      if(tr.getAttribute('data-refil2-match')==='0') return false; // respeita filtro client-side
+                      return !!cellOf(tr) && !!tr.querySelector('.refil2RepoRefreshOne');
+                    });
+                    var ids = trs.map(function(tr){ return String(tr.getAttribute('data-refil2-id')||'').trim(); }).filter(Boolean);
+                    ids = Array.from(new Set(ids));
+                    if(!ids.length){ if(bulkSt){ bulkSt.style.color='#b45309'; bulkSt.textContent='Nenhuma reposição com order/refil id nesta página.'; } return; }
+                    bulk.disabled=true; var old=bulk.textContent; bulk.textContent='Consultando…';
+                    if(bulkSt){ bulkSt.style.color='#6b7280'; bulkSt.textContent='Consultando '+ids.length+' reposição(ões)…'; }
+                    try {
+                      var data = await refresh(ids, bulk);
+                      if(data && data.ok && data.statuses){
+                        var n=0;
+                        trs.forEach(function(tr){ var id=tr.getAttribute('data-refil2-id'); if(data.statuses[id]){ paint(tr, data.statuses[id]); n++; } });
+                        if(bulkSt){ bulkSt.style.color='#15803d'; bulkSt.textContent='Atualizadas '+n+' de '+ids.length+'.'; }
+                      } else if(bulkSt){ bulkSt.style.color='#b91c1c'; bulkSt.textContent=(data && (data.message||data.error))||'Falha ao consultar.'; }
+                    } catch(e){ if(bulkSt){ bulkSt.style.color='#b91c1c'; bulkSt.textContent='Erro: '+((e&&e.message)||e); } }
+                    finally { bulk.disabled=false; bulk.textContent=old; }
+                  });
+                }
               })();
             </script>
             <div id="refil2ExportWrap" style="position:relative; display:inline-flex; align-items:center;">
@@ -5722,6 +5802,7 @@
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Forçado em</th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Refil ID <span style="color:#6b7280; font-weight:400;">(auto)</span></th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Order ID <span style="color:#6b7280; font-weight:400;">(manual)</span></th>
+                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Status Reposição <span style="color:#6b7280; font-weight:400;">(fornecedor)</span></th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Custo</th>
                 <th style="text-align:center; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Cobrado OK</th>
               </tr>
@@ -5852,6 +5933,33 @@
                       return (m.includes('instagram_proxy') || m.includes('proxy') || m.includes('rocket') || m.includes('timeout') || m.includes('consultar seguidores') || m.includes('followers') || m.includes('profile_lookup_failed'));
                     } catch (_) { return false; }
                   })();
+                  // ── Status da REPOSIÇÃO no fornecedor ───────────────────────────────
+                  // Reposição = novo pedido forçado (action=status) OU refil nativo (action=refill_status).
+                  // Mostra o status gravado (forceRefil.statusPayload/refillStatus); o botão ↻ atualiza ao vivo.
+                  const repoSp = (forceObj && forceObj.statusPayload && typeof forceObj.statusPayload === 'object') ? forceObj.statusPayload : null;
+                  const repoProvider = String((forceObj && forceObj.provider) || it.lastRefilProvider || '').trim();
+                  let repoStatusTxt = '';
+                  let repoRemains = null;
+                  if (repoSp) {
+                    repoStatusTxt = String(repoSp.status || repoSp.error || '').trim();
+                    const rem = repoSp.remains;
+                    if (rem !== undefined && rem !== null && rem !== '') { const n = Number(rem); if (Number.isFinite(n)) repoRemains = n; }
+                  }
+                  if (!repoStatusTxt && forceObj && forceObj.refillStatus) repoStatusTxt = String(forceObj.refillStatus).trim();
+                  if (!repoStatusTxt && forceObj && forceObj.status) repoStatusTxt = String(forceObj.status).trim();
+                  const repoStatusCheckedAt = (forceObj && forceObj.lastStatusAt) ? fmtDate(forceObj.lastStatusAt) : '';
+                  // Dá pra consultar ao vivo? force manual/legado => tem forceRefil.orderId; refil nativo => tem lastRefilId.
+                  const repoCanRefresh = !!(forceRawId || (it && it.lastRefilId));
+                  const repoKey = (function(){
+                    const k = String(repoStatusTxt || '').toLowerCase();
+                    if (!k) return '';
+                    if (/complet/.test(k)) return 'done';
+                    if (/partial/.test(k)) return 'partial';
+                    if (/cancel|refund|reject|recus|error|fail|not found|sem api|sem resposta|sem refil/.test(k)) return 'error';
+                    if (/pending|progress|processing|created|initiated|queue|andamento/.test(k)) return 'progress';
+                    return 'other';
+                  })();
+                  const repoBadgeCls = ({ done:'refil2-badge--green', partial:'refil2-badge--yellow', error:'refil2-badge--red', progress:'refil2-badge--blue', other:'refil2-badge--gray' })[repoKey] || 'refil2-badge--gray';
                 %>
                   <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>" data-refil2-audit="<%= String(auditKey || '') %>" data-refil2-hasrefilid="<%= (forceOrderId ? '1' : '0') %>" data-refil2-auto="<%= (it && it.automated === true) ? '1' : '0' %>">
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
@@ -5913,6 +6021,21 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
                       <span class="refil2ForceOrderId"><%= forceOrderId || '-' %></span>
                     </td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;" data-refil2-repo-provider="<%= repoProvider %>">
+                      <div style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                        <% if (repoStatusTxt) { %>
+                          <span class="refil2RepoBadge refil2-badge <%= repoBadgeCls %>" style="font-size:0.78rem; padding:3px 7px;"><%= repoStatusTxt %><% if (repoRemains != null && repoRemains > 0) { %> <span style="opacity:.75; font-weight:600;">(faltam <%= repoRemains %>)</span><% } %></span>
+                        <% } else { %>
+                          <span class="refil2RepoBadge" style="color:#9ca3af;">—</span>
+                        <% } %>
+                        <% if (repoCanRefresh) { %>
+                          <button type="button" class="refil2RepoRefreshOne" title="Atualizar status no fornecedor" style="padding:3px 7px; border:1px solid #e5e7eb; background:#fff; color:#374151; border-radius:8px; cursor:pointer; font-size:0.85rem; line-height:1;">↻</button>
+                        <% } %>
+                      </div>
+                      <% if (repoStatusCheckedAt) { %>
+                        <div class="refil2RepoCheckedAt" style="font-size:0.68rem; color:#9ca3af; margin-top:2px;"><%= repoStatusCheckedAt %></div>
+                      <% } %>
+                    </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
                       <span class="refil2ForceCharge"><%= forceCharge || '-' %></span>
                     </td>
@@ -5922,7 +6045,7 @@
                   </tr>
                 <% }) %>
               <% } else { %>
-                <tr><td colspan="19" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
+                <tr><td colspan="20" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
               <% } %>
             </tbody>
           </table>
