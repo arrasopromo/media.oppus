@@ -286,57 +286,21 @@
         if (bulkAudit) bulkAudit.disabled = !anyDone;
       }
 
-      // ── Copiar marcados: monta tabela (HTML p/ colar formatado + TSV p/ Excel/Sheets) ──
-      function nfBR(v){ var n = Number(v); return (v === '' || v == null || !isFinite(n)) ? String(v || '') : n.toLocaleString('pt-BR'); }
-      function buildCopyData(rows){
-        var headers = ['OrderID', 'Usuário', 'Link post', 'Qtd inicial', 'Qtd contratada', 'Qtd atual'];
-        var data = rows.map(function(c){
-          var user = c.getAttribute('data-usuario') || '';
-          var forn = c.getAttribute('data-fornecedor') || '';
-          var oid = c.getAttribute('data-orderid') || '';
-          return [
-            (forn ? ('"' + forn + '" ') : '') + oid,   // fornecedor entre aspas na frente do OrderID
-            user ? ('@' + user) : '',
-            c.getAttribute('data-linkpost') || '',
-            c.getAttribute('data-inicial') || '',
-            c.getAttribute('data-contratada') || '',
-            c.getAttribute('data-atual') || ''
-          ];
-        });
-        // TSV: números crus (colam certinho como número no Excel/Sheets)
-        var tsv = [headers.join('\t')].concat(data.map(function(r){ return r.join('\t'); })).join('\n');
-        // HTML: tabela estilizada (cola formatada no Docs/Word/e-mail)
-        var esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
-        var th = headers.map(function(h){ return '<th style="border:1px solid #cbd5e1;padding:6px 12px;background:#f1f5f9;text-align:left;font-family:sans-serif;font-size:13px;">' + esc(h) + '</th>'; }).join('');
-        var trs = data.map(function(r){
-          return '<tr>' + r.map(function(v, i){
-            var val;
-            if (i === 2 && v) { val = '<a href="' + esc(v) + '">' + esc(v) + '</a>'; }
-            else if (i >= 3) { val = esc(nfBR(v)); }
-            else { val = esc(v); }
-            var align = (i >= 3) ? 'right' : 'left';
-            return '<td style="border:1px solid #cbd5e1;padding:6px 12px;text-align:' + align + ';font-family:sans-serif;font-size:13px;">' + val + '</td>';
-          }).join('') + '</tr>';
-        }).join('');
-        var html = '<table style="border-collapse:collapse;">' + '<thead><tr>' + th + '</tr></thead><tbody>' + trs + '</tbody></table>';
-        return { tsv: tsv, html: html };
-      }
+      // Copia SOMENTE os orderIds dos marcados, separados por vírgula.
       async function copyMarked(){
         var rows = checkedRows();
         if (!rows.length) { if (bulkMsg) bulkMsg.textContent = 'Marque ao menos um pedido.'; return; }
-        var out = buildCopyData(rows);
+        var ids = rows.map(function(c){ return (c.getAttribute('data-orderid') || '').trim(); }).filter(Boolean);
+        var txt = ids.join(',');
         try {
-          if (navigator.clipboard && window.ClipboardItem) {
-            var item = new ClipboardItem({ 'text/html': new Blob([out.html], { type: 'text/html' }), 'text/plain': new Blob([out.tsv], { type: 'text/plain' }) });
-            await navigator.clipboard.write([item]);
-          } else if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(out.tsv);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(txt);
           } else {
-            var ta = document.createElement('textarea'); ta.value = out.tsv; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+            var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
           }
-          if (bulkMsg) bulkMsg.textContent = '✓ ' + rows.length + ' linha(s) copiada(s) — cole no Excel/Sheets/Docs.';
+          if (bulkMsg) bulkMsg.textContent = '✓ ' + ids.length + ' orderID(s) copiado(s).';
         } catch (e) {
-          try { await navigator.clipboard.writeText(out.tsv); if (bulkMsg) bulkMsg.textContent = '✓ copiado (texto).'; }
+          try { await navigator.clipboard.writeText(txt); if (bulkMsg) bulkMsg.textContent = '✓ copiado.'; }
           catch (_) { if (bulkMsg) bulkMsg.textContent = 'Falha ao copiar.'; }
         }
       }
