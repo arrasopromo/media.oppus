@@ -4288,6 +4288,10 @@ const REFIL_TESTE_PROVIDER_KEYS = {
   'dripfeedpanel.com': 'DRIPFEEDPANEL_API_KEY',
   'bulkfollows.com': 'BULKFOLLOWS_API_KEY',
   'worldsmm.com.br': 'WORLDSMM_API_KEY',
+  'hiperseguidores.com.br': 'HIPERSEGUIDORES_API_KEY',  // domínio REAL é .com.br (.com está morto)
+  'hiperseguidores.com': 'HIPERSEGUIDORES_API_KEY',
+  'revendaexclusiva.com': 'REVENDAEXCLUSIVA_API_KEY',
+  'smmpix.com': 'SMMPIX_API_KEY',
 };
 function resolveRefilProviderFromFornecedor(fornecedor) {
   const raw = String(fornecedor || '').trim();
