@@ -1787,7 +1787,7 @@ const sendPixOrderEmailToCustomer = async ({ record }) => {
     try { await maybeSendClientLoginForDebug({ record }); } catch (_) {}
 };
 
-const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, subjectOverride }) => {
+const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, subjectOverride, stageLabel: stageLabelOverride }) => {
     const isDebug = (function () {
         try { return isOrderRecoveryDebugProfile(record); } catch (_) { return false; }
     })();
@@ -1987,6 +1987,10 @@ const sendPixRecoveryEmailToCustomer = async ({ record, couponCode, couponPct, s
     const couponCodeNorm = String(couponCode || '').trim().toUpperCase();
     const couponLabel = (couponCodeNorm && couponPctNum > 0) ? `${couponCodeNorm} (${Math.round(couponPctNum)}% OFF)` : '';
     const stageLabel = (function () {
+        // Usa o label explícito do estágio quando o chamador passou (distingue 6h de 24h,
+        // ambos 30%). Sem ele, cai no legado derivado do cupom%.
+        const explicit = String(stageLabelOverride || '').trim();
+        if (explicit) return explicit;
         if (couponPctNum >= 30) return '24h';
         if (couponPctNum >= 15) return '30m';
         return '10m';
@@ -17670,10 +17674,10 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             return ORDER_RECOVERY_COUPON_HARD_START_ISO;
         };
         const getOrderRecoveryStage1Minutes = () => {
-            const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '30').trim();
+            const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '60').trim();
             const n = parseInt(raw, 10);
-            if (Number.isFinite(n) && n > 0) return Math.max(5, Math.min(180, n));
-            return 30;
+            if (Number.isFinite(n) && n > 0) return Math.max(5, Math.min(600, n));
+            return 60;
         };
         const getOrderRecoveryStage0Minutes = () => {
             const raw = String(process.env.ORDER_RECOVERY_STAGE0_MINUTES || process.env.ORDER_RECOVERY_AFTER_MINUTES || '10').trim();
@@ -17682,9 +17686,16 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             return 10;
         };
         const getOrderRecoveryStage2Hours = () => {
-            const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '24').trim();
+            const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '6').trim();
             const n = parseInt(raw, 10);
-            if (Number.isFinite(n) && n > 0) return Math.max(12, Math.min(96, n));
+            if (Number.isFinite(n) && n > 0) return Math.max(1, Math.min(96, n));
+            return 6;
+        };
+        // 4º email (dia seguinte): última tentativa, repete o cupom de 30%.
+        const getOrderRecoveryStage3Hours = () => {
+            const raw = String(process.env.ORDER_RECOVERY_STAGE3_HOURS || '24').trim();
+            const n = parseInt(raw, 10);
+            if (Number.isFinite(n) && n > 0) return Math.max(6, Math.min(168, n));
             return 24;
         };
         const paidStatusTokens = [
@@ -17757,6 +17768,7 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         let stage0Minutes = getOrderRecoveryStage0Minutes();
         let stage1Minutes = getOrderRecoveryStage1Minutes();
         let stage2Hours = getOrderRecoveryStage2Hours();
+        let stage3Hours = getOrderRecoveryStage3Hours();
         const coupon15Code = normalizeCouponCode(process.env.ORDER_RECOVERY_COUPON15_CODE || 'RECUP15');
         const coupon30Code = normalizeCouponCode(process.env.ORDER_RECOVERY_COUPON30_CODE || 'RECUP30');
         const couponInOrder = (function () {
@@ -17802,16 +17814,21 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         const stage0Due = ageMs >= (stage0Minutes * 60 * 1000);
         const stage1Due = ageMs >= (stage1Minutes * 60 * 1000);
         const stage2Due = ageMs >= (stage2Hours * 60 * 60 * 1000);
+        const stage3Due = ageMs >= (stage3Hours * 60 * 60 * 1000);
 
         const stage0SentAt = record?.emails?.paymentRecoveryStage10SentAt || record?.emails?.paymentRecoveryStage0SentAt;
         const stage1SentAt = record?.emails?.paymentRecoveryStage15SentAt || record?.emails?.paymentRecoveryCoupon15SentAt || record?.emails?.paymentRecoverySentAt;
         const stage2SentAt = record?.emails?.paymentRecoveryStage30SentAt || record?.emails?.paymentRecoveryCoupon30SentAt;
+        const stage3SentAt = record?.emails?.paymentRecoveryStage3SentAt;
         const debugIntervalMs = 60 * 1000;
 
         const stage = (function () {
             const couponsAllowed = canSendCoupon && !blockCouponEmails;
             if (!isDebugRecovery) {
-                return (couponsAllowed && stage2Due && !stage2SentAt) ? 2 : ((couponsAllowed && stage1Due && !stage1SentAt) ? 1 : ((stage0Due && !stage0SentAt) ? 10 : 0));
+                return (couponsAllowed && stage3Due && !stage3SentAt) ? 3
+                  : ((couponsAllowed && stage2Due && !stage2SentAt) ? 2
+                  : ((couponsAllowed && stage1Due && !stage1SentAt) ? 1
+                  : ((stage0Due && !stage0SentAt) ? 10 : 0)));
             }
             const now = Date.now();
             const msOr0 = (iso) => {
@@ -17824,9 +17841,11 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             };
             const s0 = msOr0(stage0SentAt);
             const s1 = msOr0(stage1SentAt);
+            const s2 = msOr0(stage2SentAt);
             if (!stage0SentAt) return (ageMs >= debugIntervalMs) ? 10 : 0;
             if (couponsAllowed && !stage1SentAt) return (now - s0 >= debugIntervalMs) ? 1 : 0;
             if (couponsAllowed && !stage2SentAt) return (now - s1 >= debugIntervalMs) ? 2 : 0;
+            if (couponsAllowed && !stage3SentAt) return (now - s2 >= debugIntervalMs) ? 3 : 0;
             return 0;
         })();
         if (!stage) return;
@@ -17850,6 +17869,7 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         const nowIso = new Date().toISOString();
         const stageNotSentCond = (function(){
           const missing = (f) => ({ $or: [{ [f]: { $exists: false } }, { [f]: null }, { [f]: '' }] });
+          if (stage === 3) return missing('emails.paymentRecoveryStage3SentAt');
           if (stage === 2) return missing('emails.paymentRecoveryStage30SentAt');
           if (stage === 1) {
             return {
@@ -17956,25 +17976,32 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             }
             const coupon15Pct = 15;
             const coupon30Pct = 30;
+            const is30 = (stage === 2 || stage === 3);
             if (stage !== 10) {
               try {
-                if (stage === 2) await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 });
+                if (is30) await ensureCouponExists({ code: coupon30Code, discountPercentage: coupon30Pct, maxUsesPerProfile: 1 });
                 else await ensureCouponExists({ code: coupon15Code, discountPercentage: coupon15Pct, maxUsesPerProfile: 1 });
               } catch (_) {}
             }
 
-            const subject = stage === 2
-              ? `Agência Oppus - Cupom ${coupon30Pct}% OFF para concluir seu pedido`
-              : (stage === 1
-                ? `Agência Oppus - Cupom ${coupon15Pct}% OFF para concluir seu pedido`
-                : `Agência Oppus - Seu pedido está aguardando pagamento`);
+            const subject = stage === 3
+              ? `Agência Oppus - Última chance: ${coupon30Pct}% OFF no seu pedido`
+              : (stage === 2
+                ? `Agência Oppus - Cupom ${coupon30Pct}% OFF para concluir seu pedido`
+                : (stage === 1
+                  ? `Agência Oppus - Cupom ${coupon15Pct}% OFF para concluir seu pedido`
+                  : `Agência Oppus - Seu pedido está aguardando pagamento`));
 
-            try { console.log(`📨 [recovery-email] start id=${orderIdShort} to=${to} stage=${stage}`); } catch (_) {}
+            // Label de atribuição por estágio (recovery_stage no link). NÃO deriva do cupom%:
+            // o email de 6h e o de 24h são ambos 30%, mas precisam ser distinguíveis.
+            const stageLabelAttr = (stage === 10) ? '10m' : (stage === 1 ? '1h' : (stage === 2 ? '6h' : '24h'));
+            try { console.log(`📨 [recovery-email] start id=${orderIdShort} to=${to} stage=${stage} label=${stageLabelAttr}`); } catch (_) {}
             const sent = await sendPixRecoveryEmailToCustomer({
               record,
-              couponCode: stage === 10 ? '' : (stage === 2 ? coupon30Code : coupon15Code),
-              couponPct: stage === 10 ? 0 : (stage === 2 ? coupon30Pct : coupon15Pct),
-              subjectOverride: subject
+              couponCode: stage === 10 ? '' : (is30 ? coupon30Code : coupon15Code),
+              couponPct: stage === 10 ? 0 : (is30 ? coupon30Pct : coupon15Pct),
+              subjectOverride: subject,
+              stageLabel: stageLabelAttr
             });
             if (!sent) throw new Error('recovery_email_not_sent');
             await col.updateOne(
@@ -17984,7 +18011,8 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
                     {},
                     stage === 10 ? { 'emails.paymentRecoveryStage10SentAt': new Date().toISOString() } : {},
                     stage === 1 ? { 'emails.paymentRecoverySentAt': new Date().toISOString(), 'emails.paymentRecoveryStage15SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon15Code': stage === 1 ? coupon15Code : '' } : {},
-                    stage === 2 ? { 'emails.paymentRecoveryStage30SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon30Code': stage === 2 ? coupon30Code : '' } : {}
+                    stage === 2 ? { 'emails.paymentRecoveryStage30SentAt': new Date().toISOString(), 'emails.paymentRecoveryCoupon30Code': stage === 2 ? coupon30Code : '' } : {},
+                    stage === 3 ? { 'emails.paymentRecoveryStage3SentAt': new Date().toISOString(), 'emails.paymentRecoveryStage3Coupon': coupon30Code } : {}
                   ),
                   $unset: { 'emails.paymentRecoveryLockAt': '' }
                 }
@@ -49349,22 +49377,29 @@ const server = app.listen(port, () => {
           return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 10;
         })();
         const stage1Minutes = (function () {
-          const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '30').trim();
+          const raw = String(process.env.ORDER_RECOVERY_STAGE1_MINUTES || '60').trim();
           const n = parseInt(raw, 10);
-          return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(180, n)) : 30;
+          return Number.isFinite(n) && n > 0 ? Math.max(5, Math.min(600, n)) : 60;
         })();
         const stage2Hours = (function () {
-          const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '24').trim();
+          const raw = String(process.env.ORDER_RECOVERY_STAGE2_HOURS || '6').trim();
           const n = parseInt(raw, 10);
-          return Number.isFinite(n) && n > 0 ? Math.max(12, Math.min(96, n)) : 24;
+          return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(96, n)) : 6;
+        })();
+        const stage3Hours = (function () {
+          const raw = String(process.env.ORDER_RECOVERY_STAGE3_HOURS || '24').trim();
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) && n > 0 ? Math.max(6, Math.min(168, n)) : 24;
         })();
         const nowIso = new Date().toISOString();
         const cutoffStage0Date = new Date(Date.now() - stage0Minutes * 60 * 1000);
         const cutoffStage1Date = new Date(Date.now() - stage1Minutes * 60 * 1000);
         const cutoffStage2Date = new Date(Date.now() - stage2Hours * 60 * 60 * 1000);
+        const cutoffStage3Date = new Date(Date.now() - stage3Hours * 60 * 60 * 1000);
         const cutoffStage0Iso = cutoffStage0Date.toISOString();
         const cutoffStage1Iso = cutoffStage1Date.toISOString();
         const cutoffStage2Iso = cutoffStage2Date.toISOString();
+        const cutoffStage3Iso = cutoffStage3Date.toISOString();
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
         const startCond = (function () {
@@ -49412,6 +49447,12 @@ const server = app.listen(port, () => {
                   $and: [
                     createdAtLte(cutoffStage2Date, cutoffStage2Iso),
                     { $or: [{ 'emails.paymentRecoveryStage30SentAt': { $exists: false } }, { 'emails.paymentRecoveryStage30SentAt': null }, { 'emails.paymentRecoveryStage30SentAt': '' }] }
+                  ]
+                },
+                {
+                  $and: [
+                    createdAtLte(cutoffStage3Date, cutoffStage3Iso),
+                    { $or: [{ 'emails.paymentRecoveryStage3SentAt': { $exists: false } }, { 'emails.paymentRecoveryStage3SentAt': null }, { 'emails.paymentRecoveryStage3SentAt': '' }] }
                   ]
                 },
                 {
