@@ -65,6 +65,14 @@
     .unknown-badge--vip { background: #0ea5e9; color: #ffffff; }
     .unknown-badge--hidden { background: #64748b; color: #ffffff; }
     .refil2-badge { display:inline-block; padding:4px 8px; border-radius:999px; font-weight:700; font-size: 0.85rem; }
+    /* Tabela principal do Gerenciamento de Refil: mais larga, fonte menor, menos espaçamento. */
+    #refil2ScrollBottom table.refil2-main-table th,
+    #refil2ScrollBottom table.refil2-main-table td { padding: 3px 5px !important; line-height: 1.25; }
+    #refil2ScrollBottom table.refil2-main-table .refil2-badge { padding: 2px 6px; font-size: 0.74rem; }
+    #refil2ScrollBottom table.refil2-main-table input,
+    #refil2ScrollBottom table.refil2-main-table button { font-size: 0.78rem; }
+    #refil2ScrollBottom table.refil2-main-table .refil2AuditCurrent { width: 70px !important; }
+    #refil2ScrollBottom table.refil2-main-table .refil2AuditResult { width: 72px !important; max-width: 72px !important; }
     .refil2-badge--green { background:#dcfce7; color:#166534; }
     .refil2-badge--blue { background:#e0f2fe; color:#075985; }
     .refil2-badge--yellow { background:#fef3c7; color:#92400e; }
@@ -5299,7 +5307,7 @@
     <% } %>
 
     <% if (isRefil2View) { %>
-      <div id="refil2RequestsWrap" data-refil2-page="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.page) ? String(refil2Pagination.page) : '1' %>" data-refil2-totalpages="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.totalPages) ? String(refil2Pagination.totalPages) : '1' %>" data-refil2-pagesize="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.pageSize) ? String(refil2Pagination.pageSize) : '200' %>" style="margin-top: 12px; border:1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fff; width:100%; box-sizing:border-box;">
+      <div id="refil2RequestsWrap" data-refil2-page="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.page) ? String(refil2Pagination.page) : '1' %>" data-refil2-totalpages="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.totalPages) ? String(refil2Pagination.totalPages) : '1' %>" data-refil2-pagesize="<%= (typeof refil2Pagination !== 'undefined' && refil2Pagination && refil2Pagination.pageSize) ? String(refil2Pagination.pageSize) : '200' %>" style="margin-top: 12px; border:1px solid #e5e7eb; border-radius: 10px; padding: 6px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
           <strong style="font-size: 1rem; color:#111827;">Gerenciamento Refil</strong>
           <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -5778,7 +5786,7 @@
           <div id="refil2ScrollTopInner" style="height:1px;"></div>
         </div>
         <div class="panel-table-scroll" id="refil2ScrollBottom" style="margin-top: 6px;">
-          <table style="width:100%; border-collapse: collapse; font-size: 0.92rem; min-width: 2080px;">
+          <table class="refil2-main-table" style="width:100%; border-collapse: collapse; font-size: 0.8rem; min-width: 1760px;">
             <thead>
               <tr>
                 <th style="text-align:center; padding:6px 4px; border-bottom:1px solid #e5e7eb; width:44px;">

@@ -26541,7 +26541,9 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
             if (__refilLogOrderId) doc.pedido = { id: __refilLogOrderId, link: 'https://instagram.com/' + username };
             // Refil AUTOMÁTICO do sistema → grava em lastRefilId (coluna "Refil ID").
             // NÃO usa forceRefil.orderId, que agora é exclusivo da força manual ("Order ID", cobrável).
-            if (ok && body && body.refill) { doc.lastRefilId = String(body.refill); doc.lastRefilProvider = 'fama24h'; doc.lastRefilAt = new Date(); }
+            // Grava o provider REAL da reposição (o endpoint devolve body.provider = followiz/nuvra/etc).
+            // NÃO usar 'fama24h' fixo: é só o nome do slot e não tem API key própria, quebrava o status.
+            if (ok && body && body.refill) { doc.lastRefilId = String(body.refill); doc.lastRefilProvider = String((body && body.provider) || '').trim() || 'fama24h'; doc.lastRefilAt = new Date(); }
             (async () => {
               try {
                 // Busca AO VIVO a quantidade atual de seguidores e grava no doc, para o Gerenciamento de
@@ -44912,7 +44914,7 @@ app.post('/api/painel/refil2/refresh-provider-status', requireAdmin, async (req,
     const objIds = ids.map(s => { try { return new ObjectId(s); } catch (_) { return null; } }).filter(Boolean);
     const docs = await col.find(
       { _id: { $in: objIds } },
-      { projection: { username: 1, forceRefil: 1, lastRefilId: 1, lastRefilProvider: 1 } }
+      { projection: { username: 1, forceRefil: 1, lastRefilId: 1, lastRefilProvider: 1, pedido: 1 } }
     ).toArray();
 
     const now = new Date().toISOString();
@@ -44927,11 +44929,44 @@ app.post('/api/painel/refil2/refresh-provider-status', requireAdmin, async (req,
         if (!byProvOrders.has(prov)) byProvOrders.set(prov, []);
         byProvOrders.get(prov).push({ id: String(d._id), docId: d._id, orderId: oid, frStatus: fr.status || '' });
       } else if (d.lastRefilId) {
-        refillJobs.push({ id: String(d._id), docId: d._id, provider: normalizeSmmProvider(d.lastRefilProvider || 'fama24h'), refillId: String(d.lastRefilId).trim() });
+        refillJobs.push({ id: String(d._id), docId: d._id, provider: normalizeSmmProvider(d.lastRefilProvider || 'fama24h'), refillId: String(d.lastRefilId).trim(), pedidoId: String((d.pedido && d.pedido.id) || '').trim() });
       } else {
         statuses[String(d._id)] = { status: '(sem order/refil id)', provider: '', remains: null, checkedAt: now };
       }
     }
+
+    // "fama24h" é só o nome do slot (sem API key própria): resolve o fornecedor REAL pelo pedido
+    // (order.fama24h.provider/effProvider), igual o /api/refil/simple faz, pra consultar o refil_status.
+    try {
+      const needResolve = refillJobs.filter(j => (j.provider === 'fama24h' || !smmProviderKey(j.provider)) && j.pedidoId);
+      if (needResolve.length) {
+        const pids = Array.from(new Set(needResolve.map(j => j.pedidoId)));
+        const ordersCol = await getCollection('checkout_orders');
+        const ords = await ordersCol.find(
+          { $or: [{ 'fama24h.orderId': { $in: pids } }, { 'fama24h_multi.orders.orderId': { $in: pids } }, { 'fornecedor_social.orderId': { $in: pids } }] },
+          { projection: { fama24h: 1, fama24h_multi: 1, fornecedor_social: 1 } }
+        ).toArray();
+        const provByPid = new Map();
+        for (const pid of pids) {
+          const o = ords.find(x =>
+            (x.fama24h && String(x.fama24h.orderId) === pid) ||
+            (x.fornecedor_social && String(x.fornecedor_social.orderId) === pid) ||
+            (x.fama24h_multi && Array.isArray(x.fama24h_multi.orders) && x.fama24h_multi.orders.some(m => m && String(m.orderId) === pid))
+          );
+          if (!o) continue;
+          const resolved = resolveRefillProviderApi(pid, o, 'fama24h');
+          if (resolved && resolved.provider) provByPid.set(pid, normalizeSmmProvider(resolved.provider));
+        }
+        for (const j of needResolve) {
+          const real = provByPid.get(j.pedidoId);
+          if (real && real !== j.provider && SMM_PROVIDERS[real]) {
+            j.provider = real;
+            // corrige o rótulo gravado pra próximas leituras (write-back barato)
+            try { await col.updateOne({ _id: j.docId }, { $set: { lastRefilProvider: real } }); } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
 
     // 1) action=status em lote por fornecedor
     for (const [prov, list] of byProvOrders.entries()) {
