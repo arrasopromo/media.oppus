@@ -1186,6 +1186,46 @@ async function ltvLookupByPhone(phone) {
 // webhook nem o disparo). A Meta não devolve histórico — só o que capturarmos daqui
 // pra frente aparece. phoneKey = dígitos sem 55 (mesma chave do opt-out).
 let __waMsgIndexed = false;
+// Transcreve um áudio recebido no número do LTV (wa_messages). Baixa pelo token PRINCIPAL
+// (WHATSAPP_ACCESS_TOKEN — dono desse número) e manda pro Whisper da OpenAI. OGG/opus do
+// WhatsApp vai direto (Whisper aceita ogg), sem precisar de ffmpeg. Best-effort, nunca lança.
+async function transcreverAudioLtv(mediaId, mimeIn) {
+  try {
+    const token = String(process.env.WHATSAPP_ACCESS_TOKEN || '').trim();
+    const openaiKey = String(process.env.OPENAI_API_KEY || '').trim();
+    if (!token || !openaiKey || !mediaId) return '';
+    const ver = String(process.env.WHATSAPP_API_VERSION || 'v21.0').trim();
+    const meta = await axios.get('https://graph.facebook.com/' + ver + '/' + encodeURIComponent(String(mediaId)), { headers: { Authorization: 'Bearer ' + token }, timeout: 20000, validateStatus: () => true });
+    if (meta.status !== 200 || !meta.data || !meta.data.url) return '';
+    const mime = String((meta.data.mime_type || mimeIn || 'audio/ogg')).split(';')[0].trim();
+    const bin = await axios.get(meta.data.url, { headers: { Authorization: 'Bearer ' + token }, responseType: 'arraybuffer', timeout: 40000, validateStatus: () => true });
+    if (bin.status !== 200) return '';
+    const buf = Buffer.from(bin.data);
+    if (!buf || !buf.length) return '';
+    const ext = /ogg|opus/.test(mime) ? 'ogg' : (/mpeg|mp3/.test(mime) ? 'mp3' : (/wav/.test(mime) ? 'wav' : (/m4a|mp4|aac/.test(mime) ? 'm4a' : 'ogg')));
+    const fd = new FormData();
+    fd.append('file', new Blob([buf], { type: mime }), 'audio.' + ext);
+    fd.append('model', 'whisper-1');
+    fd.append('language', 'pt');
+    fd.append('response_format', 'text');
+    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + openaiKey }, body: fd });
+    if (!r.ok) return '';
+    return String((await r.text()) || '').trim();
+  } catch (_) { return ''; }
+}
+// Dispara a transcrição em background e grava no doc do wa_messages (por wamid). Não bloqueia o webhook.
+function transcreverAudioLtvAsync(wamid, mediaId, mime) {
+  if (!wamid || !mediaId) return;
+  (async () => {
+    try {
+      const t = await transcreverAudioLtv(mediaId, mime);
+      if (!t) return;
+      const c = await getCollection('wa_messages');
+      await c.updateOne({ wamid: String(wamid) }, { $set: { text: '[áudio] ' + t, transcricao: t, transcritoEm: new Date() } });
+    } catch (_) {}
+  })();
+}
+
 async function logWaMessage(msg) {
   try {
     const phoneRaw = String(msg && msg.phone || '').trim();
@@ -11024,6 +11064,8 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
             try {
               const ctx = await lookupWaContact(String(from), normOptoutPhone(from));
               await logWaMessage({ phone: String(from), phoneE164: String(from), direction: 'in', type: mtype, text, mediaId, mime, replyTo: (m && m.context && m.context.id) || '', filename: (m && m.document && m.document.filename) || '', wamid: (m && m.id), campaign: 'ltv', name: ctx.name || profileNameByWa[String(from)] || '', ig: ctx.ig, ts: (m && m.timestamp) ? Number(m.timestamp) * 1000 : null });
+              // Áudio recebido no CRM do LTV: transcreve em background (Whisper) e grava no doc.
+              if ((mtype === 'audio' || mtype === 'voice') && mediaId) transcreverAudioLtvAsync((m && m.id) || '', mediaId, mime);
             } catch (_) {}
           }
         }
