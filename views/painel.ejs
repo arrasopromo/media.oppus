@@ -5422,9 +5422,9 @@
               })();
             </script>
             <script>
-              // Atualiza a coluna "Status Reposição (fornecedor)" consultando o fornecedor ao vivo.
+              // "Status Reposição": ícone (i) na coluna Status → modal com o detalhe/erro da reposição no fornecedor.
               (function(){
-                var BADGE = { done:'refil2-badge--green', partial:'refil2-badge--yellow', error:'refil2-badge--red', progress:'refil2-badge--blue', other:'refil2-badge--gray' };
+                var ICO = { done:'#16a34a', partial:'#d97706', error:'#dc2626', progress:'#2563eb', other:'#6b7280', '':'#cbd5e1' };
                 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
                 function keyOf(txt){
                   var k = String(txt||'').toLowerCase(); if(!k) return '';
@@ -5434,52 +5434,78 @@
                   if(/pending|progress|processing|created|initiated|queue|andamento/.test(k)) return 'progress';
                   return 'other';
                 }
-                function cellOf(tr){ return tr ? tr.querySelector('td[data-refil2-repo-provider]') : null; }
-                function paint(tr, s){
-                  var cell = cellOf(tr); if(!cell) return;
-                  var row = cell.querySelector('div'); if(!row) return;
-                  var txt = String((s && s.status) || '').trim();
-                  var cls = BADGE[keyOf(txt)] || 'refil2-badge--gray';
-                  var rem = (s && s.remains!=null && isFinite(s.remains) && Number(s.remains)>0) ? (' <span style="opacity:.75; font-weight:600;">(faltam '+Number(s.remains).toLocaleString('pt-BR')+')</span>') : '';
-                  var badge = tr.querySelector('.refil2RepoBadge');
-                  if(!badge){ badge=document.createElement('span'); row.insertBefore(badge, row.firstChild); }
-                  if(txt){ badge.className='refil2RepoBadge refil2-badge '+cls; badge.setAttribute('style','font-size:0.78rem; padding:3px 7px;'); badge.innerHTML=esc(txt)+rem; }
-                  else { badge.className='refil2RepoBadge'; badge.setAttribute('style','color:#9ca3af;'); badge.textContent='—'; }
-                  var when = cell.querySelector('.refil2RepoCheckedAt');
-                  var now = new Date().toLocaleString('pt-BR');
-                  if(!when){ when=document.createElement('div'); when.className='refil2RepoCheckedAt'; when.setAttribute('style','font-size:0.68rem; color:#9ca3af; margin-top:2px;'); cell.appendChild(when); }
-                  when.textContent = now;
+                // Atualiza o ícone (cor + data-*) de uma linha com o status fresco do fornecedor.
+                function setIcon(tr, s){
+                  var ico = tr.querySelector('.refil2RepoInfo'); if(!ico) return;
+                  var txt = String((s && s.status)||'').trim();
+                  ico.setAttribute('data-repo-status', txt);
+                  ico.setAttribute('data-repo-remains', (s && s.remains!=null && isFinite(s.remains)) ? String(s.remains) : '');
+                  ico.setAttribute('data-repo-checked', new Date().toLocaleString('pt-BR'));
+                  if(s && s.provider) ico.setAttribute('data-repo-provider', s.provider);
+                  ico.style.background = ICO[keyOf(txt)] || '#cbd5e1';
                 }
-                async function refresh(ids, btn){
+                async function refresh(ids){
                   if(!ids.length) return null;
                   var resp = await fetch('/api/painel/refil2/refresh-provider-status', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ ids: ids }) });
                   if(resp.status===401){ window.location.href='/login'; return null; }
-                  var data = await resp.json().catch(function(){ return null; });
-                  return data;
+                  return await resp.json().catch(function(){ return null; });
                 }
-                // Botão ↻ por linha
-                document.addEventListener('click', async function(ev){
-                  var b = ev.target && ev.target.closest ? ev.target.closest('.refil2RepoRefreshOne') : null;
-                  if(!b) return;
-                  ev.preventDefault();
-                  var tr = b.closest('tr'); if(!tr) return;
-                  var id = String(tr.getAttribute('data-refil2-id')||'').trim(); if(!id) return;
-                  var old = b.textContent; b.disabled=true; b.textContent='…';
-                  try {
-                    var data = await refresh([id], b);
-                    if(data && data.ok && data.statuses && data.statuses[id]) paint(tr, data.statuses[id]);
-                    else if(data && data.ok) paint(tr, { status:'—' });
-                  } catch(_){}
-                  finally { b.disabled=false; b.textContent=old; }
+                // ----- Modal de detalhe -----
+                var modal = document.getElementById('refil2RepoModal');
+                var mBody = document.getElementById('refil2RepoModalBody');
+                var mRefreshBtn = document.getElementById('refil2RepoModalRefresh');
+                var currentTr = null;
+                function fieldRow(label, val){
+                  return '<div style="display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid #f3f4f6;"><span style="color:#6b7280; font-size:0.85rem;">'+esc(label)+'</span><span style="color:#111827; font-weight:600; font-size:0.9rem; text-align:right; word-break:break-word;">'+val+'</span></div>';
+                }
+                function fillModal(ico){
+                  if(!ico) return;
+                  var prov=ico.getAttribute('data-repo-provider')||'', status=ico.getAttribute('data-repo-status')||'', remains=ico.getAttribute('data-repo-remains')||'';
+                  var oid=ico.getAttribute('data-repo-orderid')||'', rid=ico.getAttribute('data-repo-refilid')||'', checked=ico.getAttribute('data-repo-checked')||'';
+                  var user=ico.getAttribute('data-repo-user')||'', sysmsg=ico.getAttribute('data-repo-sysmsg')||'', syskind=ico.getAttribute('data-repo-syskind')||'', can=ico.getAttribute('data-repo-can')==='1';
+                  var k=keyOf(status), cor=ICO[k]||'#6b7280';
+                  var statusHtml = status ? '<span style="color:'+cor+'; font-weight:800;">'+esc(status)+'</span>' : '<span style="color:#9ca3af;">sem status (clique em Atualizar)</span>';
+                  var tipo = rid ? 'Refil nativo (refill_status)' : (oid ? 'Pedido forçado (status)' : '—');
+                  var html='';
+                  html+=fieldRow('Perfil', user?('<a href="https://instagram.com/'+encodeURIComponent(user)+'" target="_blank" style="color:#2563eb;">@'+esc(user)+'</a>'):'—');
+                  html+=fieldRow('Fornecedor', prov?esc(prov):'—');
+                  html+=fieldRow('Tipo da reposição', esc(tipo));
+                  html+=fieldRow('Refil ID / Order ID', esc(rid||oid||'—'));
+                  html+=fieldRow('Status no fornecedor', statusHtml);
+                  if(remains!==''&&Number(remains)>0) html+=fieldRow('Faltam entregar', Number(remains).toLocaleString('pt-BR'));
+                  if(sysmsg) html+=fieldRow('Mensagem do sistema', '<span style="color:'+(syskind==='error'?'#dc2626':'#111827')+';">'+esc(sysmsg)+'</span>');
+                  if(checked) html+=fieldRow('Checado em', esc(checked));
+                  if(k==='error'){ html+='<div style="margin-top:10px; background:#fef2f2; border:1px solid #fee2e2; color:#991b1b; border-radius:8px; padding:10px; font-size:0.85rem;">⚠ Essa reposição falhou ou foi recusada no fornecedor. Veja o status acima — se precisar, force o orderid de novo (ex.: em outro fornecedor pelo menu ▾ na coluna Ações).</div>'; }
+                  mBody.innerHTML = html;
+                  mRefreshBtn.style.display = can ? '' : 'none';
+                }
+                document.addEventListener('click', function(ev){
+                  var ico = ev.target && ev.target.closest ? ev.target.closest('.refil2RepoInfo') : null;
+                  if(!ico) return;
+                  ev.preventDefault(); ev.stopPropagation();
+                  currentTr = ico.closest('tr');
+                  fillModal(ico);
+                  if(modal) modal.style.display='flex';
                 });
+                (function(){ var c=document.getElementById('refil2RepoModalClose'); if(c)c.addEventListener('click',function(){ if(modal)modal.style.display='none'; }); if(modal)modal.addEventListener('click',function(e){ if(e.target===modal)modal.style.display='none'; }); })();
+                if(mRefreshBtn){
+                  mRefreshBtn.addEventListener('click', async function(){
+                    if(!currentTr) return;
+                    var id=String(currentTr.getAttribute('data-refil2-id')||'').trim(); if(!id) return;
+                    var old=mRefreshBtn.textContent; mRefreshBtn.disabled=true; mRefreshBtn.textContent='Consultando…';
+                    try { var data=await refresh([id]); if(data&&data.ok&&data.statuses&&data.statuses[id]){ setIcon(currentTr, data.statuses[id]); fillModal(currentTr.querySelector('.refil2RepoInfo')); } }
+                    catch(_){}
+                    finally{ mRefreshBtn.disabled=false; mRefreshBtn.textContent=old; }
+                  });
+                }
                 // Botão em massa (linhas visíveis da página)
                 var bulk = document.getElementById('refil2RefreshRepoBtn');
                 var bulkSt = document.getElementById('refil2RefreshRepoStatus');
                 if(bulk){
                   bulk.addEventListener('click', async function(){
                     var trs = Array.prototype.slice.call(document.querySelectorAll('tr[data-refil2-id]')).filter(function(tr){
-                      if(tr.getAttribute('data-refil2-match')==='0') return false; // respeita filtro client-side
-                      return !!cellOf(tr) && !!tr.querySelector('.refil2RepoRefreshOne');
+                      if(tr.getAttribute('data-refil2-match')==='0') return false;
+                      var ico=tr.querySelector('.refil2RepoInfo'); return ico && ico.getAttribute('data-repo-can')==='1';
                     });
                     var ids = trs.map(function(tr){ return String(tr.getAttribute('data-refil2-id')||'').trim(); }).filter(Boolean);
                     ids = Array.from(new Set(ids));
@@ -5487,10 +5513,10 @@
                     bulk.disabled=true; var old=bulk.textContent; bulk.textContent='Consultando…';
                     if(bulkSt){ bulkSt.style.color='#6b7280'; bulkSt.textContent='Consultando '+ids.length+' reposição(ões)…'; }
                     try {
-                      var data = await refresh(ids, bulk);
+                      var data = await refresh(ids);
                       if(data && data.ok && data.statuses){
                         var n=0;
-                        trs.forEach(function(tr){ var id=tr.getAttribute('data-refil2-id'); if(data.statuses[id]){ paint(tr, data.statuses[id]); n++; } });
+                        trs.forEach(function(tr){ var id=tr.getAttribute('data-refil2-id'); if(data.statuses[id]){ setIcon(tr, data.statuses[id]); n++; } });
                         if(bulkSt){ bulkSt.style.color='#15803d'; bulkSt.textContent='Atualizadas '+n+' de '+ids.length+'.'; }
                       } else if(bulkSt){ bulkSt.style.color='#b91c1c'; bulkSt.textContent=(data && (data.message||data.error))||'Falha ao consultar.'; }
                     } catch(e){ if(bulkSt){ bulkSt.style.color='#b91c1c'; bulkSt.textContent='Erro: '+((e&&e.message)||e); } }
@@ -5499,6 +5525,18 @@
                 }
               })();
             </script>
+            <div id="refil2RepoModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:10060; align-items:center; justify-content:center; padding:16px;">
+              <div style="background:#fff; border-radius:12px; width:100%; max-width:480px; box-shadow:0 20px 60px rgba(0,0,0,.3); overflow:hidden;">
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid #e5e7eb;">
+                  <div style="font-weight:800; color:#111827;">Status da reposição (fornecedor)</div>
+                  <button type="button" id="refil2RepoModalClose" style="border:none; background:#f3f4f6; width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:1.1rem; color:#374151;">×</button>
+                </div>
+                <div id="refil2RepoModalBody" style="padding:14px 16px;"></div>
+                <div style="padding:12px 16px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:8px;">
+                  <button type="button" id="refil2RepoModalRefresh" style="padding:8px 12px; border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; cursor:pointer; font-size:0.85rem;">↻ Atualizar status</button>
+                </div>
+              </div>
+            </div>
             <div id="refil2ExportWrap" style="position:relative; display:inline-flex; align-items:center;">
               <button type="button" id="refil2ExportAllBtn" style="padding:6px 10px; border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px 0 0 8px; cursor:pointer; font-size:0.85rem;">Exportar tudo</button>
               <button type="button" id="refil2ExportMenuBtn" aria-haspopup="true" aria-expanded="false" style="padding:6px 10px; border:1px solid #e5e7eb; border-left:0; background:#fff; color:#111827; border-radius:0 8px 8px 0; cursor:pointer; font-size:0.85rem;">▾</button>
@@ -5810,7 +5848,6 @@
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Forçado em</th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Refil ID <span style="color:#6b7280; font-weight:400;">(auto)</span></th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Order ID <span style="color:#6b7280; font-weight:400;">(manual)</span></th>
-                <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Status Reposição <span style="color:#6b7280; font-weight:400;">(fornecedor)</span></th>
                 <th style="text-align:left; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Custo</th>
                 <th style="text-align:center; padding:6px 4px; border-bottom:1px solid #e5e7eb;">Cobrado OK</th>
               </tr>
@@ -5967,7 +6004,6 @@
                     if (/pending|progress|processing|created|initiated|queue|andamento/.test(k)) return 'progress';
                     return 'other';
                   })();
-                  const repoBadgeCls = ({ done:'refil2-badge--green', partial:'refil2-badge--yellow', error:'refil2-badge--red', progress:'refil2-badge--blue', other:'refil2-badge--gray' })[repoKey] || 'refil2-badge--gray';
                 %>
                   <tr data-refil2-id="<%= rid %>" data-refil2-days="<%= (dayDiff !== null ? String(dayDiff) : '') %>" data-refil2-whenms="<%= (Number.isFinite(reqMs) ? String(reqMs) : '') %>" data-refil2-kind="<%= String(st.kind || '') %>" data-refil2-charged="<%= forceCharged ? '1' : '0' %>" data-refil2-audit="<%= String(auditKey || '') %>" data-refil2-hasrefilid="<%= (forceOrderId ? '1' : '0') %>" data-refil2-auto="<%= (it && it.automated === true) ? '1' : '0' %>">
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; text-align:center;">
@@ -6007,7 +6043,19 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
                       <input type="text" class="refil2AuditResult" value="<%= String(auditResult || '') %>" placeholder="" style="width:90px; max-width: 90px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px; text-transform: uppercase;" />
                     </td>
-                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;"><span class="refil2-badge <%= st.cls %>"><%= st.label %></span></td>
+                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
+                      <% var repoIcoColor = ({done:'#16a34a',partial:'#d97706',error:'#dc2626',progress:'#2563eb',other:'#6b7280'})[repoKey] || '#cbd5e1'; %>
+                      <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="refil2-badge <%= st.cls %>"><%= st.label %></span>
+                        <button type="button" class="refil2RepoInfo" title="Status da reposição no fornecedor — clique para detalhes"
+                          data-repo-provider="<%= repoProvider %>" data-repo-status="<%= repoStatusTxt %>"
+                          data-repo-remains="<%= (repoRemains != null ? repoRemains : '') %>"
+                          data-repo-orderid="<%= forceRawId %>" data-repo-refilid="<%= (it && it.lastRefilId ? it.lastRefilId : '') %>"
+                          data-repo-checked="<%= repoStatusCheckedAt %>" data-repo-user="<%= userSlug %>"
+                          data-repo-can="<%= repoCanRefresh ? '1' : '0' %>" data-repo-sysmsg="<%= String(st.msg || '') %>" data-repo-syskind="<%= String(st.kind || '') %>"
+                          style="width:18px; height:18px; min-width:18px; border-radius:50%; border:none; background:<%= repoIcoColor %>; color:#fff; font-weight:800; font-size:11px; line-height:18px; text-align:center; cursor:pointer; padding:0;">i</button>
+                      </div>
+                    </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; color:#374151;"><%= st.msg %></td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;">
                       <%# Botão dividido: "Forçar orderid" (fornecedor do painel) + seta ▾ com "Forçar BR Nuvra" e "Forçar SMMHustle". %>
@@ -6029,21 +6077,6 @@
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
                       <span class="refil2ForceOrderId"><%= forceOrderId || '-' %></span>
                     </td>
-                    <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6;" data-refil2-repo-provider="<%= repoProvider %>">
-                      <div style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
-                        <% if (repoStatusTxt) { %>
-                          <span class="refil2RepoBadge refil2-badge <%= repoBadgeCls %>" style="font-size:0.78rem; padding:3px 7px;"><%= repoStatusTxt %><% if (repoRemains != null && repoRemains > 0) { %> <span style="opacity:.75; font-weight:600;">(faltam <%= repoRemains %>)</span><% } %></span>
-                        <% } else { %>
-                          <span class="refil2RepoBadge" style="color:#9ca3af;">—</span>
-                        <% } %>
-                        <% if (repoCanRefresh) { %>
-                          <button type="button" class="refil2RepoRefreshOne" title="Atualizar status no fornecedor" style="padding:3px 7px; border:1px solid #e5e7eb; background:#fff; color:#374151; border-radius:8px; cursor:pointer; font-size:0.85rem; line-height:1;">↻</button>
-                        <% } %>
-                      </div>
-                      <% if (repoStatusCheckedAt) { %>
-                        <div class="refil2RepoCheckedAt" style="font-size:0.68rem; color:#9ca3af; margin-top:2px;"><%= repoStatusCheckedAt %></div>
-                      <% } %>
-                    </td>
                     <td style="padding:6px 4px; border-bottom:1px solid #f3f4f6; font-family: monospace; color:#111827;">
                       <span class="refil2ForceCharge"><%= forceCharge || '-' %></span>
                     </td>
@@ -6053,7 +6086,7 @@
                   </tr>
                 <% }) %>
               <% } else { %>
-                <tr><td colspan="20" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
+                <tr><td colspan="19" style="padding:10px 6px; color:#6b7280; text-align:center;">Sem solicitações ainda</td></tr>
               <% } %>
             </tbody>
           </table>
