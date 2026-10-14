@@ -4079,6 +4079,77 @@ function startServiceTestsDailyLoop() {
   scheduleNext();
 }
 
+// ── Custo Adicional automático: lança o custo das REPOSIÇÕES DE QUEDA (reorders cobráveis
+// NÃO cobrados ao cliente) no `ajustes_lucro`, agrupado por mês. Idempotente via a flag
+// forceRefil.custoLancado (não duplica). Refil nativo (grátis) e "Cobrado OK" não entram.
+let __custoReposRunning = false;
+async function consolidarCustoReposicoesAuto() {
+  if (__custoReposRunning) return { skipped: true };
+  __custoReposRunning = true;
+  try {
+    const { getCollection } = require('./mongodbClient');
+    const col = await getCollection('refil2_requests');
+    const aj = await getCollection('ajustes_lucro');
+    // Só REORDERS forçados de verdade (têm forcedAt + requestPayload). Refil nativo legado
+    // (forceRefil.orderId sem forcedAt) é grátis e NÃO entra. Mais recentes primeiro.
+    const docs = await col.find({
+      'forceRefil.orderId': { $exists: true, $nin: [null, ''] },
+      'forceRefil.forcedAt': { $exists: true, $nin: [null, ''] },
+      'forceRefil.requestPayload.service': { $exists: true },
+      'forceRefil.custoLancado': { $ne: true },
+      'forceRefil.charged': { $ne: true },
+    }, { projection: { username: 1, forceRefil: 1, summary: 1 } }).sort({ 'forceRefil.forcedAt': -1 }).limit(300).toArray();
+    if (!docs.length) return { ok: true, nada: true };
+    let rate = 5.03; try { const fx = await getUsdBrlRate(); if (fx && fx.rate) rate = fx.rate; } catch (_) {}
+    const USD = new Set(['followiz', 'smmhustle', 'worldofsmm', 'smmturk', 'justanotherpanel', 'peakerr', 'n1panel', 'smmcost', 'bulkfollows', 'dripfeedpanel', 'bulkmedya', 'smmraja']);
+    const byMonth = {}; const marcar = [];
+    for (const d of docs) {
+      const fr = d.forceRefil || {};
+      const prov = normalizeSmmProvider(fr.provider || '');
+      const oid = String(fr.orderId);
+      const drop = (d.summary && Number(d.summary.drop)) || 0;
+      if (!(drop > 0)) continue; // só QUEDA conta como custo adicional
+      let brl = (fr.chargeBrl != null && isFinite(Number(fr.chargeBrl))) ? Number(fr.chargeBrl) : null;
+      if (brl == null) {
+        try {
+          const key = smmProviderKey(prov); const url = smmProviderUrl(prov);
+          if (key && url) {
+            const r = await axios.post(url, new URLSearchParams({ key, action: 'status', order: oid }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true });
+            const sp = r && r.data; const ch = sp && (sp.charge != null ? sp.charge : sp.Charge);
+            const c = (ch != null) ? Number(String(ch).replace(',', '.')) : NaN;
+            if (isFinite(c)) brl = Math.round((USD.has(prov) ? c * rate : c) * 100) / 100;
+          }
+        } catch (_) {}
+      }
+      if (brl == null || !(brl > 0)) continue; // sem charge ainda → fica pra próxima rodada
+      const mes = String(fr.forcedAt || new Date().toISOString()).slice(0, 7);
+      if (!byMonth[mes]) byMonth[mes] = { total: 0, detalhes: [] };
+      byMonth[mes].total = Math.round((byMonth[mes].total + brl) * 100) / 100;
+      byMonth[mes].detalhes.push({ perfil: d.username, repor: drop, provider: prov, order: oid, custoBrl: brl });
+      marcar.push({ _id: d._id, brl });
+    }
+    for (const mes of Object.keys(byMonth)) {
+      const m = byMonth[mes];
+      const existing = await aj.findOne({ source: 'reposicao-auto', mes });
+      if (existing) {
+        await aj.updateOne({ _id: existing._id }, { $inc: { valor: m.total }, $push: { detalhes: { $each: m.detalhes } }, $set: { data: new Date().toISOString() } });
+      } else {
+        await aj.insertOne({ titulo: 'Reposições de queda (' + mes + ')', motivo: 'Reposicoes de queda (reorders cobraveis nao cobrados ao cliente) — lancado automaticamente.', valor: m.total, data: new Date().toISOString(), mes, source: 'reposicao-auto', detalhes: m.detalhes, criadoPor: 'auto' });
+      }
+    }
+    for (const mk of marcar) {
+      try { await col.updateOne({ _id: mk._id }, { $set: { 'forceRefil.chargeBrl': mk.brl, 'forceRefil.custoLancado': true, 'forceRefil.custoLancadoEm': new Date().toISOString(), 'forceRefil.custoLancadoMotivo': 'auto_diario' } }); } catch (_) {}
+    }
+    return { ok: true, lancados: marcar.length, meses: Object.keys(byMonth) };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+  finally { __custoReposRunning = false; }
+}
+// Roda ~2min após o start e depois a cada 12h (best-effort; nunca quebra o processo).
+try {
+  setTimeout(() => { consolidarCustoReposicoesAuto().then(r => { try { console.log('💸 [custo-reposicao] inicial:', JSON.stringify(r)); } catch (_) {} }).catch(() => {}); }, 120 * 1000).unref?.();
+  setInterval(() => { consolidarCustoReposicoesAuto().then(r => { try { console.log('💸 [custo-reposicao] periodico:', JSON.stringify(r)); } catch (_) {} }).catch(() => {}); }, 12 * 60 * 60 * 1000).unref?.();
+} catch (_) {}
+
 app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
   try {
     const col = await getCollection('service_tests');
