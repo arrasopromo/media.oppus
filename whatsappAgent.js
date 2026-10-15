@@ -579,7 +579,8 @@ async function handleAgentMessage(msg, sendText) {
   if (finalText) {
     const bolhas = splitIntoBubbles(finalText);
     for (let i = 0; i < bolhas.length; i++) {
-      if (i > 0 && BUBBLE_GAP_MS > 0) { try { await new Promise((r) => setTimeout(r, BUBBLE_GAP_MS)); } catch (_) {} }
+      // Espera proporcional ao tamanho do PRÓXIMO balão (quanto maior, mais "demora pra digitar").
+      if (i > 0) { try { await new Promise((r) => setTimeout(r, _typingDelay(bolhas[i]))); } catch (_) {} }
       try { await sendText(phone, bolhas[i]); } catch (_) {}
     }
   }
@@ -616,6 +617,12 @@ async function handleAgentMessage(msg, sendText) {
 // seu balão. Texto curto e sem lista continua num balão só. Máx. BOT_MAX_BUBBLES.
 const MAX_BUBBLES = Math.max(1, Number(process.env.BOT_MAX_BUBBLES || 4));
 const BUBBLE_GAP_MS = Math.max(0, Number(process.env.BOT_BUBBLE_GAP_MS || 1300));
+// Delay proporcional ao tamanho do balão (simula tempo de digitação humana): mensagem
+// maior = espera maior antes de enviar. Base + ms por caractere, com teto.
+const TYPING_BASE_MS = Math.max(0, Number(process.env.BOT_TYPING_BASE_MS || 600));
+const TYPING_PER_CHAR_MS = Math.max(0, Number(process.env.BOT_TYPING_PER_CHAR_MS || 22));
+const TYPING_MAX_MS = Math.max(0, Number(process.env.BOT_TYPING_MAX_MS || 4500));
+function _typingDelay(s) { const n = String(s || '').length; return Math.max(BUBBLE_GAP_MS, Math.min(TYPING_MAX_MS, TYPING_BASE_MS + n * TYPING_PER_CHAR_MS)); }
 function splitIntoBubbles(text) {
   const t = String(text || '').replace(/\r/g, '').trim();
   if (!t) return [];
