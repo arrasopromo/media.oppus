@@ -40,6 +40,7 @@ async function logIaMessage(d) {
       replyTo: String(d.replyTo || '').slice(0, 200),   // wamid da mensagem citada
       agent: !!d.agent, // true = enviado por atendente humano no CRM; false = bot
       ...(d.imagemDescricao ? { imagemDescricao: String(d.imagemDescricao).slice(0, 1500) } : {}),   // o que a IA leu na imagem
+      ...(d.recovery ? { recovery: String(d.recovery).slice(0, 20) } : {}),   // cutucada de recuperação (stage1/stage2) — não conta como atividade orgânica
       createdAt: new Date(),
     };
     if (wamid) { try { const r = await col.updateOne({ wamid }, { $setOnInsert: doc }, { upsert: true }); if (!r.upsertedCount && !r.modifiedCount && r.matchedCount) { /* já existia */ } } catch (_) { try { await col.insertOne(doc); } catch (_) {} } }
@@ -429,6 +430,97 @@ function registerWhatsappIa(app) {
   });
 
   try { console.log(`🤖 IA WhatsApp: webhook em ${path} | ${configured() ? 'configurado' : 'SEM credenciais (WHATSAPP_IA_*)'} | OpenAI ${agent.isEnabled() ? 'on' : 'off (fallback regras)'}`); } catch (_) {}
+  try { startIaRecoveryLoop(); } catch (_) {}
 }
 
-module.exports = { transcreverAudio, registerWhatsappIa, sendWhatsAppText, sendWhatsAppMedia, sendWhatsAppButtons, isBotPaused, handleInboundMessage, configured, isTriggerMessage, isSalesTrigger, buildConfirmNudgeText, CONFIRM_NUDGE_MS, MENU_BUTTONS, WELCOME_TEXT, logIaMessage, getIaConfig: CFG };
+// ── Recuperação automática no WhatsApp: cutuca leads que ESFRIARAM sem gerar Pix ──
+// 1ª tentativa aos 30min do silêncio, 2ª aos 3h. Só dentro da janela de 24h do WhatsApp.
+// Pula: bot pausado (humano assumiu), opt-out, quem já gerou Pix (converteu) e suporte/pós-venda.
+// Dedup por ciclo (não repete a mesma etapa). Liga/desliga por IA_RECOVERY_ENABLED.
+const IA_RECOVERY_ENABLED = String(process.env.IA_RECOVERY_ENABLED || 'true').toLowerCase() !== 'false';
+const IA_RECOVERY_STAGE1_MIN = Number(process.env.IA_RECOVERY_STAGE1_MIN || 30) || 30;
+const IA_RECOVERY_STAGE2_MIN = Number(process.env.IA_RECOVERY_STAGE2_MIN || 180) || 180;
+const IA_RECOVERY_MAX_PER_RUN = Number(process.env.IA_RECOVERY_MAX_PER_RUN || 300) || 300;
+function _recMsg(stage, tipo) {
+  if (stage === 2) {
+    return (tipo === 'sem_arroba')
+      ? 'Ainda dá tempo de crescer seu perfil hoje! 🚀 Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo em 1 minutinho 😉'
+      : 'Opa, ainda quer dar aquele up no seu perfil? 🚀 Seguidores reais, entrega rápida e garantia. Me chama que eu monto seu pacote agora 👍';
+  }
+  return (tipo === 'preco')
+    ? 'Oi! Sobre o valor, fica tranquilo — tem pacote a partir de R$ 8,90 e com garantia. Quer que eu monte um pra você? Só me mandar seu @ do Instagram 😊'
+    : ((tipo === 'sem_arroba')
+      ? 'Oi! 👋 Pra eu te mostrar os pacotes e já montar seu pedido, é só me mandar o seu @ do Instagram 😉'
+      : 'Oi! 👋 Vi que você tava querendo crescer seu perfil. Quer que eu te monte o pedido? Me manda seu @ do Instagram que eu já te passo tudo 🚀');
+}
+let __iaRecoveryRunning = false;
+async function runIaRecoverySweep() {
+  if (!IA_RECOVERY_ENABLED || !configured() || __iaRecoveryRunning) return;
+  __iaRecoveryRunning = true;
+  try {
+    const ia = await getCollection('wa_ia_messages');
+    const orders = await getCollection('checkout_orders');
+    const recCol = await getCollection('wa_ia_recovery');
+    const optCol = await getCollection('wa_optout');
+    const now = Date.now();
+    const since = new Date(now - 26 * 3600000);
+    const convs = await ia.aggregate([
+      { $match: { createdAt: { $gte: since } } },
+      { $group: {
+        _id: '$phone',
+        lastAnyAt: { $max: '$createdAt' },
+        lastInAt: { $max: { $cond: [{ $eq: ['$direction', 'in'] }, '$createdAt', null] } },
+        lastOrganicAt: { $max: { $cond: [{ $ifNull: ['$recovery', false] }, null, '$createdAt'] } },
+        inTexts: { $push: { $cond: [{ $eq: ['$direction', 'in'] }, '$text', '$$REMOVE'] } },
+      } },
+      { $limit: 5000 },
+    ]).toArray();
+    const pixDocs = await orders.find({ correlationID: { $regex: '^WppAgent_' }, createdAt: { $gte: new Date(now - 3 * 86400000).toISOString() } }, { projection: { additionalInfoMap: 1, additionalInfo: 1, customer: 1 } }).toArray();
+    const pixPhones = new Set();
+    for (const o of pixDocs) { const m = o.additionalInfoMap || {}; let ph = m.telefone || m.phone || (o.customer && (o.customer.phone_number || o.customer.phone)) || ''; if (!ph && Array.isArray(o.additionalInfo)) { const x = o.additionalInfo.find(i => /telefone|phone/i.test(i.key)); ph = x && x.value; } ph = String(ph || '').replace(/\D/g, ''); if (ph) { pixPhones.add(ph); pixPhones.add(ph.replace(/^55/, '')); } }
+    let enviados = 0;
+    for (const c of convs) {
+      if (enviados >= IA_RECOVERY_MAX_PER_RUN) break;
+      const phone = String(c._id || '').trim(); const key = phone.replace(/\D/g, '');
+      if (!key || !c.lastInAt) continue;
+      if ((now - new Date(c.lastInAt).getTime()) > 24 * 3600000) continue; // fora da janela de 24h
+      const baseMs = new Date(c.lastOrganicAt || c.lastAnyAt).getTime();
+      const ageMin = (now - baseMs) / 60000;
+      if (ageMin < IA_RECOVERY_STAGE1_MIN) continue; // ainda não esfriou
+      if (pixPhones.has(key) || pixPhones.has(key.replace(/^55/, ''))) continue; // já converteu
+      try { const ob = await optCol.findOne({ phoneKey: key.replace(/^55/, '') }, { projection: { blocked: 1 } }); if (ob && ob.blocked === true) continue; } catch (_) {}
+      try { if (await isBotPaused(phone)) continue; } catch (_) {} // humano assumiu
+      const txt = String((c.inTexts || []).join(' \n ')).toLowerCase();
+      if (/problema|reclama|golpe|suporte|n[aã]o caiu|n[aã]o chegou|estorn|reembols|comprovante|paguei|j[aá] comprei|meu pedido|despenc/.test(txt)) continue; // suporte/pós-venda
+      const temArroba = /@[a-z0-9._]{2,}|instagram\.com\//i.test(txt);
+      const preco = /pre[çc]o|valor|quanto|tabela/.test(txt);
+      const tipo = !temArroba ? 'sem_arroba' : (preco ? 'preco' : 'geral');
+      let rec = null; try { rec = await recCol.findOne({ _id: key }); } catch (_) {}
+      if (!rec || Number(rec.baseMs) !== baseMs) { rec = { _id: key, baseMs, stage1At: null, stage2At: null }; try { await recCol.updateOne({ _id: key }, { $set: { baseMs, stage1At: null, stage2At: null, tipo, updatedAt: new Date() } }, { upsert: true }); } catch (_) {} }
+      let stage = 0;
+      if (ageMin >= IA_RECOVERY_STAGE2_MIN && !rec.stage2At) stage = 2;
+      else if (ageMin >= IA_RECOVERY_STAGE1_MIN && ageMin < IA_RECOVERY_STAGE2_MIN && !rec.stage1At) stage = 1;
+      if (!stage) continue;
+      const msg = _recMsg(stage, tipo);
+      try {
+        const r = await sendWhatsAppText(phone, msg, { log: false });
+        if (r && r.ok) {
+          await logIaMessage({ phone, direction: 'out', type: 'text', text: msg, recovery: 'stage' + stage });
+          await recCol.updateOne({ _id: key }, { $set: { ['stage' + stage + 'At']: new Date().toISOString(), baseMs, tipo } }, { upsert: true });
+          enviados++;
+          try { console.log('🔁 [ia-recovery] stage' + stage + ' -> ' + phone + ' (' + tipo + ', ' + Math.round(ageMin) + 'min)'); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+    if (enviados) { try { console.log('🔁 [ia-recovery] enviados: ' + enviados); } catch (_) {} }
+  } catch (e) { try { console.error('🔁 [ia-recovery] erro:', e && e.message); } catch (_) {} }
+  finally { __iaRecoveryRunning = false; }
+}
+function startIaRecoveryLoop() {
+  if (!IA_RECOVERY_ENABLED) { try { console.log('🔁 [ia-recovery] DESATIVADO (IA_RECOVERY_ENABLED=false)'); } catch (_) {} return; }
+  setTimeout(() => { runIaRecoverySweep().catch(() => {}); }, 100 * 1000);
+  try { const t = setInterval(() => { runIaRecoverySweep().catch(() => {}); }, 5 * 60 * 1000); t.unref && t.unref(); } catch (_) {}
+  try { console.log('🔁 [ia-recovery] ativo: 1ª aos ' + IA_RECOVERY_STAGE1_MIN + 'min, 2ª aos ' + IA_RECOVERY_STAGE2_MIN + 'min, varre a cada 5min'); } catch (_) {}
+}
+
+module.exports = { transcreverAudio, registerWhatsappIa, sendWhatsAppText, sendWhatsAppMedia, sendWhatsAppButtons, isBotPaused, handleInboundMessage, configured, isTriggerMessage, isSalesTrigger, buildConfirmNudgeText, CONFIRM_NUDGE_MS, MENU_BUTTONS, WELCOME_TEXT, logIaMessage, getIaConfig: CFG, runIaRecoverySweep, startIaRecoveryLoop };
