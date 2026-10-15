@@ -95,8 +95,8 @@ const MENU_BUTTONS = [
   { id: 'quero_comprar', title: 'Quero comprar' },
   { id: 'preciso_suporte', title: 'Preciso de suporte' },
 ];
-const WELCOME_TEXT = 'Olá, tudo bem? 👋\nSeja bem-vindo ao atendimento da *Agência Oppus!*\n\nAqui é o contato oficial para: suporte, novas compras e dúvidas.\n\nMe diz, o que você procura hoje 👇';
-const INSTRUCAO_JA_COMPREI = 'Perfeito! 🎉 Acompanhar seu pedido é rapidinho:\n\n1️⃣ Acesse a *Área do Cliente*: https://agenciaoppus.site/cliente\n2️⃣ Informe o *e-mail* que você usou na hora da compra\n3️⃣ No primeiro acesso, *crie uma senha* (nas próximas vezes é só entrar com ela)\n\nProntinho! Lá dentro você vê:\n✅ O *status* e o andamento da entrega\n✅ O *detalhamento* do pedido (serviço, quantidade e perfil)\n✅ Seu *histórico* de compras\n\nSe tiver qualquer dificuldade pra acessar ou dúvida sobre a entrega, é só me chamar aqui que eu te ajudo. 😉';
+const WELCOME_TEXT = 'Olá, tudo bem?\nSeja bem-vindo ao atendimento da *Agência Oppus!*\n\nAqui é o contato oficial para suporte, novas compras e dúvidas.\n\nMe diz, o que você procura hoje?';
+const INSTRUCAO_JA_COMPREI = 'Perfeito! Acompanhar seu pedido é rapidinho:\n\n1. Acesse a *Área do Cliente*: https://agenciaoppus.site/cliente\n2. Informe o *e-mail* que você usou na hora da compra\n3. No primeiro acesso, *crie uma senha* (nas próximas vezes é só entrar com ela)\n\nProntinho! Lá dentro você vê o *status* e o andamento da entrega, o *detalhamento* do pedido (serviço, quantidade e perfil) e o seu *histórico* de compras.\n\nSe tiver qualquer dificuldade pra acessar ou dúvida sobre a entrega, é só me chamar aqui que eu te ajudo.';
 const PERGUNTA_SUPORTE = 'Claro! Me conta qual é a sua dúvida ou o que aconteceu, que eu te ajudo por aqui.';
 
 // ── Gatilhos EXATOS (as mensagens pré-preenchidas do site/anúncios) ──
@@ -444,14 +444,14 @@ const IA_RECOVERY_MAX_PER_RUN = Number(process.env.IA_RECOVERY_MAX_PER_RUN || 30
 function _recMsg(stage, tipo) {
   if (stage === 2) {
     return (tipo === 'sem_arroba')
-      ? 'Ainda dá tempo de crescer seu perfil hoje! 🚀 Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo em 1 minutinho 😉'
-      : 'Opa, ainda quer dar aquele up no seu perfil? 🚀 Seguidores reais, entrega rápida e garantia. Me chama que eu monto seu pacote agora 👍';
+      ? 'Ainda dá tempo de crescer seu perfil hoje. Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo rapidinho.'
+      : 'Opa, ainda quer dar aquele up no seu perfil? Seguidores reais, entrega rápida e com garantia. Me chama que eu monto seu pacote.';
   }
   return (tipo === 'preco')
-    ? 'Oi! Sobre o valor, fica tranquilo — tem pacote a partir de R$ 8,90 e com garantia. Quer que eu monte um pra você? Só me mandar seu @ do Instagram 😊'
+    ? 'Oi! Sobre o valor, fica tranquilo — tem pacote a partir de R$ 8,90 e com garantia. Quer que eu monte um pra você? Só me mandar seu @ do Instagram.'
     : ((tipo === 'sem_arroba')
-      ? 'Oi! 👋 Pra eu te mostrar os pacotes e já montar seu pedido, é só me mandar o seu @ do Instagram 😉'
-      : 'Oi! 👋 Vi que você tava querendo crescer seu perfil. Quer que eu te monte o pedido? Me manda seu @ do Instagram que eu já te passo tudo 🚀');
+      ? 'Oi! Pra eu te mostrar os pacotes e já montar seu pedido, é só me mandar o seu @ do Instagram.'
+      : 'Oi! Vi que você tava querendo crescer seu perfil. Quer que eu te monte o pedido? Me manda seu @ do Instagram que eu já te passo tudo.');
 }
 let __iaRecoveryRunning = false;
 async function runIaRecoverySweep() {
