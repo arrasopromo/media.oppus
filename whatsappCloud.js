@@ -441,17 +441,45 @@ const IA_RECOVERY_ENABLED = String(process.env.IA_RECOVERY_ENABLED || 'true').to
 const IA_RECOVERY_STAGE1_MIN = Number(process.env.IA_RECOVERY_STAGE1_MIN || 30) || 30;
 const IA_RECOVERY_STAGE2_MIN = Number(process.env.IA_RECOVERY_STAGE2_MIN || 180) || 180;
 const IA_RECOVERY_MAX_PER_RUN = Number(process.env.IA_RECOVERY_MAX_PER_RUN || 300) || 300;
+// Intervalo aleatório entre cada envio da varredura, pra NÃO disparar tudo no mesmo
+// segundo (bloco de mensagens idênticas = cara de spam). Pingam espaçados e humanos.
+const IA_RECOVERY_SEND_GAP_MIN_MS = Number(process.env.IA_RECOVERY_SEND_GAP_MIN_MS || 5000) || 5000;
+const IA_RECOVERY_SEND_GAP_MAX_MS = Number(process.env.IA_RECOVERY_SEND_GAP_MAX_MS || 18000) || 18000;
+const _recSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const _recPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+// Cada etapa/tipo tem VÁRIAS redações — sorteia uma por envio pra não mandar
+// texto idêntico em bloco (o que o WhatsApp lê como spam).
+const _REC_VARIANTS = {
+  '2_sem_arroba': [
+    'Ainda dá tempo de crescer seu perfil hoje. Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo rapidinho.',
+    'Oi, consegui separar um pacote bom pra você. Seguidores reais brasileiros, com garantia e entrega rápida. Me manda seu @ do Instagram que eu já deixo tudo pronto.',
+    'E aí, bora dar aquele up no perfil ainda hoje? Seguidores reais e brasileiros, com garantia. Só preciso do seu @ do Instagram pra montar.',
+  ],
+  '2_geral': [
+    'Opa, ainda quer dar aquele up no seu perfil? Seguidores reais, entrega rápida e com garantia. Me chama que eu monto seu pacote.',
+    'Oi! Ainda tô por aqui se quiser seguir com o crescimento do perfil. Seguidores reais com garantia e entrega rápida. Quer que eu monte seu pacote?',
+    'E aí, seguimos? Posso montar um pacote de seguidores reais pra você, com garantia e entrega rápida. É só me chamar.',
+  ],
+  '1_preco': [
+    'Oi! Sobre o valor, fica tranquilo — tem pacote a partir de R$ 8,90 e com garantia. Quer que eu monte um pra você? Só me mandar seu @ do Instagram.',
+    'Oi! Tem opção a partir de R$ 8,90, tudo com garantia. Se quiser eu já monto um pacote no seu perfil. Me manda seu @ do Instagram.',
+    'Sobre o preço: dá pra começar com R$ 8,90, com garantia. Quer que eu monte? Só preciso do seu @ do Instagram.',
+  ],
+  '1_sem_arroba': [
+    'Oi! Pra eu te mostrar os pacotes e já montar seu pedido, é só me mandar o seu @ do Instagram.',
+    'Oi! Me manda seu @ do Instagram que eu já te mostro os pacotes e monto seu pedido.',
+    'Oi! Faltou só o seu @ do Instagram pra eu te passar os pacotes e deixar o pedido pronto.',
+  ],
+  '1_geral': [
+    'Oi! Vi que você tava querendo crescer seu perfil. Quer que eu te monte o pedido? Me manda seu @ do Instagram que eu já te passo tudo.',
+    'Oi! Bora continuar de onde paramos? Posso montar seu pedido agora. Me manda seu @ do Instagram.',
+    'Oi! Ainda quer crescer o perfil? Me manda seu @ do Instagram que eu já monto seu pedido e te passo tudo.',
+  ],
+};
 function _recMsg(stage, tipo) {
-  if (stage === 2) {
-    return (tipo === 'sem_arroba')
-      ? 'Ainda dá tempo de crescer seu perfil hoje. Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo rapidinho.'
-      : 'Opa, ainda quer dar aquele up no seu perfil? Seguidores reais, entrega rápida e com garantia. Me chama que eu monto seu pacote.';
-  }
-  return (tipo === 'preco')
-    ? 'Oi! Sobre o valor, fica tranquilo — tem pacote a partir de R$ 8,90 e com garantia. Quer que eu monte um pra você? Só me mandar seu @ do Instagram.'
-    : ((tipo === 'sem_arroba')
-      ? 'Oi! Pra eu te mostrar os pacotes e já montar seu pedido, é só me mandar o seu @ do Instagram.'
-      : 'Oi! Vi que você tava querendo crescer seu perfil. Quer que eu te monte o pedido? Me manda seu @ do Instagram que eu já te passo tudo.');
+  const t = (stage === 2) ? (tipo === 'sem_arroba' ? 'sem_arroba' : 'geral')
+                          : (tipo === 'preco' ? 'preco' : (tipo === 'sem_arroba' ? 'sem_arroba' : 'geral'));
+  return _recPick(_REC_VARIANTS[stage + '_' + t] || _REC_VARIANTS['1_geral']);
 }
 let __iaRecoveryRunning = false;
 async function runIaRecoverySweep() {
@@ -509,6 +537,9 @@ async function runIaRecoverySweep() {
           await recCol.updateOne({ _id: key }, { $set: { ['stage' + stage + 'At']: new Date().toISOString(), baseMs, tipo } }, { upsert: true });
           enviados++;
           try { console.log('🔁 [ia-recovery] stage' + stage + ' -> ' + phone + ' (' + tipo + ', ' + Math.round(ageMin) + 'min)'); } catch (_) {}
+          // Espaça o próximo envio (intervalo aleatório) pra não cair tudo no mesmo segundo.
+          const gap = IA_RECOVERY_SEND_GAP_MIN_MS + Math.floor(Math.random() * Math.max(0, IA_RECOVERY_SEND_GAP_MAX_MS - IA_RECOVERY_SEND_GAP_MIN_MS));
+          await _recSleep(gap);
         }
       } catch (_) {}
     }

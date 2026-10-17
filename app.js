@@ -784,10 +784,11 @@ function hideProviderCharge(req, res, next) {
 // mas que vazavam no JSON (F12): custo/charge, nome do provedor, service id,
 // requestPayload/statusPayload cru, reorders. Mantém orderId (é o "nº do pedido"
 // exibido) e status (progresso da entrega). Admin recebe o doc completo.
-function sanitizeOrderForClient(doc) {
+function sanitizeOrderForClient(doc, opts) {
   if (!doc || typeof doc !== 'object') return doc;
   let out;
   try { out = JSON.parse(JSON.stringify(doc)); } catch (_) { return doc; }
+  const hideSlotNames = !!(opts && opts.hideSlotNames); // renomeia fama24h→entrega (só nas respostas de API JSON)
   const stripCharge = (o) => { if (o && typeof o === 'object') { delete o.charge; delete o.Charge; delete o.currency; delete o.cost; delete o.chargeBrl; delete o.fxRate; delete o.fxSource; } };
   const scrub = (slot) => {
     if (!slot || typeof slot !== 'object') return;
@@ -801,6 +802,19 @@ function sanitizeOrderForClient(doc) {
   const SLOTS = ['fama24h','fama24h_multi','fama24h_views','fama24h_likes','fama24h_comments','fornecedor_social','fornecedor_social_multi','fornecedor_social_likes','topfama','topfama_likes','nuvra','worldsmm_comments','ggram'];
   for (const k of SLOTS) if (out[k]) scrub(out[k]);
   delete out.costs; delete out.cost; delete out.providerChargeTotal;
+  // Oculta do JSON de API os NOMES de slot legados (ex.: "fama24h") — vazavam só o nome do
+  // campo (o conteúdo sensível já saiu acima). Renomeia para "entrega*" neutro. SÓ quando
+  // hideSlotNames=true (respostas de API JSON); o render do pedido.ejs lê order.fama24h
+  // no server-side, então ali NÃO renomeia (senão quebra a tela de entrega).
+  if (hideSlotNames) {
+    const RENAME_CLIENTE = {
+      fama24h: 'entrega', fama24h_multi: 'entrega_multi', fama24h_views: 'entrega_views',
+      fama24h_likes: 'entrega_likes', fama24h_comments: 'entrega_comments',
+    };
+    for (const [from, to] of Object.entries(RENAME_CLIENTE)) {
+      if (out[from] !== undefined) { out[to] = out[from]; delete out[from]; }
+    }
+  }
   return out;
 }
 
@@ -3477,7 +3491,8 @@ function getMergedPanelRegistry(cfg) {
   const baseNames = new Set(base.map((p) => p.name));
   const custom = (c.custom || []).filter((x) => x && x.name && x.url && !baseNames.has(String(x.name))).map((x) => {
     const t = Number((c.thresholds && c.thresholds[x.name]) != null ? c.thresholds[x.name] : x.threshold);
-    return { name: String(x.name), label: String(x.label || x.name), url: String(x.url), key: String(x.key || ''), keyEnv: '', link: String(x.link || ''), threshold: (Number.isFinite(t) && t > 0) ? t : 100, alertDefault: x.alertDefault !== false, custom: true };
+    // keyEnv (fornecedor vindo do seletor) lê a chave do .env; key = fornecedor manual legado.
+    return { name: String(x.name), label: String(x.label || x.name), url: String(x.url), key: String(x.key || ''), keyEnv: String(x.keyEnv || ''), link: String(x.link || ''), threshold: (Number.isFinite(t) && t > 0) ? t : 100, alertDefault: x.alertDefault !== false, custom: true };
   });
   return base.concat(custom);
 }
@@ -3615,6 +3630,14 @@ app.post('/api/painel/saldo/check', requireAdmin, async (req, res) => {
     return res.json({ ok: true, result: r });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Roda a reconciliação gateway↔banco agora (pagos sem pedido + pix pendente-mas-pago + watchdog).
+app.post('/api/painel/reconciliacao/run', requireAdmin, async (req, res) => {
+  try {
+    const rec = require('./reconciliacao.js');
+    const [cartao, pix, wd] = await Promise.all([rec.reconciliarCartao(), rec.reconciliarPixPendentes(), rec.watchdogPedidos()]);
+    return res.json({ ok: true, cartaoPerdidos: cartao.perdidos || [], pixCorrigidos: pix.corrigidos || [], watchdog: wd });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
 // Edita o LIMITE de aviso de UM painel (base ou customizado).
 app.post('/api/painel/saldo/threshold', requireAdmin, async (req, res) => {
   try {
@@ -3631,10 +3654,49 @@ app.post('/api/painel/saldo/threshold', requireAdmin, async (req, res) => {
     return res.json({ ok: true, panel, threshold: Math.round(threshold * 100) / 100 });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
-// Cadastra/edita um fornecedor CUSTOMIZADO (nome, URL da API, chave, limite).
+// Lista os fornecedores JÁ configurados no .env (SMM_PROVIDERS) que ainda não estão no
+// card de saldo — alimenta o seletor de cadastro (sem precisar digitar URL/chave).
+app.get('/api/painel/saldo/available', requireAdmin, async (req, res) => {
+  try {
+    const fullCfg = await loadPanelBalanceFullConfig();
+    const present = new Set(getMergedPanelRegistry(fullCfg).map((p) => String(p.name)));
+    const out = [];
+    for (const [slug, def] of Object.entries(SMM_PROVIDERS)) {
+      if (!def || !def.url || !def.keyEnv) continue;
+      if (present.has(slug)) continue;
+      if (!String(process.env[def.keyEnv] || '').trim()) continue; // sem chave no .env → não oferece
+      out.push({ provider: slug, label: def.label || slug, url: def.url });
+    }
+    out.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+    return res.json({ ok: true, providers: out });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Cadastra/edita um fornecedor CUSTOMIZADO. Dois modos:
+//  • { provider: '<slug>' } → puxa label/URL/keyEnv do SMM_PROVIDERS (chave fica no .env);
+//  • { label, url, key }     → manual legado (chave salva no banco).
 app.post('/api/painel/saldo/provider', requireAdmin, async (req, res) => {
   try {
     const b = (req.body && typeof req.body === 'object') ? req.body : {};
+    // ── Modo seletor: fornecedor já configurado no .env ──
+    const slug = String(b.provider || '').trim().toLowerCase();
+    if (slug) {
+      const def = SMM_PROVIDERS[slug];
+      if (!def || !def.url || !def.keyEnv) return res.status(400).json({ ok: false, error: 'provider_invalido', message: 'Fornecedor não reconhecido.' });
+      if (!String(process.env[def.keyEnv] || '').trim()) return res.status(400).json({ ok: false, error: 'sem_chave', message: 'Esse fornecedor não tem API key no .env.' });
+      if (panelBalanceRegistry().some((p) => p.name === slug)) return res.status(400).json({ ok: false, error: 'ja_base', message: 'Esse fornecedor já é um painel base.' });
+      let link = ''; try { link = new URL(def.url).origin; } catch (_) { link = def.url; }
+      const th = Number(b.threshold);
+      const prov = { name: slug, label: String(def.label || slug), url: String(def.url), keyEnv: String(def.keyEnv), link, threshold: (Number.isFinite(th) && th > 0) ? Math.round(th * 100) / 100 : 100, alertDefault: true };
+      const { getCollection } = require('./mongodbClient');
+      const col = await getCollection('settings');
+      const doc = await col.findOne({ _id: 'panel_balance_config' }, { projection: { custom: 1 } });
+      const custom = (doc && Array.isArray(doc.custom)) ? doc.custom : [];
+      const idx = custom.findIndex((x) => x && String(x.name) === slug);
+      if (idx >= 0) custom[idx] = prov; else custom.push(prov);
+      await col.updateOne({ _id: 'panel_balance_config' }, { $set: { custom, updatedAt: new Date().toISOString() } }, { upsert: true });
+      __panelCfgCache = { atMs: 0, doc: null };
+      return res.json({ ok: true, name: slug, label: prov.label });
+    }
     const label = String(b.label || '').trim().slice(0, 60);
     let url = String(b.url || '').trim();
     const key = String(b.key || '').trim();
@@ -4181,6 +4243,8 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       lastCheckAt: d.lastCheckAt || null,
       measureFailed: !!d.measureFailed,
       measureFailReason: String(d.measureFailReason || ''),
+      servicoForaDoCatalogo: !!d.servicoForaDoCatalogo,
+      servicoForaDoCatalogoEm: d.servicoForaDoCatalogoEm || null,
       history: Array.isArray(d.history) ? d.history : [],
     }));
     // ── Filtros: tipo de serviço, fornecedor e faixa de taxa de queda (min/max %) ──
@@ -10454,10 +10518,32 @@ async function ajustesDeLucroDoPeriodo(startMs, endMs) {
       const dentro = !semFiltro && startMs >= r.ini && endMs <= r.fimEx;
       if (!encosta) continue;
       out.total += valor;
-      out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes: dentro });
+      out.itens.push({ titulo: String(d.titulo || 'Ajuste'), motivo: String(d.motivo || ''), valor, data: d.data || null, mes: d.mes || '', source: String(d.source || ''), detalhes: Array.isArray(d.detalhes) ? d.detalhes : [], dentroDoMes: dentro });
       if (dentro) out.comAsterisco = true;
     }
     out.total = Math.round(out.total * 100) / 100;
+    // Enriquece cada detalhe (reposição) com quantos pedidos PAGOS o perfil tem conosco.
+    // Uma query só: busca os pedidos pagos de TODOS os perfis dos detalhes de uma vez.
+    try {
+      const perfis = new Set();
+      for (const it of out.itens) for (const dd of (it.detalhes || [])) if (dd && typeof dd === 'object' && dd.perfil) perfis.add(String(dd.perfil).toLowerCase());
+      if (perfis.size) {
+        const orders = await getCollection('checkout_orders');
+        const campos = ['link', 'usuario', 'perfil', 'instagramUsername', 'instauser', 'fama24h.requestPayload.link', 'fornecedor_social.requestPayload.link'];
+        const reDe = (p) => new RegExp('(^|[^A-Za-z0-9._])' + String(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^A-Za-z0-9._]|$)', 'i');
+        const perfisArr = [...perfis];
+        const bigOr = [];
+        for (const p of perfisArr) { const re = reDe(p); for (const f of campos) bigOr.push({ [f]: re }); }
+        const proj = { link: 1, usuario: 1, perfil: 1, instagramUsername: 1, instauser: 1, 'fama24h.requestPayload.link': 1, 'fornecedor_social.requestPayload.link': 1 };
+        const pagos = await orders.find({ status: 'pago', $or: bigOr }, { projection: proj }).limit(20000).toArray();
+        const res = {}; for (const p of perfisArr) res[p] = { re: reDe(p), n: 0 };
+        for (const o of pagos) {
+          const hay = [o.link, o.usuario, o.perfil, o.instagramUsername, o.instauser, (o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.link), (o.fornecedor_social && o.fornecedor_social.requestPayload && o.fornecedor_social.requestPayload.link)].filter(Boolean).join(' ');
+          for (const p of perfisArr) if (res[p].re.test(hay)) res[p].n++;
+        }
+        for (const it of out.itens) for (const dd of (it.detalhes || [])) if (dd && typeof dd === 'object' && dd.perfil) dd.pedidosPagos = res[String(dd.perfil).toLowerCase()] ? res[String(dd.perfil).toLowerCase()].n : null;
+      }
+    } catch (_) {}
   } catch (_) {}
   return out;
 }
@@ -10661,7 +10747,9 @@ async function computeLtvStats(opts = {}) {
       // Cacheado em costs.providerChargeTotal. Só cai na estimativa se o pedido nem foi ao fornecedor.
       const getCostReais = async (o) => {
         const saved = Number(o && o.costs && o.costs.providerChargeTotal);
-        if (Number.isFinite(saved) && saved > 0) return saved;                 // já calculado (cache)
+        // Cache só vale se o pedido JÁ FINALIZOU (providerChargeFinal). Parcial/em andamento
+        // é reconsultado no /status (evita congelar um charge provisório, ex.: R$3 → R$11).
+        if (Number.isFinite(saved) && saved > 0 && o && o.costs && o.costs.providerChargeFinal === true) return saved;
         const rc = await computeOrderRealCost(o, { live: true, col });         // real: base + bumps
         if (rc && rc.total > 0) return rc.total;
         if (rc && rc.hasProviderOrders) return 0;                              // foi ao fornecedor mas sem charge ainda
@@ -11730,7 +11818,7 @@ const SMM_PROVIDERS = {
   bulkfollows:       { url: 'https://bulkfollows.com/api/v2',      keyEnv: 'BULKFOLLOWS_API_KEY',       label: 'BulkFollows' },
   worldofsmm:        { url: 'https://worldofsmm.com/api/v2',       keyEnv: 'WORLDOFSMM_API_KEY',        label: 'WorldOfSMM' },
   dripfeedpanel:     { url: 'https://dripfeedpanel.com/api/v2',    keyEnv: 'DRIPFEEDPANEL_API_KEY',     label: 'DripFeedPanel' },
-  bulkmedya:         { url: 'https://bulkmedya.com/api/v2',        keyEnv: 'BULKMEDYA_API_KEY',         label: 'BulkMedya' },
+  bulkmedya:         { url: 'https://bulkmedya.org/api/v2',        keyEnv: 'BULKMEDYA_API_KEY',         label: 'BulkMedya' },
 };
 const SMM_PROVIDER_IDS = Object.keys(SMM_PROVIDERS);
 const normalizeSmmProvider = (v) => {
@@ -15689,19 +15777,23 @@ app.post('/api/expay/charge', async (req, res) => {
             }
         };
 
+        // FALHAR FECHADO: o pedido TEM que gravar no Mongo antes de entregar o Pix.
+        // Se a gravação falhar (ex.: Mongo fora), NÃO devolve o Pix — senão o cliente
+        // paga uma cobrança sem pedido no sistema (pagamento órfão, como no incidente 16/10).
+        let insertResult = null;
         try {
             const col = await getCollection('checkout_orders');
-            const insertResult = await col.insertOne(record);
+            insertResult = await col.insertOne(record);
             try { record._id = insertResult?.insertedId; } catch (_) {}
-            Promise.resolve()
-                .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
-                .catch(() => {});
-            Promise.resolve()
-                .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
-                .catch(() => {});
-            Promise.resolve()
-                .then(() => sendPixOrderEmailToCustomer({ record }))
-                .catch(() => {});
+        } catch (dbErr) {
+            try { console.error('🔴 [checkout-pix] pedido NAO gravado no Mongo — Pix NAO entregue | corr:', (record && record.correlationID), '|', dbErr && dbErr.message); } catch (_) {}
+            return res.status(503).json({ error: 'order_persist_failed', message: 'Não foi possível registrar seu pedido agora. Tente novamente em instantes — você NÃO foi cobrado.' });
+        }
+        try {
+            const col = await getCollection('checkout_orders');
+            Promise.resolve().then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record)).catch(() => {});
+            Promise.resolve().then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId })).catch(() => {});
+            Promise.resolve().then(() => sendPixOrderEmailToCustomer({ record })).catch(() => {});
         } catch (_) {}
 
         return res.status(200).json({
@@ -16350,19 +16442,23 @@ app.post('/api/paghiper/charge', async (req, res) => {
             }
         };
 
+        // FALHAR FECHADO: o pedido TEM que gravar no Mongo antes de entregar o Pix.
+        // Se a gravação falhar (ex.: Mongo fora), NÃO devolve o Pix — senão o cliente
+        // paga uma cobrança sem pedido no sistema (pagamento órfão, como no incidente 16/10).
+        let insertResult = null;
         try {
             const col = await getCollection('checkout_orders');
-            const insertResult = await col.insertOne(record);
+            insertResult = await col.insertOne(record);
             try { record._id = insertResult?.insertedId; } catch (_) {}
-            Promise.resolve()
-                .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
-                .catch(() => {});
-            Promise.resolve()
-                .then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId }))
-                .catch(() => {});
-            Promise.resolve()
-                .then(() => sendPixOrderEmailToCustomer({ record }))
-                .catch(() => {});
+        } catch (dbErr) {
+            try { console.error('🔴 [checkout-pix] pedido NAO gravado no Mongo — Pix NAO entregue | corr:', (record && record.correlationID), '|', dbErr && dbErr.message); } catch (_) {}
+            return res.status(503).json({ error: 'order_persist_failed', message: 'Não foi possível registrar seu pedido agora. Tente novamente em instantes — você NÃO foi cobrado.' });
+        }
+        try {
+            const col = await getCollection('checkout_orders');
+            Promise.resolve().then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record)).catch(() => {});
+            Promise.resolve().then(() => sendOrderCreatedEmail({ record, insertedId: insertResult && insertResult.insertedId })).catch(() => {});
+            Promise.resolve().then(() => sendPixOrderEmailToCustomer({ record })).catch(() => {});
         } catch (_) {}
 
         return res.status(200).json({
@@ -18688,6 +18784,19 @@ function _collectProviderChargeSources(order) {
 function _chargeOfStatusPayload(sp) {
   return sp ? _parseChargeNum(sp.charge ?? sp.Charge ?? sp.cost ?? sp.Cost ?? sp.price ?? sp.Price) : null;
 }
+// Um componente está FINAL (charge definitivo) quando o fornecedor terminou de entregar:
+// Completed / Partial / Canceled / Refunded / Failed. Pending/In progress/Processing = ainda
+// mudando → o charge pode subir (ex.: R$3 parcial → R$11 final), então NÃO se congela.
+function _isStatusPayloadFinal(sp) {
+  if (!sp || typeof sp !== 'object') return false;
+  const st = String(sp.status ?? sp.Status ?? '').trim().toLowerCase();
+  if (!st) return false;
+  if (/complet|partial|cancel|refund|estorn|fail|reject|recus/.test(st)) return true;
+  if (/pending|progress|processing|queue|andamento|aguard|iniciad|created|initiat/.test(st)) return false;
+  // status desconhecido: só considera final se não falta nada a entregar.
+  const rem = Number(sp.remains ?? sp.Remains);
+  return Number.isFinite(rem) && rem === 0;
+}
 // Igual ao sumStoredProviderCharges, mas separando BASE (serviço principal) de BUMPS, e
 // devolvendo a quantidade enviada ao fornecedor. É o que permite ao painel mostrar
 // "Custo/1k" e "Custo Bump" pelo charge REAL do action=status em vez do cost_settings.
@@ -18773,20 +18882,26 @@ async function computeOrderRealCost(order, opts = {}) {
   let total = 0, counted = 0, base = 0, baseCounted = 0, baseQty = 0, bumps = 0, bumpCounted = 0;
   const breakdown = [];
   const payloadSets = {};
+  let allFinal = sources.length > 0; // vira false se ALGUM componente ainda não finalizou
   for (const s of sources) {
-    let ch = refetch ? null : _chargeOfStatusPayload(s.statusPayload);
+    const cachedFinal = _isStatusPayloadFinal(s.statusPayload);
+    // Usa o charge cacheado SÓ se o componente JÁ FINALIZOU. Se ainda está em andamento
+    // (Pending/In progress), o charge pode subir (R$3 parcial → R$11 final) → re-consulta o /status.
+    let ch = (refetch || (live && !cachedFinal)) ? null : _chargeOfStatusPayload(s.statusPayload);
     let chCurrency = (s.statusPayload && (s.statusPayload.currency || s.statusPayload.Currency)) || null;
+    let compFinal = cachedFinal;
     if (ch == null && live) {
       const sp = await _fetchProviderStatusLive(s.provider, s.orderId, order, s.slot);
       ch = sp ? _parseChargeNum(sp.charge ?? sp.Charge ?? sp.cost ?? sp.Cost ?? sp.price ?? sp.Price) : null;
       if (sp && (sp.currency || sp.Currency)) chCurrency = sp.currency || sp.Currency;
+      if (sp) compFinal = _isStatusPayloadFinal(sp);
       // Cacheia o payload no próprio slot — próximas leituras não precisam ir ao fornecedor.
       if (sp && s.slot && !s.slot.endsWith('_multi')) {
         payloadSets[`${s.slot}.statusPayload`] = sp;
         payloadSets[`${s.slot}.lastStatusAt`] = new Date().toISOString();
       }
       // Fornecedor fora do ar / chave errada não pode zerar um charge já conhecido.
-      if (ch == null) { ch = _chargeOfStatusPayload(s.statusPayload); chCurrency = (s.statusPayload && (s.statusPayload.currency || s.statusPayload.Currency)) || chCurrency; }
+      if (ch == null) { ch = _chargeOfStatusPayload(s.statusPayload); chCurrency = (s.statusPayload && (s.statusPayload.currency || s.statusPayload.Currency)) || chCurrency; compFinal = cachedFinal; }
     }
     if (ch != null && ch >= 0) {
       // Fornecedor que cobra em DÓLAR (ex.: Followiz, SMMHustle, JAP) → converte pra BRL
@@ -18797,6 +18912,9 @@ async function computeOrderRealCost(order, opts = {}) {
       if (s.role === 'bump') { bumps += chBrl; bumpCounted++; }
       else { base += chBrl; baseCounted++; baseQty += s.qtySent; }
       breakdown.push({ provider: s.provider, orderId: s.orderId, charge: chBrl, chargeRaw: ch, currency: chCurrency || null, role: s.role, slot: s.slot, qtySent: s.qtySent || null });
+      if (!compFinal) allFinal = false; // tem charge, mas ainda entregando → não congela
+    } else {
+      allFinal = false; // componente sem charge ainda (fornecedor fora / sem cobrança) → não é final
     }
   }
   const r2 = (n) => Math.round(n * 100) / 100;
@@ -18808,11 +18926,14 @@ async function computeOrderRealCost(order, opts = {}) {
       'costs.providerChargeBase': base,
       'costs.providerChargeBumps': bumps,
       'costs.providerChargeBaseQty': baseQty || null,
+      // providerChargeFinal = true só quando TODOS os componentes finalizaram. Enquanto false,
+      // o custo é provisório e o backfill re-consulta até fechar (não congela o parcial).
+      'costs.providerChargeFinal': allFinal,
       'costs.providerChargeAt': new Date().toISOString()
     });
     try { await opts.col.updateOne({ _id: order._id }, { $set: sets }); } catch (_) {}
   }
-  return { total, counted, breakdown, base, bumps, baseCounted, bumpCounted, baseQtySent: baseQty, hasProviderOrders: sources.length > 0 };
+  return { total, counted, breakdown, base, bumps, baseCounted, bumpCounted, baseQtySent: baseQty, hasProviderOrders: sources.length > 0, final: allFinal };
 }
 
 // Depois de preencher/corrigir um orderId no painel (perfil privado OU orderid unknown):
@@ -48438,6 +48559,13 @@ app.post('/api/cliente/create-from-order', async (req, res) => {
 // (typeForCost + custo_por_1000 de cost_settings). Upsell é item simples (sem order bumps).
 function computeUpsellCostCents(o, costSettings) {
   try {
+    // 1) Custo REAL do fornecedor (MESMA fonte do custo principal): charge do /status cacheado,
+    //    só quando o pedido JÁ FINALIZOU. Upsell deixa de ter cálculo separado — vira a mesma regra.
+    const real = Number(o && o.costs && o.costs.providerChargeTotal);
+    if (Number.isFinite(real) && real > 0 && o && o.costs && o.costs.providerChargeFinal === true) {
+      return Math.round(real * 100);
+    }
+    // 2) Fallback: estimativa cost_settings (só enquanto não há charge real/final).
     const cs = costSettings || {};
     const m = (o && (o.additionalInfoMapPaid || o.additionalInfoMap)) || {};
     const type = String((o && (o.tipoServico || o.tipo)) || m.tipo_servico || '').toLowerCase().trim();
@@ -49256,6 +49384,7 @@ const server = app.listen(port, () => {
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
   try { require('./precosTestes.js').startPrecosTestesLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Testes de serviços: preço atual de cada serviço todo dia às 23:30 BRT
+  try { require('./reconciliacao.js').startReconciliacaoLoop(); } catch (_) {} // Reconciliação gateway↔banco (pagos sem pedido) + watchdog de pedidos parados
   try { startStuckBumpSweeper(); } catch (_) {} // destrava bumps presos em "processing" (comentários/views/curtidas)
   try { startCostRecalibrateLoop(); } catch (_) {} // Auto-calibra cost_settings pelo custo real dos últimos N pedidos de cada tipo (a cada 6h)
   try { startSpedyStatusSyncLoop(); } catch (_) {} // Notas 'na fila' → consulta a Spedy e atualiza o estado real
@@ -50228,7 +50357,10 @@ async function runCostStatusSweepTick() {
       $and: [
         { $or: [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }] },
         { $or: [{ paidAt: { $gte: desdeIso } }, { createdAt: { $gte: desdeIso } }] },
-        { $or: [{ 'costs.providerChargeTotal': { $exists: false } }, { 'costs.providerChargeTotal': null }, { 'costs.providerChargeTotal': 0 }] },
+        // Reprocessa: sem custo ainda (missing/0) OU explicitamente NÃO-FINAL (em andamento,
+        // marcado pelo código novo) → re-consulta até fechar. Pedido ANTIGO sem o flag
+        // providerChargeFinal fica intocado (passado não muda).
+        { $or: [{ 'costs.providerChargeTotal': { $exists: false } }, { 'costs.providerChargeTotal': null }, { 'costs.providerChargeTotal': 0 }, { 'costs.providerChargeFinal': false }] },
         // já foi ao fornecedor (tem pelo menos um orderId), senão não há o que perguntar
         { $or: COST_SWEEP_SLOTS.map(s => ({ [`${s}.orderId`]: { $exists: true, $nin: [null, ''] } })) },
         // desiste depois de algumas tentativas sem charge (pedido cancelado/removido lá)

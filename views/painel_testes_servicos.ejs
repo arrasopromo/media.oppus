@@ -99,6 +99,12 @@
     tr.row-failed td.rownum { box-shadow: inset 3px 0 0 #dc2626; font-weight: 700; }
     /* Ocultar perfis mortos: quando ligado, some com as linhas que caíram. */
     #gridWrap.hide-dead tr.row-failed { display: none; }
+    /* Serviço/ID que não existe mais no catálogo do fornecedor → fundo CINZA
+       (análogo ao vermelho da queda). A checagem de queda segue normal se o perfil existir. */
+    tr.row-noservice td { background: #e9eaec !important; color: #6b7280 !important; }
+    tr.row-noservice td .cell-select, tr.row-noservice td input { background: transparent; color: #6b7280; }
+    tr.row-noservice:hover td { background: #dfe1e4 !important; }
+    tr.row-noservice td.rownum { box-shadow: inset 3px 0 0 #9ca3af; font-weight: 700; }
     /* ordenação + filtro por coluna */
     thead th.sortable { cursor: pointer; user-select: none; }
     thead th.sortable:hover { background: #eef1f5; }
@@ -140,16 +146,22 @@
        var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
        function _tipoIcon(t){ t=String(t||''); if(/mundial/i.test(t)) return '🌍'; if(/brasileir/i.test(t)) return '🇧🇷'; return ''; }
        function _tipoLabel(t){ var ic=_tipoIcon(t); return (ic?ic+' ':'') + t; }
+       // Seguidores (link de PERFIL) → mostra só @usuario. Curtidas/views (link de POST
+       // /p/ /reel/ /tv/ /stories/) → mantém a URL. Username puro → @usuario.
        function _perfilParts(raw){
          var v = String(raw||'').replace(/^@+/,'').trim();
          if (!v) return { label:'', href:'', empty:true };
          var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
+         if (!isLink) return { label: '@' + v, href: 'https://instagram.com/' + encodeURIComponent(v), empty:false };
          var href;
-         if (!isLink) href = 'https://instagram.com/' + encodeURIComponent(v);
-         else if (/^https?:\/\//i.test(v)) href = v;
+         if (/^https?:\/\//i.test(v)) href = v;
          else if (/instagram\.com/i.test(v)) href = 'https://' + v.replace(/^\/+/, '');
          else href = 'https://www.instagram.com/' + v.replace(/^\/+/, '');
-         return { label: (isLink ? v : ('@' + v)), href: href, empty:false };
+         if (/\/(p|reel|reels|tv|stories)\//i.test(v)) return { label: v, href: href, empty:false }; // post → URL
+         var m = v.match(/instagram\.com\/+([^\/?#]+)/i);
+         var user = (m ? m[1] : v).replace(/^@+/, '');
+         if (!user) return { label: v, href: href, empty:false };
+         return { label: '@' + user, href: 'https://instagram.com/' + encodeURIComponent(user), empty:false };
        } %>
     <form class="toolbar" method="get" action="/painel/testes-servicos" style="background:#f8f9ff;border:1px solid #e6e8f5;border-radius:8px;padding:10px 12px;">
       <label class="sub" style="margin:0;">Tipo
@@ -243,7 +255,9 @@
           %>
 <%# Saida escapada transformava as aspas do atributo em entidade: o class virava texto
       solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
-          <tr data-id="<%= r.id %>"<% if (r.measureFailed) { %> class="row-failed" data-failed="1" title="Falha ao medir<%= r.measureFailReason ? (' (' + r.measureFailReason + ')') : '' %> — ignorada nas checagens em lote"<% } %>>
+          <% var _rowCls = []; if (r.measureFailed) _rowCls.push('row-failed'); if (r.servicoForaDoCatalogo) _rowCls.push('row-noservice');
+             var _rowTitle = r.servicoForaDoCatalogo ? ('Serviço ' + (r.serviceId||'') + ' não existe mais no catálogo do fornecedor' + (r.servicoForaDoCatalogoEm ? (' (visto em ' + String(r.servicoForaDoCatalogoEm).slice(0,10) + ')') : '')) : (r.measureFailed ? ('Falha ao medir' + (r.measureFailReason ? (' (' + r.measureFailReason + ')') : '') + ' — ignorada nas checagens em lote') : ''); %>
+          <tr data-id="<%= r.id %>"<% if (_rowCls.length) { %> class="<%= _rowCls.join(' ') %>"<% } %><% if (r.measureFailed) { %> data-failed="1"<% } %><% if (r.servicoForaDoCatalogo) { %> data-noservice="1"<% } %><% if (_rowTitle) { %> title="<%= _rowTitle %>"<% } %>>
             <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <span class="rn-num"><%= _i + 1 %></span></td>
             <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %><% var _gk = (r.fornecedor||'')+'|'+(r.serviceId||''); var _gn = (r.serviceId && _svcGroups[_gk]) ? _svcGroups[_gk] : 0; if (_gn > 1) { %> <a class="svc-link" href="/painel/testes-servicos?svc=<%= encodeURIComponent(r.serviceId) %>&fornecedor=<%= encodeURIComponent(r.fornecedor||'') %>" title="Ver os <%= _gn %> testes deste serviço" style="text-decoration:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1px 6px;font-size:11px;color:#4338ca;white-space:nowrap;">↔ <%= _gn %></a><% } %></td>
             <td class="selcell">
@@ -303,16 +317,21 @@
       function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
       function fmtInt(v){ var n = Number(v); return Number.isFinite(n) ? n.toLocaleString('pt-BR') : ''; }
       var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
+      // Perfil (seguidores) → @usuario. Post (/p/ /reel/ /tv/ /stories/, p/ curtidas/views) → URL.
       function perfilParts(raw){
         var v = String(raw||'').replace(/^@+/,'').trim();
         if (!v) return { label:'', href:'', empty:true };
         var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
+        if (!isLink) return { label: '@' + v, href: 'https://instagram.com/' + encodeURIComponent(v), empty:false };
         var href;
-        if (!isLink) href = 'https://instagram.com/' + encodeURIComponent(v);
-        else if (/^https?:\/\//i.test(v)) href = v;
+        if (/^https?:\/\//i.test(v)) href = v;
         else if (/instagram\.com/i.test(v)) href = 'https://' + v.replace(/^\/+/, '');
         else href = 'https://www.instagram.com/' + v.replace(/^\/+/, '');
-        return { label: (isLink ? v : ('@' + v)), href: href, empty:false };
+        if (/\/(p|reel|reels|tv|stories)\//i.test(v)) return { label: v, href: href, empty:false };
+        var m = v.match(/instagram\.com\/+([^\/?#]+)/i);
+        var user = (m ? m[1] : v).replace(/^@+/, '');
+        if (!user) return { label: v, href: href, empty:false };
+        return { label: '@' + user, href: 'https://instagram.com/' + encodeURIComponent(user), empty:false };
       }
       function fmtDate(raw){ var p = String(raw||'').slice(0,10).split('-'); return (p.length===3) ? (p[2]+'/'+p[1]+'/'+p[0]) : String(raw||''); }
 

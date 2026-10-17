@@ -347,8 +347,6 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 4000, p: 'R$ 122,90' },
       { q: 5000, p: 'R$ 157,90' },
       { q: 7500, p: 'R$ 195,90' },
-      { q: 10000, p: 'R$ 244,90' },
-      { q: 15000, p: 'R$ 314,90' },
     ],
   };
 
@@ -2166,7 +2164,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras' || tipo === 'organicos' || tipo === 'seguidores_tiktok') {
       if (isCurtidasContext) {
         if (tipo === 'curtidas_brasileiras') return [50, 150, 500, 1000, 3000, 5000, 10000];
-        if (tipo === 'organicos') return [20, 100].concat(base.filter(function(q){ return q >= 150 && q !== 700; }));
+        if (tipo === 'organicos') return [20, 100].concat(base.filter(function(q){ return q >= 150 && q !== 700 && q <= 7500; }));
         return [50].concat(base.filter(function(q){ return q >= 150; }));
       }
       return base;
@@ -2590,6 +2588,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     const basePrice = findPrice(tipo, baseQtd);
     const targetPrice = findPrice(tipo, targetQtd);
+    // Faixa-alvo sem preço (ex.: curtidas reais acima de 7.500, que foram removidas) → sem upgrade.
+    if (!targetPrice) {
+      if (labelSpan) labelSpan.textContent = 'Nenhum upgrade disponível para este pacote.';
+      if (upOld) upOld.textContent = '—';
+      if (upNew) upNew.textContent = '—';
+      if (upDisc) upDisc.textContent = 'OFERTA';
+      return;
+    }
     const diffCents = parsePrecoToCents(targetPrice) - parsePrecoToCents(basePrice);
     const addQtd = targetQtd - baseQtd;
     const diffStr = formatCentsToBRL(diffCents);

@@ -58,17 +58,49 @@ function lerBlocos(html) {
 }
 
 // Fornecedores conhecidos, pela URL gravada em `fornecedor` na linha do teste.
+// Catálogo sempre via API (action=services). Campos:
+//   moeda: 'BRL' | 'USD' | null  (null = não atualiza preço, só valida existência do ID)
+//   marcaAusencia: true  → ID fora do catálogo deixa a linha CINZA (servicoForaDoCatalogo)
+//                  false → nunca marca (catálogo da API é incompleto/incerto p/ esse painel)
+//   prefixo: prefixo do serviceId que a API pode não usar (ex.: SMMRaja usa 's5573')
+const P = (chave, nome, casa, moeda, { url, keyEnv, marca = true, min = 200, prefixo = null } = {}) => ({
+  chave, nome, casa, moeda, marcaAusencia: marca, minimo: min, prefixo,
+  carregar: () => catalogoApi(url, String(process.env[keyEnv] || '').trim()),
+});
 const FORNECEDORES = [
-  { chave: 'nuvra', nome: 'Nuvra', casa: /nuvrasmm\.com/i, moeda: 'BRL', marcaAusencia: false, minimo: 1,
-    carregar: () => catalogoApi(process.env.NUVRASMM_API_URL || 'https://nuvrasmm.com/api/v2', String(process.env.NUVRASMM_API_KEY || '').trim()) },
-  { chave: 'smmhustle', nome: 'SMMHustle', casa: /smmhustle\.com/i, moeda: 'USD', marcaAusencia: true, minimo: 300,
-    carregar: () => catalogoApi('https://smmhustle.com/api/v2', String(process.env.SMMHUSTLE_API_KEY || '').trim()) },
-  { chave: 'smmturk', nome: 'SMMTurk', casa: /smmturk\.org/i, moeda: 'USD', marcaAusencia: true, minimo: 1000, publico: true,
-    carregar: async () => lerTabelaPadrao(await paginaPublica('https://smmturk.org/services')) },
-  { chave: 'worldofsmm', nome: 'WorldOfSMM', casa: /worldofsmm\.com/i, moeda: 'USD', marcaAusencia: true, minimo: 300, publico: true,
-    carregar: async () => lerBlocos(await paginaPublica('https://worldofsmm.com/services')) },
+  // Painéis grandes com catálogo completo pela API → marcam ausência (fundo cinza).
+  P('smmhustle', 'SMMHustle', /smmhustle\.com/i, 'USD', { url: 'https://smmhustle.com/api/v2', keyEnv: 'SMMHUSTLE_API_KEY', min: 300 }),
+  P('smmturk', 'SMMTurk', /smmturk\.org/i, 'USD', { url: 'https://smmturk.org/api/v2', keyEnv: 'SMMTURK_API_KEY', min: 1000 }),
+  P('worldofsmm', 'WorldOfSMM', /worldofsmm\.com/i, 'USD', { url: 'https://worldofsmm.com/api/v2', keyEnv: 'WORLDOFSMM_API_KEY', min: 300 }),
+  P('justanotherpanel', 'JustAnotherPanel', /justanotherpanel\.com/i, 'USD', { url: 'https://justanotherpanel.com/api/v2', keyEnv: 'JUSTANOTHERPANEL_API_KEY', min: 1000 }),
+  P('dripfeedpanel', 'DripFeedPanel', /dripfeedpanel\.com/i, 'USD', { url: 'https://dripfeedpanel.com/api/v2', keyEnv: 'DRIPFEEDPANEL_API_KEY', min: 300 }),
+  P('followiz', 'Followiz', /followiz\.com/i, 'USD', { url: 'https://followiz.com/api/v2', keyEnv: 'FOLLOWIZ_API_KEY', min: 300 }),
+  P('smmcost', 'SMMCost', /smmcost\.com/i, 'USD', { url: 'https://smmcost.com/api/v2', keyEnv: 'SMMCOST_API_KEY', min: 200 }),
+  P('bulkfollows', 'BulkFollows', /bulkfollows\.com/i, 'USD', { url: 'https://bulkfollows.com/api/v2', keyEnv: 'BULKFOLLOWS_API_KEY', min: 300 }),
+  P('n1panel', 'N1Panel', /n1panel\.com/i, 'USD', { url: 'https://n1panel.com/api/v2', keyEnv: 'N1PANEL_API_KEY', min: 200 }),
+  P('peakerr', 'Peakerr', /peakerr\.com/i, 'USD', { url: 'https://peakerr.com/api/v2', keyEnv: 'PEAKERR_API_KEY', min: 300 }),
+  P('bulkmedya', 'BulkMedya', /bulkmedya\.(org|com)/i, 'USD', { url: 'https://bulkmedya.org/api/v2', keyEnv: 'BULKMEDYA_API_KEY', min: 200 }),
+  P('topfama', 'TopFama', /topfama\.com/i, 'BRL', { url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', min: 50 }),
+  P('revendaexclusiva', 'RevendaExclusiva', /revendaexclusiva\.com/i, 'BRL', { url: 'https://revendaexclusiva.com/api/v2', keyEnv: 'REVENDAEXCLUSIVA_API_KEY', min: 30 }),
+  P('smmpix', 'SMMPix', /smmpix\.com/i, null, { url: 'https://smmpix.com/api/v2', keyEnv: 'SMMPIX_API_KEY', min: 200 }),
+  // Catálogo incompleto/incerto pela API → só atualiza preço quando acha, NUNCA marca ausência.
+  P('nuvra', 'Nuvra', /nuvrasmm\.com/i, 'BRL', { url: process.env.NUVRASMM_API_URL || 'https://nuvrasmm.com/api/v2', keyEnv: 'NUVRASMM_API_KEY', marca: false, min: 1 }),
+  P('smmraja', 'SMMRaja', /smmraja\.com/i, 'USD', { url: 'https://smmraja.com/api/v2', keyEnv: 'SMMRAJA_API_KEY', marca: false, min: 500, prefixo: 's' }),
+  P('hiperseguidores', 'HiperSeguidores', /hiperseguidores\.com/i, 'BRL', { url: 'https://hiperseguidores.com.br/api/v2', keyEnv: 'HIPERSEGUIDORES_API_KEY', marca: false, min: 1 }),
+  P('fornecedorsocial', 'FornecedorSocial', /fornecedorsocial\.com/i, 'BRL', { url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY', marca: false, min: 1 }),
+  P('worldsmm', 'WorldSMM', /worldsmm\.com\.br/i, 'BRL', { url: 'https://worldsmm.com.br/api/v2', keyEnv: 'WORLDSMM_API_KEY', marca: false, min: 1 }),
 ];
 const fornecedorDaLinha = (url) => FORNECEDORES.find((f) => f.casa.test(String(url || ''))) || null;
+// Procura o ID no catálogo tolerando o prefixo do painel (ex.: 's5573' ↔ '5573').
+function acharNoCatalogo(cat, base, prefixo) {
+  if (cat[base]) return cat[base];
+  if (prefixo) {
+    const semPref = base.replace(new RegExp('^' + prefixo, 'i'), '');
+    if (cat[semPref]) return cat[semPref];
+    if (cat[prefixo + base]) return cat[prefixo + base];
+  }
+  return null;
+}
 
 async function cotacaoDolar(runs) {
   try {
@@ -106,10 +138,6 @@ async function atualizarPrecosTestes({ gravar = true, dia = diaBRT(Date.now()) }
       let motivo = '';
       if (n < f.minimo) motivo = `catálogo pequeno demais (${n})`;
       else if (nAntes && n < nAntes * 0.6) motivo = `catálogo encolheu de ${nAntes} para ${n}`;
-      else if (f.publico) {
-        const moedas = new Set(Object.values(cat).map((s) => s.moedaTxt).filter(Boolean));
-        if (moedas.size && ![...moedas].every((m) => m === '$')) motivo = 'moeda da página não é dólar (' + [...moedas].slice(0, 3).join(' ') + ')';
-      }
       resumoCat[f.chave] = { ok: !motivo, servicos: n, motivo: motivo || undefined };
       if (!motivo) catalogos[f.chave] = cat;
     } catch (e) {
@@ -118,7 +146,7 @@ async function atualizarPrecosTestes({ gravar = true, dia = diaBRT(Date.now()) }
   }
 
   const agoraIso = new Date().toISOString();
-  const mudancas = { precos: 0, asteriscoNovo: [], asteriscoRemovido: [], semFornecedor: 0, puladas: 0 };
+  const mudancas = { precos: 0, indisponivelNovo: [], voltou: [], semFornecedor: 0, puladas: 0 };
   const ops = [];
   for (const l of linhas) {
     const f = fornecedorDaLinha(l.fornecedor);
@@ -126,20 +154,26 @@ async function atualizarPrecosTestes({ gravar = true, dia = diaBRT(Date.now()) }
     const cat = catalogos[f.chave];
     if (!cat) { mudancas.puladas++; continue; }
     const idAtual = String(l.serviceId || '').trim();
-    const base = idAtual.replace(/\*+$/, '').trim();
+    const base = idAtual.replace(/\*+$/, '').trim(); // migra IDs legados que ganharam "*"
     if (!base) continue;
-    const s = cat[base];
+    const s = acharNoCatalogo(cat, base, f.prefixo);
     const set = {};
+    // Limpa o "*" legado do serviceId em qualquer caso (agora a sinalização é a flag/fundo cinza).
+    if (idAtual !== base) set.serviceId = base;
     if (s && Number.isFinite(s.rate)) {
-      const reais = Math.round((f.moeda === 'USD' ? s.rate * usd.valor : s.rate) * 100) / 100;
-      if (Number(l.preco) !== reais) { set.preco = reais; set.precoAnterior = (l.preco != null) ? Number(l.preco) : null; mudancas.precos++; }
+      // Atualiza preço só quando a moeda é conhecida (null = fornecedor só p/ validar existência).
+      if (f.moeda === 'BRL' || f.moeda === 'USD') {
+        const reais = Math.round((f.moeda === 'USD' ? s.rate * usd.valor : s.rate) * 100) / 100;
+        if (Number(l.preco) !== reais) { set.preco = reais; set.precoAnterior = (l.preco != null) ? Number(l.preco) : null; mudancas.precos++; }
+        set.precoFonte = f.moeda === 'USD' ? `${f.nome} US$ ${s.rate} x ${usd.valor}` : `${f.nome} R$ ${s.rate}`;
+      }
       set.precoAtualizadoEm = agoraIso;
-      set.precoFonte = f.moeda === 'USD' ? `${f.nome} US$ ${s.rate} x ${usd.valor}` : `${f.nome} R$ ${s.rate}`;
-      if (idAtual !== base) { set.serviceId = base; mudancas.asteriscoRemovido.push(`${f.nome} ${base}`); }
-      if (l.servicoForaDoCatalogo) set.servicoForaDoCatalogo = false;
+      if (l.servicoForaDoCatalogo) { set.servicoForaDoCatalogo = false; mudancas.voltou.push(`${f.nome} ${base}`); }
     } else if (f.marcaAusencia) {
-      if (!idAtual.endsWith('*')) { set.serviceId = base + '*'; mudancas.asteriscoNovo.push(`${f.nome} ${base}`); }
+      // ID não existe mais no catálogo do fornecedor → linha fica CINZA.
+      if (!l.servicoForaDoCatalogo) mudancas.indisponivelNovo.push(`${f.nome} ${base}`);
       set.servicoForaDoCatalogo = true;
+      set.servicoForaDoCatalogoEm = agoraIso;
       set.precoAtualizadoEm = agoraIso;
     }
     if (Object.keys(set).length) ops.push({ updateOne: { filter: { _id: l._id }, update: { $set: set } } });
@@ -148,7 +182,7 @@ async function atualizarPrecosTestes({ gravar = true, dia = diaBRT(Date.now()) }
 
   const resumo = {
     _id: dia, at: agoraIso, gravado: !!gravar, linhas: linhas.length, usdBrl: usd.valor, usdFonte: usd.fonte,
-    catalogos: resumoCat, precosAlterados: mudancas.precos, asteriscoNovo: mudancas.asteriscoNovo, asteriscoRemovido: mudancas.asteriscoRemovido,
+    catalogos: resumoCat, precosAlterados: mudancas.precos, indisponivelNovo: mudancas.indisponivelNovo, voltou: mudancas.voltou,
     puladasPorFalhaDeCatalogo: mudancas.puladas, semFornecedorConhecido: mudancas.semFornecedor, ms: Date.now() - inicio,
   };
   if (gravar) { try { await runs.replaceOne({ _id: dia }, resumo, { upsert: true }); } catch (_) {} }
@@ -157,10 +191,10 @@ async function atualizarPrecosTestes({ gravar = true, dia = diaBRT(Date.now()) }
 
 function avisoTexto(r) {
   const p = [];
-  if (r.asteriscoNovo.length) p.push('Saíram do catálogo (ganharam *): ' + r.asteriscoNovo.join(', '));
-  if (r.asteriscoRemovido.length) p.push('Voltaram (tirei o *): ' + r.asteriscoRemovido.join(', '));
+  if ((r.indisponivelNovo || []).length) p.push('Saíram do catálogo (ficaram cinza): ' + r.indisponivelNovo.join(', '));
+  if ((r.voltou || []).length) p.push('Voltaram ao catálogo: ' + r.voltou.join(', '));
   const falhas = Object.entries(r.catalogos || {}).filter(([, v]) => !v.ok).map(([k, v]) => `${k}: ${v.motivo}`);
-  if (falhas.length) p.push('Não atualizei hoje — ' + falhas.join(' | '));
+  if (falhas.length) p.push('Não validei hoje — ' + falhas.join(' | '));
   return p;
 }
 
