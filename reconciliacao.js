@@ -18,6 +18,9 @@ const { getCollection } = require('./mongodbClient');
 const ENABLED = String(process.env.RECONCILIACAO_ENABLED || 'true').toLowerCase() !== 'false';
 const INTERVAL_MIN = Math.max(2, Number(process.env.RECONCILIACAO_INTERVAL_MIN || 10) || 10);
 const CARTAO_LOOKBACK_H = Math.max(1, Number(process.env.RECONCILIACAO_CARTAO_HORAS || 12) || 12);
+// Watchdog de pedidos: desligado por padrão (dava falso positivo em horário
+// de baixo movimento). Para religar: WATCHDOG_PEDIDOS_ENABLED=true no .env.
+const WATCHDOG_ENABLED = String(process.env.WATCHDOG_PEDIDOS_ENABLED || 'false').toLowerCase() === 'true';
 const WATCHDOG_MIN = Math.max(5, Number(process.env.WATCHDOG_PEDIDOS_MIN || 20) || 20);
 const WATCHDOG_HORA_INI = Number(process.env.WATCHDOG_HORA_INI || 8) || 8;   // BRT
 const WATCHDOG_HORA_FIM = Number(process.env.WATCHDOG_HORA_FIM || 23) || 23; // BRT
@@ -140,9 +143,9 @@ async function runReconciliacao() {
       res.pixCorrigidos++;
       await sendEvolution(`✅ Pix reconciliado: pedido ${c.identifier} (@${c.instauser || '-'}) R$ ${c.valor.toFixed(2)} estava pendente mas já foi pago — marcado pago.`);
     }
-    const wd = await watchdogPedidos();
+    const wd = WATCHDOG_ENABLED ? await watchdogPedidos() : { ok: true, desligado: true };
     res.watchdog = wd;
-    if (!wd.ok && !wd.foraHorario) {
+    if (WATCHDOG_ENABLED && !wd.ok && !wd.foraHorario) {
       // alerta a cada ciclo enquanto estiver parado (chave por janela de 20min)
       const slot = Math.floor(Date.now() / (WATCHDOG_MIN * 60e3));
       await alertaUmaVez('watchdog:' + slot, `⚠️ ALERTA: 0 pedidos criados nos últimos ${wd.janelaMin} min. O app pode estar sem gravar no Mongo. Verifique/reinicie o app.`);
