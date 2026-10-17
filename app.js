@@ -11819,6 +11819,7 @@ const SMM_PROVIDERS = {
   worldofsmm:        { url: 'https://worldofsmm.com/api/v2',       keyEnv: 'WORLDOFSMM_API_KEY',        label: 'WorldOfSMM' },
   dripfeedpanel:     { url: 'https://dripfeedpanel.com/api/v2',    keyEnv: 'DRIPFEEDPANEL_API_KEY',     label: 'DripFeedPanel' },
   bulkmedya:         { url: 'https://bulkmedya.org/api/v2',        keyEnv: 'BULKMEDYA_API_KEY',         label: 'BulkMedya' },
+  revendaexclusiva:  { url: 'https://revendaexclusiva.com/api/v2', keyEnv: 'REVENDAEXCLUSIVA_API_KEY',  label: 'RevendaExclusiva' },
 };
 const SMM_PROVIDER_IDS = Object.keys(SMM_PROVIDERS);
 const normalizeSmmProvider = (v) => {
@@ -11840,6 +11841,7 @@ const normalizeSmmProvider = (v) => {
   if (s === 'worldofsmm' || s === 'world_of_smm') return 'worldofsmm';
   if (s === 'dripfeedpanel' || s === 'dripfeed') return 'dripfeedpanel';
   if (s === 'bulkmedya') return 'bulkmedya';
+  if (s === 'revendaexclusiva' || s === 'revenda' || s === 'revenda_exclusiva') return 'revendaexclusiva';
   return s;
 };
 const smmProviderUrl = (p) => (SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).url;
