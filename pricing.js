@@ -236,6 +236,16 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
         if (mode === 'life') return 990;
         return 990;
     }
+    // Comentários: R$ 1,50 por unidade (sem tabela de pacotes). Sem isso o preço
+    // oficial dava 0 e a criação do pedido era bloqueada por "valor nao corresponde".
+    {
+        const _catItem = Array.isArray(additionalInfo) ? additionalInfo.find(x => x && x.key === 'categoria_servico') : null;
+        const _cat = String((_catItem && _catItem.value) || '').toLowerCase().trim();
+        if (tipo === 'comentarios' || tipo === 'comentario' || _cat === 'comentarios' || _cat === 'comentario') {
+            const qc = Math.max(0, parseInt(quantity, 10) || 0);
+            return qc * 150;
+        }
+    }
     let totalCents = 0;
     const q = parseInt(quantity, 10);
     

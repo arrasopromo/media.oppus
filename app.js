@@ -15,7 +15,15 @@ const BaserowManager = require("./baserowManager");
 const axios = require('axios');
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
-const { validatePrice, verifyPrice } = require('./pricing');
+const { validatePrice, verifyPrice, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
+// Preço "a partir de" dos cards do /index: menor pacote (q>=150, ignora o teste de 100)
+// de cada tabela. Atualiza sozinho sempre que os preços em pricing.js mudam.
+const precoInicioCard = (tabela) => {
+  let min = Infinity;
+  try { for (const tipo of Object.keys(tabela || {})) { for (const it of (tabela[tipo] || [])) { if (!it || Number(it.q) < 150) continue; const c = parsePrecoToCents(it.p); if (c > 0 && c < min) min = c; } } } catch (_) {}
+  if (!isFinite(min)) return '';
+  return 'R$ ' + Math.floor(min / 100) + ',' + String(min % 100).padStart(2, '0');
+};
 const notaFiscalManager = require('./notaFiscalManager');
 const fiscalEnrichmentManager = require('./fiscalEnrichmentManager');
 const controladoria = require('./controladoriaManager');
@@ -9228,7 +9236,10 @@ app.get('/engajamento', async (req, res) => {
     PIXEL_ID: process.env.PIXEL_ID || '',
     queryParams: req.query,
     serviceVisibility,
-    isFamaApp
+    isFamaApp,
+    precoInicioSeguidores: precoInicioCard(tabelaSeguidores),
+    precoInicioCurtidas: precoInicioCard(tabelaCurtidas),
+    precoInicioVisualizacoes: precoInicioCard(tabelaVisualizacoes)
   }, (err, html) => {
     if (err) {
       console.error('❌ Erro ao renderizar engajamento:', err.message);
