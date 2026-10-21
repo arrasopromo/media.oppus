@@ -178,7 +178,14 @@ body::before {
 .header {
     text-align: center;
     margin-bottom: 3rem;
-    animation: fadeInUp 1s ease-out;
+    /* LCP: o h1.title aqui dentro é o maior elemento. Animar opacity (fadeInUp) atrasava
+       o LCP porque o Lighthouse só conta o elemento como "pintado" com opacity > 0.
+       Usa só translateY (sem opacity) → h1 visível imediatamente, LCP ~= FCP. */
+    animation: headerRise 0.6s ease-out;
+}
+@keyframes headerRise {
+    from { transform: translateY(18px); }
+    to { transform: translateY(0); }
 }
 
 /* Marca do site (Checkout) */
@@ -235,7 +242,8 @@ body.theme-light .checkout-page .logo-light { display: inline-block; }
 .main-content {
     width: 100%;
     max-width: 960px;
-    animation: fadeInUp 1s ease-out 0.3s both;
+    /* transform-only (sem opacity) p/ não atrasar o LCP caso um card entre no viewport */
+    animation: headerRise 0.6s ease-out 0.1s both;
 }
 html, body { overflow-x: hidden; }
 .checkout-page .cards-grid.checkout-grid { justify-content: center; justify-items: stretch; align-items: stretch; }
