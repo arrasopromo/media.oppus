@@ -4464,6 +4464,7 @@ const REFIL_TESTE_PROVIDER_KEYS = {
   'justanotherpanel.com': 'JUSTANOTHERPANEL_API_KEY',
   'peakerr.com': 'PEAKERR_API_KEY',
   'n1panel.com': 'N1PANEL_API_KEY',
+  'bulkmedya.org': 'BULKMEDYA_API_KEY',  // domínio REAL é .org
   'bulkmedya.com': 'BULKMEDYA_API_KEY',
   'followiz.com': 'FOLLOWIZ_API_KEY',
   'smmcost.com': 'SMMCOST_API_KEY',
@@ -42329,6 +42330,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const norm = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
       const vusers = Array.from(new Set(docs.map(d => norm(d.username)).filter(Boolean)));
       const buyers = new Set();
+      const buyersEver = new Set();
       if (vusers.length) {
         try {
           // "comprou" = pagou DENTRO do período (alinha com "pedidos pagos no período").
@@ -42359,6 +42361,20 @@ app.get('/painel', requireAdmin, async (req, res) => {
             const u = norm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || '');
             if (u) buyers.add(u);
           }
+          // "já é cliente" = comprou EM QUALQUER ÉPOCA (lifetime), p/ distinguir de quem NUNCA comprou.
+          const everDocs = await col.find(
+            { $and: [ paidQuery, { $or: [
+              { instauser: { $in: vusers } },
+              { instagramUsername: { $in: vusers } },
+              { 'additionalInfoMapPaid.instagram_username': { $in: vusers } },
+              { 'additionalInfoMap.instagram_username': { $in: vusers } }
+            ] } ] },
+            { projection: { _id: 0, instauser: 1, instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1, 'additionalInfoMap.instagram_username': 1 } }
+          ).limit(50000).toArray();
+          for (const b of everDocs) {
+            const u = norm(b.instagramUsername || b.instauser || (b.additionalInfoMapPaid && b.additionalInfoMapPaid.instagram_username) || (b.additionalInfoMap && b.additionalInfoMap.instagram_username) || '');
+            if (u) buyersEver.add(u);
+          }
         } catch (_) {}
       }
       validatedProfilesList = docs.map(d => {
@@ -42368,7 +42384,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
           checkedAt: d.checkedAt || d.lastTrackAt || null,
           followersCount: (typeof d.followersCount === 'number') ? d.followersCount : null,
           isPrivate: d.isPrivate === true,
-          bought: u ? buyers.has(u) : false
+          bought: u ? buyers.has(u) : false,
+          boughtEver: u ? buyersEver.has(u) : false
         };
       });
     } catch (_) { validatedProfilesList = []; }

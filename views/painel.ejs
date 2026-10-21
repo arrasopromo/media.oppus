@@ -4265,7 +4265,7 @@
         <div class="summary-card" id="ltvRecompraCard" style="cursor:pointer;" title="Ver compras de recompra">
           <div class="summary-label">Faturamento LTV (recompra) <span style="color:#7c3aed; font-size:0.78rem; font-weight:700;">ver ›</span></div>
           <div class="summary-value" style="color:#7c3aed;">R$ <%= _ltvRev.toFixed(2).replace('.', ',') %></div>
-          <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= (typeof ltvCustomers !== 'undefined' ? ltvCustomers : 0) %> cliente(s) recorrente(s)</div>
+          <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= (typeof ltvCustomers !== 'undefined' ? ltvCustomers : 0) %> cliente(s) recorrente(s) · <%= (typeof ltvPurchases !== 'undefined' && Array.isArray(ltvPurchases) ? ltvPurchases.length : 0) %> pedido(s) recorrente(s)</div>
         </div>
         <script type="application/json" id="ltvPurchasesJson"><%- JSON.stringify(Array.isArray(ltvPurchases) ? ltvPurchases : []).replace(/</g, '\\u003c') %></script>
         <div id="ltvPurchasesModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:14px;">
@@ -4627,6 +4627,7 @@
             <div style="padding:12px 16px; border-bottom:1px solid #f3f4f6; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
               <input id="validatedProfilesSearch" type="text" placeholder="Buscar @..." style="flex:1 1 220px; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px;">
               <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;"><input type="checkbox" id="validatedProfilesBoughtOnly"> só compraram</label>
+              <label style="display:flex; align-items:center; gap:6px; font-size:0.85rem; color:#374151;"><input type="checkbox" id="validatedProfilesNeverBought"> nunca comprou</label>
               <span id="validatedProfilesCount" style="font-size:0.85rem; color:#6b7280;"></span>
             </div>
             <div id="validatedProfilesBody" style="overflow:auto; padding:4px 8px; -webkit-overflow-scrolling:touch;"></div>
@@ -4640,6 +4641,7 @@
             var closeBtn = document.getElementById('validatedProfilesClose');
             var search = document.getElementById('validatedProfilesSearch');
             var boughtOnly = document.getElementById('validatedProfilesBoughtOnly');
+            var neverBought = document.getElementById('validatedProfilesNeverBought');
             var countEl = document.getElementById('validatedProfilesCount');
             if (!card || !modal || !body) return;
             var list = [];
@@ -4649,18 +4651,24 @@
             function render(){
               var q = String(search && search.value || '').trim().replace(/^@+/, '').toLowerCase();
               var bo = !!(boughtOnly && boughtOnly.checked);
+              var nb = !!(neverBought && neverBought.checked);
               var rows = list.filter(function(p){
                 if (bo && !p.bought) return false;
+                if (nb && p.boughtEver) return false;
                 if (q && String(p.username || '').indexOf(q) < 0) return false;
                 return true;
               });
               var boughtCount = list.filter(function(p){ return p.bought; }).length;
-              if (countEl) countEl.textContent = rows.length + ' de ' + list.length + ' · ' + boughtCount + ' compraram';
+              var everCount = list.filter(function(p){ return !p.bought && p.boughtEver; }).length;
+              var neverCount = list.filter(function(p){ return !p.boughtEver; }).length;
+              if (countEl) countEl.textContent = rows.length + ' de ' + list.length + ' · ' + boughtCount + ' compraram · ' + everCount + ' já eram clientes · ' + neverCount + ' nunca compraram';
               body.innerHTML = rows.map(function(p){
                 var u = String(p.username || '');
                 var badge = p.bought
                   ? '<span style="background:#dcfce7; color:#166534; font-weight:700; font-size:0.72rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">✓ comprou</span>'
-                  : '<span style="background:#f3f4f6; color:#9ca3af; font-size:0.72rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">não comprou</span>';
+                  : (p.boughtEver
+                    ? '<span style="background:#dbeafe; color:#1e40af; font-weight:700; font-size:0.72rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">já é cliente</span>'
+                    : '<span style="background:#f3f4f6; color:#9ca3af; font-size:0.72rem; padding:3px 8px; border-radius:999px; white-space:nowrap;">não comprou</span>');
                 var priv = p.isPrivate ? ' <span style="font-size:0.68rem; color:#b91c1c;">privado</span>' : '';
                 return '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 6px; border-bottom:1px solid #f3f4f6;">'
                   + '<div style="min-width:0;"><a href="https://www.instagram.com/' + encodeURIComponent(u) + '/" target="_blank" rel="noopener" style="color:#111827; font-weight:600; text-decoration:none;">@' + u + '</a>' + priv
@@ -4678,11 +4686,13 @@
             modal.addEventListener('click', function(ev){ if (ev.target === modal) modal.style.display = 'none'; });
             if (search) search.addEventListener('input', render);
             if (boughtOnly) boughtOnly.addEventListener('change', render);
+            if (neverBought) neverBought.addEventListener('change', render);
           })();
         </script>
         <div class="summary-card">
           <div class="summary-label">Pedidos pagos no período</div>
           <div class="summary-value"><%= totalTransactions %></div>
+          <div class="summary-sub" style="margin-top:6px;"><%= (typeof totalCustomers !== 'undefined' ? totalCustomers : 0) %> cliente(s) único(s)</div>
         </div>
         <div class="summary-card" title="Clientes que caíram na tela de obrigado logo APÓS pagar (não conta consulta do pedido). Sobre o total de pagos no período.">
           <div class="summary-label">Viram a tela de obrigado (pós-pagamento)</div>
