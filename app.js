@@ -42975,6 +42975,44 @@ app.get('/painel', requireAdmin, async (req, res) => {
       };
     });
 
+    // ── Refino de custo (pedidos SEM charge real do fornecedor) ──
+    // Pedido antigo cujo fornecedor sumiu (ex.: fama24h legado, painel morto → sem como
+    // fazer /status) não tem charge gravado e cairia no cost_settings de HOJE, que
+    // superestima pedido antigo barato (ex.: misto de março custou ~R$2,6/mil, não R$19,92).
+    // Aqui ele passa a usar a TAXA MÉDIA REAL do mesmo tipo NO PERÍODO — tirada dos pedidos
+    // que TÊM charge real. Auto-ajustável (sem tabela fixa) e só mexe nos sem-charge; os
+    // com charge real ficam intocados. Ajusta totalCost, o agregado diário e os entries.
+    try {
+      const _histAcc = {};
+      for (const r of report) {
+        if (r && r.costReal && r.type && Number(r.qty) > 0) {
+          const prov = Math.max(0, Number(r.cost || 0) - Number(r.paymentFee || 0));
+          const a = _histAcc[r.type] || { charge: 0, qty: 0 };
+          a.charge += prov; a.qty += Number(r.qty);
+          _histAcc[r.type] = a;
+        }
+      }
+      const _histRate = {};
+      for (const t in _histAcc) { const a = _histAcc[t]; if (a && a.qty >= 1000) _histRate[t] = a.charge / a.qty * 1000; }
+      for (const r of report) {
+        if (!(r && !r.costReal && r.type && _histRate[r.type] != null && Number(r.qty) > 0)) continue;
+        const _old = Number(r.cost || 0);
+        const _novoProv = Math.round(((Number(r.qty) / 1000) * _histRate[r.type]) * 100) / 100;
+        const _novo = Math.round((Number(r.paymentFee || 0) + _novoProv) * 100) / 100;
+        const _delta = _novo - _old;
+        totalCost = Math.round((totalCost + _delta) * 100) / 100;
+        r.cost = _novo; r.costEstimadoHistorico = true;
+        try {
+          const _ms = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+          if (_ms && __dailyAgg && __dailyAgg.get) {
+            const _d = new Date(_ms - 3 * 3600000).toISOString().slice(0, 10);
+            const _e = __dailyAgg.get(_d);
+            if (_e) { _e.cost = Math.round((Number(_e.cost || 0) + _delta) * 100) / 100; __dailyAgg.set(_d, _e); }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
     const customerAgg = new Map();
     const serviceAgg = new Map();
     const serviceRevenueAgg = new Map(); // valor de VENDA (bruto = totalPaid) por tipo de serviço

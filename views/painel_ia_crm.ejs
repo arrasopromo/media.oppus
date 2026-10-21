@@ -257,6 +257,7 @@
                 <span class="t-ig" id="tIg" style="display:none;"></span>
                 <button type="button" class="btn-pedidos" id="pedidosBtn" style="display:none;">🧾 Ver pedidos</button>
                 <button type="button" class="btn-pedidos btn-reposicao" id="reposicaoBtn" style="display:none;">♻️ Reposição</button>
+                <button type="button" class="btn-pedidos" id="cardReaisHeaderBtn" title="Enviar card: opções de seguidores (Mistos x Brasileiros Reais)" style="display:none; border-color:#8b5cf6; color:#6d28d9;">💠 Reais</button>
               </div>
             </div>
             <div class="actions">
@@ -278,7 +279,6 @@
           <div class="composer">
             <button type="button" class="icon-btn" id="attachBtn" title="Anexar imagem, documento ou áudio" aria-label="Anexar">📎</button>
             <input type="file" id="fileInput" multiple accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip" style="display:none">
-            <button type="button" class="icon-btn" id="cardReaisBtn" title="Enviar card: opções de seguidores (Mistos x Brasileiros Reais)" aria-label="Card opções de seguidores" style="width:auto; padding:0 10px; font-size:0.78rem; font-weight:700; color:#6d28d9; white-space:nowrap;">Reais</button>
             <textarea id="msgInput" placeholder="Mensagem" rows="1" autocomplete="off"></textarea>
             <button type="button" class="icon-btn" id="micBtn" title="Gravar áudio" aria-label="Gravar áudio">🎤</button>
             <button type="button" id="sendBtn" title="Enviar" aria-label="Enviar">➤</button>
@@ -504,7 +504,7 @@
       // Volta pra lista de conversas (celular).
       function voltarLista(){
         $('crm').classList.remove('show-thread');
-        state.current=null; state.replyTo=null; $('replyBar').style.display='none'; try{ clearPending(); }catch(_){} try{ fecharPedidos(); limparPedidos(); }catch(_){}
+        state.current=null; state.replyTo=null; $('replyBar').style.display='none'; try{ clearPending(); }catch(_){} try{ fecharPedidos(); limparPedidos(); }catch(_){} try{ $('cardReaisHeaderBtn').style.display='none'; }catch(_){}
         renderConvs();
         try{ window.scrollTo(0,0); }catch(_){}
       }
@@ -521,6 +521,7 @@
         try{ window.scrollTo(0,0); }catch(_){}
         fitHeight();
         $('tName').textContent=name || ('+'+phone); $('tPhone').textContent='+'+phone; $('tAvatar').textContent=initials(name,phone);
+        try{ $('cardReaisHeaderBtn').style.display='inline-block'; }catch(_){}
         renderConvs();
         var d=await api(API+'/messages?phone='+encodeURIComponent(phone));
         if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); pintarJanela(d); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
@@ -808,18 +809,18 @@
       async function enviarCardReais(){
         if(!state.current){ alert('Abra uma conversa primeiro.'); return; }
         if(!confirm('Enviar o card de opções de seguidores (Mistos x Brasileiros Reais) para este cliente?')) return;
-        var btn=$('cardReaisBtn');
+        var btn=$('cardReaisHeaderBtn') || $('cardReaisBtn');
         try {
-          btn.disabled=true; upmsg('Preparando card…');
+          if(btn) btn.disabled=true; upmsg('Preparando card…');
           var resp=await fetch(CARD_REAIS_IMG, { credentials:'same-origin' });
           if(!resp.ok) throw new Error('img '+resp.status);
           var blob=await resp.blob();
           var file=new File([blob], 'opcoes-seguidores.png', { type: blob.type || 'image/png' });
           await uploadFile(file, CARD_REAIS_CAP);
         } catch(e){ upmsg('Erro ao enviar o card.', true); }
-        finally { btn.disabled=false; }
+        finally { if(btn) btn.disabled=false; }
       }
-      if($('cardReaisBtn')) $('cardReaisBtn').addEventListener('click', enviarCardReais);
+      if($('cardReaisHeaderBtn')) $('cardReaisHeaderBtn').addEventListener('click', enviarCardReais);
 
       // ── Anexo pendente (colar imagem ou escolher no 📎) ────────────────────
       // Fica na prévia acima da barra e só é enviado quando você clica em ➤ — o texto

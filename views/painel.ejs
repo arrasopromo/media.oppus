@@ -4265,7 +4265,8 @@
         <div class="summary-card" id="ltvRecompraCard" style="cursor:pointer;" title="Ver compras de recompra">
           <div class="summary-label">Faturamento LTV (recompra) <span style="color:#7c3aed; font-size:0.78rem; font-weight:700;">ver ›</span></div>
           <div class="summary-value" style="color:#7c3aed;">R$ <%= _ltvRev.toFixed(2).replace('.', ',') %></div>
-          <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= (typeof ltvCustomers !== 'undefined' ? ltvCustomers : 0) %> cliente(s) recorrente(s) · <%= (typeof ltvPurchases !== 'undefined' && Array.isArray(ltvPurchases) ? ltvPurchases.length : 0) %> pedido(s) recorrente(s)</div>
+          <% var _lpN = (typeof ltvPurchases !== 'undefined' && Array.isArray(ltvPurchases) ? ltvPurchases.length : 0); var _ttN = (typeof totalTransactions !== 'undefined' ? Number(totalTransactions || 0) : 0); var _lpPct = _ttN > 0 ? (_lpN / _ttN * 100) : 0; %>
+          <div class="summary-sub" style="margin-top:6px;"><%= _ltvPct.toFixed(1).replace('.', ',') %>% das vendas · <%= _lpN %> pedido(s) recorrente(s) (<%= _lpPct.toFixed(1).replace('.', ',') %>%)</div>
         </div>
         <script type="application/json" id="ltvPurchasesJson"><%- JSON.stringify(Array.isArray(ltvPurchases) ? ltvPurchases : []).replace(/</g, '\\u003c') %></script>
         <div id="ltvPurchasesModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; padding:14px;">
@@ -4692,7 +4693,8 @@
         <div class="summary-card">
           <div class="summary-label">Pedidos pagos no período</div>
           <div class="summary-value"><%= totalTransactions %></div>
-          <div class="summary-sub" style="margin-top:6px;"><%= (typeof totalCustomers !== 'undefined' ? totalCustomers : 0) %> cliente(s) único(s)</div>
+          <% var _tcU = (typeof totalCustomers !== 'undefined' ? Number(totalCustomers || 0) : 0); var _rcU = (typeof ltvCustomers !== 'undefined' ? Number(ltvCustomers || 0) : 0); var _rcPct = _tcU > 0 ? (_rcU / _tcU * 100) : 0; %>
+          <div class="summary-sub" style="margin-top:6px;"><%= _tcU %> cliente(s) único(s) · <%= _rcU %> recorrente(s) (<%= _rcPct.toFixed(1).replace('.', ',') %>%)</div>
         </div>
         <div class="summary-card" title="Clientes que caíram na tela de obrigado logo APÓS pagar (não conta consulta do pedido). Sobre o total de pagos no período.">
           <div class="summary-label">Viram a tela de obrigado (pós-pagamento)</div>
