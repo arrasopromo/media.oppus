@@ -19097,17 +19097,23 @@ app.get('/painel/controladoria', requireAdmin, async (req, res) => {
       if (!adsSince && ds.length) adsSince = ymdOf(Math.min(...ds));
       if (!adsUntil && ds.length) adsUntil = ymdOf(Math.max(...ds));
     }
-    const ads = { cost: 0, tax: 0, ok: false, error: null, since: adsSince, until: adsUntil };
+    const ads = { cost: 0, costBr: 0, costUsd: 0, tax: 0, ok: false, error: null, since: adsSince, until: adsUntil };
     try {
       if (adsSince && adsUntil) {
         const sp = await fetchFacebookSpend({ since: adsSince, until: adsUntil });
-        if (sp && sp.ok) { ads.ok = true; ads.cost = controladoria.round2(Number(sp.spend) || 0); }
+        if (sp && sp.ok) {
+          ads.ok = true;
+          ads.costBr = controladoria.round2(Number(sp.spend) || 0);        // BR: com imposto
+          ads.costUsd = controladoria.round2(Number(sp.spendNoTax) || 0);  // ca3 USD→BRL: SEM imposto
+          ads.cost = controladoria.round2(ads.costBr + ads.costUsd);
+        }
         else { ads.error = (sp && sp.error) || 'indisponível'; }
       } else {
         ads.error = 'sem_periodo';
       }
     } catch (e) { ads.error = e && e.message; }
-    ads.tax = controladoria.round2(ads.cost * (cfg.adsTaxPct || 0));
+    // imposto de ads incide SÓ sobre a parte BR; a conta USD (ca3) não tem o encargo
+    ads.tax = controladoria.round2(ads.costBr * (cfg.adsTaxPct || 0));
 
     // ── Custo losdados (consultas de CPF): SÓ 1ª compra ──
     // O CPF só é usado na nota do EBOOK, que só sai na 1ª compra do cliente. Então o
@@ -39909,32 +39915,65 @@ function __painelTriggerRefresh(cacheKey, req) {
 // Gasto de anúncios DIA A DIA (time_increment=1) para a tabela de lucro diário do
 // dashboard. Mesmo cache curto do total. Retorna { ok, byDay: { 'YYYY-MM-DD': gasto } }.
 const __fbDailyCache = new Map();
+// ── Contas de anúncio ──
+// BR (FB_AD_ACCOUNT_ID): gasto em BRL, COM imposto de ads (markup).
+// USD (FB_AD_ACCOUNT_ID_USD, ex.: ca3): gasto em dólar, SEM imposto, SEMPRE convertido p/ BRL.
+function __fbNormAct(raw) {
+  let act = String(raw || '').trim();
+  if (!act) return '';
+  return /^act_/.test(act) ? act : 'act_' + act.replace(/^act_/, '');
+}
+function __fbBrAccount() { return __fbNormAct(process.env.FB_AD_ACCOUNT_ID); }
+function __fbUsdAccount() { return __fbNormAct(process.env.FB_AD_ACCOUNT_ID_USD); }
+// GET spend de UMA conta (total, ou por dia se daily=true).
+async function __fbSpendOne(act, token, { since, until, datePreset, daily } = {}) {
+  const params = { fields: 'spend', access_token: token };
+  if (daily) { params.time_increment = 1; params.limit = 500; }
+  if (datePreset) params.date_preset = datePreset;
+  else params.time_range = JSON.stringify({ since, until });
+  const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
+  if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
+  if (daily) {
+    const byDay = {};
+    for (const row of ((resp.data && resp.data.data) || [])) { if (row && row.date_start) byDay[row.date_start] = Number(row.spend) || 0; }
+    return { ok: true, byDay };
+  }
+  const row = (resp.data && Array.isArray(resp.data.data) && resp.data.data[0]) ? resp.data.data[0] : null;
+  return { ok: true, spend: row ? (Number(row.spend) || 0) : 0 };
+}
+
 async function fetchFacebookSpendDaily({ since, until, datePreset } = {}) {
   const token = String(process.env.FB_ADS_TOKEN || '').trim();
-  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
+  const act = __fbBrAccount();
   if (!token || !act) return { ok: false, error: 'not_configured' };
-  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
-  const params = { fields: 'spend', time_increment: 1, limit: 500, access_token: token };
   let cacheKey;
-  if (datePreset) { params.date_preset = datePreset; cacheKey = 'd:preset:' + datePreset; }
+  if (datePreset) { cacheKey = 'd:preset:' + datePreset; }
   else {
     const s = String(since || '').trim(), u = String(until || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
-    params.time_range = JSON.stringify({ since: s, until: u });
     cacheKey = 'd:' + s + '|' + u;
   }
   const now = Date.now();
   const hit = __fbDailyCache.get(cacheKey);
-  if (hit && hit.exp > now) return { ok: true, byDay: hit.value, cached: true };
+  if (hit && hit.exp > now) return { ok: true, byDay: hit.value.byDay, byDayNoTax: hit.value.byDayNoTax, cached: true };
   try {
-    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
-    if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
-    const byDay = {};
-    for (const row of ((resp.data && resp.data.data) || [])) {
-      if (row && row.date_start) byDay[row.date_start] = Number(row.spend) || 0;
+    const br = await __fbSpendOne(act, token, { since, until, datePreset, daily: true });
+    if (!br.ok) return { ok: false, error: br.error };
+    const byDay = br.byDay;
+    // Conta USD (ca3): gasto por dia convertido ao dólar atual, SEM imposto.
+    const byDayNoTax = {};
+    const usdAct = __fbUsdAccount();
+    if (usdAct) {
+      try {
+        const usd = await __fbSpendOne(usdAct, token, { since, until, datePreset, daily: true });
+        if (usd.ok) {
+          let rate = 5.03; try { const fx = await getUsdBrlRate(); if (fx && fx.rate) rate = fx.rate; } catch (_) {}
+          for (const [d, v] of Object.entries(usd.byDay)) byDayNoTax[d] = (Number(v) || 0) * rate;
+        }
+      } catch (_) {}
     }
-    __fbDailyCache.set(cacheKey, { value: byDay, exp: now + 5 * 60 * 1000 });
-    return { ok: true, byDay };
+    __fbDailyCache.set(cacheKey, { value: { byDay, byDayNoTax }, exp: now + 5 * 60 * 1000 });
+    return { ok: true, byDay, byDayNoTax };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'fetch_failed' };
   }
@@ -39943,34 +39982,42 @@ async function fetchFacebookSpendDaily({ since, until, datePreset } = {}) {
 // Busca o GASTO de anúncios da conta do Facebook (Marketing API / Insights, campo `spend`).
 // Cache curto em memória por faixa de datas (evita bater na Graph API a cada load do painel).
 const __fbSpendCache = new Map(); // chave -> { value, exp }
+// Retorna { ok, spend, spendNoTax, spendTotal, usdRate }:
+//   spend      = gasto BR (tributável, recebe o markup downstream)
+//   spendNoTax = gasto da conta USD (ca3) já convertido p/ BRL, SEM imposto
+//   spendTotal = spend + spendNoTax
 async function fetchFacebookSpend({ since, until, datePreset } = {}) {
   const token = String(process.env.FB_ADS_TOKEN || '').trim();
-  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
+  const act = __fbBrAccount();
   if (!token || !act) return { ok: false, error: 'not_configured' };
-  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
-  let params;
   let cacheKey;
-  if (datePreset) {
-    params = { fields: 'spend', date_preset: datePreset, access_token: token };
-    cacheKey = 'preset:' + datePreset;
-  } else {
+  if (datePreset) { cacheKey = 'preset:' + datePreset; }
+  else {
     const s = String(since || '').trim(), u = String(until || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
-    params = { fields: 'spend', time_range: JSON.stringify({ since: s, until: u }), access_token: token };
     cacheKey = s + '|' + u;
   }
   const now = Date.now();
   const hit = __fbSpendCache.get(cacheKey);
-  if (hit && hit.exp > now) return { ok: true, spend: hit.value, cached: true };
+  if (hit && hit.exp > now) return { ok: true, ...hit.value, cached: true };
   try {
-    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 20000, validateStatus: () => true });
-    if (resp.status !== 200) {
-      return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
+    const br = await __fbSpendOne(act, token, { since, until, datePreset });
+    if (!br.ok) return { ok: false, error: br.error };
+    const spend = br.spend; // BR (tributável)
+    let spendNoTax = 0, usdRate = null;
+    const usdAct = __fbUsdAccount();
+    if (usdAct) {
+      try {
+        const usd = await __fbSpendOne(usdAct, token, { since, until, datePreset });
+        if (usd.ok && (Number(usd.spend) || 0) > 0) {
+          let rate = 5.03; try { const fx = await getUsdBrlRate(); if (fx && fx.rate) rate = fx.rate; } catch (_) {}
+          usdRate = rate; spendNoTax = (Number(usd.spend) || 0) * rate;
+        }
+      } catch (_) {}
     }
-    const row = (resp.data && Array.isArray(resp.data.data) && resp.data.data[0]) ? resp.data.data[0] : null;
-    const spend = row ? (Number(row.spend) || 0) : 0;
-    __fbSpendCache.set(cacheKey, { value: spend, exp: now + 5 * 60 * 1000 });
-    return { ok: true, spend };
+    const value = { spend, spendNoTax, spendTotal: spend + spendNoTax, usdRate };
+    __fbSpendCache.set(cacheKey, { value, exp: now + 5 * 60 * 1000 });
+    return { ok: true, ...value };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'fetch_failed' };
   }
@@ -42081,24 +42128,25 @@ app.get('/painel', requireAdmin, async (req, res) => {
     } : null;
     const withRealValidation = (q) => realValidationSourceCond ? { $and: [q, realValidationSourceCond] } : q;
 
+    // Validação REAL lida do HISTÓRICO `checks` (cada validação de checkout é empilhada ali com
+    // seu source+checkedAt). Lemos o histórico em vez do `source` do topo — que o rastreamento de
+    // fundo (fetch de posts) sobrescreve, derrubando perfis que compraram da contagem. Isso mantém
+    // intacta a técnica do "último valor" (o topo segue atualizado) e vale p/ passado E futuro.
+    // Fontes reais sempre começam com "verifyInstagramProfile" (ROCKETAPI/BYID/APIFY/SELFAPI);
+    // as de fundo (check_privacy*, refilcheck*) não casam.
+    const realValidationChecksQuery = (start, endExclusive) => {
+      const elem = { source: { $regex: '^verifyInstagramProfile', $options: 'i' } };
+      const startIso = start ? start.toISOString() : null;
+      const endIso = endExclusive ? endExclusive.toISOString() : null;
+      const cond = {};
+      if (startIso) cond.$gte = startIso;
+      if (endIso) cond.$lt = endIso;
+      if (startIso || endIso) elem.checkedAt = cond;
+      return { checks: { $elemMatch: elem } };
+    };
+
     const countValidatedUsersInRange = async (vu, start, endExclusive) => {
-      const hasStart = !!start;
-      const hasEnd = !!endExclusive;
-      const startIso = hasStart ? start.toISOString() : null;
-      const endIso = hasEnd ? endExclusive.toISOString() : null;
-      const stringRange = {};
-      if (startIso) stringRange.$gte = startIso;
-      if (endIso) stringRange.$lt = endIso;
-      const dateRange = {};
-      if (start) dateRange.$gte = start;
-      if (endExclusive) dateRange.$lt = endExclusive;
-      const or = [
-        { checkedAt: Object.assign({ $type: 'string' }, stringRange) },
-        { checkedAt: Object.assign({ $type: 'date' }, dateRange) },
-        { lastTrackAt: Object.assign({ $type: 'string' }, stringRange) },
-        { lastTrackAt: Object.assign({ $type: 'date' }, dateRange) }
-      ];
-      return vu.countDocuments(withRealValidation({ $or: or }));
+      return vu.countDocuments(realValidationChecksQuery(start, endExclusive));
     };
 
     let validatedProfilesToday = 0;
@@ -42163,12 +42211,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const { start, endExclusive } = getPeriodRange();
       const vu = await getCollection('validated_insta_users');
       if (!start && !endExclusive) {
-        validatedProfilesPeriod = await vu.countDocuments(withRealValidation({
-          $or: [
-            { checkedAt: { $exists: true, $ne: null } },
-            { lastTrackAt: { $exists: true, $ne: null } }
-          ]
-        }));
+        validatedProfilesPeriod = await vu.countDocuments(realValidationChecksQuery(null, null));
       } else {
         validatedProfilesPeriod = await countValidatedUsersInRange(vu, start, endExclusive);
       }
@@ -42278,16 +42321,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const endIso = endExclusive ? endExclusive.toISOString() : null;
       const sr = {}; if (startIso) sr.$gte = startIso; if (endIso) sr.$lt = endIso;
       const dr = {}; if (start) dr.$gte = start; if (endExclusive) dr.$lt = endExclusive;
-      const rangeOr = (start || endExclusive)
-        ? [
-            { checkedAt: Object.assign({ $type: 'string' }, sr) },
-            { checkedAt: Object.assign({ $type: 'date' }, dr) },
-            { lastTrackAt: Object.assign({ $type: 'string' }, sr) },
-            { lastTrackAt: Object.assign({ $type: 'date' }, dr) }
-          ]
-        : [ { checkedAt: { $exists: true, $ne: null } }, { lastTrackAt: { $exists: true, $ne: null } } ];
       const docs = await vu.find(
-        withRealValidation({ $or: rangeOr }),
+        realValidationChecksQuery(start, endExclusive),
         { projection: { _id: 0, username: 1, checkedAt: 1, lastTrackAt: 1, followersCount: 1, isPrivate: 1 } }
       ).sort({ checkedAt: -1, lastTrackAt: -1, _id: -1 }).limit(3000).toArray();
 
@@ -42347,10 +42382,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const vu = await getCollection('validated_insta_users');
       const sIso = startOfTodayUtc.toISOString(), eIso = startOfTomorrowUtc.toISOString();
       const sr = { $gte: sIso, $lt: eIso }, dr = { $gte: startOfTodayUtc, $lt: startOfTomorrowUtc };
-      const rOr = [];
-      for (const f of ['checkedAt', 'lastTrackAt']) { rOr.push({ [f]: Object.assign({ $type: 'string' }, sr) }); rOr.push({ [f]: Object.assign({ $type: 'date' }, dr) }); }
       const tnorm = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
-      const tdocs = await vu.find(withRealValidation({ $or: rOr }), { projection: { _id: 0, username: 1 } }).limit(20000).toArray();
+      const tdocs = await vu.find(realValidationChecksQuery(startOfTodayUtc, startOfTomorrowUtc), { projection: { _id: 0, username: 1 } }).limit(20000).toArray();
       const tusers = Array.from(new Set(tdocs.map(d => tnorm(d.username)).filter(Boolean)));
       if (tusers.length) {
         const paidTodayOr = [];
@@ -43991,7 +44024,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           fbArgs = { datePreset: 'maximum' };
         }
         const r = await fetchFacebookSpend(fbArgs);
-        if (r && r.ok) { fbSpend = Number(r.spend) || 0; fbSpendOk = true; }
+        if (r && r.ok) { fbSpend = (Number(r.spend) || 0) + (Number(r.spendNoTax) || 0); fbSpendOk = true; }
         else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
         // ── Tabela de LUCRO POR DIA (segue o filtro de período do dashboard) ──
         // lucro = faturamento − custo serviço (fornecedor + taxa gateway)
@@ -43999,13 +44032,15 @@ app.get('/painel', requireAdmin, async (req, res) => {
         try {
           const rd = await fetchFacebookSpendDaily(fbArgs);
           const adsByDay = (rd && rd.ok) ? rd.byDay : {};
+          const adsByDayNoTax = (rd && rd.ok) ? (rd.byDayNoTax || {}) : {};
           dailyProfitAdsOk = !!(rd && rd.ok);
-          const dias = new Set([...__dailyAgg.keys(), ...Object.keys(adsByDay)]);
+          const dias = new Set([...__dailyAgg.keys(), ...Object.keys(adsByDay), ...Object.keys(adsByDayNoTax)]);
           let rows = [];
           for (const d of [...dias].sort()) {
             const a = __dailyAgg.get(d) || { rev: 0, cost: 0, n: 0 };
             const adsRaw = Number(adsByDay[d]) || 0;
-            const ads = adsRaw * (1 + DASH_ADS_MARKUP_PCT / 100);
+            const adsRawNoTax = Number(adsByDayNoTax[d]) || 0;   // ca3 USD→BRL, sem markup
+            const ads = adsRaw * (1 + DASH_ADS_MARKUP_PCT / 100) + adsRawNoTax;
             const imposto = a.rev * (DASH_IMPOSTO_PCT / 100);
             const lucro = a.rev - a.cost - ads - imposto;
             rows.push({
