@@ -4479,16 +4479,35 @@
           })();
         </script>
         <% } %>
-        <% var _fbOk = (typeof fbSpendOk !== 'undefined' && fbSpendOk); var _fb = _fbOk ? Number(fbSpend || 0) : 0; var _fbTax = _fb * 0.138; var _fbTotal = _fb + _fbTax; var _brl = function(n){ return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ','); }; %>
-        <div class="summary-card">
+        <% var _fbOk = (typeof fbSpendOk !== 'undefined' && fbSpendOk);
+           var _fbBr = _fbOk ? Number((typeof fbSpendBr !== 'undefined' ? fbSpendBr : fbSpend) || 0) : 0;
+           var _fbUsd = _fbOk ? Number((typeof fbSpendUsd !== 'undefined' ? fbSpendUsd : 0) || 0) : 0;
+           var _fb = _fbBr + _fbUsd;            // gasto total (BR + USD convertido)
+           var _fbTax = _fbBr * 0.138;          // imposto SÓ sobre a conta BR; a ca3 (USD) não tem
+           var _fbTotal = _fb + _fbTax;
+           var _brl = function(n){ return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ','); }; %>
+        <div class="summary-card" style="grid-column: span 2;">
           <div class="summary-label">Gasto Facebook (período)</div>
-          <div class="summary-value" style="color:#dc2626;"><%= _fbOk ? _brl(_fb) : '—' %></div>
           <% if (_fbOk) { %>
-          <div class="summary-sub" style="margin-top:8px; line-height:1.6;">
-            Imposto (13,8%): <strong style="color:#b91c1c;"><%= _brl(_fbTax) %></strong><br>
-            Total (gasto + imposto): <strong style="color:#111827;"><%= _brl(_fbTotal) %></strong>
+          <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; margin-top:6px;">
+            <div style="flex:1 1 150px; min-width:140px;">
+              <div style="font-size:0.72rem; color:#6b7280; text-transform:uppercase; letter-spacing:.3px;">Conta BR</div>
+              <div class="summary-value" style="color:#dc2626; font-size:1.15rem;"><%= _brl(_fbBr) %></div>
+              <div class="summary-sub" style="color:#b91c1c;">+ imposto 13,8%: <%= _brl(_fbTax) %></div>
+            </div>
+            <div style="flex:1 1 150px; min-width:140px;">
+              <div style="font-size:0.72rem; color:#6b7280; text-transform:uppercase; letter-spacing:.3px;">Conta USD (ca3)</div>
+              <div class="summary-value" style="color:#dc2626; font-size:1.15rem;"><%= _brl(_fbUsd) %></div>
+              <div class="summary-sub" style="color:#6b7280;">convertido p/ BRL · sem imposto</div>
+            </div>
+            <div style="flex:1 1 160px; min-width:150px; border-left:1px solid #eef0f4; padding-left:16px;">
+              <div style="font-size:0.72rem; color:#6b7280; text-transform:uppercase; letter-spacing:.3px;">Total</div>
+              <div class="summary-value" style="color:#111827; font-size:1.25rem;"><%= _brl(_fbTotal) %></div>
+              <div class="summary-sub" style="color:#6b7280;">gasto <%= _brl(_fb) %> + imposto <%= _brl(_fbTax) %></div>
+            </div>
           </div>
           <% } else { %>
+          <div class="summary-value" style="color:#dc2626;">—</div>
           <div class="summary-sub" style="margin-top:6px;">Não configurado / sem dados</div>
           <% } %>
         </div>

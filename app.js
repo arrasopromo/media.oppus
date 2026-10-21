@@ -43994,7 +43994,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     }
 
     // Gasto de anúncios do Facebook — acompanha o período do painel (só dashboard/vendas).
-    let fbSpend = null, fbSpendOk = false;
+    let fbSpend = null, fbSpendBr = 0, fbSpendUsd = 0, fbSpendOk = false;
     // Lucro por dia (tabela do dashboard). Percentuais configuráveis por env.
     let dailyProfit = [], dailyProfitTotals = null, dailyProfitAdsOk = false, dailyProfitTruncated = false;
     let adFormatPie = { ok: false, formats: [] };
@@ -44024,7 +44024,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
           fbArgs = { datePreset: 'maximum' };
         }
         const r = await fetchFacebookSpend(fbArgs);
-        if (r && r.ok) { fbSpend = (Number(r.spend) || 0) + (Number(r.spendNoTax) || 0); fbSpendOk = true; }
+        if (r && r.ok) { fbSpendBr = Number(r.spend) || 0; fbSpendUsd = Number(r.spendNoTax) || 0; fbSpend = fbSpendBr + fbSpendUsd; fbSpendOk = true; }
         else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
         // ── Tabela de LUCRO POR DIA (segue o filtro de período do dashboard) ──
         // lucro = faturamento − custo serviço (fornecedor + taxa gateway)
@@ -44103,7 +44103,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       custosFixos = { itens: _cf.itens, mensal: _cf.mensal, periodo: _periodo, dias: _dias };
     } catch (_) {}
 
-    const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendBr, fbSpendUsd, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {
