@@ -13,6 +13,29 @@ const LinkManager = require("./linkManager");
 const GoogleDriveManager = require("./googleDriveManager");
 const BaserowManager = require("./baserowManager");
 const axios = require('axios');
+// ── Keep-alive nas chamadas HTTP de saída (axios) ────────────────────────────
+// Reaproveita conexões TCP/TLS em vez de refazer o handshake a cada request. Mesmos
+// requests e respostas — só corta a latência de reconexão (ex.: geração de Pix na
+// PagHiper, polling de status, APIs de fornecedor). maxSockets:Infinity preserva a
+// concorrência atual (igual ao globalAgent padrão), maxFreeSockets limita só o pool
+// ocioso. Chamadas que já passam um agent próprio (servername/proxy/insecure) não são
+// afetadas — o agent por-request tem prioridade sobre este default.
+const __httpKeepAlive = new (require('http').Agent)({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: Infinity, maxFreeSockets: 64, timeout: 60000 });
+const __httpsKeepAlive = new (require('https').Agent)({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: Infinity, maxFreeSockets: 64, timeout: 60000 });
+axios.defaults.httpAgent = __httpKeepAlive;
+axios.defaults.httpsAgent = __httpsKeepAlive;
+// Pré-aquece a conexão keep-alive com o gateway de Pix (PagHiper) logo após o boot:
+// assim o PRIMEIRO cliente depois de um restart já reaproveita o socket, sem pagar o
+// handshake TLS (~0,27s) na geração do Pix. É 1 GET inofensivo na raiz do host (não cria
+// cobrança); sob tráfego normal os Pix reais mantêm o socket quente depois disso.
+// setTimeout().unref() → nunca segura o processo nem atrapalha o boot; erro é silencioso.
+try {
+  setTimeout(() => {
+    axios.get('https://pix.paghiper.com/', { timeout: 8000, validateStatus: () => true })
+      .then(() => { try { console.log('🔥 keep-alive PagHiper pré-aquecido'); } catch (_) {} })
+      .catch(() => {});
+  }, 3000).unref();
+} catch (_) {}
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
 const { validatePrice, verifyPrice, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
