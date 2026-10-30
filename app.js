@@ -1496,6 +1496,11 @@ function getOrderCreatedAtMsLoose(record) {
 }
 
 const maybeSendClientLoginForDebug = async ({ record }) => {
+    // DESLIGADO: o acesso do cliente foi padronizado no fluxo de OTP (first-access envia
+    // um código; o cliente verifica e cria a própria senha). Não criamos mais conta com
+    // senha temporária automática. Contas antigas com senha temporária seguem válidas.
+    return false;
+    // eslint-disable-next-line no-unreachable
     try {
         const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
         const email = normalizeEmail(customer.email);
@@ -1545,6 +1550,28 @@ const maybeSendClientLoginForDebug = async ({ record }) => {
     } catch (_) {
         return false;
     }
+};
+
+// ── OTP de verificação de e-mail (primeiro acesso) ───────────────────────────
+// Prova que a pessoa RECEBEU o e-mail antes de deixar criar a senha. Fecha o
+// account-takeover do /cliente/setup-password (que antes só exigia "ter compra").
+const CLIENT_OTP_TTL_MS = 15 * 60 * 1000;   // código vale 15 min
+const CLIENT_OTP_MAX_ATTEMPTS = 6;          // tentativas por código antes de exigir um novo
+function generateOtpCode() {
+    try { return String(100000 + (crypto.randomInt ? crypto.randomInt(0, 900000) : Math.floor(Math.random() * 900000))); }
+    catch (_) { return String(100000 + Math.floor(Math.random() * 900000)); }
+}
+const sendClientOtpEmail = async (email, code) => {
+    try {
+        const transporter = getSmtpTransporter();
+        const from = getOppusFromHeader();
+        if (!transporter || !from) return false;
+        const subject = 'Agência Oppus - Código de acesso';
+        const text = ['Código de acesso', '', `Seu código: ${code}`, '', 'Ele vale por 15 minutos. Use-o para criar a senha da sua conta.', 'Se você não solicitou, ignore este e-mail.'].join('\n');
+        const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;"><div style="font-size:16px;font-weight:900;margin:0 0 10px 0;">Código de acesso</div><div style="font-size:14px;line-height:1.6;margin:0 0 12px 0;">Use o código abaixo para criar a senha da sua conta:</div><div style="padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;text-align:center;font-size:28px;font-weight:900;letter-spacing:6px;color:#111827;">${code}</div><div style="font-size:12px;color:#6b7280;margin-top:12px;">Vale por 15 minutos. Se você não solicitou, ignore este e-mail.</div></div>`;
+        await transporter.sendMail({ from, to: email, subject, text, html });
+        return true;
+    } catch (_) { return false; }
 };
 
 const sendPixOrderEmailToCustomer = async ({ record }) => {
@@ -8541,9 +8568,54 @@ app.post('/api/cliente/first-access', async (req, res) => {
     const hasPaid = await emailHasPaidOrder(email);
     if (!hasPaid) return res.json({ ok: false, action: 'no_purchase' });
 
-    return res.json({ ok: true, action: 'setup', email, redirectUrl: `/cliente?setup=1&email=${encodeURIComponent(email)}` });
+    // SEGURANÇA: antes de deixar criar senha, prova que a pessoa é dona do e-mail —
+    // envia um código (OTP) que terá de ser digitado no setup-password. Sem isso, qualquer
+    // um que soubesse um e-mail que comprou assumiria a conta.
+    const otpCode = generateOtpCode();
+    const nowMs = Date.now();
+    await accCol.updateOne(
+      { email },
+      { $setOnInsert: { email, createdAt: new Date(nowMs).toISOString() }, $set: { otpHash: hashPasswordScrypt(otpCode), otpExpiresAt: new Date(nowMs + CLIENT_OTP_TTL_MS).toISOString(), otpAttempts: 0, otpSentAt: new Date(nowMs).toISOString() } },
+      { upsert: true }
+    );
+    const sent = await sendClientOtpEmail(email, otpCode);
+    if (!sent) return res.status(503).json({ ok: false, action: 'email_failed', message: 'Não conseguimos enviar o código agora. Tente novamente em instantes.' });
+    return res.json({ ok: true, action: 'verify_otp', email });
   } catch (e) {
     console.error('[first-access]', e?.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Passo 2 do primeiro acesso: verifica o código OTP. No sucesso, marca a SESSÃO como
+// "e-mail verificado" (consome o código) e libera a criação de senha no próximo passo.
+app.post('/api/cliente/verify-otp', async (req, res) => {
+  try {
+    const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+    if (hitRateLimit('cliente_verifyotp_ip:' + ip, 15, 10 * 60 * 1000)) {
+      return res.status(429).json({ ok: false, message: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+    }
+    const email = normalizeEmail(req.body?.email || '');
+    const code = String(req.body?.code || '').replace(/\D/g, '').trim();
+    if (!email) return res.status(400).json({ ok: false, error: 'invalid_email' });
+    if (!code) return res.status(400).json({ ok: false, error: 'missing_code', message: 'Informe o código.' });
+    const accCol = await getCollection('client_accounts');
+    const acc = await accCol.findOne({ email }, { projection: { email: 1, passwordHash: 1, otpHash: 1, otpExpiresAt: 1, otpAttempts: 1 } });
+    if (acc && acc.passwordHash) return res.status(400).json({ ok: false, error: 'has_password', message: 'Esta conta já possui senha. Faça login.' });
+    if (!acc || !acc.otpHash) return res.status(401).json({ ok: false, error: 'otp_required', message: 'Solicite um novo código.' });
+    const expMs = acc.otpExpiresAt ? new Date(acc.otpExpiresAt).getTime() : 0;
+    if (!expMs || Date.now() > expMs) return res.status(401).json({ ok: false, error: 'otp_expired', message: 'Código expirado. Peça um novo.' });
+    if (Number(acc.otpAttempts || 0) >= CLIENT_OTP_MAX_ATTEMPTS) return res.status(429).json({ ok: false, error: 'otp_attempts', message: 'Muitas tentativas. Peça um novo código.' });
+    if (!verifyPasswordScrypt(code, String(acc.otpHash || ''))) {
+      await accCol.updateOne({ email }, { $inc: { otpAttempts: 1 } });
+      return res.status(401).json({ ok: false, error: 'otp_invalid', message: 'Código incorreto.' });
+    }
+    // OK: consome o código e marca a sessão como verificada.
+    await accCol.updateOne({ email }, { $unset: { otpHash: '', otpExpiresAt: '', otpAttempts: '', otpSentAt: '' } });
+    if (req.session) req.session.clientOtpVerified = { email, at: Date.now() };
+    return res.json({ ok: true, action: 'set_password' });
+  } catch (e) {
+    console.error('[verify-otp]', e?.message);
     return res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -8572,14 +8644,20 @@ function validatePasswordStrength(pw) {
 
 app.post('/cliente/setup-password', async (req, res) => {
     try {
+        // Rate-limit anti brute-force do código: 10 tentativas / 10 min por IP.
+        const ip = req.realIP || req.ip || (req.connection && req.connection.remoteAddress) || '';
+        if (hitRateLimit('cliente_setup_ip:' + ip, 10, 10 * 60 * 1000)) {
+            return res.status(429).json({ ok: false, message: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+        }
         const emailRaw = String(req.body?.email || '').trim().toLowerCase();
         const password = String(req.body?.password || '').trim();
+        const code = String(req.body?.code || '').replace(/\D/g, '').trim();
         const email = normalizeEmail(emailRaw);
         if (!email) return res.status(400).json({ ok: false, message: 'E-mail inválido.' });
         { const pv = validatePasswordStrength(password); if (!pv.ok) return res.status(400).json({ ok: false, message: pv.message }); }
 
         const accCol = await getCollection('client_accounts');
-        const existing = await accCol.findOne({ email }, { projection: { email: 1, passwordHash: 1 } });
+        const existing = await accCol.findOne({ email }, { projection: { email: 1, passwordHash: 1, otpHash: 1, otpExpiresAt: 1, otpAttempts: 1 } });
 
         // Não permitir sobrescrever conta que já tem senha via este endpoint
         if (existing && existing.passwordHash) {
@@ -8592,16 +8670,25 @@ app.post('/cliente/setup-password', async (req, res) => {
             return res.status(403).json({ ok: false, message: 'Não encontramos uma compra paga com esse e-mail.' });
         }
 
+        // SEGURANÇA (anti account-takeover): o e-mail precisa ter sido VERIFICADO por OTP
+        // NESTA sessão (via /api/cliente/verify-otp), nos últimos 20 min. Sem isso, ninguém
+        // cria a senha — prova de posse do e-mail.
+        const otpv = req.session && req.session.clientOtpVerified;
+        const otpOk = !!(otpv && String(otpv.email || '').toLowerCase() === email && Number(otpv.at || 0) > (Date.now() - 20 * 60 * 1000));
+        if (!otpOk) {
+            return res.status(401).json({ ok: false, error: 'otp_required', message: 'Verifique o código enviado ao seu e-mail antes de criar a senha.' });
+        }
+
         const passwordHash = hashPasswordScrypt(password);
         const nowIso = new Date().toISOString();
         await accCol.updateOne(
             { email },
-            { $setOnInsert: { email, createdAt: nowIso }, $set: { passwordHash, mustChangePassword: false, updatedAt: nowIso }, $unset: { lastTempPasswordSentAt: '' } },
+            { $setOnInsert: { email, createdAt: nowIso }, $set: { passwordHash, mustChangePassword: false, updatedAt: nowIso }, $unset: { lastTempPasswordSentAt: '', otpHash: '', otpExpiresAt: '', otpAttempts: '', otpSentAt: '' } },
             { upsert: true }
         );
 
-        // Auto-login após criar senha
-        if (req.session) req.session.clientAuth = { email };
+        // Auto-login + limpa a marca de verificação da sessão
+        if (req.session) { req.session.clientAuth = { email }; try { delete req.session.clientOtpVerified; } catch (_) {} }
         return res.json({ ok: true });
     } catch (e) {
         console.error('[setup-password]', e?.message);

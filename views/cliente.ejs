@@ -251,6 +251,8 @@
             <input id="clientEmailInput" type="email" class="select-input" placeholder="Seu e-mail" autocomplete="email" />
             <!-- Senha (login) — aparece quando o e-mail já tem conta -->
             <input id="clientPasswordInput" type="password" class="select-input" placeholder="Sua senha" autocomplete="current-password" style="margin-top:10px; display:none;" />
+            <!-- Código de verificação (OTP) — prova posse do e-mail antes de criar senha -->
+            <input id="clientOtpInput" type="text" inputmode="numeric" maxlength="6" class="select-input" placeholder="Código do e-mail (6 dígitos)" autocomplete="one-time-code" style="margin-top:10px; display:none;" />
             <!-- Criação de senha — aparece quando comprou mas não tem senha -->
             <input id="clientNewPwInput" type="password" class="select-input" placeholder="Nova senha (mínimo 8 caracteres)" autocomplete="new-password" style="margin-top:10px; display:none;" />
             <input id="clientNewPwInput2" type="password" class="select-input" placeholder="Confirmar senha" autocomplete="new-password" style="margin-top:10px; display:none;" />
@@ -350,49 +352,11 @@
 
         <% if (pageMode === 'setup') { %>
           <div class="client-form">
-            <p style="font-size:0.82rem;color:#6b7280;margin-bottom:10px;text-align:center;">Conta: <strong><%= esc(pageEmail) %></strong></p>
-            <input id="clientSetupPasswordInput" type="password" class="select-input" placeholder="Criar senha (mínimo 8 caracteres)" autocomplete="new-password" />
-            <input id="clientSetupPasswordInput2" type="password" class="select-input" placeholder="Confirmar senha" autocomplete="new-password" style="margin-top:10px;" />
-            <div id="clientSetupMsg" class="status-message" style="display:none; margin-top:10px;"></div>
-            <div class="client-actions" style="justify-content:center;">
-              <button id="clientSetupBtn" class="continue-button"><span class="button-text">Criar senha e entrar</span></button>
-            </div>
+            <p class="client-desc" style="text-align:center;">Redirecionando para o acesso seguro…</p>
           </div>
           <script>
-          (function(){
-            var btn = document.getElementById('clientSetupBtn');
-            var p1  = document.getElementById('clientSetupPasswordInput');
-            var p2  = document.getElementById('clientSetupPasswordInput2');
-            var msg = document.getElementById('clientSetupMsg');
-            var email = '<%= esc(pageEmail) %>';
-            function showMsg(text, ok){ msg.style.display=''; msg.style.color = ok ? '#166534' : '#991b1b'; msg.textContent = text; }
-            if(!btn) return;
-            btn.addEventListener('click', async function(){
-              var pw1 = p1 ? p1.value.trim() : '';
-              var pw2 = p2 ? p2.value.trim() : '';
-              if(pw1.length < 8){ showMsg('A senha deve ter pelo menos 8 caracteres.', false); return; }
-              if(pw1 !== pw2){ showMsg('As senhas não coincidem.', false); return; }
-              btn.disabled = true;
-              try {
-                var r = await fetch('/cliente/setup-password', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ email: email, password: pw1 })
-                });
-                var d = await r.json();
-                if(d && d.ok){
-                  showMsg('Senha criada! Entrando...', true);
-                  setTimeout(function(){ window.location.href = '/cliente'; }, 1000);
-                } else {
-                  showMsg(d && d.message ? d.message : 'Erro ao criar senha. Tente novamente.', false);
-                  btn.disabled = false;
-                }
-              } catch(e){
-                showMsg('Erro de rede. Tente novamente.', false);
-                btn.disabled = false;
-              }
-            });
-          })();
+            // Padronizado: o acesso é sempre pelo /cliente (e-mail → código → senha).
+            try { window.location.replace('/cliente'); } catch(_) { window.location.href = '/cliente'; }
           </script>
         <% } %>
 
@@ -645,6 +609,7 @@
         var authStep = 'email'; // 'email' → verifica e-mail; depois 'login' ou 'setup'
         var emailEl = document.getElementById('clientEmailInput');
         var passEl = document.getElementById('clientPasswordInput');
+        var otpEl = document.getElementById('clientOtpInput');
         var newPwEl = document.getElementById('clientNewPwInput');
         var newPw2El = document.getElementById('clientNewPwInput2');
         var hintEl = document.getElementById('clientAuthHint');
@@ -656,6 +621,7 @@
           authStep = 'email';
           if (emailEl) emailEl.removeAttribute('readonly');
           if (passEl) { passEl.style.display='none'; passEl.value=''; }
+          if (otpEl) { otpEl.style.display='none'; otpEl.value=''; }
           if (newPwEl) { newPwEl.style.display='none'; newPwEl.value=''; }
           if (newPw2El) { newPw2El.style.display='none'; newPw2El.value=''; }
           if (hintEl) hintEl.style.display='none';
@@ -666,7 +632,7 @@
         // (antes o campo ficava travado em readonly e não dava pra trocar).
         if (emailEl) emailEl.addEventListener('input', function(){ if (authStep !== 'email') resetToEmailStep(); });
         // Enter em qualquer campo aciona o botão
-        [emailEl, passEl, newPwEl, newPw2El].forEach(function(el){
+        [emailEl, passEl, otpEl, newPwEl, newPw2El].forEach(function(el){
           if(el) el.addEventListener('keydown', function(ev){ if(ev.key === 'Enter'){ ev.preventDefault(); loginBtn.click(); } });
         });
         loginBtn.addEventListener('click', async function(){
@@ -687,13 +653,19 @@
                 if (msg) msg.style.display='none';
                 return;
               }
-              if (dc && dc.ok && dc.action === 'setup') {
-                authStep = 'setup';
-                if (newPwEl) { newPwEl.style.display=''; newPwEl.focus(); }
-                if (newPw2El) newPw2El.style.display='';
-                showHint('Encontramos sua compra! Crie uma senha para acessar sua conta.');
-                setBtn('Criar senha e entrar');
+              if (dc && dc.ok && (dc.action === 'verify_otp' || dc.action === 'setup')) {
+                authStep = 'otp';
+                if (otpEl) { otpEl.style.display=''; otpEl.focus(); }
+                if (newPwEl) newPwEl.style.display='none';
+                if (newPw2El) newPw2El.style.display='none';
+                showHint('Enviamos um código para o seu e-mail. Digite o código para continuar.');
+                setBtn('Verificar código');
                 if (msg) msg.style.display='none';
+                return;
+              }
+              if (dc && dc.action === 'email_failed') {
+                setMsg(msg, (dc.message || 'Não conseguimos enviar o código agora. Tente novamente.'), false);
+                setBtn('Continuar');
                 return;
               }
               setMsg(msg, 'Não encontramos uma conta nem compra paga com esse e-mail.', false);
@@ -710,6 +682,25 @@
               return;
             }
             // ETAPA 2b: criar senha
+            // ETAPA 2c: verificar o código OTP (passo separado)
+            if (authStep === 'otp') {
+              var code = otpEl ? String(otpEl.value || '').replace(/\D/g,'').trim() : '';
+              if (code.length < 6) { setMsg(msg, 'Digite o código de 6 dígitos que enviamos para o seu e-mail.', false); return; }
+              loginBtn.disabled = true;
+              var rv = await fetch('/api/cliente/verify-otp', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email, code: code }) });
+              var dv = await rv.json().catch(function(){ return null; });
+              loginBtn.disabled = false;
+              if (!dv || dv.ok !== true) { setMsg(msg, (dv && dv.message) ? dv.message : 'Código inválido.', false); return; }
+              authStep = 'setup';
+              if (otpEl) otpEl.style.display='none';
+              if (newPwEl) { newPwEl.style.display=''; newPwEl.focus(); }
+              if (newPw2El) newPw2El.style.display='';
+              showHint('Código verificado! Agora crie sua senha.');
+              setBtn('Criar senha e entrar');
+              if (msg) msg.style.display='none';
+              return;
+            }
+            // ETAPA 2b: criar senha (e-mail já verificado por OTP nesta sessão)
             if (authStep === 'setup') {
               var p1 = newPwEl ? String(newPwEl.value || '').trim() : '';
               var p2 = newPw2El ? String(newPw2El.value || '').trim() : '';
