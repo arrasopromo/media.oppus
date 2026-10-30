@@ -38,7 +38,7 @@ try {
 } catch (_) {}
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
-const { validatePrice, verifyPrice, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
+const { validatePrice, verifyPrice, warranty3mCents, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
 // Preço "a partir de" dos cards do /index: menor pacote (q>=150, ignora o teste de 100)
 // de cada tabela. Atualiza sozinho sempre que os preços em pricing.js mudam.
 const precoInicioCard = (tabela) => {
@@ -5581,7 +5581,7 @@ app.get('/api/refil/warranty-status', async (req, res) => {
     );
     if (!rec) return res.json({ ok: true, active: false });
     const mode = String(rec.warrantyMode || '').toLowerCase();
-    const isExtended = (mode === '4m' || mode === '6m' || mode === '12m' || mode === 'life' || mode === 'lifetime');
+    const isExtended = (mode === '3m' || mode === '4m' || mode === '6m' || mode === '12m' || mode === 'life' || mode === 'lifetime');
     let active = false;
     if (isExtended) {
       if (mode === 'life' || mode === 'lifetime') active = true;
@@ -5589,6 +5589,31 @@ app.get('/api/refil/warranty-status', async (req, res) => {
     }
     return res.json({ ok: true, active, mode: mode || null, expiresAt: rec.expiresAt || null });
   } catch (e) { return res.json({ ok: true, active: false }); }
+});
+
+// Preço DINÂMICO da garantia de 3 meses p/ o checkout exibir. Só seguidores mundiais
+// (mistos) e brasileiros; demais tipos retornam available:false. NÃO expõe o custo — só
+// o preço final já calculado (2 reposições completas pelo custo atual, arredondado ,90).
+// Uso: GET /api/warranty/price?tipo=mistos|brasileiros&qty=1000
+app.get('/api/warranty/price', async (req, res) => {
+  try {
+    try { res.set('Cache-Control', 'no-store'); } catch (_) {}
+    const months = 3;
+    // Extensão avulsa: resolve pelo refil_link_id (acha o pedido → tipo+qtd → custo atual).
+    const linkId = String(req.query.refil_link_id || req.query.refilLinkId || req.query.token || '').trim();
+    let cents = 0;
+    if (linkId) {
+      cents = await refilExtensaoPrice3mCents([{ key: 'refil_link_id', value: linkId }]);
+    } else {
+      // Checkout novo: pelo tipo+quantidade direto.
+      const tipo = String(req.query.tipo || req.query.tipo_servico || '').trim().toLowerCase();
+      const qty = Math.max(0, parseInt(String(req.query.qty || req.query.quantidade || ''), 10) || 0);
+      if (qty) cents = await warrantyPrice3mCentsForOrder(tipo, qty);
+    }
+    if (!cents) return res.json({ ok: true, available: false, months });
+    const label = 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
+    return res.json({ ok: true, available: true, months, priceCents: cents, price: label });
+  } catch (e) { return res.json({ ok: true, available: false, months: 3 }); }
 });
 
 const PROFILE_CACHE = new Map();
@@ -6726,12 +6751,14 @@ async function ensureRefilLink(identifier, correlationID, req) {
       const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
       const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
       const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
-      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia nova: 4 meses (R$ 14,90)
+      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia antiga: 4 meses
+      const has3m = (get('warranty_3m') > 0 || get('warranty3m') > 0); // garantia nova: 3 meses (preço dinâmico)
       const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
       if (hasLife) return { mode: 'life', months: null, days: null };
       if (has6m) return { mode: '6m', months: 6, days: null };
       if (has4m) return { mode: '4m', months: 4, days: null };
       if (has12m) return { mode: '12m', months: 12, days: null };
+      if (has3m) return { mode: '3m', months: 3, days: null };
       return { mode: '30', months: 1, days: 30 };
     })();
     const warrantyMode = warranty.mode;
@@ -12281,6 +12308,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
       let hasLife = false;
       let has6m = false;
       let has4m = false;
+      let has3m = false;
       let has12m = false;
       for (const raw of parts) {
         const part = String(raw || '').trim();
@@ -12294,12 +12322,14 @@ const refilPageHandler = (fromPath) => async (req, res) => {
         if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
         else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
         else if (key === 'warranty_4m' || key === 'warranty4m') has4m = true;
+        else if (key === 'warranty_3m' || key === 'warranty3m') has3m = true;
         else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
       }
       if (hasLife) return { isLifetime: true, mode: 'life', months: null };
       if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
       if (has4m) return { isLifetime: false, mode: '4m', months: 4 };
       if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
+      if (has3m) return { isLifetime: false, mode: '3m', months: 3 };
     } catch (_) {}
     return out;
   };
@@ -14974,7 +15004,8 @@ app.post('/api/woovi/charge', async (req, res) => {
         console.log('DEBUG Woovi Charge:', { value, tipoVal, qtdVal, addInfo: sanitizedAdditionalFiltered });
         { const _brLim = await checkBrRealFollowersLimit(addInfoMap['instagram_username'] || addInfoMap['perfil'], addInfoMap['categoria_servico'], tipoVal, qtdVal, addInfoMap['pacote']); if (_brLim.blocked) return res.status(400).json({ error: 'br_followers_limit', message: _brLim.message }); }
         { const _cat = String(addInfoMap['categoria_servico'] || '').trim().toLowerCase(); if (/curtida|visualiz|view|reel/.test(_cat)) { const _pl = String(addInfoMap['post_link'] || addInfoMap['post_links'] || addInfoMap['link'] || '').trim(); if (!/instagram\.com\/(p|reel|reels|tv)\//i.test(_pl)) return res.status(400).json({ error: 'missing_post', message: 'Selecione o post (link) antes de pagar — curtidas e visualizações vão em um post específico.' }); } }
-        const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum);
+        const _popts = await pricingOptsForCharge(tipoVal, qtdVal, sanitizedAdditionalFiltered); // garantia/extensão dinâmica (recalcula pelo custo atual)
+        const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum, _popts);
         console.log('DEBUG Woovi Verification:', verification);
         
         if (verification.isValid) {
@@ -15377,7 +15408,8 @@ app.post('/api/expay/charge', async (req, res) => {
         if (allowLowValueBypass) {
             validatedPriceCents = vNum;
         } else {
-            const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum);
+            const _popts = await pricingOptsForCharge(tipoVal, qtdVal, sanitizedAdditionalFiltered); // garantia/extensão dinâmica (recalcula pelo custo atual)
+        const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum, _popts);
             if (verification.isValid) {
                 validatedPriceCents = verification.matchedPrice;
             } else {
@@ -16012,7 +16044,8 @@ app.post('/api/paghiper/charge', async (req, res) => {
         if (allowLowValueBypass) {
             validatedPriceCents = vNum;
         } else {
-            const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum);
+            const _popts = await pricingOptsForCharge(tipoVal, qtdVal, sanitizedAdditionalFiltered); // garantia/extensão dinâmica (recalcula pelo custo atual)
+        const verification = await verifyPrice(tipoVal, qtdVal, sanitizedAdditionalFiltered, vNum, _popts);
             if (verification.isValid) {
                 validatedPriceCents = verification.matchedPrice;
             } else {
@@ -19791,7 +19824,8 @@ async function processOrderFulfillment(record, col, req) {
             const _linkIdExt = _rawTokenExt.replace(/[^a-zA-Z0-9_-]/g, '').trim();
 
             const _modeRawExt = String(_fullMapExt['refil_mode'] || _fullMapExt['refilMode'] || '').trim().toLowerCase();
-            const _modeExt = (_modeRawExt === '4' || _modeRawExt === '4meses' || _modeRawExt === '4m') ? '4m'
+            const _modeExt = (_modeRawExt === '3' || _modeRawExt === '3meses' || _modeRawExt === '3m') ? '3m'
+                : (_modeRawExt === '4' || _modeRawExt === '4meses' || _modeRawExt === '4m') ? '4m'
                 : (_modeRawExt === '6' || _modeRawExt === '6meses' || _modeRawExt === '6m') ? '6m'
                 : (_modeRawExt === '12' || _modeRawExt === '12meses' || _modeRawExt === '12m') ? '12m'
                 : (_modeRawExt === 'life' || _modeRawExt === 'lifetime' || _modeRawExt === 'vitalicio' || _modeRawExt === 'vitalício') ? 'life'
@@ -19827,8 +19861,8 @@ async function processOrderFulfillment(record, col, req) {
                     _setsExt.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
                     _setsExt.warrantyMode = 'life';
                     _setsExt.warrantyDays = null;
-                } else if (_modeExt === '4m' || _modeExt === '6m' || _modeExt === '12m') {
-                    const _monthsExt = _modeExt === '12m' ? 12 : (_modeExt === '4m' ? 4 : 6);
+                } else if (_modeExt === '3m' || _modeExt === '4m' || _modeExt === '6m' || _modeExt === '12m') {
+                    const _monthsExt = _modeExt === '12m' ? 12 : (_modeExt === '4m' ? 4 : (_modeExt === '3m' ? 3 : 6));
                     const _brtOffMs = 3 * 60 * 60 * 1000;
                     const _brtYmd = (ms) => { const d = new Date(Number(ms || 0) - _brtOffMs); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() }; };
                     const _daysInMonth = (y, m) => new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
@@ -26122,7 +26156,8 @@ app.post('/session/mark-paid', async (req, res) => {
             const linkIdX = rawTokenX.replace(/[^a-zA-Z0-9_-]/g, '').trim();
 
             const modeRawX = String(addMapX['refil_mode'] || addMapX['refilMode'] || '').trim().toLowerCase();
-            const modeX = (modeRawX === '4' || modeRawX === '4meses' || modeRawX === '4m') ? '4m'
+            const modeX = (modeRawX === '3' || modeRawX === '3meses' || modeRawX === '3m') ? '3m'
+              : (modeRawX === '4' || modeRawX === '4meses' || modeRawX === '4m') ? '4m'
               : (modeRawX === '6' || modeRawX === '6meses' || modeRawX === '6m') ? '6m'
               : (modeRawX === '12' || modeRawX === '12meses' || modeRawX === '12m') ? '12m'
               : (modeRawX === 'life' || modeRawX === 'lifetime' || modeRawX === 'vitalicio' || modeRawX === 'vitalício') ? 'life'
@@ -26185,8 +26220,8 @@ app.post('/session/mark-paid', async (req, res) => {
                 setsX.expiresAt = new Date('2099-12-31T23:59:59.999Z').toISOString();
                 setsX.warrantyMode = 'life';
                 setsX.warrantyDays = null;
-              } else if (modeX === '4m' || modeX === '6m' || modeX === '12m') {
-                const monthsToAdd = modeX === '12m' ? 12 : (modeX === '4m' ? 4 : 6);
+              } else if (modeX === '3m' || modeX === '4m' || modeX === '6m' || modeX === '12m') {
+                const monthsToAdd = modeX === '12m' ? 12 : (modeX === '4m' ? 4 : (modeX === '3m' ? 3 : 6));
                 const brtOffsetMs = 3 * 60 * 60 * 1000;
                 const brtYmdFromMs = (ms) => {
                   const d = new Date(Number(ms || 0) - brtOffsetMs);
@@ -28449,6 +28484,86 @@ const DEFAULT_COST_SETTINGS = {
   comentarios: 0.34,
   visualizacoes: 0.01
 };
+
+// ── GARANTIA DINÂMICA (3 meses) — só seguidores mundiais (mistos) e brasileiros ──
+// Custo por mil (em cents) do tipo, lido do cost_settings (auto-calibrado pelo custo
+// real recente). A garantia de 3 meses = 2 reposições completas por esse custo (ver
+// warranty3mCents no pricing.js). Tipos não elegíveis (curtidas/views/comentários/
+// orgânicos) retornam 0 → garantia não se aplica.
+async function warrantyCostPerMilCents(tipo) {
+  const t = String(tipo || '').trim().toLowerCase();
+  // Exclui curtidas/views/comentários/orgânicos ANTES — senão "curtidas_brasileiras"
+  // casaria com /brasileir/ e ganharia garantia indevida.
+  if (/curtida|like|view|visualiz|coment|organic/.test(t)) return 0;
+  let key = null;
+  if (/mist|mundia/.test(t)) key = 'seguidores_mistos';
+  else if (/brasileir/.test(t)) key = 'seguidores_brasileiros';
+  if (!key) return 0;
+  const fallback = Math.round((Number(DEFAULT_COST_SETTINGS[key]) || 0) * 100);
+  try {
+    const settingsCol = await getCollection('settings');
+    const doc = await settingsCol.findOne({ _id: 'cost_settings' }, { projection: { values: 1 } });
+    const vals = (doc && doc.values && doc.values._custom === true) ? doc.values : {};
+    const reaisPorMil = Number(vals[key]);
+    const v = (Number.isFinite(reaisPorMil) && reaisPorMil > 0) ? reaisPorMil : (Number(DEFAULT_COST_SETTINGS[key]) || 0);
+    return Math.round(v * 100);
+  } catch (_) { return fallback; }
+}
+// Preço (cents) da garantia de 3 meses p/ um pedido de seguidores. 0 se tipo não elegível.
+async function warrantyPrice3mCentsForOrder(tipo, quantidade) {
+  const costMil = await warrantyCostPerMilCents(tipo);
+  if (!costMil) return 0;
+  return warranty3mCents(costMil, quantidade);
+}
+
+// Preço (cents) da EXTENSÃO AVULSA de 3 meses (refil_extensao): acha o pedido pago mais
+// recente pelo refil_link_id, lê tipo+quantidade e aplica a MESMA fórmula (2 reposições
+// pelo custo atual). Recalcula sempre pelo custo de hoje. 0 se não achar / não elegível.
+async function refilExtensaoPrice3mCents(additionalInfo) {
+  try {
+    const map = {};
+    for (const it of (Array.isArray(additionalInfo) ? additionalInfo : [])) {
+      const k = String(it?.key || '').trim();
+      if (k && typeof map[k] === 'undefined') map[k] = String(it?.value ?? '').trim();
+    }
+    const linkId = String(map['refil_link_id'] || map['refilLinkId'] || map['refil_token'] || map['token'] || '').replace(/[^0-9a-zA-Z_-]/g, '').trim();
+    if (!linkId) return 0;
+    const ordersCol = await getCollection('checkout_orders');
+    // Pode haver vários pedidos no mesmo link (compra original + extensões anteriores).
+    // Procuramos o pedido de SEGUIDORES (mistos/brasileiros, qty>0) — ignora refil_extensao
+    // e outros — pra basear a extensão no pacote real que o cliente comprou.
+    const docs = await ordersCol.find({ refilLinkId: linkId }, { projection: { additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1 } })
+      .sort({ 'woovi.paidAt': -1, 'paghiper.paidAt': -1, 'expay.paidAt': -1, paidAt: -1, createdAt: -1, _id: -1 })
+      .limit(12).toArray();
+    const findIn = (arr, k) => { for (const it of (Array.isArray(arr) ? arr : [])) if (String(it?.key || '') === k) return String(it?.value ?? ''); return ''; };
+    for (const doc of (Array.isArray(docs) ? docs : [])) {
+      const mp = doc.additionalInfoMapPaid || {}, m = doc.additionalInfoMap || {};
+      const pick = (k) => {
+        if (typeof mp[k] !== 'undefined') return String(mp[k] ?? '');
+        if (typeof m[k] !== 'undefined') return String(m[k] ?? '');
+        return findIn(doc.additionalInfoPaid, k) || findIn(doc.additionalInfo, k) || '';
+      };
+      const tipo = (pick('tipo_servico') || pick('tipo') || '').trim();
+      const cat = (pick('categoria_servico') || '').trim().toLowerCase();
+      const qty = parseInt(String(pick('quantidade') || '').replace(/[^\d]/g, ''), 10) || 0;
+      const isSeg = (/misto|mundia|brasileir/i.test(tipo) || cat === 'seguidores') && qty > 0;
+      if (!isSeg) continue;
+      const cents = await warrantyPrice3mCentsForOrder(tipo, qty);
+      if (cents > 0) return cents;
+    }
+    return 0;
+  } catch (_) { return 0; }
+}
+
+// Monta o opts de preço p/ o verifyPrice das cobranças: garantia (bump do checkout) OU
+// extensão avulsa (refil_extensao), conforme o tipo. Ambos recalculam pelo custo atual.
+async function pricingOptsForCharge(tipoVal, qtdVal, additionalInfo) {
+  const t = String(tipoVal || '').trim().toLowerCase();
+  if (t === 'refil_extensao' || t === 'refil-extensao' || t === 'extensao_refil' || t === 'extensao-refil') {
+    return { refilExt3mCents: await refilExtensaoPrice3mCents(additionalInfo) };
+  }
+  return { warranty3mCents: await warrantyPrice3mCentsForOrder(tipoVal, qtdVal) };
+}
 
 // ─── AUTO-CALIBRAÇÃO do cost_settings pelo custo REAL recente ───────────────
 // Quando um pedido não tem orderId no fornecedor, o custo cai na ESTIMATIVA
@@ -31539,12 +31654,14 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const get = (k) => Number(bumpQtyMap[k] || 0) || 0;
       const hasLife = (get('warranty_lifetime') > 0 || get('warranty_life') > 0 || get('warrenty') > 0);
       const has6m = (get('warranty_6m') > 0 || get('warranty6m') > 0);
-      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia nova: 4 meses (R$ 14,90)
+      const has4m = (get('warranty_4m') > 0 || get('warranty4m') > 0); // garantia antiga: 4 meses
+      const has3m = (get('warranty_3m') > 0 || get('warranty3m') > 0); // garantia nova: 3 meses (preço dinâmico)
       const has12m = (get('warranty60') > 0 || get('warranty_60') > 0 || get('warrenty60') > 0 || get('warrenty_60') > 0);
       if (hasLife) return { isLifetime: true, months: null, mode: 'life', days: null };
       if (has6m) return { isLifetime: false, months: 6, mode: '6m', days: null };
       if (has4m) return { isLifetime: false, months: 4, mode: '4m', days: null };
       if (has12m) return { isLifetime: false, months: 12, mode: '12m', days: null };
+      if (has3m) return { isLifetime: false, months: 3, mode: '3m', days: null };
       return { isLifetime: false, months: 1, mode: '30', days: 30 };
     };
     const isEligibleRefilTipo = (tipoRaw) => {
@@ -34503,6 +34620,7 @@ app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdm
         let hasLife = false;
         let has6m = false;
         let has4m = false;
+        let has3m = false;
         let has12m = false;
         for (const raw of parts) {
           const part = String(raw || '').trim();
@@ -34516,12 +34634,14 @@ app.post('/api/painel/gerenciamento-seguidores/extend-refil-expired', requireAdm
           if (key === 'warranty_lifetime' || key === 'warranty_life' || key === 'warrenty') hasLife = true;
           else if (key === 'warranty_6m' || key === 'warranty6m') has6m = true;
           else if (key === 'warranty_4m' || key === 'warranty4m') has4m = true;
+          else if (key === 'warranty_3m' || key === 'warranty3m') has3m = true;
           else if (key === 'warranty60' || key === 'warranty_60' || key === 'warrenty60' || key === 'warrenty_60') has12m = true;
         }
         if (hasLife) return { isLifetime: true, mode: 'life', months: null };
         if (has6m) return { isLifetime: false, mode: '6m', months: 6 };
         if (has4m) return { isLifetime: false, mode: '4m', months: 4 };
         if (has12m) return { isLifetime: false, mode: '12m', months: 12 };
+        if (has3m) return { isLifetime: false, mode: '3m', months: 3 };
       } catch (_) {}
       return out;
     };
@@ -45618,9 +45738,11 @@ app.post('/api/painel/refil2/force-refil', requireAdmin, async (req, res) => {
           forceRefil: {
             status: 'processing',
             provider: forceProvider,
-            // providerVerified: o provider deste registro é CONFIÁVEL (registros antigos
-            // gravavam 'fama24h' fixo). Só com ele a reposição segue o provider gravado.
-            ...((viaSmmHustle || viaNuvraBr) ? { providerVerified: true } : {}),
+            // providerVerified: o provider deste registro é CONFIÁVEL — a reposição segue o
+            // provider gravado em vez de cair na heurística (fama24h/nuvra morto). forceProvider
+            // vem do resolveMainDispatch/nuvra/smmhustle (= provider REAL do add), então marcamos
+            // confiável para QUALQUER provider válido, não só SMMHustle/Nuvra-BR.
+            ...(SMM_PROVIDERS[normalizeSmmProvider(forceProvider)] ? { providerVerified: true } : {}),
             requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoRaw || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
             startedAt: nowIso,
             requestedAt: nowIso,
@@ -46005,6 +46127,9 @@ app.post('/api/painel/refil2/force-refil-bulk', requireAdmin, async (req, res) =
                 forceRefil: {
                   status: 'processing',
                   provider: _forceProvider,
+                  // provider REAL do add (resolveMainDispatch/nuvra/smmhustle) → confiável: a
+                  // reposição segue este provider em vez da heurística (fama24h/nuvra morto).
+                  ...(SMM_PROVIDERS[normalizeSmmProvider(_forceProvider)] ? { providerVerified: true } : {}),
                   requestPayload: { service: serviceId, link: linkForFama, quantity: qtyToSend, quantityNeeded: qtyNeeded, providerMinQty, tipo: tipoLower || '', auditedCurrent, baseCurrent: baseCurrentQty, final: finalQty, dropOriginal: dropQtyOriginal },
                   startedAt: nowIso,
                   requestedAt: nowIso,

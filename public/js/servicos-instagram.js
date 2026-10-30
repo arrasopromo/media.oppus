@@ -2424,20 +2424,46 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function applyWarrantyMode() {
-    const isLife = true;
+    const w = (window.__warranty3m && typeof window.__warranty3m === 'object') ? window.__warranty3m : {};
+    const priceLabel = w.price || '';
     const wLabel = document.getElementById('warrantyModeLabel');
     const wHighlight = document.getElementById('warrantyHighlight');
     const wOld = document.getElementById('warrantyOldPrice');
     const wNew = document.getElementById('warrantyNewPrice');
     const wDisc = document.getElementById('warrantyDiscount');
 
-    if (wLabel) wLabel.textContent = '4 meses';
-    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 4 MESES';
-    if (wOld) wOld.textContent = 'R$ 39,90';
-    if (wNew) wNew.textContent = 'R$ 14,90';
-    if (wDisc) wDisc.textContent = '63% OFF';
+    if (wLabel) wLabel.textContent = '3 meses';
+    if (wHighlight) wHighlight.textContent = 'REPOSIÇÃO POR 3 MESES';
+    if (wNew) wNew.textContent = priceLabel;
+    // Preço DINÂMICO (2 reposições pelo custo atual) — sem "de"/desconto fixo.
+    if (wOld) { wOld.textContent = ''; wOld.style.display = 'none'; }
+    if (wDisc) { wDisc.textContent = ''; wDisc.style.display = 'none'; }
     updatePromosSummary();
   }
+
+  // Busca o preço dinâmico da garantia de 3 meses (2 reposições pelo custo atual do tipo).
+  // Só mistos/brasileiros; usa o MESMO valor que o backend valida (endpoint /api/warranty/price).
+  let __warranty3mReq = 0;
+  async function refreshWarranty3m(tipo, qtd) {
+    try {
+      const t = String(tipo || '').trim();
+      const q = Math.max(0, parseInt(qtd, 10) || 0);
+      if (!q || !(t === 'mistos' || t === 'brasileiros')) {
+        window.__warranty3m = { available: false, price: '', priceCents: 0 };
+        try { applyWarrantyMode(); } catch (_) {}
+        return;
+      }
+      const seq = ++__warranty3mReq;
+      const r = await fetch(`/api/warranty/price?tipo=${encodeURIComponent(t)}&qty=${q}`);
+      const d = await r.json();
+      if (seq !== __warranty3mReq) return; // ignora resposta obsoleta (trocou pacote rápido)
+      window.__warranty3m = (d && d.available)
+        ? { available: true, price: d.price, priceCents: d.priceCents }
+        : { available: false, price: '', priceCents: 0 };
+      try { applyWarrantyMode(); } catch (_) {}
+    } catch (_) {}
+  }
+  try { window.refreshWarranty3m = refreshWarranty3m; } catch (_) {}
 
   function stepWarranty(delta) {
     const next = (warrantyMode === '30' && delta > 0) ? 'life' : (warrantyMode === 'life' && delta < 0) ? '30' : warrantyMode;
@@ -2463,7 +2489,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Mostrar apenas para seguidores mistos (mundiais) e brasileiros
-    if (tipo === 'mistos' || tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') {
+    if (tipo === 'mistos' || tipo === 'brasileiros') {
         warrantyItem.style.display = '';
     } else {
         warrantyItem.style.display = 'none';
@@ -2477,6 +2503,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateOrderBump(tipo, baseQtd) {
     updateWarrantyVisibility(tipo);
+    try { refreshWarranty3m(tipo, baseQtd); } catch (_) {}
     if (!orderInline) return;
     const unit = getUnitForTipo(tipo);
     const labelSpan = document.getElementById('orderBumpText');
@@ -2899,11 +2926,17 @@ document.addEventListener('DOMContentLoaded', function() {
         promos.push({ key: 'comments', qty, label: `Comentários (${qty})`, priceCents });
       }
       if (warrantyChecked) {
-        const mode = (typeof window.warrantyMode === 'string') ? window.warrantyMode : '30';
-        let priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
-        if (!priceStr) priceStr = promoPricing.warranty60?.price || 'R$ 14,90';
-        const label = 'Reposição por 4 meses';
-        promos.push({ key: 'warranty_4m', qty: 1, label, priceCents: parsePrecoToCents(priceStr) });
+        // Garantia dinâmica de 3 meses: usa o priceCents vindo do /api/warranty/price
+        // (mesmo valor que o backend valida). Fallback: parseia o preço exibido.
+        const w3 = (window.__warranty3m && typeof window.__warranty3m === 'object') ? window.__warranty3m : {};
+        let priceCents = Number(w3.priceCents) || 0;
+        if (!priceCents) {
+          const priceStr = (document.getElementById('warrantyNewPrice')?.textContent || '').trim();
+          priceCents = parsePrecoToCents(priceStr);
+        }
+        if (priceCents > 0) {
+          promos.push({ key: 'warranty_3m', qty: 1, label: 'Reposição por 3 meses', priceCents });
+        }
       }
       if (upgradeChecked) {
         let priceStr = document.querySelector('.promo-prices[data-promo="upgrade"] .new-price')?.textContent || '';
@@ -5392,7 +5425,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
 
           const warCb = document.getElementById('promoWarranty60');
-          if (warCb && (map.warranty_4m || map.warranty_6m)) warCb.checked = true;
+          if (warCb && (map.warranty_3m || map.warranty_4m || map.warranty_6m)) warCb.checked = true;
 
           try { updatePromosSummary(); } catch (_) {}
           try { updatePedidoButtonState(); } catch (_) {}

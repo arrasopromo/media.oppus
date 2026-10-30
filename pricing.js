@@ -182,7 +182,7 @@ const tabelaCurtidasPromo = {
     ],
 };
 
-const calculateOrderBumps = (bumpsStr, baseType) => {
+const calculateOrderBumps = (bumpsStr, baseType, opts = {}) => {
     if (!bumpsStr) return 0;
     let total = 0;
     const bumps = bumpsStr.split(';'); // "likes:150;views:1000"
@@ -215,24 +215,54 @@ const calculateOrderBumps = (bumpsStr, baseType) => {
             // 1 comment = R$ 1,50 (150 cents)
             total += q * 150;
             
+        } else if (key === 'warranty_3m' || key === 'warranty3m') {
+             // Garantia DINÂMICA (3 meses): 2 reposições completas pelo custo atual do tipo.
+             // O valor em cents é calculado no app.js (lê cost_settings) e passado em opts —
+             // aqui só somamos, mantendo pricing.js puro (sem acesso ao banco).
+             total += Math.max(0, Math.round(Number(opts.warranty3mCents) || 0));
         } else if (key === 'warranty_4m' || key === 'warranty4m') {
-             // Garantia nova (a partir de 09/2026): reposição por 4 meses, R$ 14,90.
+             // Garantia antiga: reposição por 4 meses, R$ 14,90 — mantida p/ pedidos já feitos.
              total += 1490;
         } else if (key === 'warranty' || key === 'warranty30' || key === 'warranty_life' || key === 'warranty_lifetime' || key === 'warranty60' || key === 'warranty_6m' || key === 'warranty6m') {
              total += 990; // chaves antigas (6 meses) — mantidas pra pedidos já feitos
         }
     });
-    
+
     return total;
 };
 
-const calculatePrice = async (type, quantity, additionalInfo = []) => {
+// Arredonda um valor (em cents) para o preço terminado em ",90" mais próximo (passo de R$1).
+// Ex.: 4000 -> 3990 (R$ 39,90); 600 -> 590 (R$ 5,90). Piso de R$ 0,90.
+const round90Cents = (cents) => {
+    const reais = (Number(cents) || 0) / 100;
+    const n = Math.round(reais - 0.90);
+    return Math.max(90, Math.round((n + 0.90) * 100));
+};
+
+// Preço DINÂMICO da garantia de 3 meses = 2 reposições completas pelo custo atual do
+// tipo (custo por mil, em cents) × quantidade do pedido, arredondado para ,90.
+// Ex.: custo R$ 20/mil, 1000 seg -> custo R$ 20 -> 2x = R$ 40 -> R$ 39,90.
+const warranty3mCents = (costPerMilCents, quantity) => {
+    const q = Math.max(0, parseInt(quantity, 10) || 0);
+    const c = Math.max(0, Number(costPerMilCents) || 0);
+    if (!q || !c) return 0;
+    const custoCents = Math.round(c * q / 1000); // custo de entregar a quantidade
+    return round90Cents(2 * custoCents);          // 2 reposições completas, em ,90
+};
+
+const calculatePrice = async (type, quantity, additionalInfo = [], opts = {}) => {
     additionalInfo = Array.isArray(additionalInfo) ? additionalInfo : [];
     const tipo = String(type || '').trim();
     if (tipo === 'refil_extensao') {
         const modeItem = additionalInfo.find(x => x && x.key === 'refil_mode');
         const mode = String(modeItem?.value || '').trim().toLowerCase();
-        if (mode === '4m' || mode === '4') return 1490; // extensão nova: 4 meses, R$ 14,90
+        // Extensão DINÂMICA de 3 meses: recalcula pelo custo ATUAL do pedido (2 reposições
+        // completas). O valor em cents vem do app.js em opts.refilExt3mCents (ele acha o
+        // pedido pelo refil_link_id → tipo+quantidade). Chaves antigas mantidas p/ compat.
+        if ((mode === '3m' || mode === '3' || mode === '') && Number(opts.refilExt3mCents) > 0) {
+            return Math.round(Number(opts.refilExt3mCents));
+        }
+        if (mode === '4m' || mode === '4') return 1490; // extensão antiga: 4 meses, R$ 14,90
         if (mode === 'life') return 990;
         return 990;
     }
@@ -329,7 +359,7 @@ const calculatePrice = async (type, quantity, additionalInfo = []) => {
     }
     
     if (bumpsStr) {
-        totalCents += calculateOrderBumps(bumpsStr, tipo);
+        totalCents += calculateOrderBumps(bumpsStr, tipo, opts);
 
         // --- UPGRADE LOGIC START ---
         // Mirroring logic from servicos-instagram.js updateOrderBump
@@ -431,9 +461,9 @@ const validatePrice = async (type, quantity, additionalInfo, valuePaid) => {
     return verification.isValid;
 };
 
-const verifyPrice = async (type, quantity, additionalInfo, valuePaid) => {
+const verifyPrice = async (type, quantity, additionalInfo, valuePaid, opts = {}) => {
     // Calculate standard price (with upsell logic applied if flag present)
-    const calculatedPrice = await calculatePrice(type, quantity, additionalInfo);
+    const calculatedPrice = await calculatePrice(type, quantity, additionalInfo, opts);
     
     // Also try to calculate WITHOUT upsell flag, in case the user didn't send the flag but sent the discounted price (legacy/fallback)
     // Or vice versa
@@ -458,4 +488,4 @@ const verifyPrice = async (type, quantity, additionalInfo, valuePaid) => {
     return { isValid, matchedPrice: isValid ? calculatedPrice : null, expectedPrice: calculatedPrice, mismatchDetails };
 };
 
-module.exports = { calculatePrice, validatePrice, verifyPrice, parsePrecoToCents, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes };
+module.exports = { calculatePrice, validatePrice, verifyPrice, parsePrecoToCents, warranty3mCents, round90Cents, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes };

@@ -56,10 +56,10 @@
                   <label class="promo-item upgrade">\
                     <div class="promo-content">\
                       <div class="promo-highlight" id="orderBumpHighlight">Extensão de Refil</div>\
-                      <div class="promo-title">por 4 meses</div>\
+                      <div class="promo-title" id="refilExtTitle">por 3 meses</div>\
                       <div id="orderBumpText" class="promo-desc">Adicione extensão de refil ao seu pedido.</div>\
                       <div class="promo-prices" data-promo="upgrade">\
-                        <span class="new-price">R$ 14,90</span>\
+                        <span class="new-price" id="refilExtPrice">R$ 14,90</span>\
                       </div>\
                     </div>\
                   </label>\
@@ -70,6 +70,23 @@
               </div>\
             </div>';
             var genBtn = document.getElementById('generateRefilPaymentBtn');
+            // Extensão RECALCULADA pelo custo atual do pedido (2 reposições, 3 meses).
+            // Busca pelo refil_link_id; se achar, vira 3m com preço dinâmico; senão, cai no fixo 4m.
+            var refilExtMode = '4m';
+            (function(){
+              try {
+                var _p = new URLSearchParams(window.location.search || '');
+                var _tk = _p.get('token') || '';
+                if (!_tk) return;
+                fetch('/api/warranty/price?refil_link_id=' + encodeURIComponent(_tk)).then(function(r){ return r.json(); }).then(function(d){
+                  if (d && d.available && d.price) {
+                    refilExtMode = '3m';
+                    var pe = document.getElementById('refilExtPrice'); if (pe) pe.textContent = d.price;
+                    var te = document.getElementById('refilExtTitle'); if (te) te.textContent = 'por 3 meses';
+                  }
+                }).catch(function(){});
+              } catch(_){}
+            })();
             function parsePrecoToCents(precoStr){
               if (!precoStr) return 0;
               var cleaned = String(precoStr).replace(/[^\d,]/g, '').replace(',', '.');
@@ -154,7 +171,7 @@
                       value: cents,
                       comment: 'Extensão de refil',
                       customer: { name: name, phone: phone },
-                      additionalInfo: [ { key: 'tipo_servico', value: 'refil_extensao' }, { key: 'refil_link_id', value: token }, { key: 'refil_mode', value: '4m' } ]
+                      additionalInfo: [ { key: 'tipo_servico', value: 'refil_extensao' }, { key: 'refil_link_id', value: token }, { key: 'refil_mode', value: refilExtMode } ]
                     })
                   }).then(function(r){ return r.json(); }).then(function(data){
                     try {
