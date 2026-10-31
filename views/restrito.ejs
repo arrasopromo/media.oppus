@@ -39,7 +39,10 @@
           var msgEl = document.querySelector('.error-message');
           var origin = String(from || referrer || '').toLowerCase();
           if (msgEl) {
-            if (origin.includes('/refil')) {
+            var garantiaMeses = parseInt(params.get('garantia_meses') || '', 10);
+            if (origin.includes('/refil') && garantiaMeses > 0) {
+              msgEl.textContent = 'A garantia de reposição contínua por até ' + (garantiaMeses > 1 ? (garantiaMeses + ' meses') : '30 dias') + ' expirou.';
+            } else if (origin.includes('/refil')) {
               msgEl.textContent = 'Acesso ao refil só é permitido com um link temporário válido.';
             } else if (origin.includes('/perfil')) {
               msgEl.textContent = 'A página de perfil exige um link temporário válido.';

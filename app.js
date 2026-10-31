@@ -12342,6 +12342,13 @@ const refilPageHandler = (fromPath) => async (req, res) => {
   console.log(`🔁 Acessando rota ${effectiveFromPath}`);
   const normalizeRefilToken = (v) => String(v || '').trim().replace(/[^0-9a-z]/gi, '');
   let token = normalizeRefilToken(req.query.token || '');
+  // Sem token na URL: valida o link guardado na sessão, senão a sessão libera link vencido.
+  if (!token && req.session && req.session.refilAccessAllowed) {
+    const slugSessao = normalizeRefilToken(req.session.linkSlug || '');
+    if (slugSessao && !/^liberado$/i.test(slugSessao)) token = slugSessao;
+  }
+  let refilLinkVencido = false; // só true com o link lido do banco e confirmado fora da garantia
+  let refilGarantiaMeses = 1;   // duração da garantia vencida, p/ a mensagem em /restrito
   const phoneRaw = String(req.query.phone || '').trim();
   const usernameRaw = String(req.query.username || req.query.user || req.query.u || req.query.instauser || req.query.instagram || '').trim();
   let refilDaysLeft = null;
@@ -12546,6 +12553,12 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                         req.session.linkSlug = token;
                         req.session.linkAccessTime = nowMs;
                       }
+                    } else {
+                      refilLinkVencido = true;
+                      // Extensão avulsa fica só no warrantyMode do link, não nos bumps do pedido.
+                      const modoLink = String(linkRec.warrantyMode || '').trim();
+                      const mesesModo = /^\d+m$/i.test(modoLink) ? parseInt(modoLink, 10) : 1;
+                      refilGarantiaMeses = Math.max(Number((warranty && warranty.months) || 1), mesesModo);
                     }
                 }
             } catch(_) {}
@@ -12628,6 +12641,7 @@ const refilPageHandler = (fromPath) => async (req, res) => {
                  }
                }
                isValid = true;
+               refilLinkVencido = false;
                if (req.session) {
                  req.session.refilAccessAllowed = true;
                  req.session.linkSlug = token;
@@ -12701,9 +12715,13 @@ const refilPageHandler = (fromPath) => async (req, res) => {
       }
     } catch(_) {}
   } catch(_) {}
+  // Link vencido perde o acesso mesmo com sessão liberada: a sessão dura 30 dias e renova a
+  // cada visita, então sem isto a pessoa nunca veria a oferta de extensão em /restrito.
+  if (refilLinkVencido && req.session) req.session.refilAccessAllowed = false;
   if (!(req.session && req.session.refilAccessAllowed)) {
     const from = effectiveFromPath;
-    const qs = token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`;
+    const qs = (token ? `from=${encodeURIComponent(from)}&token=${encodeURIComponent(token)}` : `from=${encodeURIComponent(from)}`)
+      + (token ? `&garantia_meses=${refilLinkVencido ? refilGarantiaMeses : 0}` : '');
     return res.redirect(`/restrito?${qs}`);
   }
   if (!refilLinkRec && token && !/^liberado$/i.test(token)) {
@@ -22089,6 +22107,12 @@ app.get("/used.html", (req, res) => {
 
 // Página de acesso restrito (mensagem dinâmica por origem)
 app.get('/restrito', (req, res) => {
+  // Aba antiga ou link salvo sem garantia_meses: volta ao /refil, que confere o link e devolve com o valor.
+  const token = String(req.query.token || '').trim();
+  const semGarantia = typeof req.query.garantia_meses === 'undefined';
+  if (token && semGarantia && String(req.query.from || '').includes('/refil')) {
+    return res.redirect(`/refil?token=${encodeURIComponent(token)}`);
+  }
   res.render('restrito');
 });
 

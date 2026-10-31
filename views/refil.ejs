@@ -15,7 +15,7 @@
         <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Vitalícia</strong></p>
       <% } else if (typeof refilDaysLeft === 'number' && !Number.isNaN(refilDaysLeft)) { %>
         <% if (refilDaysLeft <= 0) { %>
-          <p class="subtitle" style="margin-top:0.25rem;">Acesso: <strong>Expirado</strong></p>
+          <p class="subtitle" style="margin-top:0.25rem;">Acesso expira <strong>hoje</strong></p>
         <% } else { %>
           <p class="subtitle" style="margin-top:0.25rem;">Acesso expira em: <strong><%= refilDaysLeft %></strong> <%= (refilDaysLeft === 1 ? 'dia' : 'dias') %></p>
         <% } %>
