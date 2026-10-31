@@ -4,6 +4,7 @@
 
 const { getCollection } = require('./mongodbClient');
 const sales = require('./whatsappSales.js');
+const openaiCredito = require('./openaiCredito.js');
 let axios = require('axios'); if (axios && axios.default) axios = axios.default;
 
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
@@ -355,6 +356,7 @@ async function openaiChat(messages, useTools) {
   if (useTools) { body.tools = TOOLS; body.tool_choice = 'auto'; } else { body.tool_choice = 'none'; }
   const resp = await axios.post('https://api.openai.com/v1/chat/completions', body, { headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, timeout: 60000, validateStatus: () => true });
   if (resp.status < 200 || resp.status >= 300) throw new Error('openai_http_' + resp.status + ': ' + JSON.stringify(resp.data && resp.data.error || resp.data).slice(0, 200));
+  openaiCredito.registrarUso(OPENAI_MODEL, resp.data && resp.data.usage);
   return resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message;
 }
 

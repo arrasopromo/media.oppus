@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 const axios = require('axios');
 const { getCollection } = require('./mongodbClient');
+const openaiCredito = require('./openaiCredito.js');
 
 const BRT = 3 * 3600e3;
 const DIA = 86400e3;
@@ -109,6 +110,7 @@ async function avaliarComIA(transcricao, fatos) {
       model: MODELO(), temperature: 0.2, response_format: { type: 'json_object' },
       messages: [{ role: 'system', content: sistema }, { role: 'user', content: 'FATOS:\n' + JSON.stringify(fatos) + '\n\nTRANSCRIÇÃO:\n' + transcricao }],
     }, { headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, timeout: 90000, validateStatus: () => true });
+    openaiCredito.registrarUso(MODELO(), r && r.data && r.data.usage);
     const txt = r && r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message && r.data.choices[0].message.content;
     return txt ? JSON.parse(txt) : null;
   } catch (_) { return null; }
@@ -131,6 +133,7 @@ async function consolidarMelhorias(conversas) {
         { role: 'user', content: itens.slice(0, 400).join('\n') },
       ],
     }, { headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, timeout: 90000, validateStatus: () => true });
+    openaiCredito.registrarUso(MODELO(), r && r.data && r.data.usage);
     const txt = r && r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message && r.data.choices[0].message.content;
     const j = txt ? JSON.parse(txt) : null;
     return (j && Array.isArray(j.pontos)) ? j.pontos : [];

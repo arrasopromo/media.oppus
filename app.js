@@ -3515,6 +3515,7 @@ function panelBalanceRegistry() {
     { name: 'topfama', label: 'TopFama', url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', link: 'https://topfama.com', threshold: n(process.env.SALDO_MIN_TOPFAMA, 100), alertDefault: false },
     { name: 'smmhustle', label: 'SMMHustle', url: 'https://smmhustle.com/api/v2', keyEnv: 'SMMHUSTLE_API_KEY', link: 'https://smmhustle.com', threshold: n(process.env.SALDO_MIN_SMMHUSTLE, 10), alertDefault: true },
     { name: 'followiz', label: 'Followiz', url: 'https://followiz.com/api/v2', keyEnv: 'FOLLOWIZ_API_KEY', link: 'https://followiz.com', threshold: n(process.env.SALDO_MIN_FOLLOWIZ, 10), alertDefault: true },
+    { name: 'openai', label: 'OpenAI (Bot WhatsApp)', kind: 'openai', keyEnv: 'OPENAI_API_KEY', link: 'https://platform.openai.com/settings/organization/billing', threshold: n(process.env.SALDO_MIN_OPENAI, 5), alertDefault: true },
   ];
 }
 // Config do saldo de painéis salva no settings (_id 'panel_balance_config'):
@@ -3564,6 +3565,11 @@ async function fetchPanelBalance(p) {
   try {
     const key = String((p && p.key) || process.env[p.keyEnv] || '').trim();
     if (!key) return { ok: false, error: 'missing_key' };
+    if (p.kind === 'openai') {
+      const s = await require('./openaiCredito.js').status();
+      if (s.saldoUsd == null) return { ok: false, error: s.erro || 'informe_o_saldo_no_painel' };
+      return { ok: true, balance: s.saldoUsd, currency: 'USD' };
+    }
     const params = new URLSearchParams({ key, action: 'balance' });
     const r = await axios.post(p.url, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' }, timeout: 20000, validateStatus: () => true });
     const d = (r && r.data && typeof r.data === 'object') ? r.data : {};
@@ -3663,6 +3669,23 @@ app.get('/api/painel/saldo/list', requireAdmin, async (req, res) => {
       rows.push({ panel: p.name, label: p.label, configured: true, threshold: p.threshold, link: p.link, alertEnabled: alertOn, custom: !!p.custom, ok: b.ok, balance: b.ok ? b.balance : null, currency: b.ok ? b.currency : null, low: b.ok ? (b.balance < p.threshold) : null, error: b.ok ? null : b.error });
     }
     return res.json({ ok: true, rows });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Crédito da OpenAI (card Canal de vendas): situação real + saldo estimado.
+app.get('/api/painel/openai-credito', requireAdmin, async (req, res) => {
+  try {
+    const s = await require('./openaiCredito.js').status({ force: String(req.query.force || '') === '1' });
+    return res.json(Object.assign({ ok: true }, s));
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+app.post('/api/painel/openai-credito', requireAdmin, async (req, res) => {
+  try {
+    const saldo = Number(req.body && req.body.saldo);
+    if (!Number.isFinite(saldo) || saldo < 0) return res.status(400).json({ ok: false, error: 'saldo_invalido', message: 'Informe o saldo em dólar.' });
+    const cred = require('./openaiCredito.js');
+    await cred.definirSaldo(Math.round(saldo * 100) / 100);
+    const s = await cred.status({ force: true });
+    return res.json(Object.assign({ ok: true }, s));
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Liga/desliga o alerta de saldo de UM painel (flag do Gerenciamento de Tipos).

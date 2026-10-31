@@ -5,6 +5,7 @@
 
 const { getCollection } = require('./mongodbClient');
 const agent = require('./whatsappAgent.js');
+const openaiCredito = require('./openaiCredito.js');
 let axios = require('axios'); if (axios && axios.default) axios = axios.default;
 
 const CFG = () => ({
@@ -298,6 +299,7 @@ async function descreverImagem(mediaId, mimeIn, legenda) {
       messages: [{ role: 'user', content: [{ type: 'text', text: pedido }, { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + buf.toString('base64'), detail: 'high' } }] }]
     }, { headers: { Authorization: 'Bearer ' + openai, 'Content-Type': 'application/json' }, timeout: 60000, validateStatus: () => true });
     if (r.status !== 200) { try { console.warn('🖼️ [IA] leitura de imagem falhou:', r.status, JSON.stringify(r.data || {}).slice(0, 160)); } catch (_) {} return ''; }
+    openaiCredito.registrarUso(VISION_MODEL, r.data && r.data.usage);
     const msg = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message;
     return String((msg && msg.content) || '').trim().slice(0, 1200);
   } catch (e) { try { console.warn('🖼️ [IA] erro ao ler imagem:', e && e.message); } catch (_) {} return ''; }
