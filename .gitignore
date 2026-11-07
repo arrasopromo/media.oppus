@@ -10,6 +10,7 @@ node_modules/
 jar.txt
 google-tokens.json
 *.session
+.mcp.json
 
 # Dados de clientes / relatórios gerados (PII)
 *.csv

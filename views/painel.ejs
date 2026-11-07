@@ -4517,8 +4517,8 @@
           <div class="summary-value" id="dashImpostoValue" style="color:#dc2626;">R$ 0,00</div>
           <div class="summary-sub" style="margin-top:8px;">
             <div style="display:flex; align-items:center; gap:10px;">
-              <input type="range" id="dashImpostoRate" min="6" max="13" step="0.1" value="6" style="flex:1; accent-color:#7c3aed; cursor:pointer;">
-              <strong id="dashImpostoRateLabel" style="min-width:48px; text-align:right; color:#111827;">6%</strong>
+              <input type="range" id="dashImpostoRate" min="6" max="13" step="0.1" value="13" style="flex:1; accent-color:#7c3aed; cursor:pointer;">
+              <strong id="dashImpostoRateLabel" style="min-width:48px; text-align:right; color:#111827;">13%</strong>
             </div>
             <div style="margin-top:4px;">Alíquota sobre o faturamento (debitada do lucro)</div>
           </div>
@@ -4541,7 +4541,7 @@
             var metaBtn = document.getElementById('dashMetaTaxToggle');
             var ajusteBtn = document.getElementById('dashAjusteToggle');
             var cfBtn = document.getElementById('dashCustoFixoToggle');
-            var KEY = 'oppus_imposto_aliquota';
+            var KEY = 'oppus_imposto_aliquota_v2'; // v2: a chave antiga guardava o 6 regravado a cada carga
             var KEY_META = 'oppus_lucro_meta_tax'; // '1' = considera imposto Meta, '0' = não
             var KEY_AJUSTE = 'oppus_lucro_gasto_adicional'; // '1' = desconta o gasto adicional
             var KEY_CUSTOFIXO = 'oppus_lucro_custo_fixo'; // '1' = desconta o custo fixo (rateado)
@@ -4553,7 +4553,7 @@
             try { includeCustoFixo = (localStorage.getItem(KEY_CUSTOFIXO) === '1'); } catch(_){}
             function fmt(n){ return 'R$ ' + (Number(n) || 0).toFixed(2).replace('.', ','); }
             function apply(){
-              var rate = Number(slider.value); if (!(rate >= 6 && rate <= 13)) rate = 6;
+              var rate = Number(slider.value); if (!(rate >= 6 && rate <= 13)) rate = 13;
               var rateStr = (Math.round(rate * 10) / 10).toString().replace('.', ',');
               if (rateLabel) rateLabel.textContent = rateStr + '%';
               var imposto = vendas * (rate / 100);
@@ -5120,7 +5120,7 @@
                               var idx = Number(ctx.dataIndex || 0);
                               var paid = Array.isArray(pv.dailyPaid) ? Number(pv.dailyPaid[idx] || 0) : 0;
                               var val = Array.isArray(pv.dailyValidated) ? Number(pv.dailyValidated[idx] || 0) : 0;
-                              return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '% (' + paid + '/' + val + ')');
+                              return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '% (' + paid + ' de ' + val + ' validados pagaram)');
                             } catch (_) {
                               return (Number(ctx.parsed && ctx.parsed.y ? ctx.parsed.y : 0).toFixed(1) + '%');
                             }
@@ -8015,7 +8015,12 @@
                       <%= order.phone || '-' %>
                     </small>
                   </td>
-                  <td><%= order.serviceLabel || order.type || '-' %></td>
+                  <td>
+                    <%= order.serviceLabel || order.type || '-' %>
+                    <% if (order.upsellError) { %>
+                      <div style="margin-top:4px; font-size:0.75rem; color:#991b1b; overflow-wrap:anywhere;">Upsell: <%= order.upsellError %></div>
+                    <% } %>
+                  </td>
                   <td><%= (typeof order.qty !== 'undefined' ? order.qty : '-') %></td>
                   <td>
                     <% if (showFama) { %>

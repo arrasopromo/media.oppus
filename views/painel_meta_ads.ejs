@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meta Ads — Criativos</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..700&display=swap" rel="stylesheet">
+  <style>
+    /* Mesa de mídia: papel frio, tinta grafite, uma cor por fonte de atribuição.
+       Vermelho só quando a verba não se paga (ROAS < 1). Estrutura por linhas finas, sem cartões. */
+    .ma{
+      --papel:#f4f5f7; --folha:#ffffff; --sombra:#f8f9fb; --tinta:#14171c; --grafite:#525a67; --lapis:#8a93a1;
+      --fio:rgba(20,23,28,.09); --fio-forte:rgba(20,23,28,.16);
+      --meta:#2f5bea; --tc:#8a4fd8; --banco:#b7791f; --site:#14171c;
+      --prejuizo:#c8352b; --lucro:#127a4a; --foco:rgba(47,91,234,.35);
+      --r-peq:6px; --r-med:10px;
+      max-width:1480px; margin:0 auto; padding:28px 24px 64px; color:var(--tinta);
+      font-family:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif; font-size:14px; line-height:1.45;
+      -webkit-font-smoothing:antialiased;
+    }
+    body.painel-page{ background:var(--papel, #f4f5f7); }
+    .ma *{ box-sizing:border-box; }
+    .ma button{ font-family:inherit; }
+    .ma :focus-visible{ outline:2px solid var(--foco); outline-offset:2px; }
+    .num{ font-variant-numeric:tabular-nums; }
+
+    /* Cabeçalho */
+    .ma-top{ display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap; margin-bottom:22px; }
+    .ma-top h1{ margin:0; font-size:28px; font-weight:650; font-stretch:88%; letter-spacing:-0.02em; text-wrap:balance; }
+    .ma-top p{ margin:4px 0 0; color:var(--grafite); font-size:14px; }
+    .ma-per{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .ma-seg{ display:inline-flex; background:var(--folha); box-shadow:0 0 0 1px var(--fio); border-radius:var(--r-med); padding:3px; }
+    .ma-seg button{ border:0; background:none; padding:7px 13px; border-radius:var(--r-peq); font-size:13px; font-weight:500; color:var(--grafite); cursor:pointer; transition:background-color .15s, color .15s; }
+    .ma-seg button:hover{ color:var(--tinta); }
+    .ma-seg button[aria-pressed=true]{ background:var(--tinta); color:#fff; }
+    .ma-datas{ display:inline-flex; align-items:center; gap:6px; color:var(--lapis); font-size:13px; }
+    .ma-datas input{ border:0; background:#eceef2; border-radius:var(--r-peq); padding:7px 8px; font:inherit; font-size:13px; color:var(--tinta); }
+    .ma-b{ border:0; background:var(--folha); box-shadow:0 0 0 1px var(--fio); border-radius:var(--r-peq); padding:7px 12px; font-size:13px; font-weight:500; color:var(--tinta); cursor:pointer; transition:box-shadow .15s, transform .1s; }
+    .ma-b:hover{ box-shadow:0 0 0 1px var(--fio-forte); }
+    .ma-b:active{ transform:scale(.97); }
+    .ma-quando{ width:100%; text-align:right; color:var(--lapis); font-size:12px; }
+
+    /* Balanço do período: uma faixa só, dividida por fios */
+    .ma-bal{ background:var(--folha); box-shadow:0 0 0 1px var(--fio); border-radius:var(--r-med); margin-bottom:28px; }
+    .ma-cols{ display:grid; grid-template-columns:1.05fr repeat(4,1fr); }
+    .ma-col{ padding:18px 20px 16px; min-width:0; }
+    .ma-col + .ma-col{ border-left:1px solid var(--fio); }
+    .ma-col .rot{ display:flex; align-items:center; gap:7px; font-size:13px; font-weight:500; color:var(--grafite); }
+    .ma-col .v{ font-size:26px; font-weight:620; font-stretch:85%; letter-spacing:-0.015em; margin-top:6px; line-height:1.1; }
+    .ma-col .roas{ margin-top:8px; font-size:14px; color:var(--grafite); }
+    .ma-col .roas b{ font-size:17px; font-weight:650; color:var(--tinta); margin-right:4px; }
+    .ma-col .det{ margin-top:6px; font-size:12px; color:var(--lapis); text-wrap:pretty; }
+    .ma-col.gasto .v{ font-size:30px; }
+    .sw{ width:9px; height:9px; flex:none; }
+    .sw.meta{ background:var(--meta); border-radius:50%; } .sw.tc{ background:var(--tc); transform:rotate(45deg) scale(.85); } .sw.banco{ background:var(--banco); border-radius:2px; } .sw.site{ background:var(--site); border-radius:50%; box-shadow:inset 0 0 0 2.5px #fff; outline:1.5px solid var(--site); }
+    .ma-regua{ border-top:1px solid var(--fio); padding:16px 20px 18px; }
+    .ma-regua .cap{ display:flex; justify-content:space-between; gap:12px; font-size:13px; color:var(--grafite); margin-bottom:10px; flex-wrap:wrap; }
+    .ma-regua .cap b{ color:var(--tinta); font-weight:600; }
+    .rg{ position:relative; height:66px; margin:0 8px; }
+    .rg .eixo{ position:absolute; left:0; right:0; top:38px; height:2px; background:#e5e8ec; border-radius:2px; }
+    .rg .perda{ position:absolute; left:0; top:38px; height:2px; background:rgba(200,53,43,.35); border-radius:2px; }
+    .rg .emp{ position:absolute; top:26px; width:1.5px; height:26px; background:var(--tinta); }
+    .rg .emp span{ position:absolute; top:28px; left:6px; font-size:11px; font-weight:600; white-space:nowrap; }
+    .rg .tk{ position:absolute; top:46px; font-size:11px; color:var(--lapis); transform:translateX(-50%); }
+    .rg .lb{ position:absolute; transform:translateX(-50%); font-size:12px; font-weight:550; color:var(--grafite); white-space:nowrap; margin-top:14px; }
+    .rg .mk{ position:absolute; top:33px; width:12px; height:12px; margin-left:-6px; }
+    .rg .mk.meta{ background:var(--meta); border-radius:50%; } .rg .mk.tc{ background:var(--tc); transform:rotate(45deg) scale(.85); } .rg .mk.banco{ background:var(--banco); border-radius:2px; } .rg .mk.site{ background:#fff; border:2.5px solid var(--site); border-radius:50%; }
+
+    /* Abas de nível, no jeito do Gerenciador: Campanhas › Conjuntos › Anúncios */
+    .ma-niv{ display:flex; align-items:stretch; gap:4px; overflow-x:auto; border-bottom:1px solid var(--fio); margin-bottom:12px; }
+    .ma-niv .tb{ display:inline-flex; align-items:center; gap:8px; border:0; background:none; padding:10px 14px 9px; font-size:14px; font-weight:550; color:var(--grafite); cursor:pointer; white-space:nowrap; border-bottom:2px solid transparent; margin-bottom:-1px; border-radius:var(--r-peq) var(--r-peq) 0 0; }
+    .ma-niv .tb:hover{ background:#eceef2; color:var(--tinta); }
+    .ma-niv .tb[aria-selected=true]{ color:var(--meta); border-bottom-color:var(--meta); background:var(--folha); }
+    .ma-niv .tb svg{ flex:none; }
+    .ma-niv .chip{ display:inline-flex; align-items:center; gap:6px; background:var(--meta); color:#fff; font-size:12px; font-weight:550; padding:3px 4px 3px 9px; border-radius:var(--r-peq); }
+    .ma-niv .chip i{ font-style:normal; width:18px; height:18px; display:grid; place-items:center; border-radius:4px; font-size:13px; line-height:1; }
+    .ma-niv .chip i:hover{ background:rgba(255,255,255,.22); }
+    .ma-niv .hist{ margin-left:auto; font-weight:500; }
+    .ma-bar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+    .ma-sel{ font-size:13px; color:var(--grafite); }
+    .ma-fil{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .ma-busca{ border:0; background:#eceef2; border-radius:var(--r-peq); padding:8px 11px; font:inherit; font-size:13px; width:250px; max-width:100%; color:var(--tinta); }
+    .ma-chk{ display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--grafite); cursor:pointer; padding:6px 4px; }
+    .ma-chk input{ accent-color:var(--tinta); width:15px; height:15px; }
+
+    /* Tabela em árvore */
+    .ma-grade{ background:var(--folha); box-shadow:0 0 0 1px var(--fio); border-radius:var(--r-med); overflow:hidden; }
+    .ma-rolo{ overflow:auto; max-height:calc(100vh - 120px); }
+    table.ma-t{ width:100%; border-collapse:separate; border-spacing:0; font-variant-numeric:tabular-nums; }
+    .ma-t th{ position:sticky; top:0; z-index:2; background:var(--sombra); text-align:right; font-size:12px; font-weight:500; color:var(--grafite); padding:10px 12px; border-bottom:1px solid var(--fio); white-space:nowrap; }
+    .ma-t th[data-k]{ cursor:pointer; user-select:none; }
+    .ma-t th[data-k]:hover{ color:var(--tinta); }
+    .ma-t th.on{ color:var(--tinta); font-weight:600; }
+    .ma-t th.on::after{ content:'↓'; margin-left:3px; } .ma-t th.on.asc::after{ content:'↑'; }
+    .ma-t th .sw{ display:inline-block; margin-right:6px; vertical-align:1px; }
+    .ma-t th.l, .ma-t td.l{ text-align:left; }
+    .ma-t td{ padding:9px 12px; border-bottom:1px solid var(--fio); text-align:right; white-space:nowrap; vertical-align:middle; background:var(--folha); font-size:13px; }
+    .ma-t tbody tr:hover td{ background:#f7f9fc; }
+    .ma-t tr.sel td{ background:#eef3fe; }
+    .ma-t tr.sel:hover td{ background:#e6edfd; }
+    .ma-t tr.desl td.nome b, .ma-t tr.desl td.nome .lk{ color:var(--grafite); }
+    /* Colunas presas à esquerda: seleção, interruptor e nome */
+    .ma-t .ck{ position:sticky; left:0; z-index:1; width:44px; min-width:44px; padding:0 0 0 14px; text-align:left; }
+    .ma-t .tg{ position:sticky; left:44px; z-index:1; width:62px; min-width:62px; padding:0 8px; text-align:center; box-shadow:1px 0 0 var(--fio); }
+    .ma-t .nome{ position:sticky; left:106px; z-index:1; box-shadow:1px 0 0 var(--fio); }
+    .ma-t th.ck, .ma-t th.tg, .ma-t th.nome{ z-index:4; }
+    .ma-t .ck input{ width:16px; height:16px; accent-color:var(--meta); cursor:pointer; margin:0; vertical-align:middle; }
+    .ma-t tfoot td{ position:sticky; bottom:0; z-index:2; background:var(--sombra); border-top:1px solid var(--fio-forte); border-bottom:0; font-weight:600; }
+    .ma-t tfoot tr + tr td{ border-top:1px solid var(--fio); bottom:auto; position:static; font-weight:500; }
+    .ma-t tfoot td.ck, .ma-t tfoot td.tg, .ma-t tfoot td.nome{ z-index:4; }
+    .ma-t tfoot td.nome small{ display:block; font-weight:500; color:var(--lapis); font-size:12px; }
+    .ma-t tfoot td small{ font-weight:500; }
+
+    .nome{ min-width:280px; max-width:380px; }
+    .nm{ display:flex; align-items:center; gap:10px; }
+    .nm .tx{ min-width:0; white-space:normal; }
+    .nm b, .nm .lk{ display:block; font-weight:550; overflow-wrap:anywhere; line-height:1.3; }
+    .nm .lk{ border:0; background:none; padding:0; font:inherit; font-weight:550; color:var(--meta); text-align:left; cursor:pointer; }
+    .nm .lk:hover{ text-decoration:underline; text-underline-offset:2px; }
+    .nm small{ display:block; font-size:12px; color:var(--lapis); margin-top:1px; }
+    .nm img, .nm .ph{ width:38px; height:38px; border-radius:var(--r-peq); object-fit:cover; flex:none; background:#e9ecf0; outline:1px solid rgba(0,0,0,.1); outline-offset:-1px; }
+    .est{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--grafite); }
+    .est i{ width:7px; height:7px; border-radius:50%; background:var(--lapis); }
+    .est.on i{ background:var(--lucro); } .est.err i{ background:var(--prejuizo); } .est.warn i{ background:var(--banco); }
+    .est.err{ color:var(--prejuizo); }
+
+    .fonte b{ display:block; font-size:14px; font-weight:620; }
+    .fonte small{ display:block; font-size:12px; color:var(--lapis); }
+    .baixo{ color:var(--prejuizo) !important; }
+    .alto{ color:var(--lucro) !important; }
+
+    .mini{ position:relative; width:150px; height:22px; display:inline-block; vertical-align:middle; }
+    .mini .eixo{ position:absolute; left:0; right:0; top:10px; height:2px; background:#e8ebef; border-radius:2px; }
+    .mini .perda{ position:absolute; left:0; top:10px; height:2px; background:rgba(200,53,43,.3); }
+    .mini .emp{ position:absolute; top:3px; width:1.5px; height:16px; background:var(--tinta); opacity:.7; }
+    .mini .mk{ position:absolute; top:6px; width:10px; height:10px; margin-left:-5px; }
+    .mini .mk.meta{ background:var(--meta); border-radius:50%; } .mini .mk.tc{ background:var(--tc); transform:rotate(45deg) scale(.8); } .mini .mk.banco{ background:var(--banco); border-radius:2px; }
+    .mini.vazio{ color:var(--lapis); font-size:12px; text-align:center; line-height:22px; }
+
+    .sw-btn{ position:relative; width:38px; height:22px; border:0; border-radius:999px; background:#cfd4db; cursor:pointer; padding:0; transition:background-color .18s; }
+    .sw-btn::after{ content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); transition:transform .18s cubic-bezier(.23,1,.32,1); }
+    .sw-btn[aria-checked=true]{ background:var(--meta); }
+    .sw-btn[aria-checked=true]::after{ transform:translateX(16px); }
+    .sw-btn:disabled{ opacity:.5; cursor:wait; }
+    .sw-btn::before{ content:''; position:absolute; inset:-11px -4px; }
+
+    .ma-vazio{ padding:40px 20px; text-align:center; color:var(--grafite); }
+    .ma-aviso{ margin:0 0 14px; padding:10px 14px; border-radius:var(--r-peq); font-size:13px; }
+    .ma-aviso.err{ background:#fcefed; color:var(--prejuizo); } .ma-aviso.ok{ background:#eaf5ef; color:var(--lucro); }
+    .ma-nota{ color:var(--grafite); font-size:13px; line-height:1.6; margin:16px 0 0; max-width:78ch; text-wrap:pretty; }
+    .ma-carr{ height:3px; background:linear-gradient(90deg, transparent, var(--meta), transparent); background-size:40% 100%; background-repeat:no-repeat; animation:corre 1.1s cubic-bezier(.77,0,.175,1) infinite; }
+    @keyframes corre{ from{ background-position:-40% 0; } to{ background-position:140% 0; } }
+    @media (prefers-reduced-motion: reduce){ .ma-carr{ animation:none; background:var(--fio); } .sw-btn, .sw-btn::after{ transition:none; } }
+
+    @media (max-width:1100px){
+      .ma-cols{ grid-template-columns:repeat(3,1fr); }
+      .ma-col:nth-child(4){ border-left:0; }
+      .ma-col:nth-child(n+4){ border-top:1px solid var(--fio); }
+    }
+    @media (max-width:640px){
+      .ma{ padding:20px 16px 48px; }
+      .ma-cols{ grid-template-columns:1fr 1fr; }
+      .ma-col{ border-left:0 !important; border-top:1px solid var(--fio); }
+      .ma-col:nth-child(-n+2){ border-top:0; }
+      .ma-col.gasto{ grid-column:1 / -1; }
+      .ma-col.gasto + .ma-col{ border-top:1px solid var(--fio); }
+      .ma-busca{ width:100%; }
+      .ma-per{ justify-content:flex-start; }
+      .ma-quando{ text-align:left; }
+      .ma-col .v{ font-size:22px; }
+      .ma-regua .cap{ flex-direction:column; gap:4px; }
+      .ma-t .nome{ left:auto; min-width:220px; box-shadow:none; }
+      .ma-niv .tb{ padding:9px 10px 8px; font-size:13px; }
+    }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', {page:'meta-ads'}) %>
+  <div class="main-content">
+    <main class="ma">
+      <header class="ma-top">
+        <div>
+          <h1>Meta Ads</h1>
+          <p>Quanto cada campanha, conjunto e criativo devolveu, segundo o Meta, o TrackCombo e o nosso banco.</p>
+        </div>
+        <div class="ma-per">
+          <div class="ma-seg" id="per" role="group" aria-label="Período">
+            <button data-p="hoje" aria-pressed="true">Hoje</button>
+            <button data-p="ontem" aria-pressed="false">Ontem</button>
+            <button data-p="7d" aria-pressed="false">7 dias</button>
+            <button data-p="mes" aria-pressed="false">Este mês</button>
+          </div>
+          <span class="ma-datas"><input type="date" id="dDe" aria-label="Data inicial"> até <input type="date" id="dAte" aria-label="Data final"></span>
+          <button class="ma-b" id="bDatas">Ver datas</button>
+          <button class="ma-b" id="bAtualizar">Atualizar</button>
+          <div class="ma-quando num" id="quando"></div>
+        </div>
+      </header>
+
+      <div id="aviso"></div>
+      <section class="ma-bal" id="balanco" aria-label="Balanço do período"><div class="ma-carr"></div><div class="ma-vazio">Buscando gasto no Meta e vendas no TrackCombo e no banco…</div></section>
+
+      <div class="ma-niv" id="niv" role="tablist" aria-label="Nível"></div>
+      <div class="ma-bar" id="fil">
+        <div class="ma-fil">
+          <input type="search" class="ma-busca" id="busca" placeholder="Buscar por nome ou ID" aria-label="Buscar">
+          <label class="ma-chk"><input type="checkbox" id="soLigados"> Só ativos</label>
+        </div>
+        <div class="ma-sel" id="selInfo"></div>
+      </div>
+      <div class="ma-grade"><div class="ma-rolo" id="tabela"></div></div>
+      <p class="ma-nota"><b>Meta</b>: compras que o pixel atribui ao anúncio. As três fontes são independentes. <b>TrackCombo</b>: vendas pagas que o TC registrou; o anúncio de cada uma é o que o próprio TC atribuiu, vindo do relatório "Vendas" do painel dele (a API do TC esconde a UTM). Venda sem esse relatório importado fica sem anúncio. <b>Banco</b>: nosso próprio rastreamento: pedidos pagos cuja UTM aponta para o anúncio, vinda da URL ou, se o cliente voltou depois, do nosso cookie de último clique (30 dias); upsell conta para o anúncio do pedido original. Desligar uma campanha ou conjunto desliga tudo o que está dentro dele no Meta.</p>
+    </main>
+  </div>
+  <script>
+  (function(){
+    var $ = function(id){ return document.getElementById(id); };
+    var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+    var brl = function(v){ return 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+    var brl0 = function(v){ return 'R$ ' + Math.round(Number(v)||0).toLocaleString('pt-BR'); };
+    var nf = function(v){ return (Number(v)||0).toLocaleString('pt-BR'); };
+    var dec = function(v,n){ return (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:n,maximumFractionDigits:n}); };
+    var ICO = {
+      campaign:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 11 8 5l3 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+      adset:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="9" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+      ad:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2.5 5.5h11" stroke="currentColor" stroke-width="1.5"/></svg>',
+      historico:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.8V8l2.2 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    };
+    var NIVEIS = ['campaign','adset','ad'];
+    var S = { periodo:'hoje', de:'', ate:'', aba:'campaign', dados:null, ord:['gasto',-1], sel:{ campaign:{}, adset:{}, ad:{} } };
+    try { var g = JSON.parse(localStorage.getItem('metaAdsUi4')||'{}'); if (g.periodo && g.periodo!=='custom') S.periodo = g.periodo; if (g.soLigados !== false) $('soLigados').checked = true; if (g.ord) S.ord = g.ord; if (g.aba) S.aba = g.aba; if (g.sel && g.sel.campaign) S.sel = Object.assign(S.sel, g.sel); } catch(_){ $('soLigados').checked = true; }
+    function guardar(){ try { localStorage.setItem('metaAdsUi4', JSON.stringify({ periodo:S.periodo, soLigados:$('soLigados').checked, ord:S.ord, aba:S.aba, sel:S.sel })); } catch(_){} }
+    function qtd(o){ return Object.keys(o).length; }
+    function aviso(t, cls){ $('aviso').innerHTML = t ? '<div class="ma-aviso '+(cls||'')+'" role="status">'+t+'</div>' : ''; }
+    function dataBr(d){ return d.split('-').reverse().join('/'); }
+    function colHoje(){ var r = S.dados && S.dados.range; return !!r && r.until===r.hoje && r.since!==r.hoje; }
+    // TC por anúncio só existe para pedidos com o cookie do TC guardado (tcUtm); antes disso a coluna fica "—".
+    function tcAtivo(){ var t = S.dados && S.dados.tc; return !!(t && t.configurado); }
+    function roasCls(r){ return r < 1 ? 'baixo' : (r >= 1.5 ? 'alto' : ''); }
+
+    async function api(caminho, corpo){
+      var o = { method: corpo ? 'POST' : 'GET', headers:{ Accept:'application/json' }, credentials:'same-origin' };
+      if (corpo){ o.headers['Content-Type']='application/json'; o.body = JSON.stringify(corpo); }
+      var r = await fetch(caminho, o); return r.json().catch(function(){ return { ok:false, error:'resposta inválida do servidor' }; });
+    }
+
+    async function carregar(novo, inicial){
+      var ant = $('balanco').querySelector('.ma-carr'); if (!ant) $('balanco').insertAdjacentHTML('afterbegin','<div class="ma-carr"></div>');
+      var qs = 'periodo='+encodeURIComponent(S.periodo)+(S.periodo==='custom' ? '&since='+S.de+'&until='+S.ate : '')+(novo ? '&fresh=1' : '');
+      var d = await api('/api/painel/meta-ads/dados?'+qs);
+      var c = $('balanco').querySelector('.ma-carr'); if (c) c.remove();
+      if (!d || !d.ok){ aviso('Não deu para carregar os dados: '+esc((d&&d.error)||'erro desconhecido')+'. Tente Atualizar.','err'); return; }
+      // Ao abrir a página logo depois da meia-noite, "Hoje" vem zerado: mostra ontem e avisa.
+      if (inicial && S.periodo==='hoje' && !(d.banco && d.banco.vendas)){
+        S.periodo = 'ontem'; marcarPeriodo(); S.trocouHoje = true; return carregar(false);
+      }
+      S.dados = d;
+      var al = (d.erros||[]).slice(); if (d.tc && !d.tc.configurado) al.push('TrackCombo sem chave no servidor (TRACKCOMBO_API_KEY)');
+      aviso(al.length ? 'Parte dos dados não veio: '+esc(al.join('; ')) : '', 'err');
+      if (!al.length && S.trocouHoje){ S.trocouHoje = false; aviso('Hoje ainda não teve venda, então estou mostrando ontem. Clique em Hoje para ver o dia de hoje.', 'ok'); }
+      var r = d.range, t = new Date(d.geradoEm);
+      $('quando').textContent = (r.since===r.until ? dataBr(r.since) : dataBr(r.since)+' a '+dataBr(r.until)) + ', atualizado às ' + t.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+      balanco(); desenhar();
+    }
+
+    // Escala da régua: 0 até 3 (ou mais, se alguma fonte passar).
+    function escala(vals){ var m = Math.max.apply(null, [3].concat(vals.filter(function(v){ return isFinite(v); }))); return Math.min(6, Math.ceil(m)); }
+    function pos(v, max){ return Math.max(0, Math.min(100, v/max*100)); }
+
+    function balanco(){
+      var d = S.dados, g=0, gh=0, mc=0, mv=0, lig=0;
+      d.ads.forEach(function(a){ g+=a.gasto; gh+=a.gastoHoje; mc+=a.metaCompras; mv+=a.metaValor; if (a.efetivo==='ACTIVE') lig++; });
+      var tcOk = d.tc && d.tc.configurado;
+      var bancoV = d.banco.receita - d.semAnuncio.receita, bancoN = d.banco.vendas - d.semAnuncio.vendas;
+      var fontes = [
+        { k:'site', nome:'Venda total do site', v:d.banco.receita, n:d.banco.vendas, det:'Tudo o que foi pago, de qualquer origem' },
+        { k:'meta', nome:'Meta', v:mv, n:mc, det:'O que o Gerenciador de Anúncios atribui' },
+        { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.meta.receita:null, n:tcOk?d.tc.meta.vendas:null, det: tcOk ? (nf(d.tc.anuncio.vendas)+' ligadas a um anúncio; '+nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' ainda sem o relatório do TC importado (ficam sem anúncio)' : '')) : 'Sem chave do TrackCombo no servidor' },
+        { k:'banco', nome:'Banco, pela UTM', v:bancoV, n:bancoN, det:nf(d.semAnuncio.vendas)+' vendas sem UTM de anúncio ('+brl0(d.semAnuncio.receita)+')'+(d.banco.recuperadas && d.banco.recuperadas.vendas ? '; '+nf(d.banco.recuperadas.vendas)+' recuperadas pelo nosso cookie' : '') }
+      ];
+      var cols = '<div class="ma-col gasto"><div class="rot">Gasto no Meta</div><div class="v num">'+brl(g)+'</div><div class="roas num">'+nf(lig)+' anúncios rodando'+(colHoje()?', '+brl0(gh)+' hoje':'')+'</div><div class="det">Duas contas; dólar a '+dec(d.fx,2)+', sem imposto</div></div>' +
+        fontes.map(function(f){
+          var r = (g>0 && f.v!=null) ? f.v/g : null;
+          return '<div class="ma-col"><div class="rot"><span class="sw '+f.k+'"></span>'+f.nome+'</div><div class="v num">'+(f.v!=null?brl(f.v):'—')+'</div>' +
+            '<div class="roas num"><b class="'+(r!=null?roasCls(r):'')+'">'+(r!=null?dec(r,2):'—')+'</b>ROAS · '+(f.n!=null?nf(f.n)+' vendas':'')+'</div><div class="det">'+esc(f.det)+'</div></div>';
+        }).join('');
+      var rs = fontes.map(function(f){ return (g>0 && f.v!=null) ? f.v/g : null; });
+      var max = escala(rs);
+      var ticks = ''; for (var i=0;i<=max;i++){ if (i!==1) ticks += '<span class="tk num" style="left:'+pos(i,max)+'%">'+i+'</span>'; }
+      var mks = fontes.map(function(f,i){ return rs[i]==null ? '' : '<span class="mk '+f.k+'" style="left:'+pos(rs[i],max)+'%" title="'+esc(f.nome)+': ROAS '+dec(rs[i],2)+'"></span>'; }).join('');
+      // Rótulo de cada marcador acima da linha; se dois ficam a menos de 9% um do outro, o seguinte sobe uma linha.
+      var CURTO = { site:'Site', meta:'Meta', tc:'TrackCombo', banco:'Banco' };
+      var ordem = fontes.map(function(f,i){ return { f:f, r:rs[i] }; }).filter(function(x){ return x.r!=null; }).sort(function(a,b){ return a.r-b.r; });
+      // Distância mínima entre rótulos na mesma linha: ~110px na largura real da régua.
+      var larg = Math.max(200, ($('balanco').clientWidth || 1000) - 56), minPct = 110 / larg * 100;
+      var ult = [-999,-999,-999,-999], linMax = 0;
+      var rots = ordem.map(function(x){ var p = pos(x.r,max), lin = 0; while (lin < 3 && p - ult[lin] < minPct) lin++; ult[lin] = p; linMax = Math.max(linMax, lin); return '<span class="lb num" style="left:'+p+'%;top:'+(-3 - lin*19)+'px">'+CURTO[x.f.k]+' '+dec(x.r,2)+'</span>'; }).join('');
+      var falam = fontes.slice(1).map(function(f,i){ return rs[i+1]; }).filter(function(x){ return x!=null; });
+      var gap = falam.length > 1 ? (Math.max.apply(null,falam) - Math.min.apply(null,falam)) : 0;
+      var cap = '<span>Onde cada fonte põe o retorno. À esquerda da linha preta, a verba não se paga.</span>' + (falam.length>1 ? '<span>Diferença entre a fonte mais otimista e a mais pessimista: <b class="num">'+dec(gap,2)+'</b></span>' : '');
+      $('balanco').innerHTML = '<div class="ma-cols">'+cols+'</div><div class="ma-regua"><div class="cap">'+cap+'</div><div class="rg" style="margin-top:'+(linMax*19+4)+'px"><span class="eixo"></span><span class="perda" style="width:'+pos(1,max)+'%"></span><span class="emp" style="left:'+pos(1,max)+'%"><span>1,0 empata</span></span>'+ticks+rots+mks+'</div></div>';
+    }
+
+    var CAMPOS = ['gasto','gastoHoje','cliques','impressoes','metaCompras','metaValor','tcVendas','tcReceita','vendas','receita'];
+    function no(o){ var x = Object.assign({ n:0, js:{} }, o); CAMPOS.forEach(function(k){ x[k]=0; }); return x; }
+    function soma(x, a){ CAMPOS.forEach(function(k){ x[k] += Number(a[k])||0; }); }
+    function campDe(a){ return a.campanha || { id:'sem', nome:'Sem campanha', status:'', efetivo:'' }; }
+    function conjDe(a){ return a.conjunto || { id:'sem-'+campDe(a).id, nome:'Sem conjunto', status:'', efetivo:'' }; }
+    // Linhas de um nível, já respeitando o que está marcado nos níveis de cima (igual ao Gerenciador).
+    function linhasDe(nivel){
+      var sc = S.sel.campaign, sj = S.sel.adset, temC = qtd(sc) > 0, temJ = qtd(sj) > 0, mapa = {}, lista = [];
+      S.dados.ads.forEach(function(a){
+        var c = campDe(a), s = conjDe(a);
+        if (nivel !== 'campaign' && temC && !sc[c.id]) return;
+        if (nivel === 'ad' && temJ && !sj[s.id]) return;
+        if (nivel === 'ad'){ lista.push(Object.assign({ nivel:'ad', camp:c.nome, conj:s.nome }, a)); return; }
+        var o = nivel === 'campaign' ? c : s, x = mapa[o.id];
+        if (!x){ x = mapa[o.id] = no({ nivel:nivel, id:o.id, nome:o.nome, status:o.status, efetivo:o.efetivo, orc:o.orcamentoDia, conta:a.conta, camp:c.nome }); lista.push(x); }
+        soma(x, a); x.n++; x.js[s.id] = 1;
+      });
+      return lista;
+    }
+    function chave(o,k){
+      if (k==='nome') return String(o.nome||'').toLowerCase();
+      var g = o.gasto;
+      if (k==='rMeta') return g>0 ? o.metaValor/g : -1;
+      if (k==='rTc') return g>0 ? o.tcReceita/g : -1;
+      if (k==='rBanco') return g>0 ? o.receita/g : -1;
+      if (k==='cpa') return o.vendas>0 ? g/o.vendas : 1e12;
+      if (k==='cpaMeta') return o.metaCompras>0 ? g/o.metaCompras : 1e12;
+      if (k==='cpaTc') return o.tcVendas>0 ? g/o.tcVendas : 1e12;
+      return Number(o[k])||0;
+    }
+    function ordenar(l){ var k=S.ord[0], d=S.ord[1]; return l.sort(function(a,b){ var x=chave(a,k), y=chave(b,k); return typeof x==='string' ? d*x.localeCompare(y) : d*(x-y); }); }
+    function filtrar(l){
+      var q = ($('busca').value||'').trim().toLowerCase(), so = $('soLigados').checked;
+      return l.filter(function(n){
+        if (so && n.efetivo !== 'ACTIVE') return false;
+        return !q || String(n.nome||'').toLowerCase().indexOf(q) >= 0 || String(n.id).indexOf(q) >= 0;
+      });
+    }
+
+    var EST = { ACTIVE:['Ativo','on'], PAUSED:['Desativado',''], ADSET_PAUSED:['Conjunto desligado',''], CAMPAIGN_PAUSED:['Campanha desligada',''], DISAPPROVED:['Reprovado','err'], WITH_ISSUES:['Com problema','err'], PENDING_REVIEW:['Em análise','warn'], IN_PROCESS:['Processando','warn'], PENDING_BILLING_INFO:['Pagamento pendente','err'] };
+    function estado(ef){ var x = EST[ef] || [String(ef||'—').toLowerCase().replace(/_/g,' '),'warn']; return '<span class="est '+x[1]+'"><i></i>'+esc(x[0])+'</span>'; }
+    function fonte(v, n, g){
+      if (!(g>0)) return '<td class="fonte">'+(n>0?'<b>—</b><small class="num">'+nf(n)+' · '+brl0(v)+'</small>':'<small>—</small>')+'</td>';
+      var r = v/g; return '<td class="fonte num"><b class="'+roasCls(r)+'">'+dec(r,2)+'</b><small>'+nf(n)+' · '+brl0(v)+'</small></td>';
+    }
+    function mini(o){
+      if (!(o.gasto>0)) return '<td><span class="mini vazio">sem gasto</span></td>';
+      var rs = { meta:o.metaValor/o.gasto, banco:o.receita/o.gasto }, max = 3;
+      if (tcAtivo()) rs.tc = o.tcReceita/o.gasto;
+      var t = 'Meta '+dec(rs.meta,2)+(rs.tc!=null?' · TrackCombo '+dec(rs.tc,2):'')+' · Banco '+dec(rs.banco,2);
+      return '<td><span class="mini" title="'+t+'" aria-label="ROAS '+t+'"><span class="eixo"></span><span class="perda" style="width:'+pos(1,max)+'%"></span><span class="emp" style="left:'+pos(1,max)+'%"></span>' +
+        Object.keys(rs).reverse().map(function(k){ return '<span class="mk '+k+'" style="left:'+pos(rs[k],max)+'%"></span>'; }).join('') + '</span></td>';
+    }
+    function chave2(n){ return n.id==='sem' || String(n.id).indexOf('sem-')===0 || !n.status; }
+    function interruptor(n){
+      if (chave2(n)) return '';
+      var nomeNv = { campaign:'a campanha', adset:'o conjunto', ad:'o anúncio' }[n.nivel];
+      var lig = n.status==='ACTIVE';
+      return '<button class="sw-btn" role="switch" aria-checked="'+lig+'" data-id="'+n.id+'" data-nivel="'+n.nivel+'" data-oque="'+esc(nomeNv+' "'+n.nome+'"')+'" aria-label="'+(lig?'Desligar ':'Ligar ')+esc(nomeNv+' '+n.nome)+'" title="'+(lig?'Ligado no Meta. Clique para desligar':'Desligado no Meta. Clique para ligar')+'"></button>';
+    }
+    var NOME = { campaign:['campanha','campanhas'], adset:['conjunto de anúncios','conjuntos de anúncios'], ad:['anúncio','anúncios'] };
+    function plural(n, nv){ return nf(n)+' '+NOME[nv][n===1?0:1]; }
+    function celulas(n){
+      var g = n.gasto, h = colHoje();
+      return '<td class="num"><b style="font-weight:600">'+brl(g)+'</b>'+(h?'<small style="display:block;color:var(--lapis);font-size:12px;font-weight:500">'+(n.gastoHoje>0?brl0(n.gastoHoje)+' hoje':'nada hoje')+'</small>':'')+'</td>' +
+        fonte(n.metaValor, n.metaCompras, g) + (tcAtivo() ? fonte(n.tcReceita, n.tcVendas, g) : '<td class="fonte"><small title="TrackCombo sem chave no servidor">—</small></td>') + fonte(n.receita, n.vendas, g) +
+        mini(n) +
+        '<td class="num">'+(n.metaCompras>0?brl(g/n.metaCompras):'—')+'</td>' +
+        '<td class="num">'+(tcAtivo() && n.tcVendas>0?brl(g/n.tcVendas):'—')+'</td>' +
+        '<td class="num">'+(n.vendas>0?brl(g/n.vendas):'—')+'</td>';
+    }
+    function linha(n){
+      var nv = n.nivel, marcado = !!S.sel[nv][n.id];
+      var foto = nv==='ad' ? (n.thumb ? '<img src="'+esc(n.thumb)+'" alt="" loading="lazy">' : '<span class="ph"></span>') : '';
+      var njs = n.js ? qtd(n.js) : 0;
+      var sub = nv==='campaign' ? [(n.orc!=null?brl0(n.orc)+'/dia':''), 'conta '+n.conta, (njs>1?njs+' conjuntos':''), (n.n>1?n.n+' anúncios':'')].filter(Boolean).join(' · ')
+        : nv==='adset' ? [esc(n.camp), (n.orc!=null?brl0(n.orc)+'/dia':''), (n.n>1?n.n+' anúncios':'')].filter(Boolean).join(' · ')
+        : (esc(n.conj)+' · ID '+n.id);
+      // Nome de campanha e conjunto abre o nível de baixo só com ele, como no Gerenciador.
+      var nome = nv==='ad' ? '<b>'+esc(n.nome)+'</b>' : '<button class="lk" data-abre="'+esc(n.id)+'" title="Ver '+(nv==='campaign'?'os conjuntos':'os anúncios')+' de '+esc(n.nome)+'">'+esc(n.nome)+'</button>';
+      return '<tr class="'+(n.efetivo==='ACTIVE'?'':'desl')+(marcado?' sel':'')+'">' +
+        '<td class="ck"><input type="checkbox" data-sel="'+esc(n.id)+'" '+(marcado?'checked':'')+' aria-label="Selecionar '+esc(n.nome)+'"></td>' +
+        '<td class="tg">'+interruptor(n)+'</td>' +
+        '<td class="l nome"><div class="nm">'+foto+'<div class="tx">'+nome+'<small>'+sub+'</small></div></div></td>' +
+        '<td class="l">'+estado(n.efetivo)+'</td>' + celulas(n) + '</tr>';
+    }
+    function total(l, rotulo, det){
+      var t = no({}); l.forEach(function(n){ soma(t, n); });
+      return '<tr><td class="ck"></td><td class="tg"></td><td class="l nome">'+rotulo+(det?'<small>'+det+'</small>':'')+'</td><td></td>'+celulas(t)+'</tr>';
+    }
+    function th(k, txt, sw, cls){ var on = S.ord[0]===k; return '<th data-k="'+k+'" class="'+(cls||'')+(on?' on'+(S.ord[1]>0?' asc':''):'')+'" aria-sort="'+(on?(S.ord[1]>0?'ascending':'descending'):'none')+'">'+(sw?'<span class="sw '+sw+'"></span>':'')+txt+'</th>'; }
+
+    function abas(){
+      var sc = qtd(S.sel.campaign), sj = qtd(S.sel.adset);
+      var x = '<i data-limpa="campaign" role="button" aria-label="Limpar seleção de campanhas">×</i>', y = '<i data-limpa="adset" role="button" aria-label="Limpar seleção de conjuntos">×</i>';
+      var rot = {
+        campaign: 'Campanhas' + (sc ? ' <span class="chip">'+sc+' selecionada'+(sc>1?'s':'')+x+'</span>' : ''),
+        adset: 'Conjuntos de anúncios' + (sc ? ' para '+plural(sc,'campaign') : '') + (sj ? ' <span class="chip">'+sj+' selecionado'+(sj>1?'s':'')+y+'</span>' : ''),
+        ad: 'Anúncios' + (sj ? ' para '+plural(sj,'adset') : sc ? ' para '+plural(sc,'campaign') : '')
+      };
+      $('niv').innerHTML = NIVEIS.map(function(k){ return '<button class="tb" role="tab" data-t="'+k+'" aria-selected="'+(S.aba===k)+'">'+ICO[k]+'<span>'+rot[k]+'</span></button>'; }).join('') +
+        '<button class="tb hist" role="tab" data-t="historico" aria-selected="'+(S.aba==='historico')+'">'+ICO.historico+'<span>Histórico de alterações</span></button>';
+    }
+
+    function desenhar(){
+      guardar(); abas();
+      $('fil').style.display = S.aba==='historico' ? 'none' : '';
+      if (S.aba==='historico') return historico();
+      if (!S.dados) return;
+      var nv = S.aba, todas = linhasDe(nv), l = ordenar(filtrar(todas));
+      var ativas = todas.filter(function(n){ return n.efetivo==='ACTIVE'; });
+      var marc = qtd(S.sel[nv]), f = nv==='campaign';
+      var adj = function(n, rad){ return rad + (f ? 'a' : 'o') + (n===1 ? '' : 's'); };
+      $('selInfo').innerHTML = '<b class="num">'+plural(ativas.length, nv)+' '+adj(ativas.length,'ativ')+'</b> de '+nf(todas.length)+' no período' + (marc ? ' · '+nf(marc)+' '+adj(marc,'marcad') : '');
+      if (!l.length){ $('tabela').innerHTML = '<div class="ma-vazio">Nada com esse filtro. Limpe a busca, desmarque “Só ativos” ou tire a seleção nas abas de cima.</div>'; return; }
+      var todosMarc = l.every(function(n){ return S.sel[nv][n.id]; });
+      var so = $('soLigados').checked, atL = l.filter(function(n){ return n.efetivo==='ACTIVE'; });
+      var pe = total(l, 'Resultados de '+plural(l.length, nv), so ? 'só '+(f?'as':'os')+' '+adj(2,'ativ') : nf(atL.length)+' '+adj(atL.length,'ativ')+' na lista');
+      if (!so && atL.length && atL.length < l.length) pe += total(atL, 'Só '+(f?'as':'os')+' '+adj(2,'ativ')+' ('+nf(atL.length)+')', '');
+      $('tabela').innerHTML = '<table class="ma-t"><thead><tr>' +
+        '<th class="ck"><input type="checkbox" id="selTodos" '+(todosMarc?'checked':'')+' aria-label="Selecionar todos"></th>' +
+        '<th class="tg" title="Ligar ou desligar no Meta">Ativo</th>' +
+        th('nome', NOME[nv][0].charAt(0).toUpperCase()+NOME[nv][0].slice(1), '', 'l nome') + '<th class="l">Veiculação</th>' +
+        th('gasto','Gasto')+th('rMeta','Meta','meta')+th('rTc','TrackCombo','tc')+th('rBanco','Banco','banco') +
+        '<th>ROAS de 0 a 3</th>'+th('cpaMeta','CPA Meta')+th('cpaTc','CPA TrackCombo')+th('cpa','CPA banco')+'</tr></thead><tbody>' +
+        l.map(linha).join('') + '</tbody><tfoot>' + pe + '</tfoot></table>';
+    }
+
+    async function historico(){
+      $('tabela').innerHTML = '<div class="ma-carr"></div>';
+      var d = await api('/api/painel/meta-ads/log');
+      if (!d || !d.ok){ $('tabela').innerHTML = '<div class="ma-vazio">Não deu para carregar o histórico. Tente de novo.</div>'; return; }
+      if (!d.itens.length){ $('tabela').innerHTML = '<div class="ma-vazio">Nada foi ligado ou desligado por aqui ainda.</div>'; return; }
+      var NV = { ad:'Criativo', adset:'Conjunto', campaign:'Campanha' }, ST = { ACTIVE:'ligado', PAUSED:'desligado' };
+      $('tabela').innerHTML = '<table class="ma-t"><thead><tr><th class="l">Quando</th><th class="l">Quem</th><th class="l">O quê</th><th class="l">Mudança</th><th class="l">Resultado</th></tr></thead><tbody>' + d.itens.map(function(x){
+        return '<tr><td class="l num">'+new Date(x.em).toLocaleString('pt-BR')+'</td><td class="l">'+esc(x.usuario)+'</td><td class="l"><b>'+esc(x.nome)+'</b><small style="display:block;color:var(--lapis)">'+(NV[x.nivel]||x.nivel)+' · ID '+esc(x.id)+'</small></td><td class="l">'+(ST[x.de]||esc(x.de))+' → '+(ST[x.para]||esc(x.para))+'</td><td class="l">'+(x.ok?'<span class="est on"><i></i>Feito</span>':'<span class="est err"><i></i>'+esc(x.erro||'Falhou')+'</span>')+'</td></tr>';
+      }).join('') + '</tbody></table>';
+    }
+
+    async function alternar(b){
+      var lig = b.getAttribute('aria-checked')==='true', para = lig ? 'PAUSED' : 'ACTIVE', oque = b.getAttribute('data-oque');
+      if (!confirm((lig?'Desligar ':'Ligar ')+oque+' no Meta?')) return;
+      b.disabled = true;
+      var r = await api('/api/painel/meta-ads/status', { id:b.getAttribute('data-id'), nivel:b.getAttribute('data-nivel'), status:para });
+      if (!r || !r.ok){ aviso('O Meta não aceitou '+(lig?'desligar':'ligar')+' '+esc(oque)+': '+esc((r&&r.error)||'erro desconhecido'),'err'); b.disabled = false; return; }
+      aviso((lig?'Desligado: ':'Ligado: ')+esc(oque)+'.','ok');
+      await carregar(true);
+    }
+
+    function marcarPeriodo(){ document.querySelectorAll('#per button').forEach(function(x){ x.setAttribute('aria-pressed', String(x.getAttribute('data-p')===S.periodo)); }); }
+    $('per').addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; S.periodo = b.getAttribute('data-p'); marcarPeriodo(); carregar(false); });
+    $('bDatas').addEventListener('click', function(){ var de=$('dDe').value, ate=$('dAte').value; if (!de || !ate || de>ate){ aviso('Escolha a data inicial e a final, com a inicial antes da final.','err'); return; } S.periodo='custom'; S.de=de; S.ate=ate; marcarPeriodo(); carregar(false); });
+    $('bAtualizar').addEventListener('click', function(){ carregar(true); });
+    $('niv').addEventListener('click', function(e){
+      var x = e.target.closest('[data-limpa]');
+      if (x){ e.stopPropagation(); var nv = x.getAttribute('data-limpa'); S.sel[nv] = {}; if (nv==='campaign') S.sel.adset = {}; desenhar(); return; }
+      var b = e.target.closest('button'); if (!b) return; S.aba = b.getAttribute('data-t'); desenhar();
+    });
+    $('busca').addEventListener('input', desenhar);
+    $('soLigados').addEventListener('change', desenhar);
+    $('tabela').addEventListener('change', function(e){
+      var nv = S.aba; if (!S.sel[nv]) return;
+      if (e.target.id === 'selTodos'){
+        var l = filtrar(linhasDe(nv)); l.forEach(function(n){ if (e.target.checked) S.sel[nv][n.id] = 1; else delete S.sel[nv][n.id]; });
+      } else if (e.target.hasAttribute('data-sel')){
+        var id = e.target.getAttribute('data-sel'); if (e.target.checked) S.sel[nv][id] = 1; else delete S.sel[nv][id];
+      } else return;
+      if (nv==='campaign') S.sel.adset = {}; // conjuntos marcados de outra campanha não fazem mais sentido
+      desenhar();
+    });
+    $('tabela').addEventListener('click', function(e){
+      var a = e.target.closest('[data-abre]');
+      if (a){ var id = a.getAttribute('data-abre'), o = {}; o[id] = 1;
+        if (S.aba==='campaign'){ S.sel.campaign = o; S.sel.adset = {}; S.aba = 'adset'; } else { S.sel.adset = o; S.aba = 'ad'; }
+        S.sel.ad = {}; $('busca').value = ''; desenhar(); return; }
+      var h = e.target.closest('th[data-k]'); if (h){ var k = h.getAttribute('data-k'); S.ord = [k, S.ord[0]===k ? -S.ord[1] : (k==='nome'?1:-1)]; desenhar(); return; }
+      var s = e.target.closest('.sw-btn'); if (s) alternar(s);
+    });
+    marcarPeriodo();
+    abas();
+    if (S.aba==='historico') desenhar();
+    carregar(false, true);
+  })();
+  </script>
+</body>
+</html>

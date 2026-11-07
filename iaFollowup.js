@@ -201,6 +201,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     const ultimaIn = [...lista].reverse().find((m) => m.direction === 'in');
     const pendencias = [];
     const contato = contatos.get(fim8(tel)) || {};
+    if (contato.bloqueado) continue;   // contato bloqueado no CRM: fora do follow-up
     // Perfil e pagamento desta conversa (usados na reclamação — só quem pagou — e para mostrar o @).
     const pedidosConversa = pedidosPorFim8.get(fim8(tel)) || [];
     const temPedidoPago = pedidosConversa.some((o) => pago(o));

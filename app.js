@@ -344,6 +344,56 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: process.env.EXPRESS_URLENCODED_LIMIT || '5mb' }));
 
+// ── Atribuição própria (independente de Meta e TrackCombo) ──
+// Quando o visitante chega com UTM/fbclid, o SERVIDOR grava cookies nossos:
+//   op_ut  = último clique pago (30 dias, sobrescreve a cada nova chegada com UTM)
+//   op_ut1 = primeiro clique (180 dias, nunca sobrescreve)
+// Cookie httpOnly gravado pelo servidor não sofre o corte de 7 dias do Safari para cookie de JS.
+// No checkout, se o pedido vier sem UTM (cliente voltou depois, outra aba), usamos op_ut.
+const __OP_UT_CAMPOS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'];
+app.use((req, res, next) => {
+  try {
+    if (req.method === 'GET' && req.query && !/^\/(api|css|js|img|images|fonts|painel)\b/.test(req.path)) {
+      const q = req.query, u = {};
+      for (const k of __OP_UT_CAMPOS) { const v = q[k]; if (typeof v === 'string' && v.trim()) u[k.replace(/^utm_/, '')] = v.trim().slice(0, 200); }
+      if (u.source || u.content || u.fbclid || u.gclid) {
+        u.em = Date.now(); u.pag = String(req.path || '').slice(0, 80);
+        const val = encodeURIComponent(JSON.stringify(u));
+        const seguro = String(req.headers['x-forwarded-proto'] || req.protocol || '').includes('https');
+        const base = { httpOnly: true, sameSite: 'lax', secure: seguro, path: '/' };
+        res.cookie('op_ut', val, { ...base, maxAge: 30 * 864e5, encode: String });
+        if (!/(?:^|;\s*)op_ut1=/.test(String(req.headers.cookie || ''))) res.cookie('op_ut1', val, { ...base, maxAge: 180 * 864e5, encode: String });
+      }
+    }
+  } catch (_) {}
+  next();
+});
+function __lerOpUt(req, nome) {
+  try {
+    const m = String((req && req.headers && req.headers.cookie) || '').match(new RegExp('(?:^|;\\s*)' + nome + '=([^;]+)'));
+    return m ? JSON.parse(decodeURIComponent(m[1])) : null;
+  } catch (_) { return null; }
+}
+// Completa o pedido com a nossa atribuição. utms da URL/sessão têm prioridade; o cookie só preenche o que faltou.
+function __comUtmOppus(record, req) {
+  try {
+    if (!record) return record;
+    const u = (record.utms && typeof record.utms === 'object') ? record.utms : {};
+    const temUrl = !!(String(u.source || '').trim() || String(u.content || '').trim() || String(u.fbclid || '').trim());
+    const ck = __lerOpUt(req, 'op_ut');
+    if (!temUrl && ck) {
+      record.utms = { ...u, source: ck.source || '', medium: ck.medium || '', campaign: ck.campaign || '', term: ck.term || '', content: ck.content || '', fbclid: ck.fbclid || '', gclid: ck.gclid || '' };
+      record.utmsFonte = 'cookie_oppus';
+      record.utmsCookieEm = ck.em ? new Date(ck.em) : null;
+    } else {
+      record.utmsFonte = temUrl ? 'url' : 'nenhuma';
+    }
+    const pt = __lerOpUt(req, 'op_ut1');
+    if (pt) record.utmPrimeiroToque = pt;
+  } catch (_) {}
+  return record;
+}
+
 // ── IA de Vendas do WhatsApp (número/webhook SEPARADO, isolado do WhatsApp atual) ──
 // Registrada cedo (antes de qualquer catch-all) pra o webhook responder. Só ativa de
 // fato com as credenciais WHATSAPP_IA_* no .env; sem elas, fica inerte.
@@ -4139,6 +4189,402 @@ app.get('/painel/gestao-parcial-topfama/export', requireAdmin, async (req, res) 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  GESTÃO PARCIAL — SEGUIDORES (slot fama24h, qualquer fornecedor carimbado)
+// Fornecedor devolveu Partial (entregou só parte) ou Canceled → reenvia o que FALTOU
+// no mesmo fornecedor/serviço (ou outro serviço escolhido à mão). O pedido antigo vai
+// para fama24h.parcialHistorico (com o charge final, que entra no custo) e o orderId
+// do slot passa a ser o novo — assim refil, painel e poller seguem o pedido vivo.
+// Guardas: perfil conferido NA HORA (público e existente) antes de todo add; trava
+// atômica por orderId; add NUNCA é repetido sozinho (timeout = "incerto" → para e
+// pede conferência manual); cancelado 2x seguidas para; máx N reenvios por pedido.
+// Automático desligado por padrão (liga no painel: settings._id=gestao_parcial_seguidores).
+// ═══════════════════════════════════════════════════════════════════════════
+const SEG_PARCIAL_CFG_ID = 'gestao_parcial_seguidores';
+const SEG_PARCIAL_DEFAULTS = { autoEnabled: false, minRemains: 50, maxChain: 3, windowDays: 7 };
+async function segParcialGetCfg() {
+  let doc = null;
+  try { doc = await (await getCollection('settings')).findOne({ _id: SEG_PARCIAL_CFG_ID }); } catch (_) {}
+  const d = doc || {};
+  const n = (v, def, min, max) => { const x = Math.floor(Number(v)); return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : def; };
+  return {
+    autoEnabled: d.autoEnabled === true,
+    minRemains: n(d.minRemains, SEG_PARCIAL_DEFAULTS.minRemains, 1, 100000),
+    maxChain: n(d.maxChain, SEG_PARCIAL_DEFAULTS.maxChain, 1, 10),
+    windowDays: n(d.windowDays, SEG_PARCIAL_DEFAULTS.windowDays, 1, 30),
+    lastSweep: d.lastSweep || null,
+  };
+}
+// Só pedidos de SEGUIDORES: o link enviado ao fornecedor é de perfil (não de post/reel).
+function segParcialEhSeguidores(sub) {
+  if (!sub || !sub.orderId) return false;
+  const link = String((sub.requestPayload && sub.requestPayload.link) || '');
+  if (!link) return false;
+  return !/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv|stories)\//i.test(link);
+}
+function segParcialUsuario(o) {
+  const link = String((o && o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.link) || '');
+  const m = link.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+  return String((m && m[1]) || (o && (o.instauser || o.instagramUsername)) || '').replace(/^@+/, '').trim().toLowerCase();
+}
+// Fornecedor carimbado no slot. Sem carimbo = legado → fora da automação.
+function segParcialProvider(sub) {
+  const p = normalizeSmmProvider(sub && sub.provider);
+  return (p && SMM_PROVIDERS[p] && p !== 'fama24h') ? p : '';
+}
+async function segParcialPost(provider, params, timeout) {
+  const key = smmProviderKey(provider);
+  if (!key) return { erro: 'missing_key' };
+  try {
+    const resp = await axios.post(smmProviderUrl(provider), new URLSearchParams(Object.assign({ key }, params)).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: timeout || 30000, validateStatus: () => true });
+    if (resp.status >= 500) return { erro: 'http_' + resp.status, incerto: true };
+    if (!resp.data || typeof resp.data !== 'object') return { erro: 'resposta_invalida', incerto: true };
+    return { data: resp.data };
+  } catch (e) { return { erro: (e && e.message) || 'network_error', incerto: true }; }
+}
+// Status de vários orderIds de UM fornecedor: tenta `orders=` em lote; se o painel não
+// devolver indexado por id, cai pra consulta 1 a 1. { [orderId]: payload }.
+async function segParcialStatusMany(provider, ids) {
+  const out = {};
+  const uniq = Array.from(new Set(ids.map(String)));
+  for (let i = 0; i < uniq.length; i += 100) {
+    const chunk = uniq.slice(i, i + 100);
+    const r = await segParcialPost(provider, { action: 'status', orders: chunk.join(',') }, 60000);
+    const d = r.data;
+    const indexado = d && !Array.isArray(d) && chunk.some((id) => d[id] && typeof d[id] === 'object');
+    if (indexado) { for (const id of chunk) if (d[id] && typeof d[id] === 'object' && (d[id].status || d[id].Status)) out[id] = d[id]; continue; }
+    for (const id of chunk) {
+      const s = await segParcialPost(provider, { action: 'status', order: id }, 20000);
+      if (s.data && (s.data.status || s.data.Status)) out[id] = s.data;
+      await new Promise((ok) => setTimeout(ok, 150));
+    }
+  }
+  return out;
+}
+// Catálogo do fornecedor (cache 10 min) — confere se o serviço ainda existe e o min/max.
+const __segParcialCatalogo = new Map();
+async function segParcialServico(provider, service) {
+  const hit = __segParcialCatalogo.get(provider);
+  let lista = (hit && Date.now() - hit.at < 10 * 60 * 1000) ? hit.lista : null;
+  if (!lista) {
+    const r = await segParcialPost(provider, { action: 'services' }, 60000);
+    if (!Array.isArray(r.data)) return { erro: 'catalogo_indisponivel' };
+    lista = r.data; __segParcialCatalogo.set(provider, { at: Date.now(), lista });
+  }
+  const s = lista.find((x) => x && String(x.service) === String(service));
+  return s ? { servico: s } : { ausente: true };
+}
+// Perfil conferido NA HORA: RocketAPI → scraper próprio (fresh). ok | not_found | error.
+async function segParcialPerfil(username) {
+  const u = String(username || '').replace(/^@+/, '').trim().toLowerCase();
+  if (!u) return { status: 'error' };
+  const tk = process.env.ROCKETAPI_TOKEN;
+  if (tk) {
+    for (let t = 0; t < 2; t++) {
+      try {
+        const resp = await axios.post('https://v1.rocketapi.io/instagram/user/get_web_profile_info', { username: u }, { headers: { Authorization: `Token ${tk}`, 'Content-Type': 'application/json' }, timeout: 30000, validateStatus: () => true });
+        const rr = resp && resp.data && resp.data.response;
+        const user = rr && rr.body && rr.body.data && rr.body.data.user;
+        if (user) return { status: 'ok', isPrivate: user.is_private === true, followers: Number(user.edge_followed_by && user.edge_followed_by.count) };
+        if (rr && Number(rr.status_code) === 404) return { status: 'not_found' };
+      } catch (_) {}
+    }
+  }
+  try {
+    const r = await __igScraper.getInstagramProfile(u, { fresh: true });
+    if (r && r.ok && r.profile && typeof r.profile.isPrivate === 'boolean') return { status: 'ok', isPrivate: r.profile.isPrivate, followers: r.profile.followers };
+    if (r && r.status === 'not_found') return { status: 'not_found' };
+  } catch (_) {}
+  return { status: 'error' };
+}
+function segParcialPedidoMorto(o) {
+  return FQ_DEAD_ORDER_STATUSES.includes(String((o && o.status) || '').toLowerCase());
+}
+
+// Reenvia o FALTANTE de UM pedido. opts: { manual, service, cfg }.
+// Retorno: { ok, orderId, quantidade } | { pulado, motivo } | { erro, motivo }.
+async function segParcialReenviar(col, _id, opts = {}) {
+  const cfg = opts.cfg || await segParcialGetCfg();
+  const manual = !!opts.manual;
+  const o = await col.findOne({ _id });
+  if (!o) return { erro: true, motivo: 'pedido_nao_encontrado' };
+  const f = o.fama24h || {};
+  const oidAtual = String(f.orderId || '').trim();
+  const nowIso = new Date().toISOString();
+  const encerra = async (motivo, extra) => {
+    if (!manual) await col.updateOne({ _id, 'fama24h.orderId': f.orderId }, { $set: Object.assign({ 'fama24h.parcialChainDone': true, 'fama24h.parcialStopReason': motivo, 'fama24h.parcialStopAt': nowIso }, extra || {}) });
+    return { pulado: true, motivo };
+  };
+  const anota = async (motivo) => { await col.updateOne({ _id }, { $set: { 'fama24h.parcialUltimoErro': motivo, 'fama24h.parcialUltimoErroAt': nowIso } }); return { erro: true, motivo }; };
+  if (!/^[0-9]+$/.test(oidAtual)) return { erro: true, motivo: 'sem_orderid' };
+  if (!segParcialEhSeguidores(f)) return { erro: true, motivo: 'nao_e_seguidores' };
+  if (segParcialPedidoMorto(o)) return { erro: true, motivo: 'pedido_' + o.status };
+  const provider = segParcialProvider(f);
+  if (!provider) return { erro: true, motivo: 'fornecedor_sem_carimbo' };
+  const hist = Array.isArray(f.parcialHistorico) ? f.parcialHistorico.slice() : [];
+  if (!manual && hist.length >= cfg.maxChain) return encerra('max_reenvios');
+
+  // Status FRESCO do pedido atual (nunca age em cima de status velho).
+  const st = await segParcialPost(provider, { action: 'status', order: oidAtual }, 20000);
+  const sp = st.data || null;
+  if (!sp || !(sp.status || sp.Status)) return anota('status_falhou: ' + String(st.erro || (sp && sp.error) || 'sem status').slice(0, 120));
+  const remains = Math.max(0, Math.floor(Number(sp.remains ?? sp.Remains) || 0));
+  const cat = topfamaStatusCat(sp.status || sp.Status, remains);
+  await col.updateOne({ _id }, { $set: { 'fama24h.statusPayload': sp, 'fama24h.status': normalizeProviderStatusText(sp) || f.status || 'unknown', 'fama24h.lastStatusAt': nowIso, 'fama24h.parcialRemains': remains, 'fama24h.parcialCheckedAt': nowIso } });
+  if (cat !== 'partial' && cat !== 'canceled') return { pulado: true, motivo: 'status_' + String(sp.status || sp.Status) };
+  const qtdPedido = Number((f.requestPayload && f.requestPayload.quantity) || 0) || 0;
+  const qtd = cat === 'canceled' ? (remains > 0 ? remains : qtdPedido) : remains;
+  const ultimo = hist.length ? hist[hist.length - 1] : null;
+  if (!manual && cat === 'canceled' && ultimo && ultimo.motivo === 'cancelado') return encerra('cancelado_2x');
+  if (!(qtd > 0)) return encerra('sem_quantidade');
+  if (!manual && qtd < cfg.minRemains) return encerra('falta_abaixo_do_minimo');
+
+  const service = String(opts.service || (f.requestPayload && f.requestPayload.service) || '').trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(service)) return anota('servico_invalido');
+  const cat2 = await segParcialServico(provider, service);
+  if (cat2.erro) return anota(cat2.erro);
+  if (cat2.ausente) return manual ? { erro: true, motivo: 'servico_' + service + '_nao_existe_no_' + provider } : encerra('servico_fora_do_catalogo');
+  const smin = Number(cat2.servico.min) || 0, smax = Number(cat2.servico.max) || Infinity;
+  if (qtd < smin) return manual ? { erro: true, motivo: 'falta_' + qtd + '_abaixo_do_min_' + smin } : encerra('abaixo_do_min_do_servico');
+  if (qtd > smax) return { erro: true, motivo: 'falta_' + qtd + '_acima_do_max_' + smax };
+
+  const usuario = segParcialUsuario(o);
+  const pf = await segParcialPerfil(usuario);
+  if (pf.status === 'not_found') return manual ? { erro: true, motivo: 'perfil_nao_encontrado' } : encerra('perfil_nao_encontrado');
+  if (pf.status !== 'ok') return anota('perfil_nao_conferido');
+  if (pf.isPrivate) { await col.updateOne({ _id }, { $set: { isPrivate: true, 'profilePrivacy.isPrivate': true, 'profilePrivacy.checkedAt': nowIso } }); return anota('perfil_privado'); }
+  // O remains do fornecedor nem sempre bate com o perfil: o JAP 2971 já entregou com o status
+  // ainda "Processing · remains 700" (@sem_burocracia1, 93 → 927). Se o perfil já ganhou o
+  // contratado desde a linha de base do pedido, reenviar duplicaria — para e mostra o número.
+  const inicial = Number(o.initialFollowersCount);
+  const contratado = (hist.length && Number(hist[0].quantity)) || qtdPedido;
+  if (Number.isFinite(inicial) && inicial >= 0 && Number.isFinite(pf.followers) && contratado > 0) {
+    const ganho = pf.followers - inicial;
+    if (ganho >= Math.floor(contratado * 0.9)) {
+      const motivo = `perfil_ja_ganhou_${ganho}_de_${contratado}_(${inicial}→${pf.followers})`;
+      return manual ? anota(motivo) : encerra('perfil_ja_ganhou_o_contratado', { 'fama24h.parcialUltimoErro': motivo, 'fama24h.parcialUltimoErroAt': nowIso });
+    }
+  }
+
+  // Trava atômica: só um reenvio por orderId, mesmo com o loop e o botão ao mesmo tempo.
+  const travaAntiga = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const trava = await col.updateOne(
+    { _id, 'fama24h.orderId': f.orderId, $or: [{ 'fama24h.parcialLockAt': { $exists: false } }, { 'fama24h.parcialLockAt': null }, { 'fama24h.parcialLockAt': { $lt: travaAntiga } }] },
+    { $set: { 'fama24h.parcialLockAt': nowIso } });
+  if (!trava || trava.modifiedCount !== 1) return { pulado: true, motivo: 'em_andamento' };
+
+  const link = 'https://instagram.com/' + usuario;
+  // UM add, sem repetição: timeout/5xx pode ter criado o pedido no fornecedor.
+  const add = await segParcialPost(provider, { action: 'add', service, link, quantity: String(qtd) }, 45000);
+  const novo = add.data && (add.data.order || add.data.orderId);
+  if (!novo) {
+    const msg = String(add.erro || (add.data && (add.data.error || add.data.Error)) || 'sem_order').slice(0, 200);
+    if (add.incerto) {
+      // Pode ter subido no fornecedor: para a automação deste pedido até alguém conferir.
+      await col.updateOne({ _id }, { $set: { 'fama24h.parcialChainDone': true, 'fama24h.parcialStopReason': 'add_incerto', 'fama24h.parcialStopAt': nowIso, 'fama24h.parcialUltimoErro': 'add_incerto: ' + msg, 'fama24h.parcialUltimoErroAt': nowIso }, $unset: { 'fama24h.parcialLockAt': '' } });
+      return { erro: true, motivo: 'add_incerto (confira no ' + provider + ' antes de reenviar): ' + msg };
+    }
+    await col.updateOne({ _id }, { $set: { 'fama24h.parcialUltimoErro': 'add: ' + msg, 'fama24h.parcialUltimoErroAt': nowIso }, $unset: { 'fama24h.parcialLockAt': '' } });
+    return { erro: true, motivo: 'fornecedor recusou: ' + msg };
+  }
+  const novoId = String(novo);
+  hist.push({
+    orderId: oidAtual, provider, service: (f.requestPayload && f.requestPayload.service) || null, quantity: qtdPedido || null,
+    status: String(sp.status || sp.Status), remains, startCount: sp.start_count ?? null, charge: sp.charge ?? null, currency: sp.currency || null,
+    statusPayload: sp, requestedAt: f.requestedAt || null, substituidoEm: nowIso, novoOrderId: novoId, novoService: service,
+    motivo: cat === 'canceled' ? 'cancelado' : 'parcial', origem: manual ? 'manual' : 'auto', por: opts.por || null,
+  });
+  await col.updateOne({ _id }, {
+    $set: {
+      'fama24h.orderId': novoId, 'fama24h.status': 'created', 'fama24h.response': add.data, 'fama24h.error': null,
+      'fama24h.requestPayload': { service: /^[0-9]+$/.test(service) ? Number(service) : service, link, quantity: qtd },
+      'fama24h.requestedAt': nowIso, 'fama24h.reorderAt': nowIso, 'fama24h.statusPayload': null, 'fama24h.lastStatusAt': null,
+      'fama24h.parcialHistorico': hist, 'fama24h.parcialRemains': null, 'fama24h.parcialUltimoErro': '', 'fama24h.parcialChainDone': false,
+      isPrivate: false, 'profilePrivacy.isPrivate': false, 'profilePrivacy.checkedAt': nowIso,
+    },
+    $unset: { 'fama24h.parcialLockAt': '', 'fama24h.parcialStopReason': '' },
+  });
+  try { console.log(`🔁 [seg-parcial] ${o.identifier || _id} @${usuario} ${cat} ${oidAtual} → ${provider}:${service} ${qtd} = ${novoId} (${manual ? 'manual' : 'auto'})`); } catch (_) {}
+  // Custo: o charge do pedido antigo (histórico) + o novo entram juntos; o novo leva uns segundos pra aparecer.
+  setTimeout(() => { refreshOrderRealCostById(col, _id).catch(() => {}); }, 15000);
+  return { ok: true, orderId: novoId, quantidade: qtd, provider, service };
+}
+
+// Varre os pedidos de seguidores da janela: atualiza status e (se ligado) reenvia o faltante.
+let __segParcialRunning = false;
+async function runSeguidoresParcialSweep({ reenviar } = {}) {
+  if (__segParcialRunning) return { skipped: true, reason: 'running' };
+  __segParcialRunning = true;
+  const out = { checados: 0, atualizados: 0, problemas: 0, reenviados: 0, pulados: 0, erros: 0, auto: false };
+  try {
+    const cfg = await segParcialGetCfg();
+    out.auto = cfg.autoEnabled;
+    const col = await getCollection('checkout_orders');
+    const { ObjectId } = require('mongodb');
+    const minId = ObjectId.createFromTime(Math.floor((Date.now() - cfg.windowDays * 86400000) / 1000));
+    const docs = await col.find({ _id: { $gte: minId }, 'fama24h.orderId': { $exists: true, $nin: [null, ''] }, 'fama24h.parcialChainDone': { $ne: true }, status: { $nin: FQ_DEAD_ORDER_STATUSES } },
+      { projection: { _id: 1, status: 1, fama24h: 1 } }).limit(5000).toArray();
+    const porProv = {};
+    for (const o of docs) {
+      const f = o.fama24h || {};
+      if (!segParcialEhSeguidores(f)) continue;
+      const p = segParcialProvider(f); if (!p) continue;
+      if (!/^[0-9]+$/.test(String(f.orderId))) continue;
+      if (/complet/.test(String(f.status || '').toLowerCase())) continue; // já concluído
+      (porProv[p] = porProv[p] || []).push(o);
+    }
+    const problemas = [];
+    for (const [p, lista] of Object.entries(porProv)) {
+      const st = await segParcialStatusMany(p, lista.map((o) => String(o.fama24h.orderId)));
+      for (const o of lista) {
+        out.checados++;
+        const sp = st[String(o.fama24h.orderId)];
+        if (!sp) continue;
+        const remains = Math.max(0, Math.floor(Number(sp.remains ?? sp.Remains) || 0));
+        const nowIso = new Date().toISOString();
+        try {
+          await col.updateOne({ _id: o._id, 'fama24h.orderId': o.fama24h.orderId }, { $set: { 'fama24h.statusPayload': sp, 'fama24h.status': normalizeProviderStatusText(sp) || o.fama24h.status || 'unknown', 'fama24h.lastStatusAt': nowIso, 'fama24h.parcialRemains': remains, 'fama24h.parcialCheckedAt': nowIso } });
+          out.atualizados++;
+        } catch (_) {}
+        const cat = topfamaStatusCat(sp.status || sp.Status, remains);
+        if (cat === 'partial' || cat === 'canceled') problemas.push(o._id);
+      }
+    }
+    out.problemas = problemas.length;
+    if (cfg.autoEnabled && reenviar !== false) {
+      for (const _id of problemas) {
+        try {
+          const r = await segParcialReenviar(col, _id, { cfg });
+          if (r.ok) out.reenviados++; else if (r.pulado) out.pulados++; else out.erros++;
+        } catch (_) { out.erros++; }
+        await new Promise((ok) => setTimeout(ok, 400));
+      }
+    }
+    out.at = new Date().toISOString();
+    try { await (await getCollection('settings')).updateOne({ _id: SEG_PARCIAL_CFG_ID }, { $set: { lastSweep: out } }, { upsert: true }); } catch (_) {}
+  } catch (e) { out.error = e && e.message; }
+  __segParcialRunning = false;
+  return out;
+}
+let __segParcialTimer = null;
+function startSeguidoresParcialLoop() {
+  if (__segParcialTimer || !backgroundJobsEnabled()) return;
+  const loopMs = Math.max(15, Number(process.env.SEG_PARCIAL_LOOP_MIN || 60) || 60) * 60 * 1000;
+  const tick = () => runSeguidoresParcialSweep().then((r) => { try { if (r && (r.problemas || r.reenviados)) console.log('🔁 [seg-parcial]', JSON.stringify(r)); } catch (_) {} }).catch(() => {});
+  setTimeout(tick, 5 * 60 * 1000);
+  __segParcialTimer = setInterval(tick, loopMs);
+  try { __segParcialTimer.unref && __segParcialTimer.unref(); } catch (_) {}
+}
+
+// Linhas da página: pedidos de seguidores da janela (com ou sem problema).
+async function seguidoresParcialLinhas(query) {
+  const cfg = await segParcialGetCfg();
+  const dias = Math.min(60, Math.max(1, Math.floor(Number(query.dias) || cfg.windowDays)));
+  const col = await getCollection('checkout_orders');
+  const { ObjectId } = require('mongodb');
+  const minId = ObjectId.createFromTime(Math.floor((Date.now() - dias * 86400000) / 1000));
+  const docs = await col.find({ _id: { $gte: minId }, 'fama24h.orderId': { $exists: true, $nin: [null, ''] } },
+    { projection: { identifier: 1, instauser: 1, instagramUsername: 1, tipo: 1, status: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, fama24h: 1 } })
+    .sort({ _id: -1 }).limit(3000).toArray();
+  const rows = [];
+  for (const o of docs) {
+    const f = o.fama24h || {};
+    if (!segParcialEhSeguidores(f)) continue;
+    const sp = f.statusPayload || {};
+    const stTxt = String(sp.status || sp.Status || f.status || '');
+    const remains = (f.parcialRemains != null) ? Number(f.parcialRemains) : (sp.remains != null ? Math.max(0, Math.floor(Number(sp.remains) || 0)) : null);
+    const st = stTxt.toLowerCase();
+    let statusCat = 'other';
+    if (/complet|conclu/.test(st)) statusCat = 'done';
+    else if (/partial/.test(st)) statusCat = 'partial';
+    else if (/cancel|refund/.test(st)) statusCat = 'canc';
+    else if (/progress|process|pending|andamento|created|start/.test(st)) statusCat = 'prog';
+    else if (/error|erro/.test(st)) statusCat = 'erro';
+    const hist = Array.isArray(f.parcialHistorico) ? f.parcialHistorico : [];
+    let dataMs = 0; for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) { dataMs = t; break; } }
+    rows.push({
+      id: String(o._id), identifier: o.identifier || '', usuario: segParcialUsuario(o), tipo: String(o.tipo || ''), pedidoStatus: String(o.status || ''),
+      morto: segParcialPedidoMorto(o), dataMs,
+      provider: segParcialProvider(f) || String(f.provider || ''), service: String((f.requestPayload && f.requestPayload.service) || ''),
+      orderId: String(f.orderId), qtdAtual: Number((f.requestPayload && f.requestPayload.quantity) || 0) || 0,
+      qtdContratada: (hist.length && Number(hist[0].quantity)) || Number((f.requestPayload && f.requestPayload.quantity) || 0) || 0,
+      status: stTxt, statusCat, remains, checkedAt: f.parcialCheckedAt || f.lastStatusAt || null,
+      historico: hist.map((h) => ({ orderId: String(h.orderId || ''), status: String(h.status || ''), remains: h.remains, quantity: h.quantity, motivo: h.motivo || '', origem: h.origem || '', at: h.substituidoEm || null, service: h.service })),
+      chainDone: !!f.parcialChainDone, stopReason: String(f.parcialStopReason || ''), ultimoErro: String(f.parcialUltimoErro || ''),
+    });
+  }
+  const statusFilter = String(query.status || 'problema').toLowerCase();
+  const filtros = {
+    problema: (r) => r.statusCat === 'partial' || r.statusCat === 'canc',
+    reenviados: (r) => r.historico.length > 0,
+    partial: (r) => r.statusCat === 'partial', canc: (r) => r.statusCat === 'canc', prog: (r) => r.statusCat === 'prog', done: (r) => r.statusCat === 'done',
+    todos: () => true,
+  };
+  const fornecedores = Array.from(new Set(rows.map((r) => r.provider).filter(Boolean))).sort();
+  const fornecedorFilter = fornecedores.includes(String(query.fornecedor || '')) ? String(query.fornecedor) : '';
+  const fn = filtros[statusFilter] || filtros.problema;
+  const filtered = rows.filter((r) => fn(r) && (!fornecedorFilter || r.provider === fornecedorFilter));
+  const faltaTotal = filtered.reduce((a, r) => a + ((r.statusCat === 'partial' || r.statusCat === 'canc') && !r.morto ? (r.remains || 0) : 0), 0);
+  return { rows: filtered, totalAll: rows.length, cfg, fornecedores, faltaTotal, filter: { status: filtros[statusFilter] ? statusFilter : 'problema', fornecedor: fornecedorFilter, dias } };
+}
+
+app.get('/painel/gestao-parcial-seguidores', requireAdmin, async (req, res) => {
+  try {
+    const dados = await seguidoresParcialLinhas(req.query || {});
+    return res.render('painel_gestao_parcial_seguidores', Object.assign({ page: 'gestao-parcial-seguidores' }, dados));
+  } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
+});
+// Atualiza o status agora (sem reenviar, mesmo com o automático ligado).
+app.post('/api/painel/seg-parcial/refresh', requireAdmin, async (req, res) => {
+  try { const r = await runSeguidoresParcialSweep({ reenviar: false }); return res.json({ ok: true, result: r }); }
+  catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Reenvia o faltante de UM ou VÁRIOS pedidos (botão). body: { ids: [...], service? }.
+app.post('/api/painel/seg-parcial/reenviar', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [req.body && req.body.id]).map((x) => String(x || '').trim()).filter((x) => /^[0-9a-fA-F]{24}$/.test(x)).slice(0, 100);
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const service = String((req.body && req.body.service) || '').trim();
+    if (service && !/^[A-Za-z0-9_-]{1,20}$/.test(service)) return res.status(400).json({ ok: false, error: 'servico_invalido' });
+    const cfg = await segParcialGetCfg();
+    const col = await getCollection('checkout_orders');
+    const por = (req.session && req.session.adminUser && req.session.adminUser.username) || null;
+    const resultados = [];
+    for (const id of ids) {
+      let r;
+      try { r = await segParcialReenviar(col, new ObjectId(id), { manual: true, service: service || undefined, cfg, por }); }
+      catch (e) { r = { erro: true, motivo: (e && e.message) || 'internal' }; }
+      resultados.push(Object.assign({ id }, r));
+    }
+    return res.json({ ok: true, resultados });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Libera de novo a automação de um pedido encerrado (ex.: depois de conferir um add_incerto).
+app.post('/api/painel/seg-parcial/reabrir', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+    await col.updateOne({ _id: new ObjectId(id) }, { $set: { 'fama24h.parcialChainDone': false, 'fama24h.parcialUltimoErro': '' }, $unset: { 'fama24h.parcialStopReason': '', 'fama24h.parcialLockAt': '' } });
+    return res.json({ ok: true });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+app.post('/api/painel/seg-parcial/config', requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const set = { updatedAt: new Date().toISOString() };
+    if (typeof b.autoEnabled === 'boolean') set.autoEnabled = b.autoEnabled;
+    const num = (v, min, max) => { const x = Math.floor(Number(v)); return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : undefined; };
+    if (b.minRemains != null && num(b.minRemains, 1, 100000) !== undefined) set.minRemains = num(b.minRemains, 1, 100000);
+    if (b.maxChain != null && num(b.maxChain, 1, 10) !== undefined) set.maxChain = num(b.maxChain, 1, 10);
+    if (b.windowDays != null && num(b.windowDays, 1, 30) !== undefined) set.windowDays = num(b.windowDays, 1, 30);
+    await (await getCollection('settings')).updateOne({ _id: SEG_PARCIAL_CFG_ID }, { $set: set }, { upsert: true });
+    return res.json({ ok: true, cfg: await segParcialGetCfg() });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  TESTES DE SERVIÇOS — cadastra um pedido de teste (serviço/fornecedor) num
 //  perfil de teste e mede a quantidade ATUAL de seguidores + % de queda todo
 //  dia às 12h (BRT). Coleção: service_tests.
@@ -4327,6 +4773,8 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       servicoForaDoCatalogo: !!d.servicoForaDoCatalogo,
       servicoForaDoCatalogoEm: d.servicoForaDoCatalogoEm || null,
       history: Array.isArray(d.history) ? d.history : [],
+      // Dias distintos (BRT) com medição válida no histórico.
+      diasConsultados: new Set((Array.isArray(d.history) ? d.history : []).filter((h) => h && Number.isFinite(Number(h.count))).map((h) => brtDayKey(h.at)).filter(Boolean)).size,
     }));
     // ── Filtros: tipo de serviço, fornecedor e faixa de taxa de queda (min/max %) ──
     const tipoF = String(req.query.tipo || '').trim();
@@ -4347,6 +4795,9 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     const pMaxRaw = String(req.query.precoMax != null ? req.query.precoMax : '').trim().replace(',', '.');
     const pMin = pMinRaw !== '' && Number.isFinite(Number(pMinRaw)) ? Number(pMinRaw) : null;
     const pMax = pMaxRaw !== '' && Number.isFinite(Number(pMaxRaw)) ? Number(pMaxRaw) : null;
+    // Filtro por dias consultados: mínimo de dias com medição (5 pega quem tem 5 ou mais).
+    const dMinRaw = String(req.query.diasMin != null ? req.query.diasMin : '').trim();
+    const dMin = /^\d+$/.test(dMinRaw) ? Number(dMinRaw) : null;
     const fornecedores = Array.from(new Set(allRows.map((r) => r.fornecedor).filter(Boolean))).sort();
     // Grupos de teste do MESMO serviço (fornecedor+serviceId): usado pra mostrar a seta "↔ N"
     // que relaciona re-testes do mesmo serviço em perfis diferentes.
@@ -4371,11 +4822,12 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       // Filtro por preço/custo
       if (pMin != null && (r.preco == null || r.preco < pMin)) return false;
       if (pMax != null && (r.preco == null || r.preco > pMax)) return false;
+      if (dMin != null && r.diasConsultados < dMin) return false;
       return true;
     });
     return res.render('painel_testes_servicos', {
       page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups,
-      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw, refil: refilF },
+      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw, refil: refilF, diasMin: dMin != null ? dMinRaw : '' },
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
@@ -4721,7 +5173,13 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
     // 'legacy' (só o histórico do DataCrazy) ou 'all' (padrão). Sem isso, as
     // ~2.3k conversas importadas afogam as novas na lista.
     const scope = String(req.query.scope || 'all').toLowerCase();
+    // Bloqueados ficam fora das guias normais; com ?bloqueados=1 a lista traz SÓ eles.
+    const soBloqueados = String(req.query.bloqueados || '') === '1';
+    const cc = await getCollection('whatsapp_contacts');
+    const telsBloqueados = (await cc.find({ bloqueado: true }, { projection: { _id: 1 } }).toArray().catch(() => [])).map((c) => c._id);
     const pipeline = [];
+    if (soBloqueados) pipeline.push({ $match: { phone: { $in: telsBloqueados } } });
+    else if (telsBloqueados.length) pipeline.push({ $match: { phone: { $nin: telsBloqueados } } });
     if (scope === 'new') pipeline.push({ $match: { importedFrom: { $ne: 'datacrazy' } } });
     else if (scope === 'legacy') pipeline.push({ $match: { importedFrom: 'datacrazy' } });
     pipeline.push(
@@ -4737,8 +5195,7 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
     );
     const convs = await col.aggregate(pipeline).toArray();
     const phones = convs.map((c) => c._id);
-    const cc = await getCollection('whatsapp_contacts');
-    const contacts = await cc.find({ _id: { $in: phones } }, { projection: { botPaused: 1, unread: 1, name: 1, legacy: 1, importedFrom: 1 } }).toArray().catch(() => []);
+    const contacts = await cc.find({ _id: { $in: phones } }, { projection: { botPaused: 1, unread: 1, name: 1, legacy: 1, importedFrom: 1, bloqueado: 1 } }).toArray().catch(() => []);
     const cmap = {}; for (const c of contacts) cmap[c._id] = c;
     const list = convs.map((c) => ({
       phone: c._id,
@@ -4753,14 +5210,15 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
       // uma tag própria, pra não se confundir com chat que o atendente assumiu.
       legacy: !!(cmap[c._id] && cmap[c._id].legacy),
       importedFrom: (cmap[c._id] && cmap[c._id].importedFrom) || '',
+      bloqueado: !!(cmap[c._id] && cmap[c._id].bloqueado),
     }));
     // Fila de trabalho: conversas NOVAS que o ATENDENTE ainda não respondeu
     // (atendimento só do bot continua contando como pendente). Vai sempre no
     // retorno pra guia "Não respondidas" mostrar o mesmo número em qualquer aba.
     // Conta sobre a própria lista (o painel pede a cada 5s — uma 2ª agregação
     // varrendo a coleção inteira aqui só pesava o servidor).
-    const pendingNew = list.filter((c) => !c.answered).length;
-    return res.json({ ok: true, conversations: list, pendingNew });
+    const pendingNew = soBloqueados ? 0 : list.filter((c) => !c.answered).length;
+    return res.json({ ok: true, conversations: list, pendingNew, bloqueadosTotal: telsBloqueados.length });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Mensagens de uma conversa (marca como lida)
@@ -4772,8 +5230,8 @@ app.get('/api/painel/ia-crm/messages', requireAdmin, async (req, res) => {
     const msgs = await col.find({ phone }, { projection: { text: 1, direction: 1, createdAt: 1, agent: 1, type: 1, mediaId: 1, mime: 1, filename: 1, wamid: 1, replyTo: 1 } }).sort({ createdAt: 1 }).limit(600).toArray();
     const cc = await getCollection('whatsapp_contacts');
     try { await cc.updateOne({ _id: phone }, { $set: { unread: false } }); } catch (_) {}
-    const contact = await cc.findOne({ _id: phone }, { projection: { botPaused: 1, name: 1 } });
-    return res.json({ ok: true, phone, name: (contact && contact.name) || '', botPaused: !!(contact && contact.botPaused), messages: msgs });
+    const contact = await cc.findOne({ _id: phone }, { projection: { botPaused: 1, name: 1, bloqueado: 1 } });
+    return res.json({ ok: true, phone, name: (contact && contact.name) || '', botPaused: !!(contact && contact.botPaused), bloqueado: !!(contact && contact.bloqueado), messages: msgs });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Busca de conversa pelo @ do Instagram (campo de busca do CRM começando com "@").
@@ -4821,12 +5279,12 @@ app.get('/api/painel/ia-crm/busca-arroba', requireAdmin, async (req, res) => {
     // Liga cada telefone à conversa existente no CRM (pelos 8 últimos dígitos).
     const finais = [...achados.keys()];
     const rxTel = new RegExp('(' + finais.map(esc).join('|') + ')$');
-    const convs = await contatos.find({ _id: { $regex: rxTel } }, { projection: { name: 1, lastMessageAt: 1, lastMessageText: 1, lastMessageDir: 1, botPaused: 1, legacy: 1, unread: 1 } }).limit(60).toArray();
+    const convs = await contatos.find({ _id: { $regex: rxTel } }, { projection: { name: 1, lastMessageAt: 1, lastMessageText: 1, lastMessageDir: 1, botPaused: 1, legacy: 1, unread: 1, bloqueado: 1 } }).limit(60).toArray();
     const resultados = convs.map((c) => {
       const a = achados.get(String(c._id).replace(/\D/g, '').slice(-8)) || { via: new Set(), usuarios: new Set() };
       return {
         phone: String(c._id), name: c.name || '', lastAt: c.lastMessageAt || null, lastText: c.lastMessageText || '', lastDir: c.lastMessageDir || '',
-        botPaused: !!c.botPaused, legacy: !!c.legacy, unread: !!c.unread,
+        botPaused: !!c.botPaused, legacy: !!c.legacy, unread: !!c.unread, bloqueado: !!c.bloqueado,
         via: [...a.via], usuarios: [...a.usuarios],
       };
     }).sort((x, y) => new Date(y.lastAt || 0) - new Date(x.lastAt || 0));
@@ -5039,6 +5497,20 @@ app.post('/api/painel/ia-crm/bot', requireAdmin, async (req, res) => {
     return res.json({ ok: true, botPaused: paused });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Bloquear/desbloquear contato no CRM da IA. Bloqueado sai das guias normais (vai para
+// "Bloqueados") e o bot, o cutucão e a recuperação deixam de falar com ele (isBotPaused).
+// É só no nosso CRM: o número continua podendo mandar mensagem e ela fica registrada.
+app.post('/api/painel/ia-crm/bloquear', requireAdmin, async (req, res) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '').trim();
+    const bloqueado = !!(req.body && req.body.bloqueado);
+    if (!phone) return res.status(400).json({ ok: false, error: 'no_phone' });
+    const cc = await getCollection('whatsapp_contacts');
+    const agora = new Date().toISOString();
+    await cc.updateOne({ _id: phone }, { $set: bloqueado ? { bloqueado: true, bloqueadoEm: agora } : { bloqueado: false, desbloqueadoEm: agora } }, { upsert: true });
+    return res.json({ ok: true, bloqueado });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
 
 // ── CRM do número do LTV: mesmas respostas das rotas da IA, lendo wa_messages ──
 // Telefone da conversa = dígitos do E.164 (55…); no banco a chave é o phoneKey (sem 55).
@@ -5226,6 +5698,54 @@ async function ensureAdminUser() {
 // Run the check
 ensureAdminUser();
 
+// ── 2FA do painel admin ────────────────────────────────────────────────────
+// Depois da senha certa, um código de 6 dígitos vai para ADMIN_2FA_EMAIL e só
+// com ele o login completa. ADMIN_2FA_DISABLED=1 desliga (emergência, ex.: SMTP fora).
+const ADMIN_2FA_EMAIL = String(process.env.ADMIN_2FA_EMAIL || 'arraso.promo@gmail.com').trim().toLowerCase();
+const ADMIN_2FA_ENABLED = String(process.env.ADMIN_2FA_DISABLED || '').trim() !== '1';
+const ADMIN_2FA_TTL_MS = 10 * 60 * 1000;
+const ADMIN_2FA_MAX_ATTEMPTS = 5;
+function maskEmailForDisplay(email) {
+    const [u, d] = String(email || '').split('@');
+    if (!u || !d) return 'o e-mail cadastrado';
+    return (u.length <= 2 ? u[0] + '*' : u[0] + '*'.repeat(Math.min(6, u.length - 2)) + u[u.length - 1]) + '@' + d;
+}
+const sendAdmin2faEmail = async (code, username, ip) => {
+    try {
+        const transporter = getSmtpTransporter();
+        const from = getOppusFromHeader();
+        if (!transporter || !from) return false;
+        const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+        const quem = String(username || '').replace(/[<>&"']/g, '');
+        const deOnde = String(ip || '').replace(/[<>&"']/g, '');
+        const subject = 'Painel Oppus - Código de login: ' + code;
+        const text = ['Código de login do painel', '', `Código: ${code}`, '', `Usuário: ${quem}`, `IP: ${deOnde}`, `Horário: ${quando}`, '', 'Vale por 10 minutos.', 'Se não foi você, troque a senha desse usuário imediatamente.'].join('\n');
+        const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;"><div style="font-size:16px;font-weight:900;margin:0 0 10px 0;">Código de login do painel</div><div style="padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;text-align:center;font-size:28px;font-weight:900;letter-spacing:6px;color:#111827;">${code}</div><div style="font-size:13px;line-height:1.6;margin-top:12px;">Usuário: <b>${quem}</b><br>IP: ${deOnde}<br>Horário: ${quando}</div><div style="font-size:12px;color:#6b7280;margin-top:12px;">Vale por 10 minutos. Se não foi você, troque a senha desse usuário imediatamente.</div></div>`;
+        const r = await transporter.sendMail({ from, to: ADMIN_2FA_EMAIL, subject, text, html });
+        if (r && r.skipped) { console.error('[admin-2fa] e-mail do código não enviado:', r.reason); return false; }
+        return true;
+    } catch (e) {
+        console.error('[admin-2fa] falha ao enviar código:', e && e.message);
+        return false;
+    }
+};
+function finishAdminLogin(req, res, adminUser) {
+    return req.session.regenerate((regenErr) => {
+        try {
+            if (regenErr) return res.status(500).json({ success: false, error: 'Erro interno' });
+            req.session.adminUser = adminUser;
+            req.session.save((saveErr) => {
+                if (saveErr) { try { __authDbg('LOGIN saveErr user=' + adminUser.username); } catch(_){} return res.status(500).json({ success: false, error: 'Erro interno' }); }
+                try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {}
+                try { __authDbg('LOGIN OK user=' + adminUser.username + ' sid=' + String(req.sessionID || '').slice(0,8) + ' ' + __cookieSnapshot(req)); } catch(_){}
+                return res.json({ success: true });
+            });
+        } catch (e) {
+            return res.status(500).json({ success: false, error: 'Erro interno' });
+        }
+    });
+}
+
 app.get('/login', (req, res) => {
     if (req.session && req.session.adminUser) return res.redirect('/painel');
     res.render('login');
@@ -5257,24 +5777,53 @@ app.post('/login', async (req, res) => {
 
         if (ok) {
             if (legacy) { try { await admins.updateOne({ _id: user._id }, { $set: { password: hashPasswordScrypt(password) } }); } catch (_) {} }
-            return req.session.regenerate((regenErr) => {
-                try {
-                    if (regenErr) return res.status(500).json({ success: false, error: 'Erro interno' });
-                    req.session.adminUser = { username: user.username, role: user.role };
-                    req.session.save((saveErr) => {
-                        if (saveErr) { try { __authDbg('LOGIN saveErr user=' + user.username); } catch(_){} return res.status(500).json({ success: false, error: 'Erro interno' }); }
-                        try { setAdminAuthCookie(res, req.session.adminUser); } catch (_) {}
-                        try { __authDbg('LOGIN OK user=' + user.username + ' sid=' + String(req.sessionID || '').slice(0,8) + ' ' + __cookieSnapshot(req)); } catch(_){}
-                        return res.json({ success: true });
-                    });
-                } catch (e) {
-                    return res.status(500).json({ success: false, error: 'Erro interno' });
-                }
+            const adminUser = { username: user.username, role: user.role };
+            if (!ADMIN_2FA_ENABLED) return finishAdminLogin(req, res, adminUser);
+            // Senha certa NÃO loga: manda o código por e-mail e só entra depois de /login/2fa.
+            const code = generateOtpCode();
+            const sent = await sendAdmin2faEmail(code, user.username, req.realIP || req.ip || '');
+            if (!sent) return res.status(500).json({ success: false, error: 'Não foi possível enviar o código de verificação. Tente de novo em instantes.' });
+            req.session.admin2fa = { username: user.username, role: user.role, codeHash: sha256Hex('admin2fa:' + code), expiresAt: Date.now() + ADMIN_2FA_TTL_MS, attempts: 0 };
+            return req.session.save((saveErr) => {
+                if (saveErr) return res.status(500).json({ success: false, error: 'Erro interno' });
+                return res.json({ success: false, twoFactor: true, message: 'Enviamos um código de 6 dígitos para ' + maskEmailForDisplay(ADMIN_2FA_EMAIL) + '. Ele vale por 10 minutos.' });
             });
         }
         return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     } catch (e) {
         console.error('Login error:', e);
+        return res.status(500).json({ success: false, error: 'Erro interno' });
+    }
+});
+
+// Segundo passo do login do painel: confere o código enviado por e-mail.
+app.post('/login/2fa', (req, res) => {
+    try {
+        const ip = req.realIP || req.ip || '';
+        if (hitRateLimit('admin_2fa_ip:' + ip, 10, 10 * 60 * 1000)) {
+            return res.status(429).json({ success: false, error: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+        }
+        const pend = req.session && req.session.admin2fa;
+        if (!pend || !pend.username || !pend.codeHash) return res.status(401).json({ success: false, expired: true, error: 'Sessão de verificação expirada. Entre com usuário e senha de novo.' });
+        if (Date.now() > Number(pend.expiresAt || 0)) {
+            delete req.session.admin2fa;
+            return req.session.save(() => res.status(401).json({ success: false, expired: true, error: 'Código expirado. Entre com usuário e senha de novo.' }));
+        }
+        if (Number(pend.attempts || 0) >= ADMIN_2FA_MAX_ATTEMPTS) {
+            delete req.session.admin2fa;
+            return req.session.save(() => res.status(401).json({ success: false, expired: true, error: 'Muitas tentativas erradas. Entre com usuário e senha de novo.' }));
+        }
+        const code = (typeof (req.body && req.body.code) === 'string') ? req.body.code.replace(/\D/g, '') : '';
+        const a = Buffer.from(sha256Hex('admin2fa:' + code));
+        const b = Buffer.from(String(pend.codeHash));
+        const match = code.length === 6 && a.length === b.length && crypto.timingSafeEqual(a, b);
+        if (!match) {
+            pend.attempts = Number(pend.attempts || 0) + 1;
+            return req.session.save(() => res.status(401).json({ success: false, error: 'Código incorreto.' }));
+        }
+        return finishAdminLogin(req, res, { username: pend.username, role: pend.role });
+    } catch (e) {
+        console.error('Login 2FA error:', e);
         return res.status(500).json({ success: false, error: 'Erro interno' });
     }
 });
@@ -12018,6 +12567,25 @@ const normalizeSmmProvider = (v) => {
 };
 const smmProviderUrl = (p) => (SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).url;
 const smmProviderKey = (p) => String(process.env[(SMM_PROVIDERS[normalizeSmmProvider(p)] || SMM_PROVIDERS.fama24h).keyEnv] || '').trim();
+// Fornecedor real de um slot do pedido: o `provider` gravado no Mongo manda; sem carimbo,
+// cai no padrão antigo do slot (fama24h era consultado na NuvraSMM).
+const SLOT_DEFAULT_PROVIDER = { fama24h: 'nuvra', fama24h_multi: 'nuvra', fornecedor_social: 'fornecedor_social', fornecedor_social_multi: 'fornecedor_social', topfama: 'topfama' };
+const slotRealProvider = (slot, sub, parent) => {
+  for (const v of [sub && sub.provider, parent && parent.provider]) {
+    const p = normalizeSmmProvider(v);
+    if (p && SMM_PROVIDERS[p]) return p;
+  }
+  return SLOT_DEFAULT_PROVIDER[slot] || 'nuvra';
+};
+const normalizeProviderStatusText = (data) => {
+  const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
+  if (/cancel/.test(txt)) return 'cancelled';
+  if (/partial/.test(txt)) return 'partial';
+  if (/pend/.test(txt)) return 'pending';
+  if (/process|progress|start|running/.test(txt)) return 'processing';
+  if (/complete|success|finished|done|conclu/.test(txt)) return 'completed';
+  return '';
+};
 // Lê o provedor escolhido no painel para um tipo (ctx/key), aceitando QUALQUER provedor
 // cadastrado. Sem seleção salva → usa o fallback (default 'fama24h').
 const resolveMainProvider = async ({ ctx, key, fallback = 'fama24h' }) => {
@@ -13395,7 +13963,7 @@ app.post('/api/efi/card-charge', async (req, res) => {
             }
 
             const col = await getCollection('checkout_orders');
-            const insertResult = await col.insertOne(record);
+            const insertResult = await col.insertOne(__comUtmOppus(record, req));
             try { record._id = insertResult?.insertedId; } catch (_) {}
             console.log('🗃️ MongoDB: pedido cartão persistido (Efí charge_id=', charge.data.charge_id, ')');
             Promise.resolve()
@@ -14017,7 +14585,7 @@ app.post('/api/pagarme/card-charge', async (req, res) => {
         }
 
         const col = await getCollection('checkout_orders');
-        const insertResult = await col.insertOne(record);
+        const insertResult = await col.insertOne(__comUtmOppus(record, req));
         try { record._id = insertResult?.insertedId; } catch (_) {}
         Promise.resolve()
             .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
@@ -14400,7 +14968,7 @@ app.post('/api/stripe/create-intent', async (req, res) => {
     }
 
     const col = await getCollection('checkout_orders');
-    const insertResult = await col.insertOne(record);
+    const insertResult = await col.insertOne(__comUtmOppus(record, req));
     try { record._id = insertResult?.insertedId; } catch (_) {}
     Promise.resolve()
       .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
@@ -14829,7 +15397,7 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
     };
 
     const col = await getCollection('checkout_orders');
-    const insertResult = await col.insertOne(record);
+    const insertResult = await col.insertOne(__comUtmOppus(record, req));
     try { record._id = insertResult?.insertedId; } catch (_) {}
     Promise.resolve()
       .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
@@ -15421,7 +15989,7 @@ app.post('/api/woovi/charge', async (req, res) => {
             }
 
             const col = await getCollection('checkout_orders');
-            const insertResult = await col.insertOne(record);
+            const insertResult = await col.insertOne(__comUtmOppus(record, req));
             console.log('🗃️ MongoDB: pedido do checkout persistido (insertedId=', insertResult.insertedId, ')', 'CorrID:', chargeCorrelationID, 'WooviChargeID:', charge?.id);
             Promise.resolve()
                 .then(() => queuePaymentRecoveryForNewOrder(col, insertResult && insertResult.insertedId, record))
@@ -15980,7 +16548,7 @@ app.post('/api/expay/charge', async (req, res) => {
         let insertResult = null;
         try {
             const col = await getCollection('checkout_orders');
-            insertResult = await col.insertOne(record);
+            insertResult = await col.insertOne(__comUtmOppus(record, req));
             try { record._id = insertResult?.insertedId; } catch (_) {}
         } catch (dbErr) {
             try { console.error('🔴 [checkout-pix] pedido NAO gravado no Mongo — Pix NAO entregue | corr:', (record && record.correlationID), '|', dbErr && dbErr.message); } catch (_) {}
@@ -16646,7 +17214,7 @@ app.post('/api/paghiper/charge', async (req, res) => {
         let insertResult = null;
         try {
             const col = await getCollection('checkout_orders');
-            insertResult = await col.insertOne(record);
+            insertResult = await col.insertOne(__comUtmOppus(record, req));
             try { record._id = insertResult?.insertedId; } catch (_) {}
         } catch (dbErr) {
             try { console.error('🔴 [checkout-pix] pedido NAO gravado no Mongo — Pix NAO entregue | corr:', (record && record.correlationID), '|', dbErr && dbErr.message); } catch (_) {}
@@ -17249,6 +17817,36 @@ app.post('/api/paghiper/notification', async (req, res) => {
             try { await broadcastPaymentPaid(existingOrder?.identifier, existingOrder?.correlationID); } catch (_) {}
         }
 
+        // ── GRUPO DE PIX (pixGroupId): 1 PIX cobre vários pedidos (perfis diferentes) ──
+        // O findOne acima casa só o pedido PRIMÁRIO (quem carrega paghiper.transactionId).
+        // Os "irmãos" do mesmo grupo (mesmo pixGroupId, sem transactionId próprio) são
+        // marcados pagos + despachados aqui. Aditivo e isolado em try/catch: só age quando
+        // existe pixGroupId, então NUNCA interfere no fluxo normal de 1 PIX = 1 pedido.
+        if (paidFlag && existingOrder && !isDivergent) {
+            try {
+                const grpId = existingOrder.pixGroupId || (transactionId || '');
+                if (grpId) {
+                    const paidIso = setFields.paidAt || setFields['paghiper.paidAt'] || new Date().toISOString();
+                    const sibs = await col.find({ pixGroupId: grpId, _id: { $ne: existingOrder._id } }).toArray();
+                    for (const sib of sibs) {
+                        try {
+                            const jaPago = String(sib.status || '').toLowerCase() === 'pago' || !!sib.paidAt || !!(sib.paghiper && sib.paghiper.paidAt);
+                            if (!jaPago) {
+                                // NÃO grava paghiper.transactionId no irmão — manter só no primário
+                                // garante que o findOne de notificações futuras resolva sempre no primário.
+                                await col.updateOne({ _id: sib._id }, { $set: { status: 'pago', paidAt: paidIso, 'paghiper.status': 'pago', 'paghiper.paidAt': paidIso, pixGroupPrimary: String(existingOrder._id) } });
+                            }
+                            const fresh = await col.findOne({ _id: sib._id });
+                            if (fresh && !(fresh.upsell && fresh.upsell.isUpsell === true)) {
+                                await processOrderFulfillment(fresh, col, req);
+                            }
+                            try { await broadcastPaymentPaid(sib.identifier, sib.correlationID); } catch (_) {}
+                        } catch (eSib) { try { console.error('[PixGroup] falha no irmão', sib && sib._id, eSib && eSib.message); } catch (_) {} }
+                    }
+                }
+            } catch (ePg) { try { console.error('[PixGroup] erro geral:', ePg && ePg.message); } catch (_) {} }
+        }
+
         // Demais notificações (pendente, estorno, upsell aguardando o pai...) seguem na hora —
         // só se a PagHiper reconheceu a notificação (status preenchido); forjada não vai.
         if (statusRaw) forwardToTrackCombo({ valueCents: paidValueCents, feeCents, data });
@@ -17777,6 +18375,13 @@ const isOrderRecoveryDebugProfile = (record) => {
     }
 };
 
+// Idade máxima (desde a criação do pedido) para a recuperação por e-mail agir. O último estágio
+// sai com 24h, então 48h dá folga; pedido mais velho que isso é encerrado (skip 'too_old').
+function getOrderRecoveryMaxAgeHours() {
+    const n = parseInt(String(process.env.ORDER_RECOVERY_MAX_AGE_HOURS || '48').trim(), 10);
+    return (Number.isFinite(n) && n > 0) ? Math.max(30, Math.min(240, n)) : 48;
+}
+
 function getOrderRecoveryConfig() {
     const enabledRaw = String(process.env.ORDER_RECOVERY_ENABLED || '1').trim().toLowerCase();
     const enabled = !(enabledRaw === '0' || enabledRaw === 'false' || enabledRaw === 'no');
@@ -17845,14 +18450,16 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         const enabledRaw = String(process.env.ORDER_RECOVERY_ENABLED || '1').trim().toLowerCase();
         const enabled = !(enabledRaw === '0' || enabledRaw === 'false' || enabledRaw === 'no');
         if (!enabled) return;
-        const markSkip = async (reason) => {
+        // encerra=true: tira o pedido da recuperação mesmo que algum estágio já tenha saído
+        // (pedido velho / sem próximo estágio possível), senão ele fica candidato do loop pra sempre.
+        const markSkip = async (reason, encerra) => {
             try {
                 const nowIso = new Date().toISOString();
                 await col.updateOne(
                     {
                         _id: record._id,
                         $and: [
-                            { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] },
+                            encerra ? {} : { $or: [{ 'emails.paymentRecoverySentAt': { $exists: false } }, { 'emails.paymentRecoverySentAt': null }, { 'emails.paymentRecoverySentAt': '' }] },
                             { $or: [{ 'emails.paymentRecoverySkippedAt': { $exists: false } }, { 'emails.paymentRecoverySkippedAt': null }, { 'emails.paymentRecoverySkippedAt': '' }] }
                         ]
                     },
@@ -18015,13 +18622,22 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
         const stage3SentAt = record?.emails?.paymentRecoveryStage3SentAt;
         const debugIntervalMs = 60 * 1000;
 
+        const couponsAllowed = canSendCoupon && !blockCouponEmails;
+        // Pedido velho demais não entra mais na recuperação: em 13/10/2026 o loop mandou 673
+        // e-mails de "última chance" de uma vez pra pedidos de maio a setembro.
+        const maxAgeMs = getOrderRecoveryMaxAgeHours() * 60 * 60 * 1000;
+        if (!isDebugRecovery && ageMs > maxAgeMs) {
+            await markSkip('too_old', true);
+            return;
+        }
         const stage = (function () {
-            const couponsAllowed = canSendCoupon && !blockCouponEmails;
             if (!isDebugRecovery) {
-                return (couponsAllowed && stage3Due && !stage3SentAt) ? 3
-                  : ((couponsAllowed && stage2Due && !stage2SentAt) ? 2
-                  : ((couponsAllowed && stage1Due && !stage1SentAt) ? 1
-                  : ((stage0Due && !stage0SentAt) ? 10 : 0)));
+                // Só o estágio MAIS ALTO vencido. Estágio posterior já enviado vale pelos anteriores:
+                // sem isso, quem atrasou recebia "Última chance" e DEPOIS o "Cupom 30%" do 6h.
+                if (couponsAllowed && stage3Due) return stage3SentAt ? 0 : 3;
+                if (couponsAllowed && stage2Due) return (stage2SentAt || stage3SentAt) ? 0 : 2;
+                if (couponsAllowed && stage1Due) return (stage1SentAt || stage2SentAt || stage3SentAt) ? 0 : 1;
+                return (stage0Due && !stage0SentAt && !stage1SentAt && !stage2SentAt && !stage3SentAt) ? 10 : 0;
             }
             const now = Date.now();
             const msOr0 = (iso) => {
@@ -18041,7 +18657,15 @@ const maybeSendPaymentRecoveryEmail = async (record, col) => {
             if (couponsAllowed && !stage3SentAt) return (now - s2 >= debugIntervalMs) ? 3 : 0;
             return 0;
         })();
-        if (!stage) return;
+        if (!stage) {
+            // Pedido que já usou cupom (ex.: veio de um link RECUP15/RECUP30) só recebe o e-mail de
+            // 10 min. Sem marcar, ele continuava candidato do recovery-loop PRA SEMPRE: o loop pega os
+            // 60 mais antigos, e esses pedidos travados ocupavam o lote inteiro → nenhum e-mail de
+            // cupom (1h/6h/24h) saiu de 13/10 a 05/11/2026.
+            if (!isDebugRecovery && !couponsAllowed && stage0SentAt) await markSkip(blockCouponEmails ? 'coupon_in_order' : 'coupon_not_allowed', true);
+            else if (!isDebugRecovery && couponsAllowed && stage3SentAt) await markSkip('recovery_done', true);
+            return;
+        }
 
         if (isPaidRecord(record)) {
             await markSkip('already_paid');
@@ -18937,6 +19561,13 @@ function _collectProviderChargeSources(order) {
     return (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra';
   };
   add(effFama(order?.fama24h), order?.fama24h, 'base', 'fama24h');
+  // Pedidos parciais/cancelados que a Gestão Parcial de Seguidores substituiu: o que eles
+  // entregaram foi cobrado e continua sendo custo do pedido. Slot vazio = não regrava payload.
+  (Array.isArray(order?.fama24h?.parcialHistorico) ? order.fama24h.parcialHistorico : []).forEach((h) => {
+    if (!h || !h.orderId) return;
+    const entregue = Math.max(0, (Number(h.quantity) || 0) - (Number(h.remains) || 0));
+    add(normalizeSmmProvider(h.provider) || effFama(h), { orderId: h.orderId, statusPayload: h.statusPayload || null, requestPayload: { quantity: entregue } }, 'base', '');
+  });
   add(effFama(order?.fama24h_views), order?.fama24h_views, 'bump', 'fama24h_views');
   add(effFama(order?.fama24h_likes), order?.fama24h_likes, 'bump', 'fama24h_likes');
   add('fornecedor_social', order?.fornecedor_social, 'base', 'fornecedor_social');
@@ -19032,6 +19663,7 @@ function _statusApiFor(provider, orderId, order = null, slot = '') {
   if (p === 'topfama') return { url: 'https://topfama.com/api/v2', key: String(process.env.TOPFAMA_API_KEY || '').trim() };
   if (p === 'worldsmm') return { url: 'https://worldsmm.com.br/api/v2', key: String(process.env.WORLDSMM_API_KEY || '').trim() };
   if (p === 'nuvra') return { url: 'https://nuvrasmm.com/api/v2', key: String(process.env.NUVRASMM_API_KEY || '').trim() };
+  if (p !== 'fama24h' && SMM_PROVIDERS[p]) return { url: smmProviderUrl(p), key: smmProviderKey(p) };
   try {
     const r = resolveRefillProviderApi(orderId, order, slot || null);
     if (r && r.url && r.key) return { url: r.url, key: r.key };
@@ -19722,13 +20354,10 @@ function fqNormalizeStatusText(txt) {
 async function fqFetchProviderStatus(provider, orderId) {
     try {
         if (!orderId) return '';
-        const key = provider === 'fornecedor_social' ? (process.env.FORNECEDOR_SOCIAL_API_KEY || '')
-            : provider === 'topfama' ? (process.env.TOPFAMA_API_KEY || '')
-                : (process.env.NUVRASMM_API_KEY || '');
+        const prov = SMM_PROVIDERS[normalizeSmmProvider(provider)] ? normalizeSmmProvider(provider) : 'nuvra';
+        const key = smmProviderKey(prov);
         if (!key) return '';
-        const url = provider === 'fornecedor_social' ? 'https://fornecedorsocial.com/api/v2'
-            : provider === 'topfama' ? 'https://topfama.com/api/v2'
-                : 'https://nuvrasmm.com/api/v2';
+        const url = smmProviderUrl(prov);
         const payload = new URLSearchParams({ key, action: 'status', order: String(orderId) });
         const resp = await axios.post(url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
         const data = resp.data || {};
@@ -19742,13 +20371,15 @@ async function fqFetchProviderStatus(provider, orderId) {
 function fqCollectProviderOrders(order) {
     const out = [];
     const pushIf = (provider, id) => { const s = String(id == null ? '' : id).trim(); if (s) out.push({ provider, orderId: s }); };
-    // Slot legado "fama24h": provedor real é NuvraSMM quando o orderId < 1.000.000.
-    const effFama = (id) => { const n = Number(id); return (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra'; };
-    pushIf(effFama(order?.fama24h?.orderId), order?.fama24h?.orderId);
-    pushIf('fornecedor_social', order?.fornecedor_social?.orderId);
-    pushIf('topfama', order?.topfama?.orderId);
-    (Array.isArray(order?.fama24h_multi?.orders) ? order.fama24h_multi.orders : []).forEach(o => { const id = o && (o.orderId ?? o.id); pushIf(effFama(id), id); });
-    (Array.isArray(order?.fornecedor_social_multi?.orders) ? order.fornecedor_social_multi.orders : []).forEach(o => pushIf('fornecedor_social', o && (o.orderId ?? o.id)));
+    // Slot "fama24h": vale o provider gravado no pedido. Sem carimbo (pedido legado),
+    // o provedor real é NuvraSMM quando o orderId < 1.000.000.
+    const stamped = (...subs) => { for (const s of subs) { const p = normalizeSmmProvider(s && s.provider); if (p && SMM_PROVIDERS[p]) return p; } return ''; };
+    const effFama = (id, ...subs) => { const st = stamped(...subs); if (st) return st; const n = Number(id); return (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra'; };
+    pushIf(effFama(order?.fama24h?.orderId, order?.fama24h), order?.fama24h?.orderId);
+    pushIf(stamped(order?.fornecedor_social) || 'fornecedor_social', order?.fornecedor_social?.orderId);
+    pushIf(stamped(order?.topfama) || 'topfama', order?.topfama?.orderId);
+    (Array.isArray(order?.fama24h_multi?.orders) ? order.fama24h_multi.orders : []).forEach(o => { const id = o && (o.orderId ?? o.id); pushIf(effFama(id, o, order.fama24h_multi), id); });
+    (Array.isArray(order?.fornecedor_social_multi?.orders) ? order.fornecedor_social_multi.orders : []).forEach(o => pushIf(stamped(o, order.fornecedor_social_multi) || 'fornecedor_social', o && (o.orderId ?? o.id)));
     return out;
 }
 
@@ -21688,37 +22319,32 @@ app.get('/api/woovi/charge-status', publicStatusResponse, async (req, res) => {
 
 app.post('/api/fama/status', publicIpLimit('fama_status', 60, 10), async (req, res) => {
   try {
-    const key = process.env.NUVRASMM_API_KEY || '';
     const orderParam = String((req.body && (req.body.order || req.body.orderId)) || req.query.order || '').trim();
-    if (!key) return res.status(400).json({ ok: false, error: 'missing_key' });
     if (!orderParam) return res.status(400).json({ ok: false, error: 'missing_order' });
     const __isAdminFama = !!(req.session && req.session.adminUser);
+    const col = await getCollection('checkout_orders');
+    const n0 = Number(orderParam);
+    const own = await col.findOne({ $or: [{ 'fama24h.orderId': orderParam }, ...(Number.isFinite(n0) ? [{ 'fama24h.orderId': n0 }] : [])] }, { projection: { _id: 1, 'fama24h.provider': 1, 'fama24h.statusPayload': 1 } });
     // Só consulta pedido que é NOSSO (antes qualquer nº do fornecedor, com a nossa chave).
-    if (!__isAdminFama) {
-      const colChk = await getCollection('checkout_orders');
-      const n0 = Number(orderParam);
-      const own = await colChk.findOne({ $or: [{ 'fama24h.orderId': orderParam }, ...(Number.isFinite(n0) ? [{ 'fama24h.orderId': n0 }] : [])] }, { projection: { _id: 1 } });
-      if (!own) { logBlockedCall(req, 'fama_status_pedido_alheio'); return res.status(404).json({ ok: false, error: 'order_not_found' }); }
-    }
+    if (!own && !__isAdminFama) { logBlockedCall(req, 'fama_status_pedido_alheio'); return res.status(404).json({ ok: false, error: 'order_not_found' }); }
+    // O slot fama24h guarda pedidos de vários fornecedores: consulta o provider gravado no pedido.
+    const provFama = slotRealProvider('fama24h', own && own.fama24h);
+    const key = smmProviderKey(provFama);
+    if (!key) return res.status(400).json({ ok: false, error: 'missing_key' });
     const axios = require('axios');
     const payload = new URLSearchParams({ key, action: 'status', order: orderParam });
-    try { console.log('🛰️ Fama status request', { order: orderParam, action: 'status' }); } catch(_) {}
-    const resp = await axios.post('https://nuvrasmm.com/api/v2', payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
+    try { console.log('🛰️ Fama status request', { order: orderParam, action: 'status', provider: provFama }); } catch(_) {}
+    const resp = await axios.post(smmProviderUrl(provFama), payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
     try {
       const data = resp.data || {};
       try { console.log('🛰️ Fama status response', { status: resp.status, data }); } catch(_) {}
-      const col = await getCollection('checkout_orders');
-      const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
-      let normalized = '';
-      if (/cancel/.test(txt)) normalized = 'cancelled';
-      else if (/partial/.test(txt)) normalized = 'partial';
-      else if (/pend/.test(txt)) normalized = 'pending';
-      else if (/process|progress|start|running/.test(txt)) normalized = 'processing';
-      else if (/complete|success|finished|done|conclu/.test(txt)) normalized = 'completed';
-      await col.updateOne(
-        { 'fama24h.orderId': Number(orderParam) },
-        { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } }
-      );
+      const normalized = normalizeProviderStatusText(data);
+      if (own && (normalized || !(own.fama24h && own.fama24h.statusPayload))) {
+        await col.updateOne(
+          { _id: own._id },
+          { $set: { 'fama24h.statusPayload': data, 'fama24h.status': normalized || 'unknown', 'fama24h.lastStatusAt': new Date().toISOString() } }
+        );
+      }
     } catch (_) {}
     // Custo do fornecedor (charge) não vai para o público.
     const __out = Object.assign({}, resp.data || {});
@@ -21886,24 +22512,32 @@ app.get('/api/order/provider-status', publicIpLimit('provider_status', 120, 10),
       try { console.log('🛰️ [provider-status] skip (final)', { t }); } catch(_) {}
       return res.json({ ok: true, provider: (req.session && req.session.adminUser) ? provider : null, data: persisted, skipped: true });
     }
-    const key = provider === 'fama24h'
-      ? (process.env.NUVRASMM_API_KEY || '')
-      : (provider === 'topfama' ? (process.env.TOPFAMA_API_KEY || '') : (process.env.FORNECEDOR_SOCIAL_API_KEY || ''));
+    // Consulta o fornecedor gravado no pedido (slot.provider / item do multi), não o nome do slot.
+    const realProvider = (function () {
+      if (provider === 'fama24h') {
+        const it = (hasFamaInMulti && orderParam) ? famaMultiOrders.find((x) => matchesId(x && (x.orderId ?? x.id))) : null;
+        return it ? slotRealProvider('fama24h_multi', it, doc.fama24h_multi) : slotRealProvider('fama24h', doc.fama24h);
+      }
+      if (provider === 'fornecedor_social') {
+        const it = (hasFsInMulti && orderParam) ? fsMultiOrders.find((x) => matchesId(x && (x.orderId ?? x.id))) : null;
+        return it ? slotRealProvider('fornecedor_social_multi', it, doc.fornecedor_social_multi) : slotRealProvider('fornecedor_social', doc.fornecedor_social);
+      }
+      return slotRealProvider('topfama', doc.topfama);
+    })();
+    const key = smmProviderKey(realProvider);
     if (!key) return res.status(400).json({ ok: false, error: 'missing_key', provider });
     const axios = require('axios');
-    const url = provider === 'fama24h' ? 'https://nuvrasmm.com/api/v2' : (provider === 'topfama' ? 'https://topfama.com/api/v2' : 'https://fornecedorsocial.com/api/v2');
+    const url = smmProviderUrl(realProvider);
     const payload = new URLSearchParams({ key, action: 'status', order: orderParam });
-    try { console.log('🛰️ [provider-status] requesting', { url, order: orderParam }); } catch(_) {}
+    try { console.log('🛰️ [provider-status] requesting', { url, order: orderParam, realProvider }); } catch(_) {}
     const resp = await axios.post(url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
     const data = resp.data || {};
     try { console.log('🛰️ [provider-status] response', { status: resp.status, data }); } catch(_) {}
-    const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
-    let normalized = '';
-    if (/cancel/.test(txt)) normalized = 'cancelled';
-    else if (/partial/.test(txt)) normalized = 'partial';
-    else if (/pend/.test(txt)) normalized = 'pending';
-    else if (/process|progress|start|running/.test(txt)) normalized = 'processing';
-    else if (/complete|success|finished|done|conclu/.test(txt)) normalized = 'completed';
+    const normalized = normalizeProviderStatusText(data);
+    // Resposta sem status (ex.: "Incorrect order ID") não apaga o status bom que já está salvo.
+    if (!normalized && persisted && getText(persisted)) {
+      return res.json({ ok: true, provider: (req.session && req.session.adminUser) ? provider : null, data: persisted, skipped: true });
+    }
     if (provider === 'fama24h') {
       if (hasFamaInMulti && orderParam) {
         const oidVals = [String(orderParam)];
@@ -22341,6 +22975,14 @@ app.post("/api/check-instagram-profile", async (req, res) => {
         return res.status(400).json({
             success: false,
             error: "Nome de usuário é obrigatório"
+        });
+    }
+
+    // Link de post colado no campo do @ vira "reel" ou "p", que são contas reais: o pedido ia para elas.
+    if (/^@?(p|reel|reels|tv|stories|explore|accounts|direct)$/i.test(String(username).trim())) {
+        return res.status(400).json({
+            success: false,
+            error: "Cole o @ do perfil, não o link do post."
         });
     }
 
@@ -40358,6 +41000,241 @@ async function fetchFacebookInsightsByFormat({ since, until, datePreset } = {}) 
   } catch (e) { return { ok: false, error: (e && e.message) || 'fetch_failed' }; }
 }
 
+// ── Gestão Meta Ads (/painel/meta-ads) ─────────────────────────────────────────
+// Por anúncio: gasto/cliques/compras do Meta (as 2 contas, USD convertido sem imposto)
+// x vendas do banco (pedidos pagos cuja utms.content = ad_id; upsell herda o anúncio do pai).
+// Permite pausar/ativar anúncio e conjunto (token FB_ADS_TOKEN tem ads_management);
+// toda troca fica em meta_ads_log.
+const __metaAdsCache = new Map();
+const __META_PURCH = ['purchase', 'offsite_conversion.fb_pixel_purchase', 'omni_purchase'];
+function __metaPick(arr) {
+  if (!Array.isArray(arr)) return 0;
+  for (const t of __META_PURCH) { const x = arr.find((a) => a && a.action_type === t); if (x) return Number(x.value) || 0; }
+  return 0;
+}
+function __metaAccounts() {
+  return [{ act: __fbBrAccount(), conta: 'BR' }, { act: __fbUsdAccount(), conta: 'USD' }].filter((a) => a.act);
+}
+async function __metaGetAll(url, params) {
+  const out = [];
+  let next = url, p = params, guard = 0;
+  while (next && guard++ < 40) {
+    const r = await axios.get(next, { params: p, timeout: 45000, validateStatus: () => true });
+    if (r.status !== 200 || !r.data || !Array.isArray(r.data.data)) {
+      throw new Error((r.data && r.data.error && r.data.error.message) || ('http_' + r.status));
+    }
+    out.push(...r.data.data);
+    next = r.data.paging && r.data.paging.next; p = undefined;
+  }
+  return out;
+}
+// Período em datas de São Paulo: hoje | ontem | 7d | mes | custom (since/until YYYY-MM-DD).
+function __metaRange(q) {
+  const brt = (ms) => new Date(ms - 3 * 3600e3).toISOString().slice(0, 10);
+  const hoje = brt(Date.now());
+  const menos = (d, n) => brt(Date.parse(d + 'T12:00:00Z') + 3 * 3600e3 - n * 864e5);
+  const p = String((q && q.periodo) || 'hoje');
+  let since = hoje, until = hoje;
+  if (p === 'ontem') { since = until = menos(hoje, 1); }
+  else if (p === '7d') { since = menos(hoje, 6); }
+  else if (p === 'mes') { since = hoje.slice(0, 8) + '01'; }
+  else if (p === 'custom') {
+    const s = String(q.since || ''), u = String(q.until || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u) || s > u) return null;
+    since = s; until = u;
+  }
+  return { periodo: p, since, until, hoje };
+}
+// TrackCombo via o servidor MCP deles (mesma API do painel TC). Chave em TRACKCOMBO_API_KEY.
+// Busca por dia em paralelo; dia fechado fica 6h em cache, o dia de hoje 2 min.
+const __tcDiaCache = new Map();
+function __tcConfigurado() { return !!String(process.env.TRACKCOMBO_API_KEY || '').trim(); }
+async function __tcMcpCall(args) {
+  const raw = String(process.env.TRACKCOMBO_API_KEY || '').trim();
+  const auth = /^bearer /i.test(raw) ? raw : 'Bearer ' + raw;
+  const url = String(process.env.TRACKCOMBO_MCP_URL || 'https://mcp.trackcombo.com/mcp');
+  const r = await axios.post(url, { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: 'get_recent_events', arguments: args } },
+    { headers: { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, timeout: 60000, validateStatus: () => true });
+  let j = r.data;
+  if (typeof j === 'string') { const l = j.split('\n').filter((x) => x.startsWith('data:')).pop(); j = l ? JSON.parse(l.slice(5)) : null; }
+  const txt = j && j.result && Array.isArray(j.result.content) && j.result.content[0] && j.result.content[0].text;
+  if (r.status !== 200 || !txt || (j.result && j.result.isError)) throw new Error('tc_http_' + r.status + (txt ? ': ' + String(txt).slice(0, 120) : ''));
+  return JSON.parse(txt.slice(0, txt.lastIndexOf('}') + 1));
+}
+async function __tcDia(dia, agora) {
+  const ini = Date.parse(dia + 'T03:00:00Z'), fim = Math.min(ini + 864e5, agora);
+  const hit = __tcDiaCache.get(dia);
+  if (hit && hit.exp > agora) return hit.compras;
+  const container = String(process.env.TRACKCOMBO_CONTAINER_ID || 'MXERC7WMHA');
+  const ev = new Map(); let cursor, guard = 0;
+  do {
+    const args = { container_id: container, event_name: 'purchase', status: 'SUCCESS', from: ini, to: fim };
+    if (cursor) args.cursor = cursor;
+    const o = await __tcMcpCall(args);
+    for (const e of (o.events || [])) ev.set(e.id, e);
+    cursor = o.nextCursor;
+  } while (cursor && guard++ < 40);
+  const porTx = new Map();
+  for (const e of ev.values()) {
+    const cd = e.data && e.data.custom_data; if (!cd || cd.status !== 'paid' || !cd.transaction_id) continue;
+    const t = (e.data && e.data.tracking) || {};
+    // utm_content vem cortado ("1202***") enquanto o TC esconder a UTM; quando vier inteiro, já é usado.
+    const uc = String(t.utm_content || '').trim();
+    porTx.set(cd.transaction_id, { tx: cd.transaction_id, valor: Number(cd.value) || 0, em: e.date, pago: /^paid/.test(String(t.channel || '')) || /^120/.test(uc), content: /^\d{10,}$/.test(uc) ? uc : '' });
+  }
+  const compras = [...porTx.values()];
+  __tcDiaCache.set(dia, { compras, exp: agora + (fim < ini + 864e5 ? 2 * 60e3 : 6 * 3600e3) });
+  return compras;
+}
+async function __tcCompras(iniMs, fimMs) {
+  const agora = Date.now(), dias = [];
+  for (let t = iniMs; t < Math.min(fimMs, agora); t += 864e5) dias.push(new Date(t - 3 * 3600e3).toISOString().slice(0, 10));
+  const out = [];
+  for (let i = 0; i < dias.length; i += 6) {
+    const lote = await Promise.all(dias.slice(i, i + 6).map((d) => __tcDia(d, agora)));
+    for (const l of lote) out.push(...l);
+  }
+  const vistos = new Set();
+  return out.filter((c) => c.em >= iniMs && c.em < fimMs && !vistos.has(c.tx) && vistos.add(c.tx));
+}
+async function computeMetaAdsData(q) {
+  const range = __metaRange(q || {});
+  if (!range) return { ok: false, error: 'periodo_invalido' };
+  const token = String(process.env.FB_ADS_TOKEN || '').trim();
+  const contas = __metaAccounts();
+  if (!token || !contas.length) return { ok: false, error: 'not_configured' };
+  const key = range.since + '|' + range.until;
+  const hit = __metaAdsCache.get(key);
+  if (hit && hit.exp > Date.now() && !(q && q.fresh)) return { ...hit.value, cached: true };
+  let fx = 5.03; try { const r = await getUsdBrlRate(); if (r && r.rate) fx = r.rate; } catch (_) {}
+  const ads = new Map();
+  const tr = JSON.stringify({ since: range.since, until: range.until });
+  const erros = [];
+  for (const { act, conta } of contas) {
+    try {
+      const [lista, ins, hojeIns] = await Promise.all([
+        __metaGetAll(`https://graph.facebook.com/v21.0/${act}/ads`, { fields: 'id,name,status,effective_status,created_time,adset{id,name,status,effective_status,daily_budget},campaign{id,name,status,effective_status,daily_budget},creative{thumbnail_url}', limit: 200, access_token: token }),
+        __metaGetAll(`https://graph.facebook.com/v21.0/${act}/insights`, { fields: 'ad_id,spend,impressions,inline_link_clicks,actions,action_values', level: 'ad', time_range: tr, limit: 500, access_token: token }),
+        range.until === range.hoje && range.since === range.hoje ? Promise.resolve(null)
+          : __metaGetAll(`https://graph.facebook.com/v21.0/${act}/insights`, { fields: 'ad_id,spend', level: 'ad', date_preset: 'today', limit: 500, access_token: token }),
+      ]);
+      const m = conta === 'USD' ? fx : 1;
+      for (const a of lista) {
+        const st = String(a.effective_status || '');
+        if (st === 'DELETED' || st === 'ARCHIVED') continue;
+        ads.set(String(a.id), {
+          id: String(a.id), nome: a.name || '', conta, status: a.status || '', efetivo: st, criadoEm: a.created_time || null,
+          conjunto: a.adset ? { id: String(a.adset.id), nome: a.adset.name || '', status: a.adset.status || '', efetivo: a.adset.effective_status || '', orcamentoDia: a.adset.daily_budget ? (Number(a.adset.daily_budget) / 100) * m : null } : null,
+          campanha: a.campaign ? { id: String(a.campaign.id), nome: a.campaign.name || '', status: a.campaign.status || '', efetivo: a.campaign.effective_status || '', orcamentoDia: a.campaign.daily_budget ? (Number(a.campaign.daily_budget) / 100) * m : null } : null,
+          thumb: (a.creative && a.creative.thumbnail_url) || '',
+          gasto: 0, gastoHoje: 0, impressoes: 0, cliques: 0, metaCompras: 0, metaValor: 0, vendas: 0, receita: 0, tcVendas: 0, tcReceita: 0,
+        });
+      }
+      for (const x of ins) {
+        const a = ads.get(String(x.ad_id)); if (!a) continue;
+        a.gasto += (Number(x.spend) || 0) * m; a.impressoes += Number(x.impressions) || 0; a.cliques += Number(x.inline_link_clicks) || 0;
+        a.metaCompras += __metaPick(x.actions); a.metaValor += __metaPick(x.action_values) * m;
+      }
+      if (hojeIns === null) { for (const a of ads.values()) if (a.conta === conta) a.gastoHoje = a.gasto; }
+      else for (const x of hojeIns) { const a = ads.get(String(x.ad_id)); if (a) a.gastoHoje += (Number(x.spend) || 0) * m; }
+    } catch (e) { erros.push(conta + ': ' + ((e && e.message) || e)); }
+  }
+  // Vendas do banco no período (horário de SP).
+  const iniMs = Date.parse(range.since + 'T03:00:00Z'), fimMs = Date.parse(range.until + 'T03:00:00Z') + 864e5;
+  const semAnuncio = { vendas: 0, receita: 0 }, recuperadas = { vendas: 0, receita: 0 }; let totVendas = 0, totReceita = 0;
+  const tc = { configurado: __tcConfigurado(), total: { vendas: 0, receita: 0 }, meta: { vendas: 0, receita: 0 }, anuncio: { vendas: 0, receita: 0 }, semRelatorio: { vendas: 0, receita: 0 } };
+  const tcPromise = tc.configurado ? __tcCompras(iniMs, fimMs).catch((e) => { erros.push('TrackCombo: ' + ((e && e.message) || e)); return []; }) : Promise.resolve([]);
+  try {
+    const col = await getCollection('checkout_orders');
+    const desde = new Date(iniMs - 3 * 864e5);
+    const docs = await col.find({ status: 'pago', $or: [{ createdAt: { $gte: desde } }, { createdAt: { $gte: desde.toISOString() } }] })
+      .project({ identifier: 1, utms: 1, utmsFonte: 1, upsell: 1, valueCents: 1, paidAt: 1, 'paghiper.paidAt': 1, 'woovi.paidAt': 1, createdAt: 1 }).limit(50000).toArray();
+    const quando = (d) => new Date(d.paidAt || (d.paghiper && d.paghiper.paidAt) || (d.woovi && d.woovi.paidAt) || d.createdAt).getTime();
+    const noPeriodo = docs.filter((d) => { const t = quando(d); return t >= iniMs && t < fimMs; });
+    const adDe = (u) => { const s = String((u && u.content) || '').trim(); return /^\d{10,}$/.test(s) ? s : ''; };
+    const paiIds = new Set(), paiCorr = new Set();
+    for (const d of noPeriodo) if (d.upsell && !adDe(d.utms)) { if (d.upsell.parentIdentifier) paiIds.add(String(d.upsell.parentIdentifier)); if (d.upsell.parentCorrelationID) paiCorr.add(String(d.upsell.parentCorrelationID)); }
+    const pais = (paiIds.size || paiCorr.size) ? await col.find({ $or: [{ identifier: { $in: [...paiIds] } }, { correlationID: { $in: [...paiCorr] } }] }).project({ identifier: 1, correlationID: 1, utms: 1 }).toArray() : [];
+    const paiPorId = new Map(); for (const p of pais) { if (p.identifier) paiPorId.set('i:' + p.identifier, p); if (p.correlationID) paiPorId.set('c:' + p.correlationID, p); }
+    for (const d of noPeriodo) {
+      const v = (Number(d.valueCents) || 0) / 100; totVendas++; totReceita += v;
+      let ad = adDe(d.utms);
+      if (!ad && d.upsell) { const p = paiPorId.get('i:' + d.upsell.parentIdentifier) || paiPorId.get('c:' + d.upsell.parentCorrelationID); if (p) ad = adDe(p.utms); }
+      const a = ad && ads.get(ad);
+      if (a) { a.vendas++; a.receita += v; if (d.utmsFonte === 'cookie_oppus') { recuperadas.vendas++; recuperadas.receita += v; } } else { semAnuncio.vendas++; semAnuncio.receita += v; }
+    }
+    // TrackCombo: só o que o PRÓPRIO TC atribuiu, sem usar nada do nosso banco (fontes independentes).
+    // A API (MCP) do TC devolve a UTM cortada, então o anúncio de cada venda vem do relatório "Vendas" do
+    // painel do TC, importado em tc_atribuicao (_id = transaction_id). Venda sem import fica sem anúncio.
+    const compras = await tcPromise;
+    if (compras.length) {
+      const ids = [...new Set(compras.map((x) => x.tx).filter(Boolean))];
+      const imp = new Map();
+      try { for (const x of await (await getCollection('tc_atribuicao')).find({ _id: { $in: ids } }).project({ content: 1 }).toArray()) imp.set(x._id, String(x.content || '')); } catch (_) {}
+      for (const cp of compras) {
+        tc.total.vendas++; tc.total.receita += cp.valor;
+        // 1) API do TC com UTM inteira (quando o TC liberar); 2) relatório importado do painel do TC.
+        if (cp.content) tc.viaApi = (tc.viaApi || 0) + 1;
+        else if (!imp.has(cp.tx)) { tc.semRelatorio.vendas++; tc.semRelatorio.receita += cp.valor; }
+        const ad = adDe({ content: cp.content || imp.get(cp.tx) || '' });
+        const a = ad && ads.get(ad);
+        if (a) { a.tcVendas++; a.tcReceita += cp.valor; tc.anuncio.vendas++; tc.anuncio.receita += cp.valor; }
+        if (a || cp.pago) { tc.meta.vendas++; tc.meta.receita += cp.valor; }
+      }
+    }
+  } catch (e) { erros.push('banco: ' + ((e && e.message) || e)); }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  for (const k of ['total', 'meta', 'anuncio', 'semRelatorio']) tc[k].receita = r2(tc[k].receita);
+  const linhas = [...ads.values()]
+    .filter((a) => a.gasto > 0 || a.vendas > 0 || a.metaCompras > 0 || a.tcVendas > 0 || a.efetivo === 'ACTIVE')
+    .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
+    .sort((x, y) => y.gasto - x.gasto);
+  const value = { ok: true, range, fx, geradoEm: new Date().toISOString(), ads: linhas, semAnuncio: { vendas: semAnuncio.vendas, receita: r2(semAnuncio.receita) }, banco: { vendas: totVendas, receita: r2(totReceita), recuperadas: { vendas: recuperadas.vendas, receita: r2(recuperadas.receita) } }, tc, erros };
+  if (!erros.length) __metaAdsCache.set(key, { value, exp: Date.now() + 2 * 60 * 1000 });
+  return value;
+}
+
+app.get('/painel/meta-ads', requireAdmin, (req, res) => res.render('painel_meta_ads', { page: 'meta-ads' }));
+app.get('/api/painel/meta-ads/dados', requireAdmin, async (req, res) => {
+  try {
+    const d = await computeMetaAdsData({ ...req.query, fresh: req.query.fresh === '1' });
+    return res.status(d.ok ? 200 : 400).json(d);
+  } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+// Pausa/ativa anúncio, conjunto ou campanha. Só aceita objetos das nossas contas.
+app.post('/api/painel/meta-ads/status', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    const nivel = String((req.body && req.body.nivel) || '');
+    const para = String((req.body && req.body.status) || '');
+    if (!/^\d{6,}$/.test(id) || !['ad', 'adset', 'campaign'].includes(nivel) || !['ACTIVE', 'PAUSED'].includes(para)) return res.status(400).json({ ok: false, error: 'parametros_invalidos' });
+    const token = String(process.env.FB_ADS_TOKEN || '').trim();
+    if (!token) return res.status(400).json({ ok: false, error: 'not_configured' });
+    const info = await axios.get(`https://graph.facebook.com/v21.0/${id}`, { params: { fields: 'id,name,status,effective_status,account_id', access_token: token }, timeout: 20000, validateStatus: () => true });
+    const obj = info.data || {};
+    if (info.status !== 200 || !obj.id) return res.status(404).json({ ok: false, error: (obj.error && obj.error.message) || 'nao_encontrado' });
+    const nossas = __metaAccounts().map((a) => a.act.replace(/^act_/, ''));
+    if (!nossas.includes(String(obj.account_id))) return res.status(403).json({ ok: false, error: 'conta_nao_permitida' });
+    const r = await axios.post(`https://graph.facebook.com/v21.0/${id}`, new URLSearchParams({ status: para, access_token: token }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true });
+    const ok = r.status === 200 && r.data && r.data.success === true;
+    const usuario = (req.session && req.session.adminUser && req.session.adminUser.username) || '?';
+    try {
+      const log = await getCollection('meta_ads_log');
+      await log.insertOne({ em: new Date(), usuario, id, nivel, nome: obj.name || '', de: obj.status || '', para, ok, erro: ok ? null : ((r.data && r.data.error && r.data.error.message) || ('http_' + r.status)) });
+    } catch (_) {}
+    if (!ok) return res.status(502).json({ ok: false, error: (r.data && r.data.error && (r.data.error.error_user_msg || r.data.error.message)) || ('http_' + r.status) });
+    __metaAdsCache.clear();
+    return res.json({ ok: true, id, nivel, status: para, nome: obj.name || '' });
+  } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+app.get('/api/painel/meta-ads/log', requireAdmin, async (req, res) => {
+  try {
+    const log = await getCollection('meta_ads_log');
+    const itens = await log.find({}).sort({ em: -1 }).limit(50).toArray();
+    return res.json({ ok: true, itens: itens.map((x) => ({ em: x.em, usuario: x.usuario, id: x.id, nivel: x.nivel, nome: x.nome, de: x.de, para: x.para, ok: x.ok, erro: x.erro })) });
+  } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+
 // Pizza de ORDER BUMPS: quanto cada bump vendeu (receita) e custou, por categoria.
 // Upgrade = 1 categoria (todos os perfis). Curtidas = mistas+brasileiras+reais juntas,
 // mas o CUSTO é por subtipo. Views, Comentários e Garantia idem. Cache 5 min.
@@ -41280,6 +42157,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     const unknownProviderQuery = {
       $or: [
+        { 'upsell.dispatchStatus': 'error' },
         { 'fama24h.status': 'unknown' },
         { 'fama24h.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h.status': 'error' },
@@ -41456,7 +42334,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       // Pedido represado na fila de seguidores também está sem orderId, mas não é
       // falha — ele tem tópico próprio (/painel/aguardando). Fora daqui pra não
       // virar ruído no meio dos que realmente deram erro.
-      ? { $and: [paidQuery, unknownProviderQuery, { 'followersQueue.status': { $ne: 'waiting_previous' } }] }
+      ? { $and: [paidQuery, unknownProviderQuery, { 'followersQueue.status': { $ne: 'waiting_previous' } }, { 'upsell.dispatchStatus': { $nin: ['waiting_parent', 'waiting_payment', 'paused', 'cancelled'] } }] }
       : paidQuery;
 
     const periodDefault = (view === 'unknown_orderid') ? 'all' : (view === 'dashboard' ? 'all' : 'today');
@@ -42295,6 +43173,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         orderBumps: resolveOrderBumps(o),
         _id: o._id,
         createdAt: resolvePaidAtIsoForPanel(o),
+        upsellError: (o && o.upsell && o.upsell.dispatchStatus === 'error') ? String(o.upsell.dispatchError || 'Erro no envio') : '',
         instaUser: resolveUser(o),
         phone: resolvePhone(o),
         postLinkViews: resolvePostLinkViews(o),
@@ -42767,45 +43646,51 @@ app.get('/painel', requireAdmin, async (req, res) => {
         }
       }
 
-      const paidMap = new Map();
+      // Mesma conta do card (validado → comprou), dia a dia: perfis validados no dia que pagaram no dia.
+      // Lê o histórico `checks`: o checkedAt do topo guarda só a última validação do perfil, o que
+      // esvaziava os dias antigos e, dividindo pedidos por perfis, passava de 100%.
+      const normUser = (u) => String(u || '').trim().replace(/^@+/, '').toLowerCase();
+      const buyersByDay = new Map();
       for (const o of filteredOrders) {
         const dateStr = resolvePaidAtIsoForPanel(o);
         if (!dateStr) continue;
         const orderDateUTC = parseOrderDateUTC(dateStr);
         if (!orderDateUTC) continue;
         if (orderDateUTC < start || orderDateUTC >= endExclusive) continue;
+        const u = normUser(o.instagramUsername || o.instauser || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || (o.additionalInfoMap && o.additionalInfoMap.instagram_username) || '');
+        if (!u) continue;
         const k = mkKey(orderDateUTC);
-        paidMap.set(k, (paidMap.get(k) || 0) + 1);
+        if (!buyersByDay.has(k)) buyersByDay.set(k, new Set());
+        buyersByDay.get(k).add(u);
       }
 
-      const validatedMap = new Map();
+      const validatedByDay = new Map();
       try {
         const vu = await getCollection('validated_insta_users');
-        const startIso = start.toISOString();
-        const endIso = endExclusive.toISOString();
-        const stringRange = { $gte: startIso, $lt: endIso };
-        const dateRange = { $gte: start, $lt: endExclusive };
-        const or = [
-          { checkedAt: Object.assign({ $type: 'string' }, stringRange) },
-          { checkedAt: Object.assign({ $type: 'date' }, dateRange) },
-          { lastTrackAt: Object.assign({ $type: 'string' }, stringRange) },
-          { lastTrackAt: Object.assign({ $type: 'date' }, dateRange) }
-        ];
         const docs = await vu
-          .find({ $or: or }, { projection: { checkedAt: 1, lastTrackAt: 1 } })
+          .find(realValidationChecksQuery(start, endExclusive), { projection: { _id: 0, username: 1, 'checks.source': 1, 'checks.checkedAt': 1 } })
           .toArray();
         for (const d0 of docs) {
-          const raw = (typeof d0.checkedAt !== 'undefined' && d0.checkedAt !== null) ? d0.checkedAt : d0.lastTrackAt;
-          const dt = parseOrderDateUTC(raw);
-          if (!dt) continue;
-          if (dt < start || dt >= endExclusive) continue;
-          const k = mkKey(dt);
-          validatedMap.set(k, (validatedMap.get(k) || 0) + 1);
+          const u = normUser(d0.username);
+          if (!u) continue;
+          for (const ck of (Array.isArray(d0.checks) ? d0.checks : [])) {
+            if (!ck || !/^verifyInstagramProfile/i.test(String(ck.source || ''))) continue;
+            const dt = parseOrderDateUTC(ck.checkedAt);
+            if (!dt) continue;
+            if (dt < start || dt >= endExclusive) continue;
+            const k = mkKey(dt);
+            if (!validatedByDay.has(k)) validatedByDay.set(k, new Set());
+            validatedByDay.get(k).add(u);
+          }
         }
       } catch (_) {}
 
-      const dailyPaid = labels.map(k => Number(paidMap.get(k) || 0));
-      const dailyValidated = labels.map(k => Number(validatedMap.get(k) || 0));
+      const dailyValidated = labels.map(k => (validatedByDay.has(k) ? validatedByDay.get(k).size : 0));
+      const dailyPaid = labels.map(k => {
+        const buyers = buyersByDay.get(k);
+        if (!buyers || !validatedByDay.has(k)) return 0;
+        return Array.from(validatedByDay.get(k)).filter(u => buyers.has(u)).length;
+      });
       const dailyPct = labels.map((k, idx) => {
         const v = Number(dailyValidated[idx] || 0);
         const p = Number(dailyPaid[idx] || 0);
@@ -46764,6 +47649,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
 
     const unknownProviderQuery = {
       $or: [
+        { 'upsell.dispatchStatus': 'error' },
         { 'fama24h.status': 'unknown' },
         { 'fama24h.orderId': { $in: ['unknown', 'unknow'] } },
         { 'fama24h.status': 'error' },
@@ -46877,7 +47763,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
     };
 
     // Mesma exclusão da tela: represado na fila de seguidores não é "unknown".
-    const query = { $and: [paidQuery, unknownProviderQuery, { 'followersQueue.status': { $ne: 'waiting_previous' } }] };
+    const query = { $and: [paidQuery, unknownProviderQuery, { 'followersQueue.status': { $ne: 'waiting_previous' } }, { 'upsell.dispatchStatus': { $nin: ['waiting_parent', 'waiting_payment', 'paused', 'cancelled'] } }] };
     const orders = await col.find(query).sort({ createdAt: -1 }).limit(5000).toArray();
 
     const toSP = (d) => new Date(d.getTime() - 3 * 60 * 60 * 1000);
@@ -47534,20 +48420,20 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
         const pickMulti = (arr) => {
           for (const it of (arr || [])) {
             const oid = String((it && (it.orderId ?? it.id)) || '').trim();
-            if (oid) return { orderId: oid, statusPayload: it && it.statusPayload ? it.statusPayload : null };
+            if (oid) return { orderId: oid, statusPayload: it && it.statusPayload ? it.statusPayload : null, item: it };
           }
           return null;
         };
         const famaOid = String((o && o.fama24h && (o.fama24h.orderId ?? o.fama24h.orderID ?? o.fama24h.order_id)) || '').trim();
         const fsOid = String((o && o.fornecedor_social && (o.fornecedor_social.orderId ?? o.fornecedor_social.orderID ?? o.fornecedor_social.order_id)) || '').trim();
-        const fama = famaOid ? { provider: 'fama24h', orderId: famaOid, statusPayload: o.fama24h.statusPayload || null } : null;
-        const fs = fsOid ? { provider: 'fornecedor_social', orderId: fsOid, statusPayload: o.fornecedor_social.statusPayload || null } : null;
+        const fama = famaOid ? { provider: 'fama24h', realProvider: slotRealProvider('fama24h', o.fama24h), orderId: famaOid, statusPayload: o.fama24h.statusPayload || null } : null;
+        const fs = fsOid ? { provider: 'fornecedor_social', realProvider: slotRealProvider('fornecedor_social', o.fornecedor_social), orderId: fsOid, statusPayload: o.fornecedor_social.statusPayload || null } : null;
         if (fs) return fs;
         if (fama) return fama;
         const fsM = pickMulti(fsMulti);
-        if (fsM) return { provider: 'fornecedor_social', orderId: fsM.orderId, statusPayload: fsM.statusPayload };
+        if (fsM) return { provider: 'fornecedor_social', realProvider: slotRealProvider('fornecedor_social_multi', fsM.item, o.fornecedor_social_multi), orderId: fsM.orderId, statusPayload: fsM.statusPayload };
         const famaM = pickMulti(famaMulti);
-        if (famaM) return { provider: 'fama24h', orderId: famaM.orderId, statusPayload: famaM.statusPayload };
+        if (famaM) return { provider: 'fama24h', realProvider: slotRealProvider('fama24h_multi', famaM.item, o.fama24h_multi), orderId: famaM.orderId, statusPayload: famaM.statusPayload };
       } catch (_) {}
       return { provider: '', orderId: '', statusPayload: null };
     };
@@ -47609,10 +48495,11 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
       return 0;
     };
 
-    const fetchStatus = async (provider, orderId) => {
-      const key = provider === 'fama24h' ? String(process.env.NUVRASMM_API_KEY || '').trim() : String(process.env.FORNECEDOR_SOCIAL_API_KEY || '').trim();
+    // `realProvider` = fornecedor gravado no pedido (o slot fama24h guarda vários fornecedores).
+    const fetchStatus = async (realProvider, orderId) => {
+      const key = smmProviderKey(realProvider);
       if (!key) return null;
-      const url = provider === 'fama24h' ? 'https://nuvrasmm.com/api/v2' : 'https://fornecedorsocial.com/api/v2';
+      const url = smmProviderUrl(realProvider);
       const payload = new URLSearchParams({ key, action: 'status', order: String(orderId) });
       const resp = await axios.post(url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
       const data = resp?.data || {};
@@ -47629,7 +48516,7 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
       scanned++;
       const oid = String(o && o._id ? o._id : '').trim();
       if (!oid) continue;
-      const { provider, orderId, statusPayload } = resolveProviderOrder(o);
+      const { provider, realProvider, orderId, statusPayload } = resolveProviderOrder(o);
 
       let providerCharge = null;
       let providerChargeFrom = '';
@@ -47640,11 +48527,11 @@ app.post('/api/painel/custos/recalcular', requireAdmin, async (req, res) => {
 
       if (provider && orderId && providerCharge == null) {
         try {
-          const remote = await fetchStatus(provider, orderId);
+          const remote = await fetchStatus(realProvider, orderId);
           providerCharge = extractChargeFromPayload(remote);
           if (providerCharge != null) providerChargeFrom = 'action_status';
           try {
-            if (remote) {
+            if (remote && normalizeProviderStatusText(remote)) {
               if (provider === 'fama24h') await ordersCol.updateOne({ _id: o._id }, { $set: { 'fama24h.statusPayload': remote, 'fama24h.lastStatusAt': new Date().toISOString() } });
               else await ordersCol.updateOne({ _id: o._id }, { $set: { 'fornecedor_social.statusPayload': remote, 'fornecedor_social.lastStatusAt': new Date().toISOString() } });
             }
@@ -49002,6 +49889,7 @@ app.get('/painel/upsell', requireAdmin, async (req, res) => {
     else if (filterStatus === 'paid')       query['status'] = { $in: ['pago', 'paid'] };
     else if (filterStatus === 'dispatched') query['upsell.dispatchStatus'] = { $in: ['dispatching', 'dispatched'] };
     else if (filterStatus === 'waiting')    { query['status'] = { $in: ['pago', 'paid'] }; query['upsell.dispatchStatus'] = 'waiting_parent'; }
+    else if (filterStatus === 'error')      query['upsell.dispatchStatus'] = 'error';
 
     if (filterTipo) {
       query['$or'] = [
@@ -49128,7 +50016,7 @@ app.post('/api/painel/upsell/dispatch', requireAdmin, async (req, res) => {
     if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
     const status = String(doc.status || '').toLowerCase();
     if (status !== 'pago' && status !== 'paid') return res.status(400).json({ ok: false, error: 'not_paid', message: 'O upsell ainda não foi pago.' });
-    await col.updateOne({ _id: doc._id }, { $set: { 'upsell.dispatchStatus': 'dispatching', 'upsell.manualDispatchAt': new Date().toISOString() } });
+    await col.updateOne({ _id: doc._id }, { $set: { 'upsell.dispatchStatus': 'dispatching', 'upsell.manualDispatchAt': new Date().toISOString() }, $unset: { 'upsell.dispatchError': '', 'upsell.dispatchErrorAt': '' } });
     // Re-buscar o doc atualizado (dispatchStatus='dispatching') para passar pelo portão do processOrderFulfillment
     const freshDoc = await col.findOne({ _id: doc._id });
     processOrderFulfillment(freshDoc || doc, col, null).catch((e) => console.error('[Upsell] dispatch manual err:', e?.message));
@@ -49765,6 +50653,7 @@ const server = app.listen(port, () => {
   try { startEmailBounceLoop(); } catch (_) {} // processa bounces (DSN) → supressão automática
   try { startLtvD2Loop(); } catch (_) {} // LTV D+2: só ENVIA se a config (settings.ltv_d2.enabled) estiver ligada — desligado por padrão
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
+  try { startSeguidoresParcialLoop(); } catch (_) {} // Gestão Parcial Seguidores: status a cada 1h + reenvio do faltante (se ligado no painel)
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
@@ -49955,13 +50844,16 @@ const server = app.listen(port, () => {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
         const startCond = (function () {
-          if (!recoveryStartIso) return null;
-          const startDate = new Date(recoveryStartIso);
-          const canUseDate = Number.isFinite(startDate.getTime());
+          // Só pedidos da janela de recuperação (padrão 48h). Antes ia desde 26/05: o lote de 60
+          // (ordenado do mais antigo) enchia de pedidos velhos sem estágio possível e travava tudo.
+          const janelaMs = Date.now() - getOrderRecoveryMaxAgeHours() * 60 * 60 * 1000;
+          const hardMs = recoveryStartIso ? new Date(recoveryStartIso).getTime() : 0;
+          const startDate = new Date(Math.max(janelaMs, Number.isFinite(hardMs) ? hardMs : 0));
+          const startIso = startDate.toISOString();
           return {
             $or: [
-              { $and: [{ createdAt: { $type: 'date' } }, ...(canUseDate ? [{ createdAt: { $gte: startDate } }] : [])] },
-              { $and: [{ createdAt: { $type: 'string' } }, { createdAt: { $gte: recoveryStartIso } }] }
+              { $and: [{ createdAt: { $type: 'date' } }, { createdAt: { $gte: startDate } }] },
+              { $and: [{ createdAt: { $type: 'string' } }, { createdAt: { $gte: startIso } }] }
             ]
           };
         })();
@@ -50237,31 +51129,22 @@ const server = app.listen(port, () => {
       if (/complete|success|finished|done|conclu/.test(t)) return 'completed';
       return '';
     };
-    const fetchProviderStatus = async (provider, orderId) => {
-      try {
-        if (!orderId) return '';
-        const key = provider === 'fornecedor_social' ? (process.env.FORNECEDOR_SOCIAL_API_KEY || '')
-          : provider === 'topfama' ? (process.env.TOPFAMA_API_KEY || '')
-          : (process.env.NUVRASMM_API_KEY || '');
-        if (!key) return '';
-        const url = provider === 'fornecedor_social' ? 'https://fornecedorsocial.com/api/v2'
-          : provider === 'topfama' ? 'https://topfama.com/api/v2'
-          : 'https://nuvrasmm.com/api/v2';
-        const payload = new URLSearchParams({ key, action: 'status', order: String(orderId) });
-        const resp = await axios.post(url, payload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
-        const data = resp.data || {};
-        return normalizeStatusText(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '');
-      } catch (_) { return ''; }
+    // O slot fama24h guarda pedidos de vários fornecedores: consulta sempre o fornecedor real.
+    const fetchProviderStatus = async (provider, orderId, parent, slot) => {
+      const data = await _fetchProviderStatusLive(provider, orderId, parent, slot);
+      return normalizeStatusText(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '');
     };
-    // Coleta provider + lista de orderIds do pai (single + multi)
+    // Coleta slot + fornecedor + orderIds do pai (single + multi)
     const collectParentProviderOrders = (parent) => {
-      const out = []; // { provider, orderId }
-      const pushIf = (provider, id) => { const s = String(id || '').trim(); if (s) out.push({ provider, orderId: s }); };
-      pushIf('fama24h', parent?.fama24h?.orderId);
-      pushIf('fornecedor_social', parent?.fornecedor_social?.orderId);
-      pushIf('topfama', parent?.topfama?.orderId);
-      (Array.isArray(parent?.fama24h_multi?.orders) ? parent.fama24h_multi.orders : []).forEach(o => pushIf('fama24h', o && (o.orderId ?? o.id)));
-      (Array.isArray(parent?.fornecedor_social_multi?.orders) ? parent.fornecedor_social_multi.orders : []).forEach(o => pushIf('fornecedor_social', o && (o.orderId ?? o.id)));
+      const out = []; // { slot, provider, orderId }
+      const pushIf = (slot, provider, id) => { const s = String(id || '').trim(); if (s) out.push({ slot, provider, orderId: s }); };
+      // O multi não grava o fornecedor: IDs na casa de 60 milhões são da WorldOfSMM.
+      const provedorMulti = (o) => { const id = Number(o && (o.orderId ?? o.id)); return (o && o.provider) || (id >= 60e6 && id < 70e6 ? 'worldofsmm' : 'fama24h'); };
+      pushIf('fama24h', parent?.fama24h?.provider || 'fama24h', parent?.fama24h?.orderId);
+      pushIf('fornecedor_social', 'fornecedor_social', parent?.fornecedor_social?.orderId);
+      pushIf('topfama', 'topfama', parent?.topfama?.orderId);
+      (Array.isArray(parent?.fama24h_multi?.orders) ? parent.fama24h_multi.orders : []).forEach(o => pushIf('fama24h', provedorMulti(o), o && (o.orderId ?? o.id)));
+      (Array.isArray(parent?.fornecedor_social_multi?.orders) ? parent.fornecedor_social_multi.orders : []).forEach(o => pushIf('fornecedor_social', 'fornecedor_social', o && (o.orderId ?? o.id)));
       return out;
     };
     // Intervalo de checagem por tipo do pai
@@ -50273,6 +51156,41 @@ const server = app.listen(port, () => {
       return 30 * 60 * 1000;                                        // default 30min
     };
 
+    // Upsell liberado que não subiu ao fornecedor (sem saldo, link duplicado...) vira 'error' com
+    // o motivo e aparece no OrderID Unknown. Cadastrar o orderId depois tira do erro.
+    const idValido = (v) => { const s = String(v ?? '').trim().toLowerCase(); return !!s && s !== 'null' && s !== 'undefined' && s !== 'unknown' && s !== 'unknow'; };
+    const temOrderIdUpsell = (o) => [o?.fama24h, o?.fornecedor_social, o?.topfama].some(b => b && idValido(b.orderId))
+      || [o?.fama24h_multi, o?.fornecedor_social_multi].some(b => Array.isArray(b?.orders) && b.orders.some(x => x && idValido(x.orderId ?? x.id)));
+    const motivoFalhaUpsell = (o) => {
+      const blocos = [o?.fama24h, o?.fornecedor_social, o?.topfama, o?.fama24h_multi, o?.fornecedor_social_multi].filter(Boolean);
+      const lerErro = (b) => {
+        const e = b?.response?.error ?? b?.error;
+        if (!e) return '';
+        return String(typeof e === 'object' ? (e.error || e.code || e.message || JSON.stringify(e)) : e).slice(0, 160);
+      };
+      const bruto = blocos.flatMap(b => [b, ...(Array.isArray(b.orders) ? b.orders : [])]).map(lerErro).find(Boolean) || '';
+      if (!bruto) return (o?.isPrivate === true || o?.profilePrivacy?.isPrivate === true) ? 'Perfil privado' : 'Fornecedor não retornou pedido';
+      if (/funds|balance|saldo/i.test(bruto)) return `Sem saldo no painel (${bruto})`;
+      if (/duplicate|active order/i.test(bruto)) return `Link com pedido ativo no fornecedor (${bruto})`;
+      return bruto;
+    };
+    const revisarEnviosUpsell = async (col) => {
+      const limite = new Date(Date.now() - 2 * 60 * 1000).toISOString(); // dá tempo do envio terminar
+      const enviando = await col.find({ 'upsell.isUpsell': true, 'upsell.dispatchStatus': 'dispatching', 'fama24h.orderId': null, 'fornecedor_social.orderId': null, 'topfama.orderId': null, 'followersQueue.status': { $ne: 'waiting_previous' } }).limit(200).toArray();
+      for (const up of enviando) {
+        if (temOrderIdUpsell(up)) continue;
+        const desde = String(up?.upsell?.manualDispatchAt || up?.upsell?.parentFulfilledAt || '');
+        if (desde > limite) continue;
+        const motivo = motivoFalhaUpsell(up);
+        console.log(`⚠️ [Upsell Poller] ${up.identifier} não subiu ao fornecedor: ${motivo}`);
+        await col.updateOne({ _id: up._id }, { $set: { 'upsell.dispatchStatus': 'error', 'upsell.dispatchError': motivo, 'upsell.dispatchErrorAt': new Date().toISOString() } });
+      }
+      const comErro = await col.find({ 'upsell.isUpsell': true, 'upsell.dispatchStatus': 'error' }).limit(500).toArray();
+      for (const up of comErro) {
+        if (temOrderIdUpsell(up)) await col.updateOne({ _id: up._id }, { $set: { 'upsell.dispatchStatus': 'dispatched' }, $unset: { 'upsell.dispatchError': '', 'upsell.dispatchErrorAt': '' } });
+      }
+    };
+
     let running = false;
     const tick = async () => {
       if (running) return;
@@ -50281,6 +51199,7 @@ const server = app.listen(port, () => {
         const { getCollection } = require('./mongodbClient');
         const col = await getCollection('checkout_orders');
         const paidTokens = ['pago', 'paid'];
+        await revisarEnviosUpsell(col);
         // Upsells pagos aguardando o pai
         const upsells = await col.find({
           'upsell.isUpsell': true,
@@ -50318,17 +51237,17 @@ const server = app.listen(port, () => {
             const parentSet = {};
             const seenProviders = {};
             for (const po of providerOrders) {
-              const st = await fetchProviderStatus(po.provider, po.orderId);
+              const st = await fetchProviderStatus(po.provider, po.orderId, parent, po.slot);
               statuses.push(st || 'unknown');
-              // Persiste o status no pai. Para provider single (orderId direto), grava <provider>.status.
+              // Persiste o status no pai. Para pedido single (orderId direto), grava <slot>.status.
               if (st) {
-                if (String(parent?.[po.provider]?.orderId || '') === String(po.orderId)) {
-                  parentSet[`${po.provider}.status`] = st;
-                  parentSet[`${po.provider}.lastStatusAt`] = new Date().toISOString();
+                if (String(parent?.[po.slot]?.orderId || '') === String(po.orderId)) {
+                  parentSet[`${po.slot}.status`] = st;
+                  parentSet[`${po.slot}.lastStatusAt`] = new Date().toISOString();
                 } else {
-                  // veio de multi: guarda overall por provider
-                  seenProviders[po.provider] = seenProviders[po.provider] || [];
-                  seenProviders[po.provider].push(st);
+                  // veio de multi: guarda overall por slot
+                  seenProviders[po.slot] = seenProviders[po.slot] || [];
+                  seenProviders[po.slot].push(st);
                 }
               }
             }

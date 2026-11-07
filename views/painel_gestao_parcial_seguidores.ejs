@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestão Parcial (Seguidores)</title>
+  <link href="/css/style.css" rel="stylesheet" />
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 0; }
+    h1 { margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 0.9rem; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .btn { padding: 6px 10px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.82rem; color: #fff; }
+    .btn-primary { background: #2563eb; }
+    .btn-green { background: #16a34a; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 5px 7px; text-align: left; border-bottom: 1px solid #eef0f4; font-size: 0.78rem; vertical-align: middle; white-space: nowrap; }
+    th { background: #f9fafb; font-weight: 700; color: #6b7280; position: sticky; top: 0; }
+    tr:hover { background: #f8fafc; }
+    .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+    .pill-part { background: #fef3c7; color: #92400e; }
+    .pill-done { background: #dcfce7; color: #166534; }
+    .pill-prog { background: #e0f2fe; color: #075985; }
+    .pill-canc { background: #fee2e2; color: #991b1b; }
+    .pill-none { background: #f3f4f6; color: #6b7280; }
+    .muted { color: #9ca3af; }
+    a.link { color: #2563eb; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+    .reorder-btn { padding: 3px 7px; border: 1px solid #16a34a; background: #16a34a; color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.72rem; }
+    .reorder-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .ghost-btn { padding: 3px 7px; border: 1px solid #64748b; background: #fff; color: #475569; border-radius: 6px; cursor: pointer; font-size: 0.72rem; }
+    .svc-in { width: 62px; padding: 3px 5px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.72rem; }
+    .scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .autobox { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; }
+    .autobox.on { background: #ecfdf5; border-color: #86efac; }
+    .autobox.off { background: #fff7ed; border-color: #fed7aa; }
+    .autobox input[type=number] { width: 64px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 6px; }
+    .bulkbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; }
+    .rowChk, #selAll { width: 16px; height: 16px; cursor: pointer; }
+    .err { color: #b91c1c; font-size: 0.68rem; }
+  </style>
+</head>
+<body>
+  <%- include('partials/painel_sidebar', { page: 'gestao-parcial-seguidores' }) %>
+  <div class="main-content">
+    <h1>Gestão Parcial (Seguidores)</h1>
+    <div class="sub">Pedidos de <strong>seguidores</strong> que o fornecedor devolveu como <strong>Parcial</strong> ou <strong>Cancelado</strong>. "Reenviar" manda só o que <strong>faltou</strong>, no mesmo fornecedor e serviço (ou no serviço que você digitar). Antes de todo envio o perfil é conferido na hora: se estiver privado ou não existir, não envia. O status é atualizado sozinho a cada 1h.</div>
+
+    <% var lastSweep = cfg && cfg.lastSweep; %>
+    <div class="autobox <%= cfg.autoEnabled ? 'on' : 'off' %>">
+      <strong><%= cfg.autoEnabled ? '🟢 Reenvio automático LIGADO' : '🟠 Reenvio automático DESLIGADO' %></strong>
+      <label class="sub" style="margin:0;">Falta mínima <input type="number" id="cfgMin" min="1" value="<%= cfg.minRemains %>"></label>
+      <label class="sub" style="margin:0;">Máx. reenvios por pedido <input type="number" id="cfgMax" min="1" max="10" value="<%= cfg.maxChain %>"></label>
+      <label class="sub" style="margin:0;">Janela (dias) <input type="number" id="cfgDias" min="1" max="30" value="<%= cfg.windowDays %>"></label>
+      <button type="button" id="cfgSave" class="btn btn-primary">Salvar</button>
+      <button type="button" id="cfgToggle" class="btn <%= cfg.autoEnabled ? '' : 'btn-green' %>" style="<%= cfg.autoEnabled ? 'background:#dc2626;' : '' %>"><%= cfg.autoEnabled ? 'Desligar automático' : 'Ligar automático' %></button>
+      <span id="cfgMsg" class="sub" style="margin:0;"></span>
+      <% if (lastSweep && lastSweep.at) { var ls = new Date(new Date(lastSweep.at).getTime() - 3*3600e3).toISOString(); %>
+        <span class="sub" style="margin:0 0 0 auto;">Última varredura <%= ls.slice(8,10) %>/<%= ls.slice(5,7) %> <%= ls.slice(11,16) %>: <%= lastSweep.checados || 0 %> checados, <%= lastSweep.problemas || 0 %> com problema, <%= lastSweep.reenviados || 0 %> reenviados</span>
+      <% } %>
+    </div>
+
+    <form class="toolbar" method="get" action="/painel/gestao-parcial-seguidores">
+      <button type="button" id="refreshBtn" class="btn btn-primary">🔄 Atualizar status agora</button>
+      <span id="refreshMsg" class="sub" style="margin:0;"></span>
+      <% var _sf = filter.status; %>
+      <label class="sub" style="margin:0;">Mostrar
+        <select name="status" style="padding:6px; border:1px solid #ccc; border-radius:6px;">
+          <option value="problema" <%= _sf==='problema'?'selected':'' %>>Parcial + Cancelado</option>
+          <option value="partial" <%= _sf==='partial'?'selected':'' %>>Só parcial</option>
+          <option value="canc" <%= _sf==='canc'?'selected':'' %>>Só cancelado</option>
+          <option value="reenviados" <%= _sf==='reenviados'?'selected':'' %>>Já reenviados</option>
+          <option value="prog" <%= _sf==='prog'?'selected':'' %>>Em andamento</option>
+          <option value="done" <%= _sf==='done'?'selected':'' %>>Concluído</option>
+          <option value="todos" <%= _sf==='todos'?'selected':'' %>>Todos</option>
+        </select>
+      </label>
+      <label class="sub" style="margin:0;">Fornecedor
+        <select name="fornecedor" style="padding:6px; border:1px solid #ccc; border-radius:6px;">
+          <option value="">Todos</option>
+          <% (fornecedores || []).forEach(function(fn){ %><option value="<%= fn %>" <%= filter.fornecedor===fn?'selected':'' %>><%= fn %></option><% }); %>
+        </select>
+      </label>
+      <label class="sub" style="margin:0;">Últimos <input type="number" name="dias" min="1" max="60" value="<%= filter.dias %>" style="width:56px; padding:6px; border:1px solid #ccc; border-radius:6px;"> dias</label>
+      <button type="submit" class="btn btn-green">Filtrar</button>
+      <a href="/painel/gestao-parcial-seguidores" class="sub" style="margin:0;">limpar</a>
+      <span class="sub" style="margin-left:auto;"><strong><%= rows.length %></strong> pedido(s)<% if (faltaTotal) { %> · faltam <strong><%= faltaTotal.toLocaleString('pt-BR') %></strong> seguidores<% } %></span>
+    </form>
+
+    <div class="bulkbar">
+      <span><strong id="bulkCount">0</strong> marcado(s)</span>
+      <button type="button" id="bulkReenviar" class="btn btn-green" disabled>↻ Reenviar faltante dos marcados</button>
+      <span id="bulkMsg" class="sub" style="margin:0;"></span>
+    </div>
+
+    <div class="card scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px; text-align:center;"><input type="checkbox" id="selAll" title="Selecionar todos"></th>
+            <th>Pago em</th>
+            <th>Pedido</th>
+            <th>Perfil</th>
+            <th>Tipo</th>
+            <th>Fornecedor · serviço</th>
+            <th>OrderID atual</th>
+            <th>Qtd</th>
+            <th>Status</th>
+            <th>Falta</th>
+            <th>Reenvios</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!rows.length) { %>
+            <tr><td colspan="12" style="text-align:center; padding:24px; color:#777;">Nenhum pedido nesse filtro.</td></tr>
+          <% } %>
+          <% rows.forEach(function(r){
+               var cls = ({ partial: 'pill-part', done: 'pill-done', prog: 'pill-prog', canc: 'pill-canc' })[r.statusCat] || 'pill-none';
+               var dt = r.dataMs ? new Date(r.dataMs - 3*3600e3).toISOString() : '';
+               var dataTxt = dt ? (dt.slice(8,10) + '/' + dt.slice(5,7) + ' ' + dt.slice(11,16)) : '—';
+               var problema = (r.statusCat === 'partial' || r.statusCat === 'canc');
+               var podeReenviar = problema && !r.morto && r.provider;
+          %>
+          <tr>
+            <td style="text-align:center;"><% if (podeReenviar) { %><input type="checkbox" class="rowChk" data-id="<%= r.id %>"><% } %></td>
+            <td><%= dataTxt %></td>
+            <td><% if (r.identifier) { %><a class="link" href="/pedido?t=<%= encodeURIComponent(r.identifier) %>" target="_blank" rel="noopener"><%= r.identifier %></a><% } else { %>—<% } %><% if (r.morto) { %> <span class="pill pill-canc"><%= r.pedidoStatus %></span><% } %></td>
+            <td><% if (r.usuario) { %><a class="link" href="https://instagram.com/<%= encodeURIComponent(r.usuario) %>" target="_blank" rel="noopener">@<%= r.usuario %></a><% } else { %>—<% } %></td>
+            <td><%= r.tipo || '—' %></td>
+            <td><%= r.provider || '—' %> · <%= r.service || '—' %></td>
+            <td><%= r.orderId %></td>
+            <td><%= (r.qtdAtual || 0).toLocaleString('pt-BR') %><% if (r.qtdContratada && r.qtdContratada !== r.qtdAtual) { %><br><span class="muted" style="font-size:0.68rem;">contratado <%= r.qtdContratada.toLocaleString('pt-BR') %></span><% } %></td>
+            <td><span class="pill <%= cls %>"><%= r.status || '—' %></span></td>
+            <td><% if (problema && r.remains != null) { %><strong style="color:#b45309"><%= r.remains.toLocaleString('pt-BR') %></strong><% } else { %><span class="muted">—</span><% } %></td>
+            <td>
+              <% if (r.historico.length) { %>
+                <div style="font-size:0.72rem; line-height:1.5;">
+                  <% r.historico.forEach(function(h){ var hd = h.at ? new Date(new Date(h.at).getTime() - 3*3600e3).toISOString() : ''; %>
+                    <div><span style="color:<%= h.motivo === 'cancelado' ? '#b91c1c' : '#92400e' %>; font-weight:700;">#<%= h.orderId %></span>
+                      <span class="muted"><%= h.motivo %><%= h.remains != null ? (' · faltou ' + Number(h.remains).toLocaleString('pt-BR')) : '' %> · <%= h.origem %><%= hd ? (' ' + hd.slice(8,10) + '/' + hd.slice(5,7) + ' ' + hd.slice(11,16)) : '' %></span></div>
+                  <% }); %>
+                </div>
+              <% } else { %><span class="muted">—</span><% } %>
+              <% if (r.chainDone) { %><div class="muted" style="font-size:0.66rem;">automático parado: <%= r.stopReason %></div><% } %>
+              <% if (r.ultimoErro) { %><div class="err"><%= r.ultimoErro %></div><% } %>
+            </td>
+            <td>
+              <% if (podeReenviar) { %>
+                <input class="svc-in" data-id="<%= r.id %>" value="<%= r.service %>" title="Serviço do fornecedor para o reenvio">
+                <button type="button" class="reorder-btn" data-id="<%= r.id %>" data-remains="<%= r.remains || '' %>" data-user="<%= r.usuario %>" data-prov="<%= r.provider %>">Reenviar faltante</button>
+              <% } %>
+              <% if (r.chainDone) { %><button type="button" class="ghost-btn reopen-btn" data-id="<%= r.id %>" title="Volta a deixar o automático cuidar deste pedido">Reabrir</button><% } %>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      function post(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify(body || {}) }).then(function(r){ return r.json().catch(function(){ return null; }); }); }
+      function resumo(res){
+        return (res || []).map(function(x){ return x.ok ? ('✓ ' + x.quantidade + ' → #' + x.orderId) : ('✕ ' + (x.motivo || 'erro')); }).join('\n');
+      }
+      var cfgMsg = document.getElementById('cfgMsg');
+      function salvarCfg(extra){
+        var body = Object.assign({ minRemains: document.getElementById('cfgMin').value, maxChain: document.getElementById('cfgMax').value, windowDays: document.getElementById('cfgDias').value }, extra || {});
+        cfgMsg.textContent = 'Salvando…';
+        post('/api/painel/seg-parcial/config', body).then(function(d){ if (d && d.ok) { cfgMsg.textContent = 'Salvo.'; setTimeout(function(){ location.reload(); }, 600); } else cfgMsg.textContent = 'Falha ao salvar.'; }).catch(function(){ cfgMsg.textContent = 'Erro de rede.'; });
+      }
+      document.getElementById('cfgSave').addEventListener('click', function(){ salvarCfg(); });
+      document.getElementById('cfgToggle').addEventListener('click', function(){
+        var ligar = <%= cfg.autoEnabled ? 'false' : 'true' %>;
+        if (ligar && !confirm('Ligar o reenvio automático? A cada 1h, todo pedido de seguidores Parcial/Cancelado recebe um novo pedido com o que faltou (perfil conferido antes; máx. ' + document.getElementById('cfgMax').value + ' reenvios por pedido).')) return;
+        salvarCfg({ autoEnabled: ligar });
+      });
+
+      var refreshBtn = document.getElementById('refreshBtn'), refreshMsg = document.getElementById('refreshMsg');
+      refreshBtn.addEventListener('click', function(){
+        refreshBtn.disabled = true; refreshMsg.textContent = 'Consultando os fornecedores… (não reenvia nada)';
+        post('/api/painel/seg-parcial/refresh').then(function(d){
+          if (d && d.ok) { refreshMsg.textContent = (d.result.checados || 0) + ' checados, ' + (d.result.problemas || 0) + ' com problema. Recarregando…'; setTimeout(function(){ location.reload(); }, 1000); }
+          else { refreshMsg.textContent = 'Falha: ' + ((d && (d.error || (d.result && d.result.reason))) || 'erro'); refreshBtn.disabled = false; }
+        }).catch(function(){ refreshMsg.textContent = 'Erro de rede.'; refreshBtn.disabled = false; });
+      });
+
+      Array.prototype.slice.call(document.querySelectorAll('.reorder-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var id = btn.getAttribute('data-id');
+          var inp = document.querySelector('.svc-in[data-id="' + id + '"]');
+          var svc = inp ? inp.value.trim() : '';
+          if (!confirm('Reenviar o que faltou (' + (btn.getAttribute('data-remains') || '?') + ') para @' + btn.getAttribute('data-user') + ' no ' + btn.getAttribute('data-prov') + ' serviço ' + svc + '?\nA quantidade é conferida de novo no fornecedor antes do envio.')) return;
+          btn.disabled = true; btn.textContent = 'Enviando…';
+          post('/api/painel/seg-parcial/reenviar', { ids: [id], service: svc }).then(function(d){
+            alert(d && d.ok ? resumo(d.resultados) : ('Falha: ' + ((d && d.error) || 'erro')));
+            location.reload();
+          }).catch(function(){ alert('Erro de rede. Confira no fornecedor antes de tentar de novo.'); location.reload(); });
+        });
+      });
+      Array.prototype.slice.call(document.querySelectorAll('.reopen-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+          if (!confirm('Reabrir este pedido para o automático? Se o motivo foi "add_incerto", confira antes no fornecedor se o pedido não subiu.')) return;
+          post('/api/painel/seg-parcial/reabrir', { id: btn.getAttribute('data-id') }).then(function(){ location.reload(); });
+        });
+      });
+
+      var selAll = document.getElementById('selAll'), bulkCount = document.getElementById('bulkCount'), bulkBtn = document.getElementById('bulkReenviar'), bulkMsg = document.getElementById('bulkMsg');
+      function marcados(){ return Array.prototype.slice.call(document.querySelectorAll('.rowChk')).filter(function(c){ return c.checked; }); }
+      function atualiza(){ var n = marcados().length; bulkCount.textContent = n; bulkBtn.disabled = !n; }
+      selAll.addEventListener('change', function(){ Array.prototype.slice.call(document.querySelectorAll('.rowChk')).forEach(function(c){ c.checked = selAll.checked; }); atualiza(); });
+      Array.prototype.slice.call(document.querySelectorAll('.rowChk')).forEach(function(c){ c.addEventListener('change', atualiza); });
+      bulkBtn.addEventListener('click', function(){
+        var ids = marcados().map(function(c){ return c.getAttribute('data-id'); });
+        if (!confirm('Reenviar o faltante de ' + ids.length + ' pedido(s), cada um no mesmo fornecedor/serviço de hoje?')) return;
+        bulkBtn.disabled = true; bulkMsg.textContent = 'Enviando ' + ids.length + ' pedido(s)…';
+        post('/api/painel/seg-parcial/reenviar', { ids: ids }).then(function(d){
+          alert(d && d.ok ? resumo(d.resultados) : ('Falha: ' + ((d && d.error) || 'erro')));
+          location.reload();
+        }).catch(function(){ alert('Erro de rede. Confira no fornecedor antes de tentar de novo.'); location.reload(); });
+      });
+      atualiza();
+    })();
+  </script>
+</body>
+</html>

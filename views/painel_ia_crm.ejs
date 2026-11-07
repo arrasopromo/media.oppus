@@ -78,6 +78,14 @@
     .btn-bot { padding: 6px 12px; border-radius: 8px; border: 1px solid; cursor: pointer; font-size: 0.8rem; font-weight: 600; }
     .btn-bot.on { border-color: #16a34a; color: #16a34a; background: #fff; }
     .btn-bot.off { border-color: #d97706; color: #d97706; background: #fff; }
+    .btn-bot.btn-block { border-color: #dc2626; color: #dc2626; background: #fff; }
+    .btn-bot.btn-block.ativo { background: #dc2626; color: #fff; }
+    .hint.hint-block { color: #991b1b; background: #fee2e2; }
+    .tag-block { font-size: 0.62rem; background: #dc2626; color: #fff; padding: 1px 5px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+    .tab[data-tab="blocked"] { background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+    .tab[data-tab="blocked"].active { background:#dc2626; border-color:#dc2626; color:#fff; }
+    .tab[data-tab="blocked"] .tab-badge { background:#dc2626; }
+    .tab[data-tab="blocked"].active .tab-badge { background:#fff; color:#b91c1c; }
     .msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
     .b { max-width: 72%; padding: 7px 26px 7px 10px; border-radius: 8px;   /* espaço à direita p/ o botão responder */ font-size: 0.9rem; line-height: 1.35; white-space: pre-wrap; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,0.13); position: relative; }
     .b { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
@@ -240,6 +248,9 @@
           <button type="button" class="tab" data-tab="pending" title="Você ainda não respondeu manualmente<%= C.temBot ? ' — atendimento só do bot continua aqui' : '' %>">⏳ Não respondidas <span class="tab-badge" id="pendCount">0</span></button>
           <button type="button" class="tab" data-tab="done" title="Você já respondeu manualmente em algum momento">✓ Respondidas</button>
           <button type="button" class="tab active" data-tab="all">Todas</button>
+          <% if (C.temBot) { %>
+          <button type="button" class="tab" data-tab="blocked" title="Contatos bloqueados: fora das outras guias e o bot não responde">🚫 Bloqueados <span class="tab-badge" id="blockCount">0</span></button>
+          <% } %>
         </div>
         <div class="conv-list" id="convList"></div>
       </div>
@@ -262,8 +273,10 @@
             </div>
             <div class="actions">
               <button class="btn-bot on" id="botBtn"<%- C.temBot ? '' : ' style="display:none;"' %>>🤖 Bot ligado</button>
+              <% if (C.temBot) { %><button type="button" class="btn-bot btn-block" id="blockBtn" title="Bloquear contato">🚫 Bloquear</button><% } %>
             </div>
           </div>
+          <div class="hint hint-block" id="blockHint" style="display:none;">🚫 Contato bloqueado: o bot não responde e a conversa só aparece na guia "Bloqueados". Você ainda pode ler e responder aqui.</div>
           <div class="hint" id="pausedHint" style="display:none;">⏸ IA pausada neste chat — ela NÃO responde. Só você atende. Clique em "▶ Dar Play (IA)" para a IA voltar a responder.</div>
           <div class="hint" id="janelaHint" style="display:none;"></div>
           <div class="msgs" id="msgs"></div>
@@ -324,7 +337,8 @@
       var TABS = {
         pending: { scope: 'all', answer: 'pending' },  // você ainda não respondeu
         done:    { scope: 'all', answer: 'done'    },  // você já respondeu
-        all:     { scope: 'all', answer: 'all' }
+        all:     { scope: 'all', answer: 'all' },
+        blocked: { scope: 'all', answer: 'all', bloqueados: true }   // só contatos bloqueados
       };
 
       // A sidebar do painel fica sticky no topo no celular: sem descontar a altura
@@ -376,7 +390,7 @@
         // Badge da guia "Não respondidas" = o que está na lista carregada.
         var nPend=state.convs.filter(function(c){ return !c.answered && c.inCount!==0; }).length;
         $('convCount').textContent=state.convs.length;
-        var badgePend=$('pendCount'); if(badgePend) badgePend.textContent=nPend;
+        var badgePend=$('pendCount'); if(badgePend && !state.bloqueados) badgePend.textContent=nPend;   // na guia Bloqueados a lista é outra
 
         // Sem cabeçalho de grupo no meio da lista: a separação respondida/não
         // respondida é feita pelos BOTÕES lá em cima.
@@ -391,7 +405,7 @@
           var pendente=(c.lastDir!=='out');
           var nm=c.name || ('+'+c.phone);
           var prefix=(c.lastDir==='out')?'Você: ':'';
-          var tag=!CRM.temBot ? (c.blocked?'<span class="tag-paused" title="Descadastrou dos envios automáticos — você ainda pode responder">opt-out</span>':'') : c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
+          var tag=!CRM.temBot ? (c.blocked?'<span class="tag-paused" title="Descadastrou dos envios automáticos — você ainda pode responder">opt-out</span>':'') : c.bloqueado?'<span class="tag-block">bloqueado</span>' : c.botPaused?(c.legacy?'<span class="tag-legacy" title="Conversa antiga importada — IA pausada">antiga</span>':'<span class="tag-paused">humano</span>'):'<span class="tag-bot">bot</span>';
           html+='<div class="conv'+(state.current===c.phone?' active':'')+(pendente?' pend':'')+'" data-phone="'+esc(c.phone)+'" data-name="'+esc(c.name||'')+'">'
             +'<div class="avatar">'+esc(initials(c.name,c.phone))+'</div>'
             +'<div class="conv-main">'
@@ -414,6 +428,8 @@
         });
         var vazio = (state.tab==='pending')
           ? '<div class="empty" style="height:auto;padding:28px 20px;">✅ Nenhuma conversa sem resposta.</div>'
+          : (state.tab==='blocked')
+          ? '<div class="empty" style="height:auto;padding:24px;">Nenhum contato bloqueado.</div>'
           : '<div class="empty" style="height:auto;padding:24px;">Nenhuma conversa aqui.</div>';
         var novo = (modoArroba ? html : (html || vazio));
         // O polling redesenha a lista a cada 5s. Se nada mudou, não mexe no DOM
@@ -426,8 +442,14 @@
       }
 
       async function loadConvs(){
-        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope)+(state.soResposta?'&withReply=1':''));
-        if(d&&d.ok){ state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew; renderConvs(); }
+        var bloq=!!state.bloqueados;
+        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope)+(state.soResposta?'&withReply=1':'')+(bloq?'&bloqueados=1':''));
+        if(bloq!==!!state.bloqueados) return;   // trocou de guia enquanto carregava
+        if(d&&d.ok){
+          state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew;
+          if(typeof d.bloqueadosTotal==='number' && $('blockCount')) $('blockCount').textContent=d.bloqueadosTotal;
+          renderConvs();
+        }
       }
 
       function mediaHtml(m){
@@ -491,6 +513,15 @@
         else { b.className='btn-bot on'; b.textContent='⏸ Pausar IA'; $('pausedHint').style.display='none'; }
       }
 
+      function setBlockBtn(bloqueado){
+        state.bloqueadoAtual=!!bloqueado;
+        var b=$('blockBtn'); if(!b) return;   // LTV não tem bloqueio
+        b.textContent=bloqueado?'✅ Desbloquear':'🚫 Bloquear';
+        b.title=bloqueado?'Desbloquear: volta para as guias normais':'Bloquear contato: sai das guias e o bot para de responder';
+        b.classList.toggle('ativo', !!bloqueado);
+        $('blockHint').style.display=bloqueado?'block':'none';
+      }
+
       // LTV: avisa quando passou das 24h da Meta (texto livre não é entregue) e quando
       // o cliente descadastrou (só bloqueia disparo automático; responder continua liberado).
       function pintarJanela(d){
@@ -524,7 +555,7 @@
         try{ $('cardReaisHeaderBtn').style.display='inline-block'; }catch(_){}
         renderConvs();
         var d=await api(API+'/messages?phone='+encodeURIComponent(phone));
-        if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); pintarJanela(d); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
+        if(d&&d.ok){ renderMsgs(d.messages, true); setBotBtn(d.botPaused); setBlockBtn(d.bloqueado); pintarJanela(d); if(d.name){ state.currentName=d.name; $('tName').textContent=d.name; } }
         carregarResumoPedidos(phone);   // depois das mensagens: não atrasa o chat
       }
 
@@ -599,7 +630,7 @@
       async function refreshOpen(force){
         if(!state.current) return;
         var d=await api(API+'/messages?phone='+encodeURIComponent(state.current));
-        if(d&&d.ok){ renderMsgs(d.messages, force===true); setBotBtn(d.botPaused); pintarJanela(d); }
+        if(d&&d.ok){ renderMsgs(d.messages, force===true); setBotBtn(d.botPaused); setBlockBtn(d.bloqueado); pintarJanela(d); }
       }
 
       // Eventos
@@ -624,9 +655,9 @@
         var t=b.getAttribute('data-tab'); var cfg=TABS[t]; if(!cfg) return;
         document.querySelectorAll('#tabs .tab').forEach(function(x){ x.classList.remove('active'); });
         b.classList.add('active');
-        var mudouEscopo=(state.scope!==cfg.scope);
-        state.tab=t; state.scope=cfg.scope; state.answer=cfg.answer;
-        if(mudouEscopo) loadConvs(); else renderConvs();
+        var mudouEscopo=(state.scope!==cfg.scope) || (!!state.bloqueados!==!!cfg.bloqueados);
+        state.tab=t; state.scope=cfg.scope; state.answer=cfg.answer; state.bloqueados=!!cfg.bloqueados;
+        if(mudouEscopo){ state.convs=[]; state._convsHtml=null; renderConvs(); loadConvs(); } else renderConvs();
       });
       var buscaTimer=null, buscaSeq=0;
       $('search').addEventListener('input', function(){
@@ -654,6 +685,17 @@
         var target=!state.botPaused; // se ligado -> pausa (você atende); se pausado -> religa
         var d=await api(API+'/bot', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, paused: target }) });
         if(d&&d.ok){ setBotBtn(d.botPaused); loadConvs(); }
+      });
+      if($('blockBtn')) $('blockBtn').addEventListener('click', async function(){
+        if(!state.current) return;
+        var alvo=!state.bloqueadoAtual;
+        var quem=state.currentName || ('+'+state.current);
+        if(alvo && !confirm('Bloquear '+quem+'?\n\nA conversa sai das guias normais (fica em "Bloqueados") e o bot para de responder esse número.')) return;
+        var btn=this; btn.disabled=true;
+        var d=await api(API+'/bloquear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, bloqueado: alvo }) });
+        btn.disabled=false;
+        if(d&&d.ok){ setBlockBtn(d.bloqueado); state._convsHtml=null; loadConvs(); }
+        else alert('Não consegui '+(alvo?'bloquear':'desbloquear')+': '+((d&&(d.error||d.message))||'erro'));
       });
       async function send(){
         // Trava de reentrada: o Enter (keydown) chama send() ignorando o botão desabilitado,

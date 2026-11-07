@@ -134,8 +134,9 @@ async function sendWhatsAppButtons(to, bodyText, buttons) {
   } catch (e) { return { ok: false, error: (e && e.message) || 'erro' }; }
 }
 
+// Contato bloqueado no CRM conta como pausado: o bot, o cutucão e a recuperação não falam com ele.
 async function isBotPaused(phone) {
-  try { const col = await getCollection('whatsapp_contacts'); const d = await col.findOne({ _id: String(phone) }, { projection: { botPaused: 1 } }); return !!(d && d.botPaused); } catch (_) { return false; }
+  try { const col = await getCollection('whatsapp_contacts'); const d = await col.findOne({ _id: String(phone) }, { projection: { botPaused: 1, bloqueado: 1 } }); return !!(d && (d.botPaused || d.bloqueado)); } catch (_) { return false; }
 }
 
 // ── Debounce: junta mensagens picadas do mesmo telefone antes de responder ──

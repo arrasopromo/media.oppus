@@ -179,6 +179,7 @@
           <option value="pending"    <%= filterStatus === 'pending'    ? 'selected' : '' %>>Sem pagamento</option>
           <option value="paid"       <%= filterStatus === 'paid'       ? 'selected' : '' %>>Pagos</option>
           <option value="waiting"    <%= filterStatus === 'waiting'    ? 'selected' : '' %>>Aguardando pai</option>
+          <option value="error"      <%= filterStatus === 'error'      ? 'selected' : '' %>>Erro no envio</option>
           <option value="dispatched" <%= filterStatus === 'dispatched' ? 'selected' : '' %>>Despachados</option>
         </select>
       </div>
@@ -364,6 +365,9 @@
                   <% if (u.upsell && u.upsell.queuedAt) { %>
                     <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;"><%= fmtDate(u.upsell.queuedAt) %></div>
                   <% } %>
+                <% } else if (dispatchStatus === 'error') { %>
+                  <span class="badge badge--red">Erro no envio</span>
+                  <div style="font-size:0.72rem; color:#991b1b; margin-top:3px; max-width:220px; overflow-wrap:anywhere;"><%= (u.upsell && u.upsell.dispatchError) || 'Motivo não informado' %></div>
                 <% } else if (dispatchStatus === 'paused') { %>
                   <span class="badge badge--orange">Pausado</span>
                 <% } else if (dispatchStatus === 'cancelled') { %>

@@ -4,8 +4,8 @@
     var _groups = {
         geral:       ['dashboard','vendas'],
         financeiro:  ['controladoria','notas-fiscais'],
-        operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
-        marketing:   ['coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm','ia-followup'],
+        operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','gestao-parcial-seguidores','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
+        marketing:   ['meta-ads','coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm','ia-followup'],
         ferramentas: ['consulta-perfil','service_types','testes-servicos','whatsapp-ia-teste']
     };
     function _open(list){ return (list.indexOf(_p) >= 0) ? 'open' : ''; }
@@ -46,6 +46,7 @@
                 <li><a href="/painel/gerenciamento-seguidores" class="<%= _a('gerenciamento-seguidores') %>">Gerenciamento de Seguidores</a></li>
                 <li><a href="/painel?view=refil2" class="<%= _a('refil2') %>">Gerenciamento Refil</a></li>
                 <li><a href="/painel/gestao-parcial-topfama" class="<%= _a('gestao-parcial-topfama') %>">Gestão Parcial (Topfama)</a></li>
+                <li><a href="/painel/gestao-parcial-seguidores" class="<%= _a('gestao-parcial-seguidores') %>">Gestão Parcial (Seguidores)</a></li>
                 <li><a href="/painel/aguardando" class="<%= _a('aguardando') %>">Aguardando Pedido</a></li>
                 <li><a href="/painel?view=unknown_orderid&period=all" class="<%= _a('unknown_orderid') %>">OrderID Unknown</a></li>
                 <li><a href="/painel/registro-pedido" class="<%= _a('registro-pedido') %>">Registro de Pedido</a></li>
@@ -57,7 +58,8 @@
         <details class="nav-group" data-group="marketing" <%= _open(_groups.marketing) %>>
             <summary>Marketing &amp; Retenção <span class="nav-caret">›</span></summary>
             <ul>
-                <li><a href="/painel?view=coupons" class="<%= _a('coupons') %>">Cupons</a></li>
+                <li><a href="/painel/meta-ads" class="<%= _a('meta-ads') %>">Meta Ads (Criativos)</a></li>
+                <li><a href="/painel?view=coupons"class="<%= _a('coupons') %>">Cupons</a></li>
                 <li><a href="/painel/recuperacao-whatsapp" class="<%= _a('recuperacao-whatsapp') %>">Recuperação WhatsApp</a></li>
                 <li><a href="/painel/upsell" class="<%= _a('upsell') %>">Gestão de Upsell</a></li>
                 <li><a href="/painel/ltv" class="<%= _a('ltv') %>">LTV (Disparo)</a></li>

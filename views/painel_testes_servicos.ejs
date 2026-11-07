@@ -182,6 +182,7 @@
       <label class="sub" style="margin:0;">até <input type="number" name="quedaMax" value="<%= _ff.quedaMax %>" step="0.1" placeholder="30" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;">%</label>
       <label class="sub" style="margin:0;">Custo R$ <input type="number" name="precoMin" value="<%= _ff.precoMin||'' %>" step="0.01" placeholder="min" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0;">até R$ <input type="number" name="precoMax" value="<%= _ff.precoMax||'' %>" step="0.01" placeholder="max" style="width:70px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
+      <label class="sub" style="margin:0;" title="Mostra só testes consultados em pelo menos esse número de dias">Dias consultados, mín. <input type="number" name="diasMin" value="<%= _ff.diasMin||'' %>" min="0" step="1" placeholder="5" style="width:60px;padding:6px;border:1px solid #ccc;border-radius:6px;"></label>
       <label class="sub" style="margin:0;">Refil
         <select name="refil" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
           <option value="">Todos</option>

@@ -124,32 +124,87 @@
             
             <button type="submit" class="submit-btn">Entrar</button>
         </form>
+
+        <form id="codeForm" style="display:none">
+            <p id="codeInfo" style="font-size:0.875rem;color:#374151;margin:0 0 1rem 0;text-align:center;"></p>
+            <div class="form-group">
+                <label for="code">Código de verificação</label>
+                <input type="text" id="code" name="code" class="form-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required style="letter-spacing:6px;text-align:center;font-size:1.25rem;">
+            </div>
+            <button type="submit" class="submit-btn">Confirmar</button>
+            <button type="button" id="voltarBtn" style="margin-top:0.75rem;width:100%;background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.875rem;">Voltar e reenviar código</button>
+        </form>
     </div>
 
     <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        const loginForm = document.getElementById('loginForm');
+        const codeForm = document.getElementById('codeForm');
+        const mostrarErro = (msg) => { const d = document.getElementById('errorMessage'); d.textContent = msg; d.style.display = msg ? 'block' : 'none'; };
+        const voltarParaSenha = () => {
+            codeForm.style.display = 'none';
+            loginForm.style.display = 'block';
+            document.getElementById('password').value = '';
+            document.getElementById('password').focus();
+        };
+        document.getElementById('voltarBtn').addEventListener('click', () => { mostrarErro(''); voltarParaSenha(); });
+
+        codeForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+            const btn = e.target.querySelector('.submit-btn');
+            const code = document.getElementById('code').value.replace(/\D/g, '');
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Confirmando...';
+                const response = await fetch('/login/2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code }),
+                    credentials: 'same-origin'
+                });
+                const data = await response.json();
+                if (data.success) { window.location.href = '/painel'; return; }
+                mostrarErro(data.error || 'Código incorreto.');
+                document.getElementById('code').value = '';
+                if (data.expired) voltarParaSenha();
+            } catch (error) {
+                mostrarErro('Erro ao conectar com o servidor');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Confirmar';
+        });
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('errorMessage');
             const btn = e.target.querySelector('button');
-            
+
             try {
                 btn.disabled = true;
                 btn.textContent = 'Verificando...';
-                
+
                 const response = await fetch('/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password }),
                     credentials: 'same-origin'
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     window.location.href = '/painel';
+                } else if (data.twoFactor) {
+                    mostrarErro('');
+                    document.getElementById('codeInfo').textContent = data.message || 'Enviamos um código para o seu e-mail.';
+                    loginForm.style.display = 'none';
+                    codeForm.style.display = 'block';
+                    document.getElementById('code').value = '';
+                    document.getElementById('code').focus();
+                    btn.disabled = false;
+                    btn.textContent = 'Entrar';
                 } else {
                     errorDiv.textContent = data.error || 'Credenciais inválidas';
                     errorDiv.style.display = 'block';
