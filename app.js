@@ -3721,6 +3721,19 @@ app.get('/api/painel/saldo/list', requireAdmin, async (req, res) => {
     return res.json({ ok: true, rows });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Cartão LootRush que paga a ca3 (Meta USD): última leitura do monitor / roda agora.
+app.get('/api/painel/lootrush/status', requireAdmin, async (req, res) => {
+  try { return res.json(Object.assign({ ok: true }, await require('./lootrushMonitor.js').status())); }
+  catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+app.post('/api/painel/lootrush/check', requireAdmin, async (req, res) => {
+  try {
+    const force = String((req.body && req.body.force) || '') === 'true' || String(req.query.force || '') === '1';
+    const semEnvio = String((req.body && req.body.dry) || '') === 'true' || String(req.query.dry || '') === '1';
+    const r = await require('./lootrushMonitor.js').verificar({ force, enviar: semEnvio ? null : sendEvolutionText });
+    return res.json({ ok: !r.erro, result: r });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
 // Crédito da OpenAI (card Canal de vendas): situação real + saldo estimado.
 app.get('/api/painel/openai-credito', requireAdmin, async (req, res) => {
   try {
@@ -50655,6 +50668,7 @@ const server = app.listen(port, () => {
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
   try { startSeguidoresParcialLoop(); } catch (_) {} // Gestão Parcial Seguidores: status a cada 1h + reenvio do faltante (se ligado no painel)
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
+  try { require('./lootrushMonitor.js').iniciar({ enviar: sendEvolutionText }); } catch (_) {} // Cartão LootRush x cobrança da ca3: avisa no WhatsApp horas antes da recusa (a cada 15 min)
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
   try { require('./precosTestes.js').startPrecosTestesLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Testes de serviços: preço atual de cada serviço todo dia às 23:30 BRT
