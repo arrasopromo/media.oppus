@@ -11283,20 +11283,64 @@ async function ajustesDeLucroDoPeriodo(startMs, endMs) {
 }
 
 // Custos fixos mensais (assinaturas recorrentes) — settings _id 'custos_fixos',
-// formato { itens: [{ nome, valor }] }. valor em R$/mês.
+// formato { itens: [{ nome, valor }], meses: { 'YYYY-MM': { itens, travadoEm } } }. valor em R$/mês.
+// `itens` é o PADRÃO (vale para todo mês). TRAVA MENSAL: um mês travado guarda a própria lista
+// (ex.: deixou de pagar algo naquele mês) e não muda quando o padrão é editado depois.
+function normalizaCustosFixosItens(raw) {
+  return (Array.isArray(raw) ? raw : []).map((it) => ({
+    nome: String((it && it.nome) || '').trim().slice(0, 80),
+    valor: Math.round((Number(String((it && it.valor) != null ? it.valor : '').replace(',', '.')) || 0) * 100) / 100
+  })).filter((it) => it.nome && it.valor > 0);
+}
+const somaCustosFixos = (itens) => Math.round(itens.reduce((a, it) => a + it.valor, 0) * 100) / 100;
 async function loadCustosFixos() {
   try {
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('settings');
-    const doc = col ? await col.findOne({ _id: 'custos_fixos' }, { projection: { _id: 0, itens: 1 } }) : null;
-    const raw = (doc && Array.isArray(doc.itens)) ? doc.itens : [];
-    const itens = raw.map((it) => ({
-      nome: String((it && it.nome) || '').trim(),
-      valor: Math.round((Number(String((it && it.valor) != null ? it.valor : '').replace(',', '.')) || 0) * 100) / 100
-    })).filter((it) => it.nome && it.valor > 0);
-    const mensal = Math.round(itens.reduce((a, it) => a + it.valor, 0) * 100) / 100;
-    return { itens, mensal };
-  } catch (_) { return { itens: [], mensal: 0 }; }
+    const doc = col ? await col.findOne({ _id: 'custos_fixos' }, { projection: { _id: 0, itens: 1, meses: 1 } }) : null;
+    const itens = normalizaCustosFixosItens(doc && doc.itens);
+    const meses = {};
+    const rawMeses = (doc && doc.meses && typeof doc.meses === 'object') ? doc.meses : {};
+    for (const k of Object.keys(rawMeses)) {
+      if (!/^\d{4}-\d{2}$/.test(k)) continue;
+      const m = rawMeses[k] || {};
+      const its = normalizaCustosFixosItens(m.itens);
+      meses[k] = { itens: its, mensal: somaCustosFixos(its), travadoEm: m.travadoEm || null };
+    }
+    return { itens, mensal: somaCustosFixos(itens), meses };
+  } catch (_) { return { itens: [], mensal: 0, meses: {} }; }
+}
+
+// Custo fixo que cai no período: cada dia vale (valor do mês daquele dia ÷ dias do mês), usando a
+// lista TRAVADA do mês quando existe e o padrão quando não. Mês inteiro = exatamente o valor do mês.
+// Sem período (Máximo) = valor do mês atual.
+function custoFixoDoPeriodo(cf, start, endExclusive) {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const meses = (cf && cf.meses) || {};
+  const padrao = Number((cf && cf.mensal) || 0);
+  const valorDoMes = (k) => (meses[k] ? meses[k].mensal : padrao);
+  const chave = (d) => d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  const brt = (d) => new Date(d.getTime() - 3 * 3600000);
+  const temRange = start && endExclusive && Number.isFinite(start.getTime()) && Number.isFinite(endExclusive.getTime());
+  if (!temRange) { const k = chave(brt(new Date())); return { periodo: r2(valorDoMes(k)), dias: 30, mesRef: k, porMes: [{ mes: k, valor: valorDoMes(k), travado: !!meses[k], dias: null }] }; }
+  const ini = brt(start), fim = brt(endExclusive);
+  const dias = Math.max(1, Math.round((endExclusive.getTime() - start.getTime()) / 86400000));
+  const por = {};
+  let total = 0;
+  const cur = new Date(Date.UTC(ini.getUTCFullYear(), ini.getUTCMonth(), ini.getUTCDate()));
+  const fimDia = Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), fim.getUTCDate());
+  for (let i = 0; i < 4000 && cur.getTime() < fimDia; i++) {
+    const k = chave(cur);
+    const diasMes = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 0)).getUTCDate();
+    const v = valorDoMes(k) / diasMes;
+    total += v;
+    if (!por[k]) por[k] = { mes: k, valor: valorDoMes(k), travado: !!meses[k], dias: 0, noPeriodo: 0 };
+    por[k].dias += 1; por[k].noPeriodo += v;
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  const porMes = Object.values(por).map((x) => ({ ...x, noPeriodo: r2(x.noPeriodo) }));
+  const mesRef = porMes.length === 1 ? porMes[0].mes : chave(brt(new Date()));
+  return { periodo: r2(total), dias, mesRef, porMes };
 }
 
 // Chave de dia (YYYY-MM-DD) no fuso BRT, para agrupar séries diárias.
@@ -45321,16 +45365,12 @@ app.get('/painel', requireAdmin, async (req, res) => {
     } catch (_) {}
 
     // Custos fixos mensais (assinaturas): total rateado por dia no período selecionado.
-    let custosFixos = { itens: [], mensal: 0, periodo: 0, dias: 30 };
+    let custosFixos = { itens: [], mensal: 0, periodo: 0, dias: 30, meses: {}, mesRef: null, porMes: [] };
     try {
       const _cf = await loadCustosFixos();
       const _prc = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
-      let _dias = 30;
-      if (_prc && _prc.start && _prc.endExclusive) {
-        _dias = Math.max(1, Math.round((_prc.endExclusive.getTime() - _prc.start.getTime()) / 86400000));
-      }
-      const _periodo = Math.round((_cf.mensal / 30) * _dias * 100) / 100;
-      custosFixos = { itens: _cf.itens, mensal: _cf.mensal, periodo: _periodo, dias: _dias };
+      const _cp = custoFixoDoPeriodo(_cf, _prc && _prc.start, _prc && _prc.endExclusive);
+      custosFixos = { itens: _cf.itens, mensal: _cf.mensal, meses: _cf.meses, periodo: _cp.periodo, dias: _cp.dias, mesRef: _cp.mesRef, porMes: _cp.porMes };
     } catch (_) {}
 
     const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendBr, fbSpendUsd, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
@@ -45533,21 +45573,27 @@ app.post('/api/painel/provider-currencies', requireAdmin, async (req, res) => {
 });
 
 // Custos fixos mensais (assinaturas) — lista editável {nome, valor}, substitui tudo.
+// Sem `mes`: edita o PADRÃO. Com `mes` ('YYYY-MM') + travar:true: grava a lista própria daquele mês
+// (trava mensal); travar:false: remove a trava e o mês volta a usar o padrão.
 app.post('/api/painel/custos-fixos', requireAdmin, async (req, res) => {
   try {
     const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
-    const arr = Array.isArray(body.itens) ? body.itens : [];
-    const itens = [];
-    for (const it of arr) {
-      const nome = String((it && it.nome) || '').trim().slice(0, 80);
-      const valor = Math.round((Number(String((it && it.valor) != null ? it.valor : '').replace(',', '.')) || 0) * 100) / 100;
-      if (nome && valor > 0) itens.push({ nome, valor });
-    }
+    const itens = normalizaCustosFixosItens(body.itens);
+    const mes = String(body.mes || '').trim();
     const { getCollection } = require('./mongodbClient');
     const col = await getCollection('settings');
-    await col.updateOne({ _id: 'custos_fixos' }, { $set: { itens, updatedAt: new Date().toISOString() } }, { upsert: true });
-    const mensal = Math.round(itens.reduce((a, x) => a + x.valor, 0) * 100) / 100;
-    return res.json({ ok: true, itens, mensal });
+    const agora = new Date().toISOString();
+    if (mes) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes)) return res.status(400).json({ ok: false, error: 'mes_invalido' });
+      if (body.travar === false) {
+        await col.updateOne({ _id: 'custos_fixos' }, { $unset: { ['meses.' + mes]: '' }, $set: { updatedAt: agora } }, { upsert: true });
+        return res.json({ ok: true, mes, travado: false });
+      }
+      await col.updateOne({ _id: 'custos_fixos' }, { $set: { ['meses.' + mes]: { itens, travadoEm: agora }, updatedAt: agora } }, { upsert: true });
+      return res.json({ ok: true, mes, travado: true, itens, mensal: somaCustosFixos(itens) });
+    }
+    await col.updateOne({ _id: 'custos_fixos' }, { $set: { itens, updatedAt: agora } }, { upsert: true });
+    return res.json({ ok: true, itens, mensal: somaCustosFixos(itens) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: 'save_failed', message: e?.message || String(e) });
   }

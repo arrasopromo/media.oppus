@@ -278,7 +278,9 @@
       var fontes = [
         { k:'site', nome:'Venda total do site', v:d.banco.receita, n:d.banco.vendas, det:'Tudo o que foi pago, de qualquer origem' },
         { k:'meta', nome:'Meta', v:mv, n:mc, det:'O que o Gerenciador de Anúncios atribui' },
-        { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.meta.receita:null, n:tcOk?d.tc.meta.vendas:null, det: tcOk ? (nf(d.tc.anuncio.vendas)+' ligadas a um anúncio; '+nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' ainda sem o relatório do TC importado (ficam sem anúncio)' : '')) : 'Sem chave do TrackCombo no servidor' },
+        // Mesma base da tabela: só o que o TC liga a um anúncio das contas. Venda que o TC marca como paga mas sem
+        // anúncio identificado fica fora do ROAS (só citada), igual ao Banco.
+        { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.anuncio.receita:null, n:tcOk?d.tc.anuncio.vendas:null, det: tcOk ? (nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.meta.vendas > d.tc.anuncio.vendas ? '; '+nf(d.tc.meta.vendas - d.tc.anuncio.vendas)+' pagas sem anúncio identificado ('+brl0(d.tc.meta.receita - d.tc.anuncio.receita)+')' : '')+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' ainda sem o relatório do TC importado (ficam sem anúncio)' : '')) : 'Sem chave do TrackCombo no servidor' },
         { k:'banco', nome:'Banco, pela UTM', v:bancoV, n:bancoN, det:nf(d.semAnuncio.vendas)+' vendas sem UTM de anúncio ('+brl0(d.semAnuncio.receita)+')'+(d.banco.recuperadas && d.banco.recuperadas.vendas ? '; '+nf(d.banco.recuperadas.vendas)+' recuperadas pelo nosso cookie' : '') }
       ];
       var cols = '<div class="ma-col gasto"><div class="rot">Gasto no Meta</div><div class="v num">'+brl(g)+'</div><div class="roas num">'+nf(lig)+' anúncios rodando'+(colHoje()?', '+brl0(gh)+' hoje':'')+'</div><div class="det">Duas contas; dólar a '+dec(d.fx,2)+', sem imposto</div></div>' +

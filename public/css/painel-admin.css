@@ -1,0 +1,658 @@
+/* ==========================================================================
+   Painel Oppus — camada visual do admin (/painel/*)
+   Mesa de operação: papel frio, tinta grafite, fios finos no lugar de cartões
+   com sombra. Cor só quando significa algo: azul-caneta para navegação e
+   seleção, verde para dinheiro que entrou / ação confirmada, vermelho para
+   prejuízo e ação destrutiva, âmbar para atenção. Números em Archivo
+   condensada e tabular, como no painel Meta Ads.
+   Carregado pela partial painel_sidebar — não afeta o site público.
+   Gerado por um script: a parte final (botões com cor inline) é automática.
+   ========================================================================== */
+:root{
+  --papel:#f4f5f7; --folha:#ffffff; --sombra:#f8f9fb; --vala:#eceef2;
+  --tinta:#14171c; --grafite:#525a67; --lapis:#8a93a1; --borracha:#b8bec8;
+  --fio:rgba(20,23,28,.09); --fio-forte:rgba(20,23,28,.16);
+  --caneta:#2f5bea; --caneta-fundo:#eef3fe; --foco:rgba(47,91,234,.35);
+  --lucro:#127a4a; --prejuizo:#c8352b; --alerta:#b7791f;
+  --r-peq:6px; --r-med:10px;
+  --anel:0 0 0 1px var(--fio);
+  --fonte:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+body.pnl{ background:var(--papel); color:var(--tinta); font-family:var(--fonte); font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+body.pnl input, body.pnl select, body.pnl textarea, body.pnl button{ font-family:inherit; }
+body.pnl :focus-visible{ outline:2px solid var(--foco); outline-offset:2px; }
+
+/* ── Barra lateral: mesma superfície do papel, separada por um fio ───── */
+body.pnl .sidebar{ width:250px; background:var(--papel); color:var(--tinta); height:100vh; position:fixed; left:0; top:0; padding:22px 14px 24px; box-sizing:border-box; z-index:1000; overflow-y:auto; overscroll-behavior:contain; box-shadow:1px 0 0 var(--fio); }
+body.pnl .sidebar::-webkit-scrollbar{ width:8px; }
+body.pnl .sidebar::-webkit-scrollbar-thumb{ background:var(--fio-forte); border-radius:8px; }
+body.pnl .sidebar::-webkit-scrollbar-track{ background:transparent; }
+body.pnl .sidebar-toggle{ display:none; }
+body.pnl .sidebar-top{ display:block; }
+body.pnl .sidebar-menu-btn{ display:none; }
+body.pnl .sidebar h2{ margin:0 0 18px; padding:0 10px; border:0; text-align:left; color:var(--tinta); font-size:17px; font-weight:650; font-stretch:88%; letter-spacing:-.01em; display:flex; align-items:center; gap:9px; }
+body.pnl .sidebar h2::before{ content:""; width:9px; height:9px; border-radius:2px; background:var(--tinta); flex:none; }
+body.pnl .sidebar-menu{ display:block; padding:0; }
+body.pnl .nav-search{ position:relative; margin:0 0 6px; }
+body.pnl .nav-search-input{ width:100%; box-sizing:border-box; padding:8px 28px 8px 11px; border:0; border-radius:var(--r-peq); background:var(--vala); color:var(--tinta); font-size:13px; outline:none; transition:box-shadow .15s; }
+body.pnl .nav-search-input::placeholder{ color:var(--lapis); }
+body.pnl .nav-search-input:focus{ background:var(--vala); box-shadow:0 0 0 2px var(--foco); }
+body.pnl .nav-search-clear{ position:absolute; right:6px; top:50%; transform:translateY(-50%); display:none; width:18px; height:18px; line-height:16px; text-align:center; padding:0; border:0; border-radius:50%; background:var(--fio-forte); color:var(--tinta); font-size:13px; cursor:pointer; }
+body.pnl .nav-search.has-text .nav-search-clear{ display:block; }
+body.pnl .nav-search-empty{ color:var(--lapis); font-size:12px; padding:4px 10px 10px; }
+body.pnl .nav-expand-all{ display:block; width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--fio); color:var(--lapis); font-size:12px; font-weight:500; letter-spacing:0; text-transform:none; padding:6px 10px 10px; margin:0 0 4px; cursor:pointer; }
+body.pnl .nav-expand-all:hover{ color:var(--tinta); }
+body.pnl .nav-group{ margin:0 0 2px; border-radius:0; overflow:visible; }
+body.pnl .nav-group > summary{ list-style:none; cursor:pointer; display:flex; align-items:center; gap:8px; padding:9px 10px 6px; font-size:12.5px; font-weight:600; letter-spacing:0; text-transform:none; color:var(--grafite); user-select:none; border-radius:var(--r-peq); transition:color .15s; }
+body.pnl .nav-group > summary::-webkit-details-marker{ display:none; }
+body.pnl .nav-group > summary:hover{ color:var(--tinta); background:none; }
+body.pnl .nav-group[open] > summary{ color:var(--tinta); }
+body.pnl .nav-caret{ margin-left:auto; font-size:15px; line-height:1; color:var(--borracha); transition:transform .18s cubic-bezier(.23,1,.32,1); }
+body.pnl .nav-group[open] > summary .nav-caret{ transform:rotate(90deg); }
+body.pnl .nav-group ul{ list-style:none; padding:0 0 8px; margin:0; }
+body.pnl .nav-group li{ margin:0; }
+body.pnl .nav-group li a{ display:block; padding:7px 10px 7px 20px; margin:1px 0; color:var(--grafite); text-decoration:none; border:0; border-radius:var(--r-peq); font-size:13.5px; font-weight:450; line-height:1.3; transition:background-color .12s, color .12s; position:relative; }
+body.pnl .nav-group li a:hover{ background:rgba(20,23,28,.05); color:var(--tinta); }
+body.pnl .nav-group li a.active{ background:var(--folha); color:var(--tinta); font-weight:600; box-shadow:var(--anel); }
+body.pnl .nav-group li a.active::before{ content:""; position:absolute; left:8px; top:50%; width:5px; height:5px; margin-top:-2.5px; border-radius:50%; background:var(--caneta); }
+body.pnl .nav-group li a.nav-search-hit{ background:var(--caneta-fundo); color:var(--tinta); }
+body.pnl .nav-logout{ display:block; margin-top:14px; padding:10px; color:var(--grafite); text-decoration:none; border-top:1px solid var(--fio); border-radius:0; font-size:13px; }
+body.pnl .nav-logout:hover{ background:none; color:var(--prejuizo); }
+
+/* ── Área principal ───────────────────────────────────────────────────── */
+body.pnl .main-content{ margin-left:250px; padding:28px 32px 64px; min-height:100vh; width:auto !important; max-width:none !important; box-sizing:border-box; }
+body.pnl .panel-table-scroll{ width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+body.pnl .panel-table-scroll table{ width:100%; border-collapse:collapse; }
+
+@media (max-width:768px){
+  body.pnl .sidebar{ width:100%; height:auto; position:sticky; top:0; padding:10px 14px; box-shadow:0 1px 0 var(--fio); }
+  body.pnl .sidebar-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  body.pnl .sidebar h2{ margin:0; padding:0; font-size:16px; white-space:nowrap; }
+  body.pnl .sidebar-menu-btn{ display:inline-flex; align-items:center; justify-content:center; padding:7px 12px; border:0; border-radius:var(--r-peq); background:var(--folha); box-shadow:var(--anel); color:var(--tinta); font-size:13px; font-weight:500; cursor:pointer; user-select:none; }
+  body.pnl .sidebar-menu{ display:none; padding:10px 0 0; margin:0; max-height:calc(100vh - 54px); overflow:auto; }
+  body.pnl .sidebar-toggle:checked ~ .sidebar-menu{ display:block; }
+  body.pnl .main-content{ margin-left:0; padding:16px; width:100%; }
+}
+
+/* ==========================================================================
+   Componentes das telas (pnl-ui). O Meta Ads tem os próprios e fica fora.
+   ========================================================================== */
+body.pnl-ui .main-content{ color:var(--tinta); }
+body.pnl-ui .main-content h1{ font-size:26px; font-weight:650; font-stretch:88%; letter-spacing:-.02em; line-height:1.15; color:var(--tinta); text-wrap:balance; }
+body.pnl-ui .main-content h2{ font-size:18px; font-weight:620; font-stretch:92%; letter-spacing:-.01em; color:var(--tinta); text-wrap:balance; }
+body.pnl-ui .main-content h3{ font-size:15px; font-weight:600; color:var(--tinta); }
+body.pnl-ui .main-content h4{ font-size:14px; font-weight:600; color:var(--tinta); }
+body.pnl-ui .main-content a:not([class]):not([style*="color"]){ color:var(--caneta); text-underline-offset:2px; }
+
+/* Folhas: o container branco de cada tela vira uma folha com fio, sem sombra */
+body.pnl-ui .main-content .container,
+body.pnl-ui .main-content .card,
+body.pnl-ui .main-content .panel-filterbar,
+body.pnl-ui .main-content .cost-panel,
+body.pnl-ui .main-content .dashboard-table-wrap{ background:var(--folha); border:0; box-shadow:var(--anel); border-radius:var(--r-med); }
+body.pnl-ui .main-content .container{ max-width:1480px; }
+/* Telas largas (Vendas, Gerenciamento, Refil, OrderID): ocupam a área toda no desktop */
+body.pnl-ui .main-content .container.container-wide{ max-width:1900px; }
+body.pnl-ui .main-content .panel-filterbar{ padding:12px 14px; }
+
+/* Indicadores (summary-card / stat-card): rótulo pequeno, número condensado */
+body.pnl-ui .main-content .summary-card,
+body.pnl-ui .main-content .stat-card{ border:0; border-radius:var(--r-med); box-shadow:var(--anel); padding:16px 18px 14px; transition:box-shadow .15s; }
+body.pnl-ui .main-content .summary-card:not([style*="background"]),
+body.pnl-ui .main-content .stat-card:not([style*="background"]){ background:var(--folha); }
+body.pnl-ui .main-content .summary-card:hover,
+body.pnl-ui .main-content .stat-card:hover{ box-shadow:0 0 0 1px var(--fio-forte); }
+body.pnl-ui .main-content .summary-label,
+body.pnl-ui .main-content .stat-label{ font-size:12.5px; font-weight:500; color:var(--grafite); text-transform:none; letter-spacing:0; margin-bottom:6px; }
+body.pnl-ui .main-content .summary-value,
+body.pnl-ui .main-content .stat-value{ font-size:25px; font-weight:620; font-stretch:85%; letter-spacing:-.015em; line-height:1.1; font-variant-numeric:tabular-nums; }
+body.pnl-ui .main-content .summary-value:not([style*="color"]),
+body.pnl-ui .main-content .stat-value:not([style*="color"]){ color:var(--tinta); }
+body.pnl-ui .main-content .summary-sub{ font-size:12px; color:var(--lapis); margin-top:7px; line-height:1.4; text-wrap:pretty; }
+body.pnl-ui .main-content .summary-grid{ gap:12px; }
+
+/* Tabelas: cabeçalho em sombra, linhas separadas por fio, números tabulares */
+body.pnl-ui .main-content table{ border-collapse:collapse; font-variant-numeric:tabular-nums; }
+body.pnl-ui .main-content th{ background-color:var(--sombra); color:var(--grafite); font-size:12px; font-weight:550; text-transform:none; letter-spacing:0; padding:10px 12px; border-bottom:1px solid var(--fio); white-space:nowrap; }
+body.pnl-ui .main-content td{ font-size:13px; border-bottom:1px solid var(--fio); }
+body.pnl-ui .main-content tbody tr:hover > td{ background-color:#f7f9fc; }
+
+/* Campos: afundados (vala), sem borda dura */
+body.pnl-ui .main-content input[type=text], body.pnl-ui .main-content input[type=search], body.pnl-ui .main-content input[type=number],
+body.pnl-ui .main-content input[type=date], body.pnl-ui .main-content input[type=datetime-local], body.pnl-ui .main-content input[type=email],
+body.pnl-ui .main-content input[type=tel], body.pnl-ui .main-content input[type=url], body.pnl-ui .main-content input[type=password],
+body.pnl-ui .main-content input:not([type]), body.pnl-ui .main-content select, body.pnl-ui .main-content textarea{
+  background-color:var(--vala); border-color:transparent; border-radius:var(--r-peq); color:var(--tinta); font-size:13px; outline:none; transition:box-shadow .15s, background-color .15s; }
+body.pnl-ui .main-content input:focus, body.pnl-ui .main-content select:focus, body.pnl-ui .main-content textarea:focus{ background-color:var(--folha); box-shadow:0 0 0 2px var(--foco); border-color:transparent; }
+body.pnl-ui .main-content input[type=checkbox], body.pnl-ui .main-content input[type=radio]{ accent-color:var(--tinta); }
+
+/* Botões: folha com fio por padrão; tinta para a ação principal */
+body.pnl-ui .main-content button, body.pnl-ui .main-content .btn, body.pnl-ui .main-content input[type=submit], body.pnl-ui .main-content input[type=button]{
+  font-weight:550; border-radius:var(--r-peq); cursor:pointer; transition:box-shadow .15s, background-color .15s, transform .1s; }
+body.pnl-ui .main-content button:active, body.pnl-ui .main-content .btn:active{ transform:scale(.97); }
+body.pnl-ui .main-content button:disabled, body.pnl-ui .main-content .btn:disabled{ opacity:.5; cursor:not-allowed; transform:none; }
+body.pnl-ui .main-content .btn:not([style*="background"]), body.pnl-ui .main-content .btn-secondary, body.pnl-ui .main-content .btn--ghost, body.pnl-ui .main-content .mini-btn{
+  background:var(--folha); color:var(--tinta); border:0; box-shadow:var(--anel); text-decoration:none; }
+body.pnl-ui .main-content .btn:not([style*="background"]):hover, body.pnl-ui .main-content .btn-secondary:hover, body.pnl-ui .main-content .btn--ghost:hover, body.pnl-ui .main-content .mini-btn:hover{ box-shadow:0 0 0 1px var(--fio-forte); }
+body.pnl-ui .main-content .btn-primary, body.pnl-ui .main-content .btn--primary, body.pnl-ui .main-content .unknown-btn{
+  background:var(--tinta); color:#fff; box-shadow:none; border:0; }
+body.pnl-ui .main-content .btn-primary:hover, body.pnl-ui .main-content .btn--primary:hover, body.pnl-ui .main-content .unknown-btn:hover{ background:#2a2f37; }
+/* Botões de envio de filtro: ação principal */
+body.pnl-ui .main-content .filterbar button, body.pnl-ui .main-content .toolbar button:not([class]), body.pnl-ui .main-content .panel-filterbar button:not([class]), body.pnl-ui .main-content form button[type=submit]:not([class]){ background:var(--tinta); color:#fff; border:0; box-shadow:none; }
+body.pnl-ui .main-content .btn--green, body.pnl-ui .main-content .btn-success{ background:var(--lucro); color:#fff; border:0; box-shadow:none; }
+body.pnl-ui .main-content .btn--red, body.pnl-ui .main-content .btn-danger{ background:var(--prejuizo); color:#fff; border:0; box-shadow:none; }
+body.pnl-ui .main-content .btn--gray{ background:var(--folha); color:var(--tinta); border:0; box-shadow:var(--anel); }
+/* Pílulas de filtro (upsell e afins) */
+body.pnl-ui .main-content .filter-pill{ border:0; border-radius:var(--r-peq); padding:6px 11px; font-size:12.5px; font-weight:500; }
+body.pnl-ui .main-content .filter-pill:not(.filter-pill--active){ background:var(--folha); color:var(--grafite); box-shadow:var(--anel); }
+body.pnl-ui .main-content .filter-pill--active{ background:var(--tinta); color:#fff; }
+body.pnl-ui .main-content .btn-green{ background:var(--lucro); color:#fff; box-shadow:none; border:0; }
+body.pnl-ui .main-content .unknown-link{ color:var(--caneta); }
+
+/* Filtros de período (.filters a / .period) viram um seletor segmentado */
+body.pnl-ui .main-content .filters a, body.pnl-ui .main-content a.period{
+  background:var(--folha); color:var(--grafite); box-shadow:var(--anel); border:0; border-radius:var(--r-peq); font-size:13px; font-weight:500; text-decoration:none; }
+body.pnl-ui .main-content .filters a:hover, body.pnl-ui .main-content a.period:hover{ color:var(--tinta); box-shadow:0 0 0 1px var(--fio-forte); }
+body.pnl-ui .main-content .filters a.active, body.pnl-ui .main-content a.period.active{ background:var(--tinta); color:#fff; box-shadow:none; }
+
+/* Selos de status */
+body.pnl-ui .main-content .badge, body.pnl-ui .main-content .refil2-badge, body.pnl-ui .main-content .status-badge{ border-radius:999px; font-weight:600; letter-spacing:0; text-transform:none; }
+
+@media (prefers-reduced-motion:reduce){ body.pnl *{ transition:none !important; } }
+
+/* ── Botões com cor inline: padroniza pelo papel da cor ───────────────── */
+/* ação comum (azul, índigo, roxo, céu, preto) → folha com fio, texto em tinta */
+body.pnl-ui .main-content button[style*="background:#2563eb"],
+body.pnl-ui .main-content a[style*="background:#2563eb"],
+body.pnl-ui .main-content button[style*="background: #2563eb"],
+body.pnl-ui .main-content a[style*="background: #2563eb"],
+body.pnl-ui .main-content button[style*="background-color:#2563eb"],
+body.pnl-ui .main-content a[style*="background-color:#2563eb"],
+body.pnl-ui .main-content button[style*="background-color: #2563eb"],
+body.pnl-ui .main-content a[style*="background-color: #2563eb"],
+body.pnl-ui .main-content button[style*="background:#2563EB"],
+body.pnl-ui .main-content a[style*="background:#2563EB"],
+body.pnl-ui .main-content button[style*="background: #2563EB"],
+body.pnl-ui .main-content a[style*="background: #2563EB"],
+body.pnl-ui .main-content button[style*="background-color:#2563EB"],
+body.pnl-ui .main-content a[style*="background-color:#2563EB"],
+body.pnl-ui .main-content button[style*="background-color: #2563EB"],
+body.pnl-ui .main-content a[style*="background-color: #2563EB"],
+body.pnl-ui .main-content button[style*="background:#007bff"],
+body.pnl-ui .main-content a[style*="background:#007bff"],
+body.pnl-ui .main-content button[style*="background: #007bff"],
+body.pnl-ui .main-content a[style*="background: #007bff"],
+body.pnl-ui .main-content button[style*="background-color:#007bff"],
+body.pnl-ui .main-content a[style*="background-color:#007bff"],
+body.pnl-ui .main-content button[style*="background-color: #007bff"],
+body.pnl-ui .main-content a[style*="background-color: #007bff"],
+body.pnl-ui .main-content button[style*="background:#007BFF"],
+body.pnl-ui .main-content a[style*="background:#007BFF"],
+body.pnl-ui .main-content button[style*="background: #007BFF"],
+body.pnl-ui .main-content a[style*="background: #007BFF"],
+body.pnl-ui .main-content button[style*="background-color:#007BFF"],
+body.pnl-ui .main-content a[style*="background-color:#007BFF"],
+body.pnl-ui .main-content button[style*="background-color: #007BFF"],
+body.pnl-ui .main-content a[style*="background-color: #007BFF"],
+body.pnl-ui .main-content button[style*="background:#4f46e5"],
+body.pnl-ui .main-content a[style*="background:#4f46e5"],
+body.pnl-ui .main-content button[style*="background: #4f46e5"],
+body.pnl-ui .main-content a[style*="background: #4f46e5"],
+body.pnl-ui .main-content button[style*="background-color:#4f46e5"],
+body.pnl-ui .main-content a[style*="background-color:#4f46e5"],
+body.pnl-ui .main-content button[style*="background-color: #4f46e5"],
+body.pnl-ui .main-content a[style*="background-color: #4f46e5"],
+body.pnl-ui .main-content button[style*="background:#4F46E5"],
+body.pnl-ui .main-content a[style*="background:#4F46E5"],
+body.pnl-ui .main-content button[style*="background: #4F46E5"],
+body.pnl-ui .main-content a[style*="background: #4F46E5"],
+body.pnl-ui .main-content button[style*="background-color:#4F46E5"],
+body.pnl-ui .main-content a[style*="background-color:#4F46E5"],
+body.pnl-ui .main-content button[style*="background-color: #4F46E5"],
+body.pnl-ui .main-content a[style*="background-color: #4F46E5"],
+body.pnl-ui .main-content button[style*="background:#7c3aed"],
+body.pnl-ui .main-content a[style*="background:#7c3aed"],
+body.pnl-ui .main-content button[style*="background: #7c3aed"],
+body.pnl-ui .main-content a[style*="background: #7c3aed"],
+body.pnl-ui .main-content button[style*="background-color:#7c3aed"],
+body.pnl-ui .main-content a[style*="background-color:#7c3aed"],
+body.pnl-ui .main-content button[style*="background-color: #7c3aed"],
+body.pnl-ui .main-content a[style*="background-color: #7c3aed"],
+body.pnl-ui .main-content button[style*="background:#7C3AED"],
+body.pnl-ui .main-content a[style*="background:#7C3AED"],
+body.pnl-ui .main-content button[style*="background: #7C3AED"],
+body.pnl-ui .main-content a[style*="background: #7C3AED"],
+body.pnl-ui .main-content button[style*="background-color:#7C3AED"],
+body.pnl-ui .main-content a[style*="background-color:#7C3AED"],
+body.pnl-ui .main-content button[style*="background-color: #7C3AED"],
+body.pnl-ui .main-content a[style*="background-color: #7C3AED"],
+body.pnl-ui .main-content button[style*="background:#0ea5e9"],
+body.pnl-ui .main-content a[style*="background:#0ea5e9"],
+body.pnl-ui .main-content button[style*="background: #0ea5e9"],
+body.pnl-ui .main-content a[style*="background: #0ea5e9"],
+body.pnl-ui .main-content button[style*="background-color:#0ea5e9"],
+body.pnl-ui .main-content a[style*="background-color:#0ea5e9"],
+body.pnl-ui .main-content button[style*="background-color: #0ea5e9"],
+body.pnl-ui .main-content a[style*="background-color: #0ea5e9"],
+body.pnl-ui .main-content button[style*="background:#0EA5E9"],
+body.pnl-ui .main-content a[style*="background:#0EA5E9"],
+body.pnl-ui .main-content button[style*="background: #0EA5E9"],
+body.pnl-ui .main-content a[style*="background: #0EA5E9"],
+body.pnl-ui .main-content button[style*="background-color:#0EA5E9"],
+body.pnl-ui .main-content a[style*="background-color:#0EA5E9"],
+body.pnl-ui .main-content button[style*="background-color: #0EA5E9"],
+body.pnl-ui .main-content a[style*="background-color: #0EA5E9"],
+body.pnl-ui .main-content button[style*="background:#3b82f6"],
+body.pnl-ui .main-content a[style*="background:#3b82f6"],
+body.pnl-ui .main-content button[style*="background: #3b82f6"],
+body.pnl-ui .main-content a[style*="background: #3b82f6"],
+body.pnl-ui .main-content button[style*="background-color:#3b82f6"],
+body.pnl-ui .main-content a[style*="background-color:#3b82f6"],
+body.pnl-ui .main-content button[style*="background-color: #3b82f6"],
+body.pnl-ui .main-content a[style*="background-color: #3b82f6"],
+body.pnl-ui .main-content button[style*="background:#3B82F6"],
+body.pnl-ui .main-content a[style*="background:#3B82F6"],
+body.pnl-ui .main-content button[style*="background: #3B82F6"],
+body.pnl-ui .main-content a[style*="background: #3B82F6"],
+body.pnl-ui .main-content button[style*="background-color:#3B82F6"],
+body.pnl-ui .main-content a[style*="background-color:#3B82F6"],
+body.pnl-ui .main-content button[style*="background-color: #3B82F6"],
+body.pnl-ui .main-content a[style*="background-color: #3B82F6"],
+body.pnl-ui .main-content button[style*="background:#1d4ed8"],
+body.pnl-ui .main-content a[style*="background:#1d4ed8"],
+body.pnl-ui .main-content button[style*="background: #1d4ed8"],
+body.pnl-ui .main-content a[style*="background: #1d4ed8"],
+body.pnl-ui .main-content button[style*="background-color:#1d4ed8"],
+body.pnl-ui .main-content a[style*="background-color:#1d4ed8"],
+body.pnl-ui .main-content button[style*="background-color: #1d4ed8"],
+body.pnl-ui .main-content a[style*="background-color: #1d4ed8"],
+body.pnl-ui .main-content button[style*="background:#1D4ED8"],
+body.pnl-ui .main-content a[style*="background:#1D4ED8"],
+body.pnl-ui .main-content button[style*="background: #1D4ED8"],
+body.pnl-ui .main-content a[style*="background: #1D4ED8"],
+body.pnl-ui .main-content button[style*="background-color:#1D4ED8"],
+body.pnl-ui .main-content a[style*="background-color:#1D4ED8"],
+body.pnl-ui .main-content button[style*="background-color: #1D4ED8"],
+body.pnl-ui .main-content a[style*="background-color: #1D4ED8"],
+body.pnl-ui .main-content button[style*="background:#6366f1"],
+body.pnl-ui .main-content a[style*="background:#6366f1"],
+body.pnl-ui .main-content button[style*="background: #6366f1"],
+body.pnl-ui .main-content a[style*="background: #6366f1"],
+body.pnl-ui .main-content button[style*="background-color:#6366f1"],
+body.pnl-ui .main-content a[style*="background-color:#6366f1"],
+body.pnl-ui .main-content button[style*="background-color: #6366f1"],
+body.pnl-ui .main-content a[style*="background-color: #6366f1"],
+body.pnl-ui .main-content button[style*="background:#6366F1"],
+body.pnl-ui .main-content a[style*="background:#6366F1"],
+body.pnl-ui .main-content button[style*="background: #6366F1"],
+body.pnl-ui .main-content a[style*="background: #6366F1"],
+body.pnl-ui .main-content button[style*="background-color:#6366F1"],
+body.pnl-ui .main-content a[style*="background-color:#6366F1"],
+body.pnl-ui .main-content button[style*="background-color: #6366F1"],
+body.pnl-ui .main-content a[style*="background-color: #6366F1"],
+body.pnl-ui .main-content button[style*="background:#0d6efd"],
+body.pnl-ui .main-content a[style*="background:#0d6efd"],
+body.pnl-ui .main-content button[style*="background: #0d6efd"],
+body.pnl-ui .main-content a[style*="background: #0d6efd"],
+body.pnl-ui .main-content button[style*="background-color:#0d6efd"],
+body.pnl-ui .main-content a[style*="background-color:#0d6efd"],
+body.pnl-ui .main-content button[style*="background-color: #0d6efd"],
+body.pnl-ui .main-content a[style*="background-color: #0d6efd"],
+body.pnl-ui .main-content button[style*="background:#0D6EFD"],
+body.pnl-ui .main-content a[style*="background:#0D6EFD"],
+body.pnl-ui .main-content button[style*="background: #0D6EFD"],
+body.pnl-ui .main-content a[style*="background: #0D6EFD"],
+body.pnl-ui .main-content button[style*="background-color:#0D6EFD"],
+body.pnl-ui .main-content a[style*="background-color:#0D6EFD"],
+body.pnl-ui .main-content button[style*="background-color: #0D6EFD"],
+body.pnl-ui .main-content a[style*="background-color: #0D6EFD"],
+body.pnl-ui .main-content button[style*="background:#111827"],
+body.pnl-ui .main-content a[style*="background:#111827"],
+body.pnl-ui .main-content button[style*="background: #111827"],
+body.pnl-ui .main-content a[style*="background: #111827"],
+body.pnl-ui .main-content button[style*="background-color:#111827"],
+body.pnl-ui .main-content a[style*="background-color:#111827"],
+body.pnl-ui .main-content button[style*="background-color: #111827"],
+body.pnl-ui .main-content a[style*="background-color: #111827"],
+body.pnl-ui .main-content button[style*="background:#1f2937"],
+body.pnl-ui .main-content a[style*="background:#1f2937"],
+body.pnl-ui .main-content button[style*="background: #1f2937"],
+body.pnl-ui .main-content a[style*="background: #1f2937"],
+body.pnl-ui .main-content button[style*="background-color:#1f2937"],
+body.pnl-ui .main-content a[style*="background-color:#1f2937"],
+body.pnl-ui .main-content button[style*="background-color: #1f2937"],
+body.pnl-ui .main-content a[style*="background-color: #1f2937"],
+body.pnl-ui .main-content button[style*="background:#1F2937"],
+body.pnl-ui .main-content a[style*="background:#1F2937"],
+body.pnl-ui .main-content button[style*="background: #1F2937"],
+body.pnl-ui .main-content a[style*="background: #1F2937"],
+body.pnl-ui .main-content button[style*="background-color:#1F2937"],
+body.pnl-ui .main-content a[style*="background-color:#1F2937"],
+body.pnl-ui .main-content button[style*="background-color: #1F2937"],
+body.pnl-ui .main-content a[style*="background-color: #1F2937"],
+body.pnl-ui .main-content button[style*="background:#0284c7"],
+body.pnl-ui .main-content a[style*="background:#0284c7"],
+body.pnl-ui .main-content button[style*="background: #0284c7"],
+body.pnl-ui .main-content a[style*="background: #0284c7"],
+body.pnl-ui .main-content button[style*="background-color:#0284c7"],
+body.pnl-ui .main-content a[style*="background-color:#0284c7"],
+body.pnl-ui .main-content button[style*="background-color: #0284c7"],
+body.pnl-ui .main-content a[style*="background-color: #0284c7"],
+body.pnl-ui .main-content button[style*="background:#0284C7"],
+body.pnl-ui .main-content a[style*="background:#0284C7"],
+body.pnl-ui .main-content button[style*="background: #0284C7"],
+body.pnl-ui .main-content a[style*="background: #0284C7"],
+body.pnl-ui .main-content button[style*="background-color:#0284C7"],
+body.pnl-ui .main-content a[style*="background-color:#0284C7"],
+body.pnl-ui .main-content button[style*="background-color: #0284C7"],
+body.pnl-ui .main-content a[style*="background-color: #0284C7"],
+body.pnl-ui .main-content button[style*="background:#8b5cf6"],
+body.pnl-ui .main-content a[style*="background:#8b5cf6"],
+body.pnl-ui .main-content button[style*="background: #8b5cf6"],
+body.pnl-ui .main-content a[style*="background: #8b5cf6"],
+body.pnl-ui .main-content button[style*="background-color:#8b5cf6"],
+body.pnl-ui .main-content a[style*="background-color:#8b5cf6"],
+body.pnl-ui .main-content button[style*="background-color: #8b5cf6"],
+body.pnl-ui .main-content a[style*="background-color: #8b5cf6"],
+body.pnl-ui .main-content button[style*="background:#8B5CF6"],
+body.pnl-ui .main-content a[style*="background:#8B5CF6"],
+body.pnl-ui .main-content button[style*="background: #8B5CF6"],
+body.pnl-ui .main-content a[style*="background: #8B5CF6"],
+body.pnl-ui .main-content button[style*="background-color:#8B5CF6"],
+body.pnl-ui .main-content a[style*="background-color:#8B5CF6"],
+body.pnl-ui .main-content button[style*="background-color: #8B5CF6"],
+body.pnl-ui .main-content a[style*="background-color: #8B5CF6"]{ background:var(--folha) !important; color:var(--tinta) !important; border-color:transparent !important; box-shadow:var(--anel) !important; }
+/* confirmar / dinheiro (verdes) → lucro */
+body.pnl-ui .main-content button[style*="background:#16a34a"],
+body.pnl-ui .main-content a[style*="background:#16a34a"],
+body.pnl-ui .main-content button[style*="background: #16a34a"],
+body.pnl-ui .main-content a[style*="background: #16a34a"],
+body.pnl-ui .main-content button[style*="background-color:#16a34a"],
+body.pnl-ui .main-content a[style*="background-color:#16a34a"],
+body.pnl-ui .main-content button[style*="background-color: #16a34a"],
+body.pnl-ui .main-content a[style*="background-color: #16a34a"],
+body.pnl-ui .main-content button[style*="background:#16A34A"],
+body.pnl-ui .main-content a[style*="background:#16A34A"],
+body.pnl-ui .main-content button[style*="background: #16A34A"],
+body.pnl-ui .main-content a[style*="background: #16A34A"],
+body.pnl-ui .main-content button[style*="background-color:#16A34A"],
+body.pnl-ui .main-content a[style*="background-color:#16A34A"],
+body.pnl-ui .main-content button[style*="background-color: #16A34A"],
+body.pnl-ui .main-content a[style*="background-color: #16A34A"],
+body.pnl-ui .main-content button[style*="background:#28a745"],
+body.pnl-ui .main-content a[style*="background:#28a745"],
+body.pnl-ui .main-content button[style*="background: #28a745"],
+body.pnl-ui .main-content a[style*="background: #28a745"],
+body.pnl-ui .main-content button[style*="background-color:#28a745"],
+body.pnl-ui .main-content a[style*="background-color:#28a745"],
+body.pnl-ui .main-content button[style*="background-color: #28a745"],
+body.pnl-ui .main-content a[style*="background-color: #28a745"],
+body.pnl-ui .main-content button[style*="background:#28A745"],
+body.pnl-ui .main-content a[style*="background:#28A745"],
+body.pnl-ui .main-content button[style*="background: #28A745"],
+body.pnl-ui .main-content a[style*="background: #28A745"],
+body.pnl-ui .main-content button[style*="background-color:#28A745"],
+body.pnl-ui .main-content a[style*="background-color:#28A745"],
+body.pnl-ui .main-content button[style*="background-color: #28A745"],
+body.pnl-ui .main-content a[style*="background-color: #28A745"],
+body.pnl-ui .main-content button[style*="background:#059669"],
+body.pnl-ui .main-content a[style*="background:#059669"],
+body.pnl-ui .main-content button[style*="background: #059669"],
+body.pnl-ui .main-content a[style*="background: #059669"],
+body.pnl-ui .main-content button[style*="background-color:#059669"],
+body.pnl-ui .main-content a[style*="background-color:#059669"],
+body.pnl-ui .main-content button[style*="background-color: #059669"],
+body.pnl-ui .main-content a[style*="background-color: #059669"],
+body.pnl-ui .main-content button[style*="background:#10b981"],
+body.pnl-ui .main-content a[style*="background:#10b981"],
+body.pnl-ui .main-content button[style*="background: #10b981"],
+body.pnl-ui .main-content a[style*="background: #10b981"],
+body.pnl-ui .main-content button[style*="background-color:#10b981"],
+body.pnl-ui .main-content a[style*="background-color:#10b981"],
+body.pnl-ui .main-content button[style*="background-color: #10b981"],
+body.pnl-ui .main-content a[style*="background-color: #10b981"],
+body.pnl-ui .main-content button[style*="background:#10B981"],
+body.pnl-ui .main-content a[style*="background:#10B981"],
+body.pnl-ui .main-content button[style*="background: #10B981"],
+body.pnl-ui .main-content a[style*="background: #10B981"],
+body.pnl-ui .main-content button[style*="background-color:#10B981"],
+body.pnl-ui .main-content a[style*="background-color:#10B981"],
+body.pnl-ui .main-content button[style*="background-color: #10B981"],
+body.pnl-ui .main-content a[style*="background-color: #10B981"],
+body.pnl-ui .main-content button[style*="background:#15803d"],
+body.pnl-ui .main-content a[style*="background:#15803d"],
+body.pnl-ui .main-content button[style*="background: #15803d"],
+body.pnl-ui .main-content a[style*="background: #15803d"],
+body.pnl-ui .main-content button[style*="background-color:#15803d"],
+body.pnl-ui .main-content a[style*="background-color:#15803d"],
+body.pnl-ui .main-content button[style*="background-color: #15803d"],
+body.pnl-ui .main-content a[style*="background-color: #15803d"],
+body.pnl-ui .main-content button[style*="background:#15803D"],
+body.pnl-ui .main-content a[style*="background:#15803D"],
+body.pnl-ui .main-content button[style*="background: #15803D"],
+body.pnl-ui .main-content a[style*="background: #15803D"],
+body.pnl-ui .main-content button[style*="background-color:#15803D"],
+body.pnl-ui .main-content a[style*="background-color:#15803D"],
+body.pnl-ui .main-content button[style*="background-color: #15803D"],
+body.pnl-ui .main-content a[style*="background-color: #15803D"],
+body.pnl-ui .main-content button[style*="background:#198754"],
+body.pnl-ui .main-content a[style*="background:#198754"],
+body.pnl-ui .main-content button[style*="background: #198754"],
+body.pnl-ui .main-content a[style*="background: #198754"],
+body.pnl-ui .main-content button[style*="background-color:#198754"],
+body.pnl-ui .main-content a[style*="background-color:#198754"],
+body.pnl-ui .main-content button[style*="background-color: #198754"],
+body.pnl-ui .main-content a[style*="background-color: #198754"],
+body.pnl-ui .main-content button[style*="background:#22c55e"],
+body.pnl-ui .main-content a[style*="background:#22c55e"],
+body.pnl-ui .main-content button[style*="background: #22c55e"],
+body.pnl-ui .main-content a[style*="background: #22c55e"],
+body.pnl-ui .main-content button[style*="background-color:#22c55e"],
+body.pnl-ui .main-content a[style*="background-color:#22c55e"],
+body.pnl-ui .main-content button[style*="background-color: #22c55e"],
+body.pnl-ui .main-content a[style*="background-color: #22c55e"],
+body.pnl-ui .main-content button[style*="background:#22C55E"],
+body.pnl-ui .main-content a[style*="background:#22C55E"],
+body.pnl-ui .main-content button[style*="background: #22C55E"],
+body.pnl-ui .main-content a[style*="background: #22C55E"],
+body.pnl-ui .main-content button[style*="background-color:#22C55E"],
+body.pnl-ui .main-content a[style*="background-color:#22C55E"],
+body.pnl-ui .main-content button[style*="background-color: #22C55E"],
+body.pnl-ui .main-content a[style*="background-color: #22C55E"]{ background:var(--lucro) !important; color:#fff !important; border-color:transparent !important; box-shadow:none !important; }
+/* destrutivo (vermelhos) → prejuízo */
+body.pnl-ui .main-content button[style*="background:#dc2626"],
+body.pnl-ui .main-content a[style*="background:#dc2626"],
+body.pnl-ui .main-content button[style*="background: #dc2626"],
+body.pnl-ui .main-content a[style*="background: #dc2626"],
+body.pnl-ui .main-content button[style*="background-color:#dc2626"],
+body.pnl-ui .main-content a[style*="background-color:#dc2626"],
+body.pnl-ui .main-content button[style*="background-color: #dc2626"],
+body.pnl-ui .main-content a[style*="background-color: #dc2626"],
+body.pnl-ui .main-content button[style*="background:#DC2626"],
+body.pnl-ui .main-content a[style*="background:#DC2626"],
+body.pnl-ui .main-content button[style*="background: #DC2626"],
+body.pnl-ui .main-content a[style*="background: #DC2626"],
+body.pnl-ui .main-content button[style*="background-color:#DC2626"],
+body.pnl-ui .main-content a[style*="background-color:#DC2626"],
+body.pnl-ui .main-content button[style*="background-color: #DC2626"],
+body.pnl-ui .main-content a[style*="background-color: #DC2626"],
+body.pnl-ui .main-content button[style*="background:#dc3545"],
+body.pnl-ui .main-content a[style*="background:#dc3545"],
+body.pnl-ui .main-content button[style*="background: #dc3545"],
+body.pnl-ui .main-content a[style*="background: #dc3545"],
+body.pnl-ui .main-content button[style*="background-color:#dc3545"],
+body.pnl-ui .main-content a[style*="background-color:#dc3545"],
+body.pnl-ui .main-content button[style*="background-color: #dc3545"],
+body.pnl-ui .main-content a[style*="background-color: #dc3545"],
+body.pnl-ui .main-content button[style*="background:#DC3545"],
+body.pnl-ui .main-content a[style*="background:#DC3545"],
+body.pnl-ui .main-content button[style*="background: #DC3545"],
+body.pnl-ui .main-content a[style*="background: #DC3545"],
+body.pnl-ui .main-content button[style*="background-color:#DC3545"],
+body.pnl-ui .main-content a[style*="background-color:#DC3545"],
+body.pnl-ui .main-content button[style*="background-color: #DC3545"],
+body.pnl-ui .main-content a[style*="background-color: #DC3545"],
+body.pnl-ui .main-content button[style*="background:#ef4444"],
+body.pnl-ui .main-content a[style*="background:#ef4444"],
+body.pnl-ui .main-content button[style*="background: #ef4444"],
+body.pnl-ui .main-content a[style*="background: #ef4444"],
+body.pnl-ui .main-content button[style*="background-color:#ef4444"],
+body.pnl-ui .main-content a[style*="background-color:#ef4444"],
+body.pnl-ui .main-content button[style*="background-color: #ef4444"],
+body.pnl-ui .main-content a[style*="background-color: #ef4444"],
+body.pnl-ui .main-content button[style*="background:#EF4444"],
+body.pnl-ui .main-content a[style*="background:#EF4444"],
+body.pnl-ui .main-content button[style*="background: #EF4444"],
+body.pnl-ui .main-content a[style*="background: #EF4444"],
+body.pnl-ui .main-content button[style*="background-color:#EF4444"],
+body.pnl-ui .main-content a[style*="background-color:#EF4444"],
+body.pnl-ui .main-content button[style*="background-color: #EF4444"],
+body.pnl-ui .main-content a[style*="background-color: #EF4444"],
+body.pnl-ui .main-content button[style*="background:#b91c1c"],
+body.pnl-ui .main-content a[style*="background:#b91c1c"],
+body.pnl-ui .main-content button[style*="background: #b91c1c"],
+body.pnl-ui .main-content a[style*="background: #b91c1c"],
+body.pnl-ui .main-content button[style*="background-color:#b91c1c"],
+body.pnl-ui .main-content a[style*="background-color:#b91c1c"],
+body.pnl-ui .main-content button[style*="background-color: #b91c1c"],
+body.pnl-ui .main-content a[style*="background-color: #b91c1c"],
+body.pnl-ui .main-content button[style*="background:#B91C1C"],
+body.pnl-ui .main-content a[style*="background:#B91C1C"],
+body.pnl-ui .main-content button[style*="background: #B91C1C"],
+body.pnl-ui .main-content a[style*="background: #B91C1C"],
+body.pnl-ui .main-content button[style*="background-color:#B91C1C"],
+body.pnl-ui .main-content a[style*="background-color:#B91C1C"],
+body.pnl-ui .main-content button[style*="background-color: #B91C1C"],
+body.pnl-ui .main-content a[style*="background-color: #B91C1C"]{ background:var(--prejuizo) !important; color:#fff !important; border-color:transparent !important; box-shadow:none !important; }
+/* atenção (âmbar) → alerta */
+body.pnl-ui .main-content button[style*="background:#f59e0b"],
+body.pnl-ui .main-content a[style*="background:#f59e0b"],
+body.pnl-ui .main-content button[style*="background: #f59e0b"],
+body.pnl-ui .main-content a[style*="background: #f59e0b"],
+body.pnl-ui .main-content button[style*="background-color:#f59e0b"],
+body.pnl-ui .main-content a[style*="background-color:#f59e0b"],
+body.pnl-ui .main-content button[style*="background-color: #f59e0b"],
+body.pnl-ui .main-content a[style*="background-color: #f59e0b"],
+body.pnl-ui .main-content button[style*="background:#F59E0B"],
+body.pnl-ui .main-content a[style*="background:#F59E0B"],
+body.pnl-ui .main-content button[style*="background: #F59E0B"],
+body.pnl-ui .main-content a[style*="background: #F59E0B"],
+body.pnl-ui .main-content button[style*="background-color:#F59E0B"],
+body.pnl-ui .main-content a[style*="background-color:#F59E0B"],
+body.pnl-ui .main-content button[style*="background-color: #F59E0B"],
+body.pnl-ui .main-content a[style*="background-color: #F59E0B"],
+body.pnl-ui .main-content button[style*="background:#d97706"],
+body.pnl-ui .main-content a[style*="background:#d97706"],
+body.pnl-ui .main-content button[style*="background: #d97706"],
+body.pnl-ui .main-content a[style*="background: #d97706"],
+body.pnl-ui .main-content button[style*="background-color:#d97706"],
+body.pnl-ui .main-content a[style*="background-color:#d97706"],
+body.pnl-ui .main-content button[style*="background-color: #d97706"],
+body.pnl-ui .main-content a[style*="background-color: #d97706"],
+body.pnl-ui .main-content button[style*="background:#D97706"],
+body.pnl-ui .main-content a[style*="background:#D97706"],
+body.pnl-ui .main-content button[style*="background: #D97706"],
+body.pnl-ui .main-content a[style*="background: #D97706"],
+body.pnl-ui .main-content button[style*="background-color:#D97706"],
+body.pnl-ui .main-content a[style*="background-color:#D97706"],
+body.pnl-ui .main-content button[style*="background-color: #D97706"],
+body.pnl-ui .main-content a[style*="background-color: #D97706"],
+body.pnl-ui .main-content button[style*="background:#eab308"],
+body.pnl-ui .main-content a[style*="background:#eab308"],
+body.pnl-ui .main-content button[style*="background: #eab308"],
+body.pnl-ui .main-content a[style*="background: #eab308"],
+body.pnl-ui .main-content button[style*="background-color:#eab308"],
+body.pnl-ui .main-content a[style*="background-color:#eab308"],
+body.pnl-ui .main-content button[style*="background-color: #eab308"],
+body.pnl-ui .main-content a[style*="background-color: #eab308"],
+body.pnl-ui .main-content button[style*="background:#EAB308"],
+body.pnl-ui .main-content a[style*="background:#EAB308"],
+body.pnl-ui .main-content button[style*="background: #EAB308"],
+body.pnl-ui .main-content a[style*="background: #EAB308"],
+body.pnl-ui .main-content button[style*="background-color:#EAB308"],
+body.pnl-ui .main-content a[style*="background-color:#EAB308"],
+body.pnl-ui .main-content button[style*="background-color: #EAB308"],
+body.pnl-ui .main-content a[style*="background-color: #EAB308"]{ background:var(--alerta) !important; color:#fff !important; border-color:transparent !important; box-shadow:none !important; }
+/* secundário (cinzas) → folha com fio */
+body.pnl-ui .main-content button[style*="background:#6c757d"],
+body.pnl-ui .main-content a[style*="background:#6c757d"],
+body.pnl-ui .main-content button[style*="background: #6c757d"],
+body.pnl-ui .main-content a[style*="background: #6c757d"],
+body.pnl-ui .main-content button[style*="background-color:#6c757d"],
+body.pnl-ui .main-content a[style*="background-color:#6c757d"],
+body.pnl-ui .main-content button[style*="background-color: #6c757d"],
+body.pnl-ui .main-content a[style*="background-color: #6c757d"],
+body.pnl-ui .main-content button[style*="background:#6C757D"],
+body.pnl-ui .main-content a[style*="background:#6C757D"],
+body.pnl-ui .main-content button[style*="background: #6C757D"],
+body.pnl-ui .main-content a[style*="background: #6C757D"],
+body.pnl-ui .main-content button[style*="background-color:#6C757D"],
+body.pnl-ui .main-content a[style*="background-color:#6C757D"],
+body.pnl-ui .main-content button[style*="background-color: #6C757D"],
+body.pnl-ui .main-content a[style*="background-color: #6C757D"],
+body.pnl-ui .main-content button[style*="background:#6b7280"],
+body.pnl-ui .main-content a[style*="background:#6b7280"],
+body.pnl-ui .main-content button[style*="background: #6b7280"],
+body.pnl-ui .main-content a[style*="background: #6b7280"],
+body.pnl-ui .main-content button[style*="background-color:#6b7280"],
+body.pnl-ui .main-content a[style*="background-color:#6b7280"],
+body.pnl-ui .main-content button[style*="background-color: #6b7280"],
+body.pnl-ui .main-content a[style*="background-color: #6b7280"],
+body.pnl-ui .main-content button[style*="background:#6B7280"],
+body.pnl-ui .main-content a[style*="background:#6B7280"],
+body.pnl-ui .main-content button[style*="background: #6B7280"],
+body.pnl-ui .main-content a[style*="background: #6B7280"],
+body.pnl-ui .main-content button[style*="background-color:#6B7280"],
+body.pnl-ui .main-content a[style*="background-color:#6B7280"],
+body.pnl-ui .main-content button[style*="background-color: #6B7280"],
+body.pnl-ui .main-content a[style*="background-color: #6B7280"],
+body.pnl-ui .main-content button[style*="background:#9ca3af"],
+body.pnl-ui .main-content a[style*="background:#9ca3af"],
+body.pnl-ui .main-content button[style*="background: #9ca3af"],
+body.pnl-ui .main-content a[style*="background: #9ca3af"],
+body.pnl-ui .main-content button[style*="background-color:#9ca3af"],
+body.pnl-ui .main-content a[style*="background-color:#9ca3af"],
+body.pnl-ui .main-content button[style*="background-color: #9ca3af"],
+body.pnl-ui .main-content a[style*="background-color: #9ca3af"],
+body.pnl-ui .main-content button[style*="background:#9CA3AF"],
+body.pnl-ui .main-content a[style*="background:#9CA3AF"],
+body.pnl-ui .main-content button[style*="background: #9CA3AF"],
+body.pnl-ui .main-content a[style*="background: #9CA3AF"],
+body.pnl-ui .main-content button[style*="background-color:#9CA3AF"],
+body.pnl-ui .main-content a[style*="background-color:#9CA3AF"],
+body.pnl-ui .main-content button[style*="background-color: #9CA3AF"],
+body.pnl-ui .main-content a[style*="background-color: #9CA3AF"],
+body.pnl-ui .main-content button[style*="background:#64748b"],
+body.pnl-ui .main-content a[style*="background:#64748b"],
+body.pnl-ui .main-content button[style*="background: #64748b"],
+body.pnl-ui .main-content a[style*="background: #64748b"],
+body.pnl-ui .main-content button[style*="background-color:#64748b"],
+body.pnl-ui .main-content a[style*="background-color:#64748b"],
+body.pnl-ui .main-content button[style*="background-color: #64748b"],
+body.pnl-ui .main-content a[style*="background-color: #64748b"],
+body.pnl-ui .main-content button[style*="background:#64748B"],
+body.pnl-ui .main-content a[style*="background:#64748B"],
+body.pnl-ui .main-content button[style*="background: #64748B"],
+body.pnl-ui .main-content a[style*="background: #64748B"],
+body.pnl-ui .main-content button[style*="background-color:#64748B"],
+body.pnl-ui .main-content a[style*="background-color:#64748B"],
+body.pnl-ui .main-content button[style*="background-color: #64748B"],
+body.pnl-ui .main-content a[style*="background-color: #64748B"],
+body.pnl-ui .main-content button[style*="background:#4b5563"],
+body.pnl-ui .main-content a[style*="background:#4b5563"],
+body.pnl-ui .main-content button[style*="background: #4b5563"],
+body.pnl-ui .main-content a[style*="background: #4b5563"],
+body.pnl-ui .main-content button[style*="background-color:#4b5563"],
+body.pnl-ui .main-content a[style*="background-color:#4b5563"],
+body.pnl-ui .main-content button[style*="background-color: #4b5563"],
+body.pnl-ui .main-content a[style*="background-color: #4b5563"],
+body.pnl-ui .main-content button[style*="background:#4B5563"],
+body.pnl-ui .main-content a[style*="background:#4B5563"],
+body.pnl-ui .main-content button[style*="background: #4B5563"],
+body.pnl-ui .main-content a[style*="background: #4B5563"],
+body.pnl-ui .main-content button[style*="background-color:#4B5563"],
+body.pnl-ui .main-content a[style*="background-color:#4B5563"],
+body.pnl-ui .main-content button[style*="background-color: #4B5563"],
+body.pnl-ui .main-content a[style*="background-color: #4B5563"]{ background:var(--folha) !important; color:var(--tinta) !important; border-color:transparent !important; box-shadow:var(--anel) !important; }

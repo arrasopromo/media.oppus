@@ -195,7 +195,7 @@
   %>
   <%- include('partials/painel_sidebar', { page: sidebarPage }) %>
   <div class="main-content">
-  <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView || isRefil2View) ? 'container-wide' : '' %>">
+  <div class="container <%= (isUnknownOrderIdView || isFollowersMgmtView || isRefil2View || isVendasView) ? 'container-wide' : '' %>">
     <div class="panel-header">
         <h1 style="margin:0;"><%= isFollowersMgmtView ? 'Gerenciamento de Seguidores' : (isServiceTypesView ? 'Gerenciamento Tipos' : (isRefil2View ? 'Gerenciamento Refil' : (isLtvView ? 'LTV' : (isCouponsView ? 'Cupons' : (isVendasView ? 'Vendas' : 'Painel de Gerenciamento de Custos'))))) %></h1>
         <% if (!isLtvView) { %>
@@ -4335,7 +4335,17 @@
            var _ajTotal = Number(_aj.total || 0);
            var _cf = (typeof custosFixos !== 'undefined' && custosFixos) ? custosFixos : { itens: [], mensal: 0, periodo: 0, dias: 30 };
            var _cfMensal = Number(_cf.mensal || 0); var _cfPeriodo = Number(_cf.periodo || 0); var _cfDias = Number(_cf.dias || 30);
-           var _cfItens = Array.isArray(_cf.itens) ? _cf.itens : []; %>
+           var _cfItens = Array.isArray(_cf.itens) ? _cf.itens : [];
+           var _cfMesesTrav = (_cf.meses && typeof _cf.meses === 'object') ? _cf.meses : {};
+           var _cfPorMes = Array.isArray(_cf.porMes) ? _cf.porMes : [];
+           var _cfMesRef = _cf.mesRef || '';
+           var _cfNomesMes = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+           var _cfMesNome = function(k){ var a = String(k||'').split('-'); return a.length === 2 ? (_cfNomesMes[Number(a[1])-1] + '/' + a[0]) : k; };
+           var _cfRefTravado = !!_cfMesesTrav[_cfMesRef];
+           var _cfValorRef = _cfRefTravado ? Number(_cfMesesTrav[_cfMesRef].mensal || 0) : _cfMensal;
+           var _cfItensRef = _cfRefTravado ? (_cfMesesTrav[_cfMesRef].itens || []) : _cfItens;
+           var _cfTravadosNoPeriodo = _cfPorMes.filter(function(x){ return x && x.travado; });
+           var _cfPeriodoTxt = 'R$ ' + _cfPeriodo.toFixed(2).replace('.', ',') + ' no período (' + _cfDias + 'd)'; %>
         <div class="summary-card">
           <div class="summary-label">Lucro Líquido (período)</div>
           <div class="summary-value" id="dashLucroOperValue" style="color: <%= _lucroOper >= 0 ? '#16a34a' : '#dc2626' %>;">R$ <%= _lucroOper.toFixed(2).replace('.', ',') %></div>
@@ -4357,9 +4367,10 @@
         </div>
         <% } %>
         <div class="summary-card">
-          <div class="summary-label">Custos Fixos (mensal)</div>
-          <div class="summary-value" style="color:#dc2626;">R$ <%= _cfMensal.toFixed(2).replace('.', ',') %></div>
-          <div class="summary-sub" id="dashCustoFixoSub" data-base="<%= _cfItens.length %> assinatura<%= _cfItens.length !== 1 ? 's' : '' %> · R$ <%= _cfPeriodo.toFixed(2).replace('.', ',') %> no período (<%= _cfDias %>d)" style="margin-top:6px;"><%= _cfItens.length %> assinatura<%= _cfItens.length !== 1 ? 's' : '' %> · R$ <%= _cfPeriodo.toFixed(2).replace('.', ',') %> no período (<%= _cfDias %>d)</div>
+          <div class="summary-label">Custos Fixos (<%= _cfMesNome(_cfMesRef) %>)<% if (_cfRefTravado) { %> <span title="Mês travado: usa a lista própria deste mês, não o padrão" style="color:#b91c1c;">🔒</span><% } %></div>
+          <div class="summary-value" style="color:#dc2626;">R$ <%= _cfValorRef.toFixed(2).replace('.', ',') %></div>
+          <div class="summary-sub" id="dashCustoFixoSub" data-base="<%= _cfItensRef.length %> assinatura<%= _cfItensRef.length !== 1 ? 's' : '' %> · <%= _cfPeriodoTxt %>" style="margin-top:6px;"><%= _cfItensRef.length %> assinatura<%= _cfItensRef.length !== 1 ? 's' : '' %> · <%= _cfPeriodoTxt %></div>
+          <% if (_cfRefTravado) { %><div style="margin-top:4px; font-size:0.72rem; color:#b91c1c;">🔒 <%= _cfMesNome(_cfMesRef) %> travado · padrão R$ <%= _cfMensal.toFixed(2).replace('.', ',') %></div><% } else if (_cfTravadosNoPeriodo.length) { %><div style="margin-top:4px; font-size:0.72rem; color:#b91c1c;">🔒 travado<%= _cfTravadosNoPeriodo.length > 1 ? 's' : '' %>: <%= _cfTravadosNoPeriodo.map(function(x){ return _cfMesNome(x.mes) + ' R$ ' + Number(x.valor).toFixed(2).replace('.', ','); }).join(' · ') %></div><% } %>
           <button type="button" id="dashCustoFixoEditar" style="margin-top:8px; font-size:0.72rem; padding:4px 10px; border:1px solid #fecaca; border-radius:999px; background:#fff5f5; cursor:pointer; color:#b91c1c; font-weight:600;">Editar / Detalhar</button>
         </div>
         <div id="dashCustoFixoModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:9999; align-items:center; justify-content:center; padding:16px;">
@@ -4369,7 +4380,15 @@
               <button type="button" id="dashCustoFixoClose" style="border:none; background:#f3f4f6; width:32px; height:32px; border-radius:8px; cursor:pointer; font-size:1.1rem; color:#374151;">×</button>
             </div>
             <div style="padding:16px 18px;">
-              <div style="font-size:.82rem; color:#6b7280; margin-bottom:10px;">Assinaturas e custos recorrentes (R$/mês). O total é rateado por dia e descontado do lucro quando você liga <strong>"considerar custo fixo"</strong>.</div>
+              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+                <label for="cfMes" style="font-size:.82rem; font-weight:700; color:#374151;">Mês</label>
+                <select id="cfMes" style="flex:1; min-width:160px; padding:7px 9px; border:1px solid #e5e7eb; border-radius:8px; background:#fff;"></select>
+              </div>
+              <label id="cfTravaBox" style="display:flex; gap:10px; align-items:flex-start; padding:10px 12px; margin-bottom:10px; border:1px solid #fecaca; border-radius:10px; background:#fff5f5; cursor:pointer;">
+                <input type="checkbox" id="cfTravaMensal" style="margin-top:3px; accent-color:#b91c1c;">
+                <span style="font-size:.82rem; color:#374151; line-height:1.45;"><strong style="color:#b91c1c;">🔒 Travar o valor de <span id="cfMesNome"></span></strong> — este mês fica com a lista abaixo (ex.: tirou algo que não pagou). Editar o padrão depois não muda este mês.</span>
+              </label>
+              <div id="cfHint" style="font-size:.8rem; color:#6b7280; margin-bottom:10px; line-height:1.45;"></div>
               <div id="cfRows"></div>
               <button type="button" id="cfAddRow" style="margin-top:8px; font-size:.8rem; padding:6px 12px; border:1px dashed #cbd5e1; border-radius:8px; background:#fff; cursor:pointer; color:#374151;">+ adicionar</button>
               <div style="display:flex; justify-content:space-between; font-weight:800; color:#111827; padding-top:12px; margin-top:8px; border-top:1px solid #f1f2f6;">
@@ -4395,7 +4414,26 @@
             var msgEl = document.getElementById('cfMsg');
             var addBtn = document.getElementById('cfAddRow');
             var saveBtn = document.getElementById('cfSalvar');
-            var itens = <%- JSON.stringify(_cfItens).replace(/</g, '\\u003c') %> || [];
+            var padrao = <%- JSON.stringify(_cfItens).replace(/</g, '\\u003c') %> || [];
+            var travados = <%- JSON.stringify(_cfMesesTrav).replace(/</g, '\\u003c') %> || {};
+            var mesRef = <%- JSON.stringify(_cfMesRef || '') %>;
+            var mesSel = document.getElementById('cfMes');
+            var travaChk = document.getElementById('cfTravaMensal');
+            var travaBox = document.getElementById('cfTravaBox');
+            var hintEl = document.getElementById('cfHint');
+            var mesNomeEl = document.getElementById('cfMesNome');
+            var NOMES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+            function nomeMes(k){ var a = String(k||'').split('-'); return a.length === 2 ? NOMES[Number(a[1])-1] + '/' + a[0] : k; }
+            function opcoesMes(){
+              var ks = {}; var d = new Date(Date.now() - 3*3600000);
+              for (var i = -12; i <= 1; i++) { var x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1)); ks[x.getUTCFullYear() + '-' + String(x.getUTCMonth()+1).padStart(2,'0')] = 1; }
+              Object.keys(travados).forEach(function(k){ ks[k] = 1; }); if (mesRef) ks[mesRef] = 1;
+              var html = '<option value="">Padrão (todo mês sem trava)</option>';
+              Object.keys(ks).sort().reverse().forEach(function(k){ html += '<option value="' + k + '">' + nomeMes(k) + (travados[k] ? ' 🔒 R$ ' + (Number(travados[k].mensal)||0).toFixed(2).replace('.', ',') : '') + '</option>'; });
+              mesSel.innerHTML = html;
+            }
+            function setEditavel(on){ rowsEl.querySelectorAll('input,button').forEach(function(el){ el.disabled = !on; }); rowsEl.style.opacity = on ? '1' : '.55'; if (addBtn) { addBtn.disabled = !on; addBtn.style.opacity = on ? '1' : '.55'; } }
+            var itens = padrao;
             function brl(n){ return 'R$ ' + (Number(n)||0).toFixed(2).replace('.', ','); }
             function recalc(){
               var t = 0;
@@ -4416,7 +4454,25 @@
               rowsEl.appendChild(row);
             }
             function render(){ rowsEl.innerHTML = ''; (itens.length ? itens : [{nome:'',valor:''}]).forEach(function(it){ addRow(it.nome, it.valor); }); recalc(); }
-            editar.addEventListener('click', function(){ render(); if (msgEl) msgEl.textContent=''; modal.style.display='flex'; });
+            function mostrar(){
+              var k = mesSel.value;
+              if (!k) { travaBox.style.display = 'none'; itens = padrao; render(); setEditavel(true); hintEl.textContent = 'Padrão: vale para todo mês que não estiver travado. Mudar aqui não altera os meses travados.'; return; }
+              travaBox.style.display = 'flex'; if (mesNomeEl) mesNomeEl.textContent = nomeMes(k);
+              travaChk.checked = !!travados[k];
+              itens = travados[k] ? (travados[k].itens || []) : padrao; render(); setEditavel(travaChk.checked);
+              hintEl.textContent = travaChk.checked ? 'Edite a lista deste mês e salve. Desmarque a trava e salve para ' + nomeMes(k) + ' voltar a usar o padrão.' : nomeMes(k) + ' está usando o padrão. Marque a trava para fixar um valor só deste mês.';
+            }
+            if (mesSel) mesSel.addEventListener('change', mostrar);
+            if (travaChk) travaChk.addEventListener('change', function(){
+              var k = mesSel.value;
+              if (travaChk.checked) {
+                if (!travados[k]) { itens = padrao.map(function(x){ return { nome: x.nome, valor: x.valor }; }); render(); }
+                setEditavel(true); hintEl.textContent = 'Edite a lista de ' + nomeMes(k) + ' e salve.';
+              } else {
+                itens = padrao; render(); setEditavel(false); hintEl.textContent = 'Ao salvar, ' + nomeMes(k) + ' volta a usar o padrão.';
+              }
+            });
+            editar.addEventListener('click', function(){ opcoesMes(); mesSel.value = (mesRef && travados[mesRef]) ? mesRef : ''; mostrar(); if (msgEl) msgEl.textContent=''; modal.style.display='flex'; });
             if (closeBtn) closeBtn.addEventListener('click', function(){ modal.style.display='none'; });
             modal.addEventListener('click', function(e){ if (e.target === modal) modal.style.display='none'; });
             document.addEventListener('keydown', function(e){ if (e.key === 'Escape') modal.style.display='none'; });
@@ -4426,7 +4482,7 @@
               rowsEl.querySelectorAll('.cfRow').forEach(function(r){ var nome=String(r.querySelector('.cfNome').value||'').trim(); var v=Number(String(r.querySelector('.cfVal').value||'').replace(',', '.'))||0; if (nome && v>0) out.push({nome:nome, valor:v}); });
               try { saveBtn.disabled = true; } catch(_){}
               if (msgEl) msgEl.textContent = 'Salvando...';
-              fetch('/api/painel/custos-fixos', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify({ itens: out }) })
+              fetch('/api/painel/custos-fixos', { method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'}, credentials:'same-origin', body: JSON.stringify(mesSel && mesSel.value ? { mes: mesSel.value, travar: !!travaChk.checked, itens: out } : { itens: out }) })
                 .then(function(r){ return r.json().catch(function(){ return null; }); })
                 .then(function(j){ if (!j || j.ok !== true) throw new Error((j&&j.message)||'save_failed'); if (msgEl) msgEl.textContent='Salvo ✓ recarregando…'; try { var u=new URL(window.location.href); u.searchParams.set('nocache','1'); window.location.href=u.toString(); } catch(_){ location.reload(); } })
                 .catch(function(e){ if (msgEl) msgEl.textContent='Falha ao salvar.'; alert('Erro: '+(e&&e.message?e.message:e)); try { saveBtn.disabled=false; } catch(_){} });

@@ -124,63 +124,51 @@ function calcula(lr, meta) {
   return { limite, porHora, porDia: porHora * 24, saldo, cobre, horasAteProxima, horasAteRecusa, recarga, recargaMinima };
 }
 
-function fmtHoras(h) {
-  if (h == null) return 'sem previsão';
-  if (h < 1) return 'menos de 1 hora';
-  if (h < 1.5) return 'cerca de 1 hora';
-  return 'cerca de ' + Math.round(h) + ' horas';
-}
 function horaPrevista(h) {
   if (h == null) return '';
   const d = new Date(Date.now() + h * 3600e3 - 3 * 3600e3);
   return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
 }
 
-// ── Textos (variados de propósito) ──
-const SAUDA = ['', 'Oi! ', 'Atenção: ', 'Aviso rápido: ', 'Alerta da ca3: ', 'Ei, ', ''];
-const FECHO = ['', '\n\nRecarregue pela LootRush.', '\n\nDá uma olhada na LootRush assim que puder.', '\n\nBom recarregar antes.', '\n\nSó repor o saldo do cartão.', ''];
+// ── Textos: formato curto e fixo; variam só o título e a linha de recarga (não repetir mensagem igual) ──
+const LINK = () => String(process.env.LOOTRUSH_LINK || 'https://www.lootrush.com').trim();
+function prazoTxt(h) {
+  if (h == null) return 'sem previsão';
+  if (h < 1) return 'menos de 1 hora';
+  return 'até ' + Math.max(1, Math.round(h)) + ' hora' + (Math.round(h) > 1 ? 's' : '');
+}
+const TITULOS = {
+  12: ['💳 *Cartão ca3*', '💳 *ca3 — saldo do cartão*', '💳 *Aviso de saldo ca3*', '💳 *ca3 · cartão LootRush*'],
+  6: ['⚠️ *Cartão ca3*', '⚠️ *ca3 — saldo curto*', '⚠️ *Saldo do cartão ca3*', '⚠️ *ca3 · cartão LootRush*'],
+  3: ['⚠️ *ca3 — recarregar logo*', '⚠️ *Cartão ca3 quase sem saldo*', '⚠️ *ca3 — saldo acabando*', '⚠️ *Atenção: cartão ca3*'],
+  1: ['🚨 *ca3 — recusa em menos de 1h*', '🚨 *Cartão ca3 sem saldo*', '🚨 *ca3 — recarregar agora*', '🚨 *Urgente: cartão ca3*'],
+};
+function linhaRecarregue(c) {
+  if (!(c.recargaMinima > 0)) return sorteia(['Recarregue', 'Recarregue o cartão', 'Recarregar pela LootRush']);
+  return sorteia([
+    `Recarregue - mín. ${usd(c.recargaMinima)} · ideal ${usd(c.recarga)}`,
+    `Recarregue: no mínimo ${usd(c.recargaMinima)} (24h: ${usd(c.recarga)})`,
+    `Recarregar - mínimo ${usd(c.recargaMinima)}, ideal ${usd(c.recarga)}`,
+  ]);
+}
+function blocoNumeros(c, meta) {
+  return `Saldo atual cartão - ${usd(c.saldo)}\nGasto atual Meta - ${usd(meta.gastoHoje)}\nPendente - ${usd(meta.naoCobrado)}`;
+}
 
 function msgAntecipada(nivel, c, lr, meta) {
-  const quando = fmtHoras(c.horasAteRecusa); const hora = horaPrevista(c.horasAteRecusa);
-  const linhaSaldo = sorteia([`Saldo no cartão: ${usd(c.saldo)}`, `O cartão tem ${usd(c.saldo)}`, `Cartão *${lr.cartao.final}: ${usd(c.saldo)} disponível`]);
-  const linhaCob = sorteia([`cada cobrança da Meta é de ${usd(c.limite)}`, `a Meta está cobrando ${usd(c.limite)} por vez`, `limite de cobrança atual: ${usd(c.limite)}`]);
-  const linhaRec = c.recarga > 0 ? sorteia([`Recarga sugerida: ${usd(c.recarga)} (cobre ~24h). Mínimo pra próxima: ${usd(c.recargaMinima)}.`, `Pra rodar ~24h tranquilo, coloque uns ${usd(c.recarga)} (no mínimo ${usd(c.recargaMinima)}).`, `Sugestão: ${usd(c.recarga)} de recarga; o mínimo que evita a recusa é ${usd(c.recargaMinima)}.`]) : '';
-  const ritmo = sorteia([`Gasto atual ~${usd(c.porDia)}/dia.`, `A ca3 está gastando uns ${usd(c.porDia)} por dia.`, `Ritmo de gasto: ${usd(c.porHora)}/hora.`]);
-  const modelos = {
-    12: [
-      `${linhaSaldo}, mas ${linhaCob}. Pelo ritmo, a cobrança que o saldo não cobre vem em ${quando} (por volta das ${hora}).\n${ritmo}\n${linhaRec}`,
-      `O saldo do cartão da ca3 dá para mais ${c.cobre} cobrança(s). A próxima sem saldo deve cair em ${quando} (~${hora}).\n${linhaSaldo} · ${linhaCob}.\n${linhaRec}`,
-      `Previsão de recusa na ca3 em ${quando}, perto das ${hora}.\n${linhaSaldo}; ${linhaCob}.\n${linhaRec}`,
-    ],
-    6: [
-      `Faltam ${quando} para a Meta tentar uma cobrança que o cartão não paga (~${hora}).\n${linhaSaldo} · ${linhaCob}.\n${linhaRec}`,
-      `ca3: saldo curto. ${linhaSaldo} e ${linhaCob}. Recusa prevista às ${hora} (${quando}).\n${linhaRec}`,
-      `${linhaSaldo}. Do jeito que está gastando (${usd(c.porDia)}/dia), a cobrança sem saldo cai em ${quando}.\n${linhaRec}`,
-    ],
-    3: [
-      `⚠️ Faltam ${quando} para a cobrança da ca3 ser recusada (~${hora}). ${linhaSaldo}.\n${linhaRec}`,
-      `Urgente: a Meta vai cobrar ${usd(c.limite)} em breve e o cartão só tem ${usd(c.saldo)}. Previsão: ${hora}.\n${linhaRec}`,
-      `ca3 perto de tomar recusa: ${quando} (perto das ${hora}). ${linhaCob}; ${linhaSaldo.toLowerCase()}.\n${linhaRec}`,
-    ],
-    1: [
-      `🚨 Menos de 1h para a ca3 ter cobrança recusada. ${linhaSaldo}, próxima cobrança ${usd(c.limite)}.\nMínimo agora: ${usd(c.recargaMinima)}.`,
-      `🚨 Última chamada: a cobrança de ${usd(c.limite)} da ca3 deve cair até ~${hora} e o cartão tem ${usd(c.saldo)}. Recarregue pelo menos ${usd(c.recargaMinima)}.`,
-      `🚨 ca3: recusa iminente (${quando}). Coloque ${usd(c.recargaMinima)} ou mais no cartão *${lr.cartao.final}.`,
-    ],
-  };
-  return (sorteia(SAUDA) + sorteia(modelos[nivel])).trim() + sorteia(FECHO);
+  const prazo = sorteia([
+    `Prazo de ${prazoTxt(c.horasAteRecusa)} pelo ritmo para cobrança`,
+    `Prazo de ${prazoTxt(c.horasAteRecusa)} pelo ritmo para a cobrança`,
+    `Pelo ritmo, prazo de ${prazoTxt(c.horasAteRecusa)} para cobrança`,
+  ]) + (c.horasAteRecusa != null ? ` (~${horaPrevista(c.horasAteRecusa)})` : '');
+  return `${sorteia(TITULOS[nivel] || TITULOS[12])}\n\n${blocoNumeros(c, meta)}\n\n${prazo}\n${linhaRecarregue(c)}\n${LINK()}`;
 }
 
 function msgRecusa(rec, c, lr, meta, n) {
   const hora = (() => { const d = new Date(new Date(rec.quando).getTime() - 3 * 3600e3); return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0'); })();
-  const modelos = [
-    `🛑 A Meta tentou cobrar ${usd(rec.valor)} da ca3 às ${hora} e o cartão recusou (${rec.motivo || 'sem saldo'}). Saldo agora: ${usd(c.saldo)}. Recarregue pelo menos ${usd(c.recargaMinima)} para a conta não ser bloqueada.`,
-    `🛑 Cobrança RECUSADA na ca3: ${usd(rec.valor)} (${hora}). O cartão *${lr.cartao.final} está com ${usd(c.saldo)}. Precisa de no mínimo ${usd(c.recargaMinima)}.`,
-    `🛑 ca3 com pagamento recusado às ${hora} (${usd(rec.valor)}). Sem recarga a Meta pausa os anúncios. Saldo: ${usd(c.saldo)} · mínimo: ${usd(c.recargaMinima)}.`,
-  ];
-  const lembrete = n > 1 ? sorteia([`\n\n(lembrete ${n})`, `\n\nAinda não normalizou (aviso ${n}).`, `\n\nContinua pendente — ${n}º aviso.`]) : '';
-  if (meta.status !== 1) return `🛑 A ca3 já está com status ${meta.status} na Meta (não ativa). ` + sorteia(modelos) + lembrete;
-  return sorteia(modelos) + lembrete;
+  const titulo = sorteia(['🛑 *Cobrança recusada na ca3*', '🛑 *ca3 — pagamento recusado*', '🛑 *Cartão ca3 recusou a Meta*']) + (n > 1 ? ` (${n}º aviso)` : '');
+  const status = meta.status !== 1 ? `\nConta na Meta com status ${meta.status} (não ativa)` : '';
+  return `${titulo}\n\n${blocoNumeros(c, meta)}\n\nRecusada ${usd(rec.valor)} às ${hora}${status}\n${linhaRecarregue(c)}\n${LINK()}`;
 }
 
 // ── Ciclo principal ──
