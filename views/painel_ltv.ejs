@@ -196,7 +196,66 @@
         <div class="ltv-k" title="Teto diário por canal (dia BRT): manual e automático têm quotas separadas, então o automático nunca engole o manual."><div class="lbl"><span class="dot" style="background:#0891b2"></span>Enviadas hoje (teto <%= _ld.totalCap %>/dia)</div><div class="val" id="kSentToday"><%= nf(_ld.totalSentToday) %></div><div class="sub">✋ manual <b id="kManualToday"><%= nf(_ld.manualSent) %></b>/<%= _ld.manualCap %> · 🤖 auto <b id="kAutoToday"><%= nf(_ld.autoSent) %></b>/<%= _ld.autoCap %></div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#d97706"></span>Clicaram no link</div><div class="val" id="kClicaram"><%= nf(clicaram) %></div><div class="sub"><span id="kCliques"><%= nf(cliques) %></span> cliques · <span id="kCtr"><%= _ctr %></span>% de clique</div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Descadastraram (opt-out)</div><div class="val" id="kOptout"><%= nf(optout) %></div><div class="sub"><span id="kRejeitando"><%= nf(rejeitando) %></span> rejeitando (&lt;<%= optoutThreshold %>x)</div></div>
+        <!-- Crédito OpenAI do bot de IA (a API não dá o saldo: estimativa = saldo informado − uso registrado) -->
+        <div class="ltv-k oa-k" id="oaCard">
+          <div class="lbl"><span class="dot" id="oaDot" style="background:#94a3b8"></span>Crédito da IA (OpenAI)<button type="button" class="oa-toggle" id="oaToggle" aria-expanded="false">atualizar</button></div>
+          <div class="val" id="oaValor">…</div>
+          <div class="sub" id="oaInfo">consultando…</div>
+          <div class="oa-form" id="oaForm" hidden>
+            <input id="oaInput" class="ltv-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Saldo em US$">
+            <button type="button" class="ltv-btn primary" id="oaSalvar">Salvar</button>
+            <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener">ver saldo na OpenAI ↗</a>
+          </div>
+        </div>
       </div>
+      <style>
+        .oa-k .lbl{ position:relative; }
+        .oa-toggle{ all:unset; margin-left:auto; cursor:pointer; font-size:0.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--accent); }
+        .oa-toggle:hover{ text-decoration:underline; }
+        .oa-toggle:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+        .oa-form{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+        .oa-form[hidden]{ display:none; }
+        .oa-form .ltv-input{ flex:1 1 90px; min-width:0; padding:6px 8px; font-size:0.84rem; }
+        .oa-form .ltv-btn{ padding:6px 12px; font-size:0.82rem; }
+        .oa-form a{ flex-basis:100%; font-size:0.74rem; color:var(--faint); text-decoration:none; }
+        .oa-form a:hover{ color:var(--accent); }
+      </style>
+      <script>
+        (function(){
+          var $ = function(id){ return document.getElementById(id); };
+          var valor = $('oaValor'), info = $('oaInfo'), dot = $('oaDot'), form = $('oaForm'), toggle = $('oaToggle'), input = $('oaInput'), salvar = $('oaSalvar');
+          if (!valor || !form) return;
+          function usd(v){ return 'US$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+          function pinta(c){ valor.style.color = c; dot.style.background = c; }
+          function abrir(sim){ form.hidden = !sim; toggle.setAttribute('aria-expanded', sim ? 'true' : 'false'); toggle.textContent = sim ? 'fechar' : 'atualizar'; if (sim) { try { input.focus(); } catch(_) {} } }
+          function mostrar(d){
+            if (!d || !d.ok){ valor.textContent = 'Erro'; pinta('#d97706'); info.textContent = 'não foi possível consultar'; return; }
+            if (d.semCredito){ valor.textContent = 'Sem crédito'; pinta('#dc2626'); info.textContent = 'o bot não responde até recarregar'; return; }
+            if (d.saldoUsd == null){
+              valor.textContent = d.erro ? 'Falha no teste' : 'Com crédito'; pinta(d.erro ? '#d97706' : '#059669');
+              info.textContent = d.erro ? ('erro: ' + d.erro) : 'bot respondendo · informe o saldo p/ estimar';
+              return;
+            }
+            valor.textContent = '≈ ' + usd(d.saldoUsd); pinta(d.saldoUsd < 5 ? '#dc2626' : (d.saldoUsd < 15 ? '#d97706' : '#059669'));
+            info.textContent = usd(d.saldoBaseUsd) + ' informados − ' + usd(d.gastoUsd) + ' gastos';
+          }
+          function carregar(){ fetch('/api/painel/openai-credito', { credentials:'same-origin' }).then(function(r){ return r.json(); }).then(mostrar).catch(function(){ mostrar(null); }); }
+          function enviar(){
+            var saldo = Number(input.value);
+            if (input.value === '' || !(saldo >= 0)) { info.textContent = 'digite o saldo em dólar'; return; }
+            salvar.disabled = true;
+            fetch('/api/painel/openai-credito', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ saldo: saldo }) })
+              .then(function(r){ return r.json(); })
+              .then(function(d){ salvar.disabled = false; input.value = ''; abrir(false); mostrar(d); })
+              .catch(function(){ salvar.disabled = false; mostrar(null); });
+          }
+          toggle.addEventListener('click', function(){ abrir(form.hidden); });
+          salvar.addEventListener('click', enviar);
+          input.addEventListener('keydown', function(e){ if (e.key === 'Enter') enviar(); if (e.key === 'Escape') abrir(false); });
+          var refresh = $('ltvRefreshAll'); if (refresh) refresh.addEventListener('click', carregar);
+          carregar();
+        })();
+      </script>
 
       <!-- Financeiro -->
       <%

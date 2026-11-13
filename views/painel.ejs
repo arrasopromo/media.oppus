@@ -8323,49 +8323,6 @@
                     </div>
                     <div style="font-size:0.78rem; color:#6b7280; margin-top:6px;">Valor de venda por canal:</div>
                     <div id="dashboardChannelBreakdown" style="margin-top:4px; font-size:0.84rem; color:#374151;"></div>
-                    <div id="dashboardOpenAiCredit" style="margin-top:8px; padding-top:8px; border-top:1px solid #eef0f4; font-size:0.84rem; color:#374151;">
-                      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                        <span>Crédito OpenAI (Bot WhatsApp)</span>
-                        <strong id="openAiCreditValue" style="white-space:nowrap;">…</strong>
-                      </div>
-                      <div id="openAiCreditInfo" style="font-size:0.75rem; color:#6b7280; margin-top:2px;"></div>
-                      <div style="display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap;">
-                        <input id="openAiCreditInput" type="number" min="0" step="0.01" placeholder="Saldo atual (US$)" style="width:150px; max-width:100%; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px;">
-                        <button id="openAiCreditSave" type="button" style="padding:4px 10px; border:1px solid #d1d5db; border-radius:6px; background:#fff; cursor:pointer;">Salvar</button>
-                        <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener" style="font-size:0.75rem; color:#6B46C1;">Ver na OpenAI</a>
-                      </div>
-                    </div>
-                    <script>
-                      (function(){
-                        var valor = document.getElementById('openAiCreditValue');
-                        var info = document.getElementById('openAiCreditInfo');
-                        var input = document.getElementById('openAiCreditInput');
-                        var salvar = document.getElementById('openAiCreditSave');
-                        if (!valor || !info || !input || !salvar) return;
-                        function usd(v){ return 'US$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-                        function mostrar(d){
-                          if (!d || !d.ok){ valor.textContent = 'erro'; valor.style.color = '#b45309'; info.textContent = 'Não foi possível consultar.'; return; }
-                          if (d.semCredito){ valor.textContent = 'Sem crédito'; valor.style.color = '#b91c1c'; info.textContent = 'O bot não responde até recarregar.'; return; }
-                          valor.style.color = d.erro ? '#b45309' : '#166534';
-                          if (d.saldoUsd == null){ valor.textContent = d.erro ? 'Falha no teste' : 'Com crédito'; info.textContent = d.erro ? ('Erro: ' + d.erro) : 'Informe o saldo atual para acompanhar a estimativa.'; return; }
-                          valor.textContent = '≈ ' + usd(d.saldoUsd);
-                          info.textContent = 'Estimado: ' + usd(d.saldoBaseUsd) + ' informados menos ' + usd(d.gastoUsd) + ' gastos. O valor exato fica na OpenAI.';
-                        }
-                        function carregar(){
-                          fetch('/api/painel/openai-credito', { credentials:'same-origin' }).then(function(r){ return r.json(); }).then(mostrar).catch(function(){ mostrar(null); });
-                        }
-                        salvar.addEventListener('click', function(){
-                          var saldo = Number(input.value);
-                          if (input.value === '' || !(saldo >= 0)) { info.textContent = 'Digite o saldo em dólar.'; return; }
-                          salvar.disabled = true;
-                          fetch('/api/painel/openai-credito', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ saldo: saldo }) })
-                            .then(function(r){ return r.json(); })
-                            .then(function(d){ salvar.disabled = false; input.value = ''; mostrar(d); })
-                            .catch(function(){ salvar.disabled = false; mostrar(null); });
-                        });
-                        carregar();
-                      })();
-                    </script>
                   </div>
                   <div style="display:flex; flex-direction:column; min-width:0;">
                     <div style="font-weight:700; margin-bottom:8px; color:#111827;">Vendas por método</div>
