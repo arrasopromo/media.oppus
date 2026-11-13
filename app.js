@@ -38,7 +38,7 @@ try {
 } catch (_) {}
 const fs = require('fs');
 const EfiPay = require('gn-api-sdk-node');
-const { validatePrice, verifyPrice, warranty3mCents, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
+const { validatePrice, verifyPrice, warranty3mCents, round90Cents, tabelaSeguidores, tabelaCurtidas, tabelaVisualizacoes, parsePrecoToCents } = require('./pricing');
 // Preço "a partir de" dos cards do /index: menor pacote (q>=150, ignora o teste de 100)
 // de cada tabela. Atualiza sozinho sempre que os preços em pricing.js mudam.
 const precoInicioCard = (tabela) => {
@@ -50166,8 +50166,7 @@ function getUpsellOffer(order) {
     // tipo pode ser 'mistos', 'brasileiros', 'organicos' sem prefixo 'seguidores'
     const _followersTypes = ['mistos', 'brasileiros', 'organicos', 'seguidores_mistos', 'seguidores_brasileiros', 'seguidores_organicos'];
     const isFollowers    = cat === 'seguidores'
-      || tipo.includes('seguidores')
-      || _followersTypes.includes(tipo);
+      || (cat !== 'curtidas' && cat !== 'visualizacoes' && (tipo.includes('seguidores') || _followersTypes.includes(tipo)));
     const isCurtidas     = cat === 'curtidas'
       || tipo.includes('curtida')
       || tipo === 'curtidas_reais'
@@ -50190,19 +50189,24 @@ function getUpsellOffer(order) {
     );
     if (isCurtidasReais) return null;
 
-    // ── Tabelas de preço (inline, mesmas do pricing.js) ─────────
+    // ── Tabelas de preço: as MESMAS do site (pricing.js) ─────────
+    // Antes era uma cópia inline que ficou com os preços antigos (3.000 mistos a R$ 79,90
+    // quando o site já cobrava R$ 112,90) e o upsell saía barato demais. Agora lê do pricing.js.
+    const _cents = (arr) => (Array.isArray(arr) ? arr : []).map((e) => ({ q: Number(e.q), p: parsePrecoToCents(e.p) })).filter((e) => e.q > 0 && e.p > 0).sort((a, b) => a.q - b.q);
+    // Pacote de 100 curtidas (R$ 3,00) não existe no pricing.js; mantido como antes.
+    const _com100 = (arr) => (arr.some((e) => e.q === 100) ? arr : [{ q: 100, p: 300 }].concat(arr));
     const tSeguidores = {
-      mistos:      [{q:150,p:790},{q:300,p:1290},{q:500,p:1690},{q:700,p:2290},{q:1000,p:2990},{q:2000,p:4990},{q:3000,p:7990},{q:5000,p:12990},{q:7500,p:16990},{q:10000,p:22990}],
-      brasileiros: [{q:150,p:1290},{q:300,p:2490},{q:500,p:3990},{q:700,p:4990},{q:1000,p:7990},{q:2000,p:12990},{q:3000,p:17990},{q:5000,p:27990},{q:7500,p:39990},{q:10000,p:49990}],
-      organicos:   [{q:150,p:3990},{q:300,p:4990},{q:500,p:6990},{q:700,p:8990},{q:1000,p:12990},{q:2000,p:19990},{q:3000,p:24990},{q:5000,p:49990},{q:7500,p:59990},{q:10000,p:89990}],
+      mistos:      _cents(tabelaSeguidores.mistos),
+      brasileiros: _cents(tabelaSeguidores.brasileiros),
+      organicos:   _cents(tabelaSeguidores.organicos),
     };
     const tCurtidas = {
-      mistos:          [{q:100,p:300},{q:150,p:490},{q:300,p:790},{q:500,p:990},{q:1000,p:1990},{q:3000,p:2990},{q:5000,p:3990},{q:10000,p:6990}],
-      brasileiros:     [{q:150,p:490},{q:300,p:990},{q:500,p:1490},{q:1000,p:3990},{q:3000,p:5990},{q:5000,p:7990},{q:10000,p:13990}],
-      organicos:       [{q:100,p:300},{q:150,p:1690},{q:300,p:2890},{q:500,p:4990},{q:1000,p:6990},{q:3000,p:13990},{q:5000,p:22490}],
-      curtidas_reais:  [{q:100,p:300},{q:150,p:1690},{q:300,p:2890},{q:500,p:4990},{q:1000,p:6990},{q:3000,p:13990},{q:5000,p:22490}],
+      mistos:          _com100(_cents(tabelaCurtidas.mistos)),
+      brasileiros:     _cents(tabelaCurtidas.curtidas_brasileiras || tabelaCurtidas.brasileiros),
+      organicos:       _com100(_cents(tabelaCurtidas.organicos)),
+      curtidas_reais:  _com100(_cents(tabelaCurtidas.curtidas_reais)),
     };
-    const tViews = [{q:1000,p:490},{q:2500,p:990},{q:5000,p:1490},{q:10000,p:1990},{q:25000,p:2490},{q:50000,p:3490},{q:100000,p:4990}];
+    const tViews = _cents(tabelaVisualizacoes.visualizacoes_reels);
 
     // ── Selecionar tabela correta pelo tipo exato ────────────────
     let table = null;
@@ -50232,7 +50236,9 @@ function getUpsellOffer(order) {
     const offerQty   = qty;           // dobra: adiciona a mesma quantidade comprada
     // Mínimo R$ 3,00: a PagHiper REJEITA PIX abaixo disso ("valor abaixo do mínimo
     // permitido de R$ 3,00"), o que fazia o upsell barato falhar sem registro.
-    const offerCents = Math.max(300, Math.round(basePrice * (1 - discountPct / 100)));
+    // Arredonda para terminar em ,90 (ex.: R$ 79,03 -> R$ 78,90). Se cair abaixo de R$ 3,00, usa R$ 3,90.
+    let offerCents = round90Cents(Math.round(basePrice * (1 - discountPct / 100)));
+    if (offerCents < 300) offerCents = 390;
 
     // ── Label legível ────────────────────────────────────────────
     const tipoLabel = (() => {
@@ -50341,6 +50347,8 @@ app.get('/api/upsell/offer', async (req, res) => {
     if (!order) return res.status(404).json({ ok: false, error: 'order_not_found' });
 
     const status = String(order.status || order?.woovi?.status || '').toLowerCase();
+    // Categoria explícita manda: curtidas "mistos"/"brasileiros" usam o mesmo nome de tipo
+    // dos seguidores e antes caíam na tabela de SEGUIDORES (upsell de curtidas cobrado errado).
     if (status !== 'pago' && status !== 'paid') return res.json({ ok: false, error: 'order_not_paid' });
 
     // Verificar se já existe upsell para este pedido
