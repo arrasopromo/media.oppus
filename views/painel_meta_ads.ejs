@@ -212,7 +212,7 @@
         <div class="ma-sel" id="selInfo"></div>
       </div>
       <div class="ma-grade"><div class="ma-rolo" id="tabela"></div></div>
-      <p class="ma-nota"><b>Meta</b>: compras que o pixel atribui ao anúncio. As três fontes são independentes. <b>TrackCombo</b>: vendas pagas que o TC registrou; o anúncio de cada uma é o que o próprio TC atribuiu, vindo do relatório "Vendas" do painel dele (a API do TC esconde a UTM). Venda sem esse relatório importado fica sem anúncio. <b>Banco</b>: nosso próprio rastreamento: pedidos pagos cuja UTM aponta para o anúncio, vinda da URL ou, se o cliente voltou depois, do nosso cookie de último clique (30 dias); upsell conta para o anúncio do pedido original. Desligar uma campanha ou conjunto desliga tudo o que está dentro dele no Meta.</p>
+      <p class="ma-nota"><b>Meta</b>: compras que o pixel atribui ao anúncio. As três fontes são independentes. <b>TrackCombo</b>: vendas pagas que o TC registrou; o anúncio de cada uma é o que o próprio TC atribuiu (UTM do último clique no relatório de Vendas dele, puxado pela API a cada atualização). Venda sem UTM de anúncio no TC fica sem anúncio. <b>Banco</b>: nosso próprio rastreamento: pedidos pagos cuja UTM aponta para o anúncio, vinda da URL ou, se o cliente voltou depois, do nosso cookie de último clique (30 dias); upsell conta para o anúncio do pedido original. Desligar uma campanha ou conjunto desliga tudo o que está dentro dele no Meta.</p>
     </main>
   </div>
   <script>
@@ -280,7 +280,7 @@
         { k:'meta', nome:'Meta', v:mv, n:mc, det:'O que o Gerenciador de Anúncios atribui' },
         // Mesma base da tabela: só o que o TC liga a um anúncio das contas. Venda que o TC marca como paga mas sem
         // anúncio identificado fica fora do ROAS (só citada), igual ao Banco.
-        { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.anuncio.receita:null, n:tcOk?d.tc.anuncio.vendas:null, det: tcOk ? (nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.meta.vendas > d.tc.anuncio.vendas ? '; '+nf(d.tc.meta.vendas - d.tc.anuncio.vendas)+' pagas sem anúncio identificado ('+brl0(d.tc.meta.receita - d.tc.anuncio.receita)+')' : '')+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' ainda sem o relatório do TC importado (ficam sem anúncio)' : '')) : 'Sem chave do TrackCombo no servidor' },
+        { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.anuncio.receita:null, n:tcOk?d.tc.anuncio.vendas:null, det: tcOk ? (nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.meta.vendas > d.tc.anuncio.vendas ? '; '+nf(d.tc.meta.vendas - d.tc.anuncio.vendas)+' pagas sem anúncio identificado ('+brl0(d.tc.meta.receita - d.tc.anuncio.receita)+')' : '')+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' sem UTM de anúncio no TC (direto, orgânico ou sem origem)' : '')) : 'Sem chave do TrackCombo no servidor' },
         { k:'banco', nome:'Banco, pela UTM', v:bancoV, n:bancoN, det:nf(d.semAnuncio.vendas)+' vendas sem UTM de anúncio ('+brl0(d.semAnuncio.receita)+')'+(d.banco.recuperadas && d.banco.recuperadas.vendas ? '; '+nf(d.banco.recuperadas.vendas)+' recuperadas pelo nosso cookie' : '') }
       ];
       var cols = '<div class="ma-col gasto"><div class="rot">Gasto no Meta</div><div class="v num">'+brl(g)+'</div><div class="roas num">'+nf(lig)+' anúncios rodando'+(colHoje()?', '+brl0(gh)+' hoje':'')+'</div><div class="det">Duas contas; dólar a '+dec(d.fx,2)+', sem imposto</div></div>' +

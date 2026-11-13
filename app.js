@@ -41106,11 +41106,11 @@ function __metaRange(q) {
 // Busca por dia em paralelo; dia fechado fica 6h em cache, o dia de hoje 2 min.
 const __tcDiaCache = new Map();
 function __tcConfigurado() { return !!String(process.env.TRACKCOMBO_API_KEY || '').trim(); }
-async function __tcMcpCall(args) {
+async function __tcMcpCall(args, tool = 'get_recent_events') {
   const raw = String(process.env.TRACKCOMBO_API_KEY || '').trim();
   const auth = /^bearer /i.test(raw) ? raw : 'Bearer ' + raw;
   const url = String(process.env.TRACKCOMBO_MCP_URL || 'https://mcp.trackcombo.com/mcp');
-  const r = await axios.post(url, { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: 'get_recent_events', arguments: args } },
+  const r = await axios.post(url, { jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: tool, arguments: args } },
     { headers: { Authorization: auth, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, timeout: 60000, validateStatus: () => true });
   let j = r.data;
   if (typeof j === 'string') { const l = j.split('\n').filter((x) => x.startsWith('data:')).pop(); j = l ? JSON.parse(l.slice(5)) : null; }
@@ -41123,22 +41123,22 @@ async function __tcDia(dia, agora) {
   const hit = __tcDiaCache.get(dia);
   if (hit && hit.exp > agora) return hit.compras;
   const container = String(process.env.TRACKCOMBO_CONTAINER_ID || 'MXERC7WMHA');
-  const ev = new Map(); let cursor, guard = 0;
+  // Relatório de Vendas do TC (get_sales_report): mesma base do painel deles, venda deduplicada por
+  // transação, com a UTM INTEIRA do último clique (last_touch). Antes era get_recent_events, que
+  // devolvia a UTM cortada ("1202***") e obrigava a raspar o painel do TC (tc_atribuicao).
+  const porTx = new Map(); let cursor, guard = 0;
   do {
-    const args = { container_id: container, event_name: 'purchase', status: 'SUCCESS', from: ini, to: fim };
+    const args = { container_id: container, from: ini, to: fim - 1, limit: 200 };
     if (cursor) args.cursor = cursor;
-    const o = await __tcMcpCall(args);
-    for (const e of (o.events || [])) ev.set(e.id, e);
-    cursor = o.nextCursor;
-  } while (cursor && guard++ < 40);
-  const porTx = new Map();
-  for (const e of ev.values()) {
-    const cd = e.data && e.data.custom_data; if (!cd || cd.status !== 'paid' || !cd.transaction_id) continue;
-    const t = (e.data && e.data.tracking) || {};
-    // utm_content vem cortado ("1202***") enquanto o TC esconder a UTM; quando vier inteiro, já é usado.
-    const uc = String(t.utm_content || '').trim();
-    porTx.set(cd.transaction_id, { tx: cd.transaction_id, valor: Number(cd.value) || 0, em: e.date, pago: /^paid/.test(String(t.channel || '')) || /^120/.test(uc), content: /^\d{10,}$/.test(uc) ? uc : '' });
-  }
+    const o = await __tcMcpCall(args, 'get_sales_report');
+    for (const s of (o.sales || [])) {
+      const tx = String(s.transaction_id || '').trim(); if (!tx || String(s.status || 'OK').toUpperCase() !== 'OK') continue;
+      const lt = s.last_touch || {};
+      const uc = String(lt.utm_content || '').trim();
+      porTx.set(tx, { tx, valor: Number(s.value) || 0, em: Number(s.date) || 0, pago: s.attribution_type === 'campaign' || /^paid/.test(String(lt.channel || '')) || /^\d{10,}$/.test(uc), content: /^\d{10,}$/.test(uc) ? uc : '' });
+    }
+    cursor = o.next_cursor;
+  } while (cursor && guard++ < 60);
   const compras = [...porTx.values()];
   __tcDiaCache.set(dia, { compras, exp: agora + (fim < ini + 864e5 ? 2 * 60e3 : 6 * 3600e3) });
   return compras;
@@ -41221,8 +41221,8 @@ async function computeMetaAdsData(q) {
       if (a) { a.vendas++; a.receita += v; if (d.utmsFonte === 'cookie_oppus') { recuperadas.vendas++; recuperadas.receita += v; } } else { semAnuncio.vendas++; semAnuncio.receita += v; }
     }
     // TrackCombo: só o que o PRÓPRIO TC atribuiu, sem usar nada do nosso banco (fontes independentes).
-    // A API (MCP) do TC devolve a UTM cortada, então o anúncio de cada venda vem do relatório "Vendas" do
-    // painel do TC, importado em tc_atribuicao (_id = transaction_id). Venda sem import fica sem anúncio.
+    // O anúncio de cada venda vem da UTM do último clique no relatório de Vendas do TC (get_sales_report).
+    // tc_atribuicao (raspagem antiga do painel do TC) só cobre venda que veio sem utm_content na API.
     const compras = await tcPromise;
     if (compras.length) {
       const ids = [...new Set(compras.map((x) => x.tx).filter(Boolean))];
