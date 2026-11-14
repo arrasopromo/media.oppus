@@ -1580,14 +1580,14 @@ document.addEventListener('DOMContentLoaded', function() {
               const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
               const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
               const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
-              const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+              const pick = (candidates && candidates[0]) || (onlyKind === 'views' ? null : (posts && posts[0])) || null; // views: nunca cai em foto/carrossel
               if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
             } catch (_) {}
           }
           if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
         } else {
           if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
-          if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+          if (hasViews && viewsLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink }); // views não herdam o post de curtidas/comentários
           if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
         }
 
@@ -3265,7 +3265,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!html) {
           const manualHtml = `
             <div style="grid-column:1/-1; text-align:center; padding: 1rem;">
-                <p style="margin-bottom:0.5rem; color:var(--text-secondary);">Não encontramos posts recentes compatíveis automaticamente.</p>
+                <p style="margin-bottom:0.5rem; color:var(--text-secondary);">${kind === 'views' ? 'Esse perfil não tem reels publicados. Visualizações só podem ser enviadas para reels ou vídeos: publique um reel ou cole o link de um vídeo abaixo.' : 'Não encontramos posts recentes compatíveis automaticamente.'}</p>
                 <div style="display:flex; gap:0.5rem; max-width:400px; margin:0 auto;">
                     <input type="text" id="manualPostLinkInput" placeholder="${kind === 'views' ? 'Cole o link do Reels/Vídeo aqui...' : 'Cole o link do post aqui...'}" style="flex:1; padding:0.6rem; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-primary); color:var(--text-primary);" />
                     <button type="button" id="manualPostLinkBtn" class="continue-button" style="padding:0.6rem 1rem;">Usar Link</button>
@@ -3286,7 +3286,7 @@ document.addEventListener('DOMContentLoaded', function() {
                           return;
                       }
                       let sc = '';
-                      const m = val.match(/\/(?:p|reel)\/([A-Za-z0-9_-]+)/);
+                      const m = val.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
                       if(m) sc = m[1];
                       if(!sc) {
                            if(msg) { msg.textContent = 'Link inválido (não foi possível extrair ID)'; msg.style.color = '#ff4444'; }
@@ -3307,7 +3307,8 @@ document.addEventListener('DOMContentLoaded', function() {
                       const user2 = (checkoutProfileUsername && checkoutProfileUsername.textContent && checkoutProfileUsername.textContent.trim()) || '';
                       fetch('/api/instagram/select-post-for', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: user2, shortcode: sc, kind: kind, mode: (postModalAppendMode ? 'append' : 'replace') }) })
                         .then(r=>r.json())
-                        .then(function(){ 
+                        .then(function(d){
+                            if (d && d.success === false) { if (msg) { msg.textContent = d.message || 'Não foi possível usar esse link.'; msg.style.color = '#ff4444'; } return; }
                             if (typeof updateSelectedPostPreview === 'function') {
                                 try { updateSelectedPostPreview(kind, sc, { append: postModalAppendMode }); } catch(_) {}
                             }
@@ -4647,14 +4648,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 const posts = Array.isArray(pd && pd.posts) ? pd.posts : [];
                 const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
                 const candidates = onlyKind === 'views' ? posts.filter(isVideo) : posts;
-                const pick = (candidates && candidates[0]) || (posts && posts[0]) || null;
+                const pick = (candidates && candidates[0]) || (onlyKind === 'views' ? null : (posts && posts[0])) || null; // views: nunca cai em foto/carrossel
                 if (pick && pick.shortcode) link = buildIgMediaLink(onlyKind, pick.shortcode);
               } catch (_) {}
             }
             if (link) payload.additionalInfo.push({ key: `orderbump_post_${onlyKind}`, value: link });
           } else {
             if (hasLikes && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_likes', value: likesLink || anyLink });
-            if (hasViews && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink || anyLink });
+            if (hasViews && viewsLink) payload.additionalInfo.push({ key: 'orderbump_post_views', value: viewsLink }); // views não herdam o post de curtidas/comentários
             if (hasComments && anyLink) payload.additionalInfo.push({ key: 'orderbump_post_comments', value: commentsLink || anyLink });
           }
 

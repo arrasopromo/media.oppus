@@ -8149,13 +8149,90 @@ app.post('/api/instagram/track-validated', publicIpLimit('track_validated', 60, 
 });
 
 // Rota para selecionar um post para um tipo de serviço (likes, views, comments)
-app.post('/api/instagram/select-post-for', (req, res) => {
+// ── VIEWS SÓ EM VÍDEO ──
+// O fornecedor de visualizações cancela foto e carrossel (não existe contador de views neles),
+// então views só podem ir para reel/vídeo. `isInstagramVideoPost` confere o tipo do post no
+// RocketAPI (cache 6h): true = vídeo, false = foto/carrossel, null = não deu para saber (na
+// dúvida não bloqueia, igual ao comportamento antigo).
+const __igMediaTypeCache = new Map();
+function igShortcodeFromLink(link) {
+  const m = String(link || '').match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  return m ? m[1] : '';
+}
+async function isInstagramVideoPost(shortcode) {
+  const sc = String(shortcode || '').trim();
+  if (!/^[A-Za-z0-9_-]{5,40}$/.test(sc)) return null;
+  const hit = __igMediaTypeCache.get(sc);
+  if (hit && (Date.now() - hit.at) < 6 * 3600000) return hit.v;
+  if (!process.env.ROCKETAPI_TOKEN) return null;
+  try {
+    const r = await axios.post('https://v1.rocketapi.io/instagram/media/get_info_by_shortcode', { shortcode: sc }, { headers: { Authorization: `Token ${process.env.ROCKETAPI_TOKEN}`, 'Content-Type': 'application/json' }, timeout: 8000, validateStatus: () => true });
+    const b = r.data && r.data.response && r.data.response.body;
+    const it = (b && Array.isArray(b.items)) ? b.items[0] : null;
+    if (!it || it.media_type == null) return null;
+    const v = Number(it.media_type) === 2;
+    __igMediaTypeCache.set(sc, { v, at: Date.now() });
+    if (__igMediaTypeCache.size > 5000) { const k0 = __igMediaTypeCache.keys().next().value; __igMediaTypeCache.delete(k0); }
+    return v;
+  } catch (_) { return null; }
+}
+// Reel mais recente do perfil (cache de reels → RocketAPI get_clips). '' = perfil sem reels.
+// Ordena por data: reel FIXADO vem primeiro na lista do Instagram e costuma ser antigo.
+function __newestByTakenAt(list) {
+  const ts = (t) => { const n = Number(t); if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000; const d = new Date(t).getTime(); return Number.isFinite(d) ? d : 0; };
+  return (Array.isArray(list) ? list : []).filter(p => p && p.shortcode).sort((a, b) => ts(b.takenAt) - ts(a.takenAt))[0] || null;
+}
+async function pickNewestReelLink(username) {
+  const uname = String(username || '').trim().replace(/^@+/, '').toLowerCase();
+  if (!uname || /^https?:/i.test(uname)) return '';
+  try {
+    const vu = await getCollection('validated_insta_users');
+    const d = await vu.findOne({ username: uname }, { projection: { latestReels: 1 } });
+    const r0 = __newestByTakenAt(d && d.latestReels);
+    if (r0) return `https://www.instagram.com/reel/${encodeURIComponent(r0.shortcode)}/`;
+  } catch (_) {}
+  try {
+    const rk = await fetchInstagramPostsRocketApi(uname, { reels: true });
+    const posts = (rk && rk.success && Array.isArray(rk.posts)) ? rk.posts.filter(p => p && p.shortcode) : [];
+    const r1 = __newestByTakenAt(posts);
+    if (r1) {
+      try { const vu = await getCollection('validated_insta_users'); await vu.updateOne({ username: uname }, { $set: { latestReels: posts, reelsCheckedAt: new Date().toISOString() } }); } catch (_) {}
+      return `https://www.instagram.com/reel/${encodeURIComponent(r1.shortcode)}/`;
+    }
+  } catch (_) {}
+  return '';
+}
+// Link final das views de um pedido. Com link: só passa se não for foto/carrossel. Sem link:
+// usa o reel mais recente; perfil sem reel → sem link (o pedido fica para revisão, nunca foto).
+async function resolveViewsLinkSafe(link, username) {
+  const l = String(link || '').trim();
+  if (l) {
+    const v = await isInstagramVideoPost(igShortcodeFromLink(l));
+    if (v === false) return { link: '', motivo: 'post_nao_e_video', original: l };
+    return { link: l };
+  }
+  const auto = await pickNewestReelLink(username);
+  if (auto) return { link: auto, auto: true };
+  return { link: '', motivo: 'perfil_sem_reels', original: '' };
+}
+// Marca o bump de views para revisão (sem despachar) quando não há reel válido.
+async function markViewsBumpReview(col, filter, info, qty) {
+  try {
+    await col.updateOne(
+      { ...filter, 'fama24h_views.orderId': { $exists: false }, 'fama24h_views.status': { $nin: ['processing', 'created', 'duplicate', 'review'] } },
+      { $set: { 'fama24h_views.status': 'review', 'fama24h_views.error': { code: (info && info.motivo) || 'sem_reel', link: (info && info.original) || '' }, 'fama24h_views.requestPayload': { link: (info && info.original) || '', quantity: qty }, 'fama24h_views.requestedAt': new Date().toISOString() } }
+    );
+    console.log('⛔ [views] bump sem reel válido → revisão', { motivo: info && info.motivo, link: info && info.original, qty });
+  } catch (_) {}
+}
+
+app.post('/api/instagram/select-post-for', async (req, res) => {
     try {
         const { username, shortcode, kind, mode } = req.body;
         if (!req.session) return res.json({ success: false, error: 'no_session' });
-        
+
         req.session.selectedFor = req.session.selectedFor || {};
-        
+
         const kindKey = String(kind || '').trim();
         if (!kindKey) return res.status(400).json({ success: false, error: 'missing_kind' });
 
@@ -8163,6 +8240,19 @@ app.post('/api/instagram/select-post-for', (req, res) => {
         const u = String(username || '').trim();
         const m = String(mode || '').trim().toLowerCase();
         const replace = (m !== 'append');
+
+        // Views: só aceita reel/vídeo. Post que já está no cache de reels do perfil passa direto.
+        if (sc && kindKey === 'views' && m !== 'remove') {
+            let jaReel = false;
+            try {
+                const vu = await getCollection('validated_insta_users');
+                const d = u ? await vu.findOne({ username: u.replace(/^@+/, '').toLowerCase() }, { projection: { latestReels: 1 } }) : null;
+                jaReel = !!(d && Array.isArray(d.latestReels) && d.latestReels.some(p => p && p.shortcode === sc));
+            } catch (_) {}
+            if (!jaReel && (await isInstagramVideoPost(sc)) === false) {
+                return res.status(400).json({ success: false, error: 'not_video', message: 'Esse post não é um reel/vídeo. Visualizações só podem ser enviadas para reels ou vídeos.' });
+            }
+        }
 
         if (!sc) {
             if (req.session.selectedFor[kindKey]) delete req.session.selectedFor[kindKey];
@@ -12698,12 +12788,67 @@ const resolveRefillProviderApi = (orderId, order = null, blockName = null) => {
       }
     }
   } catch (_) {}
-  if (!prov || !SMM_PROVIDERS[prov]) {
-    const n = Number(orderId);
-    prov = (Number.isFinite(n) && n >= 1000000) ? 'fama24h' : 'nuvra';
-  }
+  // Sem fornecedor gravado: NÃO adivinha mais pelo tamanho do orderId (a regra antiga mandava
+  // número grande pro fama24h, que não existe mais). Devolve vazio; quem precisa do fornecedor
+  // usa resolveRefillProviderApiAsync, que pergunta aos fornecedores quem tem o pedido.
+  if (!prov || !SMM_PROVIDERS[prov]) return { provider: '', url: '', key: '' };
   return { provider: prov, url: smmProviderUrl(prov), key: smmProviderKey(prov) };
 };
+
+// Descobre o fornecedor de um pedido SEM fornecedor gravado: consulta action=status em todos
+// os fornecedores com chave configurada (menos fama24h, desativado). Só aceita quando a resposta
+// é inequívoca: um único fornecedor reconhece o pedido, ou, se mais de um reconhecer, aquele
+// cujo start_count bate com os seguidores iniciais da compra. Resultado em cache (6h).
+const __refillProbeCache = new Map();
+async function detectRefillProviderByStatus(orderId, order = null) {
+  const oid = String(orderId || '').trim();
+  if (!/^\d+$/.test(oid)) return null;
+  const hit = __refillProbeCache.get(oid);
+  if (hit && (Date.now() - hit.at) < 6 * 3600000) return hit.v;
+  const cands = SMM_PROVIDER_IDS.filter(p => p !== 'fama24h' && smmProviderKey(p));
+  const results = await Promise.all(cands.map(async (p) => {
+    try {
+      const r = await axios.post(smmProviderUrl(p), new URLSearchParams({ key: smmProviderKey(p), action: 'status', order: oid }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000, validateStatus: () => true });
+      const d = normalizeProviderResponseData(r.data) || {};
+      const st = d.status || d.Status;
+      return (st && !d.error) ? { provider: p, data: d } : null;
+    } catch (_) { return null; }
+  }));
+  let matches = results.filter(Boolean);
+  if (matches.length > 1) {
+    const ini = Number(order && order.initialFollowersCount);
+    if (Number.isFinite(ini) && ini >= 0) {
+      const perto = matches.filter(m => { const s = Number(m.data.start_count); return Number.isFinite(s) && Math.abs(s - ini) <= Math.max(20, ini * 0.05); });
+      if (perto.length === 1) matches = perto;
+    }
+  }
+  const v = matches.length === 1 ? matches[0].provider : null;
+  try { console.log('🔎 [refil] fornecedor detectado por status', { orderId: oid, reconhecido: results.filter(Boolean).map(m => m.provider), escolhido: v }); } catch (_) {}
+  __refillProbeCache.set(oid, { v, at: Date.now() });
+  return v;
+}
+
+// Versão completa: fornecedor gravado → usa; senão detecta por status e GRAVA no slot do pedido
+// (para as próximas reposições não precisarem consultar de novo).
+async function resolveRefillProviderApiAsync(orderId, order = null, blockName = null) {
+  const r = resolveRefillProviderApi(orderId, order, blockName);
+  if (r && r.provider) return r;
+  const p = await detectRefillProviderByStatus(orderId, order);
+  if (!p) return { provider: '', url: '', key: '' };
+  try {
+    if (order && order._id) {
+      const col = await getCollection('checkout_orders');
+      const now = new Date().toISOString();
+      for (const bn of ['fama24h', 'fama24h_views', 'fama24h_likes']) {
+        const b = order[bn];
+        if (b && String(b.orderId || '') === String(orderId) && !b.provider) {
+          await col.updateOne({ _id: order._id, [bn + '.provider']: { $exists: false } }, { $set: { [bn + '.provider']: p, [bn + '.providerCarimbadoEm']: now, [bn + '.providerCarimboMotivo']: 'detectado por action=status no refil' } });
+        }
+      }
+    }
+  } catch (_) {}
+  return { provider: p, url: smmProviderUrl(p), key: smmProviderKey(p) };
+}
 
 // Página Serviços (três serviços iguais ao principal)
 app.get('/servicos', (req, res) => {
@@ -21698,7 +21843,7 @@ async function processOrderFulfillment(record, col, req) {
                  if (vUser && vUser.latestPosts && Array.isArray(vUser.latestPosts) && vUser.latestPosts.length > 0) {
                      const isVideo = (p) => !!(p && (p.isVideo || /video|clip/.test(String(p.typename || '').toLowerCase())));
                      const lpAny = vUser.latestPosts[0];
-                     const lpVideo = vUser.latestPosts.find(isVideo) || lpAny;
+                     const lpVideo = vUser.latestPosts.find(isVideo) || null; // views nunca caem em foto/carrossel
                      const codeAny = lpAny && (lpAny.shortcode || lpAny.code);
                      const codeVideo = lpVideo && (lpVideo.shortcode || lpVideo.code);
                      if (viewsQty > 0 && !viewsLink && codeVideo) {
@@ -21729,6 +21874,11 @@ async function processOrderFulfillment(record, col, req) {
         const _likesBrMd = await resolveMainDispatch({ ctx: 'curtidas', key: 'curtidas_brasileiras', fallbackId: 679 });
 
         const alreadyViews = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || record.fama24h_views.status === 'duplicate' || typeof record.fama24h_views.error !== 'undefined' || typeof record.fama24h_views.duplicate !== 'undefined'));
+        if (viewsQty > 0 && !alreadyViews) {
+            const _vs = await resolveViewsLinkSafe(viewsLink, instaUser);
+            viewsLink = _vs.link;
+            if (!viewsLink) await markViewsBumpReview(col, filter, _vs, viewsQty);
+        }
         if (viewsQty > 0 && viewsLink && !alreadyViews) {
             if (viewsBumpKey) {
                 const axios = require('axios');
@@ -24414,8 +24564,14 @@ app.post('/api/openpix/webhook', async (req, res) => {
               const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
               const viewsLinkRaw = mapPaid2['orderbump_post_views'] || selViews || additionalInfoMap['orderbump_post_views'] || (arrPaid.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_views')?.value) || '';
               const likesLinkRaw0 = mapPaid2['orderbump_post_likes'] || selLikes || additionalInfoMap['orderbump_post_likes'] || (arrPaid.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig.find(it => it && it.key === 'orderbump_post_likes')?.value) || '';
-              const viewsLink = sanitizeLink(viewsLinkRaw);
+              let viewsLink = sanitizeLink(viewsLinkRaw);
               const likesLinkSel = sanitizeLink(likesLinkRaw0 || viewsLinkRaw) || viewsLink;
+              let _viewsReview2 = false;
+              if (viewsQty > 0 && !(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status))) {
+                const _vs = await resolveViewsLinkSafe(viewsLink, (record && (record.instagramUsername || record.instauser)) || '');
+                viewsLink = _vs.link;
+                if (!viewsLink) { _viewsReview2 = true; await markViewsBumpReview(col, filter, _vs, viewsQty); }
+              }
 
               // Bumps seguem o provedor escolhido no painel (default fama24h).
               const _viewsBumpMd = await resolveMainDispatch({ ctx: 'visualizacoes', key: 'visualizacoes_reels', fallbackId: 250 });
@@ -24425,7 +24581,9 @@ app.post('/api/openpix/webhook', async (req, res) => {
 
               if (viewsQty > 0) {
                 const alreadyViews2 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || record.fama24h_views.status === 'duplicate' || typeof record.fama24h_views.error !== 'undefined' || typeof record.fama24h_views.duplicate !== 'undefined'));
-                if (!viewsLink) {
+                if (_viewsReview2) {
+                  // sem reel válido: já ficou marcado para revisão
+                } else if (!viewsLink) {
                   await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': 'invalid_link', 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
                 } else if (!alreadyViews2) {
                   const lockUpdate = await col.updateOne(
@@ -27121,8 +27279,14 @@ app.post('/session/mark-paid', async (req, res) => {
           const selLikes = selectedFor && selectedFor.likes && selectedFor.likes.link ? String(selectedFor.likes.link) : '';
           const viewsLinkRaw = mapPaid['orderbump_post_views'] || selViews || (record?.additionalInfoPaid || []).find(it => it && it.key === 'orderbump_post_views')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'orderbump_post_views')?.value || '';
           const likesLinkRaw = mapPaid['orderbump_post_likes'] || selLikes || (record?.additionalInfoPaid || []).find(it => it && it.key === 'orderbump_post_likes')?.value || (record?.additionalInfo || []).find(it => it && it.key === 'orderbump_post_likes')?.value || '';
-          const viewsLink = sanitizeLink(viewsLinkRaw);
+          let viewsLink = sanitizeLink(viewsLinkRaw);
           const likesLinkSel = sanitizeLink(likesLinkRaw);
+          let _viewsReview3 = false;
+          if (viewsQty > 0 && !(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status))) {
+            const _vs = await resolveViewsLinkSafe(viewsLink, (record && (record.instagramUsername || record.instauser)) || '');
+            viewsLink = _vs.link;
+            if (!viewsLink) { _viewsReview3 = true; await markViewsBumpReview(col, filter, _vs, viewsQty); }
+          }
           // Bumps seguem o provedor escolhido no painel (default fama24h).
           const _viewsBumpMd = await resolveMainDispatch({ ctx: 'visualizacoes', key: 'visualizacoes_reels', fallbackId: 250 });
           const viewsBumpService = _viewsBumpMd.serviceId, viewsBumpUrl = _viewsBumpMd.url, viewsBumpKey = _viewsBumpMd.key;
@@ -27131,7 +27295,7 @@ app.post('/session/mark-paid', async (req, res) => {
           try { console.log('🔎 [mark-paid] orderbump_raw', { identifier, correlationID, viewsLinkRaw, likesLinkRaw, selectedFor, viewsQty, likesQty }); } catch(_) {}
           try { console.log('🔎 [mark-paid] orderbump_sanitized', { viewsLink, likesLinkSel }); } catch(_) {}
           const alreadyViews3 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || typeof record.fama24h_views.error !== 'undefined'));
-          if (viewsBumpKey && viewsQty > 0 && !alreadyViews3) {
+          if (viewsBumpKey && viewsQty > 0 && !alreadyViews3 && !_viewsReview3) {
             if (!viewsLink) {
               try { console.warn('⚠️ [mark-paid] views_link_invalid', { viewsLinkRaw }); } catch(_) {}
               await col.updateOne(filter, { $set: { 'fama24h_views.status': 'error', 'fama24h_views.error': 'invalid_link', 'fama24h_views.requestPayload': { service: viewsBumpService, link: viewsLink, quantity: viewsQty }, 'fama24h_views.requestedAt': new Date().toISOString() } });
@@ -27920,12 +28084,18 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     const __refillApi = (__usingAnchor && __anchorProvider)
       ? { provider: __anchorProvider, url: smmProviderUrl(__anchorProvider), key: smmProviderKey(__anchorProvider) }
       : (__usingAnchor
-        ? resolveRefillProviderApi(famaOrderId, null, null)
-        : resolveRefillProviderApi(famaOrderId, order, 'fama24h'));
+        ? await resolveRefillProviderApiAsync(famaOrderId, null, null)
+        : await resolveRefillProviderApiAsync(famaOrderId, order, 'fama24h'));
     const providerKey = __refillApi.key;
     const apiUrl = __refillApi.url;
     try { console.log('🔁 [refil/simple] provedor da reposição', { order: famaOrderId, provider: __refillApi.provider }); } catch(_) {}
-    if (!providerKey) { await __releaseThrottle(); await logRefilFalha({ username, motivo: 'missing_key', provider: __refillApi.provider }); return res.status(500).json({ ok: false, error: 'missing_key', message: 'Configuração indisponível.' }); }
+    if (!providerKey) {
+      await __releaseThrottle();
+      // Sem fornecedor identificado (nenhum reconheceu o pedido) ≠ chave faltando no servidor.
+      const __semProv = !__refillApi.provider;
+      await logRefilFalha({ username, motivo: __semProv ? 'provider_not_found' : 'missing_key', provider: __refillApi.provider || null, orderId: famaOrderId });
+      return res.status(__semProv ? 400 : 500).json({ ok: false, error: __semProv ? 'provider_not_found' : 'missing_key', message: __semProv ? 'Favor contatar o suporte.' : 'Configuração indisponível.' });
+    }
 
     const params = new URLSearchParams();
     params.append('key', providerKey);
@@ -28020,8 +28190,8 @@ app.post('/api/painel/refil/bulk-by-orderid', requireAdmin, async (req, res) => 
           qty = Number((o.fama24h && o.fama24h.requestPayload && o.fama24h.requestPayload.quantity) || o.qtd || 0) || 0;
         }
       } catch (_) {}
-      // Reposição vai pro provedor onde o pedido foi criado (heurística por orderId: fama antigo → fama).
-      const __rp = resolveRefillProviderApi(orderId);
+      // Reposição vai pro provedor onde o pedido foi criado (gravado no pedido; sem registro, detecta por status).
+      const __rp = await resolveRefillProviderApiAsync(orderId);
       const providerKey = __rp.key;
       const apiUrl = __rp.url;
       try {
@@ -28259,7 +28429,7 @@ async function famaRefillOrder(orderId, provider = '') {
   // Reposição vai pro provedor onde o pedido foi criado. Com provider confirmado
   // (âncora do SMMHustle) usa ele; senão, heurística por orderId (fama antigo → fama).
   const _pv = normalizeSmmProvider(provider);
-  const __rp = (_pv && SMM_PROVIDERS[_pv]) ? { provider: _pv, url: smmProviderUrl(_pv), key: smmProviderKey(_pv) } : resolveRefillProviderApi(orderId);
+  const __rp = (_pv && SMM_PROVIDERS[_pv]) ? { provider: _pv, url: smmProviderUrl(_pv), key: smmProviderKey(_pv) } : await resolveRefillProviderApiAsync(orderId);
   const providerKey = __rp.key;
   const apiUrl = __rp.url;
   if (!providerKey) return { ok: false, error: 'missing_key' };
@@ -28767,6 +28937,12 @@ app.post('/api/refil/create', refilCreateAuth, publicIpLimit('refil_create', 60,
     };
 
     const candidates = getProviderCandidates(order || {});
+    // Sub-pedido sem fornecedor gravado: descobre consultando os fornecedores (sem adivinhar pelo número).
+    for (const cand of candidates) {
+      if (cand && cand.externalOrderId && !cand.provider) {
+        try { const d = await resolveRefillProviderApiAsync(cand.externalOrderId, order); if (d && d.provider) { cand.provider = d.provider; cand.apiKey = d.key; cand.apiUrl = d.url; } } catch (_) {}
+      }
+    }
     const desiredIdStr = String(orderIdInput || '').trim();
     const desiredIdNum = Number(desiredIdStr);
     const desiredIsNum = !Number.isNaN(desiredIdNum);
@@ -50165,6 +50341,8 @@ function getUpsellOffer(order) {
     // ── Identificar categoria real ──────────────────────────────
     // tipo pode ser 'mistos', 'brasileiros', 'organicos' sem prefixo 'seguidores'
     const _followersTypes = ['mistos', 'brasileiros', 'organicos', 'seguidores_mistos', 'seguidores_brasileiros', 'seguidores_organicos'];
+    // Categoria explícita manda: curtidas "mistos"/"brasileiros" usam o mesmo nome de tipo
+    // dos seguidores e antes caíam na tabela de SEGUIDORES (upsell de curtidas cobrado errado).
     const isFollowers    = cat === 'seguidores'
       || (cat !== 'curtidas' && cat !== 'visualizacoes' && (tipo.includes('seguidores') || _followersTypes.includes(tipo)));
     const isCurtidas     = cat === 'curtidas'
@@ -50217,7 +50395,7 @@ function getUpsellOffer(order) {
     } else if (isCurtidas) {
       if (tipo === 'curtidas_reais' || tipo.includes('curtidas_reais')) table = tCurtidas.curtidas_reais;
       else if (tipo.includes('organico'))    table = tCurtidas.organicos;
-      else if (tipo.includes('brasileiro'))  table = tCurtidas.brasileiros;
+      else if (tipo.includes('brasileir'))   table = tCurtidas.brasileiros; // 'curtidas_brasileiras' não contém 'brasileiro'
       else                                   table = tCurtidas.mistos;
     } else if (isVisualizacao) {
       table = tViews;
@@ -50347,8 +50525,6 @@ app.get('/api/upsell/offer', async (req, res) => {
     if (!order) return res.status(404).json({ ok: false, error: 'order_not_found' });
 
     const status = String(order.status || order?.woovi?.status || '').toLowerCase();
-    // Categoria explícita manda: curtidas "mistos"/"brasileiros" usam o mesmo nome de tipo
-    // dos seguidores e antes caíam na tabela de SEGUIDORES (upsell de curtidas cobrado errado).
     if (status !== 'pago' && status !== 'paid') return res.json({ ok: false, error: 'order_not_paid' });
 
     // Verificar se já existe upsell para este pedido
@@ -51964,6 +52140,14 @@ async function runIaPaymentRecoveryTick() {
           continue;
         }
         try { await wa.sendWhatsAppText(phone, iaPayRecoveryMessage(st)); } catch (_) {}
+        // Última chamada: reenvia o Pix copia e cola numa mensagem SÓ com o código (fácil de
+        // copiar no celular) — muita gente perde a mensagem original no meio da conversa.
+        if (st === stages[stages.length - 1]) {
+          const _br = String((doc.paghiper && doc.paghiper.brCode) || (doc.woovi && doc.woovi.brCode) || '').trim();
+          if (_br) {
+            try { await new Promise((r) => setTimeout(r, 1500)); await wa.sendWhatsAppText(phone, 'Aqui está o Pix copia e cola de novo:'); await wa.sendWhatsAppText(phone, _br); } catch (_) {}
+          }
+        }
         try { console.log(`💬 [ia-pay-recovery] stage${st} ${phone} order=${doc._id}`); } catch (_) {}
       }
     } catch (_) {}
@@ -52402,9 +52586,14 @@ app.post('/api/payment/confirm', async (req, res) => {
           return `https://www.instagram.com/${kind}/${encodeURIComponent(code)}/`;
         };
         const mapPaid3 = record?.additionalInfoMapPaid || {};
-        const viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
+        let viewsLink = sanitizeLink(mapPaid3['orderbump_post_views'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_views')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_views')?.value) || '');
         const likesLinkSel = sanitizeLink(mapPaid3['orderbump_post_likes'] || (arrPaid2.find(it => it && it.key === 'orderbump_post_likes')?.value) || (arrOrig2.find(it => it && it.key === 'orderbump_post_likes')?.value) || '');
         const alreadyViews4 = !!(record && record.fama24h_views && (record.fama24h_views.orderId || record.fama24h_views.status === 'processing' || record.fama24h_views.status === 'created' || typeof record.fama24h_views.error !== 'undefined'));
+        if (viewsQty > 0 && !alreadyViews4) {
+          const _vs = await resolveViewsLinkSafe(viewsLink, (record && (record.instagramUsername || record.instauser)) || '');
+          viewsLink = _vs.link;
+          if (!viewsLink) await markViewsBumpReview(col, filter, _vs, viewsQty);
+        }
         // Bumps seguem o provedor escolhido no painel (default fama24h).
         const _viewsBumpMd = await resolveMainDispatch({ ctx: 'visualizacoes', key: 'visualizacoes_reels', fallbackId: 250 });
         const viewsBumpService = _viewsBumpMd.serviceId, viewsBumpUrl = _viewsBumpMd.url, viewsBumpKey = _viewsBumpMd.key;
