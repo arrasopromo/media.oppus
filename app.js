@@ -2553,6 +2553,8 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
     const clientUrlWithPhone = phoneDigits ? `${clientUrl}?phone=${encodeURIComponent(phoneDigits)}` : clientUrl;
     const whatsappPrefillText = 'Olá, vim pelo e-mail de compra e preciso de ajuda';
     const whatsappHref = `https://wa.me/553173425727?text=${encodeURIComponent(whatsappPrefillText)}`;
+    // Comunidade do WhatsApp (mesmo link da bolha da tela de obrigado).
+    const communityHref = String(process.env.OPPUS_COMMUNITY_URL || '').trim() || 'https://chat.whatsapp.com/DnS9B3B7lBbCEYbPs3zVdF';
 
     const show48hFollowersNotice = (function () {
         try {
@@ -2585,6 +2587,9 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
         '2. Informe o número de telefone que você registrou para compra.',
         '3. Abra o detalhamento do pedido e veja o status.',
         `Link: ${clientUrl}`,
+        '',
+        'Acesse nossa comunidade no WhatsApp - ofertas imperdíveis:',
+        communityHref,
         '',
         'Precisa de ajuda?',
         'Email: suporte@agenciaoppus.site',
@@ -2647,6 +2652,12 @@ const sendPaymentApprovedEmailToCustomer = async ({ record, toOverride, serviceL
                 <div style="margin-top:10px;">
                   <a href="${escapeHtml(clientUrl)}" style="display:inline-block;padding:9px 12px;background:#111827;color:#ffffff;border-radius:10px;font-size:13px;font-weight:800;text-decoration:none;">Abrir Clientes</a>
                 </div>
+              </div>
+
+              <div style="margin:14px 0 0 0;padding:14px 12px;border:1px solid #bbf7d0;border-radius:10px;background:#f0fdf4;text-align:center;">
+                <div style="font-size:14px;font-weight:800;margin:0 0 4px 0;color:#14532d;">Acesse nossa comunidade no WhatsApp</div>
+                <div style="font-size:12px;line-height:1.5;margin:0 0 10px 0;color:#166534;">Ofertas imperdíveis e novidades em primeira mão.</div>
+                <a href="${escapeHtml(communityHref)}" style="display:inline-block;padding:10px 18px;background:#1DA851;color:#ffffff;border-radius:999px;font-size:13px;font-weight:800;text-decoration:none;">Entrar na comunidade</a>
               </div>
 
               <div style="margin:14px 0 0 0;padding:12px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
@@ -2802,6 +2813,8 @@ const maybeSendRefil2ToolEmail = async (record, col, req) => {
     try {
         if (!record || !col || !record._id) return;
         if (record?.manualSale?.source === 'whatsapp' && record?.manualSale?.skipEmails === true) return;
+        // Upsell não recebe o e-mail da ferramenta de reposição (o cliente já recebeu no pedido principal).
+        if (record?.upsell?.isUpsell) return;
         const customer = (record && record.customer && typeof record.customer === 'object') ? record.customer : {};
         const to = String(customer.email || '').trim();
         if (!to) return;
