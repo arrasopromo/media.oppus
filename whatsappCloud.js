@@ -192,27 +192,37 @@ const turnosEmAndamento = new Map(); // phone -> { pendentes: [] }
 // Se a IA responder demais para o MESMO número numa janela curta (ex.: outro bot
 // conversando com a gente num vai-e-vem infinito), pausa a IA nessa conversa e
 // passa pro humano. Conta 1 por TURNO da IA (não por mensagem mesclada).
-const IA_FLOOD_MAX = Math.max(0, Number(process.env.WHATSAPP_IA_FLOOD_MAX || 15) || 15);                 // 0 = desativado
-const IA_FLOOD_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD_WINDOW_MIN || 60) || 60) * 60000); // janela (default 60min)
+// Duas réguas: RAJADA (ritmo de robô: >10 turnos em 5min) e TETO por hora (>40 em 60min).
+// Antes era só 15/60min e cortava cliente de verdade que comprava 2 coisas seguidas
+// (ex.: 556792085965 em 11/11 — 16 mensagens em ~30min, uma a cada 1-2min, e ficou sem o Pix).
+const IA_FLOOD_MAX = Math.max(0, Number(process.env.WHATSAPP_IA_FLOOD_MAX || 40) || 40);                 // teto na janela longa; 0 = desativado
+const IA_FLOOD_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD_WINDOW_MIN || 60) || 60) * 60000); // janela longa (default 60min)
+const IA_FLOOD_BURST_MAX = Math.max(0, Number(process.env.WHATSAPP_IA_FLOOD_BURST_MAX || 10) || 10);     // rajada; 0 = desativado
+const IA_FLOOD_BURST_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD_BURST_WINDOW_MIN || 5) || 5) * 60000); // janela curta (default 5min)
 const iaReplyTimes = new Map(); // phone -> number[] timestamps das respostas da IA
 async function tripFloodGuard(phone) {
-  if (!(IA_FLOOD_MAX > 0)) return false; // desativado por config
+  if (!(IA_FLOOD_MAX > 0) && !(IA_FLOOD_BURST_MAX > 0)) return false; // desativado por config
   const p = String(phone || '');
   const now = Date.now();
-  const arr = (iaReplyTimes.get(p) || []).filter((t) => (now - t) < IA_FLOOD_WINDOW_MS);
+  const janela = Math.max(IA_FLOOD_WINDOW_MS, IA_FLOOD_BURST_WINDOW_MS);
+  const arr = (iaReplyTimes.get(p) || []).filter((t) => (now - t) < janela);
   arr.push(now);
   iaReplyTimes.set(p, arr);
   if (iaReplyTimes.size > 5000) { // limpeza defensiva de memória
-    for (const [k, v] of iaReplyTimes) { if (!v.length || (now - v[v.length - 1]) > IA_FLOOD_WINDOW_MS) iaReplyTimes.delete(k); }
+    for (const [k, v] of iaReplyTimes) { if (!v.length || (now - v[v.length - 1]) > janela) iaReplyTimes.delete(k); }
   }
-  if (arr.length <= IA_FLOOD_MAX) return false;
-  const mins = Math.round(IA_FLOOD_WINDOW_MS / 60000);
+  const nLonga = arr.filter((t) => (now - t) < IA_FLOOD_WINDOW_MS).length;
+  const nRajada = arr.filter((t) => (now - t) < IA_FLOOD_BURST_WINDOW_MS).length;
+  let motivo = '';
+  if (IA_FLOOD_BURST_MAX > 0 && nRajada > IA_FLOOD_BURST_MAX) motivo = `${nRajada} respostas em ${Math.round(IA_FLOOD_BURST_WINDOW_MS / 60000)}min`;
+  else if (IA_FLOOD_MAX > 0 && nLonga > IA_FLOOD_MAX) motivo = `${nLonga} respostas em ${Math.round(IA_FLOOD_WINDOW_MS / 60000)}min`;
+  if (!motivo) return false;
   try {
     const col = await getCollection('whatsapp_contacts');
-    await col.updateOne({ _id: p }, { $set: { botPaused: true, flag: 'suporte', supportReason: `IA pausada: anti-loop (${arr.length} respostas em ${mins}min)`, supportAt: new Date().toISOString() } }, { upsert: true });
+    await col.updateOne({ _id: p }, { $set: { botPaused: true, flag: 'suporte', supportReason: `IA pausada: anti-loop (${motivo})`, supportAt: new Date().toISOString() } }, { upsert: true });
   } catch (_) {}
   iaReplyTimes.delete(p); // já pausou; zera pra não re-disparar
-  try { console.warn(`🛑 [IA] anti-loop: ${p} estourou ${IA_FLOOD_MAX} respostas/${mins}min → IA pausada + flag suporte`); } catch (_) {}
+  try { console.warn(`🛑 [IA] anti-loop: ${p} ${motivo} → IA pausada + flag suporte`); } catch (_) {}
   return true;
 }
 
@@ -368,6 +378,9 @@ async function handleInboundMessage(m, contactName) {
     logIaMessage({ phone: from, direction: 'in', type: btn ? 'button' : (m.type || 'text'), text: inboundText, wamid: String(m.id || ''), name: contactName || '', replyTo: String((m.context && m.context.id) || '') }).catch(() => {});
   }
 
+  // "Pare"/"sair" no número da IA: para de receber retomada automática (a conversa segue normal).
+  if (bodyRaw && RE_REC_OPTOUT.test(bodyRaw)) { markRecoveryOptOut(from).catch(() => {}); }
+
   // Comandos de controle (texto): /pause e /start (para operar o número da IA).
   if (/^\/(pause|pausar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: true } }, { upsert: true }); } catch (_) {} return; }
   if (/^\/(start|iniciar|começar|comecar|resume|retomar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: false } }, { upsert: true }); } catch (_) {} try { await agent.clearHistory(from); } catch (_) {} return; }
@@ -455,7 +468,7 @@ const _recPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const _REC_VARIANTS = {
   '2_sem_arroba': [
     'Ainda dá tempo de crescer seu perfil hoje. Seguidores reais e brasileiros, entrega rápida e com garantia. É só me mandar seu @ do Instagram que eu finalizo rapidinho.',
-    'Oi, consegui separar um pacote bom pra você. Seguidores reais brasileiros, com garantia e entrega rápida. Me manda seu @ do Instagram que eu já deixo tudo pronto.',
+    'Oi! Se ainda quiser crescer o perfil, os seguidores reais brasileiros saem com garantia e entrega rápida. Me manda seu @ do Instagram que eu já deixo tudo pronto.',
     'E aí, bora dar aquele up no perfil ainda hoje? Seguidores reais e brasileiros, com garantia. Só preciso do seu @ do Instagram pra montar.',
   ],
   '2_geral': [
@@ -484,16 +497,51 @@ function _recMsg(stage, tipo) {
                           : (tipo === 'preco' ? 'preco' : (tipo === 'sem_arroba' ? 'sem_arroba' : 'geral'));
   return _recPick(_REC_VARIANTS[stage + '_' + t] || _REC_VARIANTS['1_geral']);
 }
+// Limites anti-insistência (o relatório diário da IA apontava "follow-up repetitivo" como o
+// problema nº 1): no máximo N retomadas por telefone a cada 24h, nada no horário de silêncio.
+const IA_RECOVERY_MAX_24H = Math.max(1, Number(process.env.IA_RECOVERY_MAX_24H || 2) || 2);
+const IA_RECOVERY_QUIET_START = Number(process.env.IA_RECOVERY_QUIET_START || 21); // hora BRT
+const IA_RECOVERY_QUIET_END = Number(process.env.IA_RECOVERY_QUIET_END || 8);      // hora BRT
+const IA_RECOVERY_PAID_DAYS = Math.max(1, Number(process.env.IA_RECOVERY_PAID_DAYS || 7) || 7);
+// Cliente em suporte/pós-venda (inclui o clique "🔘 Acabei de comprar" / "Preciso de suporte").
+const RE_REC_SUPORTE = /problema|reclama|golpe|suporte|n[aã]o caiu|n[aã]o chegou|n[aã]o recebi|estorn|reembols|comprovante|paguei|j[aá] comprei|acabei de comprar|j[aá] (foi |est[aá] )?pago|meu pedido|despenc|reposi[cç]|refil|caiu (os|meus)|sumiu|sumiram/;
+// Último texto do bot foi o fallback de falha (ex.: sem crédito na OpenAI) → não manda modelo pronto.
+const RE_REC_FALHA_BOT = /n[aã]o peguei sua [uú]ltima mensagem/i;
+// Pedido de saída ("pare", "sair"...) no número da IA → não recebe mais retomada.
+const RE_REC_OPTOUT = /^\s*(pare|para|parar|sair|stop|cancelar|chega|n[aã]o quero mais|n[aã]o tenho interesse|me tira( da lista)?|remover|para de (me )?mandar)\s*[.!]*\s*$/i;
+function _horaBRT(ms) { return new Date(ms - 3 * 3600000).getUTCHours(); }
+function _emSilencio(ms) {
+  const h = _horaBRT(ms);
+  return IA_RECOVERY_QUIET_START > IA_RECOVERY_QUIET_END ? (h >= IA_RECOVERY_QUIET_START || h < IA_RECOVERY_QUIET_END) : (h >= IA_RECOVERY_QUIET_START && h < IA_RECOVERY_QUIET_END);
+}
+const _phoneTail = (p) => String(p || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+async function markRecoveryOptOut(phone) {
+  const key = String(phone || '').replace(/\D/g, '');
+  if (!key) return;
+  try { const recCol = await getCollection('wa_ia_recovery'); await recCol.updateOne({ _id: key }, { $set: { optout: true, optoutAt: new Date().toISOString() } }, { upsert: true }); console.log('🔕 [ia-recovery] opt-out ' + phone); } catch (_) {}
+}
 let __iaRecoveryRunning = false;
 async function runIaRecoverySweep() {
   if (!IA_RECOVERY_ENABLED || !configured() || __iaRecoveryRunning) return;
+  if (_emSilencio(Date.now())) return; // horário de silêncio: nada sai (o ciclo continua depois)
   __iaRecoveryRunning = true;
   try {
+    // Sem crédito na OpenAI o bot só responde o fallback: não adianta cutucar ninguém.
+    try { const cr = await openaiCredito.status(); if (cr && cr.semCredito) { console.log('🔁 [ia-recovery] pulado: OpenAI sem crédito'); return; } } catch (_) {}
     const ia = await getCollection('wa_ia_messages');
     const orders = await getCollection('checkout_orders');
     const recCol = await getCollection('wa_ia_recovery');
     const optCol = await getCollection('wa_optout');
     const now = Date.now();
+    // Quem PAGOU qualquer pedido (site ou bot) nos últimos dias não recebe oferta de compra.
+    const paidPhones = new Set();
+    try {
+      const dP = new Date(now - IA_RECOVERY_PAID_DAYS * 86400000);
+      const pagos = await orders.find({ status: 'pago', $or: [{ paidAt: { $gte: dP.toISOString() } }, { paidAt: { $gte: dP } }] }, { projection: { telefone: 1, 'customer.phone': 1, 'additionalInfoMap.phone': 1, 'additionalInfoMapPaid.phone': 1 } }).toArray();
+      for (const o of pagos) {
+        for (const p of [o.telefone, o.customer && o.customer.phone, o.additionalInfoMap && o.additionalInfoMap.phone, o.additionalInfoMapPaid && o.additionalInfoMapPaid.phone]) { const t = _phoneTail(p); if (t.length >= 10) paidPhones.add(t); }
+      }
+    } catch (_) {}
     const since = new Date(now - 26 * 3600000);
     const convs = await ia.aggregate([
       { $match: { createdAt: { $gte: since } } },
@@ -519,32 +567,60 @@ async function runIaRecoverySweep() {
       const ageMin = (now - baseMs) / 60000;
       if (ageMin < IA_RECOVERY_STAGE1_MIN) continue; // ainda não esfriou
       if (pixPhones.has(key) || pixPhones.has(key.replace(/^55/, ''))) continue; // já converteu
+      if (paidPhones.has(_phoneTail(key))) continue; // já é cliente pago recente (site ou bot)
       try { const ob = await optCol.findOne({ phoneKey: key.replace(/^55/, '') }, { projection: { blocked: 1 } }); if (ob && ob.blocked === true) continue; } catch (_) {}
       try { if (await isBotPaused(phone)) continue; } catch (_) {} // humano assumiu
       const txt = String((c.inTexts || []).join(' \n ')).toLowerCase();
-      if (/problema|reclama|golpe|suporte|n[aã]o caiu|n[aã]o chegou|estorn|reembols|comprovante|paguei|j[aá] comprei|meu pedido|despenc/.test(txt)) continue; // suporte/pós-venda
+      if (RE_REC_SUPORTE.test(txt)) continue; // suporte/pós-venda
       const temArroba = /@[a-z0-9._]{2,}|instagram\.com\//i.test(txt);
       const preco = /pre[çc]o|valor|quanto|tabela/.test(txt);
       const tipo = !temArroba ? 'sem_arroba' : (preco ? 'preco' : 'geral');
       let rec = null; try { rec = await recCol.findOne({ _id: key }); } catch (_) {}
+      if (rec && rec.optout) continue; // pediu para parar
       if (!rec || Number(rec.baseMs) !== baseMs) { rec = { _id: key, baseMs, stage1At: null, stage2At: null }; try { await recCol.updateOne({ _id: key }, { $set: { baseMs, stage1At: null, stage2At: null, tipo, updatedAt: new Date() } }, { upsert: true }); } catch (_) {} }
       let stage = 0;
       if (ageMin >= IA_RECOVERY_STAGE2_MIN && !rec.stage2At) stage = 2;
       else if (ageMin >= IA_RECOVERY_STAGE1_MIN && ageMin < IA_RECOVERY_STAGE2_MIN && !rec.stage1At) stage = 1;
       if (!stage) continue;
+      // Última resposta do bot foi o fallback de falha → o problema foi nosso, não manda modelo pronto.
+      try {
+        const lastOut = await ia.find({ phone, direction: 'out', recovery: { $exists: false } }, { projection: { text: 1 } }).sort({ createdAt: -1 }).limit(1).next();
+        if (lastOut && RE_REC_FALHA_BOT.test(String(lastOut.text || ''))) continue;
+      } catch (_) {}
+      // Teto por telefone: no máximo IA_RECOVERY_MAX_24H retomadas nas últimas 24h (o ciclo
+      // reinicia a cada nova mensagem, e sem teto um mesmo número chegou a receber 19).
+      try {
+        const n24 = await ia.countDocuments({ phone, direction: 'out', recovery: { $exists: true }, createdAt: { $gte: new Date(now - 24 * 3600000) } });
+        if (n24 >= IA_RECOVERY_MAX_24H) continue;
+      } catch (_) {}
+      // Trava a etapa NO BANCO antes de enviar: com duas instâncias rodando a varredura, só uma
+      // envia (antes saíam duplicadas no mesmo segundo). Envio que falha não é repetido.
+      const stageField = 'stage' + stage + 'At';
+      let claimed = false;
+      try {
+        const cl = await recCol.updateOne({ _id: key, baseMs, $or: [{ [stageField]: null }, { [stageField]: { $exists: false } }] }, { $set: { [stageField]: new Date().toISOString(), tipo } });
+        claimed = !!(cl && cl.modifiedCount > 0);
+      } catch (_) {}
+      if (!claimed) continue;
       const msg = _recMsg(stage, tipo);
       try {
         const r = await sendWhatsAppText(phone, msg, { log: false });
         if (r && r.ok) {
           await logIaMessage({ phone, direction: 'out', type: 'text', text: msg, recovery: 'stage' + stage });
-          await recCol.updateOne({ _id: key }, { $set: { ['stage' + stage + 'At']: new Date().toISOString(), baseMs, tipo } }, { upsert: true });
+          try { await agent.appendAssistantNote(phone, msg); } catch (_) {} // a IA passa a saber o que foi enviado
           enviados++;
           try { console.log('🔁 [ia-recovery] stage' + stage + ' -> ' + phone + ' (' + tipo + ', ' + Math.round(ageMin) + 'min)'); } catch (_) {}
           // Espaça o próximo envio (intervalo aleatório) pra não cair tudo no mesmo segundo.
           const gap = IA_RECOVERY_SEND_GAP_MIN_MS + Math.floor(Math.random() * Math.max(0, IA_RECOVERY_SEND_GAP_MAX_MS - IA_RECOVERY_SEND_GAP_MIN_MS));
           await _recSleep(gap);
+        } else {
+          const err = (r && (r.error || (r.data && r.data.error) || r.status)) || 'falha_envio';
+          try { await recCol.updateOne({ _id: key }, { $set: { ['stage' + stage + 'Erro']: typeof err === 'object' ? JSON.stringify(err).slice(0, 300) : String(err).slice(0, 300), ultimoErroAt: new Date().toISOString() } }); } catch (_) {}
+          try { console.warn('🔁 [ia-recovery] falha stage' + stage + ' -> ' + phone + ': ' + (typeof err === 'object' ? JSON.stringify(err).slice(0, 200) : err)); } catch (_) {}
         }
-      } catch (_) {}
+      } catch (e) {
+        try { await recCol.updateOne({ _id: key }, { $set: { ['stage' + stage + 'Erro']: String((e && e.message) || e).slice(0, 300), ultimoErroAt: new Date().toISOString() } }); } catch (_) {}
+      }
     }
     if (enviados) { try { console.log('🔁 [ia-recovery] enviados: ' + enviados); } catch (_) {} }
   } catch (e) { try { console.error('🔁 [ia-recovery] erro:', e && e.message); } catch (_) {} }
@@ -552,6 +628,9 @@ async function runIaRecoverySweep() {
 }
 function startIaRecoveryLoop() {
   if (!IA_RECOVERY_ENABLED) { try { console.log('🔁 [ia-recovery] DESATIVADO (IA_RECOVERY_ENABLED=false)'); } catch (_) {} return; }
+  // Mesma chave dos outros jobs: instância de teste/local (BACKGROUND_JOBS_ENABLED=false) não envia.
+  const bg = String(typeof process.env.BACKGROUND_JOBS_ENABLED === 'undefined' ? 'true' : process.env.BACKGROUND_JOBS_ENABLED).trim().toLowerCase();
+  if (bg === 'false' || bg === '0' || bg === 'no') { try { console.log('⏸️ [ia-recovery] DESLIGADO (BACKGROUND_JOBS_ENABLED=false)'); } catch (_) {} return; }
   setTimeout(() => { runIaRecoverySweep().catch(() => {}); }, 100 * 1000);
   try { const t = setInterval(() => { runIaRecoverySweep().catch(() => {}); }, 5 * 60 * 1000); t.unref && t.unref(); } catch (_) {}
   try { console.log('🔁 [ia-recovery] ativo: 1ª aos ' + IA_RECOVERY_STAGE1_MIN + 'min, 2ª aos ' + IA_RECOVERY_STAGE2_MIN + 'min, varre a cada 5min'); } catch (_) {}

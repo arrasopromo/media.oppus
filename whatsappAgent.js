@@ -66,7 +66,15 @@ function _tabelasDe(cat) {
   if (cat === 'curtidas') return tabelaCurtidas;
   return tabelaVisualizacoes;
 }
-function acharPrecosErrados(texto) {
+// Tipo à venda agora (settings.service_visibility via sales.tiposDisponiveis). As chaves
+// internas de curtidas (curtidas_brasileiras/curtidas_reais) são apelidos de brasileiros/orgânicos.
+// Sem a lista (falha ao ler o banco) considera tudo à venda, como antes.
+const _TIPO_BASE = { curtidas_brasileiras: 'brasileiros', curtidas_reais: 'organicos', curtidas_organicos: 'organicos' };
+function _tipoVendido(disp, cat, tipo) {
+  if (!disp || (cat !== 'seguidores' && cat !== 'curtidas') || !Array.isArray(disp[cat])) return true;
+  return disp[cat].includes(_TIPO_BASE[tipo] || tipo);
+}
+function acharPrecosErrados(texto, disp) {
   const erros = [];
   // O trecho entre a quantidade e o preço não pode ter OUTRA quantidade nem "total"/"soma":
   // senão "1000 seguidores e 150 curtidas, total R$ 84,80" viraria preço errado.
@@ -85,14 +93,17 @@ function acharPrecosErrados(texto) {
       : /brasileir/i.test(trechoTipo) ? ['brasileiros', 'curtidas_brasileiras']
       : /mist|mundia|internac/i.test(trechoTipo) ? ['mistos'] : null;
     const tabelas = _tabelasDe(cat);
-    const usar = chaves ? chaves.filter((k) => tabelas[k]).map((k) => tabelas[k]) : Object.values(tabelas);
+    // Preço de tipo fora de venda (ex.: seguidores *brasileiros* ocultos no site) conta como erro.
+    let chavesUsar = chaves ? chaves.filter((k) => tabelas[k]) : [];
+    if (!chavesUsar.length) chavesUsar = Object.keys(tabelas);
+    const usar = chavesUsar.filter((k) => _tipoVendido(disp, cat, k)).map((k) => tabelas[k]);
     const validos = new Set();
-    for (const tab of (usar.length ? usar : Object.values(tabelas))) for (const it of (tab || [])) if (Number(it.q) === qtd) validos.add(parsePrecoToCents(it.p));
+    for (const tab of usar) for (const it of (tab || [])) if (Number(it.q) === qtd) validos.add(parsePrecoToCents(it.p));
     if (!validos.has(cents)) erros.push({ cat, qtd, preco: m[4], trecho: m[0].slice(0, 80) });
   }
   return erros;
 }
-function tabelaOficialTexto(cat) {
+function tabelaOficialTexto(cat, disp) {
   const nomes = cat === 'curtidas'
     ? { mistos: '*Curtidas mistas*', brasileiros: '*Curtidas brasileiras*', organicos: '*Curtidas brasileiras reais* (orgânicas)' }
     : { mistos: '*Mistos*', brasileiros: '*Brasileiros*', organicos: '*Brasileiros reais* (orgânicos)', visualizacoes_reels: '*Visualizações (reels)*' };
@@ -102,6 +113,7 @@ function tabelaOficialTexto(cat) {
     // Só os tipos vendidos (curtidas_brasileiras/curtidas_reais são apelidos internos
     // das mesmas tabelas — antes saíam duplicadas e com o nome cru pro cliente).
     if (!nomes[tipo]) continue;
+    if (!_tipoVendido(disp, cat, tipo)) continue;
     const itens = (tab || []).filter((x) => Number(x.q) >= 150).map((x) => '- ' + Number(x.q).toLocaleString('pt-BR') + ': ' + x.p);
     const assinatura = itens.join('|');
     if (!itens.length || vistas.has(assinatura)) continue;
@@ -112,7 +124,7 @@ function tabelaOficialTexto(cat) {
 }
 // Cliente pediu "brasileiros": a resposta TEM que trazer as 2 opções (brasileiros e
 // brasileiros reais). Se o modelo mandou só a tabela de brasileiros, anexa a de reais.
-function garantirBrasileirosReais(texto) {
+function garantirBrasileirosReais(texto, disp) {
   const t = String(texto || '');
   if (/reais\b|org[âa]nic/i.test(t.replace(/R\$\s*[\d.,]+/g, '').replace(/\bs[óo] tenho \d+ reais/gi, ''))) return t;
   const re = /(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(seguidor(?:es)?|curtidas?)\b[^\n]{0,20}?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})/gi;
@@ -126,13 +138,24 @@ function garantirBrasileirosReais(texto) {
     if (it && parsePrecoToCents(it.p) === Number(String(m[3]).replace(/\./g, '').replace(',', ''))) hits[cat]++;
   }
   const cat = hits.seguidores >= 3 ? 'seguidores' : (hits.curtidas >= 3 ? 'curtidas' : '');
-  if (!cat) return t;
+  if (!cat || !_tipoVendido(disp, cat, 'organicos')) return t;
   const itens = ((_tabelasDe(cat) || {}).organicos || []).filter((x) => Number(x.q) >= 150).map((x) => '- ' + Number(x.q).toLocaleString('pt-BR') + ' ' + cat + ': ' + x.p);
   if (!itens.length) return t;
   const bloco = 'Também temos os *Brasileiros reais* (orgânicos) — perfis reais e ativos, o serviço mais estável:\n' + itens.join('\n');
   // Mantém a pergunta final ("Qual quantidade…?") no fim da mensagem.
   const idx = t.search(/\n[^\n]*\?\s*$/);
   return idx > 0 ? (t.slice(0, idx).trimEnd() + '\n\n' + bloco + '\n\n' + t.slice(idx).trim()) : (t.trimEnd() + '\n\n' + bloco);
+}
+// Resposta com título de tabela de um tipo fora de venda. O caso real hoje: seguidores
+// *Brasileiros* (simples) oculto — a lista "- 150: R$ 10,90" não cita "seguidores", então
+// acharPrecosErrados não pega.
+function tiposForaDeVenda(texto, disp) {
+  const t = String(texto || '');
+  if (!disp) return [];
+  const titulo = /^[ \t]*\*?brasileir[oa]s\*?[ \t]*:?[ \t]*$/im; // linha só com "*Brasileiros*"
+  if (!titulo.test(t)) return [];
+  const cat = (/curtida/i.test(t) && !/seguidor/i.test(t)) ? 'curtidas' : 'seguidores';
+  return _tipoVendido(disp, cat, 'brasileiros') ? [] : [{ cat, qtd: 0, preco: '', trecho: 'tabela *Brasileiros* de ' + cat + ' (fora de venda)' }];
 }
 // Divide em frases mantendo as quebras de linha.
 function _frases(linha) { return String(linha).split(/(?<=[.!?])\s+/); }
@@ -166,6 +189,18 @@ function systemPrompt(dispTipos) {
   const _d = dispTipos || { seguidores: ['mistos', 'brasileiros', 'organicos'], curtidas: ['mistos', 'brasileiros', 'organicos'] };
   const _seg = (_d.seguidores || []).map((t) => _nomeT[t] || t).join(', ') || 'nenhum tipo';
   const _cur = (_d.curtidas || []).map((t) => _nomeT[t] || t).join(', ') || 'nenhum tipo';
+  // Títulos/opções só dos tipos à venda — as regras abaixo listavam sempre os 3 e o bot
+  // mandava a tabela de seguidores *Brasileiros* mesmo oculta no site.
+  const _titulo = { mistos: '*Mistos*', brasileiros: '*Brasileiros*', organicos: '*Brasileiros reais*' };
+  const _ops = (cat) => (_d[cat] || []).map((t) => _titulo[t]).filter(Boolean);
+  const _ou = (arr) => (arr.length > 1 ? arr.slice(0, -1).join(', ') + ' ou ' + arr[arr.length - 1] : (arr[0] || ''));
+  const _regraBrasileiros = (cat, rotulo) => {
+    const temB = (_d[cat] || []).includes('brasileiros'); const temR = (_d[cat] || []).includes('organicos');
+    if (temB && temR) return `${rotulo}: mostre as 2 opções — *Brasileiros* e *Brasileiros reais* (orgânicos, perfis reais, o mais estável) — cada tabela com seu título, e pergunte qual tipo e quantidade.`;
+    if (temR) return `${rotulo}: NÃO temos *brasileiros* simples à venda — o que temos de brasileiros é *Brasileiros reais* (orgânicos, perfis reais, o mais estável). Mostre SÓ essa tabela (tipo organicos) e NUNCA uma tabela "*Brasileiros*".`;
+    if (temB) return `${rotulo}: mostre a tabela de *Brasileiros*. *Brasileiros reais* NÃO está à venda em ${cat} — não ofereça.`;
+    return `${rotulo}: não temos tipo brasileiro à venda — ofereça os disponíveis.`;
+  };
   return [
     `DISPONIBILIDADE ATUAL (REGRA ACIMA DE TUDO): em SEGUIDORES só trabalhamos com ${_seg}; em CURTIDAS só com ${_cur}. NUNCA ofereça, cite tabela ou cote um tipo que NÃO esteja nessa lista — as ferramentas recusam tipo indisponível. Se o cliente pedir um tipo indisponível, diga com gentileza que no momento só temos os tipos acima e ofereça esses. VISUALIZAÇÕES (reels) seguem normais.`,
     'Você é um atendente de vendas do Instagram pelo WhatsApp da Agência Oppus. Feche a venda AQUI, pela conversa — nunca mande o cliente pro site.',
@@ -196,7 +231,7 @@ function systemPrompt(dispTipos) {
     'DISCORDÂNCIA DE NÚMERO: se o cliente disser que o número de seguidores que você falou está errado ("não tenho isso", "tenho mais", "tenho menos"), NÃO insista no seu número e NÃO discuta — chame validar_perfil de novo e use o número que a ferramenta retornar agora. Todo número de seguidores que você escrever TEM que ter vindo de validar_perfil nesta conversa; nunca afirme uma quantidade de cabeça.',
     '"SÃO FALSOS/FAKE/ROBÔS?" (sobre mistos ou internacionais): responda CURTO e GENÉRICO, SEM detalhamento e SEM dizer que são falsos/fake. NÃO faça comparação longa entre os tipos e NÃO empurre os orgânicos. NUNCA afirme que algum tipo é falso, fake ou robô. Ex. de tom: "São contas reais que dão número e autoridade ao seu perfil. Quer que eu te mostre a tabela?". Não volunteie ressalvas nem defeitos.',
     'Pedido múltiplo (vários serviços numa mensagem): avise que faz um de cada vez, organizado, e comece pelo primeiro.',
-    'TIPO ANTES DO PREÇO (CRÍTICO): NUNCA mostre tabela/valor de seguidores ou curtidas sem deixar claro DE QUAL TIPO são. Se o cliente ainda não escolheu, PERGUNTE primeiro (*mistos*, *brasileiros* ou *brasileiros reais*). Se as ferramentas retornarem tipoAssumido=true, os preços são de *mistos* (internacionais) — então ou você escreve isso explicitamente na mensagem, ou pergunta o tipo antes de cotar. Mostrar preço de *mistos* como se fosse "o preço" engana o cliente e gera reclamação depois.',
+    `TIPO ANTES DO PREÇO (CRÍTICO): NUNCA mostre tabela/valor de seguidores ou curtidas sem deixar claro DE QUAL TIPO são. Se o cliente ainda não escolheu, PERGUNTE primeiro (seguidores: ${_ou(_ops('seguidores'))}; curtidas: ${_ou(_ops('curtidas'))}). Se as ferramentas retornarem tipoAssumido=true, os preços são de *mistos* (internacionais) — então ou você escreve isso explicitamente na mensagem, ou pergunta o tipo antes de cotar. Mostrar preço de *mistos* como se fosse "o preço" engana o cliente e gera reclamação depois.`,
     '@ OBRIGATÓRIO EM TODO PEDIDO (inclusive curtidas e visualizações, mesmo já tendo o link do post): peça o @ do Instagram e valide com validar_perfil ANTES de gerar o Pix. NUNCA use o e-mail (ex.: fulano@hotmail.com) nem o nome do cliente como @.',
     'IMAGEM DO CLIENTE: mensagens "[O cliente enviou uma IMAGEM… Conteúdo da imagem: …]" trazem o que está na foto. Use isso: se aparecer o @ do Instagram, use esse @ (ex.: consultar_pedido com usuario); se for print da página de reposição com erro, trate como ERRO NA REPOSIÇÃO; se for comprovante, trate como pagamento enviado. Não diga que não consegue ver imagens.',
     'LINK DE REPOSIÇÃO: só envie o refilLink que a ferramenta consultar_pedido devolveu. NUNCA monte ou invente link (ex.: token=abc). Se não achar o pedido pelo telefone, peça o nome de usuário (@) do Instagram e consulte de novo.',
@@ -209,9 +244,10 @@ function systemPrompt(dispTipos) {
     'ERRO NA REPOSIÇÃO (cliente diz que pediu a reposição e deu erro, erro interno, não consegue, não funciona, manda print de erro): NUNCA mande o link de reposição de novo e NUNCA responda com status do pedido ("está em andamento") — ele JÁ tentou pelo link. Diga que vai acionar o suporte para verificar e resolver, e chame chamar_suporte com o motivo.',
     'PAGAMENTO JÁ CONFIRMADO: se no histórico já existe a mensagem de *Pagamento confirmado* deste pedido, NUNCA peça o pagamento de novo, não reenvie o Pix e não diga que está aguardando a confirmação. Trate o pedido como pago: agradeça e fale da entrega.',
     'TAXA DE QUEDA: "5-6% em mais de um mês" vale SÓ para *brasileiros reais* (orgânicos). NUNCA diga isso de *mistos* ou *brasileiros* — desses diga que pode haver queda com o tempo e que seguidores têm reposição pelo link.',
-    'CLIENTE PEDIU "BRASILEIROS" (seguidores ou curtidas): mostre SEMPRE as 2 opções — *Brasileiros* e *Brasileiros reais* (orgânicos, perfis reais, o mais estável) — cada tabela com seu título, e pergunte qual tipo e quantidade. Não escolha por ele nem mostre só uma. Se ele já escolheu um dos dois depois de ver as duas, siga com o escolhido.',
+    _regraBrasileiros('seguidores', 'CLIENTE PEDIU SEGUIDORES "BRASILEIROS"'),
+    _regraBrasileiros('curtidas', 'CLIENTE PEDIU CURTIDAS "BRASILEIRAS"'),
     'CLIENTE PERGUNTA "SÃO REAIS?" / "são de verdade?" / "são reais mesmo?" / "são contas reais?" / "quero reais": NUNCA afirme que *mistos* ou *brasileiros* (simples) são "reais", nem diga que "são contas reais e ativas". Em vez disso, diga que temos a OPÇÃO específica de *Brasileiros reais* (orgânicos) — perfis 100% reais e ativos, o serviço mais estável — e mostre essa opção (a tabela de *organicos*). Explique a diferença em 1 frase: *brasileiros* = seguidores do Brasil; *brasileiros reais* (orgânicos) = perfis reais e ativos, o pacote premium. Deixe o cliente escolher.',
-    'VÁRIAS TABELAS:ao mostrar mais de uma tabela de preço, SEMPRE coloque o título do tipo em cima de cada lista (*Mistos*, *Brasileiros*, *Brasileiros reais*). Nunca mande listas seguidas sem dizer de qual tipo é cada uma.',
+    `VÁRIAS TABELAS: ao mostrar mais de uma tabela de preço, SEMPRE coloque o título do tipo em cima de cada lista. Seguidores à venda: ${_ou(_ops('seguidores'))}; curtidas à venda: ${_ou(_ops('curtidas'))}. Nunca mande tabela de tipo fora dessa lista e nunca mande listas seguidas sem dizer de qual tipo é cada uma.`,
     'PREÇO SÓ DA FERRAMENTA: qualquer preço ou quantidade que você escrever tem que ter vindo de cotar_preco ou tabela_precos NESTA conversa. Nunca invente quantidade que não está na tabela (ex.: "2.500") nem combine preços.',
     'LINK DE REPOSIÇÃO: mande o link de reposição SÓ quando o cliente falar de queda de seguidores ou pedir reposição. Para quem está esperando a entrega (pedido em andamento), NÃO mande o link.',
     'PEDIDO JÁ PAGO: se gerar_pix responder pedido_ja_pago, ou se o cliente mandou comprovante/disse que pagou, NÃO gere outro Pix e NÃO diga que está aguardando pagamento. Confirme e fale da entrega. Se ele disser que pagou mas o sistema ainda não confirmou, diga que a confirmação pode levar alguns minutos.',
@@ -242,14 +278,24 @@ async function runTool(name, args, ctx) {
         const aceitaTipo = ['seguidores', 'curtidas'].includes(String((args2 && args2.servico) || '').toLowerCase());
         if (r && r.ok && semTipo && aceitaTipo) {
           r.tipoAssumido = true;
-          r.aviso = 'O cliente NÃO escolheu o tipo — assumi *mistos* (internacionais/mundiais). Você DEVE dizer explicitamente que são *mistos* ao mostrar estes preços, ou perguntar antes qual tipo ele quer (*mistos*, *brasileiros* ou *brasileiros reais*). NUNCA mostre estes valores como se fossem os únicos.';
+          r.aviso = 'O cliente NÃO escolheu o tipo — assumi *mistos* (internacionais/mundiais). Você DEVE dizer explicitamente que são *mistos* ao mostrar estes preços, ou perguntar antes qual tipo ele quer (só os tipos à venda da regra DISPONIBILIDADE ATUAL). NUNCA mostre estes valores como se fossem os únicos.';
         }
       } catch (_) {}
       return r;
     };
     if (name === 'cotar_preco') return avisaTipo(await sales.quote(args || {}), args);
     if (name === 'tabela_precos') {
-      const r = avisaTipo(await sales.priceTable(args || {}), args);
+      let r = avisaTipo(await sales.priceTable(args || {}), args);
+      // "brasileiros" fora de venda mas *brasileiros reais* à venda → devolve a de reais.
+      try {
+        if (r && !r.ok && r.error === 'tipo_indisponivel' && r.tipo === 'brasileiros' && (r.tiposDisponiveis || []).includes('organicos')) {
+          const reais = await sales.priceTable({ servico: args.servico, tipo: 'organicos' });
+          if (reais && reais.ok) {
+            r = reais;
+            r.aviso = 'Não temos *brasileiros* simples à venda agora. O que temos de brasileiros é *Brasileiros reais* (orgânicos, perfis reais, o mais estável) — mostre ESTA tabela com o título *Brasileiros reais* e pergunte a quantidade. NUNCA escreva uma tabela com título "*Brasileiros*".';
+          }
+        }
+      } catch (_) {}
       // "brasileiros" → devolve junto a tabela de brasileiros reais: as 2 opções vão sempre.
       try {
         if (r && r.ok && r.tipo === 'brasileiros' && ['seguidores', 'curtidas'].includes(r.servico)) {
@@ -542,20 +588,21 @@ async function handleAgentMessage(msg, sendText) {
   // Preço inventado → pede ao modelo para reescrever com a tabela oficial; se insistir,
   // responde com a tabela oficial direto.
   try {
-    let erradosP = acharPrecosErrados(finalText);
+    const conferir = (txt) => { const e = acharPrecosErrados(txt, _dispTipos); return e.length ? e : tiposForaDeVenda(txt, _dispTipos); };
+    let erradosP = conferir(finalText);
     if (erradosP.length && !erroRefilTratado) {
       try { console.warn('💸 [agent] preço fora da tabela:', JSON.stringify(erradosP)); } catch (_) {}
       const cats = [...new Set(erradosP.map((e) => e.cat))];
-      const oficial = cats.map((c) => '### ' + c.toUpperCase() + '\n' + tabelaOficialTexto(c)).join('\n\n');
-      work.push({ role: 'system', content: 'CORREÇÃO OBRIGATÓRIA: sua resposta citou preço/quantidade que NÃO existe na tabela oficial (' + erradosP.map((e) => e.trecho).join(' | ') + '). Reescreva a MESMA resposta usando SOMENTE estes preços e quantidades oficiais (se a quantidade pedida não existe, diga quais existem):\n\n' + oficial });
+      const oficial = cats.map((c) => '### ' + c.toUpperCase() + '\n' + tabelaOficialTexto(c, _dispTipos)).join('\n\n');
+      work.push({ role: 'system', content: 'CORREÇÃO OBRIGATÓRIA: sua resposta citou preço/quantidade/tipo que NÃO existe na tabela oficial ou NÃO está à venda (' + erradosP.map((e) => e.trecho).join(' | ') + '). Reescreva a MESMA resposta usando SOMENTE estes tipos, preços e quantidades oficiais (se a quantidade ou o tipo pedido não existe, diga quais existem):\n\n' + oficial });
       try { const mC = await openaiChat(work, false); const novo = String((mC && mC.content) || '').trim(); if (novo) finalText = novo; } catch (_) {}
-      erradosP = acharPrecosErrados(finalText);
+      erradosP = conferir(finalText);
       if (erradosP.length) finalText = 'Deixa eu te passar os valores oficiais certinhos:\n\n' + oficial.replace(/^### .*$/gm, '').trim() + '\n\nQual quantidade você quer?';
     }
   } catch (_) {}
   try {
     const pediuReais = /reais|real\b|org[âa]nic|de verdade/i.test((ctx.recentUserTexts || [text]).slice(0, 2).join(' ').replace(/\d+\s*reais/gi, ''));
-    if (!erroRefilTratado && !pediuReais) finalText = garantirBrasileirosReais(finalText);
+    if (!erroRefilTratado && !pediuReais) finalText = garantirBrasileirosReais(finalText, _dispTipos);
   } catch (_) {}
   try { finalText = corrigirTaxaQueda(finalText); } catch (_) {}
   try {
@@ -691,4 +738,12 @@ async function handleSalesMessage(msg, sendText) {
   try { await sendText(phone, reply); } catch (_) {}
 }
 
-module.exports = { isEnabled, handleAgentMessage, handleSalesMessage, clearHistory, systemPrompt };
+// Registra no histórico do agente uma mensagem que saiu FORA dele (ex.: retomada automática),
+// para a IA saber o que acabou de ser enviado e não repetir/contradizer no próximo turno.
+async function appendAssistantNote(phone, text) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  try { const h = await loadHistory(phone); h.push({ role: 'assistant', content: t }); await saveHistory(phone, h); } catch (_) {}
+}
+
+module.exports = { isEnabled, handleAgentMessage, handleSalesMessage, clearHistory, systemPrompt, appendAssistantNote };
