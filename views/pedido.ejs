@@ -2530,5 +2530,79 @@ function startPrivacyTimer(seconds) {
       } catch(_) {}
     })();
   </script>
+  <% if (isPaidLocal) { %>
+  <!-- Comunidade no WhatsApp: card depois do "Voltar" + bolha flutuante que aparece quando
+       o cliente rola a tela para baixo do "Não, obrigado" do upsell (≈3 roladas no celular). -->
+  <style>
+    @keyframes cmdRing{0%{box-shadow:0 0 0 0 rgba(255,255,255,.55)}70%{box-shadow:0 0 0 10px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+    @keyframes cmdWiggle{0%,86%,100%{transform:rotate(0)}89%{transform:rotate(-14deg)}92%{transform:rotate(12deg)}95%{transform:rotate(-8deg)}98%{transform:rotate(4deg)}}
+    /* Entra e sai por transição (some ao rolar de volta para cima do upsell). */
+    #cmdBubble{position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9990;max-width:calc(100vw - 28px);opacity:0;visibility:hidden;pointer-events:none;transform:translateY(24px) scale(.9);transition:opacity .25s ease,transform .35s cubic-bezier(.2,.9,.3,1.25),visibility 0s linear .35s}
+    #cmdBubble.show{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0) scale(1);transition:opacity .25s ease,transform .45s cubic-bezier(.2,.9,.3,1.25),visibility 0s}
+    /* Espaço no fim da página para a bolha não cobrir o "Voltar". */
+    body.cmd-on .main-content{padding-bottom:84px}
+    #cmdBubble .cmdb-link{display:flex;align-items:center;gap:10px;padding:8px 16px 8px 8px;border-radius:999px;background:#1DA851;color:#fff;text-decoration:none;font-weight:400;font-size:.9rem;letter-spacing:.01em;box-shadow:0 8px 20px rgba(16,110,60,.28)}
+    #cmdBubble .cmdb-ico{flex:none;width:38px;height:38px;border-radius:50%;background:#fff;color:#1DA851;display:flex;align-items:center;justify-content:center;animation:cmdRing 2s ease-out infinite}
+    #cmdBubble .cmdb-ico svg{animation:cmdWiggle 3.2s ease-in-out infinite}
+    #cmdBubble .cmdb-txt{display:flex;flex-direction:column;gap:1px;line-height:1.2;min-width:0;white-space:nowrap}
+    #cmdBubble .cmdb-title{font-weight:700;font-size:.9rem}
+    #cmdBubble .cmdb-sub{font-weight:400;font-size:.76rem;opacity:.92}
+    /* "×" discreto: círculo branco pequeno, traço fino cinza. A área de toque é maior que o desenho. */
+    #cmdBubbleClose{position:absolute;top:-10px;left:-10px;width:30px;height:30px;border:none;background:none;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+    #cmdBubbleClose span{width:18px;height:18px;border-radius:50%;background:#fff;color:#94a3b8;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.12);display:flex;align-items:center;justify-content:center}
+    #cmdBubbleClose:hover span{color:#475569}
+    @media (prefers-reduced-motion: reduce){#cmdBubble,#cmdBubble.show{transition:none}#cmdBubble .cmdb-ico,#cmdBubble .cmdb-ico svg{animation:none}}
+  </style>
+  <div id="cmdBubble">
+    <button type="button" id="cmdBubbleClose" aria-label="Fechar"><span><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span></button>
+    <a class="cmdb-link" href="https://chat.whatsapp.com/DnS9B3B7lBbCEYbPs3zVdF" target="_blank" rel="noopener noreferrer" aria-label="Acesse nossa comunidade no WhatsApp">
+    <span class="cmdb-ico" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M17.47 14.38c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.49-1.77-1.66-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.08c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.63.71.22 1.36.19 1.87.12.57-.09 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35zM12.04 21.5h-.01a9.4 9.4 0 01-4.8-1.31l-.34-.2-3.57.93.95-3.48-.22-.36a9.39 9.39 0 01-1.44-5.01c0-5.19 4.23-9.42 9.43-9.42 2.52 0 4.88.98 6.66 2.76a9.36 9.36 0 012.76 6.67c0 5.2-4.23 9.42-9.42 9.42zm8.02-17.44A11.3 11.3 0 0012.04.75C5.8.75.72 5.83.72 12.08c0 2 .52 3.95 1.52 5.66L.62 23.25l5.65-1.48a11.3 11.3 0 005.77 1.47h.01c6.25 0 11.33-5.08 11.33-11.33 0-3.03-1.18-5.87-3.32-8.01z"/></svg></span>
+    <span class="cmdb-txt"><span class="cmdb-title">Acesse nossa comunidade</span><span class="cmdb-sub">Ofertas imperdíveis</span></span>
+    </a>
+  </div>
+  <script>
+    (function(){
+      try {
+        var b = document.getElementById('cmdBubble');
+        var x = document.getElementById('cmdBubbleClose');
+        if (!b) return;
+        var fechado = false;
+        try { fechado = sessionStorage.getItem('oppus_cmd_fechado') === '1'; } catch(_) {}
+        if (fechado) return;
+        // Âncora: o card do upsell (orderbump). Aparece quando o fim do card já subiu um pouco
+        // (passou do meio da tela). Sem upsell na tela: depois de ~3 roladas (90% da altura).
+        // Abaixo disso fica na tela até o fim da página; rolando de volta para cima, some.
+        // O "×" fecha de vez (até fechar a aba).
+        function limite(){
+          var box = document.querySelector('#upsellModal.active #upsellModalBox');
+          if (box && box.offsetParent) {
+            var r = box.getBoundingClientRect();
+            return r.bottom + window.pageYOffset - window.innerHeight * 0.5;
+          }
+          return window.innerHeight * 0.9;
+        }
+        var visivel = false;
+        function avaliar(){
+          if (fechado) return;
+          var mostrar = window.pageYOffset >= limite();
+          if (mostrar === visivel) return;
+          visivel = mostrar;
+          b.classList.toggle('show', mostrar);
+          // O respiro embaixo do "Voltar" fica depois da 1ª vez, para a página não "pular" na volta.
+          if (mostrar) document.body.classList.add('cmd-on');
+        }
+        window.addEventListener('scroll', avaliar, { passive: true });
+        window.addEventListener('resize', avaliar);
+        avaliar();
+        if (x) x.addEventListener('click', function(ev){
+          ev.preventDefault(); ev.stopPropagation();
+          fechado = true; b.classList.remove('show'); document.body.classList.remove('cmd-on');
+          try { sessionStorage.setItem('oppus_cmd_fechado', '1'); } catch(_) {}
+        });
+        var lk = b.querySelector('.cmdb-link');
+        if (lk) lk.addEventListener('click', function(){ try { if (window.fbq) fbq('trackCustom', 'ComunidadeWhatsapp', { origem: 'bolha' }); } catch(_) {} });      } catch(_) {}
+    })();
+  </script>
+  <% } %>
 </body>
 </html>
