@@ -4617,9 +4617,154 @@ app.post('/api/painel/seg-parcial/config', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Checa UM teste: busca seguidores atuais, atualiza pico/atual/queda e o histórico
 // (1 ponto por dia BRT — reconsulta no mesmo dia substitui o ponto do dia).
+// Ritmo do TikTok: todo acesso à página do TikTok (checagem das 12h e botões de checar) passa por
+// aqui. Um acesso por vez, intervalo mínimo de ~10s (+ variação aleatória) e, quando o TikTok devolve
+// a página de verificação/bloqueio, pausa de 3 min antes do próximo. Assim o IP não toma 403.
+const __ttPace = { last: 0, cooldownUntil: 0, chain: Promise.resolve() };
+const TT_GAP_MS = 10000, TT_JITTER_MS = 5000, TT_COOLDOWN_MS = 180000;
+function ttGet(url, ua) {
+  const run = async () => {
+    const espera = Math.max(__ttPace.cooldownUntil, __ttPace.last + TT_GAP_MS + Math.floor(Math.random() * TT_JITTER_MS)) - Date.now();
+    if (espera > 0) await new Promise((res) => setTimeout(res, espera));
+    try { return await axios.get(url, { headers: { 'User-Agent': ua, 'Accept-Language': 'es-MX,es;q=0.9' }, timeout: 20000, validateStatus: () => true }); }
+    finally { __ttPace.last = Date.now(); }
+  };
+  const p = __ttPace.chain.then(run, run);
+  __ttPace.chain = p.catch(() => {});
+  return p;
+}
+function ttMarcarBloqueio() { __ttPace.cooldownUntil = Date.now() + TT_COOLDOWN_MS; }
+const TT_UA_MOB = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const TT_UA_DESK = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+// Seguidores de perfil/página do Facebook pela prévia pública (UA do crawler do Facebook): o
+// og:description traz o número exato ("Nome. 28.726.311 seguidores · …"). Mesma leitura da etapa 2 do You Agency.
+// Retorna { count } | null (link inválido / página não existe = 404) | { semNumero: true } (abriu sem número).
+async function fetchFacebookFollowerCount(linkRaw) {
+  let v = String(linkRaw || '').trim();
+  if (/^([a-z0-9-]+\.)*(facebook\.com|fb\.com)\//i.test(v)) v = 'https://' + v;
+  if (/^\d{5,20}$/.test(v)) v = 'https://www.facebook.com/profile.php?id=' + v;
+  if (!/^https?:\/\/([a-z0-9-]+\.)*(facebook\.com|fb\.com)\//i.test(v)) return null;
+  const pid = v.match(/profile\.php\?id=(\d+)/i);
+  const url = pid ? 'https://www.facebook.com/profile.php?id=' + pid[1] : v.replace(/^http:/i, 'https:').replace(/[?#].*$/, '').replace(/^https:\/\/(m\.|web\.|mbasic\.)?facebook\.com/i, 'https://www.facebook.com');
+  let ultimoStatus = 0;
+  for (let t = 0; t < 2; t++) {
+    try {
+      const r = await axios.get(url, { headers: { 'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)', 'Accept-Language': 'pt-BR,pt;q=0.9' }, timeout: 20000, maxRedirects: 5, validateStatus: () => true });
+      ultimoStatus = r.status;
+      if (r.status === 404) return null;
+      const h = String(r.data || '');
+      const desc = (h.match(/<meta (?:name="description"|property="og:description") content="([^"]*)"/) || [])[1] || '';
+      const m = desc.match(/(\d[\d.,]*)[\s ]*(mil\s+)?(seguidores|followers)/i);
+      if (m) {
+        let n = Number(m[1].replace(/[^\d,]/g, '').replace(/,(?=\d{3}\b)/g, '').replace(',', '.'));
+        if (m[2]) n *= 1000; // "1,2 mil seguidores" (o Facebook costuma mandar o número cheio, mas por via das dúvidas)
+        if (Number.isFinite(n)) return { count: Math.round(n), source: 'facebook_og' };
+      }
+    } catch (_) {}
+    await new Promise((res) => setTimeout(res, 2500));
+  }
+  return { semNumero: true, status: ultimoStatus };
+}
+
+// Seguidores de um perfil do TikTok pela página pública (mesma leitura da busca do You Agency).
+// Retorna { count } | null (perfil não existe/inválido) | { blocked: true } (TikTok bloqueou: não é falha do teste).
+async function fetchTikTokFollowerCount(perfilRaw) {
+  const v = String(perfilRaw || '').trim();
+  const m = v.match(/tiktok\.com\/@([A-Za-z0-9._]+)/i);
+  const user = (m ? m[1] : v).replace(/^@+/, '').replace(/[/?#].*$/, '');
+  if (!/^[A-Za-z0-9._]{2,24}$/.test(user)) return null;
+  for (let t = 0; t < 2; t++) {
+    // 1) Embed do criador (tiktok.com/embed/@perfil): a página de perfil anda bloqueando o servidor
+    //    (devolve 1462 bytes), o embed não. Traz userInfo { uniqueId, followerCount, privateAccount }.
+    try {
+      const r = await ttGet('https://www.tiktok.com/embed/@' + user, TT_UA_DESK);
+      const h = String(r.data || '');
+      const i = h.indexOf('"userInfo":{');
+      if (i >= 0) {
+        const ui = h.slice(i, h.indexOf('}', i) + 1);
+        const fc = ui.match(/"followerCount":(\d+)/);
+        const un = (ui.match(/"uniqueId":"([^"]+)"/) || [])[1];
+        if (fc && (!un || un.toLowerCase() === user.toLowerCase())) return { count: Number(fc[1]), source: 'tiktok_embed', isPrivate: /"privateAccount":true/.test(ui) };
+      }
+      if (r.status === 400 && /Frontity/i.test(h)) return null; // embed responde 400 quando o perfil não existe
+    } catch (_) {}
+    // 2) Página do perfil (fallback)
+    try {
+      const r = await ttGet('https://www.tiktok.com/@' + user + '?lang=es', TT_UA_MOB);
+      const mm = String(r.data || '').match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+      if (mm) {
+        const d = (JSON.parse(mm[1]).__DEFAULT_SCOPE__ || {})['webapp.user-detail'] || {};
+        const ui = d.userInfo;
+        if (ui && ui.user) { const n = Number((ui.statsV2 && ui.statsV2.followerCount) || (ui.stats && ui.stats.followerCount)); return Number.isFinite(n) ? { count: n, source: 'tiktok_page', isPrivate: !!ui.user.privateAccount } : null; }
+        if (Number(d.statusCode) === 10221 || Number(d.statusCode) === 10202) return null; // perfil não existe
+      }
+    } catch (_) {}
+    ttMarcarBloqueio(); // sem os dados = página de verificação/403: pausa antes de tentar de novo
+  }
+  return { blocked: true };
+}
+
+// Curtidas de um vídeo do TikTok. Página mobile: o item vem no HTML e o 1º "diggCount" depois do
+// "id" do vídeo é o dele. Página desktop: itemStruct em webapp.video-detail.
+// Retorna { count } | null (link inválido) | { blocked: true }.
+async function fetchTikTokVideoLikeCount(linkRaw) {
+  const link = String(linkRaw || '').trim();
+  if (!/^https?:\/\/([a-z0-9-]+\.)*tiktok\.com\/@[^/]+\/(video|photo)\/\d+/i.test(link)) return null;
+  const id = (link.match(/\/(?:video|photo)\/(\d+)/) || [])[1];
+  for (let t = 0; t < 2; t++) {
+    try {
+      const r = await ttGet(link, TT_UA_MOB);
+      const h = String(r.data || '');
+      const i = h.indexOf('"id":"' + id + '"');
+      if (i >= 0) { const m = h.slice(i, i + 20000).match(/"diggCount":(\d+)/); if (m) return { count: Number(m[1]), source: 'tiktok_video' }; }
+    } catch (_) {}
+    try {
+      const r = await ttGet(link, TT_UA_DESK);
+      const mm = String(r.data || '').match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+      if (mm) {
+        const d = (JSON.parse(mm[1]).__DEFAULT_SCOPE__ || {})['webapp.video-detail'] || {};
+        const it = d.itemInfo && d.itemInfo.itemStruct;
+        if (it) { const st = it.statsV2 || it.stats || {}; const n = Number(st.diggCount); if (Number.isFinite(n)) return { count: n, source: 'tiktok_video' }; }
+      }
+    } catch (_) {}
+    ttMarcarBloqueio();
+  }
+  return { blocked: true };
+}
+
 async function serviceTestCheckOne(col, rec) {
-  // Facebook/TikTok: ainda não há medição automática (os fetchers são do Instagram). Não marca falha.
-  if (rec && rec.rede && rec.rede !== 'instagram') return { ok: false, skipped: 'rede_sem_medicao' };
+  // Facebook: só SEGUIDORES (perfil/página) têm medição; curtidas/visualizações ainda não.
+  if (rec && rec.rede === 'facebook' && !/seguidor/i.test(String(rec.tipo || ''))) return { ok: false, skipped: 'rede_sem_medicao' };
+  // TikTok: seguidores pela página do perfil; curtidas pela página do vídeo (o "perfil" é o link do vídeo).
+  // Facebook: seguidores pela prévia pública (og:description "N seguidores").
+  if (rec && (rec.rede === 'tiktok' || rec.rede === 'facebook')) {
+    const tt = rec.rede === 'facebook' ? await fetchFacebookFollowerCount(rec.perfil)
+      : (/curtida/i.test(String(rec.tipo || '')) ? await fetchTikTokVideoLikeCount(rec.perfil) : await fetchTikTokFollowerCount(rec.perfil));
+    if (tt && tt.semNumero) {
+      // Página abriu mas o Facebook não mostrou o número (perfil com seguidores ocultos, login): não marca X.
+      try { await col.updateOne({ _id: rec._id }, { $set: { lastCheckError: 'facebook_sem_numero', lastCheckErrorAt: new Date().toISOString() } }); } catch (_) {}
+      return { ok: false, semNumero: true };
+    }
+    if (tt && tt.blocked) {
+      // Bloqueio do TikTok não é defeito do teste: NÃO marca X (senão a linha seria ignorada para sempre).
+      try { await col.updateOne({ _id: rec._id }, { $set: { lastCheckError: 'tiktok_bloqueio', lastCheckErrorAt: new Date().toISOString() } }); } catch (_) {}
+      return { ok: false, blocked: true };
+    }
+    if (!tt) {
+      try { await col.updateOne({ _id: rec._id }, { $set: { measureFailed: true, measureFailedAt: new Date().toISOString(), measureFailReason: rec.rede + '_fetch_failed', updatedAt: new Date().toISOString() }, $inc: { measureFailCount: 1 } }); } catch (_) {}
+      return { ok: false };
+    }
+    const count = tt.count;
+    const pico = Math.max(Number(rec.pico || 0) || 0, count);
+    const quedaPct = pico > 0 ? Math.round(((pico - count) / pico) * 1000) / 10 : 0;
+    let hist = Array.isArray(rec.history) ? rec.history.slice() : [];
+    const point = { at: new Date().toISOString(), count, source: tt.source };
+    if (hist.length && brtDayKey(hist[hist.length - 1].at) === brtDayKey(Date.now())) hist[hist.length - 1] = point; else hist.push(point);
+    if (hist.length > 180) hist = hist.slice(-180);
+    await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: tt.source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, $unset: { lastCheckError: '', lastCheckErrorAt: '' } });
+    return { ok: true, count, pico, quedaPct, source: tt.source };
+  }
   // Tipo CURTIDAS → o "perfil" é o LINK DO POST; medimos as CURTIDAS ATUAIS do post
   // (RocketAPI get_info_by_shortcode → Apify). Demais tipos → seguidores do perfil.
   const isCurtidas = /curtida/i.test(String(rec.tipo || ''));
@@ -4656,27 +4801,65 @@ async function serviceTestCheckOne(col, rec) {
   await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
   return { ok: true, count, pico, quedaPct, source };
 }
-// Checa TODOS os testes (usado pelo cron das 12h e pelo botão "Checar todos agora").
+// Checagem dos testes: um job por vez (cron das 12h, "Checar todos", "Checar selecionados").
+// O painel acompanha por /check-status e pode PAUSAR: termina a linha em andamento, para e guarda as
+// linhas que faltam em __svcJob.pausado; "Continuar" retoma só essas.
 let __serviceTestsRunning = false;
-async function runServiceTestsDailyCheck() {
+const __svcJob = { running: false, origem: '', rede: '', total: 0, feitos: 0, ok: 0, fail: 0, pausar: false, pausado: null, inicio: null, fim: null, ultimo: null };
+function svcJobStatus() {
+  const j = __svcJob;
+  return { running: j.running, origem: j.origem, rede: j.rede, total: j.total, feitos: j.feitos, ok: j.ok, fail: j.fail, pausando: j.running && j.pausar,
+    pausado: j.pausado ? { rede: j.pausado.rede, origem: j.pausado.origem, restantes: j.pausado.ids.length, feitos: j.pausado.feitos, total: j.pausado.total } : null,
+    inicio: j.inicio, fim: j.fim, ultimo: j.ultimo };
+}
+// Roda a checagem de uma lista de registros. `origem`: 'cron' | 'todos' | 'selecionados' | 'continuar'.
+async function runServiceTestsJob(recs, { rede = '', origem = '', ignored = 0 } = {}) {
   if (__serviceTestsRunning) return { skipped: true, reason: 'running' };
   __serviceTestsRunning = true;
-  const out = { checked: 0, ok: 0, fail: 0, ignored: 0, failedIds: [] };
+  const out = { checked: 0, ok: 0, fail: 0, ignored, failedIds: [] };
+  Object.assign(__svcJob, { running: true, origem, rede, total: recs.length, feitos: 0, ok: 0, fail: 0, pausar: false, pausado: null, inicio: new Date().toISOString(), fim: null });
   try {
     const col = await getCollection('service_tests');
-    // Ignora linhas já marcadas como falha (perfil caiu/sumiu) — não tenta medir de novo.
-    const recs = await col.find({ measureFailed: { $ne: true } }).toArray();
-    out.ignored = await col.countDocuments({ measureFailed: true }).catch(() => 0);
-    for (const rec of recs) {
+    let ttBloqueiosSeguidos = 0;
+    for (let i = 0; i < recs.length; i++) {
+      if (__svcJob.pausar) {
+        const ids = recs.slice(i).map((r) => String(r._id));
+        __svcJob.pausado = { rede, origem, ids, feitos: i, total: recs.length };
+        out.paused = true; out.restantes = ids.length;
+        break;
+      }
+      const rec = recs[i];
+      const ehTT = rec.rede === 'tiktok';
+      // TikTok bloqueou 3 vezes seguidas (mesmo com as pausas): deixa o resto do TikTok para a próxima rodada.
+      if (ehTT && ttBloqueiosSeguidos >= 3) { out.tiktokAdiados = (out.tiktokAdiados || 0) + 1; __svcJob.feitos++; continue; }
       out.checked++;
-      let ok = false;
-      try { const r = await serviceTestCheckOne(col, rec); ok = !!(r && r.ok); } catch (_) { ok = false; }
-      if (ok) out.ok++; else { out.fail++; out.failedIds.push(String(rec._id)); }
-      await new Promise((res) => setTimeout(res, 400));
+      let ok = false, r = null;
+      try { r = await serviceTestCheckOne(col, rec); ok = !!(r && r.ok); } catch (_) { ok = false; }
+      if (ehTT) ttBloqueiosSeguidos = (r && r.blocked) ? ttBloqueiosSeguidos + 1 : 0;
+      if (ok) out.ok++;
+      else if (r && r.skipped) { out.semMedicao = (out.semMedicao || 0) + 1; } // tipo sem medição (FB curtidas/views): não é falha
+      else { out.fail++; out.failedIds.push(String(rec._id)); }
+      __svcJob.feitos++; __svcJob.ok = out.ok; __svcJob.fail = out.fail;
+      if (!ehTT) await new Promise((res) => setTimeout(res, 400)); // TikTok já tem o ritmo próprio (ttGet)
     }
   } catch (e) { out.error = e && e.message; }
+  __svcJob.running = false; __svcJob.pausar = false; __svcJob.fim = new Date().toISOString();
+  __svcJob.ultimo = { origem, rede, ok: out.ok, fail: out.fail, ignored: out.ignored, paused: !!out.paused, restantes: out.restantes || 0, tiktokAdiados: out.tiktokAdiados || 0, failedIds: out.failedIds.slice(0, 500), fim: __svcJob.fim };
   __serviceTestsRunning = false;
   return out;
+}
+function svcFiltroRede(rede) {
+  return rede === 'tiktok' || rede === 'facebook' ? { rede } : (rede === 'instagram' ? { rede: { $nin: ['tiktok', 'facebook'] } } : {});
+}
+// Checa TODOS os testes (cron das 12h sem `rede`; botão "Checar todos agora" com a rede da aba aberta).
+async function runServiceTestsDailyCheck(rede, origem) {
+  if (__serviceTestsRunning) return { skipped: true, reason: 'running' };
+  const col = await getCollection('service_tests');
+  // Ignora linhas já marcadas como falha (perfil caiu/sumiu) — não tenta medir de novo.
+  const fRede = svcFiltroRede(rede);
+  const recs = await col.find({ ...fRede, measureFailed: { $ne: true } }).toArray();
+  const ignored = await col.countDocuments({ ...fRede, measureFailed: true }).catch(() => 0);
+  return runServiceTestsJob(recs, { rede: rede || '', origem: origem || 'cron', ignored });
 }
 // Agenda o check diário às 12h BRT (12:00 BRT = 15:00 UTC).
 let __serviceTestsTimer = null;
@@ -5009,7 +5192,13 @@ app.post('/api/painel/testes-servicos/check', requireAdmin, async (req, res) => 
     const col = await getCollection('service_tests');
     const rec = await col.findOne({ _id: new ObjectId(id) });
     if (!rec) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (rec.rede === 'tiktok' && __ttPace.cooldownUntil > Date.now()) {
+      return res.status(429).json({ ok: false, error: 'tiktok_pausa', message: 'TikTok em pausa anti-bloqueio. Tente de novo em ' + Math.ceil((__ttPace.cooldownUntil - Date.now()) / 1000) + 's.' });
+    }
     const r = await serviceTestCheckOne(col, rec);
+    if (r && r.blocked) return res.status(429).json({ ok: false, error: 'tiktok_bloqueio', message: 'O TikTok bloqueou a leitura agora. Pausa de 3 min; a linha NÃO foi marcada com X.' });
+    if (r && r.skipped) return res.status(422).json({ ok: false, error: 'sem_medicao', message: 'Esse tipo do Facebook ainda não tem medição automática (só seguidores de perfil/página).' });
+    if (r && r.semNumero) return res.status(502).json({ ok: false, error: 'facebook_sem_numero', message: 'O Facebook abriu a página mas não mostrou o número de seguidores (perfil com seguidores ocultos?). A linha NÃO foi marcada com X.' });
     if (!r.ok) return res.status(502).json({ ok: false, error: 'check_failed', message: 'Não foi possível obter os seguidores (RocketAPI e Apify falharam).' });
     return res.json({ ok: true, count: r.count, pico: r.pico, quedaPct: r.quedaPct, source: r.source });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
@@ -5120,32 +5309,65 @@ app.post('/api/painel/testes-servicos/refil-bulk', requireAdmin, async (req, res
     return res.json(out);
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
-// Checa TODOS agora (botão do topo)
+// Checa TODOS agora (botão do topo) — roda em segundo plano; o painel acompanha por /check-status.
+function svcJobMinutos(recs) {
+  const nTT = recs.filter((r) => r.rede === 'tiktok').length;
+  return Math.max(1, Math.ceil((nTT * (TT_GAP_MS + TT_JITTER_MS / 2) + (recs.length - nTT) * 1500) / 60000));
+}
 app.post('/api/painel/testes-servicos/check-all', requireAdmin, async (req, res) => {
-  try { const r = await runServiceTestsDailyCheck(); return res.json({ ok: true, result: r }); }
+  try {
+    const rede = String((req.body && req.body.rede) || '').toLowerCase();
+    if (__serviceTestsRunning) return res.json({ ok: false, error: 'Já tem uma checagem rodando (cron das 12h ou outro clique). Pause ela ou espere terminar.', status: svcJobStatus() });
+    const r0 = ['instagram', 'tiktok', 'facebook'].includes(rede) ? rede : '';
+    const col = await getCollection('service_tests');
+    const recs = await col.find({ ...svcFiltroRede(r0), measureFailed: { $ne: true } }).toArray();
+    const ignored = await col.countDocuments({ ...svcFiltroRede(r0), measureFailed: true }).catch(() => 0);
+    runServiceTestsJob(recs, { rede: r0, origem: 'todos', ignored }).then((r) => { try { console.log('🧪 [testes-servicos] checar todos (' + (r0 || 'todas') + '):', JSON.stringify({ ...r, failedIds: undefined })); } catch (_) {} }).catch(() => {});
+    return res.json({ ok: true, background: true, total: recs.length, minutos: svcJobMinutos(recs), status: svcJobStatus() });
+  }
   catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
-// Checa os SELECIONADOS agora (checkboxes das linhas)
+// Checa os SELECIONADOS agora (checkboxes das linhas) — também em segundo plano, pausável.
 app.post('/api/painel/testes-servicos/check-bulk', requireAdmin, async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).filter((x) => /^[0-9a-fA-F]{24}$/.test(String(x))).slice(0, 500);
     if (!ids.length) return res.status(400).json({ ok: false, error: 'no_ids' });
+    if (__serviceTestsRunning) return res.json({ ok: false, error: 'Já tem uma checagem rodando (cron das 12h ou outro clique). Pause ela ou espere terminar.', status: svcJobStatus() });
     const col = await getCollection('service_tests');
-    const out = { pedidos: ids.length, checados: 0, falhas: 0, linhas: [] };
-    for (const id of ids) {
-      try {
-        const rec = await col.findOne({ _id: new ObjectId(id) });
-        if (!rec) { out.falhas++; continue; }
-        const r = await serviceTestCheckOne(col, rec);
-        if (r && r.ok) { out.checados++; out.linhas.push({ id, count: r.count, pico: r.pico, quedaPct: r.quedaPct, source: r.source }); }
-        else { out.falhas++; out.linhas.push({ id, erro: true }); }
-      } catch (_) { out.falhas++; out.linhas.push({ id, erro: true }); }
-      await new Promise((r2) => setTimeout(r2, 200)); // rate-limit gentil no RocketAPI
-    }
-    return res.json({ ok: true, result: out });
+    const docs = await col.find({ _id: { $in: ids.map((x) => new ObjectId(x)) } }).toArray();
+    const byId = new Map(docs.map((d) => [String(d._id), d]));
+    const recs = ids.map((x) => byId.get(String(x))).filter(Boolean); // mantém a ordem da tela
+    const rede = String((req.body && req.body.rede) || '').toLowerCase();
+    runServiceTestsJob(recs, { rede, origem: 'selecionados' }).then((r) => { try { console.log('🧪 [testes-servicos] checar selecionados:', JSON.stringify({ ...r, failedIds: undefined })); } catch (_) {} }).catch(() => {});
+    return res.json({ ok: true, background: true, total: recs.length, minutos: svcJobMinutos(recs), status: svcJobStatus() });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
+// Progresso da checagem em andamento (o painel consulta a cada 2s).
+app.get('/api/painel/testes-servicos/check-status', requireAdmin, (req, res) => res.json({ ok: true, status: svcJobStatus() }));
+// Pausar: termina a linha que está sendo medida e para; guarda as que faltam.
+app.post('/api/painel/testes-servicos/check-pause', requireAdmin, (req, res) => {
+  if (!__svcJob.running) return res.json({ ok: false, error: 'Nenhuma checagem rodando.', status: svcJobStatus() });
+  __svcJob.pausar = true;
+  return res.json({ ok: true, status: svcJobStatus() });
+});
+// Continuar: retoma só as linhas que faltavam quando pausou.
+app.post('/api/painel/testes-servicos/check-resume', requireAdmin, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const pz = __svcJob.pausado;
+    if (!pz || !pz.ids.length) return res.json({ ok: false, error: 'Não tem checagem pausada.', status: svcJobStatus() });
+    if (__serviceTestsRunning) return res.json({ ok: false, error: 'Já tem uma checagem rodando.', status: svcJobStatus() });
+    const col = await getCollection('service_tests');
+    const docs = await col.find({ _id: { $in: pz.ids.map((x) => new ObjectId(x)) } }).toArray();
+    const byId = new Map(docs.map((d) => [String(d._id), d]));
+    const recs = pz.ids.map((x) => byId.get(x)).filter(Boolean);
+    runServiceTestsJob(recs, { rede: pz.rede, origem: 'continuar' }).then((r) => { try { console.log('🧪 [testes-servicos] continuar:', JSON.stringify({ ...r, failedIds: undefined })); } catch (_) {} }).catch(() => {});
+    return res.json({ ok: true, background: true, total: recs.length, minutos: svcJobMinutos(recs), status: svcJobStatus() });
+  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
+});
+// Descartar a checagem pausada (some o "Continuar").
+app.post('/api/painel/testes-servicos/check-discard', requireAdmin, (req, res) => { __svcJob.pausado = null; return res.json({ ok: true, status: svcJobStatus() }); });
 
 // Follow-up diário do bot (IA WhatsApp): /painel/ia-followup + geração sob demanda.
 try { require('./iaFollowup.js').registerIaFollowup(app, { requireAdmin, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (e) { try { console.error('⚠️ ia-followup não registrado:', e && e.message); } catch (_) {} }

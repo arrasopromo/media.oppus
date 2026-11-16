@@ -143,10 +143,13 @@
         <a href="/painel/testes-servicos?rede=<%= rd[0] %>" class="rede-tab<%= _rede===rd[0] ? ' on' : '' %>" style="--rede:<%= rd[2] %>;"><span class="rede-dot"></span><%= rd[1] %> <span class="rede-n"><%= _redeCounts[rd[0]] || 0 %></span></a>
       <% }); %>
     </nav>
-    <% if (_rede !== 'instagram') { %><div class="sub" style="margin-top:-4px;">Testes de <strong><%= _rede === 'tiktok' ? 'TikTok' : 'Facebook' %></strong>: ainda sem medição automática (a checagem das 12h é só do Instagram), então <strong>Qtd atual</strong> e queda ficam em branco.</div><% } %>
+    <% if (_rede === 'facebook') { %><div class="sub" style="margin-top:-4px;">Testes de <strong>Facebook</strong>: seguidores de perfil e página medidos pela prévia pública (número exato de seguidores), na checagem das 12h e nos botões de checar. Curtidas e visualizações ainda sem medição.</div><% } else if (_rede === 'tiktok') { %><div class="sub" style="margin-top:-4px;">Testes de <strong>TikTok</strong>: seguidores medidos pela página pública do perfil e curtidas pela página do vídeo (checagem das 12h e botões de checar).</div><% } %>
     <div class="toolbar">
       <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
       <button type="button" id="checkSelBtn" class="btn" style="background:#0f766e;color:#fff;" disabled>↻ Checar selecionados (<span id="selCount">0</span>)</button>
+      <button type="button" id="pauseCheckBtn" class="btn" style="display:none;background:#b45309;color:#fff;" title="Termina a linha que está sendo medida e para. Dá para continuar depois de onde parou.">⏸ Pausar checagem</button>
+      <button type="button" id="resumeCheckBtn" class="btn" style="display:none;background:#2563eb;color:#fff;" title="Retoma só as linhas que faltavam quando pausou">▶ Continuar checagem</button>
+      <button type="button" id="discardCheckBtn" class="btn" style="display:none;background:#e5e7eb;color:#374151;" title="Esquece a checagem pausada">✕ Descartar pausada</button>
       <button type="button" id="refilSelBtn" class="btn" style="background:#059669;color:#fff;" disabled title="Solicita refil ao fornecedor das linhas selecionadas que têm Refil = Sim">♻ Solicitar refil dos selecionados (<span id="refilSelCount">0</span>)</button>
       <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.85rem; color:#374151; user-select:none;">
         <input type="checkbox" id="hideDeadChk"> Ocultar perfis mortos
@@ -159,8 +162,8 @@
        var _redeCounts = (typeof redeCounts !== 'undefined' && redeCounts) ? redeCounts : {};
        var TIPOS_POR_REDE = {
          instagram: ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'],
-         facebook: ['seguidores perfil','seguidores página','curtidas facebook','visualizações facebook'],
-         tiktok: ['seguidores tiktok','curtidas tiktok','visualizações tiktok']
+         facebook: ['seguidores perfil mundiais','seguidores perfil brasileiros','seguidores página mundiais','seguidores página brasileiros','curtidas mundiais','curtidas brasileiras','visualizações'],
+         tiktok: ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras','visualizações']
        };
        var TIPO_OPTS = TIPOS_POR_REDE[_rede];
        var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'', precoMin:'', precoMax:'' };
@@ -527,16 +530,68 @@
       // Checar todos
       $('checkAllBtn').addEventListener('click', async function(){
         var btn = this, msg = $('checkAllMsg');
-        btn.disabled = true; msg.textContent = 'Consultando seguidores de todos…';
-        var d = await post('/api/painel/testes-servicos/check-all', {});
-        if (d && d.ok) {
-          var res = d.result || {};
-          try { sessionStorage.setItem('svcCheckFails', JSON.stringify(res.failedIds || [])); } catch(_){}
-          msg.textContent = 'Ok: ' + (res.ok||0) + ' medidos' + (res.fail ? (' · ' + res.fail + ' falha(s)') : '') + (res.ignored ? (' · ' + res.ignored + ' ignorada(s) com X') : '') + '. Recarregando…';
-          setTimeout(function(){ location.reload(); }, 1000);
-        }
-        else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); btn.disabled = false; }
+        btn.disabled = true; msg.textContent = 'Iniciando checagem…';
+        var d = await post('/api/painel/testes-servicos/check-all', { rede: <%- JSON.stringify(_rede) %> });
+        if (d && d.ok) { jobVisto = true; if (d.status) renderJob(d.status); agendaPoll(1500); }
+        else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); btn.disabled = false; if (d && d.status) { renderJob(d.status); if (d.status.running) { jobVisto = true; agendaPoll(2000); } } }
       });
+
+      // ── Checagem em segundo plano: progresso + Pausar / Continuar (Instagram, TikTok e Facebook) ──
+      var REDE_NOME = { instagram: 'Instagram', tiktok: 'TikTok', facebook: 'Facebook' };
+      var ORIGEM_NOME = { cron: 'checagem das 12h', todos: 'checar todos', selecionados: 'checar selecionados', continuar: 'checagem retomada' };
+      var pollTimer = null, jobVisto = false;
+      function agendaPoll(ms){ if (pollTimer) clearTimeout(pollTimer); pollTimer = setTimeout(pollJob, ms); }
+      function show(el, on){ if (el) el.style.display = on ? '' : 'none'; }
+      function renderJob(st){
+        var msg = $('checkAllMsg'), pb = $('pauseCheckBtn'), rb = $('resumeCheckBtn'), db = $('discardCheckBtn');
+        var redeTxt = REDE_NOME[st.rede] || 'todas as redes';
+        if (st.running) {
+          show(pb, true); show(rb, false); show(db, false);
+          pb.disabled = !!st.pausando;
+          pb.textContent = st.pausando ? '⏸ Pausando… (termina a linha atual)' : '⏸ Pausar checagem';
+          $('checkAllBtn').disabled = true; $('checkSelBtn').disabled = true;
+          msg.textContent = 'Rodando ' + (ORIGEM_NOME[st.origem] || 'checagem') + ' (' + redeTxt + '): ' + st.feitos + '/' + st.total + ' · ' + st.ok + ' ok' + (st.fail ? (' · ' + st.fail + ' falha(s)') : '');
+          return 'running';
+        }
+        show(pb, false);
+        $('checkAllBtn').disabled = false; atualizaSel();
+        if (st.pausado) {
+          show(rb, true); show(db, true); rb.disabled = false;
+          rb.textContent = '▶ Continuar checagem (' + st.pausado.restantes + ' restante' + (st.pausado.restantes === 1 ? '' : 's') + ')';
+          if (!msg.textContent || /^Rodando|^Iniciando|pausada/.test(msg.textContent)) msg.textContent = 'Checagem pausada em ' + st.pausado.feitos + '/' + st.pausado.total + ' (' + (REDE_NOME[st.pausado.rede] || 'todas as redes') + ').';
+        } else { show(rb, false); show(db, false); }
+        return 'idle';
+      }
+      async function pollJob(){
+        var r = null;
+        try { r = await fetch('/api/painel/testes-servicos/check-status', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }).then(function(x){ return x.json(); }); } catch(_){}
+        if (!r || !r.status) { if (jobVisto) agendaPoll(4000); return; }
+        if (renderJob(r.status) === 'running') { jobVisto = true; agendaPoll(2000); return; }
+        if (!jobVisto) return;
+        jobVisto = false; // terminou (ou pausou) enquanto a página acompanhava: recarrega para mostrar os números
+        var u = r.status.ultimo || {}, msg = $('checkAllMsg');
+        if (!u.paused) { try { sessionStorage.setItem('svcCheckFails', JSON.stringify(u.failedIds || [])); } catch(_){} }
+        msg.textContent = (u.paused ? 'Pausado. ' : 'Pronto. ') + (u.ok||0) + ' medido(s)' + (u.fail ? (' · ' + u.fail + ' falha(s)') : '') + (u.ignored ? (' · ' + u.ignored + ' ignorada(s) com X') : '') + (u.tiktokAdiados ? (' · ' + u.tiktokAdiados + ' do TikTok adiado(s) por bloqueio') : '') + '. Recarregando…';
+        setTimeout(function(){ location.reload(); }, 1200);
+      }
+      $('pauseCheckBtn').addEventListener('click', async function(){
+        this.disabled = true; this.textContent = '⏸ Pausando… (termina a linha atual)';
+        var d = await post('/api/painel/testes-servicos/check-pause', {});
+        if (d && d.status) renderJob(d.status);
+        agendaPoll(1000);
+      });
+      $('resumeCheckBtn').addEventListener('click', async function(){
+        this.disabled = true;
+        var d = await post('/api/painel/testes-servicos/check-resume', {});
+        if (d && d.ok) { jobVisto = true; if (d.status) renderJob(d.status); agendaPoll(1500); }
+        else { $('checkAllMsg').textContent = 'Falha: ' + ((d && d.error) || 'erro'); this.disabled = false; if (d && d.status) renderJob(d.status); }
+      });
+      $('discardCheckBtn').addEventListener('click', async function(){
+        var d = await post('/api/painel/testes-servicos/check-discard', {});
+        $('checkAllMsg').textContent = '';
+        if (d && d.status) renderJob(d.status);
+      });
+      pollJob(); // ao abrir a página: mostra checagem rodando (cron/outro clique) ou pausada
 
       // ── Seleção de linhas + checar selecionados ────────────────────────────
       function selecionadas(){ return Array.prototype.filter.call(document.querySelectorAll('.selRow'), function(cb){ return cb.checked && cb.offsetParent !== null; }); }
@@ -569,13 +624,10 @@
         var ids = selecionadas().map(function(cb){ return cb.getAttribute('data-id'); });
         if (!ids.length) return;
         var msg = $('checkAllMsg');
-        checkSelBtn.disabled = true; msg.textContent = 'Medindo seguidores de ' + ids.length + ' selecionado(s)…';
-        var d = await post('/api/painel/testes-servicos/check-bulk', { ids: ids });
-        if (d && d.ok) {
-          var r = d.result || {};
-          msg.textContent = 'Ok: ' + (r.checados||0) + ' medido(s)' + (r.falhas ? (' · ' + r.falhas + ' falha(s)') : '') + '. Recarregando…';
-          setTimeout(function(){ location.reload(); }, 900);
-        } else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); checkSelBtn.disabled = false; }
+        checkSelBtn.disabled = true; msg.textContent = 'Iniciando checagem de ' + ids.length + ' selecionado(s)…';
+        var d = await post('/api/painel/testes-servicos/check-bulk', { ids: ids, rede: <%- JSON.stringify(_rede) %> });
+        if (d && d.ok) { jobVisto = true; if (d.status) renderJob(d.status); agendaPoll(1500); }
+        else { msg.textContent = 'Falha: ' + ((d && d.error) || 'erro'); checkSelBtn.disabled = false; if (d && d.status) { renderJob(d.status); if (d.status.running) { jobVisto = true; agendaPoll(2000); } } }
       });
       var refilSelBtn = $('refilSelBtn');
       if (refilSelBtn) refilSelBtn.addEventListener('click', async function(){

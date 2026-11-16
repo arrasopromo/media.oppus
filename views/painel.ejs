@@ -4959,6 +4959,7 @@
               <tr style="background:#f9fafb; text-align:right;">
                 <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #e5e7eb;">Dia</th>
                 <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Pedidos pagos</th>
+                <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Faturamento</th>
                 <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Lucro</th>
                 <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Margem</th>
               </tr>
@@ -4970,6 +4971,7 @@
               <tr style="text-align:right; border-bottom:1px solid #f3f4f6;">
                 <td style="padding:8px 12px; text-align:left; font-weight:600;"><%= _dia %></td>
                 <td style="padding:8px 12px; font-weight:600; color:#374151; font-variant-numeric:tabular-nums;"><%= Number(d.pedidos || 0).toLocaleString('pt-BR') %></td>
+                <td style="padding:8px 12px; font-weight:600; color:#374151; font-variant-numeric:tabular-nums;"><%= _dpBrl(d.receita) %></td>
                 <td style="padding:8px 12px; font-weight:700; color:<%= _lucroCor %>;"><%= _dpBrl(d.lucro) %></td>
                 <td style="padding:8px 12px; font-weight:600; color:<%= _lucroCor %>;"><%= _dpNum(d.margem) %>%</td>
               </tr>
@@ -4979,6 +4981,7 @@
               <tr style="text-align:right; background:#f9fafb; font-weight:700;">
                 <td style="padding:10px 12px; text-align:left;">Total</td>
                 <td style="padding:10px 12px; color:#374151; font-variant-numeric:tabular-nums;"><%= Number(_dpT.pedidos || 0).toLocaleString('pt-BR') %></td>
+                <td style="padding:10px 12px; color:#374151; font-variant-numeric:tabular-nums;"><%= _dpBrl(_dpT.receita) %></td>
                 <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpBrl(_dpT.lucro) %></td>
                 <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpNum(_dpMargem) %>%</td>
               </tr>
