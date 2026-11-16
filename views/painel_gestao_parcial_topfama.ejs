@@ -40,7 +40,10 @@
     .scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .bulkbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; }
     .rowChk, #selAll { width: 16px; height: 16px; cursor: pointer; }
-  </style>
+    .th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+  .th-sort:hover { text-decoration: underline; }
+  .th-sort .sort-ind { opacity: .7; font-size: .85em; }
+</style>
 </head>
 <body>
   <%- include('partials/painel_sidebar', { page: 'gestao-parcial-topfama' }) %>
@@ -109,7 +112,7 @@
             <th>Link post</th>
             <th>Qtd contratada</th>
             <th>Status</th>
-            <th>Qtd faltando</th>
+            <th id="thFaltando" class="th-sort" title="Clique para ordenar pela quantidade faltando" aria-sort="none">Qtd faltando <span class="sort-ind">↕</span></th>
             <th>Curtidas atuais</th>
             <th>Reenvios (cadeia)</th>
             <th>Ação</th>
@@ -131,7 +134,7 @@
                var hasChain = (r.reorders && r.reorders.length);
                var canReorder = (r.remains != null && r.remains > 0 && !r.novoOrderId && !hasChain && (r.statusCat === 'partial' || r.statusCat === 'canc'));
           %>
-          <tr>
+          <tr class="row-pedido" data-faltando="<%= (r.faltando == null ? '' : r.faltando) %>">
             <td style="text-align:center;"><input type="checkbox" class="rowChk" data-id="<%= r.id %>" data-field="<%= r.field %>" data-done="<%= r.statusDone ? 1 : 0 %>" data-fornecedor="<%= r.fornecedor || '' %>" data-orderid="<%= r.orderIdOriginal || '' %>" data-usuario="<%= r.usuario || '' %>" data-linkpost="<%= r.linkPost || '' %>" data-inicial="<%= (r.initialLikes != null ? r.initialLikes : '') %>" data-contratada="<%= (r.qtdContratada != null ? r.qtdContratada : '') %>" data-atual="<%= (r.okNok === 'oculto' ? '(oculto)' : (r.auditLikes != null ? r.auditLikes : '')) %>"></td>
             <td><%= dataTxt %></td>
             <td><% if (r.fornecedor) { %><span class="muted" style="font-size:0.72rem;">"<%= r.fornecedor %>"</span> <% } %><%= r.orderIdOriginal || '—' %></td>
@@ -345,6 +348,29 @@
       });
       refreshBulk();
     })();
+  // Ordenação pela coluna "Qtd faltando" (clique alterna: maior → menor → menor → maior). Sem valor (—) fica sempre no fim.
+  (function () {
+    var th = document.getElementById('thFaltando');
+    if (!th) return;
+    var dir = 0; // 0 = ordem original, -1 = maior primeiro, 1 = menor primeiro
+    var tbody = th.closest('table').querySelector('tbody');
+    var original = Array.prototype.slice.call(tbody.querySelectorAll('tr.row-pedido'));
+    th.addEventListener('click', function () {
+      dir = (dir === -1) ? 1 : -1;
+      var linhas = original.slice();
+      linhas.sort(function (a, b) {
+        var va = a.getAttribute('data-faltando'), vb = b.getAttribute('data-faltando');
+        var na = va === '' ? null : Number(va), nb = vb === '' ? null : Number(vb);
+        if (na === null && nb === null) return original.indexOf(a) - original.indexOf(b);
+        if (na === null) return 1;
+        if (nb === null) return -1;
+        return (na - nb) * dir || (original.indexOf(a) - original.indexOf(b));
+      });
+      linhas.forEach(function (tr) { tbody.appendChild(tr); });
+      th.setAttribute('aria-sort', dir === -1 ? 'descending' : 'ascending');
+      th.querySelector('.sort-ind').textContent = dir === -1 ? '↓' : '↑';
+    });
+  })();
   </script>
 </body>
 </html>

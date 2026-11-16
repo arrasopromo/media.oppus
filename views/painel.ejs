@@ -702,6 +702,7 @@
                 %>
                 <option value="all" <%= (!wf || wf === 'all') ? 'selected' : '' %>>Todos</option>
                 <option value="expired" <%= (wf === 'expired') ? 'selected' : '' %>>Expirada</option>
+                <option value="3m" <%= (wf === '3m') ? 'selected' : '' %>>3 meses</option>
                 <option value="4m" <%= (wf === '4m') ? 'selected' : '' %>>4 meses</option>
                 <option value="6m" <%= (wf === '6m') ? 'selected' : '' %>>6 meses</option>
                 <option value="12m" <%= (wf === '12m') ? 'selected' : '' %>>1 ano</option>
@@ -900,6 +901,7 @@
                   if (refilMode === '12m') return '1 ano';
                   if (refilMode === '6m') return '6 meses';
                   if (refilMode === '4m') return '4 meses';
+                  if (refilMode === '3m') return '3 meses';
                   if (refilDaysLeft !== null) return '30 dias';
                   return '-';
                 })();
@@ -929,6 +931,8 @@
                     <span class="unknown-badge unknown-badge--lifetime">6 meses</span>
                   <% } else if (refilMode === '4m') { %>
                     <span class="unknown-badge unknown-badge--lifetime">4 meses</span>
+                  <% } else if (refilMode === '3m') { %>
+                    <span class="unknown-badge unknown-badge--lifetime">3 meses</span>
                   <% } %>
                   <%
                     const uRaw = String(username || '').trim();
@@ -960,10 +964,12 @@
                 <td style="text-align:right;" class="cell-initial"><%= (init !== null ? init : '-') %></td>
                 <td style="text-align:right;"><%= contracted %></td>
                 <td style="text-align:right;" class="cell-resultado"><%= (resultado !== null ? resultado : '-') %></td>
-                <td style="text-align:right;" class="cell-current"><% if (entregaPendente) { %><span style="color:#d97706; font-weight:700;" title="Pedido <%= (row.entregaStatus||'') %> no fornecedor — ainda não entregue">Em andamento</span><% } else { %><%= (current !== null ? current : '-') %><% } %></td>
+                <td style="text-align:right;" class="cell-current"><% if (entregaPendente && row.entregaCancelada) { %><span style="color:#dc2626; font-weight:700;" title="Último pedido <%= (row.fornecedorOrderId||'') %> está <%= (row.entregaStatus||'') %> no fornecedor">Cancelado</span><% } else if (entregaPendente) { %><span style="color:#d97706; font-weight:700;" title="Pedido <%= (row.entregaStatus||'') %> no fornecedor — ainda não entregue">Em andamento</span><% } else { %><%= (current !== null ? current : '-') %><% } %></td>
                 <td style="text-align:right;" class="cell-diff"><% if (entregaPendente) { %><span class="muted" style="color:#94a3b8;">—</span><% } else { %><%= (diff !== null ? diff : '-') %><% } %></td>
                 <td style="text-align:right;" class="cell-pct">
-                  <% if (entregaPendente) { %>
+                  <% if (entregaPendente && row.entregaCancelada) { %>
+                    <span style="color:#dc2626; font-weight:700;" title="orderId <%= (row.fornecedorOrderId||'') %>: <%= (row.entregaStatus||'') %> no fornecedor">Cancelado</span>
+                  <% } else if (entregaPendente) { %>
                     <span style="color:#d97706; font-weight:700;" title="orderId <%= (row.fornecedorOrderId||'') %> ainda não concluído no fornecedor">Em andamento</span>
                   <% } else if (resultado !== null && current !== null) { %>
                     <% if (current >= resultado) { %>
@@ -4952,6 +4958,7 @@
             <thead>
               <tr style="background:#f9fafb; text-align:right;">
                 <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #e5e7eb;">Dia</th>
+                <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Pedidos pagos</th>
                 <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Lucro</th>
                 <th style="padding:8px 12px; border-bottom:1px solid #e5e7eb;">Margem</th>
               </tr>
@@ -4962,6 +4969,7 @@
                    var _dia = d.dia.slice(8,10) + '/' + d.dia.slice(5,7); %>
               <tr style="text-align:right; border-bottom:1px solid #f3f4f6;">
                 <td style="padding:8px 12px; text-align:left; font-weight:600;"><%= _dia %></td>
+                <td style="padding:8px 12px; font-weight:600; color:#374151; font-variant-numeric:tabular-nums;"><%= Number(d.pedidos || 0).toLocaleString('pt-BR') %></td>
                 <td style="padding:8px 12px; font-weight:700; color:<%= _lucroCor %>;"><%= _dpBrl(d.lucro) %></td>
                 <td style="padding:8px 12px; font-weight:600; color:<%= _lucroCor %>;"><%= _dpNum(d.margem) %>%</td>
               </tr>
@@ -4970,6 +4978,7 @@
             <tfoot>
               <tr style="text-align:right; background:#f9fafb; font-weight:700;">
                 <td style="padding:10px 12px; text-align:left;">Total</td>
+                <td style="padding:10px 12px; color:#374151; font-variant-numeric:tabular-nums;"><%= Number(_dpT.pedidos || 0).toLocaleString('pt-BR') %></td>
                 <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpBrl(_dpT.lucro) %></td>
                 <td style="padding:10px 12px; color:<%= _dpT.lucro >= 0 ? '#16a34a' : '#dc2626' %>;"><%= _dpNum(_dpMargem) %>%</td>
               </tr>

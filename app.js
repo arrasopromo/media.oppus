@@ -4618,6 +4618,8 @@ app.post('/api/painel/seg-parcial/config', requireAdmin, async (req, res) => {
 // Checa UM teste: busca seguidores atuais, atualiza pico/atual/queda e o histórico
 // (1 ponto por dia BRT — reconsulta no mesmo dia substitui o ponto do dia).
 async function serviceTestCheckOne(col, rec) {
+  // Facebook/TikTok: ainda não há medição automática (os fetchers são do Instagram). Não marca falha.
+  if (rec && rec.rede && rec.rede !== 'instagram') return { ok: false, skipped: 'rede_sem_medicao' };
   // Tipo CURTIDAS → o "perfil" é o LINK DO POST; medimos as CURTIDAS ATUAIS do post
   // (RocketAPI get_info_by_shortcode → Apify). Demais tipos → seguidores do perfil.
   const isCurtidas = /curtida/i.test(String(rec.tipo || ''));
@@ -4771,7 +4773,11 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
     // Mais antiga em cima, mais nova embaixo: a linha criada aparece junto do "+ nova linha".
     const docs = await col.find({}).sort({ dataPedidoMs: 1, createdAt: 1, _id: 1 }).limit(2000).toArray();
     const ENTREGA_VALS = ['Mais', 'Igual', 'Menos'];
-    const allRows = docs.map((d) => ({
+    // Rede do teste: Instagram (padrão, inclusive testes antigos sem o campo), Facebook ou TikTok.
+    const REDES_TESTE = ['instagram', 'facebook', 'tiktok'];
+    const redeF = REDES_TESTE.includes(String(req.query.rede || '').toLowerCase()) ? String(req.query.rede).toLowerCase() : 'instagram';
+    const todasRedes = docs.map((d) => ({
+      rede: REDES_TESTE.includes(String(d.rede || '')) ? String(d.rede) : 'instagram',
       id: String(d._id),
       favorito: !!d.favorito,
       serviceId: String(d.serviceId || ''),
@@ -4802,6 +4808,9 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       // Dias distintos (BRT) com medição válida no histórico.
       diasConsultados: new Set((Array.isArray(d.history) ? d.history : []).filter((h) => h && Number.isFinite(Number(h.count))).map((h) => brtDayKey(h.at)).filter(Boolean)).size,
     }));
+    const redeCounts = { instagram: 0, facebook: 0, tiktok: 0 };
+    for (const r of todasRedes) redeCounts[r.rede] = (redeCounts[r.rede] || 0) + 1;
+    const allRows = todasRedes.filter((r) => r.rede === redeF);
     // ── Filtros: tipo de serviço, fornecedor e faixa de taxa de queda (min/max %) ──
     const tipoF = String(req.query.tipo || '').trim();
     const fornF = String(req.query.fornecedor || '').trim();
@@ -4852,8 +4861,8 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
       return true;
     });
     return res.render('painel_testes_servicos', {
-      page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups,
-      filter: { tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw, refil: refilF, diasMin: dMin != null ? dMinRaw : '' },
+      page: 'testes-servicos', rows, totalAll: allRows.length, fornecedores, svcGroups, rede: redeF, redeCounts,
+      filter: { rede: redeF, tipo: tipoF, fornecedor: fornF, fav: favF ? '1' : '', quedaMin: qMinRaw, quedaMax: qMaxRaw, de, ate, svc: svcF, precoMin: pMinRaw, precoMax: pMaxRaw, refil: refilF, diasMin: dMin != null ? dMinRaw : '' },
     });
   } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
 });
@@ -4864,7 +4873,7 @@ app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
 async function pickAvailableTestProfile(col) {
   try {
     const docs = await col.find(
-      { perfil: { $nin: [null, ''] } },
+      { perfil: { $nin: [null, ''] }, rede: { $nin: ['facebook', 'tiktok'] } },
       { projection: { perfil: 1, atual: 1, createdAt: 1, dataPedidoMs: 1, measureFailed: 1 } }
     ).toArray();
     const byPerfil = new Map(); // key normalizado -> { ms, atual, perfilRaw, measureFailed }
@@ -4900,13 +4909,15 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
     const col = await getCollection('service_tests');
     // Baserow-style: pode criar linha vazia e preencher depois (edição inline).
     let perfil = String(b.perfil || '').replace(/^@+/, '').replace(/\/+$/g, '').trim();
+    const rede = ['facebook', 'tiktok'].includes(String(b.rede || '').toLowerCase()) ? String(b.rede).toLowerCase() : 'instagram';
     // Sem perfil informado → puxa automaticamente uma conta de teste disponível (<10 seg).
+    // Só no Instagram: as contas de teste reaproveitáveis são do Instagram.
     let autoPicked = false, noProfile = false;
-    if (!perfil) {
+    if (!perfil && rede === 'instagram') {
       const picked = await pickAvailableTestProfile(col);
       if (picked) { perfil = picked; autoPicked = true; }
       else noProfile = true;
-    }
+    } else if (!perfil) { noProfile = true; }
     // ── REGRA ANTI-DUPLICADO ──────────────────────────────────────────────────
     // Cada teste precisa de conta VIRGEM: um mesmo perfil nunca pode ter 2 linhas
     // (senão a medição de entrega/queda fica contaminada por pedidos anteriores).
@@ -4924,6 +4935,7 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
     const dataPedido = `${_nb.getUTCFullYear()}-${String(_nb.getUTCMonth() + 1).padStart(2, '0')}-${String(_nb.getUTCDate()).padStart(2, '0')}`;
     const dataPedidoMs = Date.now();
     const doc = {
+      rede,
       favorito: (b.favorito === true || b.favorito === 'true' || b.favorito === '1'),
       serviceId: String(b.serviceId || '').trim(),
       tipo: String(b.tipo || '').slice(0, 40),
@@ -27982,6 +27994,7 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
     // despacho do pedido escolhido (uma compra nova legítima ainda vence a âncora).
     let __usingAnchor = false;
     let __anchorProvider = '';   // só quando o registro da âncora tem provider CONFIRMADO (ex.: SMMHustle)
+    let __anchorAtMs = 0;        // quando a âncora (force-refil) foi criada, se for usada
     try {
       const r2c = await getCollection('refil2_requests');
       const anchorArr = await r2c.find(
@@ -28014,12 +28027,36 @@ app.post('/api/refil/simple', publicIpLimit('refil_simple', 20, 10), async (req,
           famaOrderId = anchorOid;
           __refilLogOrderId = anchorOid;
           __usingAnchor = true;
+          __anchorAtMs = anchorMs;
           if (fr.providerVerified === true && SMM_PROVIDERS[normalizeSmmProvider(fr.provider)]) __anchorProvider = normalizeSmmProvider(fr.provider);
           // O provedor da âncora é resolvido pela MESMA heurística de sempre (tamanho do
           // orderId) — não pelo forceRefil.provider, que em registros antigos foi gravado
           // fixo como 'fama24h' quando na verdade o pedido foi pro Nuvra.
           try { console.log('🔁 [refil/simple] âncora de force-refil', { username, anchorOid }); } catch (_) {}
         }
+      }
+    } catch (_) {}
+
+    // Reposição FORÇADA gravada no próprio pedido (fama24h.reorders[], ex.: reposição de queda
+    // manual no JAP 2971): é o pedido mais novo do perfil, então o refil tem que ir PARA ELE, no
+    // fornecedor dele. Antes, essa reposição só servia para "vencer" a âncora antiga e o refil
+    // voltava para o fama24h.orderId original (ex.: Nuvra 15636, serviço SEM refil → "Refill not
+    // available for this service" para @deborangomes em 14 e 16/11).
+    try {
+      const reos = (order && order.fama24h && Array.isArray(order.fama24h.reorders)) ? order.fama24h.reorders : [];
+      let ultimo = null, ultimoMs = 0;
+      for (const ro of reos) {
+        const oid = String((ro && ro.orderId) || '').trim();
+        const t = (ro && ro.at) ? new Date(String(ro.at)).getTime() : 0;
+        if (/^[0-9]+$/.test(oid) && Number.isFinite(t) && t > ultimoMs) { ultimo = ro; ultimoMs = t; }
+      }
+      const provRe = ultimo ? normalizeSmmProvider(ultimo.provider) : '';
+      if (ultimo && provRe && SMM_PROVIDERS[provRe] && ultimoMs >= __anchorAtMs && ultimoMs >= orderRecencyMs(order)) {
+        famaOrderId = String(ultimo.orderId).trim();
+        __refilLogOrderId = famaOrderId;
+        __usingAnchor = true;
+        __anchorProvider = provRe;
+        try { console.log('🔁 [refil/simple] reposição forçada do pedido', { username, orderId: famaOrderId, provider: provRe }); } catch (_) {}
       }
     } catch (_) {}
 
@@ -32334,6 +32371,16 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       return t;
     };
 
+    // Slot com o pedido MAIS RECENTE (fornecedor_social x fama24h): o reenvio de parcial/cancelado
+    // grava o pedido novo num slot, e o painel tem que olhar esse (o último orderId), não o antigo.
+    // Empate/sem data mantém a ordem antiga (fornecedor_social primeiro).
+    const ultimoSlotComPedido = (o, temPedido) => {
+      const cands = ['fornecedor_social', 'fama24h'].filter((f) => o && o[f] && typeof o[f] === 'object' && temPedido(o[f]));
+      if (cands.length <= 1) return cands[0] || null;
+      const ts = (s) => { for (const k of ['reorderAt', 'requestedAt', 'createdAt', 'sentAt']) { const t = Date.parse((s && s[k]) || ''); if (Number.isFinite(t)) return t; } return 0; };
+      return cands.reduce((best, f) => (ts(o[f]) > ts(o[best]) ? f : best), cands[0]);
+    };
+
     const resolveFornecedor = (o) => {
       const isUnknown = (v) => {
         const s = String(v ?? '').toLowerCase().trim();
@@ -32387,7 +32434,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       // o provedor de verdade vem do `.provider` gravado no despacho/reenvio (ou do último
       // reorder). Assim aparece Nuvra/SMMHustle/TopFama corretamente, não "Fama24h" pra tudo.
       const LABEL = { fornecedor_social: 'Fornecedor Social', fama24h: 'Fama24h', nuvra: 'Nuvra', smmhustle: 'SMMHustle', topfama: 'TopFama', worldsmm: 'WorldSMM' };
-      const CAMPOS = ['fornecedor_social', 'fama24h', 'nuvra', 'topfama'];
+      const ultimo = ultimoSlotComPedido(o, pickProviderOrderId);
+      const CAMPOS = ultimo ? [ultimo] : ['fornecedor_social', 'fama24h', 'nuvra', 'topfama'];
       for (const f of CAMPOS) {
         const sub = o && o[f];
         if (!sub || !pickProviderOrderId(sub)) continue;
@@ -32449,14 +32497,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         return '';
       };
 
-      const fs = o && o.fornecedor_social ? o.fornecedor_social : null;
-      const fama = o && o.fama24h ? o.fama24h : null;
-
-      const fsOid = pickProviderOrderId(fs);
-      if (fsOid) return fsOid;
-      const famaOid = pickProviderOrderId(fama);
-      if (famaOid) return famaOid;
-      return '';
+      const ultimo = ultimoSlotComPedido(o, pickProviderOrderId);
+      return ultimo ? pickProviderOrderId(o[ultimo]) : '';
     };
 
     const resolveIdentifier = (o) => {
@@ -32502,10 +32544,11 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       if (w === '12m' || w === '1ano' || w === '1_ano') return '12m';
       if (w === '6m' || w === '6meses' || w === '6_meses') return '6m';
       if (w === '4m' || w === '4meses' || w === '4_meses') return '4m';
+      if (w === '3m' || w === '3meses' || w === '3_meses' || w === '90') return '3m';
       if (!w && lifetimeOnly) return 'life';
       return '';
     })();
-    const warrantyFilter = (warrantyUi === 'life' || warrantyUi === '12m' || warrantyUi === '6m' || warrantyUi === '4m') ? warrantyUi : '';
+    const warrantyFilter = (warrantyUi === 'life' || warrantyUi === '12m' || warrantyUi === '6m' || warrantyUi === '4m' || warrantyUi === '3m') ? warrantyUi : '';
     const refilExpiredOnly = (refilExpiredFlag || warrantyUi === 'expired');
     const startDateRaw = String(req.query.startDate || '').trim();
     const endDateRaw = String(req.query.endDate || '').trim();
@@ -33273,6 +33316,8 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
           if (mode !== '6m') return false;
         } else if (warrantyFilter === '4m') {
           if (mode !== '4m') return false;
+        } else if (warrantyFilter === '3m') {
+          if (mode !== '3m') return false;
         }
       } else if (lifetimeOnly) {
         if (r.refilIsLifetime !== true) return false;
@@ -33379,6 +33424,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
       const absDiffAgg = { thresholdAbs: warrantyThresholdAbs, base: 0, gte: 0, lt: 0 };
       const warrantyAgg = {
         life: { key: 'life', label: 'Vitalício', ok: 0, nok: 0, total: 0 },
+        '3m': { key: '3m', label: '3 meses', ok: 0, nok: 0, total: 0 },
         '4m': { key: '4m', label: '4 meses', ok: 0, nok: 0, total: 0 },
         '6m': { key: '6m', label: '6 meses', ok: 0, nok: 0, total: 0 },
         '12m': { key: '12m', label: '1 ano', ok: 0, nok: 0, total: 0 }
@@ -33429,7 +33475,7 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         }
         if (abs != null && Number.isFinite(abs)) {
           const mode = String(r && r.refilWarrantyMode ? r.refilWarrantyMode : '').trim().toLowerCase();
-          const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '4m' ? '4m' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : '')));
+          const wKey = (r && r.refilIsLifetime === true) || mode === 'life' ? 'life' : (mode === '3m' ? '3m' : (mode === '4m' ? '4m' : (mode === '6m' ? '6m' : (mode === '12m' ? '12m' : ''))));
           if (wKey && warrantyAgg[wKey]) {
             warrantyAgg[wKey].total += 1;
             if (abs >= warrantyThresholdAbs) warrantyAgg[wKey].nok += 1;
@@ -33590,11 +33636,13 @@ app.get('/painel/gerenciamento-seguidores', requireAdmin, async (req, res) => {
         if (!c || !c.status) continue;
         const st = String(c.status).toLowerCase();
         const entregue = /complet|conclu/.test(st);
-        if (!entregue && !/cancel|refund|estorn/.test(st)) {
-          r.entregaPendente = true;
-          r.entregaStatus = c.status;
-          r.diffAbs = null; r.diffPct = null; // não trata como queda: pedido ainda não entregue
-        }
+        if (entregue) continue;
+        // Último pedido Parcial ou Cancelado no fornecedor = "Cancelado" (status final, não fica
+        // "Em andamento"). Não é queda: o que falta vai pela Gestão Parcial (reenvio), não pelo refil.
+        r.entregaPendente = true;
+        r.entregaStatus = c.status;
+        r.entregaCancelada = /cancel|refund|estorn|partial|parcial/.test(st);
+        r.diffAbs = null; r.diffPct = null; // não trata como queda: pedido não entregue por inteiro
       }
     } catch (_) {}
 

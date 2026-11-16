@@ -120,6 +120,13 @@
     .range-in::-webkit-outer-spin-button, .range-in::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     .range-in { -moz-appearance: textfield; }
     .range-dash { color: #9ca3af; font-size: 12px; }
+    .rede-switch { display: inline-flex; gap: 4px; padding: 4px; background: #f1f2f8; border: 1px solid #e6e8f5; border-radius: 10px; margin: 6px 0 12px; flex-wrap: wrap; }
+    .rede-tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 7px; color: #4b5563; text-decoration: none; font-weight: 600; font-size: 0.88rem; }
+    .rede-tab:hover { background: #fff; }
+    .rede-tab.on { background: #fff; color: #111827; box-shadow: 0 1px 3px rgba(17,24,39,.12); }
+    .rede-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rede); }
+    .rede-n { font-variant-numeric: tabular-nums; font-size: 0.75rem; color: #6b7280; background: #eef0f6; border-radius: 999px; padding: 1px 7px; }
+    .rede-tab.on .rede-n { background: color-mix(in srgb, var(--rede) 14%, #fff); color: var(--rede); }
   </style>
 </head>
 <body>
@@ -128,6 +135,15 @@
     <h1>Testes de Serviços</h1>
     <div class="sub">Clique em <strong>+ nova linha</strong> e preencha os campos direto na tabela (clique na célula pra editar). O sistema mede a <strong>quantidade atual de seguidores</strong> e a <strong>% de queda</strong> todo dia às 12h (BRT). A data do pedido é registrada automaticamente.</div>
 
+    <% var _rede = (typeof rede !== 'undefined' && (rede === 'facebook' || rede === 'tiktok')) ? rede : 'instagram';
+       var _redeCounts = (typeof redeCounts !== 'undefined' && redeCounts) ? redeCounts : {};
+       var _REDES_UI = [['instagram','Instagram','#E1306C'],['facebook','Facebook','#1877F2'],['tiktok','TikTok','#111827']]; %>
+    <nav class="rede-switch" aria-label="Rede dos testes">
+      <% _REDES_UI.forEach(function(rd){ %>
+        <a href="/painel/testes-servicos?rede=<%= rd[0] %>" class="rede-tab<%= _rede===rd[0] ? ' on' : '' %>" style="--rede:<%= rd[2] %>;"><span class="rede-dot"></span><%= rd[1] %> <span class="rede-n"><%= _redeCounts[rd[0]] || 0 %></span></a>
+      <% }); %>
+    </nav>
+    <% if (_rede !== 'instagram') { %><div class="sub" style="margin-top:-4px;">Testes de <strong><%= _rede === 'tiktok' ? 'TikTok' : 'Facebook' %></strong>: ainda sem medição automática (a checagem das 12h é só do Instagram), então <strong>Qtd atual</strong> e queda ficam em branco.</div><% } %>
     <div class="toolbar">
       <button type="button" id="checkAllBtn" class="btn btn-purple">🔄 Checar todos agora</button>
       <button type="button" id="checkSelBtn" class="btn" style="background:#0f766e;color:#fff;" disabled>↻ Checar selecionados (<span id="selCount">0</span>)</button>
@@ -139,7 +155,14 @@
       <span id="checkAllMsg" class="sub" style="margin:0;"></span>
     </div>
 
-    <% var TIPO_OPTS = ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'];
+    <% var _rede = (typeof rede !== 'undefined' && (rede === 'facebook' || rede === 'tiktok')) ? rede : 'instagram';
+       var _redeCounts = (typeof redeCounts !== 'undefined' && redeCounts) ? redeCounts : {};
+       var TIPOS_POR_REDE = {
+         instagram: ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'],
+         facebook: ['seguidores perfil','seguidores página','curtidas facebook','visualizações facebook'],
+         tiktok: ['seguidores tiktok','curtidas tiktok','visualizações tiktok']
+       };
+       var TIPO_OPTS = TIPOS_POR_REDE[_rede];
        var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'', precoMin:'', precoMax:'' };
        var _svcGroups = (typeof svcGroups !== 'undefined' && svcGroups) ? svcGroups : {};
        var _forn = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
@@ -151,6 +174,10 @@
        function _perfilParts(raw){
          var v = String(raw||'').replace(/^@+/,'').trim();
          if (!v) return { label:'', href:'', empty:true };
+         if (_rede !== 'instagram') {
+           var hrefR = /^https?:\/\//i.test(v) ? v : (_rede === 'tiktok' ? 'https://www.tiktok.com/@' + encodeURIComponent(v) : 'https://www.facebook.com/' + encodeURIComponent(v));
+           return { label: /^https?:\/\//i.test(v) ? v.replace(/^https?:\/\/(www\.)?/i, '') : '@' + v, href: hrefR, empty:false };
+         }
          var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
          if (!isLink) return { label: '@' + v, href: 'https://instagram.com/' + encodeURIComponent(v), empty:false };
          var href;
@@ -164,6 +191,7 @@
          return { label: '@' + user, href: 'https://instagram.com/' + encodeURIComponent(user), empty:false };
        } %>
     <form class="toolbar" method="get" action="/painel/testes-servicos" style="background:#f8f9ff;border:1px solid #e6e8f5;border-radius:8px;padding:10px 12px;">
+      <input type="hidden" name="rede" value="<%= _rede %>">
       <label class="sub" style="margin:0;">Tipo
         <select name="tipo" style="padding:6px;border:1px solid #ccc;border-radius:6px;">
           <option value="">Todos</option>
@@ -193,13 +221,13 @@
       <label class="sub" style="margin:0; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" name="fav" value="1" <%= (_ff.fav==='1')?'checked':'' %>> ★ Só favoritos</label>
       <% if (_ff.svc) { %><span class="sub" style="margin:0;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:4px 8px;">serviço <strong><%= _ff.svc %></strong> <a href="#" id="clearSvcFilter" style="color:#dc2626;">✕</a></span><input type="hidden" name="svc" value="<%= _ff.svc %>"><% } %>
       <button type="submit" class="btn btn-purple">Filtrar</button>
-      <a href="/painel/testes-servicos" id="clearAllFilters" class="sub" style="margin:0;">limpar</a>
+      <a href="/painel/testes-servicos?rede=<%= _rede %>" id="clearAllFilters" class="sub" style="margin:0;">limpar</a>
       <span class="sub" style="margin-left:auto;"><strong><%= (rows||[]).length %></strong><% if (typeof totalAll!=='undefined' && totalAll!==(rows||[]).length) { %> de <%= totalAll %><% } %> teste(s)</span>
     </form>
     <script>document.addEventListener('DOMContentLoaded',function(){var b=document.getElementById('clearSvcFilter');if(b)b.addEventListener('click',function(e){e.preventDefault();var f=b.closest('form');var h=f&&f.querySelector('input[name=svc]');if(h)h.remove();if(f)f.submit();});
       // "limpar": vai pra URL sem filtros. Se já estamos na URL limpa (só filtros de coluna, que são
       // client-side), o clique num link pra mesma URL não recarrega — então forçamos reload.
-      var la=document.getElementById('clearAllFilters');if(la)la.addEventListener('click',function(e){e.preventDefault();var base='/painel/testes-servicos';if(location.pathname===base&&!location.search){location.reload();}else{location.href=base;}});});</script>
+      var la=document.getElementById('clearAllFilters');if(la)la.addEventListener('click',function(e){e.preventDefault();var base='/painel/testes-servicos?rede=<%= _rede %>';if(location.pathname+location.search===base){location.reload();}else{location.href=base;}});});</script>
 
     <div class="top-scroll" id="topScroll"><div class="top-scroll-inner" id="topScrollInner"></div></div>
     <div class="grid-wrap" id="gridWrap">
@@ -267,7 +295,7 @@
                 <% TIPO_OPTS.forEach(function(t){ %><option value="<%= t %>" <%= (r.tipo||'')===t?'selected':'' %>><%= _tipoLabel(t) %></option><% }); %>
               </select>
             </td>
-            <td class="edit col-perfil" data-field="perfil" data-type="perfil" data-raw="<%= r.perfil %>"><% var _pp = _perfilParts(r.perfil); if (!_pp.empty) { %><span class="perfil-txt" title="<%= _pp.label %>"><%= _pp.label %></span> <a class="ig-link" href="<%= _pp.href %>" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram"><%- IG_SVG %></a><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="edit col-perfil" data-field="perfil" data-type="perfil" data-raw="<%= r.perfil %>"><% var _pp = _perfilParts(r.perfil); if (!_pp.empty) { %><span class="perfil-txt" title="<%= _pp.label %>"><%= _pp.label %></span> <a class="ig-link" href="<%= _pp.href %>" target="_blank" rel="noopener noreferrer" title="Abrir o link"><%- IG_SVG %></a><% } else { %><span class="muted">—</span><% } %></td>
             <td class="edit num" data-field="quantidade" data-type="int" data-raw="<%= r.quantidade || '' %>"><%= r.quantidade ? r.quantidade.toLocaleString('pt-BR') : '—' %></td>
             <td class="num" data-v="<%= r.atual != null ? r.atual : '' %>">
               <% if (r.atual != null) { %>
@@ -302,12 +330,13 @@
             </td>
           </tr>
           <% }); %>
-          <tr class="addrow" id="addRow"><td colspan="14">+ nova linha (puxa perfil de teste disponível &lt;10 seg)</td></tr>
+          <tr class="addrow" id="addRow"><td colspan="14"><% if (_rede === 'instagram') { %>+ nova linha (puxa perfil de teste disponível &lt;10 seg)<% } else { %>+ nova linha de <%= _rede === 'tiktok' ? 'TikTok' : 'Facebook' %> (cole o link do perfil/post)<% } %></td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
+  <script>window.__TESTES_REDE__ = '<%= _rede %>';</script>
   <script>
     (function(){
       function $(id){ return document.getElementById(id); }
@@ -322,6 +351,11 @@
       function perfilParts(raw){
         var v = String(raw||'').replace(/^@+/,'').trim();
         if (!v) return { label:'', href:'', empty:true };
+        var rd = window.__TESTES_REDE__ || 'instagram';
+        if (rd !== 'instagram') {
+          var http = /^https?:\/\//i.test(v);
+          return { label: http ? v.replace(/^https?:\/\/(www\.)?/i, '') : '@' + v, href: http ? v : (rd === 'tiktok' ? 'https://www.tiktok.com/@' + encodeURIComponent(v) : 'https://www.facebook.com/' + encodeURIComponent(v)), empty:false };
+        }
         var isLink = /^https?:\/\//i.test(v) || /instagram\.com/i.test(v) || v.indexOf('/') >= 0;
         if (!isLink) return { label: '@' + v, href: 'https://instagram.com/' + encodeURIComponent(v), empty:false };
         var href;
@@ -342,7 +376,7 @@
         if (type === 'perfil') {
           var pp = perfilParts(raw);
           td.innerHTML = pp.empty ? '<span class="muted">—</span>'
-            : '<span class="perfil-txt" title="' + esc(pp.label) + '">' + esc(pp.label) + '</span> <a class="ig-link" href="' + esc(pp.href) + '" target="_blank" rel="noopener noreferrer" title="Abrir no Instagram">' + IG_SVG + '</a>';
+            : '<span class="perfil-txt" title="' + esc(pp.label) + '">' + esc(pp.label) + '</span> <a class="ig-link" href="' + esc(pp.href) + '" target="_blank" rel="noopener noreferrer" title="Abrir o link">' + IG_SVG + '</a>';
         }
         else if (type === 'int') { td.innerHTML = raw ? fmtInt(raw) : '—'; }
         else if (type === 'preco') { td.innerHTML = raw ? ('R$ ' + esc(raw)) : '—'; }
@@ -426,10 +460,10 @@
         var addr = ev.target.closest('#addRow');
         if (addr) {
           addr.querySelector('td').textContent = 'criando…';
-          var d = await post('/api/painel/testes-servicos/create', {});
+          var d = await post('/api/painel/testes-servicos/create', { rede: window.__TESTES_REDE__ || 'instagram' });
           if (d && d.ok) {
             try { sessionStorage.setItem('svcNovaLinha', String(d.id || '')); } catch(_){}
-            if (d.noProfile) { alert('Nenhum perfil de teste disponível (<10 seguidores) no momento. Linha criada vazia — preencha o perfil manualmente. (Um perfil fica disponível quando os seguidores de teste dele caem abaixo de 10.)'); }
+            if (d.noProfile && (window.__TESTES_REDE__ || 'instagram') === 'instagram') { alert('Nenhum perfil de teste disponível (<10 seguidores) no momento. Linha criada vazia — preencha o perfil manualmente. (Um perfil fica disponível quando os seguidores de teste dele caem abaixo de 10.)'); }
             location.reload();
           } else { addr.querySelector('td').textContent = '+ nova linha'; alert('Falha ao criar linha.'); }
           return;
