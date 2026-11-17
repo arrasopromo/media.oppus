@@ -22173,9 +22173,16 @@ async function processOrderFulfillment(record, col, req) {
             try { console.warn('⚠️ views_link_invalid', { viewsLinkRaw, sanitized: viewsLink }); } catch(_) {}
         }
         
+        // Tipo de curtida que a página mostrou na oferta (likes_bump_tipo): reais, ou brasileiras quando
+        // as reais estão ocultas no Gerenciamento de Tipo (o preço cobrado também seguiu esse tipo).
+        const likesBumpTipo = String(additionalInfoMap['likes_bump_tipo'] || (arrPaid.find(it => it && it.key === 'likes_bump_tipo')?.value) || (arrOrig.find(it => it && it.key === 'likes_bump_tipo')?.value) || '').toLowerCase().trim();
         const likesBumpConf = (() => {
           const t = String(tipo || '').toLowerCase();
-          if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
+          if (/coment|visualizacoes|views|reels/i.test(t)) {
+            if (likesBumpTipo === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };
+            if (likesBumpTipo === 'mistos') return { provider: 'fama24h', serviceId: _likesMistasMd.serviceId, url: _likesMistasMd.url, key: _likesMistasMd.key, effProvider: _likesMistasMd.provider };
+            return __orgLikesBumpMd; // comentarios/views -> curtidas reais
+          }
           const isFollowersBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBase && !isViewsBase;
           const isFollowerOrg = isFollowersBase && /organicos/.test(t);
           const isFollowerBr = isFollowersBase && /brasileir/.test(t);

@@ -324,7 +324,7 @@ document.addEventListener('DOMContentLoaded', function() {
       { q: 15000, p: 'R$ 89,90' },
     ],
     curtidas_brasileiras: [
-      { q: 150, p: 'R$ 5,90' },
+      { q: 150, p: 'R$ 4,90' }, // igual ao pricing.js (o servidor só aceita o valor exato)
       { q: 300, p: 'R$ 9,90' },
       { q: 500, p: 'R$ 14,90' },
       { q: 700, p: 'R$ 29,90' },
@@ -1454,6 +1454,7 @@ document.addEventListener('DOMContentLoaded', function() {
           ...(contactNameValue ? [{ key: 'customer_name', value: contactNameValue }] : []),
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
+          { key: 'likes_bump_tipo', value: (function(){ try { return getLikesVariantKey(); } catch(_) { return ''; } })() },
           { key: 'quantidade', value: String(qtd) },
           { key: 'pacote', value: `${qtd} ${getUnitForTipo(tipo)} - ${totalLabel}` },
           { key: 'phone', value: phoneValue },
@@ -2646,14 +2647,38 @@ document.addEventListener('DOMContentLoaded', function() {
   function formatCurrencyBR(n) { return `R$ ${n.toFixed(2).replace('.', ',')}`; }
   function parseCurrencyBR(s) { const cleaned = String(s).replace(/[R$\s]/g, '').replace('.', '').replace(',', '.'); const val = parseFloat(cleaned); return isNaN(val) ? 0 : val; }
   function getLikesVariantKey() {
-    // Nas páginas de comentários e visualizações o bump de curtidas é sempre REAIS (orgânicas).
-    if (isCommentsContext || isViewsContext) return 'organicos';
+    // Comentários e visualizações: oferta de curtidas REAIS; se as reais estiverem ocultas no
+    // Gerenciamento de Tipo, BRASILEIRAS (e, se essas também, mistas). O tipo vai no pedido
+    // (likes_bump_tipo) e o servidor cobra/envia por ele.
+    if (isCommentsContext || isViewsContext) {
+      const ocultas = (serviceVisibility && Array.isArray(serviceVisibility.curtidas) ? serviceVisibility.curtidas : []).map(function(x){ return String(x || '').trim(); });
+      if (ocultas.indexOf('organicos') < 0) return 'organicos';
+      if (ocultas.indexOf('curtidas_brasileiras') < 0) return 'curtidas_brasileiras';
+      return 'mistos';
+    }
     const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     if (tipo === 'organicos') return 'organicos';
     if (tipo === 'curtidas_brasileiras') return 'curtidas_brasileiras';
     return 'mistos';
   }
+  // Tipo de curtidas oculto no Gerenciamento de Tipo (ex.: curtidas reais = 'organicos') também some do
+  // order bump: se a oferta de curtidas desta página seria desse tipo, o card da oferta fica escondido.
+  const hiddenCurtidasTipos = (function(){
+    try { return (serviceVisibility && Array.isArray(serviceVisibility.curtidas) ? serviceVisibility.curtidas : []).map(function(x){ return String(x || '').trim(); }).filter(Boolean); } catch (_) { return []; }
+  })();
+  function likesBumpOculto() { return hiddenCurtidasTipos.indexOf(getLikesVariantKey()) >= 0; }
+  function aplicarVisibilidadeLikesBump() {
+    const item = document.querySelector('.promo-item.likes');
+    if (!item) return;
+    const ocultar = likesBumpOculto();
+    item.style.display = ocultar ? 'none' : '';
+    if (ocultar) {
+      const cb = document.getElementById('promoLikes');
+      if (cb && cb.checked) { cb.checked = false; try { cb.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {} }
+    }
+  }
   function refreshLikesTable() {
+    try { aplicarVisibilidadeLikesBump(); } catch (_) {}
     try {
       const key = getLikesVariantKey();
       const src = (tabelaCurtidas && tabelaCurtidas[key]) ? tabelaCurtidas[key] : null;
@@ -2687,7 +2712,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const titleEl = document.querySelector('.promo-item.likes .promo-title');
     const descEl = document.querySelector('.promo-item.likes .promo-desc');
     if (!titleEl && !descEl) return;
-    const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+    const tipo = (isCommentsContext || isViewsContext) ? getLikesVariantKey() : String((tipoSelect && tipoSelect.value) || '').toLowerCase();
     const variant = (function(t){
       if (t === 'organicos') return { title: 'Curtidas reais promocionais', desc: 'Adicionar curtidas orgânicas ao post.' };
       if (t === 'brasileiros' || t === 'curtidas_brasileiras') return { title: 'Curtidas brasileiras promocionais', desc: 'Adicionar curtidas brasileiras ao post.' };
@@ -2705,7 +2730,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (oldEl && entry) { const newVal = parseCurrencyBR(entry.price); const oldVal = newVal * 1.70; oldEl.textContent = formatCurrencyBR(oldVal); }
     const hl = document.querySelector('.promo-item.likes .promo-highlight');
     if (hl) {
-      const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+      const tipo = (isCommentsContext || isViewsContext) ? getLikesVariantKey() : String((tipoSelect && tipoSelect.value) || '').toLowerCase();
       if (tipo === 'organicos') hl.textContent = `+ ${q} CURTIDAS REAIS`;
       else if (tipo === 'brasileiros' || tipo === 'curtidas_brasileiras') hl.textContent = `+ ${q} CURTIDAS BRASILEIRAS`;
       else if (tipo === 'mistos') hl.textContent = `+ ${q} CURTIDAS MISTAS`;
@@ -2905,7 +2930,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const qty = Number(document.getElementById('likesQty')?.textContent || 150);
         let priceStr = document.querySelector('.promo-prices[data-promo="likes"] .new-price')?.textContent || '';
         if (!priceStr) priceStr = promoPricing.likes?.price || '';
-        const tipo = String((tipoSelect && tipoSelect.value) || '').toLowerCase();
+        const tipo = (isCommentsContext || isViewsContext) ? getLikesVariantKey() : String((tipoSelect && tipoSelect.value) || '').toLowerCase();
         const label = (function(t){
           if (t === 'organicos') return `Curtidas Reais (${qty})`;
           if (t === 'brasileiros' || t === 'curtidas_brasileiras') return `Curtidas brasileiras (${qty})`;
@@ -4547,6 +4572,7 @@ document.addEventListener('DOMContentLoaded', function() {
           { key: 'customer_name', value: nameValue },
           { key: 'tipo_servico', value: tipo },
           { key: 'categoria_servico', value: serviceCategory },
+          { key: 'likes_bump_tipo', value: (function(){ try { return getLikesVariantKey(); } catch(_) { return ''; } })() },
           { key: 'quantidade', value: String(qtdEffective) },
           { key: 'pacote', value: `${qtdEffective} ${getUnitForTipo(tipo)} - ${precoStr}` },
           { key: 'phone', value: phoneValue },

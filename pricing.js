@@ -200,7 +200,9 @@ const calculateOrderBumps = (bumpsStr, baseType, opts = {}) => {
             // Antes o backend usava tabelaCurtidasPromo (mais cara) + variante por base,
             // o que cobrava ~R$2 a mais do que o cliente via no checkout.
             let variant;
-            if (base === 'organicos' || base === 'curtidas_organicos' || base === 'curtidas_reais') variant = 'organicos';
+            // A página informa o tipo que mostrou (likes_bump_tipo → opts.likesVariant); sem isso, regra antiga.
+            if (['organicos', 'curtidas_brasileiras', 'mistos'].includes(String(opts.likesVariant || ''))) variant = opts.likesVariant;
+            else if (base === 'organicos' || base === 'curtidas_organicos' || base === 'curtidas_reais') variant = 'organicos';
             else if (base === 'curtidas_brasileiras') variant = 'curtidas_brasileiras';
             else variant = 'mistos';
             const table = tabelaCurtidas[variant] || tabelaCurtidas.mistos;
@@ -253,6 +255,14 @@ const warranty3mCents = (costPerMilCents, quantity) => {
 const calculatePrice = async (type, quantity, additionalInfo = [], opts = {}) => {
     additionalInfo = Array.isArray(additionalInfo) ? additionalInfo : [];
     const tipo = String(type || '').trim();
+    // Tipo de curtida da oferta (order bump) que a página mostrou ao cliente (likes_bump_tipo).
+    // Nas páginas de comentários/visualizações é "reais", ou "brasileiras" quando as reais estão
+    // ocultas no Gerenciamento de Tipo. O preço da oferta segue a tabela desse tipo.
+    {
+        const lv = additionalInfo.find(x => x && x.key === 'likes_bump_tipo');
+        const v = String((lv && lv.value) || '').toLowerCase().trim();
+        if (['organicos', 'curtidas_brasileiras', 'mistos'].includes(v)) opts = Object.assign({}, opts, { likesVariant: v });
+    }
     if (tipo === 'refil_extensao') {
         const modeItem = additionalInfo.find(x => x && x.key === 'refil_mode');
         const mode = String(modeItem?.value || '').trim().toLowerCase();
@@ -273,7 +283,11 @@ const calculatePrice = async (type, quantity, additionalInfo = [], opts = {}) =>
         const _cat = String((_catItem && _catItem.value) || '').toLowerCase().trim();
         if (tipo === 'comentarios' || tipo === 'comentario' || _cat === 'comentarios' || _cat === 'comentario') {
             const qc = Math.max(0, parseInt(quantity, 10) || 0);
-            return qc * 150;
+            // Ofertas da página de comentários (curtidas + visualizações): antes não eram somadas e o
+            // pagamento com oferta marcada era bloqueado por "valor não corresponde".
+            const ob = additionalInfo.find(x => x && x.key === 'order_bumps');
+            const bumpsCom = String((ob && ob.value) || '').split(';').map(s => s.trim()).filter(s => /^(likes|views):\d+$/i.test(s)).join(';');
+            return qc * 150 + (bumpsCom ? calculateOrderBumps(bumpsCom, 'comentarios', opts) : 0);
         }
     }
     let totalCents = 0;
