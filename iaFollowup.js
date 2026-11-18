@@ -15,13 +15,12 @@ const BRT = 3 * 3600e3;
 const DIA = 86400e3;
 const MODELO = () => String(process.env.IA_FOLLOWUP_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
 
-const PROVEDORES = {
-  fama24h: { url: 'https://fama24h.net/api/v2', keyEnv: 'FAMA24H_API_KEY', label: 'Fama24h' },
-  nuvra: { url: 'https://nuvrasmm.com/api/v2', keyEnv: 'NUVRASMM_API_KEY', label: 'Nuvra' },
-  fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', keyEnv: 'FORNECEDOR_SOCIAL_API_KEY', label: 'Fornecedor Social' },
-  topfama: { url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', label: 'TopFama' },
-  worldsmm: { url: 'https://worldsmm.com.br/api/v2', keyEnv: 'WORLDSMM_API_KEY', label: 'WorldSMM' },
-};
+// Todos os fornecedores (mesma lista do bot/app.js). Antes só tinha Fama24h, Nuvra, Forn. Social,
+// TopFama e WorldSMM: pedido da JAP/WorldOfSMM/Revenda ficava sem status e cancelamento passava batido.
+const smmProv = require('./smmProviders.js');
+const PROVEDORES = smmProv.PROVIDERS;
+// Mapa do Gerenciamento de Tipos (fornecedor dos pedidos de vários posts sem carimbo), carregado por relatório.
+let __provPorTipo = null;
 
 const diaBRT = (ms) => new Date(ms - BRT).toISOString().slice(0, 10);
 // Aceita um dia ('YYYY-MM-DD') ou um intervalo ({ de, ate }) — o intervalo dá a visão cumulativa.
@@ -53,12 +52,23 @@ function orderIdAtual(v) {
 }
 function enviosDoPedido(o) {
   const out = [];
-  const fama = (id) => (Number(id) >= 1000000 ? 'fama24h' : 'nuvra');
-  for (const k of ['fama24h', 'fama24h_views', 'fama24h_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: fama(id), orderId: id }); else if (v && v.status === 'error') out.push({ slot: k, erro: JSON.stringify(v.error || v.response || 'erro').slice(0, 120) }); }
-  if (o.fama24h_multi && Array.isArray(o.fama24h_multi.orders)) for (const x of o.fama24h_multi.orders) { if (x && x.orderId) out.push({ slot: 'fama24h_multi', provider: x.provider || fama(x.orderId), orderId: String(x.orderId) }); else if (x) out.push({ slot: 'fama24h_multi', erro: String(x.status || 'erro') }); }
-  for (const k of ['fornecedor_social', 'fornecedor_social_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: 'fornecedor_social', orderId: id }); }
-  for (const k of ['topfama', 'topfama_likes']) { const v = o[k]; const id = orderIdAtual(v); if (id) out.push({ slot: k, provider: 'topfama', orderId: id }); }
-  if (o.worldsmm_comments && o.worldsmm_comments.orderId) out.push({ slot: 'worldsmm_comments', provider: 'worldsmm', orderId: String(o.worldsmm_comments.orderId) });
+  const prov = (slot, sub, parent) => smmProv.providerDoPedidoCom(__provPorTipo, slot, sub, parent, o);
+  // Reenvio (reorders): o fornecedor do reenvio pode ser outro (ex.: carimbado no próprio reorder).
+  const atual = (v) => { const r = Array.isArray(v && v.reorders) && v.reorders.length ? v.reorders[v.reorders.length - 1] : null; return (r && r.orderId) ? r : null; };
+  for (const k of ['fama24h', 'fama24h_views', 'fama24h_likes', 'fornecedor_social', 'fornecedor_social_likes', 'topfama', 'topfama_likes', 'worldsmm_comments']) {
+    const v = o[k]; if (!v || typeof v !== 'object') continue;
+    const r = atual(v);
+    const id = r ? String(r.orderId) : (v.reorderId ? String(v.reorderId) : (v.orderId != null ? String(v.orderId) : null));
+    if (id) out.push({ slot: k, provider: r ? prov(k, r, v) : prov(k, v, null), orderId: id });
+    else if (v.status === 'error') out.push({ slot: k, erro: JSON.stringify(v.error || v.response || 'erro').slice(0, 120) });
+  }
+  for (const k of ['fama24h_multi', 'fornecedor_social_multi']) {
+    const m = o[k]; if (!m || !Array.isArray(m.orders)) continue;
+    for (const x of m.orders) {
+      if (x && x.orderId) out.push({ slot: k, provider: prov(k, x, m), orderId: String(x.orderId) });
+      else if (x) out.push({ slot: k, erro: String((x.response && x.response.error) || x.status || 'erro') });
+    }
+  }
   return out;
 }
 
@@ -141,6 +151,7 @@ async function consolidarMelhorias(conversas) {
 }
 
 async function gerarRelatorio(dia, { comIA = true } = {}) {
+  try { __provPorTipo = await smmProv.providersPorTipo(); } catch (_) { __provPorTipo = null; }
   const { ini, fim } = janela(dia);
   const ehIntervalo = dia && typeof dia === 'object' && dia.de && dia.ate;
   const idRel = ehIntervalo ? `${dia.de}..${dia.ate}` : dia;
@@ -251,7 +262,7 @@ async function gerarRelatorio(dia, { comIA = true } = {}) {
     for (const o of pedidosDoTel) {
       const doBot = /^WppAgent_/.test(String(o.correlationID || ''));
       const criadoHoje = String(o.createdAt) >= ini.toISOString();
-      const item = { identifier: o.identifier, origem: doBot ? 'bot' : 'site', criado: o.createdAt, pago: pago(o), valor: (Number(o.valueCents) || 0) / 100, pacote: ai(o, 'pacote') || `${ai(o, 'quantidade')} ${ai(o, 'categoria_servico')}`, tipo: ai(o, 'tipo_servico'), usuario: o.instagramUsername || o.instauser || ai(o, 'instagram_username'), status: o.status };
+      const item = { identifier: o.identifier, origem: doBot ? 'bot' : 'site', criado: o.createdAt, pago: pago(o), valor: (Number(o.valueCents) || 0) / 100, pacote: (ai(o, 'pacote') || `${ai(o, 'quantidade')} ${ai(o, 'categoria_servico')}`) + ((o.fulfillmentCalc && o.fulfillmentCalc.hasUpgrade && Number(o.fulfillmentCalc.finalQty) > Number(o.fulfillmentCalc.baseQty)) ? ` + upgrade = ${o.fulfillmentCalc.finalQty} no total` : ''), tipo: ai(o, 'tipo_servico'), usuario: o.instagramUsername || o.instauser || ai(o, 'instagram_username'), status: o.status };
       if (!item.pago) {
         if (doBot && criadoHoje && String(o.status || '').toLowerCase() !== 'estornado') item.situacao = 'pix_nao_pago';
         else continue; // pendente antigo: não interessa ao follow-up
@@ -531,7 +542,11 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       if (!campo || !sub) return res.status(400).json({ ok: false, error: 'não achei o sub-pedido para reenviar' });
       if (sub.reenviando) return res.status(409).json({ ok: false, error: 'já há um reenvio em andamento' });
       const rp = sub.requestPayload || {};
-      const provKey = provKeyDoCampo(campo, rp.service); // hoje sempre Nuvra p/ seguidores/curtidas/views
+      // Fornecedor REAL do sub-pedido (carimbado no slot: JAP, WorldOfSMM, Revenda...). O service
+      // gravado é desse fornecedor — mandar pra Nuvra com o ID da JAP pediria outro produto.
+      try { __provPorTipo = await smmProv.providersPorTipo(); } catch (_) {}
+      const provKey = (smmProv.normalizeProvider(sub.provider) || (/_multi$/.test(campo) ? smmProv.providerDoPedidoCom(__provPorTipo, campo, (sub.orders || [])[0], sub, o) : '')) || provKeyDoCampo(campo, rp.service);
+      if (!PROVEDORES[provKey]) return res.status(400).json({ ok: false, error: 'fornecedor do pedido não identificado (' + provKey + ')' });
       // trava
       const trava = await col.updateOne({ _id: o._id, [`${campo}.reenviando`]: { $ne: true } }, { $set: { [`${campo}.reenviando`]: true } });
       if (!trava.modifiedCount) return res.status(409).json({ ok: false, error: 'não travou (reenvio concorrente?)' });
@@ -547,7 +562,7 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
           const qty = Number(item && item.quantity) || 0;
           if (!link || !(qty > 0)) continue;
           const addM = await provAdd(provKey, rp.service, link, qty);
-          if (addM.ok) novos.push({ link, quantity: qty, orderId: /^\d+$/.test(String(addM.order)) ? Number(addM.order) : String(addM.order), status: 'created', at: agora });
+          if (addM.ok) novos.push({ link, quantity: qty, orderId: /^\d+$/.test(String(addM.order)) ? Number(addM.order) : String(addM.order), status: 'created', at: agora, provider: provKey });
           else erros.push({ link, quantity: qty, error: addM.error });
         }
         if (!novos.length) { await col.updateOne({ _id: o._id }, { $unset: { [`${campo}.reenviando`]: '' } }); return res.json({ ok: false, error: 'nenhum link reenviado: ' + (erros.map((e) => e.error).join(' | ') || 'sem itens no plano') }); }
@@ -556,6 +571,7 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
           $set: {
             [`${campo}.orders`]: orders,
             [`${campo}.status`]: erros.length ? 'partial' : 'In progress',
+            [`${campo}.provider`]: provKey,
             [`${campo}.reenvioManualPainel`]: { plano: novos.length, erros: erros.length, em: agora, por: 'ia-followup', motivo, provider: provKey },
           },
           $unset: { [`${campo}.reenviando`]: '', [`${campo}.error`]: '' },
@@ -572,11 +588,12 @@ function registerIaFollowup(app, { requireAdmin, sendNtfy } = {}) {
       try { const p = PROVEDORES[provKey]; const r = await axios.post(p.url, new URLSearchParams({ key: process.env[p.keyEnv], action: 'status', orders: add.order }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true }); st = (r.data && r.data[add.order]) || {}; } catch (_) {}
       const antigo = sub.orderId || null;
       const chain = Array.isArray(sub.reorders) ? sub.reorders.slice() : [];
-      chain.push({ orderId: String(add.order), quantity: Number(rp.quantity) || null, reason: motivo === 'adicional' ? 'adicional_reenviado' : 'reenvio_manual', at: agora, status: st.status || 'created', de: antigo });
+      chain.push({ orderId: String(add.order), provider: provKey, quantity: Number(rp.quantity) || null, reason: motivo === 'adicional' ? 'adicional_reenviado' : 'reenvio_manual', at: agora, status: st.status || 'created', de: antigo });
       await col.updateOne({ _id: o._id }, {
         $set: {
           [`${campo}.orderId`]: /^\d+$/.test(String(add.order)) ? Number(add.order) : String(add.order),
           [`${campo}.status`]: st.status || 'In progress',
+          [`${campo}.provider`]: provKey,
           [`${campo}.remains`]: st.remains != null ? Number(st.remains) : undefined,
           [`${campo}.statusPayload`]: st && st.status ? st : undefined,
           [`${campo}.statusCheckedAt`]: agora,

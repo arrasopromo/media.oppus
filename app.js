@@ -13020,6 +13020,62 @@ const slotRealProvider = (slot, sub, parent) => {
   }
   return SLOT_DEFAULT_PROVIDER[slot] || 'nuvra';
 };
+// Pedido PRINCIPAL de uma venda (não os bumps): orgânicos vão pro slot fornecedor_social, o
+// resto pro fama24h (com fama24h_multi/topfama de reserva). Usado na coluna "Status (fornecedor)"
+// da tela de Vendas. Retorna { slot, provider, orderId, status, remains, checkedAt } ou null.
+const mainProviderSlotOf = (o, provMap) => {
+  try {
+    if (!o || typeof o !== 'object') return null;
+    const _arrT = (arr, k) => { try { const it = Array.isArray(arr) ? arr.find((i) => i && i.key === k) : null; return it ? it.value : ''; } catch (_) { return ''; } };
+    const _info = (k) => (o.additionalInfoMapPaid && o.additionalInfoMapPaid[k]) || (o.additionalInfoMap && o.additionalInfoMap[k]) || _arrT(o.additionalInfoPaid, k) || _arrT(o.additionalInfo, k) || '';
+    const tipo = String(o.tipo || o.tipoServico || _info('tipo_servico') || '').toLowerCase();
+    const cat = String(o.categoria || _info('categoria_servico') || '').toLowerCase();
+    // Fornecedor quando o slot não foi carimbado (pedidos de vários posts): o configurado pro tipo
+    // no Gerenciamento de Tipos (o mesmo que o despacho usou).
+    const pm = provMap || (__serviceTypeProvidersCache && __serviceTypeProvidersCache.values) || {};
+    const provDoTipo = () => {
+      try {
+        if (/curtid|like/.test(cat) || /^curtidas/.test(tipo)) { const k = /brasil/.test(tipo) ? 'curtidas_brasileiras' : (/organic/.test(tipo) ? 'organicos' : 'mistos'); return normalizeSmmProvider((pm.curtidas || {})[k]); }
+        if (/visualiz|view/.test(cat) || /visualiz/.test(tipo)) return normalizeSmmProvider((pm.visualizacoes || {}).visualizacoes_reels);
+        if (/seguid/.test(cat) || /mistos|brasileir/.test(tipo)) return normalizeSmmProvider((pm.seguidores || {})[/brasil/.test(tipo) ? 'brasileiros' : 'mistos']);
+      } catch (_) {}
+      return '';
+    };
+    const ordem = (/organic/.test(tipo) && !/curtid/.test(cat)) ? ['fornecedor_social', 'fama24h', 'fama24h_multi', 'topfama'] : ['fama24h', 'fama24h_multi', 'fornecedor_social', 'topfama'];
+    for (const slot of ordem) {
+      const v = o[slot];
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      const subs = Array.isArray(v.orders) ? v.orders.filter((x) => x && typeof x === 'object') : [];
+      if (!v.orderId && !v.status && !v.error && !subs.length) continue;
+      const carimbo = normalizeSmmProvider(v.provider || (subs[0] && subs[0].provider) || o.provider);
+      const provider = (carimbo && SMM_PROVIDERS[carimbo]) ? carimbo : (slot === 'fama24h_multi' ? (provDoTipo() || slotRealProvider(slot, v, o)) : slotRealProvider(slot, v, o));
+      if (subs.length) {
+        // Vários posts: um sub-pedido por post. Status = o pior entre eles (erro > pendente > andamento > concluído).
+        const lista = subs.map((x) => ({ orderId: (x.orderId != null && x.orderId !== '') ? String(x.orderId) : '', status: String((x.statusPayload && x.statusPayload.status) || x.status || ((x.response && x.response.error) ? 'error' : '') || ''), remains: (x.statusPayload && x.statusPayload.remains != null) ? Number(x.statusPayload.remains) : null }));
+        return { slot, provider, carimbado: !!(carimbo && SMM_PROVIDERS[carimbo]), orderId: lista.map((x) => x.orderId).filter(Boolean).join(','), subs: lista, status: agregaStatusSubs(lista.map((x) => (x.orderId ? x.status : 'error'))), remains: lista.some((x) => x.remains != null) ? lista.reduce((a, x) => a + (x.remains || 0), 0) : null, checkedAt: v.lastStatusAt || null };
+      }
+      const sp = (v.statusPayload && typeof v.statusPayload === 'object') ? v.statusPayload : {};
+      return {
+        slot, provider, carimbado: !!(carimbo && SMM_PROVIDERS[carimbo]), orderId: (v.orderId != null && v.orderId !== '') ? String(v.orderId) : '',
+        status: String(sp.status || v.status || (v.error ? 'error' : '') || ''), remains: (sp.remains != null ? sp.remains : (v.remains != null ? v.remains : null)),
+        checkedAt: v.lastStatusAt || v.statusCheckedAt || null
+      };
+    }
+  } catch (_) {}
+  return null;
+};
+// Junta status de vários sub-pedidos no "pior" deles, pra coluna de Vendas.
+const agregaStatusSubs = (arr) => {
+  const s = (arr || []).map((x) => String(x || '').toLowerCase());
+  if (!s.length) return '';
+  if (s.some((x) => !x || /error|fail|erro/.test(x))) return 'error';
+  if (s.some((x) => /cancel|refund/.test(x))) return 'Canceled';
+  if (s.some((x) => /partial/.test(x))) return 'Partial';
+  if (s.some((x) => /pend|created|queue/.test(x))) return 'Pending';
+  if (s.some((x) => /progress|processing/.test(x))) return 'In progress';
+  if (s.every((x) => /complete/.test(x))) return 'Completed';
+  return arr[0];
+};
 const normalizeProviderStatusText = (data) => {
   const txt = String(data?.status || data?.Status || data?.status_text || data?.statusText || data?.StatusText || '').toLowerCase();
   if (/cancel/.test(txt)) return 'cancelled';
@@ -41551,44 +41607,58 @@ const __FB_FORMAT_LABELS = {
   'audience_network/rewarded_video': 'Audience Network', 'audience_network/an_classic': 'Audience Network',
   'messenger/messenger_home': 'Messenger', 'messenger/story': 'Messenger Stories',
 };
+// As DUAS contas: ca 2 (BRL) e ca3 (USD). Na ca3 o gasto e o valor das compras do pixel vêm em dólar:
+// convertidos pela taxa média do período (a mesma do card de gasto, fetchFacebookSpend.usdRate).
 async function fetchFacebookInsightsByFormat({ since, until, datePreset } = {}) {
   const token = String(process.env.FB_ADS_TOKEN || '').trim();
-  let act = String(process.env.FB_AD_ACCOUNT_ID || '').trim();
-  if (!token || !act) return { ok: false, error: 'not_configured' };
-  if (!/^act_/.test(act)) act = 'act_' + act.replace(/^act_/, '');
-  const base = { fields: 'spend,actions,action_values', breakdowns: 'publisher_platform,platform_position', level: 'account', access_token: token };
+  const contas = [{ act: __fbBrAccount(), usd: false }, { act: __fbUsdAccount(), usd: true }].filter((c) => c.act);
+  if (!token || !contas.length) return { ok: false, error: 'not_configured' };
+  const base = { fields: 'spend,actions,action_values', breakdowns: 'publisher_platform,platform_position', level: 'account', access_token: token, limit: 500 };
   let params, cacheKey;
-  if (datePreset) { params = { ...base, date_preset: datePreset }; cacheKey = 'fmt:preset:' + datePreset; }
+  if (datePreset) { params = { ...base, date_preset: datePreset }; cacheKey = 'fmt2:preset:' + datePreset; }
   else {
     const s = String(since || '').trim(), u = String(until || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(u)) return { ok: false, error: 'bad_range' };
-    params = { ...base, time_range: JSON.stringify({ since: s, until: u }) }; cacheKey = 'fmt:' + s + '|' + u;
+    params = { ...base, time_range: JSON.stringify({ since: s, until: u }) }; cacheKey = 'fmt2:' + s + '|' + u;
   }
   const now = Date.now();
   const hit = __fbFormatCache.get(cacheKey);
   if (hit && hit.exp > now) return { ok: true, formats: hit.value, cached: true };
   try {
-    const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
-    if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
-    const rows = (resp.data && Array.isArray(resp.data.data)) ? resp.data.data : [];
-    const purchOf = (acts) => { if (!Array.isArray(acts)) return 0; const p = acts.find((a) => /purchase/.test(a.action_type) && !/value/.test(a.action_type)); return p ? Number(p.value) || 0 : 0; };
-    const revOf = (vals) => { if (!Array.isArray(vals)) return 0; const p = vals.find((a) => /purchase/.test(a.action_type)); return p ? Number(p.value) || 0 : 0; };
-    // Agrupa por label amigável (ex.: reels + reels_overlay = "Instagram Reels").
-    const byLabel = new Map();
-    for (const x of rows) {
-      const pp = String(x.publisher_platform || '?'), pos = String(x.platform_position || '?');
-      const key = pp + '/' + pos;
-      const label = __FB_FORMAT_LABELS[key] || (pp.charAt(0).toUpperCase() + pp.slice(1) + ' ' + pos.replace(/^(facebook|instagram|messenger)_/, '').replace(/_/g, ' '));
-      const cur = byLabel.get(label) || { label, spend: 0, purchases: 0, revenue: 0 };
-      cur.spend += Number(x.spend) || 0; cur.purchases += purchOf(x.actions); cur.revenue += revOf(x.action_values);
-      byLabel.set(label, cur);
+    let usdRate = null;
+    if (contas.some((c) => c.usd)) {
+      try { const sp = await fetchFacebookSpend({ since, until, datePreset }); if (sp && sp.ok && sp.usdRate) usdRate = Number(sp.usdRate); } catch (_) {}
+      if (!usdRate) { try { usdRate = Number((await convertUsdByDay({ [new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10)]: 1 })).taxaMedia) || null; } catch (_) {} }
     }
+    // Valor das compras: o Meta converteu o real do pixel pra dólar pelo câmbio de mercado → volta pelo
+    // câmbio de mercado (o gasto usa a taxa do cartão, que inclui o custo da LootRush).
+    let fxRev = null;
+    if (contas.some((c) => c.usd)) { try { const fx = await getUsdBrlRate(); fxRev = Number(fx && fx.rate) || null; } catch (_) {} }
+    const byLabel = new Map();
+    let algumaOk = false, ultimoErro = '';
+    for (const c of contas) {
+      const resp = await axios.get(`https://graph.facebook.com/v21.0/${c.act}/insights`, { params, timeout: 25000, validateStatus: () => true });
+      if (resp.status !== 200) { ultimoErro = (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status); continue; }
+      if (c.usd && !usdRate) { ultimoErro = 'sem_cotacao_usd'; continue; }
+      algumaOk = true;
+      const fx = c.usd ? usdRate : 1, fxR = c.usd ? (fxRev || usdRate) : 1;
+      const rows = (resp.data && Array.isArray(resp.data.data)) ? resp.data.data : [];
+      for (const x of rows) {
+        const pp = String(x.publisher_platform || '?'), pos = String(x.platform_position || '?');
+        const key = pp + '/' + pos;
+        const label = __FB_FORMAT_LABELS[key] || (pp.charAt(0).toUpperCase() + pp.slice(1) + ' ' + pos.replace(/^(facebook|instagram|messenger)_/, '').replace(/_/g, ' '));
+        const cur = byLabel.get(label) || { label, spend: 0, purchases: 0, revenue: 0 };
+        cur.spend += (Number(x.spend) || 0) * fx; cur.purchases += __metaPick(x.actions); cur.revenue += __metaPick(x.action_values) * fxR;
+        byLabel.set(label, cur);
+      }
+    }
+    if (!algumaOk) return { ok: false, error: ultimoErro || 'fetch_failed' };
     const formats = Array.from(byLabel.values())
       .map((f) => ({ ...f, spend: Math.round(f.spend * 100) / 100, revenue: Math.round(f.revenue * 100) / 100, roas: f.spend > 0 ? Math.round((f.revenue / f.spend) * 100) / 100 : 0 }))
       .filter((f) => f.purchases > 0) // só formatos que tiveram venda
       .sort((a, b) => b.purchases - a.purchases);
     __fbFormatCache.set(cacheKey, { value: formats, exp: now + 5 * 60 * 1000 });
-    return { ok: true, formats };
+    return { ok: true, formats, usdRate };
   } catch (e) { return { ok: false, error: (e && e.message) || 'fetch_failed' }; }
 }
 
@@ -41837,10 +41907,15 @@ function __tsProduto(o) {
 // Robôs (prévia de link do Facebook/WhatsApp, revisão de anúncio da Meta, Google…) não são visitantes.
 const __TS_BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|externalhit|meta-externalads|go-http-client|whatsapp\/|googleother|google-|headless|prospector|python|curl\/|wget|axios|node-fetch|Mac OS X 10_11_1\) AppleWebKit\/601/i;
 function __tsEhBot(ua, city) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()); }
+const TRACK_SITE_INICIO = '2026-11-17';
 async function computeTrackSite({ since, until, fresh } = {}) {
   const hojeSP = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
-  const s = /^\d{4}-\d{2}-\d{2}$/.test(String(since || '')) ? String(since) : hojeSP;
-  const u = /^\d{4}-\d{2}-\d{2}$/.test(String(until || '')) ? String(until) : hojeSP;
+  let s = /^\d{4}-\d{2}-\d{2}$/.test(String(since || '')) ? String(since) : hojeSP;
+  let u = /^\d{4}-\d{2}-\d{2}$/.test(String(until || '')) ? String(until) : hojeSP;
+  // O rastreio completo (pageview em todas as páginas, UTM na visita) entrou em 17/11/2026: nada
+  // antes disso entra na conta, senão o período mistura dado incompleto com dado completo.
+  if (u < TRACK_SITE_INICIO) return { ok: false, error: 'O Track do Site só tem dados a partir de 17/11/2026.' };
+  if (s < TRACK_SITE_INICIO) s = TRACK_SITE_INICIO;
   const ini = new Date(s + 'T00:00:00-03:00'), fim = new Date(new Date(u + 'T00:00:00-03:00').getTime() + 864e5);
   if (!(fim > ini) || (fim - ini) > 400 * 864e5) return { ok: false, error: 'periodo_invalido' };
   const key = s + '|' + u;
@@ -41858,7 +41933,10 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1 }).toArray(),
     db.fe.find(rangeDate).project({ visitorId: 1, evento: 1, servico: 1, tipo: 1, qtd: 1, preco: 1, erro: 1, createdAt: 1, utm: 1 }).toArray(),
     db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1 }).toArray(),
-    db.vu.find({ $or: [{ lastAt: { $gte: iniS, $lt: fimS } }, { lastAt: { $gte: ini, $lt: fim } }] }).project({ username: 1, lastAt: 1, utms: 1 }).toArray(),
+    // Mesma regra do card do Dashboard: só validação REAL (o cliente digitou o @ no site → source
+    // verifyInstagramProfile*) com a checagem dentro do período. As conferências de fundo (refil,
+    // reposição, gerenciamento) também atualizam o perfil e inflavam a contagem.
+    db.vu.find({ checks: { $elemMatch: { source: { $regex: '^verifyInstagramProfile', $options: 'i' }, checkedAt: { $gte: iniS, $lt: fimS } } } }).project({ username: 1, lastAt: 1, utms: 1 }).toArray(),
     db.al.find(rangeDate).project({ max_percentage: 1 }).toArray(),
   ]);
   const diaSP = (d) => new Date(new Date(d).getTime() - 3 * 3600e3).toISOString().slice(0, 10);
@@ -41868,6 +41946,10 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const visitantes = new Set(), visServico = new Set(), porHora = Array(24).fill(0);
   const pags = {}, disp = { Celular: new Set(), Computador: new Set(), Outro: new Set() }, cidades = {}, origem = {};
   let botsPv = 0;
+  // A UTM só passou a ser gravada na visita em 17/11: antes disso a origem fica sem registro.
+  // A tabela de origem usa só as visitas a partir da 1ª com UTM, pra não mostrar milhares de "sem origem".
+  let origemDesdeMs = null;
+  for (const r of pvRows) { if (r.utm) { const t = new Date(r.createdAt).getTime(); if (origemDesdeMs == null || t < origemDesdeMs) origemDesdeMs = t; } }
   for (const r of pvRows) {
     if (__tsEhBot(r.ua, r.city)) { botsPv++; continue; }
     const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
@@ -41888,7 +41970,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     else if (/google\./i.test(String(r.referer || ''))) src = 'Google';
     else if (r.referer && !/agenciaoppus/i.test(String(r.referer))) src = 'Outros sites';
     else src = 'Sem origem registrada';
-    if (cid) (origem[src] || (origem[src] = new Set())).add(cid);
+    if (cid && origemDesdeMs != null && new Date(r.createdAt).getTime() >= origemDesdeMs) (origem[src] || (origem[src] = new Set())).add(cid);
   }
 
   // 2) Pedidos (Pix gerado) e pagos
@@ -41945,21 +42027,44 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     }
   }
   const nEv = (k) => (ev[k] ? ev[k].size : 0);
+  // As etapas "escolheu pacote / validou / clicou em pagar" só são gravadas desde que o rastreio do
+  // funil entrou no ar. Pra não comparar 18 dias de visitas com 1 dia de eventos, o funil inteiro
+  // (visitas, Pix e pagos inclusive) usa a MESMA janela: do 1º evento gravado até o fim do período.
+  let funilDesdeMs = null;
+  for (const e of feRows) { const t = new Date(e.createdAt).getTime(); if (funilDesdeMs == null || t < funilDesdeMs) funilDesdeMs = t; }
+  const noFunil = (d) => funilDesdeMs == null || new Date(d).getTime() >= funilDesdeMs;
+  const fVis = new Set(), fServ = new Set();
+  for (const r of pvRows) {
+    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city)) continue;
+    const cid = String(r.clientId || ''); if (!cid) continue;
+    fVis.add(cid); if (__TS_PAG_SERV[String(r.path || '').split(':')[0]]) fServ.add(cid);
+  }
+  let fPix = 0, fPagos = 0;
+  for (const o of orders) {
+    if (!noFunil(o.createdAt)) continue;
+    const info = __tsProduto(o); if (info.cat === 'refil' || info.canal !== 'site') continue;
+    fPix++; if (pago(o)) fPagos++;
+  }
   const funil = [
-    { etapa: 'Visitantes no site', n: visitantes.size },
-    { etapa: 'Entraram pela página inicial', n: pags['/engajamento'] ? pags['/engajamento'].vis.size : 0, desde: 'novo' },
-    { etapa: 'Viram uma página de serviço', n: visServico.size },
-    { etapa: 'Escolheram um pacote', n: nEv('pacote_escolhido'), desde: 'novo' },
-    { etapa: 'Validaram o perfil', n: nEv('perfil_validado') || vuRows.length, fonte: nEv('perfil_validado') ? 'funil' : 'perfis validados' },
-    { etapa: 'Clicaram em pagar', n: nEv('clicou_pagar'), desde: 'novo' },
-    { etapa: 'Pix gerado (pelo site)', n: canais.site.pix },
-    { etapa: 'Pagaram (pelo site)', n: canais.site.pagos },
+    { etapa: 'Visitantes no site', n: fVis.size },
+    { etapa: 'Viram uma página de serviço', n: fServ.size },
   ];
+  if (funilDesdeMs != null) funil.push(
+    { etapa: 'Escolheram um pacote', n: nEv('pacote_escolhido') },
+    { etapa: 'Validaram o perfil', n: nEv('perfil_validado') },
+    { etapa: 'Clicaram em pagar', n: nEv('clicou_pagar') },
+  );
+  funil.push(
+    { etapa: 'Pix gerado (pelo site)', n: fPix },
+    { etapa: 'Pagaram (pelo site)', n: fPagos },
+  );
 
   const top = (obj, campo, n) => Object.values(obj).sort((a, b) => (b[campo] || 0) - (a[campo] || 0)).slice(0, n);
   const out = {
     ok: true, since: s, until: u, geradoEm: new Date().toISOString(),
     funilAtivoDesde: feRows.length ? null : 'sem_eventos',
+    funilDesde: funilDesdeMs != null ? new Date(funilDesdeMs).toISOString() : null,
+    origemDesde: origemDesdeMs != null ? new Date(origemDesdeMs).toISOString() : null,
     kpis: {
       visitantes: visitantes.size, pageviews: pvRows.length - botsPv, pvPorVisitante: visitantes.size ? (pvRows.length - botsPv) / visitantes.size : 0,
       perfisValidados: vuRows.length, pix, pagos, receita, ticket: pagos ? receita / pagos : 0,
@@ -41990,6 +42095,79 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   return out;
 }
 app.get('/painel/track-site', requireAdmin, (req, res) => res.render('painel_track_site', { page: 'track-site' }));
+// Status AO VIVO do pedido principal (no fornecedor) das vendas que estão na tela. Agrupa por
+// fornecedor e consulta em lote (action=status&orders=...). Só leitura: não grava no pedido.
+app.post('/api/painel/vendas/status-fornecedor', requireAdmin, async (req, res) => {
+  try {
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map((x) => String(x || '')).filter((x) => /^[0-9a-f]{24}$/i.test(x)).slice(0, 300);
+    if (!ids.length) return res.json({ ok: true, status: {} });
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+    const docs = await col.find({ _id: { $in: ids.map((i) => new ObjectId(i)) } }).toArray();
+    const porProv = new Map(); const ref = {};
+    let provMap = {}; try { provMap = (await getServiceTypeProvidersCached()) || {}; } catch (_) {}
+    const subsDe = {};
+    for (const o of docs) {
+      const m = mainProviderSlotOf(o, provMap); const id = String(o._id);
+      if (!m) { ref[id] = { status: 'sem_envio' }; continue; }
+      ref[id] = { provider: m.provider, orderId: m.orderId, status: m.status, remains: m.remains, posts: m.subs ? m.subs.length : undefined, origem: 'salvo', _presumido: !m.carimbado };
+      if (!SMM_PROVIDERS[m.provider]) continue;
+      const oids = m.subs ? m.subs.map((x) => x.orderId) : [m.orderId];
+      if (m.subs) subsDe[id] = m.subs;
+      if (!porProv.has(m.provider)) porProv.set(m.provider, []);
+      oids.forEach((oid) => { if (oid) porProv.get(m.provider).push([id, oid]); });
+    }
+    const vivo = {}; // id -> { orderId: { status, remains } }
+    await Promise.all([...porProv.entries()].map(async ([prov, lista]) => {
+      const key = smmProviderKey(prov); if (!key) return;
+      for (let i = 0; i < lista.length; i += 100) {
+        const lote = lista.slice(i, i + 100);
+        try {
+          const r = await axios.post(smmProviderUrl(prov), new URLSearchParams({ key, action: 'status', orders: lote.map((x) => x[1]).join(',') }), { timeout: 20000, validateStatus: () => true });
+          const data = (r && r.data && typeof r.data === 'object') ? r.data : {};
+          for (const [id, oid] of lote) {
+            const d = data[oid] || (lote.length === 1 && data.status ? data : null);
+            if (d && (d.status || d.error)) { vivo[id] = vivo[id] || {}; vivo[id][oid] = { status: String(d.status || ('erro: ' + d.error)), remains: d.remains != null ? Number(d.remains) : null }; }
+          }
+        } catch (_) {}
+      }
+    }));
+    const provDe = {};
+    const idErrado = (st) => /incorrect order|order not found|invalid order|not found/i.test(String(st || ''));
+    const revisar = [];
+    for (const [id, porOid] of Object.entries(vivo)) {
+      if (!ref[id] || !ref[id]._presumido) continue;
+      for (const [oid, v] of Object.entries(porOid)) if (idErrado(v.status)) revisar.push([id, oid]);
+    }
+    const ALT = ['fama24h', 'nuvra', 'worldofsmm', 'fornecedor_social', 'justanotherpanel', 'revendaexclusiva', 'smmhustle', 'topfama', 'worldsmm', 'followiz'];
+    for (const [id, oid] of revisar.slice(0, 30)) {
+      for (const prov of ALT) {
+        if (prov === ref[id].provider) continue;
+        const key = smmProviderKey(prov); if (!key) continue;
+        try {
+          const r = await axios.post(smmProviderUrl(prov), new URLSearchParams({ key, action: 'status', order: oid }), { timeout: 12000, validateStatus: () => true });
+          const d = (r && r.data && typeof r.data === 'object') ? r.data : {};
+          if (d.status && !d.error) { vivo[id][oid] = { status: String(d.status), remains: d.remains != null ? Number(d.remains) : null }; provDe[id] = prov; break; }
+        } catch (_) {}
+      }
+    }
+    for (const [id, porOid] of Object.entries(vivo)) {
+      if (provDe[id]) ref[id].provider = provDe[id];
+      const subs = subsDe[id];
+      if (subs) {
+        const st = subs.map((x) => (x.orderId ? ((porOid[x.orderId] && porOid[x.orderId].status) || x.status) : 'error'));
+        const rem = subs.reduce((a, x) => a + ((x.orderId && porOid[x.orderId] && porOid[x.orderId].remains) || 0), 0);
+        ref[id] = Object.assign({}, ref[id], { status: agregaStatusSubs(st), remains: rem, posts: subs.length, origem: 'fornecedor' });
+      } else {
+        const v = Object.values(porOid)[0];
+        if (v) ref[id] = Object.assign({}, ref[id], { status: v.status, remains: v.remains != null ? v.remains : ref[id].remains, origem: 'fornecedor' });
+      }
+    }
+    for (const v of Object.values(ref)) delete v._presumido;
+    return res.json({ ok: true, status: ref });
+  } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+app.get('/painel/bloqueados', requireAdmin, (req, res) => res.render('painel_bloqueados', { page: 'bloqueados' }));
 app.get('/api/painel/track-site/dados', requireAdmin, async (req, res) => {
   try {
     const d = await computeTrackSite({ since: req.query.since, until: req.query.until, fresh: req.query.fresh === '1' });
@@ -44947,7 +45125,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
         customerLabel,
         instagramUsername: igUser,
         phone,
-        isUpsell: !!(o && o.upsell && o.upsell.isUpsell === true)
+        isUpsell: !!(o && o.upsell && o.upsell.isUpsell === true),
+        mainSupplier: mainProviderSlotOf(o)
       };
     });
 

@@ -8192,8 +8192,17 @@
           </table>
           </div>
         <% } else if (isVendasView) { %>
+          <div class="vd-filtro" id="vdFiltro" role="group" aria-label="Filtrar por status do fornecedor">
+            <button type="button" data-f="" aria-pressed="true">Todos <span>0</span></button>
+            <button type="button" data-f="ok"><i class="ok"></i>Concluído <span>0</span></button>
+            <button type="button" data-f="and"><i class="and"></i>Em andamento <span>0</span></button>
+            <button type="button" data-f="pend"><i class="pend"></i>Pendente <span>0</span></button>
+            <button type="button" data-f="parc"><i class="parc"></i>Parcial <span>0</span></button>
+            <button type="button" data-f="ruim"><i class="ruim"></i>Cancelado / erro <span>0</span></button>
+            <small id="vdFiltroInfo">consultando fornecedores…</small>
+          </div>
           <div class="dashboard-table-wrap panel-table-scroll">
-          <table class="dashboard-table" style="min-width: 1180px; font-size: 0.92rem;">
+          <table class="dashboard-table vd-tab" style="width:100%; font-size: 0.92rem;">
             <thead>
               <tr>
                 <th>Data (SP)</th>
@@ -8206,6 +8215,7 @@
                 <th>Custo Bump</th>
                 <th>Total Item</th>
                 <th>Total Pago</th>
+                <th class="vd-th-st">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -8245,9 +8255,10 @@
                    const dateStr = formatDateTimeSP(order.createdAt);
                    const userLabel = String(order.instagramUsername ? ('@' + String(order.instagramUsername).replace(/^@+/, '')) : (order.customerLabel || '-'));
                 %>
-                <tr>
+                <tr data-oid="<%= String(order._id || '') %>">
                   <td><%= dateStr %></td>
-                  <td><%= userLabel %></td>
+                  <% const _igU = String(order.instagramUsername || '').replace(/^@+/, '').trim(); %>
+                  <td><% if (/^[A-Za-z0-9._]{1,30}$/.test(_igU)) { %><a class="vd-user" href="https://www.instagram.com/<%= _igU %>/" target="_blank" rel="noopener noreferrer" title="Abrir o perfil no Instagram">@<%= _igU %></a><% } else { %><%= userLabel %><% } %></td>
                   <td><%= order.type %></td>
                   <td><%= order.qty %></td>
                   <td>
@@ -8257,7 +8268,7 @@
                     <% } %>
                   </td>
                   <td>R$ <%= (function(){ try { var n = Number(order && typeof order.paymentFee !== 'undefined' ? order.paymentFee : NaN); if (isFinite(n) && n > 0) return n.toFixed(2).replace('.', ','); var pm = String(order && (order.paymentMethod || order.payment_method || order.method) ? (order.paymentMethod || order.payment_method || order.method) : '').toLowerCase(); if (pm.indexOf('paghiper') >= 0) return '0,99'; return '0,85'; } catch(_) { return '0,85'; } })() %></td>
-                  <td><%= (order.orderBumps || '-') %></td>
+                  <td class="vd-bump"><% const _bl = order.orderBumps ? String(order.orderBumps).split(';').filter(Boolean) : []; %><% if (!_bl.length) { %>-<% } else { _bl.forEach(function(x){ %><span><%= x %></span><% }) } %></td>
                   <td>
                     R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>
                     <% if (order.orderBumpsTotal) { %>
@@ -8266,11 +8277,96 @@
                   </td>
                   <td>R$ <%= order.cost.toFixed(2).replace('.', ',') %></td>
                   <td>R$ <%= (typeof order.totalPaid !== 'undefined' ? Number(order.totalPaid || 0) : 0).toFixed(2).replace('.', ',') %></td>
+                  <% const _ms = order.mainSupplier || null; %>
+                  <td class="vd-st" data-st="<%= _ms ? (_ms.status || '') : 'sem_envio' %>" data-rem="<%= _ms && _ms.remains != null ? _ms.remains : '' %>" data-prov="<%= _ms ? (_ms.provider || '') : '' %>" data-ord="<%= _ms ? (_ms.orderId || '') : '' %>" data-posts="<%= _ms && _ms.subs ? _ms.subs.length : '' %>"><span class="vd-badge"><i></i><b>…</b></span></td>
                 </tr>
               <% }) %>
             </tbody>
           </table>
           </div>
+          <style>
+            .vd-th-st{ min-width:140px; }
+            a.vd-user{ color:inherit; text-decoration:none; border-bottom:1px solid #c9ced6; }
+            a.vd-user:hover{ color:#2a4fc4; border-bottom-color:#2a4fc4; }
+            .vd-tab td.vd-bump{ color:#4b5260; } .vd-tab td.vd-bump span{ display:block; white-space:nowrap; line-height:1.5; }
+            .vd-st{ white-space:nowrap; }
+            .vd-badge{ display:inline-flex; align-items:center; gap:6px; padding:3px 10px 3px 8px; border-radius:6px; font-size:12px; line-height:18px; background:#f2f3f5; color:#4b5260; }
+            .vd-badge b{ font-weight:600; }
+            .vd-badge i, .vd-filtro i{ width:7px; height:7px; border-radius:50%; background:#9aa1ad; flex:none; display:inline-block; }
+            .vd-badge.ok{ background:#ecf6f0; color:#17643f; } .vd-badge.ok i, .vd-filtro i.ok{ background:#1f9d5c; }
+            .vd-badge.and{ background:#eef2fd; color:#2a4fc4; } .vd-badge.and i, .vd-filtro i.and{ background:#3b6cf0; }
+            .vd-badge.pend{ background:#fbf5e8; color:#8a5a00; } .vd-badge.pend i, .vd-filtro i.pend{ background:#d99a1e; }
+            .vd-badge.parc{ background:#fcf0e8; color:#a4491a; } .vd-badge.parc i, .vd-filtro i.parc{ background:#e0702c; }
+            .vd-badge.ruim{ background:#fcedeb; color:#b0322a; } .vd-badge.ruim i, .vd-filtro i.ruim{ background:#dc4a3f; }
+            .vd-st small{ display:block; color:#8a93a1; font-size:11px; margin-top:4px; }
+            .vd-filtro{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 12px; }
+            .vd-filtro button{ display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border:1px solid #e3e6eb; border-radius:999px; background:#fff; color:#3a404b; font:inherit; font-size:13px; cursor:pointer; }
+            .vd-filtro button span{ color:#8a93a1; font-variant-numeric:tabular-nums; font-size:12px; }
+            .vd-filtro button:hover{ border-color:#c9ced6; }
+            .vd-filtro button[aria-pressed="true"]{ background:#14171c; border-color:#14171c; color:#fff; }
+            .vd-filtro button[aria-pressed="true"] span{ color:rgba(255,255,255,.7); }
+            .vd-filtro small{ color:#8a93a1; font-size:12px; margin-left:4px; }
+          </style>
+          <script>
+            // Coluna "Status (fornecedor)": mostra o último status gravado e, logo depois, o status AO VIVO
+            // consultado no fornecedor do pedido principal (POST /api/painel/vendas/status-fornecedor).
+            (function(){
+              var NOME = { fama24h:'Fama24h', nuvra:'NuvraSMM', fornecedor_social:'Forn. Social', topfama:'TopFama', smmhustle:'SMMHustle', worldsmm:'WorldSMM', worldofsmm:'WorldOfSMM', justanotherpanel:'JAP', revendaexclusiva:'Revenda', followiz:'Followiz', smmraja:'SMMRaja', smmturk:'SMMTurk', peakerr:'Peakerr' };
+              function traduz(st){
+                var s = String(st || '').toLowerCase();
+                if (!s || s === 'sem_envio') return ['Sem envio','ruim'];
+                if (/^erro|error|fail/.test(s)) return ['Erro no envio','ruim'];
+                if (/unknown/.test(s)) return ['Desconhecido','ruim'];
+                if (/cancel|refund/.test(s)) return ['Cancelado','ruim'];
+                if (/partial/.test(s)) return ['Parcial','parc'];
+                if (/complete|conclu|success|done/.test(s)) return ['Concluído','ok'];
+                if (/progress|processing|andamento/.test(s)) return ['Em andamento','and'];
+                if (/pend|created|queue/.test(s)) return ['Pendente','pend'];
+                return [st, ''];
+              }
+              var filtro = '';
+              function aplica(){
+                var n = { '': 0, ok: 0, and: 0, pend: 0, parc: 0, ruim: 0 };
+                Array.prototype.forEach.call(document.querySelectorAll('tr[data-oid]'), function(tr){
+                  var c = tr.getAttribute('data-cat') || ''; n[''] += 1; if (n[c] != null && c) n[c] += 1;
+                  tr.hidden = !!filtro && c !== filtro;
+                });
+                Array.prototype.forEach.call(document.querySelectorAll('#vdFiltro button'), function(b){
+                  var f = b.getAttribute('data-f') || ''; b.setAttribute('aria-pressed', f === filtro ? 'true' : 'false');
+                  var sp = b.querySelector('span'); if (sp) sp.textContent = (n[f] || 0).toLocaleString('pt-BR');
+                });
+              }
+              var fb = document.getElementById('vdFiltro');
+              if (fb) fb.addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; filtro = b.getAttribute('data-f') || ''; aplica(); });
+              function pinta(td, d){
+                var t = traduz(d.status), b = td.querySelector('.vd-badge') || document.createElement('span');
+                b.className = 'vd-badge ' + t[1]; b.innerHTML = '<i></i><b></b>'; b.querySelector('b').textContent = t[0];
+                var tr0 = td.closest('tr'); if (tr0) tr0.setAttribute('data-cat', t[1]);
+                var extra = [];
+                if (d.provider) extra.push(NOME[d.provider] || d.provider);
+                if (d.posts && Number(d.posts) > 1) extra.push(d.posts + ' posts');
+                if (d.remains != null && d.remains !== '' && Number(d.remains) > 0 && !/complete/i.test(String(d.status||''))) extra.push('faltam ' + Number(d.remains).toLocaleString('pt-BR'));
+                var sm = td.querySelector('small'); if (!sm) { sm = document.createElement('small'); td.appendChild(sm); }
+                sm.textContent = extra.join(' · '); if (d.orderId) sm.title = 'Pedido ' + d.orderId + (d.origem === 'fornecedor' ? ' (consultado agora)' : ' (último status salvo)');
+                if (!td.contains(b)) td.insertBefore(b, td.firstChild);
+              }
+              var cels = Array.prototype.slice.call(document.querySelectorAll('td.vd-st'));
+              cels.forEach(function(td){ pinta(td, { status: td.getAttribute('data-st'), remains: td.getAttribute('data-rem'), provider: td.getAttribute('data-prov'), orderId: td.getAttribute('data-ord'), posts: td.getAttribute('data-posts') }); });
+              aplica();
+              var ids = cels.map(function(td){ var tr = td.closest('tr'); return tr ? tr.getAttribute('data-oid') : ''; }).filter(Boolean);
+              var faltam = Math.ceil(ids.length / 150), info = document.getElementById('vdFiltroInfo');
+              var fim = function(){ faltam -= 1; aplica(); if (faltam <= 0 && info) info.textContent = 'status ao vivo do fornecedor'; };
+              if (!ids.length && info) info.textContent = '';
+              for (var i = 0; i < ids.length; i += 150) {
+                (function(lote){
+                  fetch('/api/painel/vendas/status-fornecedor', { method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ ids: lote }) })
+                    .then(function(r){ return r.json(); })
+                    .then(function(d){ if (!d || !d.ok || !d.status) return; lote.forEach(function(id){ var v = d.status[id]; if (!v) return; var tr = document.querySelector('tr[data-oid="' + id + '"] td.vd-st'); if (tr) pinta(tr, v); }); })
+                    .catch(function(){}).then(fim);
+                })(ids.slice(i, i + 150));
+              }
+            })();
+          </script>
         <% } else { %>
           <% if (view === 'dashboard') { %>
           <div style="margin-bottom:14px;">
@@ -9038,107 +9134,7 @@
         <% } %>
       </div>
 
-      <% if (!isUnknownOrderIdView && isVendasView) { %>
-      <div class="cost-panel-wrap">
-
-        <div style="border:1px solid #ddd; border-radius:8px; padding:16px; background:#fafafa; margin-top: 16px;">
-          <h2 style="margin:0 0 8px; font-size:1rem;">Usuários Bloqueados</h2>
-          <div style="display:flex; gap:8px; margin-bottom:12px;">
-            <input type="text" id="blacklistInput" placeholder="Usuário (sem @)" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px;">
-            <button onclick="addToBlacklist()" style="padding:6px 12px; background:#dc3545; color:#fff; border:none; border-radius:4px; cursor:pointer;">Bloquear</button>
-          </div>
-          <ul id="blacklistList" style="list-style:none; padding:0; margin:0; max-height: 200px; overflow-y: auto;">
-            <!-- Items via JS -->
-          </ul>
-          <script>
-            async function loadBlacklist() {
-              try {
-                const res = await fetch('/api/blacklist');
-                const data = await res.json();
-                if(data.success) {
-                  renderBlacklist(data.blacklist);
-                }
-              } catch(e) { console.error(e); }
-            }
-
-            function renderBlacklist(list) {
-              const ul = document.getElementById('blacklistList');
-              ul.innerHTML = '';
-              if (list.length === 0) {
-                ul.innerHTML = '<li style="color:#777; font-size:0.9rem; text-align:center;">Nenhum usuário bloqueado</li>';
-                return;
-              }
-              list.forEach(item => {
-                const li = document.createElement('li');
-                li.style.display = 'flex';
-                li.style.justifyContent = 'space-between';
-                li.style.alignItems = 'center';
-                li.style.padding = '6px 0';
-                li.style.borderBottom = '1px solid #eee';
-                
-                const span = document.createElement('span');
-                span.textContent = item.username;
-                span.style.fontWeight = '500';
-                
-                const btn = document.createElement('button');
-                btn.textContent = '✕';
-                btn.style.background = 'transparent';
-                btn.style.border = 'none';
-                btn.style.color = '#dc3545';
-                btn.style.cursor = 'pointer';
-                btn.style.fontSize = '1.1rem';
-                btn.title = 'Desbloquear';
-                btn.onclick = () => removeFromBlacklist(item.username);
-                
-                li.appendChild(span);
-                li.appendChild(btn);
-                ul.appendChild(li);
-              });
-            }
-
-            async function addToBlacklist() {
-              const input = document.getElementById('blacklistInput');
-              const username = input.value.trim();
-              if(!username) return;
-              
-              try {
-                const res = await fetch('/api/blacklist/add', {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ username })
-                });
-                const data = await res.json();
-                if(data.success) {
-                  input.value = '';
-                  loadBlacklist();
-                } else {
-                  alert('Erro ao bloquear: ' + (data.message || data.error));
-                }
-              } catch(e) { alert('Erro: ' + e.message); }
-            }
-
-            async function removeFromBlacklist(username) {
-              if(!confirm('Desbloquear ' + username + '?')) return;
-              try {
-                const res = await fetch('/api/blacklist/remove', {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ username })
-                });
-                const data = await res.json();
-                if(data.success) {
-                  loadBlacklist();
-                } else {
-                  alert('Erro ao desbloquear: ' + (data.message || data.error));
-                }
-              } catch(e) { alert('Erro: ' + e.message); }
-            }
-
-            loadBlacklist();
-          </script>
-        </div>
-    </div>
-    <% } %>
+      <%# Usuários Bloqueados saiu daqui: agora é a página /painel/bloqueados (menu Operação). %>
       <% } %>
     <% } %>
 

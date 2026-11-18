@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuários Bloqueados</title>
+  <style>
+    /* Mesma folha do admin (painel-admin.css, carregada pelo partial da sidebar). */
+    .bl{ max-width:880px; margin:0 auto; color:var(--tinta,#14171c); }
+    .bl *{ box-sizing:border-box; }
+    .bl-top{ margin-bottom:18px; }
+    .bl-top h1{ margin:0; font-size:28px; font-weight:650; font-stretch:88%; letter-spacing:-.02em; }
+    .bl-top p{ margin:4px 0 0; color:var(--grafite,#525a67); font-size:14px; max-width:64ch; line-height:1.5; }
+    .bl-bloco{ background:var(--folha,#fff); border-radius:12px; box-shadow:0 0 0 1px var(--fio,rgba(20,23,28,.09)); padding:16px 18px; }
+    .bl-add{ display:flex; gap:8px; flex-wrap:wrap; }
+    .bl-add input{ flex:1 1 240px; min-width:0; border:0; background:var(--vala,#eceef2); border-radius:8px; padding:10px 12px; font:inherit; font-size:14px; color:var(--tinta,#14171c); }
+    .bl-btn{ border:0; border-radius:8px; padding:10px 16px; font:inherit; font-size:14px; font-weight:600; cursor:pointer; background:#c0362c; color:#fff; }
+    .bl-btn:disabled{ opacity:.6; cursor:default; }
+    .bl-msg{ margin-top:8px; font-size:13px; color:var(--grafite,#525a67); min-height:18px; }
+    .bl-msg.erro{ color:#c0362c; }
+    .bl-cab{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:18px 0 8px; }
+    .bl-cab h2{ margin:0; font-size:15px; font-weight:650; }
+    .bl-cab .n{ color:var(--lapis,#8a93a1); font-weight:500; font-variant-numeric:tabular-nums; }
+    .bl-busca{ border:0; background:var(--vala,#eceef2); border-radius:8px; padding:8px 10px; font:inherit; font-size:13px; min-width:0; width:220px; color:var(--tinta,#14171c); }
+    .bl-lista{ list-style:none; margin:0; padding:0; }
+    .bl-lista li{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 2px; border-bottom:1px solid var(--fio,rgba(20,23,28,.09)); }
+    .bl-lista li:last-child{ border-bottom:0; }
+    .bl-u{ font-weight:600; font-size:14px; word-break:break-all; }
+    .bl-u a{ color:inherit; text-decoration:none; }
+    .bl-u a:hover{ text-decoration:underline; }
+    .bl-d{ color:var(--lapis,#8a93a1); font-size:12px; margin-top:2px; font-variant-numeric:tabular-nums; }
+    .bl-x{ border:0; background:none; color:#c0362c; font:inherit; font-size:13px; font-weight:600; cursor:pointer; padding:6px 8px; border-radius:6px; white-space:nowrap; }
+    .bl-x:hover{ background:rgba(192,54,44,.08); }
+    .bl-vazio{ color:var(--lapis,#8a93a1); font-size:14px; padding:14px 2px; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page: 'bloqueados' }) %>
+  <div class="main-content">
+    <div class="bl">
+      <div class="bl-top">
+        <h1>Usuários Bloqueados</h1>
+        <p>Perfis do Instagram que não podem comprar no site. Quem está na lista é recusado ao informar o @ no checkout.</p>
+      </div>
+      <div class="bl-bloco">
+        <form class="bl-add" id="blForm">
+          <input type="text" id="blInput" placeholder="Usuário (sem @)" autocomplete="off" spellcheck="false" aria-label="Usuário para bloquear">
+          <button type="submit" class="bl-btn" id="blBtn">Bloquear</button>
+        </form>
+        <div class="bl-msg" id="blMsg" role="status"></div>
+      </div>
+      <div class="bl-cab">
+        <h2>Bloqueados <span class="n" id="blN"></span></h2>
+        <input type="search" class="bl-busca" id="blBusca" placeholder="Filtrar…" aria-label="Filtrar bloqueados">
+      </div>
+      <div class="bl-bloco">
+        <ul class="bl-lista" id="blLista"><li class="bl-vazio">Carregando…</li></ul>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var lista = [], el = function (id) { return document.getElementById(id); };
+      function msg(t, erro) { var m = el('blMsg'); m.textContent = t || ''; m.className = 'bl-msg' + (erro ? ' erro' : ''); }
+      function data(iso) { try { var d = new Date(iso); if (isNaN(d)) return ''; return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } }
+      function render() {
+        var q = String(el('blBusca').value || '').trim().toLowerCase().replace(/^@+/, '');
+        var itens = lista.filter(function (i) { return !q || String(i.username || '').indexOf(q) >= 0; });
+        el('blN').textContent = '(' + lista.length + ')';
+        var ul = el('blLista'); ul.innerHTML = '';
+        if (!itens.length) { ul.innerHTML = '<li class="bl-vazio">' + (lista.length ? 'Nenhum resultado.' : 'Nenhum usuário bloqueado.') + '</li>'; return; }
+        itens.forEach(function (i) {
+          var li = document.createElement('li');
+          var info = document.createElement('div');
+          var u = document.createElement('div'); u.className = 'bl-u';
+          var a = document.createElement('a'); a.href = 'https://instagram.com/' + encodeURIComponent(i.username); a.target = '_blank'; a.rel = 'noopener'; a.textContent = '@' + i.username;
+          u.appendChild(a); info.appendChild(u);
+          var d = document.createElement('div'); d.className = 'bl-d'; d.textContent = i.blockedAt ? ('Bloqueado em ' + data(i.blockedAt)) : ''; info.appendChild(d);
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'bl-x'; b.textContent = 'Desbloquear';
+          b.addEventListener('click', function () { remover(i.username, b); });
+          li.appendChild(info); li.appendChild(b); ul.appendChild(li);
+        });
+      }
+      function carregar() {
+        fetch('/api/blacklist', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+          lista = (d && d.success && Array.isArray(d.blacklist)) ? d.blacklist : []; render();
+        }).catch(function () { el('blLista').innerHTML = '<li class="bl-vazio">Não consegui carregar a lista.</li>'; });
+      }
+      function remover(u, btn) {
+        if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.textContent = 'Confirmar?'; setTimeout(function () { btn.dataset.confirma = ''; btn.textContent = 'Desbloquear'; }, 4000); return; }
+        btn.disabled = true;
+        fetch('/api/blacklist/remove', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u }) })
+          .then(function (r) { return r.json(); }).then(function (d) { if (d && d.success) { msg('@' + u + ' desbloqueado.'); carregar(); } else { btn.disabled = false; msg('Erro ao desbloquear: ' + ((d && (d.message || d.error)) || ''), true); } })
+          .catch(function (e) { btn.disabled = false; msg('Erro: ' + e.message, true); });
+      }
+      el('blForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var u = String(el('blInput').value || '').trim().replace(/^@+/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/[/?#].*$/, '').toLowerCase();
+        if (!u) return;
+        el('blBtn').disabled = true;
+        fetch('/api/blacklist/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u }) })
+          .then(function (r) { return r.json(); }).then(function (d) { el('blBtn').disabled = false; if (d && d.success) { el('blInput').value = ''; msg('@' + u + ' bloqueado.'); carregar(); } else msg('Erro ao bloquear: ' + ((d && (d.message || d.error)) || ''), true); })
+          .catch(function (er) { el('blBtn').disabled = false; msg('Erro: ' + er.message, true); });
+      });
+      el('blBusca').addEventListener('input', render);
+      carregar();
+    })();
+  </script>
+</body>
+</html>

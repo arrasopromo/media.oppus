@@ -91,15 +91,14 @@
             <button type="button" data-p="7">7 dias</button>
             <button type="button" data-p="30">30 dias</button>
             <button type="button" data-p="mes" aria-pressed="true">Este mês</button>
-            <button type="button" data-p="mesant">Mês passado</button>
           </div>
-          <span class="ts-datas"><input type="date" id="dIni" aria-label="Início"> até <input type="date" id="dFim" aria-label="Fim"></span>
+          <span class="ts-datas"><input type="date" id="dIni" min="2026-11-17" aria-label="Início"> até <input type="date" id="dFim" min="2026-11-17" aria-label="Fim"></span>
           <button type="button" class="ts-btn" id="btnAtualizar">Atualizar</button>
         </div>
       </div>
 
-      <div class="ts-aviso" id="avisoFunil" hidden>
-        <b>Funil completo começa a contar com o rastreio novo publicado.</b> Entrada pela página inicial, pacote escolhido e clique em pagar ainda aparecem zerados neste período. Até lá, "Validaram o perfil" usa a base de perfis validados.
+      <div class="ts-aviso" id="avisoFunil">
+        Os dados do Track do Site contam a partir de <b>17/11/2026</b>, quando o rastreio completo entrou no ar. Datas anteriores são ignoradas.
       </div>
 
       <div id="conteudo"><div class="ts-carregando">Carregando…</div></div>
@@ -119,13 +118,14 @@
   var C = { vis: cor('--caneta', '#2f5bea'), pix: '#b7791f', pago: cor('--lucro', '#127a4a'), fio: cor('--fio', 'rgba(20,23,28,.09)'), lapis: cor('--lapis', '#8a93a1'), tinta: cor('--tinta', '#14171c') };
   var graficos = [];
 
-  function periodo(p){
+  var INICIO = '2026-11-17';
+  function periodo(p){ var r = periodoBruto(p); if (r[0] < INICIO) r[0] = INICIO; if (r[1] < INICIO) r[1] = INICIO; return r; }
+  function periodoBruto(p){
     var hoje = dSP(0);
     if (p === 'hoje') return [hoje, hoje];
     if (p === 'ontem') return [dSP(1), dSP(1)];
     if (p === '7') return [dSP(6), hoje];
     if (p === '30') return [dSP(29), hoje];
-    if (p === 'mesant') { var d = new Date(hoje + 'T12:00:00Z'); var y = d.getUTCFullYear(), m = d.getUTCMonth(); var i = new Date(Date.UTC(y, m - 1, 1)), f = new Date(Date.UTC(y, m, 0)); return [i.toISOString().slice(0,10), f.toISOString().slice(0,10)]; }
     return [hoje.slice(0, 8) + '01', hoje];
   }
   function marcar(p){ Array.prototype.forEach.call(document.querySelectorAll('#atalhos button'), function(b){ b.setAttribute('aria-pressed', b.getAttribute('data-p') === p ? 'true' : 'false'); }); }
@@ -137,7 +137,7 @@
     $('conteudo').innerHTML = '<div class="ts-carregando">Carregando…</div>';
     fetch('/api/painel/track-site/dados?since=' + $('dIni').value + '&until=' + $('dFim').value + (fresh ? '&fresh=1' : ''))
       .then(function(r){ return r.json(); })
-      .then(function(d){ if (!d || !d.ok) throw new Error((d && d.error) || 'falha'); desenhar(d); })
+      .then(function(d){ if (!d || !d.ok) throw new Error((d && d.error) || 'falha'); if (d.since && $('dIni').value < d.since) $('dIni').value = d.since; $('avisoFunil').hidden = false; desenhar(d); })
       .catch(function(e){ $('conteudo').innerHTML = '<div class="ts-erro">Não foi possível carregar: ' + esc(e.message) + '</div>'; });
   }
 
@@ -147,7 +147,6 @@
   function desenhar(d){
     graficos.forEach(function(g){ try { g.destroy(); } catch(_){} }); graficos = [];
     var k = d.kpis;
-    $('avisoFunil').hidden = d.funilAtivoDesde !== 'sem_eventos';
     var h = '';
     h += '<div class="ts-kpis">'
       + kpi('Visitantes únicos', nf(k.visitantes), nf(k.botsPageviews) + ' visitas de robôs fora')
@@ -168,21 +167,27 @@
     h += '<section class="ts-bloco ts-6"><h2>Visitas por dia</h2><p class="sub">Pageviews e visitantes únicos (sem robôs).</p>'
       + '<div class="ts-legenda"><span><i style="background:' + C.vis + '33;box-shadow:inset 0 0 0 1px ' + C.vis + '"></i>Pageviews</span><span><i style="background:' + C.vis + '"></i>Visitantes</span></div>'
       + '<div class="ts-chart"><canvas id="gVisitas" aria-label="Visitas por dia"></canvas></div></section>';
-    h += '<section class="ts-bloco ts-6"><h2>Pix e pagos por dia</h2><p class="sub">Pedidos criados no dia e quantos deles já foram pagos; linha = faturamento.</p>'
-      + '<div class="ts-legenda"><span><i style="background:' + C.pix + '"></i>Pix gerado</span><span><i style="background:' + C.pago + '"></i>Pago</span><span><i style="background:' + C.tinta + '"></i>Faturamento</span></div>'
+    h += '<section class="ts-bloco ts-6"><h2>Pix e pagos por dia</h2><p class="sub">Quantidade de pedidos criados no dia e quantos deles já foram pagos.</p>'
+      + '<div class="ts-legenda"><span><i style="background:' + C.pix + '"></i>Pix gerado</span><span><i style="background:' + C.pago + '"></i>Pago</span></div>'
       + '<div class="ts-chart"><canvas id="gVendas" aria-label="Pix e pagos por dia"></canvas></div></section>';
+    h += '<section class="ts-bloco"><h2>Faturamento por dia</h2><p class="sub">Soma dos pedidos pagos, pelo dia em que o Pix foi gerado (site + bot).</p>'
+      + '<div class="ts-chart baixo"><canvas id="gReceita" aria-label="Faturamento por dia"></canvas></div></section>';
 
     // Funil
     var f0 = (d.funil[0] && d.funil[0].n) || 0;
-    h += '<section class="ts-bloco"><h2>Funil</h2><p class="sub">% sobre os visitantes e, ao lado, sobre a etapa anterior com dado.</p><div class="ts-funil">';
+    var dtBR = function(iso){ try { return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+    var subFunil = d.funilDesde
+      ? 'Todas as etapas contadas na mesma janela: desde ' + dtBR(d.funilDesde) + ', quando o rastreio das etapas (pacote, perfil, pagar) entrou no ar. % sobre os visitantes e sobre a etapa anterior.'
+      : 'Sem eventos de etapa no período: só visitas, Pix e pagos. % sobre os visitantes e sobre a etapa anterior.';
+    h += '<section class="ts-bloco"><h2>Funil</h2><p class="sub">' + esc(subFunil) + '</p><div class="ts-funil">';
     var ant = null;
     d.funil.forEach(function(e){
       var cls = /Pix/.test(e.etapa) ? 'pix' : (/Pagaram/.test(e.etapa) ? 'pago' : '');
-      var vazio = !e.n && e.desde === 'novo';
+      var vazio = false;
       var w = f0 ? Math.min(100, e.n / f0 * 100) : 0;
       // Só mostra quando faz sentido (≤ 100%): perfis validados e Pix vêm de bases diferentes.
       var sobreAnt = (ant && e.n && e.n <= ant) ? pct(e.n / ant, 0) + ' da etapa anterior' : '';
-      h += '<div class="ts-et ' + cls + (vazio ? ' vazio' : '') + '"><div class="nome">' + esc(e.etapa) + (vazio ? '<small>começa com o rastreio novo</small>' : (e.fonte === 'perfis validados' ? '<small>base de perfis validados</small>' : '')) + '</div>'
+      h += '<div class="ts-et ' + cls + (vazio ? ' vazio' : '') + '"><div class="nome">' + esc(e.etapa) + '' + '</div>'
         + '<div class="trilho"><span style="width:' + w + '%"></span></div>'
         + '<div class="val num">' + (vazio ? '—' : nf(e.n)) + '<small>' + (vazio ? '' : (f0 ? pct(e.n / f0) : '') + (sobreAnt ? ' · ' + sobreAnt : '')) + '</small></div></div>';
       if (e.n) ant = e.n;
@@ -191,7 +196,7 @@
 
     // Páginas
     var maxPv = Math.max.apply(null, d.paginas.map(function(p){ return p.pageviews; }).concat([1]));
-    h += '<section class="ts-bloco ts-8"><h2>Pageview por página / produto</h2><p class="sub">Pix e pagos = pedidos do site daquele serviço.</p><div class="ts-scroll"><table><thead><tr><th>Página</th><th class="n">Pageviews</th><th></th><th class="n">Visitantes</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Visitante → pago</th><th class="n">Faturamento</th></tr></thead><tbody>';
+    h += '<section class="ts-bloco ts-8"><h2>Pageview por página / produto</h2><p class="sub">Só estas páginas registram visita; a soma dos pageviews é o total do topo. Um visitante pode ver várias páginas, então os visitantes não somam. Pix e pagos = pedidos do site daquele serviço.</p><div class="ts-scroll"><table><thead><tr><th>Página</th><th class="n">Pageviews</th><th></th><th class="n">Visitantes</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Visitante → pago</th><th class="n">Faturamento</th></tr></thead><tbody>';
     d.paginas.forEach(function(p){
       h += '<tr><td>' + esc(p.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(p.path) + '</span></td><td class="n">' + nf(p.pageviews) + '</td><td style="width:18%">' + barra(p.pageviews, maxPv) + '</td><td class="n">' + nf(p.visitantes) + '</td>'
         + '<td class="n">' + (p.pix == null ? '<span class="muted">—</span>' : nf(p.pix)) + '</td><td class="n">' + (p.pagos == null ? '<span class="muted">—</span>' : nf(p.pagos)) + '</td>'
@@ -222,26 +227,12 @@
     h += '</tbody></table></div></section>';
     h += '<section class="ts-bloco ts-4"><h2>Faturamento por produto</h2><p class="sub">Participação no período.</p><div class="ts-chart baixo"><canvas id="gProdutos" aria-label="Faturamento por produto"></canvas></div></section>';
 
-    // Ofertas + canais
-    h += '<section class="ts-bloco ts-6"><h2>Ofertas (order bumps) nos pedidos pagos</h2><p class="sub">Quantos pedidos pagos levaram cada oferta.</p><div class="ts-scroll"><table><thead><tr><th>Oferta</th><th class="n">Pedidos</th><th class="n">% dos pagos</th><th class="n">Unidades</th></tr></thead><tbody>'
-      + (d.ofertas.length ? d.ofertas.map(function(o){ return '<tr><td>' + esc(o.oferta) + '</td><td class="n">' + nf(o.n) + '</td><td class="n">' + (k.pagos ? pct(o.n / k.pagos) : '—') + '</td><td class="n">' + (o.unidades ? nf(o.unidades) : '<span class="muted">—</span>') + '</td></tr>'; }).join('') : '<tr><td colspan="4" class="muted">Nenhuma oferta no período.</td></tr>')
-      + '</tbody></table></div></section>';
-    h += '<section class="ts-bloco ts-6"><h2>Canal de venda</h2><p class="sub">Site x bot de vendas do WhatsApp.</p><div class="ts-scroll"><table><thead><tr><th>Canal</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th></tr></thead><tbody>'
-      + d.canais.map(function(c){ return '<tr><td>' + esc(c.canal) + '</td><td class="n">' + nf(c.pix) + '</td><td class="n">' + nf(c.pagos) + '</td><td class="n">' + (c.pix ? pct(c.pagos / c.pix) : '—') + '</td><td class="n">' + brl(c.receita) + '</td></tr>'; }).join('')
-      + '</tbody></table></div></section>';
-
-    // Anúncios
-    h += '<section class="ts-bloco"><h2>Vendas por anúncio (utm_content)</h2><p class="sub">Top 15 por faturamento. "Sem anúncio" = pedido sem UTM (orgânico, WhatsApp, link direto).</p><div class="ts-scroll"><table><thead><tr><th>Anúncio (ID)</th><th>Campanha</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th></tr></thead><tbody>'
-      + d.anuncios.map(function(a){ return '<tr><td>' + esc(a.content) + '</td><td class="muted">' + esc(a.campaign || '—') + '</td><td class="n">' + nf(a.pix) + '</td><td class="n">' + nf(a.pagos) + '</td><td class="n">' + (a.pix ? pct(a.pagos / a.pix) : '—') + '</td><td class="n">' + brl(a.receita) + '</td></tr>'; }).join('')
-      + '</tbody></table></div></section>';
-
     // Público
-    h += '<section class="ts-bloco ts-4"><h2>Dispositivo</h2><p class="sub">Visitantes únicos.</p><div class="ts-chart baixo"><canvas id="gDisp" aria-label="Dispositivos"></canvas></div></section>';
-    h += '<section class="ts-bloco ts-4"><h2>Cidades</h2><p class="sub">Top 10 por visitantes (pela localização do IP).</p><div class="ts-scroll"><table><tbody>'
+    h += '<section class="ts-bloco ts-6"><h2>Cidades</h2><p class="sub">Top 10 por visitantes (pela localização do IP).</p><div class="ts-scroll"><table><tbody>'
       + (d.cidades.length ? d.cidades.map(function(c){ return '<tr><td>' + esc(c.cidade) + '</td><td class="n">' + nf(c.visitantes) + '</td></tr>'; }).join('') : '<tr><td class="muted">Sem dados.</td></tr>')
       + '</tbody></table></div></section>';
-    h += '<section class="ts-bloco ts-4"><h2>Origem das visitas</h2><p class="sub">UTM da URL ou site de onde veio. Completa com o rastreio novo publicado.</p><div class="ts-scroll"><table><tbody>'
-      + d.origem.map(function(o){ return '<tr><td>' + esc(o.origem) + '</td><td class="n">' + nf(o.visitantes) + '</td></tr>'; }).join('')
+    h += '<section class="ts-bloco ts-6"><h2>Origem das visitas</h2><p class="sub">' + (d.origemDesde ? 'Visitantes desde ' + esc(dtBR(d.origemDesde)) + ', quando a UTM do anúncio passou a ser gravada na visita. Antes disso a origem não foi registrada.' : 'A UTM do anúncio ainda não foi gravada em nenhuma visita do período.') + '</p><div class="ts-scroll"><table><tbody>'
+      + (d.origem.length ? '' : '<tr><td class="muted">Sem dados no período.</td></tr>') + d.origem.map(function(o){ return '<tr><td>' + esc(o.origem) + '</td><td class="n">' + nf(o.visitantes) + '</td></tr>'; }).join('')
       + '</tbody></table></div>'
       + (d.errosPix.length ? '<h2 style="margin-top:14px">Erros ao gerar Pix</h2><table><tbody>' + d.errosPix.map(function(e){ return '<tr><td>' + esc(e.erro) + '</td><td class="n">' + nf(e.n) + '</td></tr>'; }).join('') + '</tbody></table>' : '')
       + '</section>';
@@ -262,18 +253,18 @@
     ] }, options: Object.assign({}, base, { scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo) } }) }));
     graficos.push(new Chart($('gVendas'), { type: 'bar', data: { labels: rot, datasets: [
       { label: 'Pix gerado', data: d.serie.map(function(x){ return x.pix; }), backgroundColor: C.pix, borderRadius: 3, order: 2 },
-      { label: 'Pago', data: d.serie.map(function(x){ return x.pagos; }), backgroundColor: C.pago, borderRadius: 3, order: 2 },
-      { type: 'line', label: 'Faturamento', data: d.serie.map(function(x){ return x.receita; }), borderColor: C.tinta, backgroundColor: C.tinta, pointRadius: 2, tension: .25, yAxisID: 'y2', order: 1 }
-    ] }, options: Object.assign({}, base, { plugins: Object.assign({}, base.plugins, { tooltip: { callbacks: { label: function(c){ return c.dataset.label + ': ' + (c.dataset.yAxisID === 'y2' ? brl(c.parsed.y) : nf(c.parsed.y)); } } } }),
-      scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo), y2: { position: 'right', beginAtZero: true, grid: { display: false }, border: { display: false }, ticks: { callback: function(v){ return 'R$ ' + Number(v).toLocaleString('pt-BR'); } } } } }) }));
+      { label: 'Pago', data: d.serie.map(function(x){ return x.pagos; }), backgroundColor: C.pago, borderRadius: 3, order: 2 }
+    ] }, options: Object.assign({}, base, { scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo) } }) }));
+    graficos.push(new Chart($('gReceita'), { type: 'bar', data: { labels: rot, datasets: [
+      { label: 'Faturamento', data: d.serie.map(function(x){ return x.receita; }), backgroundColor: C.pago, borderRadius: 3 }
+    ] }, options: Object.assign({}, base, { plugins: Object.assign({}, base.plugins, { tooltip: { callbacks: { label: function(c){ return 'Faturamento: ' + brl(c.parsed.y); } } } }),
+      scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo, { ticks: { callback: function(v){ return 'R$ ' + Number(v).toLocaleString('pt-BR'); } } }) } }) }));
     graficos.push(new Chart($('gHora'), { type: 'bar', data: { labels: d.porHora.map(function(_, i){ return String(i).padStart(2, '0') + 'h'; }), datasets: [{ label: 'Pageviews', data: d.porHora, backgroundColor: C.vis, borderRadius: 2 }] },
       options: Object.assign({}, base, { scales: { x: Object.assign({}, semGrade, { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } }), y: Object.assign({ beginAtZero: true }, eixo) } }) }));
     var paleta = [C.pago, C.vis, C.pix, '#8a4fd8', '#0e7490', '#c8352b', '#6b7280', '#a16207'];
     var top = d.produtos.slice(0, 7), resto = d.produtos.slice(7).reduce(function(a, p){ return a + p.receita; }, 0);
     graficos.push(new Chart($('gProdutos'), { type: 'doughnut', data: { labels: top.map(function(p){ return p.produto; }).concat(resto ? ['Outros'] : []), datasets: [{ data: top.map(function(p){ return p.receita; }).concat(resto ? [resto] : []), backgroundColor: paleta, borderWidth: 2, borderColor: cor('--folha', '#fff') }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { callbacks: { label: function(c){ return c.label + ': ' + brl(c.parsed); } } } } } }));
-    graficos.push(new Chart($('gDisp'), { type: 'doughnut', data: { labels: d.dispositivos.map(function(x){ return x.tipo; }), datasets: [{ data: d.dispositivos.map(function(x){ return x.visitantes; }), backgroundColor: [C.vis, C.pix, C.lapis], borderWidth: 2, borderColor: cor('--folha', '#fff') }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } } }));
   }
   carregar();
 })();

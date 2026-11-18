@@ -380,12 +380,9 @@ function _orderPaidMs(o) { for (const c of [o.paidAt, o.woovi && o.woovi.paidAt,
 // Consulta o status AO VIVO de UMA ordem no fornecedor (action=status). Retorna
 // { status, remains, startCount } ou null. Providers: fama24h / fornecedor_social / topfama.
 async function fetchProviderOrderStatus(provider, orderId) {
-  const M = {
-    fama24h: { url: 'https://fama24h.net/api/v2', key: process.env.FAMA24H_API_KEY },
-    fornecedor_social: { url: 'https://fornecedorsocial.com/api/v2', key: process.env.FORNECEDOR_SOCIAL_API_KEY },
-    topfama: { url: 'https://topfama.com/api/v2', key: process.env.TOPFAMA_API_KEY },
-  };
-  const cfg = M[provider];
+  // Todos os fornecedores (JAP, WorldOfSMM, Revenda...), não só Fama24h/FornecedorSocial/TopFama:
+  // antes o bot perguntava à Fama24h por um pedido da JAP, não achava e dizia "em andamento".
+  const cfg = require('./smmProviders.js').config(provider);
   if (!cfg || !cfg.key || !orderId) return null;
   try {
     const payload = new URLSearchParams({ key: String(cfg.key), action: 'status', order: String(orderId) });
@@ -443,11 +440,24 @@ async function alertaPedidosSemEnvio(col, orders, telefone) {
   }
 }
 
-function baseProviderOrder(o) {
+async function baseProviderOrder(o) {
+  // Fornecedor REAL: o carimbado no slot/sub-pedido (JAP, WorldOfSMM, Revenda...). Sem carimbo,
+  // o do Gerenciamento de Tipos (vários posts) ou o padrão antigo do slot.
+  const sp = require('./smmProviders.js');
+  const reorderAtual = (v) => (Array.isArray(v && v.reorders) && v.reorders.length && v.reorders[v.reorders.length - 1].orderId) ? v.reorders[v.reorders.length - 1] : null;
   const singles = [['fornecedor_social', o.fornecedor_social], ['fama24h', o.fama24h], ['topfama', o.topfama]];
-  for (const [prov, sub] of singles) { if (sub && sub.orderId && /^[0-9]+$/.test(String(sub.orderId))) return { provider: prov, orderId: String(sub.orderId) }; }
-  const multis = [['fornecedor_social', o.fornecedor_social_multi], ['fama24h', o.fama24h_multi]];
-  for (const [prov, m] of multis) { if (m && Array.isArray(m.orders)) { const it = m.orders.find((x) => x && (x.orderId || x.id) && /^[0-9]+$/.test(String(x.orderId || x.id))); if (it) return { provider: prov, orderId: String(it.orderId || it.id) }; } }
+  for (const [slot, sub] of singles) {
+    const r = reorderAtual(sub);
+    if (r && /^[0-9]+$/.test(String(r.orderId))) return { provider: (await sp.providerDoPedido(slot, r, sub, o)) || slot, orderId: String(r.orderId), slot };
+    if (sub && sub.orderId && /^[0-9]+$/.test(String(sub.orderId))) return { provider: (await sp.providerDoPedido(slot, sub, null, o)) || slot, orderId: String(sub.orderId), slot };
+  }
+  const multis = [['fornecedor_social_multi', o.fornecedor_social_multi], ['fama24h_multi', o.fama24h_multi]];
+  for (const [slot, m] of multis) {
+    if (m && Array.isArray(m.orders)) {
+      const it = m.orders.find((x) => x && (x.orderId || x.id) && /^[0-9]+$/.test(String(x.orderId || x.id)));
+      if (it) return { provider: (await sp.providerDoPedido(slot, it, m, o)) || slot.replace(/_multi$/, ''), orderId: String(it.orderId || it.id), slot };
+    }
+  }
   return null;
 }
 
@@ -504,7 +514,7 @@ async function consultarPedido({ telefone, usuario } = {}) {
   // Se a consulta ao vivo falhar, cai no status salvo no pedido.
   let provStatusRaw = '';
   let remains = null, entregues = null;
-  const bp = baseProviderOrder(o);
+  const bp = await baseProviderOrder(o);
   if (bp) {
     const live = await fetchProviderOrderStatus(bp.provider, bp.orderId);
     if (live && !live.error && live.status) {
