@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track do Site</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    /* Track do Site: mesma folha do admin (painel-admin.css). Uma cor por série:
+       visitas = caneta (azul), Pix = âmbar, pago = verde. Linhas finas, sem caixa em tudo. */
+    .ts{ --ts-pix:#b7791f; --ts-pago:var(--lucro,#127a4a); --ts-vis:var(--caneta,#2f5bea);
+      max-width:1480px; margin:0 auto; color:var(--tinta,#14171c); }
+    .ts *{ box-sizing:border-box; }
+    .ts .num{ font-variant-numeric:tabular-nums; }
+    .ts-top{ display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin-bottom:18px; }
+    .ts-top h1{ margin:0; font-size:28px; font-weight:650; font-stretch:88%; letter-spacing:-.02em; }
+    .ts-top p{ margin:4px 0 0; color:var(--grafite,#525a67); font-size:14px; max-width:62ch; }
+    .ts-per{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+    .ts-seg{ display:inline-flex; flex-wrap:wrap; background:var(--folha,#fff); box-shadow:0 0 0 1px var(--fio,rgba(20,23,28,.09)); border-radius:10px; padding:3px; }
+    .ts-seg button{ border:0; background:none; padding:7px 12px; border-radius:6px; font:inherit; font-size:13px; color:var(--grafite,#525a67); cursor:pointer; }
+    .ts-seg button[aria-pressed=true]{ background:var(--tinta,#14171c); color:#fff; }
+    .ts-datas{ display:inline-flex; align-items:center; gap:6px; color:var(--lapis,#8a93a1); font-size:13px; }
+    .ts-datas input{ border:0; background:var(--vala,#eceef2); border-radius:6px; padding:7px 8px; font:inherit; font-size:13px; color:var(--tinta,#14171c); }
+    .ts-btn{ border:0; background:var(--tinta,#14171c); color:#fff; border-radius:8px; padding:8px 13px; font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+    .ts-aviso{ margin:0 0 16px; padding:10px 14px; border-radius:10px; background:var(--caneta-fundo,#eef3fe); color:var(--tinta,#14171c); font-size:13px; line-height:1.5; }
+    .ts-aviso b{ font-weight:650; }
+    .ts-kpis{ display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:1px; background:var(--fio,rgba(20,23,28,.09)); border-radius:12px; overflow:hidden; box-shadow:0 0 0 1px var(--fio,rgba(20,23,28,.09)); margin-bottom:22px; }
+    .ts-kpi{ background:var(--folha,#fff); padding:14px 16px; min-width:0; }
+    .ts-kpi .r{ font-size:12px; color:var(--grafite,#525a67); font-weight:500; }
+    .ts-kpi .v{ font-size:24px; font-weight:650; letter-spacing:-.02em; margin-top:2px; font-variant-numeric:tabular-nums; }
+    .ts-kpi .s{ font-size:12px; color:var(--lapis,#8a93a1); margin-top:2px; }
+    .ts-grid{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:18px; }
+    .ts-bloco{ grid-column:span 12; background:var(--folha,#fff); border-radius:12px; box-shadow:0 0 0 1px var(--fio,rgba(20,23,28,.09)); padding:16px 18px 18px; min-width:0; }
+    .ts-6{ grid-column:span 6; } .ts-4{ grid-column:span 4; } .ts-8{ grid-column:span 8; }
+    @media (max-width:1100px){ .ts-6,.ts-4,.ts-8{ grid-column:span 12; } }
+    .ts-bloco h2{ margin:0 0 2px; font-size:15px; font-weight:650; }
+    .ts-bloco .sub{ margin:0 0 12px; font-size:12.5px; color:var(--lapis,#8a93a1); }
+    .ts-chart{ position:relative; height:260px; }
+    .ts-chart.baixo{ height:220px; }
+    .ts-legenda{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--grafite,#525a67); margin:0 0 8px; }
+    .ts-legenda i{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+    .ts-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .ts table{ width:100%; border-collapse:collapse; font-size:13px; }
+    .ts th{ text-align:left; font-weight:600; font-size:12px; color:var(--grafite,#525a67); padding:8px 10px; border-bottom:1px solid var(--fio-forte,rgba(20,23,28,.16)); white-space:nowrap; }
+    .ts td{ padding:8px 10px; border-bottom:1px solid var(--fio,rgba(20,23,28,.09)); vertical-align:middle; }
+    .ts td.n, .ts th.n{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .ts tr:last-child td{ border-bottom:0; }
+    .ts .muted{ color:var(--lapis,#8a93a1); }
+    .ts .barra{ height:6px; border-radius:3px; background:var(--vala,#eceef2); overflow:hidden; min-width:60px; }
+    .ts .barra span{ display:block; height:100%; border-radius:3px; background:var(--ts-vis); }
+    /* Funil */
+    .ts-funil{ display:flex; flex-direction:column; gap:8px; }
+    .ts-et{ display:grid; grid-template-columns:minmax(150px,230px) 1fr 120px; gap:12px; align-items:center; font-size:13px; }
+    .ts-et .nome{ color:var(--tinta,#14171c); }
+    .ts-et .nome small{ display:block; color:var(--lapis,#8a93a1); font-size:11.5px; }
+    .ts-et .trilho{ height:22px; background:var(--vala,#eceef2); border-radius:5px; overflow:hidden; }
+    .ts-et .trilho span{ display:block; height:100%; background:var(--ts-vis); border-radius:5px; min-width:2px; }
+    .ts-et.pix .trilho span{ background:var(--ts-pix); } .ts-et.pago .trilho span{ background:var(--ts-pago); }
+    .ts-et.vazio .trilho span{ background:transparent; }
+    .ts-et .val{ text-align:right; font-variant-numeric:tabular-nums; }
+    .ts-et .val small{ display:block; color:var(--lapis,#8a93a1); font-size:11.5px; }
+    @media (max-width:640px){ .ts-et{ grid-template-columns:1fr 90px; } .ts-et .trilho{ grid-column:1 / -1; order:3; } }
+    /* Tops */
+    .ts-top5{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+    @media (max-width:900px){ .ts-top5{ grid-template-columns:1fr; } }
+    .ts-top5 h3{ margin:0 0 8px; font-size:13px; font-weight:650; }
+    .ts-top5 ol{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:9px; }
+    .ts-top5 li{ display:grid; grid-template-columns:18px 1fr auto; gap:8px; align-items:center; font-size:13px; }
+    .ts-top5 li .pos{ color:var(--lapis,#8a93a1); font-variant-numeric:tabular-nums; }
+    .ts-top5 li .nm{ min-width:0; }
+    .ts-top5 li .nm small{ display:block; color:var(--lapis,#8a93a1); font-size:11.5px; }
+    .ts-top5 li .barra{ margin-top:4px; }
+    .ts-top5 .vazio{ color:var(--lapis,#8a93a1); font-size:12.5px; }
+    .ts-carregando{ color:var(--lapis,#8a93a1); padding:30px 0; text-align:center; }
+    .ts-erro{ color:var(--prejuizo,#c8352b); padding:16px 0; }
+  </style>
+</head>
+<body class="painel-page">
+  <%- include('partials/painel_sidebar', { page: 'track-site' }) %>
+  <div class="main-content">
+    <div class="ts">
+      <div class="ts-top">
+        <div>
+          <h1>Track do Site</h1>
+          <p>Visitas, funil, pacotes escolhidos, Pix gerados e pagos do site. Robôs (prévia de link, revisão de anúncio, Google) ficam fora.</p>
+        </div>
+        <div class="ts-per">
+          <div class="ts-seg" id="atalhos" role="group" aria-label="Período">
+            <button type="button" data-p="hoje">Hoje</button>
+            <button type="button" data-p="ontem">Ontem</button>
+            <button type="button" data-p="7">7 dias</button>
+            <button type="button" data-p="30">30 dias</button>
+            <button type="button" data-p="mes" aria-pressed="true">Este mês</button>
+            <button type="button" data-p="mesant">Mês passado</button>
+          </div>
+          <span class="ts-datas"><input type="date" id="dIni" aria-label="Início"> até <input type="date" id="dFim" aria-label="Fim"></span>
+          <button type="button" class="ts-btn" id="btnAtualizar">Atualizar</button>
+        </div>
+      </div>
+
+      <div class="ts-aviso" id="avisoFunil" hidden>
+        <b>Funil completo começa a contar com o rastreio novo publicado.</b> Entrada pela página inicial, pacote escolhido e clique em pagar ainda aparecem zerados neste período. Até lá, "Validaram o perfil" usa a base de perfis validados.
+      </div>
+
+      <div id="conteudo"><div class="ts-carregando">Carregando…</div></div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var brl = function(v){ return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var nf = function(v){ return Number(v || 0).toLocaleString('pt-BR'); };
+  var pct = function(v, d){ return (Number(v || 0) * 100).toLocaleString('pt-BR', { minimumFractionDigits: d == null ? 1 : d, maximumFractionDigits: d == null ? 1 : d }) + '%'; };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]; }); };
+  var dSP = function(off){ var d = new Date(Date.now() - 3 * 3600e3 - (off || 0) * 864e5); return d.toISOString().slice(0, 10); };
+  var css = getComputedStyle(document.documentElement);
+  var cor = function(n, f){ var v = css.getPropertyValue(n).trim(); return v || f; };
+  var C = { vis: cor('--caneta', '#2f5bea'), pix: '#b7791f', pago: cor('--lucro', '#127a4a'), fio: cor('--fio', 'rgba(20,23,28,.09)'), lapis: cor('--lapis', '#8a93a1'), tinta: cor('--tinta', '#14171c') };
+  var graficos = [];
+
+  function periodo(p){
+    var hoje = dSP(0);
+    if (p === 'hoje') return [hoje, hoje];
+    if (p === 'ontem') return [dSP(1), dSP(1)];
+    if (p === '7') return [dSP(6), hoje];
+    if (p === '30') return [dSP(29), hoje];
+    if (p === 'mesant') { var d = new Date(hoje + 'T12:00:00Z'); var y = d.getUTCFullYear(), m = d.getUTCMonth(); var i = new Date(Date.UTC(y, m - 1, 1)), f = new Date(Date.UTC(y, m, 0)); return [i.toISOString().slice(0,10), f.toISOString().slice(0,10)]; }
+    return [hoje.slice(0, 8) + '01', hoje];
+  }
+  function marcar(p){ Array.prototype.forEach.call(document.querySelectorAll('#atalhos button'), function(b){ b.setAttribute('aria-pressed', b.getAttribute('data-p') === p ? 'true' : 'false'); }); }
+  $('atalhos').addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; var p = b.getAttribute('data-p'); var r = periodo(p); $('dIni').value = r[0]; $('dFim').value = r[1]; marcar(p); carregar(); });
+  $('btnAtualizar').addEventListener('click', function(){ marcar(''); carregar(true); });
+  var r0 = periodo('mes'); $('dIni').value = r0[0]; $('dFim').value = r0[1];
+
+  function carregar(fresh){
+    $('conteudo').innerHTML = '<div class="ts-carregando">Carregando…</div>';
+    fetch('/api/painel/track-site/dados?since=' + $('dIni').value + '&until=' + $('dFim').value + (fresh ? '&fresh=1' : ''))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (!d || !d.ok) throw new Error((d && d.error) || 'falha'); desenhar(d); })
+      .catch(function(e){ $('conteudo').innerHTML = '<div class="ts-erro">Não foi possível carregar: ' + esc(e.message) + '</div>'; });
+  }
+
+  function kpi(r, v, s){ return '<div class="ts-kpi"><div class="r">' + r + '</div><div class="v">' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>'; }
+  function barra(v, max, cor){ var w = max > 0 ? Math.max(2, Math.round(v / max * 100)) : 0; return '<div class="barra"><span style="width:' + w + '%' + (cor ? ';background:' + cor : '') + '"></span></div>'; }
+
+  function desenhar(d){
+    graficos.forEach(function(g){ try { g.destroy(); } catch(_){} }); graficos = [];
+    var k = d.kpis;
+    $('avisoFunil').hidden = d.funilAtivoDesde !== 'sem_eventos';
+    var h = '';
+    h += '<div class="ts-kpis">'
+      + kpi('Visitantes únicos', nf(k.visitantes), nf(k.botsPageviews) + ' visitas de robôs fora')
+      + kpi('Pageviews', nf(k.pageviews), (k.pvPorVisitante || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' por visitante')
+      + kpi('Perfis validados', nf(k.perfisValidados))
+      + kpi('Pix gerados', nf(k.pix), nf(k.pixSite) + ' site · ' + nf(k.pixBot) + ' bot')
+      + kpi('Pedidos pagos', nf(k.pagos), nf(k.pagosSite) + ' site · ' + nf(k.pagosBot) + ' bot')
+      + kpi('Faturamento', brl(k.receita), 'ticket ' + brl(k.ticket))
+      + kpi('Faturamento do site', brl(k.receitaSite), 'bot WhatsApp: ' + brl(k.receitaBot))
+      + kpi('Visitante → pago', pct(k.convVisitantePago), 'só pedidos do site')
+      + kpi('Pix → pago', pct(k.convPixPago))
+      + kpi('Com oferta (bump)', nf(k.pedidosComOferta), k.pagos ? pct(k.pedidosComOferta / k.pagos) + ' dos pagos' : '')
+      + kpi('Upsell pago', nf(k.pagosUpsell), brl(k.receitaUpsell))
+      + kpi('Áudio inicial', nf(k.audio.tocaram) + ' plays', nf(k.audio.metade) + ' até a metade · ' + nf(k.audio.fim) + ' até o fim')
+      + '</div>';
+
+    h += '<div class="ts-grid">';
+    h += '<section class="ts-bloco ts-6"><h2>Visitas por dia</h2><p class="sub">Pageviews e visitantes únicos (sem robôs).</p>'
+      + '<div class="ts-legenda"><span><i style="background:' + C.vis + '33;box-shadow:inset 0 0 0 1px ' + C.vis + '"></i>Pageviews</span><span><i style="background:' + C.vis + '"></i>Visitantes</span></div>'
+      + '<div class="ts-chart"><canvas id="gVisitas" aria-label="Visitas por dia"></canvas></div></section>';
+    h += '<section class="ts-bloco ts-6"><h2>Pix e pagos por dia</h2><p class="sub">Pedidos criados no dia e quantos deles já foram pagos; linha = faturamento.</p>'
+      + '<div class="ts-legenda"><span><i style="background:' + C.pix + '"></i>Pix gerado</span><span><i style="background:' + C.pago + '"></i>Pago</span><span><i style="background:' + C.tinta + '"></i>Faturamento</span></div>'
+      + '<div class="ts-chart"><canvas id="gVendas" aria-label="Pix e pagos por dia"></canvas></div></section>';
+
+    // Funil
+    var f0 = (d.funil[0] && d.funil[0].n) || 0;
+    h += '<section class="ts-bloco"><h2>Funil</h2><p class="sub">% sobre os visitantes e, ao lado, sobre a etapa anterior com dado.</p><div class="ts-funil">';
+    var ant = null;
+    d.funil.forEach(function(e){
+      var cls = /Pix/.test(e.etapa) ? 'pix' : (/Pagaram/.test(e.etapa) ? 'pago' : '');
+      var vazio = !e.n && e.desde === 'novo';
+      var w = f0 ? Math.min(100, e.n / f0 * 100) : 0;
+      // Só mostra quando faz sentido (≤ 100%): perfis validados e Pix vêm de bases diferentes.
+      var sobreAnt = (ant && e.n && e.n <= ant) ? pct(e.n / ant, 0) + ' da etapa anterior' : '';
+      h += '<div class="ts-et ' + cls + (vazio ? ' vazio' : '') + '"><div class="nome">' + esc(e.etapa) + (vazio ? '<small>começa com o rastreio novo</small>' : (e.fonte === 'perfis validados' ? '<small>base de perfis validados</small>' : '')) + '</div>'
+        + '<div class="trilho"><span style="width:' + w + '%"></span></div>'
+        + '<div class="val num">' + (vazio ? '—' : nf(e.n)) + '<small>' + (vazio ? '' : (f0 ? pct(e.n / f0) : '') + (sobreAnt ? ' · ' + sobreAnt : '')) + '</small></div></div>';
+      if (e.n) ant = e.n;
+    });
+    h += '</div></section>';
+
+    // Páginas
+    var maxPv = Math.max.apply(null, d.paginas.map(function(p){ return p.pageviews; }).concat([1]));
+    h += '<section class="ts-bloco ts-8"><h2>Pageview por página / produto</h2><p class="sub">Pix e pagos = pedidos do site daquele serviço.</p><div class="ts-scroll"><table><thead><tr><th>Página</th><th class="n">Pageviews</th><th></th><th class="n">Visitantes</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Visitante → pago</th><th class="n">Faturamento</th></tr></thead><tbody>';
+    d.paginas.forEach(function(p){
+      h += '<tr><td>' + esc(p.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(p.path) + '</span></td><td class="n">' + nf(p.pageviews) + '</td><td style="width:18%">' + barra(p.pageviews, maxPv) + '</td><td class="n">' + nf(p.visitantes) + '</td>'
+        + '<td class="n">' + (p.pix == null ? '<span class="muted">—</span>' : nf(p.pix)) + '</td><td class="n">' + (p.pagos == null ? '<span class="muted">—</span>' : nf(p.pagos)) + '</td>'
+        + '<td class="n">' + (p.pagos == null || !p.visitantes ? '<span class="muted">—</span>' : pct(p.pagos / p.visitantes)) + '</td><td class="n">' + (p.receita == null ? '<span class="muted">—</span>' : brl(p.receita)) + '</td></tr>';
+    });
+    h += '</tbody></table></div></section>';
+    h += '<section class="ts-bloco ts-4"><h2>Visitas por hora</h2><p class="sub">Pageviews no horário de Brasília.</p><div class="ts-chart baixo"><canvas id="gHora" aria-label="Visitas por hora"></canvas></div></section>';
+
+    // Top 5
+    function lista(arr, nome, sub, val, cor){
+      if (!arr.length) return '<p class="vazio">Sem dados no período.</p>';
+      var mx = Math.max.apply(null, arr.map(val));
+      return '<ol>' + arr.map(function(x, i){ return '<li><span class="pos">' + (i + 1) + '</span><span class="nm">' + esc(nome(x)) + '<small>' + esc(sub(x)) + '</small>' + barra(val(x), mx, cor) + '</span><span class="num">' + nf(val(x)) + '</span></li>'; }).join('') + '</ol>';
+    }
+    var tipoNome = { mistos: 'mistos', brasileiros: 'brasileiros', curtidas_brasileiras: 'brasileiras', organicos: 'reais', visualizacoes_reels: '', comentarios: '' };
+    h += '<section class="ts-bloco"><h2>Top 5 pacotes</h2><p class="sub">Do clique no pacote até o pagamento.</p><div class="ts-top5">'
+      + '<div><h3>Mais escolhidos (clique no card)</h3>' + (d.topEscolhidos.length ? lista(d.topEscolhidos, function(x){ return x.servico + ' ' + (tipoNome[x.tipo] != null ? tipoNome[x.tipo] : x.tipo) + ' · ' + nf(x.qtd); }, function(x){ return x.preco || ''; }, function(x){ return x.visitantes; }, C.vis) : '<p class="vazio">Começa a contar com o rastreio novo publicado.</p>') + '</div>'
+      + '<div><h3>Mais pedidos (Pix gerado)</h3>' + lista(d.topPix, function(x){ return x.produto + ' · ' + nf(x.qtd); }, function(){ return ''; }, function(x){ return x.n; }, C.pix) + '</div>'
+      + '<div><h3>Mais pagos</h3>' + lista(d.topPagos, function(x){ return x.produto + ' · ' + nf(x.qtd); }, function(x){ return brl(x.receita); }, function(x){ return x.n; }, C.pago) + '</div>'
+      + '</div></section>';
+
+    // Produtos pagos
+    var totRec = d.produtos.reduce(function(a, p){ return a + p.receita; }, 0) || 1;
+    h += '<section class="ts-bloco ts-8"><h2>Produtos pagos</h2><p class="sub">Todos os canais (site + bot). Upsell entra no produto dele.</p><div class="ts-scroll"><table><thead><tr><th>Produto</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th><th class="n">% do total</th><th></th></tr></thead><tbody>';
+    d.produtos.forEach(function(p){
+      h += '<tr><td>' + esc(p.produto) + '</td><td class="n">' + nf(p.pix) + '</td><td class="n">' + nf(p.pagos) + '</td><td class="n">' + (p.pix ? pct(p.pagos / p.pix) : '—') + '</td><td class="n">' + brl(p.receita) + '</td><td class="n">' + pct(p.receita / totRec) + '</td><td style="width:16%">' + barra(p.receita, d.produtos[0] ? d.produtos[0].receita : 1, C.pago) + '</td></tr>';
+    });
+    h += '</tbody></table></div></section>';
+    h += '<section class="ts-bloco ts-4"><h2>Faturamento por produto</h2><p class="sub">Participação no período.</p><div class="ts-chart baixo"><canvas id="gProdutos" aria-label="Faturamento por produto"></canvas></div></section>';
+
+    // Ofertas + canais
+    h += '<section class="ts-bloco ts-6"><h2>Ofertas (order bumps) nos pedidos pagos</h2><p class="sub">Quantos pedidos pagos levaram cada oferta.</p><div class="ts-scroll"><table><thead><tr><th>Oferta</th><th class="n">Pedidos</th><th class="n">% dos pagos</th><th class="n">Unidades</th></tr></thead><tbody>'
+      + (d.ofertas.length ? d.ofertas.map(function(o){ return '<tr><td>' + esc(o.oferta) + '</td><td class="n">' + nf(o.n) + '</td><td class="n">' + (k.pagos ? pct(o.n / k.pagos) : '—') + '</td><td class="n">' + (o.unidades ? nf(o.unidades) : '<span class="muted">—</span>') + '</td></tr>'; }).join('') : '<tr><td colspan="4" class="muted">Nenhuma oferta no período.</td></tr>')
+      + '</tbody></table></div></section>';
+    h += '<section class="ts-bloco ts-6"><h2>Canal de venda</h2><p class="sub">Site x bot de vendas do WhatsApp.</p><div class="ts-scroll"><table><thead><tr><th>Canal</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th></tr></thead><tbody>'
+      + d.canais.map(function(c){ return '<tr><td>' + esc(c.canal) + '</td><td class="n">' + nf(c.pix) + '</td><td class="n">' + nf(c.pagos) + '</td><td class="n">' + (c.pix ? pct(c.pagos / c.pix) : '—') + '</td><td class="n">' + brl(c.receita) + '</td></tr>'; }).join('')
+      + '</tbody></table></div></section>';
+
+    // Anúncios
+    h += '<section class="ts-bloco"><h2>Vendas por anúncio (utm_content)</h2><p class="sub">Top 15 por faturamento. "Sem anúncio" = pedido sem UTM (orgânico, WhatsApp, link direto).</p><div class="ts-scroll"><table><thead><tr><th>Anúncio (ID)</th><th>Campanha</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th></tr></thead><tbody>'
+      + d.anuncios.map(function(a){ return '<tr><td>' + esc(a.content) + '</td><td class="muted">' + esc(a.campaign || '—') + '</td><td class="n">' + nf(a.pix) + '</td><td class="n">' + nf(a.pagos) + '</td><td class="n">' + (a.pix ? pct(a.pagos / a.pix) : '—') + '</td><td class="n">' + brl(a.receita) + '</td></tr>'; }).join('')
+      + '</tbody></table></div></section>';
+
+    // Público
+    h += '<section class="ts-bloco ts-4"><h2>Dispositivo</h2><p class="sub">Visitantes únicos.</p><div class="ts-chart baixo"><canvas id="gDisp" aria-label="Dispositivos"></canvas></div></section>';
+    h += '<section class="ts-bloco ts-4"><h2>Cidades</h2><p class="sub">Top 10 por visitantes (pela localização do IP).</p><div class="ts-scroll"><table><tbody>'
+      + (d.cidades.length ? d.cidades.map(function(c){ return '<tr><td>' + esc(c.cidade) + '</td><td class="n">' + nf(c.visitantes) + '</td></tr>'; }).join('') : '<tr><td class="muted">Sem dados.</td></tr>')
+      + '</tbody></table></div></section>';
+    h += '<section class="ts-bloco ts-4"><h2>Origem das visitas</h2><p class="sub">UTM da URL ou site de onde veio. Completa com o rastreio novo publicado.</p><div class="ts-scroll"><table><tbody>'
+      + d.origem.map(function(o){ return '<tr><td>' + esc(o.origem) + '</td><td class="n">' + nf(o.visitantes) + '</td></tr>'; }).join('')
+      + '</tbody></table></div>'
+      + (d.errosPix.length ? '<h2 style="margin-top:14px">Erros ao gerar Pix</h2><table><tbody>' + d.errosPix.map(function(e){ return '<tr><td>' + esc(e.erro) + '</td><td class="n">' + nf(e.n) + '</td></tr>'; }).join('') + '</tbody></table>' : '')
+      + '</section>';
+    h += '</div>';
+    $('conteudo').innerHTML = h;
+
+    // Gráficos
+    if (!window.Chart) return;
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+    Chart.defaults.color = C.lapis;
+    var rot = d.serie.map(function(x){ return x.dia.slice(8, 10) + '/' + x.dia.slice(5, 7); });
+    var eixo = { grid: { color: C.fio }, border: { display: false }, ticks: { precision: 0 } };
+    var semGrade = { grid: { display: false }, border: { display: false } };
+    var base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { padding: 10 } } };
+    graficos.push(new Chart($('gVisitas'), { type: 'bar', data: { labels: rot, datasets: [
+      { type: 'bar', label: 'Pageviews', data: d.serie.map(function(x){ return x.pageviews; }), backgroundColor: C.vis + '33', borderColor: C.vis, borderWidth: 1, borderRadius: 3, order: 2 },
+      { type: 'line', label: 'Visitantes', data: d.serie.map(function(x){ return x.visitantes; }), borderColor: C.vis, backgroundColor: C.vis, pointRadius: 2, tension: .25, order: 1 }
+    ] }, options: Object.assign({}, base, { scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo) } }) }));
+    graficos.push(new Chart($('gVendas'), { type: 'bar', data: { labels: rot, datasets: [
+      { label: 'Pix gerado', data: d.serie.map(function(x){ return x.pix; }), backgroundColor: C.pix, borderRadius: 3, order: 2 },
+      { label: 'Pago', data: d.serie.map(function(x){ return x.pagos; }), backgroundColor: C.pago, borderRadius: 3, order: 2 },
+      { type: 'line', label: 'Faturamento', data: d.serie.map(function(x){ return x.receita; }), borderColor: C.tinta, backgroundColor: C.tinta, pointRadius: 2, tension: .25, yAxisID: 'y2', order: 1 }
+    ] }, options: Object.assign({}, base, { plugins: Object.assign({}, base.plugins, { tooltip: { callbacks: { label: function(c){ return c.dataset.label + ': ' + (c.dataset.yAxisID === 'y2' ? brl(c.parsed.y) : nf(c.parsed.y)); } } } }),
+      scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo), y2: { position: 'right', beginAtZero: true, grid: { display: false }, border: { display: false }, ticks: { callback: function(v){ return 'R$ ' + Number(v).toLocaleString('pt-BR'); } } } } }) }));
+    graficos.push(new Chart($('gHora'), { type: 'bar', data: { labels: d.porHora.map(function(_, i){ return String(i).padStart(2, '0') + 'h'; }), datasets: [{ label: 'Pageviews', data: d.porHora, backgroundColor: C.vis, borderRadius: 2 }] },
+      options: Object.assign({}, base, { scales: { x: Object.assign({}, semGrade, { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } }), y: Object.assign({ beginAtZero: true }, eixo) } }) }));
+    var paleta = [C.pago, C.vis, C.pix, '#8a4fd8', '#0e7490', '#c8352b', '#6b7280', '#a16207'];
+    var top = d.produtos.slice(0, 7), resto = d.produtos.slice(7).reduce(function(a, p){ return a + p.receita; }, 0);
+    graficos.push(new Chart($('gProdutos'), { type: 'doughnut', data: { labels: top.map(function(p){ return p.produto; }).concat(resto ? ['Outros'] : []), datasets: [{ data: top.map(function(p){ return p.receita; }).concat(resto ? [resto] : []), backgroundColor: paleta, borderWidth: 2, borderColor: cor('--folha', '#fff') }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { callbacks: { label: function(c){ return c.label + ': ' + brl(c.parsed); } } } } } }));
+    graficos.push(new Chart($('gDisp'), { type: 'doughnut', data: { labels: d.dispositivos.map(function(x){ return x.tipo; }), datasets: [{ data: d.dispositivos.map(function(x){ return x.visitantes; }), backgroundColor: [C.vis, C.pix, C.lapis], borderWidth: 2, borderColor: cor('--folha', '#fff') }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } } }));
+  }
+  carregar();
+})();
+</script>
+</body>
+</html>

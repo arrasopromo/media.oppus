@@ -217,6 +217,9 @@
       <% if (!isUnknownOrderIdView) { %>
         <a href="<%= baseUrl + sep %>period=max" class="<%= panelPeriod === 'max' ? 'active' : '' %>">Máximo</a>
       <% } %>
+      <% if (typeof view !== 'undefined' && view === 'dashboard') { %>
+        <a href="<%= baseUrl + sep %>period=all" class="<%= panelPeriod === 'all' ? 'active' : '' %>">Todos</a>
+      <% } %>
       <a href="javascript:(function(){try{var u=new URL(location.href);u.searchParams.set('nocache','1');location.href=u.toString();}catch(_){location.reload();}})();" style="background: #28a745; color: white;" title="Recarrega com dados atualizados (ignora cache)">Atualizar</a>
     </div>
 
@@ -8200,7 +8203,6 @@
                 <th>Custo/1k</th>
                 <th>Taxa</th>
                 <th>Orderbump</th>
-                <th style="text-align:center; width:44px;">X</th>
                 <th>Custo Bump</th>
                 <th>Total Item</th>
                 <th>Total Pago</th>
@@ -8256,9 +8258,6 @@
                   </td>
                   <td>R$ <%= (function(){ try { var n = Number(order && typeof order.paymentFee !== 'undefined' ? order.paymentFee : NaN); if (isFinite(n) && n > 0) return n.toFixed(2).replace('.', ','); var pm = String(order && (order.paymentMethod || order.payment_method || order.method) ? (order.paymentMethod || order.payment_method || order.method) : '').toLowerCase(); if (pm.indexOf('paghiper') >= 0) return '0,99'; return '0,85'; } catch(_) { return '0,85'; } })() %></td>
                   <td><%= (order.orderBumps || '-') %></td>
-                  <td style="text-align:center;">
-                    <button type="button" class="sale-delete-btn" data-sale-id="<%= String(order._id || '') %>" style="background:#dc3545; color:#fff; border:none; border-radius:8px; width:32px; height:32px; font-weight:900; cursor:pointer;">x</button>
-                  </td>
                   <td>
                     R$ <%= (typeof order.bumpCost !== 'undefined' ? order.bumpCost : 0).toFixed(2).replace('.', ',') %>
                     <% if (order.orderBumpsTotal) { %>
@@ -8272,49 +8271,6 @@
             </tbody>
           </table>
           </div>
-          <script>
-            (function(){
-              function safeTrim(v){ return String(v == null ? '' : v).trim(); }
-              function bind(){
-                var btns = Array.prototype.slice.call(document.querySelectorAll('.sale-delete-btn'));
-                if (!btns.length) return;
-                btns.forEach(function(btn){
-                  if (btn.getAttribute('data-bound') === '1') return;
-                  btn.setAttribute('data-bound', '1');
-                  btn.addEventListener('click', async function(){
-                    var id = safeTrim(btn.getAttribute('data-sale-id') || '');
-                    if (!id) return;
-                    if (!confirm('Excluir esta venda? Isso apaga o registro no MongoDB.')) return;
-                    btn.disabled = true;
-                    try {
-                      var resp = await fetch('/api/painel/vendas/delete', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                        body: JSON.stringify({ id: id }),
-                        credentials: 'same-origin'
-                      });
-                      var data = await resp.json().catch(function(){ return null; });
-                      if (!data || data.ok !== true) {
-                        var err = (data && (data.message || data.error)) ? (data.message || data.error) : ('HTTP ' + resp.status);
-                        alert('Erro ao excluir: ' + err);
-                        btn.disabled = false;
-                        return;
-                      }
-                      try {
-                        var tr = btn.closest ? btn.closest('tr') : null;
-                        if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
-                      } catch(_) {}
-                    } catch (e) {
-                      alert('Erro ao excluir: ' + (e && e.message ? e.message : String(e)));
-                      btn.disabled = false;
-                    }
-                  });
-                });
-              }
-              if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
-              else bind();
-            })();
-          </script>
         <% } else { %>
           <% if (view === 'dashboard') { %>
           <div style="margin-bottom:14px;">

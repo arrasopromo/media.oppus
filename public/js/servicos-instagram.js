@@ -28,6 +28,19 @@ document.addEventListener('DOMContentLoaded', function() {
   // Só divergem no preço, na categoria enviada (comentarios) e nos rótulos.
   const isCurtidasContext = window.location.pathname.startsWith('/servicos-curtidas') || isCommentsContext;
   const isViewsContext = window.location.pathname.startsWith('/servicos-visualizacoes');
+  // Funil por visitante (o servidor grava pelo cookie oppus_cid): pacote escolhido, perfil validado,
+  // clicou em pagar e erro do Pix. Só registra — nunca bloqueia nem atrasa a compra.
+  const __funilServico = isCommentsContext ? 'comentarios' : (isViewsContext ? 'visualizacoes' : (isCurtidasContext ? 'curtidas' : 'seguidores'));
+  function funilEvento(evento, dados) {
+    try {
+      const body = JSON.stringify(Object.assign({ evento: evento, servico: __funilServico }, dados || {}));
+      if (navigator.sendBeacon && navigator.sendBeacon('/api/funil/evento', new Blob([body], { type: 'application/json' }))) return;
+      fetch('/api/funil/evento', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
+    } catch (_) {}
+  }
+  function funilSelecao() {
+    try { return { tipo: tipoSelect ? String(tipoSelect.value || '') : '', qtd: qtdSelect ? (Number(qtdSelect.value || 0) || null) : null }; } catch (_) { return {}; }
+  }
   const serviceVisibility = (function(){
     try {
       const node = document.getElementById('oppusServiceVisibilityJson');
@@ -2287,6 +2300,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (resQtd) resQtd.textContent = `${item.q} ${unit}`;
         if (resPreco) resPreco.textContent = baseText;
         try { basePriceCents = parsePrecoToCents(baseText); } catch(_) { basePriceCents = 0; }
+        try { funilEvento('pacote_escolhido', { tipo: String(tipo || ''), qtd: Number(item.q) || null, preco: String(baseText || '') }); } catch (_) {}
         
         // Update Order Bump e Promos
         updateOrderBump(tipo, Number(item.q));
@@ -3971,6 +3985,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try { saveCheckoutPrefill({ profile: { followers: (typeof profile.followersCount === 'number' ? profile.followersCount : null), isPrivate: !!(profile.isPrivate || profile.is_private), fullName: String(profile.fullName || '') } }); } catch (_) {}
         if (!silent) showStatusMessageCheckout('Perfil verificado com sucesso.', 'success');
         
+        try { funilEvento('perfil_validado', funilSelecao()); } catch (_) {}
         try {
           const bid = getBrowserSessionId();
           fetch('/api/instagram/validet-track', {
@@ -4444,6 +4459,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function criarPixPaghiper() {
     try { window.__oppus_pix_started = true; } catch(_) {}
+    try { funilEvento('clicou_pagar', funilSelecao()); } catch (_) {}
     if (btnPedido) {
         btnPedido.disabled = true;
         btnPedido.classList.add('loading');
@@ -4917,6 +4933,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         }
       } catch (_) {}
+      try { funilEvento('erro_pix', Object.assign(funilSelecao(), { erro: String((err && err.message) || err || '').slice(0, 160) })); } catch (_) {}
       alert('Erro ao criar PIX: ' + (err?.message || err));
     } finally {
       if (btnPedido) {

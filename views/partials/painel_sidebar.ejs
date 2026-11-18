@@ -3,6 +3,7 @@
     function _a(k){ return _p === k ? 'active' : ''; }
     var _groups = {
         geral:       ['dashboard','vendas'],
+        track:       ['track-site'],
         financeiro:  ['controladoria','notas-fiscais'],
         operacao:    ['gerenciamento-seguidores','refil2','gestao-parcial-topfama','gestao-parcial-seguidores','aguardando','unknown_orderid','registro-pedido','privados','whatsapp'],
         marketing:   ['meta-ads','coupons','recuperacao-whatsapp','upsell','ltv','whatsapp-crm','ia-crm','ia-followup'],
@@ -29,6 +30,13 @@
             <ul>
                 <li><a href="/painel?view=dashboard" class="<%= _a('dashboard') %>">Dashboard</a></li>
                 <li><a href="/painel?view=vendas" class="<%= _a('vendas') %>">Vendas</a></li>
+            </ul>
+        </details>
+
+        <details class="nav-group" data-group="track" <%= _open(_groups.track) %>>
+            <summary>Track do Site <span class="nav-caret">›</span></summary>
+            <ul>
+                <li><a href="/painel/track-site" class="<%= _a('track-site') %>">Visitas, funil e vendas</a></li>
             </ul>
         </details>
 

@@ -261,4 +261,4 @@ async function status() {
   return (await col.findOne({ _id: STATE_ID }, { projection: { ultimo: 1, ultimoErro: 1, degraus: 1, recusa: 1, ultimoEnvioAt: 1 } })) || {};
 }
 
-module.exports = { verificar, iniciar, status, _calcula: calcula, _msgAntecipada: msgAntecipada, _msgRecusa: msgRecusa };
+module.exports = { verificar, iniciar, status, mcpSession, _calcula: calcula, _msgAntecipada: msgAntecipada, _msgRecusa: msgRecusa };

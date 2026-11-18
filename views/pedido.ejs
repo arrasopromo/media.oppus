@@ -2604,5 +2604,23 @@ function startPrivacyTimer(seconds) {
     })();
   </script>
   <% } %>
+<% if (order && order.identifier && String(order.status || '').toLowerCase() !== 'pago') { %>
+<script>
+  // Pedido aberto ANTES do pagamento cair (ex.: cliente pagou e abriu a página na hora): fica conferindo
+  // e recarrega sozinha quando o pagamento é confirmado, para não ficar com data/ID/status em "-".
+  (function(){
+    var ident = <%- JSON.stringify(String(order.identifier || '')) %>, corr = <%- JSON.stringify(String(order.correlationID || '')) %>;
+    var inicio = Date.now(), ativo = true;
+    function checa(){
+      if (!ativo || Date.now() - inicio > 15 * 60 * 1000) return;
+      fetch('/api/checkout/payment-state?identifier=' + encodeURIComponent(ident) + '&correlationID=' + encodeURIComponent(corr) + '&_=' + Date.now())
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d && d.paid === true) { ativo = false; location.reload(); } else setTimeout(checa, 6000); })
+        .catch(function(){ setTimeout(checa, 10000); });
+    }
+    setTimeout(checa, 4000);
+  })();
+</script>
+<% } %>
 </body>
 </html>

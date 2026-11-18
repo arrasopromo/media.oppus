@@ -375,9 +375,30 @@ function __lerOpUt(req, nome) {
   } catch (_) { return null; }
 }
 // Completa o pedido com a nossa atribuição. utms da URL/sessão têm prioridade; o cookie só preenche o que faltou.
+// Funil por visitante (cookie oppus_cid): entrada (/engajamento) → página de serviço → perfil validado
+// → Pix gerado (pedido com visitorId) → pago. Eventos ficam em `funil_eventos` (não mexe em page_views,
+// nem no tc_code da TrackCombo, que segue no additionalInfo como antes). 1 evento por visitante+tipo a cada 30 min.
+const __funilDedupe = new Map();
+function registrarEventoFunil(req, evento, extra, detalheDedupe) {
+  try {
+    const vid = String(getCookieValue(req, OPPUS_CLIENT_ID_COOKIE) || '').trim(); // só navegador com cookie
+    if (!vid || !evento) return;
+    const k = vid + '|' + evento + '|' + String(detalheDedupe || ''), agora = Date.now();
+    if (agora - (__funilDedupe.get(k) || 0) < 30 * 60 * 1000) return;
+    __funilDedupe.set(k, agora);
+    if (__funilDedupe.size > 50000) { for (const [kk, t] of __funilDedupe) { if (agora - t > 30 * 60 * 1000) __funilDedupe.delete(kk); } }
+    let pagina = '';
+    try { const ref = String((req.get && req.get('Referer')) || ''); if (ref) pagina = new URL(ref).pathname.slice(0, 80); } catch (_) {}
+    const doc = Object.assign({ visitorId: vid, evento, pagina, createdAt: new Date() }, extra || {});
+    const ck = __lerOpUt(req, 'op_ut'); if (ck && (ck.content || ck.source)) doc.utm = { source: ck.source || '', campaign: ck.campaign || '', content: ck.content || '' };
+    getCollection('funil_eventos').then((c) => c.insertOne(doc)).catch(() => {});
+  } catch (_) {}
+}
 function __comUtmOppus(record, req) {
   try {
     if (!record) return record;
+    // Visitante (cookie oppus_cid) que gerou o pedido: liga page views → pedido. Campo próprio, não vai pro gateway nem pra TrackCombo.
+    try { if (!record.visitorId) { const vid = String(getCookieValue(req, OPPUS_CLIENT_ID_COOKIE) || '').trim(); if (vid) record.visitorId = vid; } } catch (_) {} // só o cookie que veio do navegador (pedido do bot/servidor não tem)
     const u = (record.utms && typeof record.utms === 'object') ? record.utms : {};
     const temUrl = !!(String(u.source || '').trim() || String(u.content || '').trim() || String(u.fbclid || '').trim());
     const ck = __lerOpUt(req, 'op_ut');
@@ -2964,6 +2985,14 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
                 } catch (_) { geo = null; }
                 const doc = { path: p, clientId: cid, ip, ua, createdAt: new Date() };
                 if (ref) doc.referer = ref;
+                // Origem do anúncio na própria URL (utm_*/fbclid): marca a entrada vinda de anúncio.
+                try {
+                    const q = (req && req.query) || {};
+                    const u = {};
+                    for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) { if (typeof q[k] === 'string' && q[k].trim()) u[k.replace(/^utm_/, '')] = q[k].trim().slice(0, 200); }
+                    if (typeof q.fbclid === 'string' && q.fbclid.trim()) u.fbclid = true;
+                    if (Object.keys(u).length) doc.utm = u;
+                } catch (_) {}
                 if (geo && (geo.city || geo.region || geo.country)) {
                     doc.city = geo.city || '';
                     doc.region = geo.region || '';
@@ -4708,7 +4737,8 @@ async function fetchTikTokFollowerCount(perfilRaw) {
 // Curtidas de um vídeo do TikTok. Página mobile: o item vem no HTML e o 1º "diggCount" depois do
 // "id" do vídeo é o dele. Página desktop: itemStruct em webapp.video-detail.
 // Retorna { count } | null (link inválido) | { blocked: true }.
-async function fetchTikTokVideoLikeCount(linkRaw) {
+// campo: 'diggCount' (curtidas, padrão) ou 'playCount' (visualizações) — mesma página do vídeo.
+async function fetchTikTokVideoLikeCount(linkRaw, campo = 'diggCount') {
   const link = String(linkRaw || '').trim();
   if (!/^https?:\/\/([a-z0-9-]+\.)*tiktok\.com\/@[^/]+\/(video|photo)\/\d+/i.test(link)) return null;
   const id = (link.match(/\/(?:video|photo)\/(\d+)/) || [])[1];
@@ -4717,7 +4747,7 @@ async function fetchTikTokVideoLikeCount(linkRaw) {
       const r = await ttGet(link, TT_UA_MOB);
       const h = String(r.data || '');
       const i = h.indexOf('"id":"' + id + '"');
-      if (i >= 0) { const m = h.slice(i, i + 20000).match(/"diggCount":(\d+)/); if (m) return { count: Number(m[1]), source: 'tiktok_video' }; }
+      if (i >= 0) { const m = h.slice(i, i + 20000).match(new RegExp('"' + campo + '":"?(\\d+)')); if (m) return { count: Number(m[1]), source: 'tiktok_video' }; }
     } catch (_) {}
     try {
       const r = await ttGet(link, TT_UA_DESK);
@@ -4725,7 +4755,7 @@ async function fetchTikTokVideoLikeCount(linkRaw) {
       if (mm) {
         const d = (JSON.parse(mm[1]).__DEFAULT_SCOPE__ || {})['webapp.video-detail'] || {};
         const it = d.itemInfo && d.itemInfo.itemStruct;
-        if (it) { const st = it.statsV2 || it.stats || {}; const n = Number(st.diggCount); if (Number.isFinite(n)) return { count: n, source: 'tiktok_video' }; }
+        if (it) { const st = it.statsV2 || it.stats || {}; const n = Number(st[campo]); if (Number.isFinite(n)) return { count: n, source: 'tiktok_video' }; }
       }
     } catch (_) {}
     ttMarcarBloqueio();
@@ -4736,11 +4766,12 @@ async function fetchTikTokVideoLikeCount(linkRaw) {
 async function serviceTestCheckOne(col, rec) {
   // Facebook: só SEGUIDORES (perfil/página) têm medição; curtidas/visualizações ainda não.
   if (rec && rec.rede === 'facebook' && !/seguidor/i.test(String(rec.tipo || ''))) return { ok: false, skipped: 'rede_sem_medicao' };
-  // TikTok: seguidores pela página do perfil; curtidas pela página do vídeo (o "perfil" é o link do vídeo).
+  // TikTok: seguidores pela página do perfil; curtidas e visualizações pela página do vídeo (o "perfil" é o link do vídeo).
   // Facebook: seguidores pela prévia pública (og:description "N seguidores").
   if (rec && (rec.rede === 'tiktok' || rec.rede === 'facebook')) {
     const tt = rec.rede === 'facebook' ? await fetchFacebookFollowerCount(rec.perfil)
-      : (/curtida/i.test(String(rec.tipo || '')) ? await fetchTikTokVideoLikeCount(rec.perfil) : await fetchTikTokFollowerCount(rec.perfil));
+      : (/curtida/i.test(String(rec.tipo || '')) ? await fetchTikTokVideoLikeCount(rec.perfil)
+        : (/visualiz|views/i.test(String(rec.tipo || '')) ? await fetchTikTokVideoLikeCount(rec.perfil, 'playCount') : await fetchTikTokFollowerCount(rec.perfil)));
     if (tt && tt.semNumero) {
       // Página abriu mas o Facebook não mostrou o número (perfil com seguidores ocultos, login): não marca X.
       try { await col.updateOne({ _id: rec._id }, { $set: { lastCheckError: 'facebook_sem_numero', lastCheckErrorAt: new Date().toISOString() } }); } catch (_) {}
@@ -5584,7 +5615,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
     }
     // Pedido de CARTÃO grava o telefone em customer.phone_number/telefone (não em customer.phone).
     const filtro = { $or: [{ 'customer.phone': { $in: cands } }, { 'customer.phone_number': { $in: cands } }, { telefone: { $in: cands } }, { 'additionalInfoMapPaid.phone': { $in: cands } }, { 'additionalInfoMap.phone': { $in: cands } }] };
-    const proj = { identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
+    const proj = { 'customer.email': 1, identifier: 1, status: 1, createdAt: 1, paidAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, valueCents: 1, instagramUsername: 1, instauser: 1, qtd: 1, quantidade: 1, tipo: 1, tipoServico: 1, categoriaServico: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1, 'customer.name': 1 };
     let filtroUsado = filtro;   // filtro que achou os pedidos (telefone, 8 dígitos ou @) — usado p/ o link de reposição
     let docs = await col.find(filtro, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
     let total = resumo ? await col.countDocuments(filtro, { limit: 200 }) : docs.length;
@@ -5604,6 +5635,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
     // compra. Então procura pelo @ do Instagram citado NA CONVERSA (foi assim que o pedido do
     // @harasveracruz apareceu). Só entra quando a busca por telefone falhou.
     let achadoPor = docs.length ? 'telefone' : '';
+    const emailsConversa = [];   // e-mails que o cliente escreveu na conversa (fallback depois do @)
     if (!total) {
       const handles = [];
       try {
@@ -5613,6 +5645,7 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
         for (const m of msgs) {
           if (m.ig) handles.push(String(m.ig).replace(/^@+/, '').toLowerCase());   // LTV: @ do contato gravado na mensagem
           const t = String((m && m.text) || '');
+          for (const mt of t.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)) emailsConversa.push(mt[0].toLowerCase());
           for (const mt of t.matchAll(/@([a-zA-Z0-9._]{2,30})/g)) handles.push(mt[1].toLowerCase());
           for (const mt of t.matchAll(/instagram\.com\/([a-zA-Z0-9._]{2,30})/gi)) handles.push(mt[1].toLowerCase());
           // cliente que manda só o usuário, sem @ (ex.: "sshey_lla94")
@@ -5638,6 +5671,18 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
         }
         if (total) break;
       }
+      // Ainda nada: procura pelo E-MAIL que o cliente escreveu na conversa (ex.: prosperaragroindustrial,
+      // que fala por um número e compra com outro telefone e outro @).
+      const emailsUnicos = [...new Set(emailsConversa)].slice(0, 5);
+      if (!total && emailsUnicos.length) {
+        const condEmail = { 'customer.email': { $in: emailsUnicos } };
+        const achados = await col.find(condEmail, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(resumo ? 1 : 40).toArray();
+        if (achados.length) {
+          docs = achados; filtroUsado = condEmail;
+          total = resumo ? await col.countDocuments(condEmail, { limit: 200 }) : achados.length;
+          achadoPor = 'email:' + emailsUnicos[0];
+        }
+      }
     }
     const info = (o, k) => {
       for (const m of [o.additionalInfoMapPaid, o.additionalInfoMap]) if (m && m[k] != null && String(m[k]).trim()) return String(m[k]).trim();
@@ -5659,6 +5704,9 @@ const crmPedidosHandler = (fonte) => async (req, res) => {
           const rx = new RegExp('^@?' + h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
           orCond.push({ instagramUsername: rx }, { instauser: rx }, { 'additionalInfoMapPaid.instagram_username': rx }, { 'additionalInfoMap.instagram_username': rx });
         }
+        // Mesmo e-mail também conta (cliente que trocou de @ mas compra com o mesmo e-mail).
+        const emailsMerge = [...new Set(docs.map((d) => String((d.customer && d.customer.email) || '').trim().toLowerCase()).filter((e) => /@/.test(e)))].slice(0, 5);
+        if (emailsMerge.length) orCond.push({ 'customer.email': { $in: emailsMerge } });
         const porArroba = await col.find({ $or: orCond }, { projection: proj }).sort({ createdAt: -1, _id: -1 }).limit(60).toArray();
         for (const e of porArroba) if (!jaTem.has(e.identifier)) { docs.push(e); jaTem.add(e.identifier); }
         docs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
@@ -10290,6 +10338,7 @@ app.get('/inicio', (req, res) => {
 
 app.get('/engajamento', async (req, res) => {
   console.log('📈 Acessando rota /engajamento');
+  try { trackPageView(req, '/engajamento'); } catch (_) {} // entrada do anúncio: 1º passo do funil por visitante
   const serviceVisibility = await loadServiceVisibility();
   const isFamaApp = /famaapp/i.test(String((req.headers && req.headers.host) || req.hostname || ''));
   res.render('engajamento', {
@@ -20229,7 +20278,28 @@ async function refreshOrderRealCostById(col, _id) {
 }
 
 // Converte pedidos pagos do Mongo em "entries" para o controladoriaManager.
+// História de clientes (TODOS os pedidos pagos, ~23k): usada no LTV/recompra do painel (Vendas e
+// Dashboard) e na Controladoria. Carregar tudo leva ~4s, então fica em memória: até 3 min serve direto;
+// até 30 min serve o que tem e atualiza em segundo plano; depois disso recarrega na hora. Uma carga por vez.
+// Ninguém altera a lista depois de pronta (buildReport filtra/ordena numa cópia), então é seguro compartilhar.
+const __ctrlEntries = { at: 0, data: null, promise: null };
+const CTRL_ENTRIES_TTL_MS = Number(process.env.CTRL_ENTRIES_TTL_MS || 3 * 60 * 1000);
+const CTRL_ENTRIES_STALE_MS = Number(process.env.CTRL_ENTRIES_STALE_MS || 30 * 60 * 1000);
+function __ctrlEntriesRefresh() {
+  if (!__ctrlEntries.promise) {
+    __ctrlEntries.promise = _buildControladoriaEntriesRaw()
+      .then((d) => { __ctrlEntries.data = d; __ctrlEntries.at = Date.now(); return d; })
+      .finally(() => { __ctrlEntries.promise = null; });
+  }
+  return __ctrlEntries.promise;
+}
 async function _buildControladoriaEntries() {
+  const idade = Date.now() - __ctrlEntries.at;
+  if (__ctrlEntries.data && idade < CTRL_ENTRIES_TTL_MS) return __ctrlEntries.data;
+  if (__ctrlEntries.data && idade < CTRL_ENTRIES_STALE_MS) { __ctrlEntriesRefresh().catch(() => {}); return __ctrlEntries.data; }
+  return __ctrlEntriesRefresh();
+}
+async function _buildControladoriaEntriesRaw() {
   const col = await getCollection('checkout_orders');
   const settingsCol = await getCollection('settings');
 
@@ -25458,6 +25528,23 @@ app.get('/api/instagram/validet', adminOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
+});
+// Eventos do funil vindos do navegador (servicos-instagram.js). Só os tipos abaixo; campos curtos e limpos.
+const __FUNIL_EVENTOS = new Set(['pacote_escolhido', 'perfil_validado', 'clicou_pagar', 'erro_pix']);
+app.post('/api/funil/evento', publicIpLimit('funil_evento', 120, 10), (req, res) => {
+  try {
+    const b = (req.body && typeof req.body === 'object') ? req.body : {};
+    const ev = String(b.evento || '');
+    if (__FUNIL_EVENTOS.has(ev)) {
+      const curto = (v, n) => String(v == null ? '' : v).replace(/[<>"'`\\{}]/g, '').trim().slice(0, n);
+      const extra = { servico: curto(b.servico, 20), tipo: curto(b.tipo, 40) };
+      const q = Number(b.qtd); if (Number.isFinite(q) && q > 0 && q < 10000000) extra.qtd = Math.round(q);
+      if (b.preco) extra.preco = curto(b.preco, 20);
+      if (ev === 'erro_pix' && b.erro) extra.erro = curto(b.erro, 160);
+      registrarEventoFunil(req, ev, extra, ev === 'pacote_escolhido' ? extra.servico + '|' + extra.tipo + '|' + (extra.qtd || '') : (ev === 'erro_pix' ? extra.erro : extra.servico));
+    }
+  } catch (_) {}
+  return res.status(204).end();
 });
 app.post('/api/instagram/validet-track', publicIpLimit('validet_track', 60, 10), async (req, res) => {
   try {
@@ -41167,32 +41254,6 @@ app.post('/api/painel/pedidos/aprovar-manual', requireAdmin, async (req, res) =>
   }
 });
 
-app.post('/api/painel/vendas/delete', requireAdmin, async (req, res) => {
-  try {
-    const body = (req && req.body && typeof req.body === 'object') ? req.body : {};
-    const idRaw = String(body.id || body.orderId || '').trim();
-    if (!idRaw || !/^[0-9a-fA-F]{24}$/.test(idRaw)) return res.status(400).json({ ok: false, error: 'invalid_id' });
-    const { ObjectId } = require('mongodb');
-    const oid = new ObjectId(idRaw);
-    const { getCollection } = require('./mongodbClient');
-    const col = await getCollection('checkout_orders');
-
-    const del = await col.deleteOne({ _id: oid });
-    const deleted = Number(del && typeof del.deletedCount !== 'undefined' ? del.deletedCount : 0) || 0;
-    if (!deleted) return res.status(404).json({ ok: false, error: 'not_found' });
-
-    try {
-      const tl = await getCollection('temporary_links');
-      await tl.updateMany({ purpose: 'refil', orderId: idRaw }, { $unset: { orderId: '' } });
-      await tl.updateMany({ purpose: 'refil', orders: idRaw }, { $pull: { orders: idRaw } });
-    } catch (_) {}
-
-    return res.json({ ok: true, deletedCount: deleted });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
 app.post('/painel/consulta-perfil', requireAdmin, async (req, res) => {
     const usernameRaw = req?.body?.username;
     const maxFollowersRaw = req?.body?.maxFollowers;
@@ -41377,8 +41438,17 @@ async function __fbSpendOne(act, token, { since, until, datePreset, daily } = {}
   const resp = await axios.get(`https://graph.facebook.com/v21.0/${act}/insights`, { params, timeout: 25000, validateStatus: () => true });
   if (resp.status !== 200) return { ok: false, error: (resp.data && resp.data.error && resp.data.error.message) || ('http_' + resp.status) };
   if (daily) {
+    // Segue a paginação: período longo (ex.: "máximo") passa de 500 dias numa página só.
     const byDay = {};
-    for (const row of ((resp.data && resp.data.data) || [])) { if (row && row.date_start) byDay[row.date_start] = Number(row.spend) || 0; }
+    let pagina = resp.data, guard = 0;
+    while (pagina) {
+      for (const row of ((pagina && pagina.data) || [])) { if (row && row.date_start) byDay[row.date_start] = Number(row.spend) || 0; }
+      const next = pagina && pagina.paging && pagina.paging.next;
+      if (!next || ++guard > 20) break;
+      const r2 = await axios.get(next, { timeout: 25000, validateStatus: () => true });
+      if (r2.status !== 200) return { ok: false, error: (r2.data && r2.data.error && r2.data.error.message) || ('http_' + r2.status) };
+      pagina = r2.data;
+    }
     return { ok: true, byDay };
   }
   const row = (resp.data && Array.isArray(resp.data.data) && resp.data.data[0]) ? resp.data.data[0] : null;
@@ -41400,21 +41470,17 @@ async function fetchFacebookSpendDaily({ since, until, datePreset } = {}) {
   const hit = __fbDailyCache.get(cacheKey);
   if (hit && hit.exp > now) return { ok: true, byDay: hit.value.byDay, byDayNoTax: hit.value.byDayNoTax, cached: true };
   try {
-    const br = await __fbSpendOne(act, token, { since, until, datePreset, daily: true });
+    // Conta BR e conta USD (ca3) buscadas ao mesmo tempo.
+    const usdAct = __fbUsdAccount();
+    const [br, usd] = await Promise.all([
+      __fbSpendOne(act, token, { since, until, datePreset, daily: true }),
+      usdAct ? __fbSpendOne(usdAct, token, { since, until, datePreset, daily: true }).catch(() => null) : Promise.resolve(null),
+    ]);
     if (!br.ok) return { ok: false, error: br.error };
     const byDay = br.byDay;
-    // Conta USD (ca3): gasto por dia convertido ao dólar atual, SEM imposto.
-    const byDayNoTax = {};
-    const usdAct = __fbUsdAccount();
-    if (usdAct) {
-      try {
-        const usd = await __fbSpendOne(usdAct, token, { since, until, datePreset, daily: true });
-        if (usd.ok) {
-          let rate = 5.03; try { const fx = await getUsdBrlRate(); if (fx && fx.rate) rate = fx.rate; } catch (_) {}
-          for (const [d, v] of Object.entries(usd.byDay)) byDayNoTax[d] = (Number(v) || 0) * rate;
-        }
-      } catch (_) {}
-    }
+    // Conta USD (ca3): gasto de cada dia convertido pela cotação DAQUELE dia (hoje = do momento), SEM imposto.
+    let byDayNoTax = {};
+    if (usd && usd.ok) { try { byDayNoTax = (await convertUsdByDay(usd.byDay)).byDay; } catch (_) {} }
     __fbDailyCache.set(cacheKey, { value: { byDay, byDayNoTax }, exp: now + 5 * 60 * 1000 });
     return { ok: true, byDay, byDayNoTax };
   } catch (e) {
@@ -41444,17 +41510,20 @@ async function fetchFacebookSpend({ since, until, datePreset } = {}) {
   const hit = __fbSpendCache.get(cacheKey);
   if (hit && hit.exp > now) return { ok: true, ...hit.value, cached: true };
   try {
-    const br = await __fbSpendOne(act, token, { since, until, datePreset });
+    const usdAct = __fbUsdAccount();
+    const [br, usdP] = await Promise.all([
+      __fbSpendOne(act, token, { since, until, datePreset }),
+      usdAct ? __fbSpendOne(usdAct, token, { since, until, datePreset, daily: true }).catch(() => null) : Promise.resolve(null),
+    ]);
     if (!br.ok) return { ok: false, error: br.error };
     const spend = br.spend; // BR (tributável)
     let spendNoTax = 0, usdRate = null;
-    const usdAct = __fbUsdAccount();
     if (usdAct) {
       try {
-        const usd = await __fbSpendOne(usdAct, token, { since, until, datePreset });
-        if (usd.ok && (Number(usd.spend) || 0) > 0) {
-          let rate = 5.03; try { const fx = await getUsdBrlRate(); if (fx && fx.rate) rate = fx.rate; } catch (_) {}
-          usdRate = rate; spendNoTax = (Number(usd.spend) || 0) * rate;
+        const usd = usdP;
+        if (usd && usd.ok) {
+          const conv = await convertUsdByDay(usd.byDay);
+          if (conv.totalUsd > 0) { spendNoTax = conv.total; usdRate = conv.taxaMedia; } // usdRate = média ponderada pelo gasto
         }
       } catch (_) {}
     }
@@ -41641,7 +41710,15 @@ async function computeMetaAdsData(q) {
         range.until === range.hoje && range.since === range.hoje ? Promise.resolve(null)
           : __metaGetAll(`https://graph.facebook.com/v21.0/${act}/insights`, { fields: 'ad_id,spend', level: 'ad', date_preset: 'today', limit: 500, access_token: token }),
       ]);
-      const m = conta === 'USD' ? fx : 1;
+      // ca3: orçamento e gasto de hoje pela taxa de HOJE do mesmo critério do período
+      // (custo médio das recargas LootRush; sem ele, a cotação do momento).
+      let m = 1;
+      if (conta === 'USD') { m = fx; try { const th = (await convertUsdByDay({ [range.hoje]: 1 })).taxas[range.hoje]; if (th > 1) m = th; } catch (_) {} }
+      // Gasto do período: cada dia pela cotação daquele dia (média ponderada pelo gasto diário da conta).
+      let mPer = m;
+      if (conta === 'USD') {
+        try { const dd = await __fbSpendOne(act, token, { since: range.since, until: range.until, daily: true }); if (dd.ok) { const cv = await convertUsdByDay(dd.byDay); if (cv.taxaMedia) mPer = cv.taxaMedia; } } catch (_) {}
+      }
       for (const a of lista) {
         const st = String(a.effective_status || '');
         if (st === 'DELETED' || st === 'ARCHIVED') continue;
@@ -41655,10 +41732,10 @@ async function computeMetaAdsData(q) {
       }
       for (const x of ins) {
         const a = ads.get(String(x.ad_id)); if (!a) continue;
-        a.gasto += (Number(x.spend) || 0) * m; a.impressoes += Number(x.impressions) || 0; a.cliques += Number(x.inline_link_clicks) || 0;
-        a.metaCompras += __metaPick(x.actions); a.metaValor += __metaPick(x.action_values) * m;
+        a.gasto += (Number(x.spend) || 0) * mPer; a.impressoes += Number(x.impressions) || 0; a.cliques += Number(x.inline_link_clicks) || 0;
+        a.metaCompras += __metaPick(x.actions); a.metaValor += __metaPick(x.action_values) * mPer;
       }
-      if (hojeIns === null) { for (const a of ads.values()) if (a.conta === conta) a.gastoHoje = a.gasto; }
+      if (hojeIns === null) { for (const a of ads.values()) if (a.conta === conta) a.gastoHoje = a.gasto; } // período = só hoje → mPer já é a cotação de hoje
       else for (const x of hojeIns) { const a = ads.get(String(x.ad_id)); if (a) a.gastoHoje += (Number(x.spend) || 0) * m; }
     } catch (e) { erros.push(conta + ': ' + ((e && e.message) || e)); }
   }
@@ -41717,6 +41794,208 @@ async function computeMetaAdsData(q) {
   return value;
 }
 
+
+// ── Track do Site (/painel/track-site) ─────────────────────────────────────────────
+// Tudo que o site registra num período (dias no horário de SP): visitas (page_views),
+// funil por visitante (funil_eventos), perfis validados (validated_insta_users), Pix gerados
+// e pagos (checkout_orders), ofertas (order_bumps) e o áudio da página inicial (audio_logs).
+// Pix gerado = pedido criado no período; pago = desses, os que já foram pagos (coorte).
+const __trackSiteCache = new Map();
+let __trackSiteIdx = false;
+const __TS_PAGINAS = {
+  '/engajamento': 'Página inicial (/engajamento)',
+  '/servicos-instagram': 'Seguidores',
+  '/servicos-curtidas': 'Curtidas',
+  '/servicos-visualizacoes': 'Visualizações',
+  '/servicos-comentarios': 'Comentários',
+  '/pix': 'Tela do Pix',
+};
+const __TS_PAG_SERV = { '/servicos-instagram': 'seguidores', '/servicos-curtidas': 'curtidas', '/servicos-visualizacoes': 'visualizacoes', '/servicos-comentarios': 'comentarios' };
+function __tsProduto(o) {
+  const arr = Array.isArray(o.additionalInfoPaid) ? o.additionalInfoPaid : (Array.isArray(o.additionalInfo) ? o.additionalInfo : []);
+  const m = Object.assign({}, o.additionalInfoMap || {}, o.additionalInfoMapPaid || {});
+  for (const it of arr) { if (it && it.key && m[it.key] == null) m[it.key] = it.value; }
+  const tipo = String(o.tipo || o.tipoServico || m.tipo_servico || '').toLowerCase().trim();
+  let cat = String(m.categoria_servico || '').toLowerCase().trim();
+  if (!cat) {
+    if (/coment/.test(tipo)) cat = 'comentarios';
+    else if (/visualiz|views|reels/.test(tipo)) cat = 'visualizacoes';
+    else if (/curtid|likes/.test(tipo)) cat = 'curtidas';
+    else if (tipo === 'refil_extensao') cat = 'refil';
+    else cat = 'seguidores';
+  }
+  const nomes = {
+    seguidores: { mistos: 'Seguidores mistos', brasileiros: 'Seguidores brasileiros', organicos: 'Seguidores reais' },
+    curtidas: { mistos: 'Curtidas mistas', curtidas_brasileiras: 'Curtidas brasileiras', brasileiros: 'Curtidas brasileiras', organicos: 'Curtidas reais', curtidas_reais: 'Curtidas reais' },
+  };
+  let nome = (nomes[cat] && nomes[cat][tipo]) || ({ visualizacoes: 'Visualizações', comentarios: 'Comentários', refil: 'Extensão de refil' })[cat] || (tipo || 'Outro');
+  const isUpsell = !!(o.upsell && o.upsell.isUpsell) || String(m.is_upsell || '') === '1';
+  const qtd = parseInt(String(o.qtd || o.quantidade || m.quantidade || '').replace(/\D/g, ''), 10) || 0;
+  const canal = String(m.source || '') === 'wpp_agent' ? 'bot' : 'site';
+  return { cat, tipo, nome, qtd, isUpsell, canal, bumps: String(m.order_bumps || ''), visitorId: o.visitorId || '', utm: o.utms || {} };
+}
+// Robôs (prévia de link do Facebook/WhatsApp, revisão de anúncio da Meta, Google…) não são visitantes.
+const __TS_BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|externalhit|meta-externalads|go-http-client|whatsapp\/|googleother|google-|headless|prospector|python|curl\/|wget|axios|node-fetch|Mac OS X 10_11_1\) AppleWebKit\/601/i;
+function __tsEhBot(ua, city) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()); }
+async function computeTrackSite({ since, until, fresh } = {}) {
+  const hojeSP = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+  const s = /^\d{4}-\d{2}-\d{2}$/.test(String(since || '')) ? String(since) : hojeSP;
+  const u = /^\d{4}-\d{2}-\d{2}$/.test(String(until || '')) ? String(until) : hojeSP;
+  const ini = new Date(s + 'T00:00:00-03:00'), fim = new Date(new Date(u + 'T00:00:00-03:00').getTime() + 864e5);
+  if (!(fim > ini) || (fim - ini) > 400 * 864e5) return { ok: false, error: 'periodo_invalido' };
+  const key = s + '|' + u;
+  const hit = __trackSiteCache.get(key);
+  if (!fresh && hit && Date.now() - hit.at < 2 * 60 * 1000) return hit.data;
+  const iniS = ini.toISOString(), fimS = fim.toISOString();
+  const db = { pv: await getCollection('page_views'), fe: await getCollection('funil_eventos'), co: await getCollection('checkout_orders'), vu: await getCollection('validated_insta_users'), al: await getCollection('audio_logs') };
+  if (!__trackSiteIdx) { __trackSiteIdx = true; try { db.pv.createIndex({ createdAt: 1 }).catch(() => {}); db.fe.createIndex({ createdAt: 1 }).catch(() => {}); } catch (_) {} }
+  const TZ = '-03:00';
+  const rangeDate = { createdAt: { $gte: ini, $lt: fim } };
+  const rangeStr = { $or: [{ createdAt: { $gte: ini, $lt: fim } }, { createdAt: { $gte: iniS, $lt: fimS } }] };
+
+  // 1) Visitas
+  const [pvRows, feRows, orders, vuRows, alRows] = await Promise.all([
+    db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1 }).toArray(),
+    db.fe.find(rangeDate).project({ visitorId: 1, evento: 1, servico: 1, tipo: 1, qtd: 1, preco: 1, erro: 1, createdAt: 1, utm: 1 }).toArray(),
+    db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1 }).toArray(),
+    db.vu.find({ $or: [{ lastAt: { $gte: iniS, $lt: fimS } }, { lastAt: { $gte: ini, $lt: fim } }] }).project({ username: 1, lastAt: 1, utms: 1 }).toArray(),
+    db.al.find(rangeDate).project({ max_percentage: 1 }).toArray(),
+  ]);
+  const diaSP = (d) => new Date(new Date(d).getTime() - 3 * 3600e3).toISOString().slice(0, 10);
+  const horaSP = (d) => new Date(new Date(d).getTime() - 3 * 3600e3).getUTCHours();
+  const dias = []; for (let t = ini.getTime(); t < fim.getTime(); t += 864e5) dias.push(new Date(t - 3 * 3600e3 + 3 * 3600e3).toISOString().slice(0, 10));
+  const porDia = {}; for (const d of dias) porDia[d] = { dia: d, pageviews: 0, visitantes: new Set(), pix: 0, pagos: 0, receita: 0 };
+  const visitantes = new Set(), visServico = new Set(), porHora = Array(24).fill(0);
+  const pags = {}, disp = { Celular: new Set(), Computador: new Set(), Outro: new Set() }, cidades = {}, origem = {};
+  let botsPv = 0;
+  for (const r of pvRows) {
+    if (__tsEhBot(r.ua, r.city)) { botsPv++; continue; }
+    const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
+    const d = diaSP(r.createdAt);
+    if (porDia[d]) { porDia[d].pageviews++; if (cid) porDia[d].visitantes.add(cid); }
+    porHora[horaSP(r.createdAt)]++;
+    if (cid) { visitantes.add(cid); if (__TS_PAG_SERV[p]) visServico.add(cid); }
+    const pg = pags[p] || (pags[p] = { path: p, nome: __TS_PAGINAS[p] || p, pageviews: 0, vis: new Set() });
+    pg.pageviews++; if (cid) pg.vis.add(cid);
+    const ua = String(r.ua || '');
+    const tipoDisp = /mobi|android|iphone|ipad/i.test(ua) ? 'Celular' : (/windows nt|macintosh|x11|cros/i.test(ua) ? 'Computador' : 'Outro');
+    if (cid) disp[tipoDisp].add(cid);
+    const cidade = [r.city, r.region].filter(Boolean).join(' / ');
+    if (cidade && cid) (cidades[cidade] || (cidades[cidade] = new Set())).add(cid);
+    let src = '';
+    if (r.utm && (r.utm.source || r.utm.campaign)) src = 'Anúncio';
+    else if (/facebook|instagram|fb\.|l\.instagram/i.test(String(r.referer || ''))) src = 'Instagram/Facebook';
+    else if (/google\./i.test(String(r.referer || ''))) src = 'Google';
+    else if (r.referer && !/agenciaoppus/i.test(String(r.referer))) src = 'Outros sites';
+    else src = 'Sem origem registrada';
+    if (cid) (origem[src] || (origem[src] = new Set())).add(cid);
+  }
+
+  // 2) Pedidos (Pix gerado) e pagos
+  const pago = (o) => { const st = String(o.status || '').toLowerCase(); if (/estorn|refund|reembols|cancel/.test(st)) return false; return st === 'pago' || !!o.paidAt || !!(o.paghiper && o.paghiper.paidAt); };
+  const prod = {}, porCat = {}, pacotesPix = {}, pacotesPagos = {}, bumps = {}, utmContent = {};
+  let pix = 0, pagos = 0, receita = 0, receitaUpsell = 0, pagosUpsell = 0, comVisitor = 0, comBumpPagos = 0;
+  const canais = { site: { canal: 'Site', pix: 0, pagos: 0, receita: 0 }, bot: { canal: 'WhatsApp (bot)', pix: 0, pagos: 0, receita: 0 } };
+  const porCatSite = {};
+  const bumpNome = { likes: 'Curtidas', views: 'Visualizações', comments: 'Comentários', upgrade: 'Upgrade de pacote', warranty_3m: 'Garantia 3 meses', warranty3m: 'Garantia 3 meses', warranty_4m: 'Garantia 4 meses', warranty_6m: 'Garantia 6 meses' };
+  for (const o of orders) {
+    const info = __tsProduto(o);
+    if (info.cat === 'refil') continue;
+    const ok = pago(o); const v = Number(o.valueCents || o.expectedValueCents || 0) / 100;
+    const d = diaSP(o.createdAt);
+    pix++; if (porDia[d]) porDia[d].pix++;
+    if (o.visitorId) comVisitor++;
+    const cn = canais[info.canal]; cn.pix++; if (ok) { cn.pagos++; cn.receita += v; }
+    if (info.canal === 'site') { const ps = porCatSite[info.cat] || (porCatSite[info.cat] = { pix: 0, pagos: 0, receita: 0 }); ps.pix++; if (ok) { ps.pagos++; ps.receita += v; } }
+    const pk = info.nome + '|' + info.qtd;
+    (pacotesPix[pk] || (pacotesPix[pk] = { produto: info.nome, qtd: info.qtd, n: 0 })).n++;
+    const pr = prod[info.nome] || (prod[info.nome] = { produto: info.nome, cat: info.cat, pix: 0, pagos: 0, receita: 0 });
+    pr.pix++;
+    const pc = porCat[info.cat] || (porCat[info.cat] = { pix: 0, pagos: 0, receita: 0 });
+    pc.pix++;
+    const uc = String((info.utm && info.utm.content) || '').trim() || '(sem anúncio)';
+    const ut = utmContent[uc] || (utmContent[uc] = { content: uc, campaign: String((info.utm && info.utm.campaign) || ''), pix: 0, pagos: 0, receita: 0 });
+    ut.pix++;
+    if (!ok) continue;
+    pagos++; receita += v; pr.pagos++; pr.receita += v; pc.pagos++; pc.receita += v; ut.pagos++; ut.receita += v;
+    if (porDia[d]) { porDia[d].pagos++; porDia[d].receita += v; }
+    if (info.isUpsell) { pagosUpsell++; receitaUpsell += v; }
+    (pacotesPagos[pk] || (pacotesPagos[pk] = { produto: info.nome, qtd: info.qtd, n: 0, receita: 0 })).n++;
+    pacotesPagos[pk].receita += v;
+    if (info.bumps) {
+      comBumpPagos++;
+      for (const parte of info.bumps.split(/[;,]/)) {
+        const [k0, q0] = parte.split(':'); const k = String(k0 || '').trim().toLowerCase(); if (!k) continue;
+        const b = bumps[k] || (bumps[k] = { oferta: bumpNome[k] || k, n: 0, unidades: 0 });
+        b.n++; if (!/^warranty|upgrade/.test(k)) b.unidades += parseInt(q0, 10) || 0;
+      }
+    }
+  }
+
+  // 3) Funil
+  const ev = {}; const erros = {}; const escolhidos = {};
+  for (const e of feRows) {
+    const k = String(e.evento || ''); (ev[k] || (ev[k] = new Set())).add(String(e.visitorId || ''));
+    if (k === 'erro_pix') { const m = String(e.erro || 'sem mensagem').slice(0, 120); erros[m] = (erros[m] || 0) + 1; }
+    if (k === 'pacote_escolhido') {
+      const nome = ({ seguidores: 'Seguidores', curtidas: 'Curtidas', visualizacoes: 'Visualizações', comentarios: 'Comentários' })[e.servico] || e.servico || '';
+      const kk = nome + '|' + (e.tipo || '') + '|' + (e.qtd || '');
+      const x = escolhidos[kk] || (escolhidos[kk] = { servico: nome, tipo: e.tipo || '', qtd: e.qtd || 0, preco: e.preco || '', vis: new Set() });
+      x.vis.add(String(e.visitorId || ''));
+    }
+  }
+  const nEv = (k) => (ev[k] ? ev[k].size : 0);
+  const funil = [
+    { etapa: 'Visitantes no site', n: visitantes.size },
+    { etapa: 'Entraram pela página inicial', n: pags['/engajamento'] ? pags['/engajamento'].vis.size : 0, desde: 'novo' },
+    { etapa: 'Viram uma página de serviço', n: visServico.size },
+    { etapa: 'Escolheram um pacote', n: nEv('pacote_escolhido'), desde: 'novo' },
+    { etapa: 'Validaram o perfil', n: nEv('perfil_validado') || vuRows.length, fonte: nEv('perfil_validado') ? 'funil' : 'perfis validados' },
+    { etapa: 'Clicaram em pagar', n: nEv('clicou_pagar'), desde: 'novo' },
+    { etapa: 'Pix gerado (pelo site)', n: canais.site.pix },
+    { etapa: 'Pagaram (pelo site)', n: canais.site.pagos },
+  ];
+
+  const top = (obj, campo, n) => Object.values(obj).sort((a, b) => (b[campo] || 0) - (a[campo] || 0)).slice(0, n);
+  const out = {
+    ok: true, since: s, until: u, geradoEm: new Date().toISOString(),
+    funilAtivoDesde: feRows.length ? null : 'sem_eventos',
+    kpis: {
+      visitantes: visitantes.size, pageviews: pvRows.length - botsPv, pvPorVisitante: visitantes.size ? (pvRows.length - botsPv) / visitantes.size : 0,
+      perfisValidados: vuRows.length, pix, pagos, receita, ticket: pagos ? receita / pagos : 0,
+      convVisitantePago: visitantes.size ? canais.site.pagos / visitantes.size : 0, convPixPago: pix ? pagos / pix : 0,
+      pixSite: canais.site.pix, pagosSite: canais.site.pagos, receitaSite: Math.round(canais.site.receita * 100) / 100,
+      pixBot: canais.bot.pix, pagosBot: canais.bot.pagos, receitaBot: Math.round(canais.bot.receita * 100) / 100, botsPageviews: botsPv,
+      pagosUpsell, receitaUpsell, pedidosComOferta: comBumpPagos, pedidosComVisitante: comVisitor,
+      audio: { tocaram: alRows.length, metade: alRows.filter((a) => (a.max_percentage || 0) >= 50).length, fim: alRows.filter((a) => (a.max_percentage || 0) >= 99).length },
+    },
+    serie: dias.map((d) => { const x = porDia[d]; return { dia: d, pageviews: x.pageviews, visitantes: x.visitantes.size, pix: x.pix, pagos: x.pagos, receita: Math.round(x.receita * 100) / 100 }; }),
+    porHora,
+    paginas: Object.values(pags).map((p) => { const c = porCatSite[__TS_PAG_SERV[p.path]] || (__TS_PAG_SERV[p.path] ? { pix: 0, pagos: 0, receita: 0 } : null); return { path: p.path, nome: p.nome, pageviews: p.pageviews, visitantes: p.vis.size, pix: c ? c.pix : null, pagos: c ? c.pagos : null, receita: c ? Math.round(c.receita * 100) / 100 : null }; }).sort((a, b) => b.pageviews - a.pageviews),
+    funil,
+    topEscolhidos: top(Object.fromEntries(Object.entries(escolhidos).map(([k, x]) => [k, { servico: x.servico, tipo: x.tipo, qtd: x.qtd, preco: x.preco, visitantes: x.vis.size }])), 'visitantes', 5),
+    topPix: top(pacotesPix, 'n', 5),
+    topPagos: top(pacotesPagos, 'n', 5).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
+    produtos: Object.values(prod).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })).sort((a, b) => b.receita - a.receita),
+    ofertas: Object.values(bumps).sort((a, b) => b.n - a.n),
+    anuncios: top(utmContent, 'receita', 15).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
+    dispositivos: Object.entries(disp).map(([k, v]) => ({ tipo: k, visitantes: v.size })).filter((x) => x.visitantes),
+    canais: Object.values(canais).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
+    origem: Object.entries(origem).map(([k, v]) => ({ origem: k, visitantes: v.size })).sort((a, b) => b.visitantes - a.visitantes),
+    cidades: Object.entries(cidades).map(([k, v]) => ({ cidade: k, visitantes: v.size })).sort((a, b) => b.visitantes - a.visitantes).slice(0, 10),
+    errosPix: Object.entries(erros).map(([m, n]) => ({ erro: m, n })).sort((a, b) => b.n - a.n).slice(0, 10),
+  };
+  __trackSiteCache.set(key, { at: Date.now(), data: out });
+  if (__trackSiteCache.size > 60) __trackSiteCache.delete(__trackSiteCache.keys().next().value);
+  return out;
+}
+app.get('/painel/track-site', requireAdmin, (req, res) => res.render('painel_track_site', { page: 'track-site' }));
+app.get('/api/painel/track-site/dados', requireAdmin, async (req, res) => {
+  try {
+    const d = await computeTrackSite({ since: req.query.since, until: req.query.until, fresh: req.query.fresh === '1' });
+    return res.status(d.ok ? 200 : 400).json(d);
+  } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
 app.get('/painel/meta-ads', requireAdmin, (req, res) => res.render('painel_meta_ads', { page: 'meta-ads' }));
 app.get('/api/painel/meta-ads/dados', requireAdmin, async (req, res) => {
   try {
@@ -41781,6 +42060,10 @@ async function computeOrderBumpPie({ sinceMs, untilMs } = {}) {
     const col = await getCollection('checkout_orders');
     const paidOr = [{ status: 'pago' }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }, { paidAt: { $exists: true, $nin: [null, ''] } }];
     const q = { $and: [{ $or: paidOr }, { additionalInfo: { $elemMatch: { key: 'order_bumps', value: /\S/ } } }] };
+    // Corta no banco pelo createdAt (Date ou texto ISO) em vez de trazer todos os pedidos com bump e filtrar depois.
+    // Folga: 15 dias antes do início (criado antes, pago no período) e 1 dia depois do fim. O filtro fino segue abaixo.
+    if (sinceMs) { const d = new Date(sinceMs - 15 * 864e5); q.$and.push({ $or: [{ createdAt: { $gte: d } }, { createdAt: { $gte: d.toISOString() } }, { createdAt: { $exists: false } }] }); }
+    if (untilMs) { const d = new Date(untilMs + 864e5); q.$and.push({ $or: [{ createdAt: { $lte: d } }, { createdAt: { $lte: d.toISOString() } }, { createdAt: { $exists: false } }] }); }
     const rows = await col.find(q).project({ additionalInfo: 1, additionalInfoMap: 1, tipo: 1, tipoServico: 1, paidAt: 1, 'paghiper.paidAt': 1, createdAt: 1 }).limit(80000).toArray();
     const getA = (o, k) => { const m = o.additionalInfoMap || {}; if (m[k] != null) return m[k]; const it = (o.additionalInfo || []).find((x) => x && x.key === k); return it ? it.value : undefined; };
     const cat = { upgrade: { label: 'Upgrade', count: 0, revenue: 0 }, curtidas: { label: 'Curtidas', count: 0, revenue: 0 }, views: { label: 'Visualizações', count: 0, revenue: 0 }, comentarios: { label: 'Comentários', count: 0, revenue: 0 }, garantia: { label: 'Garantia', count: 0, revenue: 0 } };
@@ -42860,8 +43143,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
       ? { $and: [paidQuery, unknownProviderQuery, { 'followersQueue.status': { $ne: 'waiting_previous' } }, { 'upsell.dispatchStatus': { $nin: ['waiting_parent', 'waiting_payment', 'paused', 'cancelled'] } }] }
       : paidQuery;
 
-    const periodDefault = (view === 'unknown_orderid') ? 'all' : (view === 'dashboard' ? 'all' : 'today');
+    // Dashboard abre em "este mês" (o período completo continua no botão "Todos" = period=all).
+    const periodDefault = (view === 'unknown_orderid') ? 'all' : (view === 'dashboard' ? 'thismonth' : 'today');
     const period = String(req.query.period || periodDefault);
+    // Vendas/Dashboard: dispara já o que não depende da lista de pedidos, para rodar junto com a consulta principal.
+    const __pre = {};
+    if (view === 'dashboard' || view === 'vendas') {
+      __pre.ctrl = _buildControladoriaEntries().catch(() => null);
+      try { const _pr0 = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate); __pre.ajustes = ajustesDeLucroDoPeriodo(_pr0.start ? _pr0.start.getTime() : NaN, _pr0.endExclusive ? _pr0.endExclusive.getTime() : NaN).catch(() => null); } catch (_) {}
+      __pre.custosFixos = loadCustosFixos().catch(() => null);
+    }
     const ignoreBumps = String(req.query.ignoreBumps || '') === '1';
     const toggleIgnoreBumpsUrl = (() => {
       try {
@@ -44667,22 +44958,32 @@ app.get('/painel', requireAdmin, async (req, res) => {
     // Aqui ele passa a usar a TAXA MÉDIA REAL do mesmo tipo NO PERÍODO — tirada dos pedidos
     // que TÊM charge real. Auto-ajustável (sem tabela fixa) e só mexe nos sem-charge; os
     // com charge real ficam intocados. Ajusta totalCost, o agregado diário e os entries.
+    // Taxa do PRÓPRIO DIA do pagamento primeiro (amostra ≥ 1000 un. do tipo naquele dia): assim o
+    // custo de um dia não muda conforme o filtro (antes "Hoje" e "Este mês" davam lucros diferentes
+    // para o mesmo dia, porque a média vinha do período inteiro). Sem amostra no dia → média do período.
     try {
-      const _histAcc = {};
+      const _histAcc = {}, _histAccDia = {};
+      const _diaDe = (r) => { const ms = r && r.createdAt ? new Date(r.createdAt).getTime() : 0; return ms ? new Date(ms - 3 * 3600000).toISOString().slice(0, 10) : ''; };
       for (const r of report) {
         if (r && r.costReal && r.type && Number(r.qty) > 0) {
           const prov = Math.max(0, Number(r.cost || 0) - Number(r.paymentFee || 0));
           const a = _histAcc[r.type] || { charge: 0, qty: 0 };
           a.charge += prov; a.qty += Number(r.qty);
           _histAcc[r.type] = a;
+          const kd = r.type + '|' + _diaDe(r);
+          const ad = _histAccDia[kd] || { charge: 0, qty: 0 };
+          ad.charge += prov; ad.qty += Number(r.qty);
+          _histAccDia[kd] = ad;
         }
       }
-      const _histRate = {};
+      const _histRate = {}, _histRateDia = {};
       for (const t in _histAcc) { const a = _histAcc[t]; if (a && a.qty >= 1000) _histRate[t] = a.charge / a.qty * 1000; }
+      for (const k in _histAccDia) { const a = _histAccDia[k]; if (a && a.qty >= 1000) _histRateDia[k] = a.charge / a.qty * 1000; }
       for (const r of report) {
-        if (!(r && !r.costReal && r.type && _histRate[r.type] != null && Number(r.qty) > 0)) continue;
+        const _taxa = (r && r.type) ? (_histRateDia[r.type + '|' + _diaDe(r)] != null ? _histRateDia[r.type + '|' + _diaDe(r)] : _histRate[r.type]) : null;
+        if (!(r && !r.costReal && r.type && _taxa != null && Number(r.qty) > 0)) continue;
         const _old = Number(r.cost || 0);
-        const _novoProv = Math.round(((Number(r.qty) / 1000) * _histRate[r.type]) * 100) / 100;
+        const _novoProv = Math.round(((Number(r.qty) / 1000) * _taxa) * 100) / 100;
         const _novo = Math.round((Number(r.paymentFee || 0) + _novoProv) * 100) / 100;
         const _delta = _novo - _old;
         totalCost = Math.round((totalCost + _delta) * 100) / 100;
@@ -44807,7 +45108,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const _lps = _pr.start;
       const _lpe = _pr.endExclusive; // limite superior EXCLUSIVO
       const _ltvCfg = controladoria.normalizeConfig({}); // sem corte: detecção pura 1ª/recompra
-      const _ltvEntries = await _buildControladoriaEntries();
+      const _ltvEntries = (await __pre.ctrl) || await _buildControladoriaEntries();
       if (!Array.isArray(_ltvEntries) || !_ltvEntries.length) throw new Error('sem_dados'); // mantém cálculo antigo
       const _ltvRep = controladoria.buildReport(_ltvEntries, _ltvCfg, {
         startMs: _lps ? new Date(_lps).getTime() : Number.NEGATIVE_INFINITY,
@@ -45763,6 +46064,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
           // 'all' (padrão do dashboard) → gasto de todo o período da conta (FB: até ~37 meses)
           fbArgs = { datePreset: 'maximum' };
         }
+        const __rdP = fetchFacebookSpendDaily(fbArgs).catch((e) => ({ ok: false, error: e && e.message }));
+        const __fmtP = view === 'dashboard' ? fetchFacebookInsightsByFormat(fbArgs).catch(() => null) : null;
+        const __bumpP = view === 'dashboard' ? (() => {
+          const _bs0 = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.since + 'T00:00:00-03:00').getTime() : null;
+          const _bu0 = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.until + 'T23:59:59-03:00').getTime() : null;
+          return computeOrderBumpPie({ sinceMs: _bs0, untilMs: _bu0 }).catch(() => null);
+        })() : null;
         const r = await fetchFacebookSpend(fbArgs);
         if (r && r.ok) { fbSpendBr = Number(r.spend) || 0; fbSpendUsd = Number(r.spendNoTax) || 0; fbSpend = fbSpendBr + fbSpendUsd; fbSpendOk = true; }
         else { try { console.warn('⚠️ [dashboard] fbSpend falhou:', r && r.error); } catch (_) {} }
@@ -45770,7 +46078,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         // lucro = faturamento − custo serviço (fornecedor + taxa gateway)
         //         − ads×(1+markup) − imposto sobre o faturamento.
         try {
-          const rd = await fetchFacebookSpendDaily(fbArgs);
+          const rd = await __rdP;
           const adsByDay = (rd && rd.ok) ? rd.byDay : {};
           const adsByDayNoTax = (rd && rd.ok) ? (rd.byDayNoTax || {}) : {};
           dailyProfitAdsOk = !!(rd && rd.ok);
@@ -45811,12 +46119,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
         } catch (eDP) { try { console.warn('⚠️ [dashboard] lucro diário falhou:', eDP && eDP.message); } catch (_) {} }
         // Insights por FORMATO (pizza de vendas) + pizza de ORDER BUMPS — só no dashboard.
         if (view === 'dashboard') {
-          try { const rf = await fetchFacebookInsightsByFormat(fbArgs); if (rf && rf.ok) adFormatPie = { ok: true, formats: rf.formats }; } catch (_) {}
-          try {
-            const _bs = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.since + 'T00:00:00-03:00').getTime() : null;
-            const _bu = (fbArgs.since && fbArgs.until) ? new Date(fbArgs.until + 'T23:59:59-03:00').getTime() : null;
-            bumpPie = await computeOrderBumpPie({ sinceMs: _bs, untilMs: _bu });
-          } catch (_) {}
+          try { const rf = await __fmtP; if (rf && rf.ok) adFormatPie = { ok: true, formats: rf.formats }; } catch (_) {}
+          try { const bp = await __bumpP; if (bp) bumpPie = bp; } catch (_) {}
         }
       } catch (_) {}
     }
@@ -45827,13 +46131,13 @@ app.get('/painel', requireAdmin, async (req, res) => {
     let ajustesLucro = { total: 0, itens: [], comAsterisco: false };
     try {
       const _pr = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
-      ajustesLucro = await ajustesDeLucroDoPeriodo(_pr.start ? _pr.start.getTime() : NaN, _pr.endExclusive ? _pr.endExclusive.getTime() : NaN);
+      ajustesLucro = (__pre.ajustes && await __pre.ajustes) || await ajustesDeLucroDoPeriodo(_pr.start ? _pr.start.getTime() : NaN, _pr.endExclusive ? _pr.endExclusive.getTime() : NaN);
     } catch (_) {}
 
     // Custos fixos mensais (assinaturas): total rateado por dia no período selecionado.
     let custosFixos = { itens: [], mensal: 0, periodo: 0, dias: 30, meses: {}, mesRef: null, porMes: [] };
     try {
-      const _cf = await loadCustosFixos();
+      const _cf = (__pre.custosFixos && await __pre.custosFixos) || await loadCustosFixos();
       const _prc = resolvePanelPeriodRange(period, req.query.startDate, req.query.endDate);
       const _cp = custoFixoDoPeriodo(_cf, _prc && _prc.start, _prc && _prc.endExclusive);
       custosFixos = { itens: _cf.itens, mensal: _cf.mensal, meses: _cf.meses, periodo: _cp.periodo, dias: _cp.dias, mesRef: _cp.mesRef, porMes: _cp.porMes };
@@ -46783,7 +47087,86 @@ let __fxUsdBrl = { atMs: 0, rate: null, source: '' };
 // restart do processo, então a conversão de custo nunca fica sem cotação de reserva.
 async function _persistFxUsdBrl(rate, source) {
   try { const col = await getCollection('settings'); await col.updateOne({ _id: 'fx_usd_brl' }, { $set: { rate, source, atMs: Date.now(), atIso: new Date().toISOString() } }, { upsert: true }); } catch (_) {}
+  // Registro por dia (horário de SP): a cotação do momento sobrescreve a do dia de hoje,
+  // então a última lida no dia é a que fica valendo para ele. Dias passados não mudam mais.
+  try { const dia = __fxDiaSP(Date.now()); const cd = await getCollection('fx_usd_brl_diario'); await cd.updateOne({ _id: dia }, { $set: { rate, source, atIso: new Date().toISOString() } }, { upsert: true }); __fxDiaCache.set(dia, rate); } catch (_) {}
 }
+// ── Cotação USD→BRL POR DIA ───────────────────────────────────────────────────
+// Gasto em dólar de um dia é convertido pela cotação DAQUELE dia (fx_usd_brl_diario),
+// não pela de hoje: o lucro de dias passados não muda quando o dólar oscila.
+// Hoje = cotação do momento (getUsdBrlRate). Dia passado sem registro = fechamento
+// histórico do AwesomeAPI (fim de semana/feriado = último dia útil anterior), gravado.
+const __fxDiaCache = new Map(); // 'YYYY-MM-DD' -> rate (só dias passados ficam estáveis)
+function __fxDiaSP(ms) { return new Date(Number(ms) - 3 * 3600e3).toISOString().slice(0, 10); }
+async function __fxBackfillHistorico(diasFaltando) {
+  const out = {};
+  if (!diasFaltando.length) return out;
+  const ord = diasFaltando.slice().sort();
+  const ini = new Date(Date.parse(ord[0] + 'T12:00:00Z') - 10 * 864e5).toISOString().slice(0, 10).replace(/-/g, '');
+  const fim = ord[ord.length - 1].replace(/-/g, '');
+  try {
+    // A API só respeita o intervalo com a quantidade no caminho (/daily/USD-BRL/<n>?start_date&end_date).
+    const n = Math.min(1000, Math.ceil((Date.parse(ord[ord.length - 1] + 'T12:00:00Z') - Date.parse(ord[0] + 'T12:00:00Z')) / 864e5) + 20);
+    const r = await axios.get('https://economia.awesomeapi.com.br/json/daily/USD-BRL/' + n, { params: { start_date: ini, end_date: fim }, timeout: 15000, validateStatus: () => true });
+    const arr = Array.isArray(r && r.data) ? r.data : [];
+    const fech = {}; // dia SP -> { ts, bid } (último do dia)
+    for (const x of arr) {
+      const ts = Number(x && x.timestamp) * 1000, bid = Number(x && x.bid);
+      if (!(ts > 0) || !(bid > 1 && bid < 20)) continue;
+      const d = __fxDiaSP(ts);
+      if (!fech[d] || fech[d].ts < ts) fech[d] = { ts, bid };
+    }
+    const uteis = Object.keys(fech).sort();
+    for (const d of ord) {
+      let ult = null; for (const u of uteis) { if (u <= d) ult = u; else break; }
+      if (ult) out[d] = { rate: fech[ult].bid, source: ult === d ? 'awesomeapi_fechamento' : 'awesomeapi_fechamento_' + ult };
+    }
+    if (Object.keys(out).length) {
+      const cd = await getCollection('fx_usd_brl_diario');
+      await Promise.all(Object.entries(out).map(([d, v]) => cd.updateOne({ _id: d }, { $setOnInsert: { rate: v.rate, source: v.source, atIso: new Date().toISOString() } }, { upsert: true })));
+    }
+  } catch (_) {}
+  return out;
+}
+// { 'YYYY-MM-DD': rate } para cada dia pedido. Nunca inventa: sem nada, usa a cotação do momento.
+async function getUsdBrlRatesByDay(dias) {
+  const hoje = __fxDiaSP(Date.now());
+  const res = {};
+  let live = null;
+  const pegaLive = async () => { if (live == null) { try { const fx = await getUsdBrlRate(); live = (fx && fx.rate) || 5.03; } catch (_) { live = 5.03; } } return live; };
+  const passados = [];
+  for (const d of [...new Set((dias || []).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x))))]) {
+    if (d >= hoje) res[d] = await pegaLive();
+    else if (__fxDiaCache.has(d)) res[d] = __fxDiaCache.get(d);
+    else passados.push(d);
+  }
+  if (passados.length) {
+    try {
+      const cd = await getCollection('fx_usd_brl_diario');
+      const docs = await cd.find({ _id: { $in: passados } }).toArray();
+      for (const x of docs) { const r = Number(x.rate); if (r > 1 && r < 20) { res[x._id] = r; __fxDiaCache.set(x._id, r); } }
+    } catch (_) {}
+    const faltam = passados.filter((d) => res[d] == null);
+    if (faltam.length) {
+      const hist = await __fxBackfillHistorico(faltam);
+      for (const d of faltam) { if (hist[d]) { res[d] = hist[d].rate; __fxDiaCache.set(d, hist[d].rate); } else res[d] = await pegaLive(); }
+    }
+  }
+  return res;
+}
+// Converte o gasto da ca3 { dia: valorUSD } em reais. Devolve { byDay, total, totalUsd, taxaMedia, taxas }.
+// Prioridade por dia: 1) custo médio das recargas LootRush (dólar comprado via Pix que paga o cartão
+// da ca3), a partir do 1º dia em que o cartão pagou a Meta; 2) cotação do dia (fx_usd_brl_diario).
+async function convertUsdByDay(byDayUsd) {
+  const dias = Object.keys(byDayUsd || {});
+  const taxas = await getUsdBrlRatesByDay(dias);
+  try { Object.assign(taxas, await require('./lootrushCusto.js').custoPorDia(dias)); } catch (_) {}
+  const byDay = {}; let total = 0, totalUsd = 0;
+  for (const d of dias) { const v = Number(byDayUsd[d]) || 0; byDay[d] = v * (taxas[d] || 5.03); total += byDay[d]; totalUsd += v; }
+  return { byDay, total, totalUsd, taxaMedia: totalUsd > 0 ? total / totalUsd : null, taxas };
+}
+// Registra a cotação do dia mesmo sem ninguém abrir o painel (1x por hora).
+try { setInterval(() => { getUsdBrlRate().catch(() => {}); }, 60 * 60 * 1000); setTimeout(() => { getUsdBrlRate().catch(() => {}); }, 20000); } catch (_) {}
 async function _loadFxUsdBrlFromDb() {
   try { const col = await getCollection('settings'); const d = await col.findOne({ _id: 'fx_usd_brl' }); const r = Number(d && d.rate); if (Number.isFinite(r) && r > 1 && r < 20) return { atMs: Number(d.atMs) || Date.now(), rate: r, source: (d.source || 'db') + ' (cache banco)' }; } catch (_) {}
   return null;
@@ -51189,6 +51572,7 @@ const server = app.listen(port, () => {
   try { startSeguidoresParcialLoop(); } catch (_) {} // Gestão Parcial Seguidores: status a cada 1h + reenvio do faltante (se ligado no painel)
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { require('./lootrushMonitor.js').iniciar({ enviar: sendEvolutionText }); } catch (_) {} // Cartão LootRush x cobrança da ca3: avisa no WhatsApp horas antes da recusa (a cada 15 min)
+  try { require('./lootrushCusto.js').iniciar(); } catch (_) {} // Custo médio do dólar das recargas LootRush (gasto da ca3 em reais), 1x por hora
   try { startServiceTestsDailyLoop(); } catch (_) {} // Testes de Serviços: mede seguidores/queda todo dia às 12h BRT
   try { require('./iaFollowup.js').startIaFollowupLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Follow-up do bot: relatório das conversas todo dia às 23:30 BRT
   try { require('./precosTestes.js').startPrecosTestesLoop({ backgroundJobsEnabled, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (_) {} // Testes de serviços: preço atual de cada serviço todo dia às 23:30 BRT
