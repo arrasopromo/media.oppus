@@ -48,3 +48,6 @@ build/ app_local_test.log
 
 # Conversas de clientes (PII/LGPD) — nao versionar
 conversas datacrazy/
+
+# Documentacao (.md) fica so local, nao vai pra VPS
+*.md
