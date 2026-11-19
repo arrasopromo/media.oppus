@@ -151,7 +151,7 @@
     h += '<div class="ts-kpis">'
       + kpi('Visitantes únicos', nf(k.visitantes), nf(k.botsPageviews) + ' visitas de robôs fora')
       + kpi('Pageviews', nf(k.pageviews), (k.pvPorVisitante || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' por visitante')
-      + kpi('Perfis validados', nf(k.perfisValidados))
+      + kpi('Perfis validados', nf(k.perfisValidados), 'no site' + (k.perfisValidadosBot ? ' · ' + nf(k.perfisValidadosBot) + ' pelo bot' : ''))
       + kpi('Pix gerados', nf(k.pix), nf(k.pixSite) + ' site · ' + nf(k.pixBot) + ' bot')
       + kpi('Pedidos pagos', nf(k.pagos), nf(k.pagosSite) + ' site · ' + nf(k.pagosBot) + ' bot')
       + kpi('Faturamento', brl(k.receita), 'ticket ' + brl(k.ticket))

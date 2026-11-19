@@ -383,6 +383,8 @@ function registrarEventoFunil(req, evento, extra, detalheDedupe) {
   try {
     const vid = String(getCookieValue(req, OPPUS_CLIENT_ID_COOKIE) || '').trim(); // só navegador com cookie
     if (!vid || !evento) return;
+    // Servidor local de teste (usa o MESMO banco): não grava evento do funil.
+    if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(String((req && req.headers && req.headers.host) || '').trim())) return;
     const k = vid + '|' + evento + '|' + String(detalheDedupe || ''), agora = Date.now();
     if (agora - (__funilDedupe.get(k) || 0) < 30 * 60 * 1000) return;
     __funilDedupe.set(k, agora);
@@ -2964,6 +2966,8 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
         const cid = String(clientId || '').trim();
         const p = String(path || '').trim();
         if (!cid || !p) return;
+        // Servidor local de teste (usa o MESMO banco): não grava visita.
+        if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(String((req && req.headers && req.headers.host) || '').trim())) return;
         const key = `${cid}|${p}`;
         const now = Date.now();
         const last = Number(pageViewDedupe.get(key) || 0);
@@ -6640,6 +6644,12 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
     const key = String(username || '').toLowerCase();
     const opts = (options && typeof options === 'object') ? options : {};
     const purpose = String(opts.purpose || '').toLowerCase();
+    // Checagens que NÃO são o cliente validando o @ no site: refil/refil2, a conferência de perfil público no
+    // DESPACHO do pedido e a validação feita pelo BOT do WhatsApp. Ganham source próprio (refilcheck_*,
+    // despachocheck_*, botcheck_*) para não contarem como "perfil validado" no Dashboard/Track do Site.
+    const __bgCheck = (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_%s_' + purpose)
+      : (String(userAgent || '') === 'ProcessFulfillment-Check' ? 'despachocheck_%s'
+      : (purpose === 'bot_check' ? 'botcheck_%s' : ''));
     const skipPosts = opts.skipPosts === true || purpose === 'refil' || purpose === 'refil2';
 
     if (!bypassCache) {
@@ -6686,7 +6696,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                         profilePicUrl: rProfileData.profilePicUrl, isVerified: rProfileData.isVerified, isPrivate: rProfileData.isPrivate,
                         followersCount: rProfileData.followersCount, followingCount: rProfileData.followingCount, postsCount: rProfileData.postsCount,
                         checkedAt: checkedAtIso, linkId: linkId || null, ip: String(ip || ''), userAgent: String(userAgent || ''),
-                        source: (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_selfapi_' + purpose) : 'verifyInstagramProfile_SELFAPI',
+                        source: __bgCheck ? __bgCheck.replace('%s', 'selfapi') : 'verifyInstagramProfile_SELFAPI',
                         latestPosts: rProfileData.latestPosts
                     };
                     const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
@@ -6803,7 +6813,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                                 ip: String(ip || ''),
                                 userAgent: String(userAgent || ''),
                                 // Checagens de FUNDO (refil/refil2) ganham source próprio p/ NÃO contarem como validação real.
-                                source: (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_rocketapi_' + purpose) : 'verifyInstagramProfile_ROCKETAPI',
+                                source: __bgCheck ? __bgCheck.replace('%s', 'rocketapi') : 'verifyInstagramProfile_ROCKETAPI',
                                 latestPosts: rExtractedPosts
                             };
                             const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
@@ -6896,7 +6906,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                     const vu = await getCollection('validated_insta_users');
                     const linkId = (req && req.session) ? req.session.linkSlug : (req && (req.query.id || req.body.id));
                     const checkedAtIso = new Date().toISOString();
-                    const doc = { username: String(_bProfile.username).toLowerCase(), fullName: _bProfile.fullName, profilePicUrl: _bProfile.profilePicUrl, isVerified: _bProfile.isVerified, isPrivate: _bProfile.isPrivate, followersCount: _bProfile.followersCount, followingCount: _bProfile.followingCount, postsCount: _bProfile.postsCount, checkedAt: checkedAtIso, linkId: linkId || null, ip: String(ip || ''), userAgent: String(userAgent || ''), source: (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_rocketapi_byid_' + purpose) : 'verifyInstagramProfile_ROCKETAPI_BYID', latestPosts: _bPosts };
+                    const doc = { username: String(_bProfile.username).toLowerCase(), fullName: _bProfile.fullName, profilePicUrl: _bProfile.profilePicUrl, isVerified: _bProfile.isVerified, isPrivate: _bProfile.isPrivate, followersCount: _bProfile.followersCount, followingCount: _bProfile.followingCount, postsCount: _bProfile.postsCount, checkedAt: checkedAtIso, linkId: linkId || null, ip: String(ip || ''), userAgent: String(userAgent || ''), source: __bgCheck ? __bgCheck.replace('%s', 'rocketapi_byid') : 'verifyInstagramProfile_ROCKETAPI_BYID', latestPosts: _bPosts };
                     const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
                     await vu.updateOne({ username: doc.username }, { $set: doc, $setOnInsert: { createdAt: new Date().toISOString() }, $push: { checks: { $each: [snapshot], $slice: -60 } } }, { upsert: true });
                     if (!skipPosts && _bPosts.length) { try { await vu.updateOne({ username: doc.username }, { $set: { lastPostsAt: checkedAtIso } }); } catch (_) {} }
@@ -7020,7 +7030,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
                     linkId: linkId || null,
                     ip: String(ip || ''),
                     userAgent: String(userAgent || ''),
-                    source: (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_apify_' + purpose) : 'verifyInstagramProfile_APIFY',
+                    source: __bgCheck ? __bgCheck.replace('%s', 'apify') : 'verifyInstagramProfile_APIFY',
                     latestPosts: extractedPosts
                 };
                 const snapshot = { checkedAt: checkedAtIso, followersCount: doc.followersCount, isPrivate: doc.isPrivate, source: doc.source };
@@ -23828,7 +23838,7 @@ app.post('/api/internal/ia-check-profile', async (req, res) => {
     // 2) Cadeia completa (RocketAPI + Apify + proxy) — mesma do site. Não escreve no res.
     try {
       const ua = req.get('User-Agent') || 'oppus-ia';
-      const result = await verifyInstagramProfile(uname, ua, ip, req, res, false, { purpose: 'profile_check', skipPosts: true });
+      const result = await verifyInstagramProfile(uname, ua, ip, req, res, false, { purpose: 'bot_check', skipPosts: true });
       if (result && result.success) return res.json(result);
       return res.status((result && result.status) || 404).json(result || { success: false, error: 'nao_encontrado' });
     } catch (e) {
@@ -42087,8 +42097,18 @@ function __tsProduto(o) {
   return { cat, tipo, nome, qtd, isUpsell, canal, bumps: String(m.order_bumps || ''), visitorId: o.visitorId || '', utm: o.utms || {} };
 }
 // Robôs (prévia de link do Facebook/WhatsApp, revisão de anúncio da Meta, Google…) não são visitantes.
-const __TS_BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|externalhit|meta-externalads|go-http-client|whatsapp\/|googleother|google-|headless|prospector|python|curl\/|wget|axios|node-fetch|Mac OS X 10_11_1\) AppleWebKit\/601/i;
-function __tsEhBot(ua, city) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()); }
+// Claude/ = navegador do app do Claude (testes do assistente), não é cliente.
+const __TS_BOT_RE = /Claude\/|bot|crawl|spider|slurp|facebookexternalhit|externalhit|meta-externalads|go-http-client|whatsapp\/|googleother|google-|headless|prospector|python|curl\/|wget|axios|node-fetch|Mac OS X 10_11_1\) AppleWebKit\/601/i;
+// Faixas de IP do Meta (AS32934): o robô de revisão de anúncio e o de prévia de link entram com navegador
+// comum e caíam como visitantes (Miami, Altoona, DeKalb, Fort Worth, Social Circle…).
+const __TS_META_CIDR = ['31.13.24.0/21', '31.13.64.0/18', '45.64.40.0/22', '57.141.0.0/16', '57.144.0.0/14', '66.220.144.0/20', '69.63.176.0/20', '69.171.224.0/19', '74.119.76.0/22', '102.132.96.0/20', '103.4.96.0/22', '129.134.0.0/16', '147.75.208.0/20', '157.240.0.0/16', '163.70.128.0/17', '173.252.64.0/18', '179.60.192.0/22', '185.60.216.0/22', '185.89.216.0/22', '204.15.20.0/22']
+  .map((c) => { const [ip, bits] = c.split('/'); const n = ip.split('.').reduce((a, x) => a * 256 + Number(x), 0); const m = bits === '0' ? 0 : (0xFFFFFFFF << (32 - Number(bits))) >>> 0; return [(n & m) >>> 0, m]; });
+function __tsIpMeta(ip) {
+  const m4 = String(ip || '').match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/); if (!m4) return /^2a03:2880:/i.test(String(ip || ''));
+  const n = ((Number(m4[1]) * 256 + Number(m4[2])) * 256 + Number(m4[3])) * 256 + Number(m4[4]);
+  return __TS_META_CIDR.some(([net, mask]) => ((n & mask) >>> 0) === net);
+}
+function __tsEhBot(ua, city, ip) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()) || __tsIpMeta(ip); }
 const TRACK_SITE_INICIO = '2026-11-17';
 async function computeTrackSite({ since, until, fresh } = {}) {
   const hojeSP = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
@@ -42112,7 +42132,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
 
   // 1) Visitas
   const [pvRows, feRows, orders, vuRows, alRows] = await Promise.all([
-    db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1 }).toArray(),
+    db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1, ip: 1 }).toArray(),
     db.fe.find(rangeDate).project({ visitorId: 1, evento: 1, servico: 1, tipo: 1, qtd: 1, preco: 1, erro: 1, createdAt: 1, utm: 1 }).toArray(),
     db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1, instagramUsername: 1, instauser: 1 }).toArray(),
     // Mesma regra do card do Dashboard: só validação REAL (o cliente digitou o @ no site → source
@@ -42121,6 +42141,9 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     db.vu.find({ checks: { $elemMatch: { source: { $regex: '^verifyInstagramProfile', $options: 'i' }, checkedAt: { $gte: iniS, $lt: fimS } } } }).project({ username: 1, lastAt: 1, utms: 1 }).toArray(),
     db.al.find(rangeDate).project({ max_percentage: 1 }).toArray(),
   ]);
+  // Validações feitas pelo BOT do WhatsApp (source botcheck_*): à parte, não entram em "Perfis validados".
+  let vuBot = 0;
+  try { vuBot = await db.vu.countDocuments({ checks: { $elemMatch: { source: { $regex: '^botcheck_', $options: 'i' }, checkedAt: { $gte: iniS, $lt: fimS } } } }); } catch (_) {}
   const diaSP = (d) => new Date(new Date(d).getTime() - 3 * 3600e3).toISOString().slice(0, 10);
   const horaSP = (d) => new Date(new Date(d).getTime() - 3 * 3600e3).getUTCHours();
   const dias = []; for (let t = ini.getTime(); t < fim.getTime(); t += 864e5) dias.push(new Date(t - 3 * 3600e3 + 3 * 3600e3).toISOString().slice(0, 10));
@@ -42133,7 +42156,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   let origemDesdeMs = null;
   for (const r of pvRows) { if (r.utm) { const t = new Date(r.createdAt).getTime(); if (origemDesdeMs == null || t < origemDesdeMs) origemDesdeMs = t; } }
   for (const r of pvRows) {
-    if (__tsEhBot(r.ua, r.city)) { botsPv++; continue; }
+    if (__tsEhBot(r.ua, r.city, r.ip)) { botsPv++; continue; }
     const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
     const d = diaSP(r.createdAt);
     if (porDia[d]) { porDia[d].pageviews++; if (cid) porDia[d].visitantes.add(cid); }
@@ -42217,7 +42240,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const noFunil = (d) => funilDesdeMs == null || new Date(d).getTime() >= funilDesdeMs;
   const fVis = new Set(), fServ = new Set();
   for (const r of pvRows) {
-    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city)) continue;
+    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city, r.ip)) continue;
     const cid = String(r.clientId || ''); if (!cid) continue;
     fVis.add(cid); if (__TS_PAG_SERV[String(r.path || '').split(':')[0]]) fServ.add(cid);
   }
@@ -42299,7 +42322,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     origemDesde: origemDesdeMs != null ? new Date(origemDesdeMs).toISOString() : null,
     kpis: {
       visitantes: visitantes.size, pageviews: pvRows.length - botsPv, pvPorVisitante: visitantes.size ? (pvRows.length - botsPv) / visitantes.size : 0,
-      perfisValidados: vuRows.length, pix, pagos, receita, ticket: pagos ? receita / pagos : 0,
+      perfisValidados: vuRows.length, perfisValidadosBot: vuBot, pix, pagos, receita, ticket: pagos ? receita / pagos : 0,
       convVisitantePago: visitantes.size ? canais.site.pagos / visitantes.size : 0, convPixPago: pix ? pagos / pix : 0,
       pixSite: canais.site.pix, pagosSite: canais.site.pagos, receitaSite: Math.round(canais.site.receita * 100) / 100,
       pixBot: canais.bot.pix, pagosBot: canais.bot.pagos, receitaBot: Math.round(canais.bot.receita * 100) / 100, botsPageviews: botsPv,
