@@ -69,8 +69,13 @@ function _tipoOculto(hidden, servicoKey, tipoKey) {
 async function tiposDisponiveis() {
   const hidden = await loadHiddenTypes();
   const todos = ['mistos', 'brasileiros', 'organicos'];
-  return { seguidores: todos.filter((t) => !_tipoOculto(hidden, 'seguidores', t)), curtidas: todos.filter((t) => !_tipoOculto(hidden, 'curtidas', t)) };
+  return { seguidores: todos.filter((t) => !_tipoOculto(hidden, 'seguidores', t)), curtidas: todos.filter((t) => !_tipoOculto(hidden, 'curtidas', t)), vistas: !_vistasOcultas(hidden) };
 }
+// Visualizações de reels ocultas no Gerenciamento de Tipo (coluna Oculto)?
+function _vistasOcultas(hidden) {
+  return ((hidden && hidden.visualizacoes) || []).map(String).includes('visualizacoes_reels');
+}
+const _VISTAS_INDISP = { ok: false, error: 'servico_indisponivel', message: 'Visualizações não estão disponíveis no momento.' };
 
 function tableFor(svc, tipo) {
   const t = svc.tipos ? (svc.table(normalizeTipo(tipo)) || svc.table('mistos')) : svc.table();
@@ -91,7 +96,7 @@ async function quote({ servico, tipo, quantidade }) {
       const disp = ['mistos', 'brasileiros', 'organicos'].filter((t) => !_tipoOculto(hidden, key, t));
       return { ok: false, error: 'tipo_indisponivel', tipo: tipoKey, tiposDisponiveis: disp, message: `O tipo *${tipoKey}* não está disponível no momento. Disponíveis: ${disp.length ? disp.join(', ') : 'nenhum'}.` };
     }
-  }
+  } else if (key === 'visualizacoes' && _vistasOcultas(await loadHiddenTypes())) return _VISTAS_INDISP;
   const q = parseInt(quantidade, 10);
   const table = tableFor(svc, tipo);
   if (!(q > 0)) return { ok: false, error: 'quantidade_invalida', available: table.map((x) => x.q) };
@@ -118,7 +123,7 @@ async function priceTable({ servico, tipo }) {
       const disp = ['mistos', 'brasileiros', 'organicos'].filter((t) => !_tipoOculto(hidden, key, t));
       return { ok: false, error: 'tipo_indisponivel', tipo: tipoKey, tiposDisponiveis: disp, message: `O tipo *${tipoKey}* não está disponível. Disponíveis: ${disp.length ? disp.join(', ') : 'nenhum'}.` };
     }
-  }
+  } else if (key === 'visualizacoes' && _vistasOcultas(await loadHiddenTypes())) return _VISTAS_INDISP;
   const table = tableFor(svc, tipo);
   return {
     ok: true, servico: svc.key, tipo: svc.tipos ? normalizeTipo(tipo) : svc.tipoFixo,
