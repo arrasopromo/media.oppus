@@ -6957,7 +6957,7 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
             try {
                 const st = error && error.response ? error.response.status : null;
                 const em = (error && error.response && error.response.data && error.response.data.error && error.response.data.error.message) ? String(error.response.data.error.message) : String((error && error.message) || '');
-                if (st === 403 || /hard limit|usage.*limit|feature-disabled|monthly/i.test(em)) {
+                if (st === 401 || st === 403 || /hard limit|usage.*limit|feature-disabled|monthly|token is not valid/i.test(em)) { // 401 = chave da Apify recusada
                     global.apifyDisabledUntil = Date.now() + 6 * 60 * 60 * 1000;
                     console.warn('⛔ Apify desativado por 6h (cota mensal estourada).');
                 }
