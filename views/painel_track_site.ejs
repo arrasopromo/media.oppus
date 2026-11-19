@@ -12,6 +12,9 @@
       max-width:1480px; margin:0 auto; color:var(--tinta,#14171c); }
     .ts *{ box-sizing:border-box; }
     .ts .num{ font-variant-numeric:tabular-nums; }
+    .ts-top5 li.ts-extra[hidden]{ display:none !important; }
+    .ts-ver-todos{ margin-top:8px; padding:6px 12px; border:1px solid var(--linha,#e3e6eb); border-radius:999px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
+    .ts-ver-todos:hover{ border-color:#c9ced6; }
     .ts-top{ display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin-bottom:18px; }
     .ts-top h1{ margin:0; font-size:28px; font-weight:650; font-stretch:88%; letter-spacing:-.02em; }
     .ts-top p{ margin:4px 0 0; color:var(--grafite,#525a67); font-size:14px; max-width:62ch; }
@@ -235,9 +238,19 @@
     function lista(arr, nome, sub, val, cor){
       if (!arr.length) return '<p class="vazio">Sem dados no período.</p>';
       var mx = Math.max.apply(null, arr.map(val));
-      return '<ol>' + arr.map(function(x, i){ return '<li><span class="pos">' + (i + 1) + '</span><span class="nm">' + esc(nome(x)) + '<small>' + esc(sub(x)) + '</small>' + barra(val(x), mx, cor) + '</span><span class="num">' + nf(val(x)) + '</span></li>'; }).join('') + '</ol>';
+      // Top 5 por padrão; o resto fica escondido e abre no "Ver todos".
+      return '<ol>' + arr.map(function(x, i){ return '<li' + (i >= 5 ? ' class="ts-extra" hidden' : '') + '><span class="pos">' + (i + 1) + '</span><span class="nm">' + esc(nome(x)) + '<small>' + esc(sub(x)) + '</small>' + barra(val(x), mx, cor) + '</span><span class="num">' + nf(val(x)) + '</span></li>'; }).join('') + '</ol>'
+        + (arr.length > 5 ? '<button type="button" class="ts-ver-todos" data-n="' + arr.length + '">Ver todos (' + arr.length + ')</button>' : '');
     }
     var tipoNome = { mistos: 'mistos', brasileiros: 'brasileiros', curtidas_brasileiras: 'brasileiras', organicos: 'reais', visualizacoes_reels: '', comentarios: '' };
+    if (!window.__tsVerTodos) { window.__tsVerTodos = true; document.addEventListener('click', function(e){
+      var b = e.target.closest && e.target.closest('.ts-ver-todos'); if (!b) return;
+      var ol = b.previousElementSibling; if (!ol) return;
+      var abrir = b.getAttribute('aria-expanded') !== 'true';
+      [].forEach.call(ol.querySelectorAll('li.ts-extra'), function(li){ li.hidden = !abrir; });
+      b.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+      b.textContent = abrir ? 'Mostrar só o top 5' : 'Ver todos (' + b.getAttribute('data-n') + ')';
+    }); }
     h += '<section class="ts-bloco"><h2>Top 5 pacotes</h2><p class="sub">Do clique no pacote até o pagamento.</p><div class="ts-top5">'
       + '<div><h3>Mais escolhidos (clique no card)</h3>' + (d.topEscolhidos.length ? lista(d.topEscolhidos, function(x){ return x.servico + ' ' + (tipoNome[x.tipo] != null ? tipoNome[x.tipo] : x.tipo) + ' · ' + nf(x.qtd); }, function(x){ return x.preco || ''; }, function(x){ return x.visitantes; }, C.vis) : '<p class="vazio">Começa a contar com o rastreio novo publicado.</p>') + '</div>'
       + '<div><h3>Mais pedidos (Pix gerado)</h3>' + lista(d.topPix, function(x){ return x.produto + ' · ' + nf(x.qtd); }, function(){ return ''; }, function(x){ return x.n; }, C.pix) + '</div>'

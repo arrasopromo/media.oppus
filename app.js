@@ -2968,6 +2968,8 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
         if (!cid || !p) return;
         // Servidor local de teste (usa o MESMO banco): não grava visita.
         if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(String((req && req.headers && req.headers.host) || '').trim())) return;
+        // Acesso pelo IP do servidor (ex.: 144.126.138.0:3000) não é cliente: são scanners varrendo a internet.
+        if (/^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?$/i.test(String((req && req.headers && req.headers.host) || '').trim())) return;
         const key = `${cid}|${p}`;
         const now = Date.now();
         const last = Number(pageViewDedupe.get(key) || 0);
@@ -42036,7 +42038,9 @@ function __tsIpMeta(ip) {
   const n = ((Number(m4[1]) * 256 + Number(m4[2])) * 256 + Number(m4[3])) * 256 + Number(m4[4]);
   return __TS_META_CIDR.some(([net, mask]) => ((n & mask) >>> 0) === net);
 }
-function __tsEhBot(ua, city, ip) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()) || __tsIpMeta(ip); }
+const __TS_SCAN_RE = /censys|internetmeasurement|infrawatch|expanse|zgrab|masscan|nmap|nuclei|l9explore|l9tcpid|httpx|okhttp|libwww|java\/|scanner|netcraft|leakix|odin|shodan|paloalto|cortex|xpanse|ahrefs|semrush|mj12|dataforseo|petal|bytespider|gptbot|ccbot|amazonbot|applebot/i;
+function __tsRefIp(ref) { try { const h = new URL(String(ref || '')).host; return /^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?$/i.test(h); } catch (_) { return false; } }
+function __tsEhBot(ua, city, ip, ref) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || __TS_SCAN_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()) || __tsIpMeta(ip) || __tsRefIp(ref); }
 const TRACK_SITE_INICIO = '2026-11-17';
 async function computeTrackSite({ since, until, fresh } = {}) {
   const hojeSP = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
@@ -42084,7 +42088,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   let origemDesdeMs = null;
   for (const r of pvRows) { if (r.utm) { const t = new Date(r.createdAt).getTime(); if (origemDesdeMs == null || t < origemDesdeMs) origemDesdeMs = t; } }
   for (const r of pvRows) {
-    if (__tsEhBot(r.ua, r.city, r.ip)) { botsPv++; continue; }
+    if (__tsEhBot(r.ua, r.city, r.ip, r.referer)) { botsPv++; continue; }
     const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
     const d = diaSP(r.createdAt);
     if (porDia[d]) { porDia[d].pageviews++; if (cid) porDia[d].visitantes.add(cid); }
@@ -42168,7 +42172,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const noFunil = (d) => funilDesdeMs == null || new Date(d).getTime() >= funilDesdeMs;
   const fVis = new Set(), fServ = new Set();
   for (const r of pvRows) {
-    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city, r.ip)) continue;
+    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city, r.ip, r.referer)) continue;
     const cid = String(r.clientId || ''); if (!cid) continue;
     fVis.add(cid); if (__TS_PAG_SERV[String(r.path || '').split(':')[0]]) fServ.add(cid);
   }
@@ -42261,9 +42265,9 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     porHora,
     paginas: Object.values(pags).map((p) => { const c = porCatSite[__TS_PAG_SERV[p.path]] || (__TS_PAG_SERV[p.path] ? { pix: 0, pagos: 0, receita: 0 } : null); return { path: p.path, nome: p.nome, pageviews: p.pageviews, visitantes: p.vis.size, pix: c ? c.pix : null, pagos: c ? c.pagos : null, receita: c ? Math.round(c.receita * 100) / 100 : null }; }).sort((a, b) => b.pageviews - a.pageviews),
     funil,
-    topEscolhidos: top(Object.fromEntries(Object.entries(escolhidos).map(([k, x]) => [k, { servico: x.servico, tipo: x.tipo, qtd: x.qtd, preco: x.preco, visitantes: x.vis.size }])), 'visitantes', 5),
-    topPix: top(pacotesPix, 'n', 5),
-    topPagos: top(pacotesPagos, 'n', 5).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
+    topEscolhidos: top(Object.fromEntries(Object.entries(escolhidos).map(([k, x]) => [k, { servico: x.servico, tipo: x.tipo, qtd: x.qtd, preco: x.preco, visitantes: x.vis.size }])), 'visitantes', 200),
+    topPix: top(pacotesPix, 'n', 200),
+    topPagos: top(pacotesPagos, 'n', 200).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
     produtos: Object.values(prod).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })).sort((a, b) => b.receita - a.receita),
     ofertas: Object.values(bumps).sort((a, b) => b.n - a.n),
     anuncios: top(utmContent, 'receita', 15).map((x) => Object.assign({}, x, { receita: Math.round(x.receita * 100) / 100 })),
