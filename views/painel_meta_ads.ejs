@@ -45,7 +45,7 @@
 
     /* Balanço do período: uma faixa só, dividida por fios */
     .ma-bal{ background:var(--folha); box-shadow:0 0 0 1px var(--fio); border-radius:var(--r-med); margin-bottom:28px; }
-    .ma-cols{ display:grid; grid-template-columns:1.05fr repeat(4,1fr); }
+    .ma-cols{ display:grid; grid-template-columns:1.05fr repeat(5,1fr); }
     .ma-col{ padding:18px 20px 16px; min-width:0; }
     .ma-col + .ma-col{ border-left:1px solid var(--fio); }
     .ma-col .rot{ display:flex; align-items:center; gap:7px; font-size:13px; font-weight:500; color:var(--grafite); }
@@ -283,7 +283,10 @@
         { k:'tc', nome:'TrackCombo', v:tcOk?d.tc.anuncio.receita:null, n:tcOk?d.tc.anuncio.vendas:null, det: tcOk ? (nf(d.tc.total.vendas)+' vendas no TC ao todo ('+brl0(d.tc.total.receita)+')'+(d.tc.meta.vendas > d.tc.anuncio.vendas ? '; '+nf(d.tc.meta.vendas - d.tc.anuncio.vendas)+' pagas sem anúncio identificado ('+brl0(d.tc.meta.receita - d.tc.anuncio.receita)+')' : '')+(d.tc.semRelatorio && d.tc.semRelatorio.vendas ? '; '+nf(d.tc.semRelatorio.vendas)+' sem UTM de anúncio no TC (direto, orgânico ou sem origem)' : '')) : 'Sem chave do TrackCombo no servidor' },
         { k:'banco', nome:'Banco, pela UTM', v:bancoV, n:bancoN, det:nf(d.semAnuncio.vendas)+' vendas sem UTM de anúncio ('+brl0(d.semAnuncio.receita)+')'+(d.banco.recuperadas && d.banco.recuperadas.vendas ? '; '+nf(d.banco.recuperadas.vendas)+' recuperadas pelo nosso cookie' : '') }
       ];
+      var K = d.cac || {};
+      var cacTxt = function(v){ return v==null ? '—' : brl(v); };
       var cols = '<div class="ma-col gasto"><div class="rot">Gasto no Meta</div><div class="v num">'+brl(g)+'</div><div class="roas num">'+nf(lig)+' anúncios rodando'+(colHoje()?', '+brl0(gh)+' hoje':'')+'</div><div class="det">Duas contas; dólar a '+dec(d.fx,2)+', sem imposto</div></div>' +
+        '<div class="ma-col" title="CAC geral = gasto ÷ todos os clientes novos do período (1ª compra do @, de qualquer origem). CAC anúncio = gasto ÷ só os clientes novos com o anúncio gravado no pedido (utm_content)."><div class="rot">CAC (cliente novo)</div><div class="v num">'+cacTxt(K.cacGeral)+'</div><div class="roas num"><b>'+cacTxt(K.cacAnuncio)+'</b>CAC anúncio</div><div class="det">'+nf(K.novos||0)+' clientes novos no período, '+nf(K.novosAnuncio||0)+' vindos de anúncio</div></div>' +
         fontes.map(function(f){
           var r = (g>0 && f.v!=null) ? f.v/g : null;
           return '<div class="ma-col"><div class="rot"><span class="sw '+f.k+'"></span>'+f.nome+'</div><div class="v num">'+(f.v!=null?brl(f.v):'—')+'</div>' +

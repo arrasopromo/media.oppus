@@ -4997,77 +4997,7 @@
       </div>
       <% } %>
       <% if (view === 'dashboard') { %>
-      <div id="dashboardRealtimeWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
-          <strong style="font-size: 1rem; color:#111827;">Tempo real</strong>
-          <div style="font-size:0.85rem; color:#6b7280;">Atualiza automaticamente</div>
-        </div>
-        <div class="summary-grid" style="margin-top: 12px;">
-          <div class="summary-card">
-            <div class="summary-label">Online agora</div>
-            <div class="summary-value" id="dashboardOnlineNowCount"><%= (typeof onlineNow !== 'undefined' ? Number(onlineNow || 0) : 0) %></div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Acessos /servicos-instagram (período)</div>
-            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.instagram || 0) : 0) %></div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Acessos /servicos-curtidas (período)</div>
-            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.curtidas || 0) : 0) %></div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Acessos /servicos-visualizacoes (período)</div>
-            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.visualizacoes || 0) : 0) %></div>
-          </div>
-          <div class="summary-card">
-            <div class="summary-label">Acessos /pix (período)</div>
-            <div class="summary-value"><%= (typeof servicePageViews !== 'undefined' && servicePageViews ? (servicePageViews.pix || 0) : 0) %></div>
-          </div>
-        </div>
-        <script>
-          (function(){
-            try {
-              var key = 'oppus_client_id';
-              var cid = '';
-              try { cid = String(localStorage.getItem(key) || ''); } catch (_) {}
-              if (!cid) {
-                cid = (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function')
-                  ? crypto.randomUUID()
-                  : (Date.now().toString(36) + Math.random().toString(36).slice(2));
-                try { localStorage.setItem(key, cid); } catch (_) {}
-              }
-              var ping = function() {
-                try {
-                  var payload = JSON.stringify({ clientId: cid, path: (location && location.pathname) ? location.pathname : '' });
-                  if (navigator && typeof navigator.sendBeacon === 'function') {
-                    navigator.sendBeacon('/api/online/ping', new Blob([payload], { type: 'application/json' }));
-                    return;
-                  }
-                  fetch('/api/online/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function(){});
-                } catch (_) {}
-              };
-              ping();
-              setInterval(ping, 15000);
-              document.addEventListener('visibilitychange', function(){ if (!document.hidden) ping(); });
-
-              var el = document.getElementById('dashboardOnlineNowCount');
-              if (!el) return;
-              var tick = function() {
-                fetch('/api/online/stats', { headers: { 'Accept': 'application/json' } })
-                  .then(function(r){ return r.json(); })
-                  .then(function(d){
-                    var v = (d && typeof d.online !== 'undefined') ? Number(d.online || 0) : 0;
-                    el.textContent = String(v);
-                  })
-                  .catch(function(){});
-              };
-              tick();
-              setInterval(tick, 10000);
-            } catch (_) {}
-          })();
-        </script>
-      </div>
-
+      <%# Bloco "Tempo real" (online agora + acessos das páginas) removido a pedido em 19/11/2026. %>
       <div id="timelineChartsWrap" style="margin-top: 14px; border:1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; width:100%; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap: wrap;">
           <strong style="font-size: 1rem; color:#111827;">Evolução diária</strong>

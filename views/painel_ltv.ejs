@@ -445,10 +445,10 @@
               <div class="ltv-field">
                 <label>Ordenar por</label>
                 <select id="sendSort" class="ltv-select">
-                  <option value="oldest">LTV mais antigo</option>
+                  <option value="oldest">LTV mais antigo (última compra até 3 meses)</option>
                   <option value="top">Top compradores</option>
                 </select>
-                <span class="hint">"Top compradores" prioriza quem comprou mais vezes (2+)</span>
+                <span class="hint">"LTV mais antigo": quem comprou 2+ vezes e a última compra foi nos últimos 3 meses — quem está há mais tempo sem comprar vai primeiro. "Top compradores": quem mais gastou (R$ 500+).</span>
               </div>
             </div>
             <div class="ltv-field">
@@ -467,7 +467,7 @@
               <button class="ltv-btn primary" id="btnEnviar">Enviar hoje</button>
               <button class="ltv-btn" id="btnRefreshAvail" title="Recalcula os disponíveis com o período/tipo atuais">↻ Atualizar disponíveis</button>
             </div>
-            <div class="hint" style="font-size:0.74rem; color:var(--faint);">Considera o filtro de <b>período</b> selecionado no topo (pela data da última compra do cliente).</div>
+            <div class="hint" style="font-size:0.74rem; color:var(--faint);">Quem entra é definido pela <b>ordem</b> escolhida acima — o filtro de período do topo não muda o envio.</div>
             <div id="dispMsg" class="ltv-msg"></div>
             <div id="dispProg" class="ltv-prog" style="display:none;"></div>
           </div>
@@ -675,7 +675,8 @@
       // ── Card dinâmico ──
       async function refreshAvailable(){
         var tipo = $('sendTipo') ? $('sendTipo').value : 'all';
-        var d = await api('/api/painel/ltv/available?tipo='+encodeURIComponent(tipo)+'&'+periodQS());
+        var sort = $('sendSort') ? $('sendSort').value : 'oldest';
+        var d = await api('/api/painel/ltv/available?tipo='+encodeURIComponent(tipo)+'&sort='+encodeURIComponent(sort));
         if (!d || !d.ok) return;
         lastAvail = d;
         $('availNum').textContent = (d.available||0).toLocaleString('pt-BR');
@@ -695,6 +696,7 @@
         return willSend;
       }
       if ($('sendTipo')) $('sendTipo').addEventListener('change', refreshAvailable);
+      if ($('sendSort')) $('sendSort').addEventListener('change', refreshAvailable);
       if ($('sendQty')) $('sendQty').addEventListener('input', recomputeWillSend);
 
       // ── Prévia ──

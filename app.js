@@ -4468,180 +4468,8 @@ async function segParcialReenviar(col, _id, opts = {}) {
   return { ok: true, orderId: novoId, quantidade: qtd, provider, service };
 }
 
-// Varre os pedidos de seguidores da janela: atualiza status e (se ligado) reenvia o faltante.
-let __segParcialRunning = false;
-async function runSeguidoresParcialSweep({ reenviar } = {}) {
-  if (__segParcialRunning) return { skipped: true, reason: 'running' };
-  __segParcialRunning = true;
-  const out = { checados: 0, atualizados: 0, problemas: 0, reenviados: 0, pulados: 0, erros: 0, auto: false };
-  try {
-    const cfg = await segParcialGetCfg();
-    out.auto = cfg.autoEnabled;
-    const col = await getCollection('checkout_orders');
-    const { ObjectId } = require('mongodb');
-    const minId = ObjectId.createFromTime(Math.floor((Date.now() - cfg.windowDays * 86400000) / 1000));
-    const docs = await col.find({ _id: { $gte: minId }, 'fama24h.orderId': { $exists: true, $nin: [null, ''] }, 'fama24h.parcialChainDone': { $ne: true }, status: { $nin: FQ_DEAD_ORDER_STATUSES } },
-      { projection: { _id: 1, status: 1, fama24h: 1 } }).limit(5000).toArray();
-    const porProv = {};
-    for (const o of docs) {
-      const f = o.fama24h || {};
-      if (!segParcialEhSeguidores(f)) continue;
-      const p = segParcialProvider(f); if (!p) continue;
-      if (!/^[0-9]+$/.test(String(f.orderId))) continue;
-      if (/complet/.test(String(f.status || '').toLowerCase())) continue; // já concluído
-      (porProv[p] = porProv[p] || []).push(o);
-    }
-    const problemas = [];
-    for (const [p, lista] of Object.entries(porProv)) {
-      const st = await segParcialStatusMany(p, lista.map((o) => String(o.fama24h.orderId)));
-      for (const o of lista) {
-        out.checados++;
-        const sp = st[String(o.fama24h.orderId)];
-        if (!sp) continue;
-        const remains = Math.max(0, Math.floor(Number(sp.remains ?? sp.Remains) || 0));
-        const nowIso = new Date().toISOString();
-        try {
-          await col.updateOne({ _id: o._id, 'fama24h.orderId': o.fama24h.orderId }, { $set: { 'fama24h.statusPayload': sp, 'fama24h.status': normalizeProviderStatusText(sp) || o.fama24h.status || 'unknown', 'fama24h.lastStatusAt': nowIso, 'fama24h.parcialRemains': remains, 'fama24h.parcialCheckedAt': nowIso } });
-          out.atualizados++;
-        } catch (_) {}
-        const cat = topfamaStatusCat(sp.status || sp.Status, remains);
-        if (cat === 'partial' || cat === 'canceled') problemas.push(o._id);
-      }
-    }
-    out.problemas = problemas.length;
-    if (cfg.autoEnabled && reenviar !== false) {
-      for (const _id of problemas) {
-        try {
-          const r = await segParcialReenviar(col, _id, { cfg });
-          if (r.ok) out.reenviados++; else if (r.pulado) out.pulados++; else out.erros++;
-        } catch (_) { out.erros++; }
-        await new Promise((ok) => setTimeout(ok, 400));
-      }
-    }
-    out.at = new Date().toISOString();
-    try { await (await getCollection('settings')).updateOne({ _id: SEG_PARCIAL_CFG_ID }, { $set: { lastSweep: out } }, { upsert: true }); } catch (_) {}
-  } catch (e) { out.error = e && e.message; }
-  __segParcialRunning = false;
-  return out;
-}
-let __segParcialTimer = null;
-function startSeguidoresParcialLoop() {
-  if (__segParcialTimer || !backgroundJobsEnabled()) return;
-  const loopMs = Math.max(15, Number(process.env.SEG_PARCIAL_LOOP_MIN || 60) || 60) * 60 * 1000;
-  const tick = () => runSeguidoresParcialSweep().then((r) => { try { if (r && (r.problemas || r.reenviados)) console.log('🔁 [seg-parcial]', JSON.stringify(r)); } catch (_) {} }).catch(() => {});
-  setTimeout(tick, 5 * 60 * 1000);
-  __segParcialTimer = setInterval(tick, loopMs);
-  try { __segParcialTimer.unref && __segParcialTimer.unref(); } catch (_) {}
-}
-
-// Linhas da página: pedidos de seguidores da janela (com ou sem problema).
-async function seguidoresParcialLinhas(query) {
-  const cfg = await segParcialGetCfg();
-  const dias = Math.min(60, Math.max(1, Math.floor(Number(query.dias) || cfg.windowDays)));
-  const col = await getCollection('checkout_orders');
-  const { ObjectId } = require('mongodb');
-  const minId = ObjectId.createFromTime(Math.floor((Date.now() - dias * 86400000) / 1000));
-  const docs = await col.find({ _id: { $gte: minId }, 'fama24h.orderId': { $exists: true, $nin: [null, ''] } },
-    { projection: { identifier: 1, instauser: 1, instagramUsername: 1, tipo: 1, status: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, fama24h: 1 } })
-    .sort({ _id: -1 }).limit(3000).toArray();
-  const rows = [];
-  for (const o of docs) {
-    const f = o.fama24h || {};
-    if (!segParcialEhSeguidores(f)) continue;
-    const sp = f.statusPayload || {};
-    const stTxt = String(sp.status || sp.Status || f.status || '');
-    const remains = (f.parcialRemains != null) ? Number(f.parcialRemains) : (sp.remains != null ? Math.max(0, Math.floor(Number(sp.remains) || 0)) : null);
-    const st = stTxt.toLowerCase();
-    let statusCat = 'other';
-    if (/complet|conclu/.test(st)) statusCat = 'done';
-    else if (/partial/.test(st)) statusCat = 'partial';
-    else if (/cancel|refund/.test(st)) statusCat = 'canc';
-    else if (/progress|process|pending|andamento|created|start/.test(st)) statusCat = 'prog';
-    else if (/error|erro/.test(st)) statusCat = 'erro';
-    const hist = Array.isArray(f.parcialHistorico) ? f.parcialHistorico : [];
-    let dataMs = 0; for (const x of [o.paidAt, o?.woovi?.paidAt, o?.paghiper?.paidAt, o.createdAt]) { const t = x ? new Date(x).getTime() : NaN; if (Number.isFinite(t)) { dataMs = t; break; } }
-    rows.push({
-      id: String(o._id), identifier: o.identifier || '', usuario: segParcialUsuario(o), tipo: String(o.tipo || ''), pedidoStatus: String(o.status || ''),
-      morto: segParcialPedidoMorto(o), dataMs,
-      provider: segParcialProvider(f) || String(f.provider || ''), service: String((f.requestPayload && f.requestPayload.service) || ''),
-      orderId: String(f.orderId), qtdAtual: Number((f.requestPayload && f.requestPayload.quantity) || 0) || 0,
-      qtdContratada: (hist.length && Number(hist[0].quantity)) || Number((f.requestPayload && f.requestPayload.quantity) || 0) || 0,
-      status: stTxt, statusCat, remains, checkedAt: f.parcialCheckedAt || f.lastStatusAt || null,
-      historico: hist.map((h) => ({ orderId: String(h.orderId || ''), status: String(h.status || ''), remains: h.remains, quantity: h.quantity, motivo: h.motivo || '', origem: h.origem || '', at: h.substituidoEm || null, service: h.service })),
-      chainDone: !!f.parcialChainDone, stopReason: String(f.parcialStopReason || ''), ultimoErro: String(f.parcialUltimoErro || ''),
-    });
-  }
-  const statusFilter = String(query.status || 'problema').toLowerCase();
-  const filtros = {
-    problema: (r) => r.statusCat === 'partial' || r.statusCat === 'canc',
-    reenviados: (r) => r.historico.length > 0,
-    partial: (r) => r.statusCat === 'partial', canc: (r) => r.statusCat === 'canc', prog: (r) => r.statusCat === 'prog', done: (r) => r.statusCat === 'done',
-    todos: () => true,
-  };
-  const fornecedores = Array.from(new Set(rows.map((r) => r.provider).filter(Boolean))).sort();
-  const fornecedorFilter = fornecedores.includes(String(query.fornecedor || '')) ? String(query.fornecedor) : '';
-  const fn = filtros[statusFilter] || filtros.problema;
-  const filtered = rows.filter((r) => fn(r) && (!fornecedorFilter || r.provider === fornecedorFilter));
-  const faltaTotal = filtered.reduce((a, r) => a + ((r.statusCat === 'partial' || r.statusCat === 'canc') && !r.morto ? (r.remains || 0) : 0), 0);
-  return { rows: filtered, totalAll: rows.length, cfg, fornecedores, faltaTotal, filter: { status: filtros[statusFilter] ? statusFilter : 'problema', fornecedor: fornecedorFilter, dias } };
-}
-
-app.get('/painel/gestao-parcial-seguidores', requireAdmin, async (req, res) => {
-  try {
-    const dados = await seguidoresParcialLinhas(req.query || {});
-    return res.render('painel_gestao_parcial_seguidores', Object.assign({ page: 'gestao-parcial-seguidores' }, dados));
-  } catch (e) { return res.status(500).send(String((e && e.message) || e)); }
-});
-// Atualiza o status agora (sem reenviar, mesmo com o automático ligado).
-app.post('/api/painel/seg-parcial/refresh', requireAdmin, async (req, res) => {
-  try { const r = await runSeguidoresParcialSweep({ reenviar: false }); return res.json({ ok: true, result: r }); }
-  catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
-});
-// Reenvia o faltante de UM ou VÁRIOS pedidos (botão). body: { ids: [...], service? }.
-app.post('/api/painel/seg-parcial/reenviar', requireAdmin, async (req, res) => {
-  try {
-    const { ObjectId } = require('mongodb');
-    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [req.body && req.body.id]).map((x) => String(x || '').trim()).filter((x) => /^[0-9a-fA-F]{24}$/.test(x)).slice(0, 100);
-    if (!ids.length) return res.status(400).json({ ok: false, error: 'invalid_id' });
-    const service = String((req.body && req.body.service) || '').trim();
-    if (service && !/^[A-Za-z0-9_-]{1,20}$/.test(service)) return res.status(400).json({ ok: false, error: 'servico_invalido' });
-    const cfg = await segParcialGetCfg();
-    const col = await getCollection('checkout_orders');
-    const por = (req.session && req.session.adminUser && req.session.adminUser.username) || null;
-    const resultados = [];
-    for (const id of ids) {
-      let r;
-      try { r = await segParcialReenviar(col, new ObjectId(id), { manual: true, service: service || undefined, cfg, por }); }
-      catch (e) { r = { erro: true, motivo: (e && e.message) || 'internal' }; }
-      resultados.push(Object.assign({ id }, r));
-    }
-    return res.json({ ok: true, resultados });
-  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
-});
-// Libera de novo a automação de um pedido encerrado (ex.: depois de conferir um add_incerto).
-app.post('/api/painel/seg-parcial/reabrir', requireAdmin, async (req, res) => {
-  try {
-    const id = String((req.body && req.body.id) || '').trim();
-    if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
-    const { ObjectId } = require('mongodb');
-    const col = await getCollection('checkout_orders');
-    await col.updateOne({ _id: new ObjectId(id) }, { $set: { 'fama24h.parcialChainDone': false, 'fama24h.parcialUltimoErro': '' }, $unset: { 'fama24h.parcialStopReason': '', 'fama24h.parcialLockAt': '' } });
-    return res.json({ ok: true });
-  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
-});
-app.post('/api/painel/seg-parcial/config', requireAdmin, async (req, res) => {
-  try {
-    const b = req.body || {};
-    const set = { updatedAt: new Date().toISOString() };
-    if (typeof b.autoEnabled === 'boolean') set.autoEnabled = b.autoEnabled;
-    const num = (v, min, max) => { const x = Math.floor(Number(v)); return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : undefined; };
-    if (b.minRemains != null && num(b.minRemains, 1, 100000) !== undefined) set.minRemains = num(b.minRemains, 1, 100000);
-    if (b.maxChain != null && num(b.maxChain, 1, 10) !== undefined) set.maxChain = num(b.maxChain, 1, 10);
-    if (b.windowDays != null && num(b.windowDays, 1, 30) !== undefined) set.windowDays = num(b.windowDays, 1, 30);
-    await (await getCollection('settings')).updateOne({ _id: SEG_PARCIAL_CFG_ID }, { $set: set }, { upsert: true });
-    return res.json({ ok: true, cfg: await segParcialGetCfg() });
-  } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
-});
+// Gestão Parcial (Seguidores): página, varredura de hora em hora e reenvio automático REMOVIDOS a pedido
+// em 19/11/2026. Os helpers segParcial* acima continuam: o reenvio manual da tela Vendas usa eles.
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TESTES DE SERVIÇOS — cadastra um pedido de teste (serviço/fornecedor) num
@@ -11333,6 +11161,26 @@ app.post('/api/painel/ltv/generate', requireAdmin, async (req, res) => {
 });
 
 // ADMIN: dispara o template `ltv` para a campanha ltv. SÓ envia com authorize:true (senão = prévia).
+// "Enviar por base": quem entra depende da PRIORIZAÇÃO escolhida, não do período do topo.
+//  - oldest ("LTV mais antigo"): última compra nos últimos LTV_OLDEST_DIAS (90) dias, quem comprou há mais tempo primeiro;
+//  - top ("Top compradores"): gastou >= LTV_TOP_MIN_REAIS (R$ 500), quem mais gastou primeiro.
+function ltvBasePriorizada(leads, sortMode) {
+  const mode = String(sortMode || '').toLowerCase();
+  let out = leads.slice();
+  if (mode === 'top') {
+    const TOP_MIN_REAIS = Math.max(0, Number(process.env.LTV_TOP_MIN_REAIS || 500) || 500);
+    out = out.filter((l) => (Number(l.totalReais) || 0) >= TOP_MIN_REAIS);
+    out.sort((a, b2) => (b2.totalReais - a.totalReais) || (b2.purchases - a.purchases));
+  } else if (mode === 'newest') {
+    out.sort((a, b2) => b2.dateMs - a.dateMs);
+  } else {
+    const dias = Math.max(1, Number(process.env.LTV_OLDEST_DIAS || 90) || 90);
+    const corte = Date.now() - dias * 864e5;
+    out = out.filter((l) => Number.isFinite(l.dateMs) && l.dateMs >= corte);
+    out.sort((a, b2) => a.dateMs - b2.dateMs);
+  }
+  return out;
+}
 app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
   try {
     const cfg = await getWabaConfig();
@@ -11375,21 +11223,15 @@ app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
 
     // Base de recompra montada NA HORA (não precisa gerar base antes).
     let leads = await computeLtvLeads(2);
-    // Filtro por período (pela data da última compra do lead), se informado.
-    { const { start, endExclusive } = resolvePanelPeriodRange(b.period, b.startDate, b.endDate); if (start && endExclusive) { const s = start.getTime(), e = endExclusive.getTime(); leads = leads.filter(l => Number.isFinite(l.dateMs) && l.dateMs >= s && l.dateMs < e); } }
+    // Período do topo NÃO filtra mais o envio: quem entra é definido pela priorização (ltvBasePriorizada).
+    if (false) { const { start, endExclusive } = resolvePanelPeriodRange(b.period, b.startDate, b.endDate); if (start && endExclusive) { const s = start.getTime(), e = endExclusive.getTime(); leads = leads.filter(l => Number.isFinite(l.dateMs) && l.dateMs >= s && l.dateMs < e); } }
     if (tipoFilter && tipoFilter !== 'all' && tipoFilter !== 'todos') leads = leads.filter(l => l.serviceTipo === tipoFilter);
     // Exclui quem tem link de LTV AINDA ATIVO (evita reenviar dentro da validade de 2 dias).
     const activeLinks = await links.find({ campaign: 'ltv', expAt: { $gt: new Date() } }, { projection: { phoneE164: 1 } }).toArray();
     const activeSet = new Set(activeLinks.map(l => String(l.phoneE164 || '')));
     leads = leads.filter(l => !activeSet.has(l.phoneE164));
-    // "Top compradores": só quem tem 2+ compras E gastou no mínimo R$500 (configurável
-    // via LTV_TOP_MIN_REAIS). Abaixo disso não é considerado top comprador.
-    const TOP_MIN_REAIS = Math.max(0, Number(process.env.LTV_TOP_MIN_REAIS || 500) || 500);
-    if (sortMode === 'top') leads = leads.filter(l => (Number(l.totalReais) || 0) >= TOP_MIN_REAIS);
-    // Ordena e corta pela quantidade pedida (limitada pelo teto diário).
-    leads.sort((a, b2) => (sortMode === 'top')
-      ? ((b2.totalReais - a.totalReais) || (b2.purchases - a.purchases))
-      : (sortMode === 'newest' ? (b2.dateMs - a.dateMs) : (a.dateMs - b2.dateMs)));
+    // Priorização (filtra e ordena) e corta pela quantidade pedida (limitada pelo teto diário).
+    leads = ltvBasePriorizada(leads, sortMode);
     const batch = leads.slice(0, Math.max(1, limit));
 
     if (!authorize) {
@@ -11472,8 +11314,9 @@ app.get('/api/painel/ltv/available', requireAdmin, async (req, res) => {
     // que NÃO tem link de LTV ativo (dentro dos 2 dias). Quem já recebeu volta a ficar
     // disponível quando o link dele expira e é excluído.
     let leads = await computeLtvLeads(2);
-    // Filtro por período (pela data da última compra do lead), se informado.
-    { const { start, endExclusive } = resolvePanelPeriodRange(req.query.period, req.query.startDate, req.query.endDate); if (start && endExclusive) { const s = start.getTime(), e = endExclusive.getTime(); leads = leads.filter(l => Number.isFinite(l.dateMs) && l.dateMs >= s && l.dateMs < e); } }
+    // Mesma base do envio: definida pela priorização (?sort=oldest|top), sem o período do topo.
+    leads = ltvBasePriorizada(leads, req.query.sort);
+    if (false) { const { start, endExclusive } = resolvePanelPeriodRange(req.query.period, req.query.startDate, req.query.endDate); if (start && endExclusive) { const s = start.getTime(), e = endExclusive.getTime(); leads = leads.filter(l => Number.isFinite(l.dateMs) && l.dateMs >= s && l.dateMs < e); } }
     const activeLinks = await links.find({ campaign: 'ltv', expAt: { $gt: new Date() } }, { projection: { phoneE164: 1 } }).toArray();
     const activeSet = new Set(activeLinks.map(l => String(l.phoneE164 || '')));
     const pending = leads.filter(l => !activeSet.has(l.phoneE164));
@@ -42067,13 +41910,14 @@ async function computeMetaAdsData(q) {
   // Vendas do banco no período (horário de SP).
   const iniMs = Date.parse(range.since + 'T03:00:00Z'), fimMs = Date.parse(range.until + 'T03:00:00Z') + 864e5;
   const semAnuncio = { vendas: 0, receita: 0 }, recuperadas = { vendas: 0, receita: 0 }; let totVendas = 0, totReceita = 0;
+  const __cacPrim = new Map(), __cacCli = { clientes: 0, novos: 0, novosAnuncio: 0 };
   const tc = { configurado: __tcConfigurado(), total: { vendas: 0, receita: 0 }, meta: { vendas: 0, receita: 0 }, anuncio: { vendas: 0, receita: 0 }, semRelatorio: { vendas: 0, receita: 0 } };
   const tcPromise = tc.configurado ? __tcCompras(iniMs, fimMs).catch((e) => { erros.push('TrackCombo: ' + ((e && e.message) || e)); return []; }) : Promise.resolve([]);
   try {
     const col = await getCollection('checkout_orders');
     const desde = new Date(iniMs - 3 * 864e5);
     const docs = await col.find({ status: 'pago', $or: [{ createdAt: { $gte: desde } }, { createdAt: { $gte: desde.toISOString() } }] })
-      .project({ identifier: 1, utms: 1, utmsFonte: 1, upsell: 1, valueCents: 1, paidAt: 1, 'paghiper.paidAt': 1, 'woovi.paidAt': 1, createdAt: 1 }).limit(50000).toArray();
+      .project({ identifier: 1, utms: 1, utmsFonte: 1, upsell: 1, valueCents: 1, paidAt: 1, 'paghiper.paidAt': 1, 'woovi.paidAt': 1, createdAt: 1, instagramUsername: 1, instauser: 1, tipo: 1, tipoServico: 1, additionalInfo: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfoMapPaid: 1 }).limit(50000).toArray();
     const quando = (d) => new Date(d.paidAt || (d.paghiper && d.paghiper.paidAt) || (d.woovi && d.woovi.paidAt) || d.createdAt).getTime();
     const noPeriodo = docs.filter((d) => { const t = quando(d); return t >= iniMs && t < fimMs; });
     const adDe = (u) => { const s = String((u && u.content) || '').trim(); return /^\d{10,}$/.test(s) ? s : ''; };
@@ -42087,7 +41931,26 @@ async function computeMetaAdsData(q) {
       if (!ad && d.upsell) { const p = paiPorId.get('i:' + d.upsell.parentIdentifier) || paiPorId.get('c:' + d.upsell.parentCorrelationID); if (p) ad = adDe(p.utms); }
       const a = ad && ads.get(ad);
       if (a) { a.vendas++; a.receita += v; if (d.utmsFonte === 'cookie_oppus') { recuperadas.vendas++; recuperadas.receita += v; } } else { semAnuncio.vendas++; semAnuncio.receita += v; }
+      // CAC: 1ª compra de cada @ no período (refil fora), com ou sem anúncio.
+      try {
+        if (__tsProduto(d).cat !== 'refil') {
+          const g = String(d.instagramUsername || (d.additionalInfoMapPaid && d.additionalInfoMapPaid.instagram_username) || (d.additionalInfoMap && d.additionalInfoMap.instagram_username) || d.instauser || '').replace(/^@+/, '').trim().toLowerCase();
+          if (g && !__cacPrim.has(g)) __cacPrim.set(g, { t: quando(d), ad: !!a });
+          else if (g && a && __cacPrim.get(g).t === quando(d)) __cacPrim.get(g).ad = true;
+        }
+      } catch (_) {}
     }
+    // Quem já tinha pedido pago ANTES do período não é cliente novo.
+    try {
+      const users = [...__cacPrim.keys()];
+      const jaComprou = new Set();
+      for (let i = 0; i < users.length; i += 2000) {
+        const lote = users.slice(i, i + 2000);
+        const antes = await col.find({ status: 'pago', $and: [{ $or: [{ createdAt: { $lt: new Date(iniMs) } }, { createdAt: { $lt: new Date(iniMs).toISOString() } }] }, { $or: [{ instagramUsername: { $in: lote.concat(lote.map((x) => '@' + x)) } }, { 'additionalInfoMapPaid.instagram_username': { $in: lote } }] }] }).project({ instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1 }).toArray();
+        for (const o of antes) { const g = String(o.instagramUsername || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || '').replace(/^@+/, '').trim().toLowerCase(); if (g) jaComprou.add(g); }
+      }
+      for (const [g, x] of __cacPrim) { __cacCli.clientes++; if (jaComprou.has(g)) continue; __cacCli.novos++; if (x.ad) __cacCli.novosAnuncio++; }
+    } catch (e) { erros.push('CAC: ' + ((e && e.message) || e)); }
     // TrackCombo: só o que o PRÓPRIO TC atribuiu, sem usar nada do nosso banco (fontes independentes).
     // O anúncio de cada venda vem da UTM do último clique no relatório de Vendas do TC (get_sales_report).
     // tc_atribuicao (raspagem antiga do painel do TC) só cobre venda que veio sem utm_content na API.
@@ -42114,7 +41977,9 @@ async function computeMetaAdsData(q) {
     .filter((a) => a.gasto > 0 || a.vendas > 0 || a.metaCompras > 0 || a.tcVendas > 0 || a.efetivo === 'ACTIVE')
     .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
     .sort((x, y) => y.gasto - x.gasto);
-  const value = { ok: true, range, fx, geradoEm: new Date().toISOString(), ads: linhas, semAnuncio: { vendas: semAnuncio.vendas, receita: r2(semAnuncio.receita) }, banco: { vendas: totVendas, receita: r2(totReceita), recuperadas: { vendas: recuperadas.vendas, receita: r2(recuperadas.receita) } }, tc, erros };
+  const __gastoTot = r2([...ads.values()].reduce((x, a) => x + (Number(a.gasto) || 0), 0));
+  const cac = { gasto: __gastoTot, clientes: __cacCli.clientes, novos: __cacCli.novos, novosAnuncio: __cacCli.novosAnuncio, cacGeral: __cacCli.novos ? r2(__gastoTot / __cacCli.novos) : null, cacAnuncio: __cacCli.novosAnuncio ? r2(__gastoTot / __cacCli.novosAnuncio) : null };
+  const value = { ok: true, range, fx, geradoEm: new Date().toISOString(), cac, ads: linhas, semAnuncio: { vendas: semAnuncio.vendas, receita: r2(semAnuncio.receita) }, banco: { vendas: totVendas, receita: r2(totReceita), recuperadas: { vendas: recuperadas.vendas, receita: r2(recuperadas.receita) } }, tc, erros };
   if (!erros.length) __metaAdsCache.set(key, { value, exp: Date.now() + 2 * 60 * 1000 });
   return value;
 }
@@ -42367,7 +42232,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
       meta = {
         gasto: r2(gasto), compras, valor: r2(valor), cac: div(gasto, compras), roas: div(valor, gasto),
         vendas: pagosP.length,
-        clientesNovos: novos, custoClienteNovo: div(gasto, novos),
+        clientesNovos: novos, custoClienteNovo: div(gasto, novos), custoClienteNovoAnuncio: div(gasto, novosAnuncio),
         vendasAnuncio, novosAnuncio, clientes: vistos.size,
         anuncios: [...porAd.values()].filter((a) => a.gasto > 0 || a.compras > 0 || a.vendas > 0)
           .map((a) => ({ ...a, gasto: r2(a.gasto), valor: r2(a.valor), receita: r2(a.receita), cac: div(a.gasto, a.compras), roas: div(a.valor, a.gasto), custoClienteNovo: div(a.gasto, a.novos) }))
@@ -52188,7 +52053,6 @@ const server = app.listen(port, () => {
   try { startEmailBounceLoop(); } catch (_) {} // processa bounces (DSN) → supressão automática
   try { startLtvD2Loop(); } catch (_) {} // LTV D+2: só ENVIA se a config (settings.ltv_d2.enabled) estiver ligada — desligado por padrão
   try { startTopfamaPartialLoop(); } catch (_) {} // Gestão Parcial TopFama: checa status/remains a cada 6h
-  try { startSeguidoresParcialLoop(); } catch (_) {} // Gestão Parcial Seguidores: status a cada 1h + reenvio do faltante (se ligado no painel)
   try { startPanelBalanceLoop(); } catch (_) {} // Saldo dos painéis: alerta no WhatsApp quando baixo (a cada 6h)
   try { require('./lootrushMonitor.js').iniciar({ enviar: sendEvolutionText }); } catch (_) {} // Cartão LootRush x cobrança da ca3: avisa no WhatsApp horas antes da recusa (a cada 15 min)
   try { require('./lootrushCusto.js').iniciar(); } catch (_) {} // Custo médio do dólar das recargas LootRush (gasto da ca3 em reais), 1x por hora
