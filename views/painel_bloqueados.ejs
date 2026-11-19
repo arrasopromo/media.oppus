@@ -29,6 +29,9 @@
     .bl-u a{ color:inherit; text-decoration:none; }
     .bl-u a:hover{ text-decoration:underline; }
     .bl-d{ color:var(--lapis,#8a93a1); font-size:12px; margin-top:2px; font-variant-numeric:tabular-nums; }
+    .bl-t{ font-size:12px; margin-top:3px; color:var(--grafite,#525a67); font-variant-numeric:tabular-nums; }
+    .bl-t.passou{ color:#c0362c; font-weight:600; }
+    .bl-t.nada{ color:var(--lapis,#8a93a1); }
     .bl-x{ border:0; background:none; color:#c0362c; font:inherit; font-size:13px; font-weight:600; cursor:pointer; padding:6px 8px; border-radius:6px; white-space:nowrap; }
     .bl-x:hover{ background:rgba(192,54,44,.08); }
     .bl-vazio{ color:var(--lapis,#8a93a1); font-size:14px; padding:14px 2px; }
@@ -40,7 +43,7 @@
     <div class="bl">
       <div class="bl-top">
         <h1>Usuários Bloqueados</h1>
-        <p>Perfis do Instagram que não podem comprar no site. Quem está na lista é recusado ao informar o @ no checkout.</p>
+        <p>Perfis do Instagram que não podem comprar no site. Quem está na lista é recusado ao informar o @ no site, ao gerar o Pix e no WhatsApp. Abaixo de cada um: a última tentativa depois do bloqueio (em vermelho quando passou).</p>
       </div>
       <div class="bl-bloco">
         <form class="bl-add" id="blForm">
@@ -76,6 +79,14 @@
           var a = document.createElement('a'); a.href = 'https://instagram.com/' + encodeURIComponent(i.username); a.target = '_blank'; a.rel = 'noopener'; a.textContent = '@' + i.username;
           u.appendChild(a); info.appendChild(u);
           var d = document.createElement('div'); d.className = 'bl-d'; d.textContent = i.blockedAt ? ('Bloqueado em ' + data(i.blockedAt)) : ''; info.appendChild(d);
+          var t = document.createElement('div'); var ut = i.ultimaTentativa;
+          var VIA = { site_validacao: 'informou o @ no site', pix: 'tentou gerar o Pix', bot_whatsapp: 'tentou pelo WhatsApp' };
+          if (!ut) { t.className = 'bl-t nada'; t.textContent = 'Nenhuma tentativa depois do bloqueio'; }
+          else if (ut.tipo === 'barrado') { t.className = 'bl-t'; t.textContent = 'Última tentativa: ' + data(ut.at) + ' · ' + (VIA[ut.via] || 'barrado') + (i.attempts > 1 ? ' · ' + i.attempts + ' tentativas barradas' : ''); }
+          else if (ut.tipo === 'pedido') { t.className = 'bl-t passou'; t.textContent = 'Última tentativa: ' + data(ut.at) + ' · passou e criou pedido' + (ut.status === 'pago' ? ' PAGO' : '') + (ut.id ? ' (' + ut.id + ')' : ''); }
+          else { t.className = 'bl-t passou'; t.textContent = 'Última tentativa: ' + data(ut.at) + ' · passou na validação do perfil'; }
+          if (ut && ut.tipo === 'barrado' && i.pedidoDepois) { t.textContent += ' · antes já tinha passado e criado pedido em ' + data(i.pedidoDepois.at); }
+          info.appendChild(t);
           var b = document.createElement('button'); b.type = 'button'; b.className = 'bl-x'; b.textContent = 'Desbloquear';
           b.addEventListener('click', function () { remover(i.username, b); });
           li.appendChild(info); li.appendChild(b); ul.appendChild(li);

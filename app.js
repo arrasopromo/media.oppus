@@ -5473,6 +5473,21 @@ app.get('/api/painel/ia-crm/conversations', requireAdmin, async (req, res) => {
     else if (telsBloqueados.length) pipeline.push({ $match: { phone: { $nin: telsBloqueados } } });
     if (scope === 'new') pipeline.push({ $match: { importedFrom: { $ne: 'datacrazy' } } });
     else if (scope === 'legacy') pipeline.push({ $match: { importedFrom: 'datacrazy' } });
+    // Busca (?q=): procura em TODO o histórico, não só nas 300 conversas mais recentes.
+    // Telefone com ou sem 55 e com ou sem o 9; texto = nome do contato.
+    {
+      const q = String(req.query.q || '').trim();
+      const dig = q.replace(/\D/g, '');
+      if (dig.length >= 4 && dig.length >= q.replace(/[\s()+-]/g, '').length - 1) {
+        let loc = dig.replace(/^55(?=\d{10,11}$)/, '');
+        const vs = [loc];
+        if (loc.length === 11 && loc[2] === '9') vs.push(loc.slice(0, 2) + loc.slice(3));
+        if (loc.length === 10) vs.push(loc.slice(0, 2) + '9' + loc.slice(2));
+        pipeline.push({ $match: { phone: { $regex: (loc.length >= 10 ? '(' + vs.join('|') + ')$' : loc) } } });
+      } else if (q.length >= 3) {
+        pipeline.push({ $match: { name: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } } });
+      }
+    }
     pipeline.push(
       { $sort: { createdAt: -1 } },
       // `humanOuts` = respostas do ATENDENTE (agent:true), não do bot. É o que
@@ -11025,15 +11040,15 @@ function ltvSendDelayMs() {
   return Math.round(min + Math.random() * (max - min));
 }
 
-// ─── Janela de horário do LTV: só envia entre 8h e 21h (BRT / America/Sao_Paulo) ───
+// ─── Janela de horário do LTV: só envia entre 7h e 22h (BRT / America/Sao_Paulo) ───
 // Brasil sem horário de verão desde 2019 → BRT fixo em UTC-3.
 // Configurável: LTV_SEND_START_HOUR (default 8) / LTV_SEND_END_HOUR (default 21).
 function ltvSendWindow() {
   let start = parseInt(process.env.LTV_SEND_START_HOUR, 10);
   let end = parseInt(process.env.LTV_SEND_END_HOUR, 10);
-  if (!Number.isFinite(start) || start < 0 || start > 23) start = 8;
-  if (!Number.isFinite(end) || end < 1 || end > 24) end = 21;
-  if (end <= start) { start = 8; end = 21; } // guarda contra config inválida
+  if (!Number.isFinite(start) || start < 0 || start > 23) start = 7;
+  if (!Number.isFinite(end) || end < 1 || end > 24) end = 22;
+  if (end <= start) { start = 7; end = 22; } // guarda contra config inválida
   return { start, end };
 }
 function ltvCurrentBrtHour() {
@@ -11049,7 +11064,7 @@ function isWithinLtvSendWindow() {
 
 // ─── Disparo LTV (recompra) via template `ltv` (params NOMEADOS nome/cupom + botão slug) ───
 const sendLtvTemplate = async (cfg, to, data) => {
-  // REGRA DE HORÁRIO: LTV só pode sair entre 8h e 21h (BRT). Fora da janela,
+  // REGRA DE HORÁRIO: LTV só pode sair entre 7h e 22h (BRT). Fora da janela,
   // não envia — devolve um "erro" que os chamadores tratam como não-enviado
   // (e reenviam no próximo ciclo, já dentro do horário). Gate único aqui cobre
   // TODOS os caminhos de envio (disparo manual e loop D+2).
@@ -11252,7 +11267,7 @@ app.post('/api/painel/ltv/dispatch', requireAdmin, async (req, res) => {
     const b = (req.body && typeof req.body === 'object') ? req.body : {};
     const authorize = (b.authorize === true || String(b.authorize || '') === '1');
 
-    // REGRA DE HORÁRIO: só dispara entre 8h e 21h (BRT). Fora disso, nem começa
+    // REGRA DE HORÁRIO: só dispara entre 7h e 22h (BRT). Fora disso, nem começa
     // (evita rodar a fila toda batendo em "fora da janela"). Prévia (authorize
     // != true) continua liberada a qualquer hora — não envia nada.
     if (authorize && !isWithinLtvSendWindow()) {
@@ -11569,8 +11584,18 @@ app.get('/api/painel/thankyou-stats', requireAdmin, async (req, res) => {
     const { start, endExclusive } = resolvePanelPeriodRange(req.query.period, req.query.startDate, req.query.endDate);
     const col = await getCollection('checkout_orders');
     const paidOr = [{ status: { $in: ['pago', 'paid'] } }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
-    const baseAnd = [{ $or: paidOr }];
-    if (start && endExclusive) baseAnd.push({ createdAt: { $gte: start.toISOString(), $lt: endExclusive.toISOString() } });
+    // Base = só pedidos que PODEM cair na tela de obrigado: do SITE (o bot paga no WhatsApp), sem upsell
+    // (pago dentro do /pedido) e sem extensão de refil, criados depois que a medição entrou no ar
+    // (1º thankYouViewedAt). Antes, a base era todo pago desde sempre e o % saía ~20% em vez de ~60%.
+    const __tyIni = await (async () => { try { const d = await col.find({ thankYouViewedAt: { $exists: true, $nin: [null, ''] } }).sort({ thankYouViewedAt: 1 }).limit(1).project({ thankYouViewedAt: 1 }).toArray(); return d[0] ? new Date(d[0].thankYouViewedAt) : null; } catch (_) { return null; } })();
+    const ini = (__tyIni && (!start || __tyIni > start)) ? __tyIni : start;
+    const baseAnd = [{ $or: paidOr }, { 'upsell.isUpsell': { $ne: true } }, { tipo: { $not: /refil/i } }, { correlationID: { $not: /^WppAgent_/ } }, { 'additionalInfoMap.source': { $ne: 'wpp_agent' } }, { additionalInfo: { $not: { $elemMatch: { key: 'source', value: 'wpp_agent' } } } }];
+    if (ini || endExclusive) {
+      const rS = {}, rD = {};
+      if (ini) { rS.$gte = ini.toISOString(); rD.$gte = ini; }
+      if (endExclusive) { rS.$lt = endExclusive.toISOString(); rD.$lt = endExclusive; }
+      baseAnd.push({ $or: [{ createdAt: rS }, { createdAt: rD }] });
+    }
     const paidOrders = await col.countDocuments({ $and: baseAnd });
     const viewedOrders = await col.countDocuments({ $and: baseAnd.concat([{ thankYouViewedAt: { $exists: true, $nin: [null, ''] } }]) });
     const pct = paidOrders > 0 ? Math.round((viewedOrders / paidOrders) * 1000) / 10 : 0;
@@ -11901,7 +11926,7 @@ async function computeLtvStats(opts = {}) {
       // Sem isto o card mostrava sempre R$ 0,00.
       let ltvCostSettings = Object.assign({}, DEFAULT_COST_SETTINGS);
       try { const sc = await getCollection('settings'); const scd = await sc.findOne({ _id: 'cost_settings' }); if (scd && scd.values && typeof scd.values === 'object') ltvCostSettings = Object.assign({}, DEFAULT_COST_SETTINGS, scd.values); } catch (_) {}
-      const ords = await col.find({ $or: orQ }, { projection: { valueCents: 1, 'woovi.paymentMethods.pix.value': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1, identifier: 1, costs: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, 'paghiper.paidAt': 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1,
+      const ords = await col.find({ $or: orQ }, { projection: { valueCents: 1, 'woovi.paymentMethods.pix.value': 1, 'woovi.value': 1, 'efi.total': 1, 'pagarme.amount': 1, identifier: 1, costs: 1, paidAt: 1, createdAt: 1, 'woovi.paidAt': 1, paghiper: 1, tipo: 1, tipoServico: 1, quantidade: 1, qtd: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1,
         'fama24h.orderId': 1, 'fama24h.statusPayload': 1, 'fama24h_views.orderId': 1, 'fama24h_views.statusPayload': 1, 'fama24h_likes.orderId': 1, 'fama24h_likes.statusPayload': 1,
         'fornecedor_social.orderId': 1, 'fornecedor_social.statusPayload': 1, 'fornecedor_social_likes.orderId': 1, 'fornecedor_social_likes.statusPayload': 1,
         'topfama.orderId': 1, 'topfama.statusPayload': 1, 'worldsmm_comments.orderId': 1, 'worldsmm_comments.statusPayload': 1,
@@ -11928,7 +11953,9 @@ async function computeLtvStats(opts = {}) {
       for (const o of ords) {
         if (hasRange && !inRange(orderDateMs(o))) continue;
         let cid = couponByMongo.get(String(o._id)); if (!cid && o.identifier) cid = couponByIdent.get(String(o.identifier)); if (!cid) continue;
-        const cents = getPaidCents(o), costR = await getCostReais(o);
+        // + taxa do Pix do pedido (PagHiper pela data do pagamento; antigo/Woovi = 0,85) — igual à tela de Vendas.
+        const __taxa = (function () { try { const pd = o.paidAt || (o.paghiper && o.paghiper.paidAt) || (o.woovi && o.woovi.paidAt) || o.createdAt; return o.paghiper ? paghiperFeeFor(pd) : 0.85; } catch (_) { return 0.85; } })();
+        const cents = getPaidCents(o), costR = (await getCostReais(o)) + __taxa;
         movedByCid.set(cid, (movedByCid.get(cid) || 0) + cents);
         costByCid.set(cid, (costByCid.get(cid) || 0) + costR);
         faturado += cents / 100; custo += costR;
@@ -12055,32 +12082,127 @@ app.post('/api/painel/ltv/blacklist/lookup', requireAdmin, async (req, res) => {
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
 });
 
+async function ltvBlacklistAddCore({ phone, username, name, addedBy, origem }) {
+  phone = String(phone || '').trim();
+  if (!phone) return { ok: false, status: 400, error: 'missing_phone' };
+  const __vs = ltvPhoneKeyVariants(phone);
+  // chave canônica = a de 11 dígitos (com o 9), quando existir
+  const phoneKey = __vs.find((v) => v.length === 11) || __vs[0] || '';
+  const phoneE164 = normalizePhoneBR(phoneKey.length === 11 ? ('55' + phoneKey) : phone);
+  if (!phoneKey) return { ok: false, status: 400, error: 'invalid_phone' };
+  // já bloqueado na outra forma (sem/com 9)? não duplica
+  try { const __c0 = await getCollection('ltv_blacklist'); const __ja = await __c0.findOne({ phoneKey: { $in: __vs } }); if (__ja) return { ok: true, phoneKey: __ja.phoneKey, phoneE164: __ja.phoneE164 || __ja.phoneKey, username: __ja.username || '', name: __ja.name || '', already: true }; } catch (_) {}
+  // @ enviado pelo painel (validado no lookup); se vier vazio, tenta buscar de novo.
+  username = String(username || '').replace(/^@+/, '').trim();
+  name = String(name || '').trim();
+  if (!username) { try { const info = await ltvLookupByPhone(phone); username = info.username || ''; name = name || info.name || ''; } catch (_) {} }
+  addedBy = String(addedBy || 'admin');
+  const c = await getCollection('ltv_blacklist');
+  try { await c.createIndex({ phoneKey: 1 }, { unique: true }); } catch (_) {}
+  await c.updateOne(
+    { phoneKey },
+    { $set: Object.assign({ phoneKey, phoneE164: phoneE164 || phoneKey, username, name, updatedAt: new Date(), addedBy }, origem ? { origem } : {}), $setOnInsert: { addedAt: new Date() } },
+    { upsert: true }
+  );
+  for (const v of ltvPhoneKeyVariants(phoneKey)) __ltvBlacklistCache.add(v);
+  try { console.log('⛔ [ltv-blacklist] add', phoneKey, '@' + (username || '?'), 'by', addedBy, origem || ''); } catch (_) {}
+  return { ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, username, name };
+}
 app.post('/api/painel/ltv/blacklist/add', requireAdmin, async (req, res) => {
   try {
-    const phone = String((req.body && req.body.phone) || '').trim();
-    if (!phone) return res.status(400).json({ ok: false, error: 'missing_phone' });
-    const __vs = ltvPhoneKeyVariants(phone);
-    // chave canônica = a de 11 dígitos (com o 9), quando existir
-    const phoneKey = __vs.find((v) => v.length === 11) || __vs[0] || '';
-    const phoneE164 = normalizePhoneBR(phoneKey.length === 11 ? ('55' + phoneKey) : phone);
-    if (!phoneKey) return res.status(400).json({ ok: false, error: 'invalid_phone' });
-    // já bloqueado na outra forma (sem/com 9)? não duplica
-    try { const __c0 = await getCollection('ltv_blacklist'); const __ja = await __c0.findOne({ phoneKey: { $in: __vs } }); if (__ja) return res.json({ ok: true, phoneKey: __ja.phoneKey, phoneE164: __ja.phoneE164 || __ja.phoneKey, username: __ja.username || '', name: __ja.name || '', already: true }); } catch (_) {}
-    // @ enviado pelo painel (validado no lookup); se vier vazio, tenta buscar de novo.
-    let username = String((req.body && req.body.username) || '').replace(/^@+/, '').trim();
-    let name = String((req.body && req.body.name) || '').trim();
-    if (!username) { try { const info = await ltvLookupByPhone(phone); username = info.username || ''; name = name || info.name || ''; } catch (_) {} }
     const addedBy = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
-    const c = await getCollection('ltv_blacklist');
-    try { await c.createIndex({ phoneKey: 1 }, { unique: true }); } catch (_) {}
-    await c.updateOne(
-      { phoneKey },
-      { $set: { phoneKey, phoneE164: phoneE164 || phoneKey, username, name, updatedAt: new Date(), addedBy }, $setOnInsert: { addedAt: new Date() } },
-      { upsert: true }
-    );
-    for (const v of ltvPhoneKeyVariants(phoneKey)) __ltvBlacklistCache.add(v);
-    try { console.log('⛔ [ltv-blacklist] add', phoneKey, '@' + (username || '?'), 'by', addedBy); } catch (_) {}
-    return res.json({ ok: true, phoneKey, phoneE164: phoneE164 || phoneKey, username, name });
+    const r = await ltvBlacklistAddCore({ phone: req.body && req.body.phone, username: req.body && req.body.username, name: req.body && req.body.name, addedBy });
+    if (!r.ok) return res.status(r.status || 400).json({ ok: false, error: r.error });
+    return res.json(r);
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+
+// ── Blacklist do LTV: SUGESTÕES a partir de reclamações no CRM IA WhatsApp ──────────
+// Varre as mensagens RECEBIDAS no número da IA (wa_ia_messages, últimos 30 dias) atrás de
+// termos de insatisfação forte (golpe, dinheiro de volta, procon, vergonha, caiu tudo…).
+// Dúvida de entrega ("não recebi", "não chegou", "cadê") NÃO entra — é suporte, não motivo
+// de bloqueio. Nada é bloqueado sozinho: vira um pedido de aprovação (✓ / ✗) na tela do LTV.
+// Recusado só volta se o cliente reclamar de novo DEPOIS da recusa.
+const LTV_RECLAMACAO_RE = /(golpe|golpista|fraude|engana[çc][ãa]o|enganad[oa]|me enganaram|procon|reclame ?aqui|denunci|estorn|reembols|dinheiro de volta|devolv\w* (o )?meu dinheiro|quero (o )?meu dinheiro|pol[íi]cia|advogad|processar|\blixo\b|p[ée]ssim|palha[çc]ada|vergonha|rid[íi]cul|absurdo|\broub|nunca mais compro|n[ãa]o compro mais|insatisfeit|caiu tudo|sumiram)/i;
+let __ltvSugScanAt = 0, __ltvSugScanning = null;
+// Pedidos PAGOS do telefone (com/sem 55, com/sem o 9, com qualquer formatação gravada). Só quem comprou
+// de verdade entra nos pedidos de bloqueio — quem só gerou Pix ou só conversou com o bot fica de fora.
+async function ltvComprasPagasDoTelefone(phone) {
+  const loc = String(phone || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+  if (loc.length < 10) return { n: 0, total: 0 };
+  const vs = [loc];
+  if (loc.length === 11 && loc[2] === '9') vs.push(loc.slice(0, 2) + loc.slice(3));
+  if (loc.length === 10) vs.push(loc.slice(0, 2) + '9' + loc.slice(2));
+  const re = new RegExp('(' + vs.map((v) => v.split('').join('\D*')).join('|') + ')\D*$');
+  const campos = ['customer.phone', 'customer.phone_number', 'customer.telefone', 'customer.whatsapp', 'additionalInfoMap.phone', 'additionalInfoMap.telefone', 'additionalInfoMap.whatsapp', 'additionalInfoMapPaid.phone', 'additionalInfoMapPaid.telefone', 'additionalInfoMapPaid.whatsapp'];
+  const col = await getCollection('checkout_orders');
+  const docs = await col.find({ status: 'pago', $or: campos.map((c) => ({ [c]: re })) }).project({ valueCents: 1 }).limit(500).toArray();
+  return { n: docs.length, total: Math.round(docs.reduce((a, d) => a + (Number(d.valueCents) || 0), 0)) / 100 };
+}
+async function ltvBlSugestoesScan(force) {
+  if (__ltvSugScanning) return __ltvSugScanning;
+  if (!force && Date.now() - __ltvSugScanAt < 5 * 60 * 1000) return;
+  __ltvSugScanning = (async () => {
+    try {
+      const msgs = await (await getCollection('wa_ia_messages')).find({ direction: 'in', createdAt: { $gte: new Date(Date.now() - 30 * 864e5) } }).project({ phone: 1, name: 1, text: 1, createdAt: 1 }).toArray();
+      const por = new Map();
+      for (const m of msgs) {
+        const t = String(m.text || ''); const hit = t.match(LTV_RECLAMACAO_RE); if (!hit) continue;
+        const k = String(m.phone || '').replace(/\D/g, ''); if (!k) continue;
+        const ms = new Date(m.createdAt).getTime();
+        const x = por.get(k) || { phone: k, nome: '', trechos: [], ultima: 0 };
+        x.trechos.push({ text: t.slice(0, 300), termo: hit[0], at: new Date(ms) });
+        if (ms > x.ultima) { x.ultima = ms; if (m.name) x.nome = String(m.name); }
+        por.set(k, x);
+      }
+      const col = await getCollection('ltv_bl_sugestoes');
+      for (const x of por.values()) {
+        if (await isLtvBlacklisted(x.phone)) continue;
+        const doc = await col.findOne({ _id: x.phone });
+        const ultimaAt = new Date(x.ultima);
+        if (doc && doc.status === 'aprovado') continue;
+        if (doc && doc.status === 'recusado' && !(doc.decididoAt && ultimaAt > new Date(doc.decididoAt))) continue;
+        // sem_compra já conferido há menos de 24h e sem reclamação nova: nada a fazer.
+        let username = (doc && doc.username) || '', nomeCadastro = (doc && doc.nomeCadastro) || '';
+        if (!doc) { try { const info = await ltvLookupByPhone(x.phone); username = info.username || ''; nomeCadastro = info.name || ''; } catch (_) {} }
+        // Só quem COMPROU (pedido pago): recontado a cada 24h (quem comprar depois passa a aparecer).
+        let compras = doc && doc.compras, comprasTotal = doc && doc.comprasTotal;
+        const comprasVelhas = !(doc && doc.comprasCheckedAt && Date.now() - new Date(doc.comprasCheckedAt).getTime() < 864e5);
+        if (compras == null || comprasVelhas) { try { const cp = await ltvComprasPagasDoTelefone(x.phone); compras = cp.n; comprasTotal = cp.total; } catch (_) { compras = (compras == null ? 0 : compras); } }
+        const trechos = x.trechos.sort((a, b) => b.at - a.at).slice(0, 5);
+        await col.updateOne({ _id: x.phone }, { $set: { phone: x.phone, nomeWhats: x.nome, username, nomeCadastro, trechos, totalTrechos: x.trechos.length, ultimaReclamacaoAt: ultimaAt, compras: Number(compras) || 0, comprasTotal: Number(comprasTotal) || 0, comprasCheckedAt: comprasVelhas ? new Date() : doc.comprasCheckedAt, status: (Number(compras) || 0) > 0 ? 'pendente' : 'sem_compra', atualizadoAt: new Date() }, $setOnInsert: { criadoAt: new Date() } }, { upsert: true });
+      }
+      __ltvSugScanAt = Date.now();
+    } catch (e) { try { console.error('[ltv-bl-sugestoes] scan', e && e.message); } catch (_) {} }
+    finally { __ltvSugScanning = null; }
+  })();
+  return __ltvSugScanning;
+}
+app.get('/api/painel/ltv/blacklist/sugestoes', requireAdmin, async (req, res) => {
+  try {
+    await ltvBlSugestoesScan(req.query.fresh === '1');
+    const docs = await (await getCollection('ltv_bl_sugestoes')).find({ status: 'pendente' }).sort({ ultimaReclamacaoAt: -1 }).limit(300).toArray();
+    const items = [];
+    for (const d of docs) { if (!(Number(d.compras) > 0)) continue; if (await isLtvBlacklisted(d.phone)) continue; items.push({ phone: d.phone, nomeWhats: d.nomeWhats || '', username: d.username || '', nomeCadastro: d.nomeCadastro || '', compras: Number(d.compras) || 0, comprasTotal: Number(d.comprasTotal) || 0, trechos: d.trechos || [], totalTrechos: d.totalTrechos || 0, ultimaReclamacaoAt: d.ultimaReclamacaoAt }); }
+    return res.json({ ok: true, count: items.length, items });
+  } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
+});
+app.post('/api/painel/ltv/blacklist/sugestoes/decidir', requireAdmin, async (req, res) => {
+  try {
+    const phone = String((req.body && req.body.phone) || '').replace(/\D/g, '');
+    const acao = String((req.body && req.body.acao) || '');
+    if (!phone || !['aprovar', 'recusar'].includes(acao)) return res.status(400).json({ ok: false, error: 'parametros_invalidos' });
+    const col = await getCollection('ltv_bl_sugestoes');
+    const d = await col.findOne({ _id: phone });
+    if (!d) return res.status(404).json({ ok: false, error: 'sugestao_nao_encontrada' });
+    const por = (req.session && req.session.adminUser && req.session.adminUser.username) ? String(req.session.adminUser.username) : 'admin';
+    let r = null;
+    if (acao === 'aprovar') {
+      r = await ltvBlacklistAddCore({ phone, username: d.username, name: d.nomeCadastro || d.nomeWhats, addedBy: por, origem: 'reclamacao_crm_ia' });
+      if (!r.ok) return res.status(r.status || 400).json({ ok: false, error: r.error });
+    }
+    await col.updateOne({ _id: phone }, { $set: { status: acao === 'aprovar' ? 'aprovado' : 'recusado', decididoAt: new Date(), decididoPor: por } });
+    return res.json({ ok: true, acao, blacklist: r });
   } catch (e) { return res.status(500).json({ ok: false, error: 'internal_error', message: String(e && e.message || e) }); }
 });
 
@@ -12171,7 +12293,7 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
   const upperMs = now - days * 86400000;            // paidAt <= now - Ddias (já passou de D+dias)
   const lowerMs = now - (days + 2) * 86400000;      // janela: até 2 dias além (evita backfill antigo)
   const paidOr = [{ status: 'pago' }, { 'woovi.status': 'pago' }, { paidAt: { $exists: true, $nin: [null, ''] } }, { 'woovi.paidAt': { $exists: true, $nin: [null, ''] } }, { 'paghiper.paidAt': { $exists: true, $nin: [null, ''] } }];
-  const projection = { customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, tipo: 1, tipoServico: 1, instagramUsername: 1, instauser: 1, identifier: 1, correlationID: 1, 'woovi.identifier': 1, 'woovi.paidAt': 1, 'paghiper.transactionId': 1, 'paghiper.paidAt': 1, 'expay.transactionId': 1, paidAt: 1, createdAt: 1, ltvD2SentAt: 1, 'fama24h.orderId': 1, 'fornecedor_social.orderId': 1, 'topfama.orderId': 1, 'fama24h_multi.orders': 1, 'fornecedor_social_multi.orders': 1 };
+  const projection = { customer: 1, additionalInfoMapPaid: 1, additionalInfoPaid: 1, additionalInfoMap: 1, additionalInfo: 1, tipo: 1, tipoServico: 1, instagramUsername: 1, instauser: 1, identifier: 1, correlationID: 1, 'woovi.identifier': 1, 'woovi.paidAt': 1, 'paghiper.transactionId': 1, 'paghiper.paidAt': 1, 'expay.transactionId': 1, paidAt: 1, createdAt: 1, ltvD2SentAt: 1, 'fama24h.orderId': 1, 'fama24h.provider': 1, 'fama24h.status': 1, 'fornecedor_social.orderId': 1, 'fornecedor_social.provider': 1, 'fornecedor_social.status': 1, 'topfama.orderId': 1, 'topfama.provider': 1, 'fama24h_multi.orders': 1, 'fama24h_multi.provider': 1, 'fornecedor_social_multi.orders': 1, provider: 1, categoria: 1 };
   const orders = await col.find({ $or: paidOr }, { projection }).sort({ paidAt: -1, 'woovi.paidAt': -1, createdAt: -1, _id: -1 }).limit(8000).toArray();
   const getPaidMs = (o) => { let best = 0; for (const x of [o.paidAt, o.woovi && o.woovi.paidAt, o.paghiper && o.paghiper.paidAt, o.createdAt]) { const t = x ? new Date(String(x)).getTime() : 0; if (Number.isFinite(t) && t > best) best = t; } return best; };
   // Tipos de serviço habilitados para o LTV automático (config do admin).
@@ -12179,7 +12301,8 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
   const wabaCfg = await getWabaConfig();
   const willSend = !dryRun && wabaCfg.configured;
   if (willSend) { try { await ensureLtvCouponPool(); } catch (_) {} }
-  const stats = { scanned: orders.length, eligible: 0, sent: 0, failed: 0, skip_window: 0, skip_already: 0, skip_no_phone: 0, skip_no_ig: 0, skip_optout: 0, skip_blacklist: 0, skip_dup: 0, skip_not_completed: 0, skip_cooldown: 0 };
+  const stats = { scanned: orders.length, eligible: 0, sent: 0, failed: 0, skip_window: 0, skip_already: 0, skip_no_phone: 0, skip_no_ig: 0, skip_optout: 0, skip_blacklist: 0, skip_dup: 0, skip_not_completed: 0, skip_cooldown: 0, notCompletedSample: [] };
+  let __d2ProvMap = {}; try { __d2ProvMap = (await getServiceTypeProvidersCached()) || {}; } catch (_) {}
   // Mapa telefone → pedido MAIS RECENTE do cliente (orders já vem ordenado por paidAt DESC).
   // A mensagem de LTV referencia o ÚLTIMO pedido, mesmo que o D+2 tenha disparado por um anterior.
   const latestByPhone = new Map();
@@ -12239,11 +12362,14 @@ async function runLtvD2Sweep({ dryRun = true, capOverride = null } = {}) {
     // (completed) no fornecedor. Se ainda está processando/não despachado, PULA — volta a
     // ser elegível no próximo ciclo, quando concluir.
     {
-      const provs = fqCollectProviderOrders(refOrder);
-      const main = provs[0] || null; // pedido principal (do último pedido) no fornecedor
+      // Pedido principal no fornecedor REAL (o carimbado no pedido; sem carimbo, o do Gerenciamento de
+      // Tipos) — mesma regra da coluna Status de Vendas. Antes deduzia pelo tamanho do orderId e mandava
+      // WorldOfSMM/JAP (IDs > 1 milhão) para a Fama24h, que não existe mais: tudo voltava "não concluído".
+      const main = mainProviderSlotOf(refOrder, __d2ProvMap);
+      const mainOid = main ? String((main.subs && main.subs.length) ? (main.subs.find((x) => x.orderId) || {}).orderId || '' : (main.orderId || '')).trim() : '';
       let mainStatus = '';
-      if (main && main.orderId) { try { mainStatus = await fqFetchProviderStatus(main.provider, main.orderId); } catch (_) { mainStatus = ''; } }
-      if (mainStatus !== 'completed') { stats.skip_not_completed++; continue; }
+      if (main && mainOid) { try { mainStatus = await fqFetchProviderStatus(main.provider, mainOid); } catch (_) { mainStatus = ''; } }
+      if (mainStatus !== 'completed') { stats.skip_not_completed++; if (stats.notCompletedSample.length < 8) stats.notCompletedSample.push({ provider: main ? main.provider : '', orderId: mainOid, status: mainStatus || 'sem_status' }); continue; }
     }
     seenPhones.add(phoneE164);
     stats.eligible++;
@@ -17269,6 +17395,10 @@ app.post('/api/paghiper/charge', async (req, res) => {
         if (!isRefilExtensao && isBaseServiceGuard && (!String(tipoVal || '').trim() || qtdVal <= 0)) {
             return res.status(400).json({ error: 'invalid_quantity', message: 'Selecione um pacote válido antes de pagar (quantidade do serviço ausente).' });
         }
+        // Usuário bloqueado não gera Pix, venha de onde vier (site, bot, link de LTV).
+        if (addInfoMap['instagram_username'] && await blacklistBarra(addInfoMap['instagram_username'], 'pix', req)) {
+            return res.status(403).json({ error: 'blocked_user', message: 'Este perfil não pode ser atendido.' });
+        }
         // Limite anti-abuso: máx. de seguidores BRASILEIROS por perfil (acumulado).
         {
             const _brLim = await checkBrRealFollowersLimit(addInfoMap['instagram_username'] || addInfoMap['perfil'], catValGuard, tipoVal, qtdVal, addInfoMap['pacote']);
@@ -21878,7 +22008,7 @@ async function processOrderFulfillment(record, col, req) {
                             const createdCount = orders.filter(o => o && o.orderId).length;
                             const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
                             const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
-                            await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                            await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, provider: mainProvider, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
                             try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
                         }
                     }
@@ -23573,19 +23703,9 @@ app.post("/api/check-instagram-profile", async (req, res) => {
         });
     }
 
-    // Verificar Blacklist
-    try {
-        const blacklistCol = await getCollection('blacklist');
-        const blocked = await blacklistCol.findOne({ username: String(username).trim().toLowerCase() });
-        if (blocked) {
-            return res.status(403).json({
-                success: false,
-                error: "blocked_user",
-                message: "Este usuário está bloqueado no sistema."
-            });
-        }
-    } catch (e) {
-        console.error('Erro ao verificar blacklist:', e);
+    // Verificar Blacklist (@ normalizado: "@user", link do perfil e maiúsculas caem no mesmo bloqueio)
+    if (await blacklistBarra(username, 'site_validacao', req)) {
+        return res.status(403).json({ success: false, error: "blocked_user", message: "Este usuário está bloqueado no sistema." });
     }
 
     try {
@@ -23697,6 +23817,7 @@ app.post('/api/internal/ia-check-profile', async (req, res) => {
     }
     const raw = String((req.body && req.body.username) || '').trim();
     if (!raw) return res.status(400).json({ success: false, error: 'missing_username' });
+    if (await blacklistBarra(raw, 'bot_whatsapp', req)) return res.json({ success: false, error: 'blocked_user', message: 'Este perfil não pode ser atendido.' });
     const uname = raw.replace(/^@+/, '').replace(/\/+$/, '').split('/').pop().trim();
     if (!uname) return res.status(400).json({ success: false, error: 'missing_username' });
     // 1) RocketAPI direto (rápido; cobre pessoais, criador e business).
@@ -23719,12 +23840,62 @@ app.post('/api/internal/ia-check-profile', async (req, res) => {
 });
 
 // --- Rotas de Blacklist ---
+// @ normalizado do jeito que o cliente pode digitar: "@User", "instagram.com/user/", "user?igsh=...".
+function __blNorm(u) {
+  let v = String(u || '').trim().toLowerCase();
+  const m = v.match(/instagram\.com\/([^/?#\s]+)/); if (m) v = m[1];
+  return v.replace(/[?#].*$/, '').replace(/\/+$/, '').replace(/^@+/, '').trim();
+}
+// Usuário bloqueado? Se sim, registra a tentativa (data, por onde, quantas) no próprio bloqueio.
+async function blacklistBarra(username, via, req) {
+  try {
+    const u = __blNorm(username);
+    if (!u) return false;
+    const col = await getCollection('blacklist');
+    const doc = await col.findOne({ username: { $in: [u, '@' + u] } });
+    if (!doc) return false;
+    const ip = req ? String(req.realIP || req.ip || '') : '';
+    await col.updateOne({ _id: doc._id }, { $set: { lastAttemptAt: new Date().toISOString(), lastAttemptVia: String(via || ''), lastAttemptIp: ip }, $inc: { attempts: 1 } });
+    try { console.log('⛔ [blacklist] @' + u + ' barrado (' + via + ')'); } catch (_) {}
+    return true;
+  } catch (e) { try { console.error('Erro ao verificar blacklist:', e && e.message); } catch (_) {} return false; }
+}
 
 // Listar usuários bloqueados
 app.get('/api/blacklist', adminOnly, async (req, res) => {
     try {
         const col = await getCollection('blacklist');
         const list = await col.find({}).sort({ blockedAt: -1 }).toArray();
+        // Depois do bloqueio: último pedido criado com o @ e última validação feita pelo próprio cliente
+        // (verifyInstagramProfile*). Conferências de fundo (refil/privacidade) não contam como tentativa.
+        try {
+          const users = list.map((b) => __blNorm(b.username)).filter(Boolean);
+          const co = await getCollection('checkout_orders');
+          const vu = await getCollection('validated_insta_users');
+          const [peds, vals] = await Promise.all([
+            co.aggregate([
+              { $match: { $or: [{ instagramUsername: { $in: users } }, { 'additionalInfoMap.instagram_username': { $in: users } }, { 'additionalInfoMapPaid.instagram_username': { $in: users } }] } },
+              { $project: { u: { $toLower: { $ifNull: ['$instagramUsername', { $ifNull: ['$additionalInfoMapPaid.instagram_username', '$additionalInfoMap.instagram_username'] }] } }, createdAt: 1, status: 1, identifier: 1 } },
+              { $sort: { createdAt: -1 } },
+              { $group: { _id: '$u', pedidos: { $push: { at: '$createdAt', status: '$status', id: '$identifier' } } } },
+            ]).toArray(),
+            vu.find({ username: { $in: users } }).project({ username: 1, checks: 1 }).toArray(),
+          ]);
+          const pedMap = new Map(peds.map((x) => [String(x._id || ''), x.pedidos]));
+          const valMap = new Map(vals.map((x) => [x.username, Array.isArray(x.checks) ? x.checks : []]));
+          for (const b of list) {
+            const u = __blNorm(b.username); const desde = String(b.blockedAt || '');
+            const cand = [];
+            if (b.lastAttemptAt) cand.push({ at: String(b.lastAttemptAt), tipo: 'barrado', via: b.lastAttemptVia || '' });
+            const p = (pedMap.get(u) || []).find((x) => String(x.at || '') > desde);
+            if (p) cand.push({ at: String(p.at), tipo: 'pedido', status: p.status || '', id: p.id || '' });
+            const v = (valMap.get(u) || []).filter((c) => c && /^verifyInstagramProfile/i.test(String(c.source || '')) && String(c.checkedAt || '') > desde).sort((a, c) => String(c.checkedAt).localeCompare(String(a.checkedAt)))[0];
+            if (v) cand.push({ at: String(v.checkedAt), tipo: 'validou' });
+            cand.sort((a, c) => c.at.localeCompare(a.at));
+            b.ultimaTentativa = cand[0] || null;
+            b.pedidoDepois = p ? { at: p.at, status: p.status || '', id: p.id || '' } : null;
+          }
+        } catch (e) { try { console.error('blacklist: tentativas', e && e.message); } catch (_) {} }
         res.json({ success: true, blacklist: list });
     } catch (error) {
         console.error('Erro ao listar blacklist:', error);
@@ -23738,7 +23909,8 @@ app.post('/api/blacklist/add', adminOnly, async (req, res) => {
         const { username } = req.body;
         if (!username) return res.status(400).json({ error: 'missing_username' });
         
-        const normalized = String(username).trim().toLowerCase();
+        const normalized = __blNorm(username);
+        if (!normalized) return res.status(400).json({ error: 'missing_username' });
         const col = await getCollection('blacklist');
         await col.updateOne(
             { username: normalized },
@@ -23763,9 +23935,9 @@ app.post('/api/blacklist/remove', adminOnly, async (req, res) => {
         const { username } = req.body;
         if (!username) return res.status(400).json({ error: 'missing_username' });
         
-        const normalized = String(username).trim().toLowerCase();
+        const normalized = __blNorm(username);
         const col = await getCollection('blacklist');
-        await col.deleteOne({ username: normalized });
+        await col.deleteMany({ username: { $in: [normalized, '@' + normalized, String(username).trim().toLowerCase()] } });
         res.json({ success: true, message: 'Usuário desbloqueado com sucesso.' });
     } catch (error) {
         console.error('Erro ao remover da blacklist:', error);
@@ -24700,7 +24872,7 @@ app.post('/api/openpix/webhook', async (req, res) => {
                       const createdCount = orders.filter(o => o && o.orderId).length;
                       const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
                       const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
-                      await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                      await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, provider: mainProvider, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
                       try { await broadcastPaymentPaid(charge?.identifier, charge?.correlationID); } catch(_) {}
                     }
                   }
@@ -27474,7 +27646,7 @@ app.post('/session/mark-paid', async (req, res) => {
                 const createdCount = orders.filter(o => o && o.orderId).length;
                 const doneCount = orders.filter(o => o && (o.orderId || o.status === 'duplicate')).length;
                 const overall = doneCount === orders.length ? (createdCount > 0 ? 'created' : 'duplicate') : (createdCount > 0 ? 'partial' : 'error');
-                await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
+                await col.updateOne(filter, { $set: { fama24h_multi: { status: overall, provider: mainProvider, requestPayload: { service: serviceId, plan: planFiltered, totalQuantity: qtd, totalQuantitySent: totalSent }, orders, requestedAt: new Date().toISOString() } } });
                 try { await broadcastPaymentPaid(identifier, correlationID); } catch(_) {}
               }
             }
@@ -28790,7 +28962,7 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
         { 'fama24h.orderId': { $exists: true, $nin: [null, ''] } },
         { $or: [ { instauser: re }, { instagramUsername: re }, { 'additionalInfoMapPaid.instagram_username': re }, { 'additionalInfoMap.instagram_username': re } ] }
       ] },
-      { projection: { 'fama24h.orderId': 1, initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1, tipo: 1, tipoServico: 1, paidAt: 1, createdAt: 1, woovi: 1, paghiper: 1 } }
+      { projection: { 'fama24h.orderId': 1, 'fama24h.reorders': 1, initialFollowersCount: 1, 'fama24h.requestPayload.quantity': 1, qtd: 1, tipo: 1, tipoServico: 1, paidAt: 1, createdAt: 1, woovi: 1, paghiper: 1 } }
     ).limit(30).toArray();
     const recency = (o) => { let b = 0; for (const c of [o && o.woovi && o.woovi.paidAt, o && o.paghiper && o.paghiper.paidAt, o && o.paidAt, o && o.createdAt]) { const t = c ? new Date(String(c)).getTime() : 0; if (t > b) b = t; } return b; };
     clientArr.sort((a, b) => recency(b) - recency(a));
@@ -28834,6 +29006,16 @@ async function syncSpecialProfileAnchor(username, opts = {}) {
     if (clientOid && clientMs >= forceMs) anchor = clientOid;
     else if (forceOid) { anchor = forceOid; anchorProv = forceProv; }
     else if (clientOid) anchor = clientOid;
+    // 3) Reposição manual gravada no pedido (fama24h.reorders[], ex.: reposição de queda no JAP 2971):
+    //    se for o evento mais novo, é ela a âncora — o mesmo critério do /api/refil/simple.
+    try {
+      let ro = null, roMs = 0;
+      for (const o of clientArr) for (const r of ((o.fama24h && Array.isArray(o.fama24h.reorders)) ? o.fama24h.reorders : [])) {
+        const t = (r && r.at) ? new Date(String(r.at)).getTime() : 0;
+        if (r && /^[0-9]+$/.test(String(r.orderId || '').trim()) && SMM_PROVIDERS[normalizeSmmProvider(r.provider)] && Number.isFinite(t) && t > roMs) { ro = r; roMs = t; }
+      }
+      if (ro && roMs >= clientMs && roMs >= forceMs) { anchor = String(ro.orderId).trim(); anchorProv = normalizeSmmProvider(ro.provider); }
+    } catch (_) {}
     if (anchor && anchor !== String(doc.orderId || '').trim()) set.orderId = anchor;
     // Fornecedor da âncora (só quando confirmado, ex.: força no SMMHustle). Vazio =
     // reposição segue a heurística de sempre pelo tamanho do orderId.
@@ -41932,7 +42114,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const [pvRows, feRows, orders, vuRows, alRows] = await Promise.all([
     db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1 }).toArray(),
     db.fe.find(rangeDate).project({ visitorId: 1, evento: 1, servico: 1, tipo: 1, qtd: 1, preco: 1, erro: 1, createdAt: 1, utm: 1 }).toArray(),
-    db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1 }).toArray(),
+    db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1, instagramUsername: 1, instauser: 1 }).toArray(),
     // Mesma regra do card do Dashboard: só validação REAL (o cliente digitou o @ no site → source
     // verifyInstagramProfile*) com a checagem dentro do período. As conferências de fundo (refil,
     // reposição, gerenciamento) também atualizam o perfil e inflavam a contagem.
@@ -42059,6 +42241,56 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     { etapa: 'Pagaram (pelo site)', n: fPagos },
   );
 
+  // 4) CAC do Meta (ca 2 + ca3, em R$), no total e por anúncio.
+  //    CAC Meta = gasto ÷ compras atribuídas pelo PIXEL do Meta (a conta do Gerenciador de Anúncios);
+  //    ROAS Meta = valor das compras do pixel ÷ gasto;
+  //    CAC cliente novo = gasto ÷ @ que compraram pela 1ª vez (nenhum pedido pago antes do período), pelo banco.
+  //    Pagos = coorte do Track (Pix gerado no período e já pago). Anúncio da venda = utm_content (ad_id).
+  let meta = null;
+  try {
+    const md = await computeMetaAdsData({ periodo: 'custom', since: s, until: u });
+    if (md && md.ok) {
+      const igDe = (o) => String(o.instagramUsername || (o.additionalInfoMapPaid && o.additionalInfoMapPaid.instagram_username) || (o.additionalInfoMap && o.additionalInfoMap.instagram_username) || o.instauser || '').replace(/^@+/, '').trim().toLowerCase();
+      const adDe = (o) => { const c = String((o.utms && o.utms.content) || '').trim(); return /^\d{10,}$/.test(c) ? c : ''; };
+      const pagosP = orders.filter((o) => pago(o) && __tsProduto(o).cat !== 'refil').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const users = Array.from(new Set(pagosP.map(igDe).filter(Boolean)));
+      const { ObjectId } = require('mongodb');
+      const jaComprou = new Set();
+      if (users.length) {
+        const antes = await db.co.find({ _id: { $lt: ObjectId.createFromTime(Math.floor(ini.getTime() / 1000)) }, status: 'pago', $or: [{ instagramUsername: { $in: users.concat(users.map((x) => '@' + x)) } }, { 'additionalInfoMapPaid.instagram_username': { $in: users.concat(users.map((x) => '@' + x)) } }] })
+          .project({ instagramUsername: 1, 'additionalInfoMapPaid.instagram_username': 1 }).toArray();
+        for (const o of antes) { const g = igDe(o); if (g) jaComprou.add(g); }
+      }
+      const porAd = new Map();
+      for (const a of (md.ads || [])) porAd.set(String(a.id), { id: String(a.id), nome: a.nome || '', conta: a.conta || '', status: a.efetivo || a.status || '', gasto: Number(a.gasto) || 0, compras: Number(a.metaCompras) || 0, valor: Number(a.metaValor) || 0, vendas: 0, receita: 0, novos: 0 });
+      const vistos = new Set(); let novos = 0, novosAnuncio = 0, vendasAnuncio = 0;
+      for (const o of pagosP) {
+        const g = igDe(o); const ad = adDe(o); const a = ad && porAd.get(ad);
+        const v = Number(o.valueCents || o.expectedValueCents || 0) / 100;
+        if (a) { a.vendas++; a.receita += v; vendasAnuncio++; }
+        if (!g || vistos.has(g)) continue;
+        vistos.add(g);
+        if (jaComprou.has(g)) continue;
+        novos++; if (a) { a.novos++; novosAnuncio++; }
+      }
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const div = (a, b) => (b > 0 ? r2(a / b) : null);
+      const gasto = [...porAd.values()].reduce((x, a) => x + a.gasto, 0);
+      const compras = [...porAd.values()].reduce((x, a) => x + a.compras, 0);
+      const valor = [...porAd.values()].reduce((x, a) => x + a.valor, 0);
+      meta = {
+        gasto: r2(gasto), compras, valor: r2(valor), cac: div(gasto, compras), roas: div(valor, gasto),
+        vendas: pagosP.length,
+        clientesNovos: novos, custoClienteNovo: div(gasto, novos),
+        vendasAnuncio, novosAnuncio, clientes: vistos.size,
+        anuncios: [...porAd.values()].filter((a) => a.gasto > 0 || a.compras > 0 || a.vendas > 0)
+          .map((a) => ({ ...a, gasto: r2(a.gasto), valor: r2(a.valor), receita: r2(a.receita), cac: div(a.gasto, a.compras), roas: div(a.valor, a.gasto), custoClienteNovo: div(a.gasto, a.novos) }))
+          .sort((x, y) => y.gasto - x.gasto),
+        erros: md.erros || [],
+      };
+    } else if (md) meta = { erro: md.error || 'meta_indisponivel' };
+  } catch (e) { meta = { erro: String((e && e.message) || e) }; }
+
   const top = (obj, campo, n) => Object.values(obj).sort((a, b) => (b[campo] || 0) - (a[campo] || 0)).slice(0, n);
   const out = {
     ok: true, since: s, until: u, geradoEm: new Date().toISOString(),
@@ -42089,6 +42321,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     origem: Object.entries(origem).map(([k, v]) => ({ origem: k, visitantes: v.size })).sort((a, b) => b.visitantes - a.visitantes),
     cidades: Object.entries(cidades).map(([k, v]) => ({ cidade: k, visitantes: v.size })).sort((a, b) => b.visitantes - a.visitantes).slice(0, 10),
     errosPix: Object.entries(erros).map(([m, n]) => ({ erro: m, n })).sort((a, b) => b.n - a.n).slice(0, 10),
+    meta,
   };
   __trackSiteCache.set(key, { at: Date.now(), data: out });
   if (__trackSiteCache.size > 60) __trackSiteCache.delete(__trackSiteCache.keys().next().value);
@@ -42166,6 +42399,127 @@ app.post('/api/painel/vendas/status-fornecedor', requireAdmin, async (req, res) 
     for (const v of Object.values(ref)) delete v._presumido;
     return res.json({ ok: true, status: ref });
   } catch (e) { return res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+});
+// Botão ⟳ da tela de Vendas (pedido PRINCIPAL da venda). Parcial → novo pedido só com o que falta;
+// Cancelado → reenvia o que falta (ou o pedido inteiro, se o fornecedor não informar). Sempre:
+// status fresco no fornecedor, perfil público conferido na hora, UM add por item (sem repetição),
+// fornecedor carimbado e o orderId antigo guardado em `reenvios`. Vários posts: só os sub-pedidos
+// Parcial/Cancelado são reenviados, cada um no seu orders.{i}.
+async function vendasReenviarPrincipal(col, _id, por) {
+  const o = await col.findOne({ _id });
+  if (!o) return { erro: true, motivo: 'pedido_nao_encontrado' };
+  if (segParcialPedidoMorto(o)) return { erro: true, motivo: 'pedido_' + o.status };
+  let provMap = {}; try { provMap = (await getServiceTypeProvidersCached()) || {}; } catch (_) {}
+  const m = mainProviderSlotOf(o, provMap);
+  if (!m || !m.slot) return { erro: true, motivo: 'sem_envio_principal' };
+  const slot = m.slot; const v = o[slot] || {};
+  // Seguidores no fama24h com fornecedor carimbado: mesmo fluxo da Gestão Parcial (parcialHistorico).
+  if (slot === 'fama24h' && !m.subs && segParcialEhSeguidores(v) && segParcialProvider(v)) return segParcialReenviar(col, _id, { manual: true, por });
+  const provider = m.provider;
+  if (!SMM_PROVIDERS[provider] || !smmProviderKey(provider)) return { erro: true, motivo: 'fornecedor_desconhecido' };
+  const nowIso = new Date().toISOString();
+  const rp = v.requestPayload || {};
+  const itens = [];
+  if (Array.isArray(v.orders) && v.orders.length) {
+    v.orders.forEach((x, i) => { if (x && x.orderId) itens.push({ path: slot + '.orders.' + i, sub: true, orderId: String(x.orderId), quantity: Number(x.quantity) || 0, service: String(x.service || rp.service || ''), link: String(x.link || ''), reenvios: Array.isArray(x.reenvios) ? x.reenvios : [] }); });
+  } else if (v.orderId) {
+    itens.push({ path: slot, sub: false, orderId: String(v.orderId), quantity: Number(rp.quantity) || 0, service: String(rp.service || ''), link: String(rp.link || ''), reenvios: Array.isArray(v.reenvios) ? v.reenvios : [] });
+  }
+  if (!itens.length) return { erro: true, motivo: 'sem_orderid' };
+
+  // 1) Status FRESCO: só age no que o fornecedor confirma como Parcial/Cancelado agora.
+  const st = await segParcialStatusMany(provider, itens.map((x) => x.orderId));
+  const alvo = []; const vistos = [];
+  for (const it of itens) {
+    const sp = st[it.orderId];
+    if (!sp) return { erro: true, motivo: 'o ' + (SMM_PROVIDERS[provider].label || provider) + ' não reconhece o pedido ' + it.orderId + ' (fornecedor não confirmado)' };
+    const remains = Math.max(0, Math.floor(Number(sp.remains ?? sp.Remains) || 0));
+    const cat = topfamaStatusCat(sp.status || sp.Status, remains);
+    vistos.push(String(sp.status || sp.Status));
+    await col.updateOne({ _id }, { $set: { [it.path + '.statusPayload']: sp, [it.path + '.lastStatusAt']: nowIso } });
+    if (cat !== 'partial' && cat !== 'canceled') continue;
+    const qtd = cat === 'canceled' ? (remains > 0 ? remains : it.quantity) : remains;
+    if (!(qtd > 0)) continue;
+    if (!/^[A-Za-z0-9_-]+$/.test(it.service)) return { erro: true, motivo: 'servico_invalido_no_pedido ' + it.orderId };
+    if (!/^https?:\/\//i.test(it.link)) return { erro: true, motivo: 'link_ausente_no_pedido ' + it.orderId };
+    alvo.push(Object.assign({}, it, { qtd, cat, sp, remains }));
+  }
+  if (!alvo.length) return { pulado: true, motivo: 'nada a reenviar (status: ' + Array.from(new Set(vistos)).join(', ') + ')' };
+
+  // 2) Serviço ainda existe e aceita a quantidade.
+  for (const it of alvo) {
+    const c = await segParcialServico(provider, it.service);
+    if (c.erro) return { erro: true, motivo: c.erro };
+    if (c.ausente) return { erro: true, motivo: 'servico ' + it.service + ' não existe mais no ' + provider };
+    const smin = Number(c.servico.min) || 0, smax = Number(c.servico.max) || Infinity;
+    if (it.qtd < smin) return { erro: true, motivo: 'faltam ' + it.qtd + ', abaixo do mínimo ' + smin + ' do serviço ' + it.service };
+    if (it.qtd > smax) return { erro: true, motivo: 'faltam ' + it.qtd + ', acima do máximo ' + smax + ' do serviço ' + it.service };
+  }
+
+  // 3) Perfil público, conferido na hora (perfil privado não recebe envio).
+  const _info = (k) => (o.additionalInfoMapPaid && o.additionalInfoMapPaid[k]) || (o.additionalInfoMap && o.additionalInfoMap[k]) || '';
+  const lk = String(alvo[0].link || '').match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+  const usuario = String(o.instagramUsername || _info('instagram_username') || o.instauser || (lk && !/^(p|reel|reels|tv|stories)$/i.test(lk[1]) ? lk[1] : '') || '').replace(/^@+/, '').trim().toLowerCase();
+  if (!usuario) return { erro: true, motivo: 'perfil_desconhecido' };
+  const pf = await segParcialPerfil(usuario);
+  if (pf.status === 'not_found') return { erro: true, motivo: 'perfil @' + usuario + ' não encontrado' };
+  if (pf.status !== 'ok') return { erro: true, motivo: 'não consegui conferir o perfil @' + usuario + ' agora' };
+  if (pf.isPrivate) { await col.updateOne({ _id }, { $set: { isPrivate: true, 'profilePrivacy.isPrivate': true, 'profilePrivacy.checkedAt': nowIso } }); return { erro: true, motivo: 'perfil @' + usuario + ' está privado' }; }
+  // Seguidores: se o perfil já ganhou o contratado desde a linha de base, reenviar duplicaria.
+  if (!alvo[0].sub && segParcialEhSeguidores(v)) {
+    const inicial = Number(o.initialFollowersCount);
+    const contratado = (alvo[0].reenvios.length && Number(alvo[0].reenvios[0].quantity)) || alvo[0].quantity;
+    if (Number.isFinite(inicial) && inicial >= 0 && Number.isFinite(pf.followers) && contratado > 0 && pf.followers - inicial >= Math.floor(contratado * 0.9)) {
+      return { erro: true, motivo: 'o perfil já ganhou ' + (pf.followers - inicial) + ' de ' + contratado + ' (' + inicial + ' → ' + pf.followers + '), não reenviei' };
+    }
+  }
+
+  // 4) Trava: um reenvio por vez no pedido (botão clicado duas vezes, duas abas…).
+  const travaAntiga = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const trava = await col.updateOne({ _id, $or: [{ [slot + '.reenvioLockAt']: { $exists: false } }, { [slot + '.reenvioLockAt']: null }, { [slot + '.reenvioLockAt']: { $lt: travaAntiga } }] }, { $set: { [slot + '.reenvioLockAt']: nowIso } });
+  if (!trava || trava.modifiedCount !== 1) return { pulado: true, motivo: 'já tem um reenvio em andamento neste pedido' };
+
+  const feitos = []; let falha = null;
+  try {
+    for (const it of alvo) {
+      // UM add, sem repetição: timeout/5xx pode ter criado o pedido no fornecedor.
+      const add = await segParcialPost(provider, { action: 'add', service: it.service, link: it.link, quantity: String(it.qtd) }, 45000);
+      const novo = add.data && (add.data.order || add.data.orderId);
+      if (!novo) {
+        const msg = String(add.erro || (add.data && (add.data.error || add.data.Error)) || 'sem_order').slice(0, 200);
+        falha = add.incerto ? ('resposta incerta no pedido ' + it.orderId + ' — confira no fornecedor antes de reenviar: ' + msg) : ('fornecedor recusou o pedido ' + it.orderId + ': ' + msg);
+        break;
+      }
+      const novoId = String(novo);
+      const hist = it.reenvios.concat([{ orderId: it.orderId, provider, service: it.service, quantity: it.quantity, status: String(it.sp.status || it.sp.Status), remains: it.remains, charge: it.sp.charge ?? null, statusPayload: it.sp, substituidoEm: nowIso, novoOrderId: novoId, quantidadeReenviada: it.qtd, motivo: it.cat === 'canceled' ? 'cancelado' : 'parcial', origem: 'vendas', por: por || null }]);
+      const set = {
+        [it.path + '.orderId']: novoId, [it.path + '.status']: 'created', [it.path + '.provider']: provider, [it.path + '.statusPayload']: null, [it.path + '.lastStatusAt']: null,
+        [it.path + '.requestedAt']: nowIso, [it.path + '.reorderAt']: nowIso, [it.path + '.reenvios']: hist, [it.path + '.error']: null,
+      };
+      if (it.sub) { set[it.path + '.id'] = novoId; set[it.path + '.quantity'] = it.qtd; set[it.path + '.response'] = add.data; }
+      else { set[it.path + '.requestPayload'] = { service: /^[0-9]+$/.test(it.service) ? Number(it.service) : it.service, link: it.link, quantity: it.qtd }; set[it.path + '.response'] = add.data; }
+      if (!m.carimbado) set[slot + '.provider'] = provider;
+      await col.updateOne({ _id }, { $set: set });
+      feitos.push({ de: it.orderId, para: novoId, quantidade: it.qtd, motivo: it.cat === 'canceled' ? 'cancelado' : 'parcial' });
+      try { console.log(`🔁 [vendas-reenvio] ${o.identifier || _id} @${usuario} ${it.cat} ${it.orderId} → ${provider}:${it.service} ${it.qtd} = ${novoId}`); } catch (_) {}
+    }
+  } finally {
+    await col.updateOne({ _id }, { $unset: { [slot + '.reenvioLockAt']: '' } }).catch(() => {});
+  }
+  if (feitos.length) setTimeout(() => { refreshOrderRealCostById(col, _id).catch(() => {}); }, 15000);
+  if (falha && !feitos.length) return { erro: true, motivo: falha };
+  return { ok: true, provider, reenviados: feitos, falha: falha || undefined };
+}
+app.post('/api/painel/vendas/reenviar', requireAdmin, async (req, res) => {
+  try {
+    const id = String((req.body && req.body.id) || '').trim();
+    if (!/^[0-9a-f]{24}$/i.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+    const { ObjectId } = require('mongodb');
+    const col = await getCollection('checkout_orders');
+    const por = (req.session && req.session.adminUser && req.session.adminUser.username) || 'painel_vendas';
+    const r = await vendasReenviarPrincipal(col, new ObjectId(id), por);
+    return res.json(Object.assign({ ok: !!r.ok }, r));
+  } catch (e) { return res.status(500).json({ ok: false, erro: true, motivo: String((e && e.message) || e) }); }
 });
 app.get('/painel/bloqueados', requireAdmin, (req, res) => res.render('painel_bloqueados', { page: 'bloqueados' }));
 app.get('/api/painel/track-site/dados', requireAdmin, async (req, res) => {

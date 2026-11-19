@@ -4761,10 +4761,10 @@
           <% var _tcU = (typeof totalCustomers !== 'undefined' ? Number(totalCustomers || 0) : 0); var _rcU = (typeof ltvCustomers !== 'undefined' ? Number(ltvCustomers || 0) : 0); var _rcPct = _tcU > 0 ? (_rcU / _tcU * 100) : 0; %>
           <div class="summary-sub" style="margin-top:6px;"><%= _tcU %> cliente(s) único(s) · <%= _rcU %> recorrente(s) (<%= _rcPct.toFixed(1).replace('.', ',') %>%)</div>
         </div>
-        <div class="summary-card" title="Clientes que caíram na tela de obrigado logo APÓS pagar (não conta consulta do pedido). Sobre o total de pagos no período.">
+        <div class="summary-card" title="Clientes que caíram na tela de obrigado logo APÓS pagar (não conta consulta do pedido). Sobre os pedidos pagos PELO SITE no período (sem bot, upsell e refil), a partir de quando a medição começou.">
           <div class="summary-label">Viram a tela de obrigado (pós-pagamento)</div>
           <div class="summary-value" id="thankyouPct">—</div>
-          <div class="summary-sub" style="margin-top:6px;"><span id="thankyouViewed">—</span> de <span id="thankyouPaid">—</span> pagos chegaram na tela</div>
+          <div class="summary-sub" style="margin-top:6px;"><span id="thankyouViewed">—</span> de <span id="thankyouPaid">—</span> pagos no site chegaram na tela</div>
         </div>
         <script>
         (function(){
@@ -8201,10 +8201,15 @@
             <button type="button" data-f="ruim"><i class="ruim"></i>Cancelado / erro <span>0</span></button>
             <small id="vdFiltroInfo">consultando fornecedores…</small>
           </div>
+          <div class="vd-lote" id="vdLote">
+            <button type="button" id="vdReMarcados" disabled>⟳ Reenviar marcados (<span id="vdReN">0</span>)</button>
+            <small id="vdLoteInfo">Marque pedidos Parcial ou Cancelado para reenviar de uma vez.</small>
+          </div>
           <div class="dashboard-table-wrap panel-table-scroll">
           <table class="dashboard-table vd-tab" style="width:100%; font-size: 0.92rem;">
             <thead>
               <tr>
+                <th class="vd-ck"><input type="checkbox" id="vdSelAll" title="Marcar todos os Parciais e Cancelados visíveis" aria-label="Marcar todos os Parciais e Cancelados visíveis"></th>
                 <th>Data (SP)</th>
                 <th>Usuário</th>
                 <th>Serviço</th>
@@ -8256,6 +8261,7 @@
                    const userLabel = String(order.instagramUsername ? ('@' + String(order.instagramUsername).replace(/^@+/, '')) : (order.customerLabel || '-'));
                 %>
                 <tr data-oid="<%= String(order._id || '') %>">
+                  <td class="vd-ck"><input type="checkbox" class="vd-sel" disabled title="Só Parcial ou Cancelado podem ser reenviados" aria-label="Marcar para reenviar"></td>
                   <td><%= dateStr %></td>
                   <% const _igU = String(order.instagramUsername || '').replace(/^@+/, '').trim(); %>
                   <td><% if (/^[A-Za-z0-9._]{1,30}$/.test(_igU)) { %><a class="vd-user" href="https://www.instagram.com/<%= _igU %>/" target="_blank" rel="noopener noreferrer" title="Abrir o perfil no Instagram">@<%= _igU %></a><% } else { %><%= userLabel %><% } %></td>
@@ -8299,6 +8305,21 @@
             .vd-badge.parc{ background:#fcf0e8; color:#a4491a; } .vd-badge.parc i, .vd-filtro i.parc{ background:#e0702c; }
             .vd-badge.ruim{ background:#fcedeb; color:#b0322a; } .vd-badge.ruim i, .vd-filtro i.ruim{ background:#dc4a3f; }
             .vd-st small{ display:block; color:#8a93a1; font-size:11px; margin-top:4px; }
+            .vd-tab th.vd-ck, .vd-tab td.vd-ck{ width:28px; padding-right:0; }
+            .vd-tab td.vd-ck + td{ white-space:nowrap; }
+            .vd-ck input{ width:16px; height:16px; cursor:pointer; accent-color:#2a4fc4; }
+            .vd-ck input:disabled{ cursor:not-allowed; opacity:.3; }
+            .vd-lote{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:-4px 0 12px; }
+            .vd-lote button{ display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:0; border-radius:8px; background:#14171c; color:#fff; font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+            .vd-lote button:disabled{ background:#e3e6eb; color:#8a93a1; cursor:not-allowed; }
+            .vd-lote small{ color:#8a93a1; font-size:12px; }
+            .vd-re{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:24px; margin-left:6px; vertical-align:middle; border:1px solid #e3e6eb; border-radius:6px; background:#fff; color:#4b5260; cursor:pointer; padding:0; }
+            .vd-re:hover{ border-color:#2a4fc4; color:#2a4fc4; background:#eef2fd; }
+            .vd-re:disabled{ cursor:wait; opacity:.7; }
+            .vd-re.gira svg{ animation:vdGira .9s linear infinite; }
+            @keyframes vdGira{ to{ transform:rotate(360deg); } }
+            .vd-re-msg{ white-space:normal; max-width:220px; font-size:11px; line-height:1.35; margin-top:4px; }
+            .vd-re-msg.ok{ color:#17643f; } .vd-re-msg.erro{ color:#b0322a; }
             .vd-filtro{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 12px; }
             .vd-filtro button{ display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border:1px solid #e3e6eb; border-radius:999px; background:#fff; color:#3a404b; font:inherit; font-size:13px; cursor:pointer; }
             .vd-filtro button span{ color:#8a93a1; font-variant-numeric:tabular-nums; font-size:12px; }
@@ -8335,6 +8356,7 @@
                   var f = b.getAttribute('data-f') || ''; b.setAttribute('aria-pressed', f === filtro ? 'true' : 'false');
                   var sp = b.querySelector('span'); if (sp) sp.textContent = (n[f] || 0).toLocaleString('pt-BR');
                 });
+                try { contaMarcados(); } catch (_) {}
               }
               var fb = document.getElementById('vdFiltro');
               if (fb) fb.addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; filtro = b.getAttribute('data-f') || ''; aplica(); });
@@ -8349,7 +8371,96 @@
                 var sm = td.querySelector('small'); if (!sm) { sm = document.createElement('small'); td.appendChild(sm); }
                 sm.textContent = extra.join(' · '); if (d.orderId) sm.title = 'Pedido ' + d.orderId + (d.origem === 'fornecedor' ? ' (consultado agora)' : ' (último status salvo)');
                 if (!td.contains(b)) td.insertBefore(b, td.firstChild);
+                // ⟳ reenviar: só Parcial e Cancelado (erro/sem envio não têm pedido no fornecedor pra reaproveitar)
+                var podeRe = t[1] === 'parc' || /cancel|refund/i.test(String(d.status || ''));
+                var bt = td.querySelector('.vd-re');
+                if (podeRe && !bt) { bt = document.createElement('button'); bt.type = 'button'; bt.className = 'vd-re'; bt.innerHTML = RE_SVG; b.insertAdjacentElement('afterend', bt); }
+                if (bt) { bt.hidden = !podeRe; bt.title = /cancel|refund/i.test(String(d.status || '')) ? 'Reenviar pedido cancelado (novo pedido no fornecedor)' : 'Reenviar o que falta (novo pedido no fornecedor)'; }
+                if (podeRe && d.remains != null && d.remains !== '') td.setAttribute('data-rem', d.remains);
+                var ck = tr0 && tr0.querySelector('.vd-sel');
+                if (ck) { ck.disabled = !podeRe; if (!podeRe) ck.checked = false; ck.title = podeRe ? 'Marcar para reenviar' : 'Só Parcial ou Cancelado podem ser reenviados'; }
+                try { contaMarcados(); } catch (_) {}
               }
+              var RE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>';
+              function consulta(ids, depois){
+                return fetch('/api/painel/vendas/status-fornecedor', { method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ ids: ids }) })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){ if (!d || !d.ok || !d.status) return; ids.forEach(function(id){ var v = d.status[id]; if (!v) return; var c = document.querySelector('tr[data-oid="' + id + '"] td.vd-st'); if (c) pinta(c, v); }); })
+                  .catch(function(){}).then(function(){ if (depois) depois(); });
+              }
+              // Reenvia UMA venda (sem perguntar): o servidor confere o status no fornecedor de novo e
+              // só reenvia Parcial/Cancelado. Devolve uma Promise que resolve { ok } quando termina.
+              function reenviaLinha(tr){
+                var td = tr && tr.querySelector('td.vd-st'); if (!td) return Promise.resolve({ ok: false });
+                var id = tr.getAttribute('data-oid'), bt = td.querySelector('.vd-re');
+                if (bt) { bt.disabled = true; bt.classList.add('gira'); }
+                [].slice.call(td.querySelectorAll('.vd-re-msg')).forEach(function(x){ x.remove(); });
+                var sm = td.querySelector('small'); var antes = sm ? sm.textContent : '';
+                if (sm) sm.textContent = 'reenviando… (confere status e perfil antes)';
+                var acabou = function(){ if (bt) { bt.disabled = false; bt.classList.remove('gira'); } };
+                return fetch('/api/painel/vendas/reenviar', { method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ id: id }) })
+                  .then(function(r){ return r.json(); })
+                  .then(function(d){
+                    acabou();
+                    var feitos = (d && d.reenviados) || (d && d.ok && d.orderId ? [{ para: d.orderId, quantidade: d.quantidade }] : []);
+                    if (d && d.ok && feitos.length) {
+                      var txt = feitos.map(function(f){ return (f.quantidade || 0).toLocaleString('pt-BR') + ' → pedido ' + f.para; }).join(', ');
+                      var aviso = document.createElement('div'); aviso.className = 'vd-re-msg ok'; aviso.textContent = 'Reenviado: ' + txt + (d.falha ? ' · ' + d.falha : '');
+                      td.appendChild(aviso);
+                      var ck = tr.querySelector('.vd-sel'); if (ck) ck.checked = false;
+                      setTimeout(function(){ consulta([id]); }, 2500);
+                      return { ok: true };
+                    }
+                    if (sm) sm.textContent = antes;
+                    var av = document.createElement('div'); av.className = 'vd-re-msg erro'; av.textContent = 'Não reenviado: ' + ((d && (d.motivo || d.error)) || 'erro');
+                    td.appendChild(av);
+                    return { ok: false };
+                  })
+                  .catch(function(){ acabou(); if (sm) sm.textContent = antes; var av = document.createElement('div'); av.className = 'vd-re-msg erro'; av.textContent = 'Sem resposta do servidor — confira no fornecedor antes de tentar de novo.'; td.appendChild(av); return { ok: false, semResposta: true }; });
+              }
+              document.addEventListener('click', function(e){
+                var bt = e.target.closest && e.target.closest('.vd-re'); if (!bt || bt.disabled) return;
+                var td = bt.closest('td.vd-st'), tr = bt.closest('tr'); if (!td || !tr) return;
+                var user = (tr.querySelector('.vd-user') || {}).textContent || '';
+                var cancelado = /cancel/i.test(bt.title), rem = Number(td.getAttribute('data-rem') || 0);
+                var msg = cancelado
+                  ? 'Reenviar o pedido CANCELADO de ' + user + '?\n\nCria um novo pedido no fornecedor' + (rem > 0 ? ' com ' + rem.toLocaleString('pt-BR') : '') + ' e troca o orderId no registro.'
+                  : 'Reenviar o que falta do pedido PARCIAL de ' + user + '?\n\nCria um novo pedido no fornecedor' + (rem > 0 ? ' com os ' + rem.toLocaleString('pt-BR') + ' que faltam' : '') + ' e troca o orderId no registro.';
+                if (!window.confirm(msg)) return;
+                reenviaLinha(tr);
+              });
+              // ── Seleção e reenvio em lote (só Parcial/Cancelado ficam marcáveis) ──
+              var emLote = false;
+              function marcados(){ return [].slice.call(document.querySelectorAll('tr[data-oid] .vd-sel:checked:not(:disabled)')).map(function(c){ return c.closest('tr'); }); }
+              function contaMarcados(){
+                var n = marcados().length, b = document.getElementById('vdReMarcados'), sp = document.getElementById('vdReN');
+                if (sp) sp.textContent = n; if (b) b.disabled = emLote || !n;
+                var all = document.getElementById('vdSelAll');
+                if (all) { var vis = [].slice.call(document.querySelectorAll('tr[data-oid]:not([hidden]) .vd-sel:not(:disabled)')); all.checked = vis.length > 0 && vis.every(function(c){ return c.checked; }); all.disabled = !vis.length; }
+              }
+              document.addEventListener('change', function(e){
+                if (e.target && e.target.id === 'vdSelAll') {
+                  var on = e.target.checked;
+                  [].slice.call(document.querySelectorAll('tr[data-oid]:not([hidden]) .vd-sel:not(:disabled)')).forEach(function(c){ c.checked = on; });
+                }
+                if (e.target && (e.target.id === 'vdSelAll' || e.target.classList.contains('vd-sel'))) contaMarcados();
+              });
+              var btLote = document.getElementById('vdReMarcados');
+              if (btLote) btLote.addEventListener('click', async function(){
+                var trs = marcados(); if (!trs.length || emLote) return;
+                var nomes = trs.slice(0, 8).map(function(tr){ return (tr.querySelector('.vd-user') || {}).textContent || tr.getAttribute('data-oid'); });
+                if (!window.confirm('Reenviar ' + trs.length + ' pedido(s) marcado(s)?\n\n' + nomes.join('\n') + (trs.length > 8 ? '\n…' : '') + '\n\nCada um é conferido de novo no fornecedor: Parcial reenvia o que falta, Cancelado reenvia o pedido. Um por vez.')) return;
+                emLote = true; contaMarcados();
+                var info = document.getElementById('vdLoteInfo'), ok = 0, falha = 0;
+                for (var k = 0; k < trs.length; k++) {
+                  if (info) info.textContent = 'Reenviando ' + (k + 1) + ' de ' + trs.length + '…';
+                  var r = await reenviaLinha(trs[k]);
+                  if (r && r.ok) ok++; else falha++;
+                  if (r && r.semResposta) { if (info) info.textContent = 'Parei: sem resposta do servidor no ' + (k + 1) + 'º. Confira no fornecedor antes de continuar.'; break; }
+                }
+                emLote = false; contaMarcados();
+                if (info && !/^Parei/.test(info.textContent)) info.textContent = ok + ' reenviado(s)' + (falha ? ' · ' + falha + ' não reenviado(s) (motivo na linha)' : '') + '.';
+              });
               var cels = Array.prototype.slice.call(document.querySelectorAll('td.vd-st'));
               cels.forEach(function(td){ pinta(td, { status: td.getAttribute('data-st'), remains: td.getAttribute('data-rem'), provider: td.getAttribute('data-prov'), orderId: td.getAttribute('data-ord'), posts: td.getAttribute('data-posts') }); });
               aplica();

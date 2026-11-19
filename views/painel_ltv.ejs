@@ -4,67 +4,77 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LTV — Reengajamento</title>
-  <link href="/css/style.css" rel="stylesheet" />
   <style>
+    /* LTV: mesma folha do admin (painel-admin.css), mesma linguagem do Track do Site:
+       papel frio, fios finos, números tabulares; azul-caneta só p/ seleção/destaque,
+       verde/vermelho/âmbar só p/ lucro, custo/prejuízo e atenção. */
     .ltv{
-      --ink:#0f172a; --muted:#64748b; --faint:#94a3b8; --line:#e8ecf1; --bg:#f6f8fb;
-      --accent:#4f46e5; --accent-soft:#eef2ff; --green:#059669; --green-soft:#ecfdf5;
-      --red:#dc2626; --red-soft:#fef2f2; --amber:#d97706; --amber-soft:#fffbeb;
-      max-width:1160px; margin:0 auto; padding:22px 18px 60px; color:var(--ink);
-      font-family:var(--font-family),'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+      --ink:var(--tinta,#14171c); --muted:var(--grafite,#525a67); --faint:var(--lapis,#8a93a1); --line:var(--fio,rgba(20,23,28,.09)); --bg:var(--papel,#f4f5f7);
+      --accent:var(--caneta,#2f5bea); --accent-soft:var(--caneta-fundo,#eef3fe); --green:var(--lucro,#127a4a); --green-soft:#e9f4ee;
+      --red:var(--prejuizo,#c8352b); --red-soft:#fbeeec; --amber:var(--alerta,#b7791f); --amber-soft:#faf3e4;
+      --card:var(--folha,#fff); --anelc:0 0 0 1px var(--fio,rgba(20,23,28,.09));
+      max-width:1480px; margin:0 auto; color:var(--ink);
     }
+    .ltv .num, .ltv .val, .ltv .n, .ltv .v{ font-variant-numeric:tabular-nums; }
     .ltv *{ box-sizing:border-box; }
 
     /* Header */
     .ltv-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
-    .ltv-head h1{ margin:0; font-size:1.4rem; font-weight:600; letter-spacing:-0.02em; }
-    .ltv-head .sub{ margin:5px 0 0; color:var(--muted); font-size:0.9rem; max-width:620px; line-height:1.5; }
-    .ltv-winbadge{ display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:10px; font-size:0.82rem; font-weight:600; border:1px solid; }
-    .ltv-winbadge.open{ background:var(--green-soft); color:var(--green); border-color:#bbf7d0; }
-    .ltv-winbadge.closed{ background:var(--amber-soft); color:var(--amber); border-color:#fde68a; }
+    .ltv-head h1{ margin:0; font-size:28px; font-weight:650; font-stretch:88%; letter-spacing:-.02em; }
+    .ltv-head .sub{ margin:4px 0 0; color:var(--muted); font-size:14px; max-width:62ch; line-height:1.5; }
+    .ltv-winbadge{ display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:999px; font-size:12.5px; font-weight:600; white-space:nowrap; }
+    .ltv-winbadge.open{ background:var(--green-soft); color:var(--green); }
+    .ltv-winbadge.closed{ background:var(--amber-soft); color:var(--amber); }
     .ltv-winbadge .dot{ width:8px; height:8px; border-radius:50%; background:currentColor; }
 
     /* Grids */
-    .ltv-kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
-    .ltv-fin{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:12px; }
+    .ltv-kpis, .ltv-fin{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1px; background:var(--line); border-radius:12px; overflow:hidden; box-shadow:var(--anelc); }
+    .ltv-kpis{ grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .ltv-fin{ grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:14px; }
+    @media(max-width:1000px){ .ltv-kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px){ .ltv-kpis{ grid-template-columns:1fr; } }
     @media(max-width:900px){ .ltv-fin{ grid-template-columns:repeat(2,1fr); } }
     @media(max-width:520px){ .ltv-fin{ grid-template-columns:1fr; } }
-    .ltv-cols{ display:grid; grid-template-columns:1.1fr 1fr; gap:14px; margin-top:20px; }
+    .ltv-cols{ display:grid; grid-template-columns:1.1fr 1fr; gap:18px; margin-top:18px; }
+    .ltv-cols{ align-items:start; }
+    .ltv-cols > *, .ltv-send > *{ min-width:0; }
     @media(max-width:860px){ .ltv-cols{ grid-template-columns:1fr; } }
 
     /* Cards */
-    .ltv-card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
-    .ltv-k{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:15px 16px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
-    .ltv-k .lbl{ display:flex; align-items:center; gap:7px; font-size:0.75rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
-    .ltv-k .dot{ width:8px; height:8px; border-radius:50%; }
-    .ltv-k .val{ font-size:1.7rem; font-weight:600; letter-spacing:-0.02em; margin-top:6px; line-height:1; }
-    .ltv-k .sub{ font-size:0.78rem; color:var(--faint); margin-top:5px; }
+    .ltv-card{ background:var(--card); border:0; border-radius:12px; padding:16px 18px 18px; box-shadow:var(--anelc); min-width:0; }
+    .ltv-k{ background:var(--card); padding:14px 16px; min-width:0; }
+    .ltv-k .lbl{ display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500; color:var(--muted); }
+    .ltv-k .dot{ display:none; }
+    .ltv-k #oaDot{ display:inline-block; width:7px; height:7px; border-radius:50%; flex:none; }
+    .ltv-k .val{ font-size:24px; font-weight:650; letter-spacing:-.02em; margin-top:2px; line-height:1.15; }
+    .ltv-k .sub{ font-size:12px; color:var(--faint); margin-top:3px; line-height:1.45; }
     .ltv-k .val.green{ color:var(--green); } .ltv-k .val.red{ color:var(--red); } .ltv-k .val.accent{ color:var(--accent); }
 
-    .ltv-h2{ font-size:0.98rem; font-weight:600; margin:0 0 14px; display:flex; align-items:center; gap:8px; }
-    .ltv-note{ color:var(--muted); font-size:0.86rem; line-height:1.55; margin:0 0 14px; }
+    .ltv-h2{ font-size:15px; font-weight:650; margin:0 0 4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .ltv-note{ color:var(--faint); font-size:12.5px; line-height:1.5; margin:0 0 14px; max-width:110ch; }
 
     /* Distribuição */
     .ltv-dist{ display:flex; flex-direction:column; gap:13px; }
     .ltv-dist .r{ display:grid; grid-template-columns:92px 1fr auto; gap:12px; align-items:center; }
-    .ltv-dist .t{ font-size:0.84rem; color:var(--muted); font-weight:600; }
-    .ltv-dist .bar{ height:9px; border-radius:999px; background:#eef2f7; overflow:hidden; }
-    .ltv-dist .bar>span{ display:block; height:100%; border-radius:999px; background:var(--accent); }
-    .ltv-dist .n{ font-weight:600; font-size:0.95rem; min-width:46px; text-align:right; }
+    .ltv-dist .t{ font-size:13px; color:var(--ink); }
+    .ltv-dist .bar{ height:8px; border-radius:4px; background:var(--vala,#eceef2); overflow:hidden; }
+    .ltv-dist .bar>span{ display:block; height:100%; border-radius:4px; background:var(--accent); }
+    .ltv-dist .n{ font-weight:600; font-size:13px; min-width:46px; text-align:right; white-space:nowrap; }
 
     /* Cupons */
-    .ltv-coupons{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; }
-    .ltv-coupon{ border:1px solid var(--line); border-radius:12px; padding:13px; background:#fcfdfe; }
+    .ltv-coupons{ display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); gap:10px; }
+    .ltv-coupon{ border:0; box-shadow:var(--anelc); border-radius:10px; padding:12px 13px; background:var(--card); }
     .ltv-coupon .top{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .ltv-coupon .code{ font-weight:600; font-size:0.98rem; font-family:ui-monospace,Menlo,Consolas,monospace; }
-    .ltv-coupon .pct{ font-weight:600; color:#fff; font-size:0.78rem; padding:2px 8px; border-radius:999px; background:var(--accent); }
+    .ltv-coupon .pct{ font-weight:600; color:var(--accent); font-size:12px; padding:2px 8px; border-radius:999px; background:var(--accent-soft); }
     .ltv-coupon .meta{ margin-top:11px; display:grid; grid-template-columns:1fr 1fr; gap:7px 10px; }
     .ltv-coupon .k{ font-size:0.68rem; color:var(--faint); text-transform:uppercase; letter-spacing:.03em; }
     .ltv-coupon .v{ font-weight:600; font-size:0.92rem; }
-    .ltv-badge{ display:inline-flex; align-items:center; gap:5px; font-size:0.72rem; font-weight:600; padding:2px 8px; border-radius:999px; }
-    .ltv-badge.ok{ background:var(--green-soft); color:var(--green); border:1px solid #bbf7d0; }
-    .ltv-badge.off{ background:var(--red-soft); color:var(--red); border:1px solid #fecaca; }
-    .ltv-badge.inf{ background:var(--accent-soft); color:var(--accent); border:1px solid #c7d2fe; }
+    .ltv-badge{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:500; padding:3px 9px; border-radius:999px; }
+    .ltv-badge.ok{ background:var(--green-soft); color:var(--green); }
+    .ltv-badge.off{ background:var(--red-soft); color:var(--red); }
+    .ltv-badge.inf{ background:var(--vala,#eceef2); color:var(--muted); }
+    .ltv-badge b{ color:var(--ink); }
     .ltv-empty{ grid-column:1/-1; text-align:center; color:var(--faint); padding:24px; border:1px dashed var(--line); border-radius:12px; font-size:0.88rem; }
 
     /* Envio */
@@ -74,16 +84,16 @@
     .ltv-field{ display:flex; flex-direction:column; gap:6px; }
     .ltv-field > label{ font-size:0.8rem; font-weight:600; color:var(--ink); }
     .ltv-field .hint{ font-size:0.74rem; color:var(--faint); font-weight:400; }
-    .ltv-input, .ltv-select{ padding:9px 11px; border:1px solid #d5dbe3; border-radius:9px; font-size:0.92rem; font-weight:600; color:var(--ink); background:#fff; }
-    .ltv-input:focus, .ltv-select:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+    .ltv-input, .ltv-select{ padding:8px 10px; border:0; border-radius:8px; font:inherit; font-size:13.5px; font-weight:500; color:var(--ink); background:var(--vala,#eceef2); min-width:0; }
+    .ltv-input:focus, .ltv-select:focus{ outline:none; box-shadow:0 0 0 2px var(--foco,rgba(47,91,234,.35)); }
     .ltv-field-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     @media(max-width:520px){ .ltv-field-row{ grid-template-columns:1fr; } }
 
     /* Card dinâmico de disponíveis */
-    .ltv-avail{ background:linear-gradient(180deg,#fff,#fafbff); border:1px solid #dfe4ee; border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:14px; }
+    .ltv-avail{ background:var(--sombra,#f8f9fb); border:0; box-shadow:var(--anelc); border-radius:12px; padding:18px; display:flex; flex-direction:column; gap:14px; }
     .ltv-avail .big{ text-align:center; }
-    .ltv-avail .big .n{ font-size:3rem; font-weight:600; letter-spacing:-0.03em; color:var(--accent); line-height:1; }
-    .ltv-avail .big .t{ font-size:0.82rem; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
+    .ltv-avail .big .n{ font-size:44px; font-weight:650; font-stretch:88%; letter-spacing:-.03em; color:var(--ink); line-height:1; font-variant-numeric:tabular-nums; }
+    .ltv-avail .big .t{ font-size:12px; color:var(--muted); font-weight:500; margin-top:6px; }
     .ltv-avail .lines{ border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:8px; }
     .ltv-avail .line{ display:flex; align-items:center; justify-content:space-between; font-size:0.84rem; }
     .ltv-avail .line .l{ color:var(--muted); }
@@ -93,30 +103,31 @@
 
     /* Botões */
     .ltv-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; }
-    .ltv-btn{ border:1px solid #d5dbe3; border-radius:10px; padding:11px 18px; font-weight:600; cursor:pointer; background:#fff; color:var(--ink); font-size:0.9rem; transition:all .12s; }
-    .ltv-btn:hover{ background:#f8fafc; }
+    .ltv-btn{ display:inline-flex; align-items:center; gap:6px; border:0; box-shadow:0 0 0 1px var(--fio-forte,rgba(20,23,28,.16)); border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; background:var(--card); color:var(--ink); font-size:13px; transition:background .12s; }
+    .ltv-btn:hover{ background:var(--sombra,#f8f9fb); }
+    .ltv-btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
     .ltv-btn:active{ transform:translateY(1px); }
     .ltv-btn:disabled{ opacity:.5; cursor:not-allowed; }
-    .ltv-btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
-    .ltv-btn.primary:hover{ background:#4338ca; }
+    .ltv-btn.primary{ background:var(--ink); color:#fff; box-shadow:none; }
+    .ltv-btn.primary:hover{ background:#2a2f37; }
     .ltv-btn.full{ width:100%; justify-content:center; }
     .ltv-msg{ margin-top:12px; font-size:0.88rem; color:var(--muted); } .ltv-msg.err{ color:var(--red); } .ltv-msg.ok{ color:var(--green); }
-    .ltv-prog{ margin-top:12px; padding:12px 15px; background:#f8fafc; border:1px solid var(--line); border-radius:11px; font-size:0.9rem; }
+    .ltv-prog{ margin-top:12px; padding:12px 15px; background:var(--sombra,#f8f9fb); box-shadow:var(--anelc); border-radius:10px; font-size:13px; }
     .ltv-switch{ display:inline-flex; align-items:center; gap:9px; font-weight:600; cursor:pointer; }
 
     /* Flag / toggle do envio automático */
     .ltv-flagcard{ display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
-      padding:16px 18px; border:1px solid var(--line); border-radius:12px; background:#fcfdfe; margin-bottom:14px; }
-    .ltv-flagcard .info .title{ font-size:0.95rem; font-weight:600; display:flex; align-items:center; gap:8px; }
+      padding:14px 16px; border:0; box-shadow:var(--anelc); border-radius:10px; background:var(--sombra,#f8f9fb); margin:10px 0 14px; }
+    .ltv-flagcard .info .title{ font-size:14px; font-weight:650; }
     .ltv-flagcard .info .desc{ font-size:0.82rem; color:var(--muted); margin-top:3px; max-width:520px; line-height:1.5; }
     .ltv-flagcard .right{ display:flex; align-items:center; gap:12px; }
     .ltv-statepill{ font-size:0.74rem; font-weight:600; padding:3px 10px; border-radius:999px; letter-spacing:.02em; }
-    .ltv-statepill.on{ background:var(--green-soft); color:var(--green); border:1px solid #bbf7d0; }
-    .ltv-statepill.off{ background:#f1f5f9; color:var(--faint); border:1px solid var(--line); }
+    .ltv-statepill.on{ background:var(--green-soft); color:var(--green); }
+    .ltv-statepill.off{ background:var(--vala,#eceef2); color:var(--muted); }
     /* toggle */
     .ltv-toggle{ position:relative; width:52px; height:30px; flex:none; }
     .ltv-toggle input{ opacity:0; width:0; height:0; position:absolute; }
-    .ltv-toggle .track{ position:absolute; inset:0; background:#cbd5e1; border-radius:999px; transition:background .18s; cursor:pointer; }
+    .ltv-toggle .track{ position:absolute; inset:0; background:var(--borracha,#b8bec8); border-radius:999px; transition:background .18s; cursor:pointer; }
     .ltv-toggle .track::before{ content:''; position:absolute; height:24px; width:24px; left:3px; top:3px; background:#fff; border-radius:50%; transition:transform .18s; box-shadow:0 1px 3px rgba(0,0,0,.2); }
     .ltv-toggle input:checked + .track{ background:var(--green); }
     .ltv-toggle input:checked + .track::before{ transform:translateX(22px); }
@@ -124,10 +135,24 @@
 
     /* Checkboxes de tipo do envio automático */
     .d2-types{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; }
-    .d2-type{ display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid var(--line); border-radius:9px; background:#fff; cursor:pointer; font-size:0.86rem; user-select:none; }
-    .d2-type:hover{ background:#fafbff; border-color:#c7d2fe; }
+    .d2-type{ display:flex; align-items:center; gap:8px; padding:9px 12px; border:0; box-shadow:var(--anelc); border-radius:8px; background:var(--card); cursor:pointer; font-size:13px; user-select:none; }
+    .d2-type:hover{ background:var(--sombra,#f8f9fb); }
     .d2-type input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
-    .d2-type input:checked + span{ font-weight:600; color:var(--accent); }
+    .d2-type input:checked + span{ font-weight:600; color:var(--ink); }
+    /* Envios automáticos por dia: colunas (dia mais antigo à esquerda) */
+    .ad-resumo{ display:flex; gap:22px; flex-wrap:wrap; font-size:12.5px; color:var(--muted); margin:0 0 12px; }
+    .ad-resumo b{ color:var(--ink); font-size:15px; font-weight:650; font-variant-numeric:tabular-nums; margin-right:4px; }
+    .ad-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px; }
+    .ad-cols{ display:flex; align-items:flex-end; gap:2px; height:170px; min-width:100%; border-bottom:1px solid var(--fio-forte,rgba(20,23,28,.16)); }
+    .ad-col{ flex:1 1 2px; min-width:2px; height:100%; display:flex; align-items:flex-end; position:relative; cursor:default; }
+    .ad-col span{ display:block; width:100%; background:var(--accent); border-radius:2px 2px 0 0; min-height:2px; opacity:.85; }
+    .ad-col:hover span{ opacity:1; background:var(--ink); }
+    .ad-eixo{ display:flex; gap:2px; min-width:100%; margin-top:5px; font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums; }
+    .ad-eixo i{ flex:1 1 2px; min-width:2px; font-style:normal; white-space:nowrap; overflow:visible; }
+    .ad-dica{ font-size:12px; color:var(--muted); margin-top:8px; min-height:1.4em; }
+    .ad-dica b{ color:var(--ink); }
+    @media(max-width:900px){ .ltv-fin{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px){ .ltv-fin{ grid-template-columns:1fr; } .ltv-head h1{ font-size:24px; } .ad-cols, .ad-eixo{ gap:1px; } #ltvRefreshAll{ margin-left:0 !important; } .ltv input[type=date]{ max-width:140px; } }
   </style>
 </head>
 <body class="painel-page">
@@ -158,6 +183,9 @@
         </div>
       </div>
 
+      <!-- Pedidos de bloqueio vindos de reclamação no CRM IA (aprovar/recusar lá embaixo) -->
+      <a href="#blSug" id="blSugAviso" class="bl-aviso" hidden><span class="bl-aviso-n" id="blSugAvisoN">0</span><span><b>pedido(s) de bloqueio aguardando aprovação</b> — clientes que reclamaram no CRM IA WhatsApp</span><span class="bl-aviso-ir">ver e aprovar ↓</span></a>
+
       <!-- Filtro por período (afeta a página toda) + Atualizar (AJAX, sem reload) -->
       <%
         var _curPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all';
@@ -172,7 +200,7 @@
             <button type="button" class="ltv-btn ltvPeriodBtn <%= _curPeriod===x[0] ? 'primary' : '' %>" data-period="<%= x[0] %>" style="padding:6px 12px; font-size:0.82rem;"><%= x[1] %></button>
           <% }); %>
         </div>
-        <div style="display:flex; gap:6px; align-items:center; margin-left:6px;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0;">
           <input type="date" id="ltvStart" value="<%= _curPeriod==='custom' ? _curStart : '' %>" class="ltv-input" style="padding:6px 8px; font-size:0.82rem;">
           <span style="color:var(--faint); font-size:0.8rem;">até</span>
           <input type="date" id="ltvEnd" value="<%= _curPeriod==='custom' ? _curEnd : '' %>" class="ltv-input" style="padding:6px 8px; font-size:0.82rem;">
@@ -190,10 +218,10 @@
           var _metaOn = (typeof metaConfigured !== 'undefined' && metaConfigured && typeof metaSent !== 'undefined' && metaSent != null);
           var _waHead = _metaOn ? metaSent : (typeof waEnviadas !== 'undefined' ? waEnviadas : 0);
         %>
-        <div class="ltv-k" title="<%= _metaOn ? 'Número OFICIAL da Meta (Analytics da WABA) — mesma fonte da tela de Insights. Casa exato com a cobrança.' : 'Mensagens WhatsApp enviadas (todos os tipos), deduplicadas por wamid. Configure WHATSAPP_BUSINESS_ACCOUNT_ID no .env para puxar o número oficial da Meta.' %>"><div class="lbl"><span class="dot" style="background:#16a34a"></span>Mensagens WhatsApp (Meta)</div><div class="val" id="kWaEnviadas"><%= nf(_waHead) %></div><div class="sub"><% if (_metaOn) { %>✅ oficial Meta · entregues <b id="kMetaDelivered"><%= nf(metaDelivered || 0) %></b><% if (typeof metaSyncedAt !== 'undefined' && metaSyncedAt) { %><br><span style="color:var(--faint);font-size:0.72rem;">sync <%= new Date(metaSyncedAt).toLocaleString('pt-BR') %></span><% } %><% } else { %>nosso registro<% if (typeof waLogSince !== 'undefined' && waLogSince) { %><br><span style="color:var(--faint);font-size:0.72rem;">desde <%= new Date(waLogSince).toLocaleDateString('pt-BR') %> · defina WABA ID p/ oficial</span><% } %><% } %></div></div>
-        <div class="ltv-k" title="Total real de mensagens LTV = automático (D+2) + manual (enviar por base)"><div class="lbl"><span class="dot" style="background:#059669"></span>Mensagens LTV enviadas</div><div class="val" id="kTotalEnviadas"><%= nf(typeof totalEnviadas !== 'undefined' ? totalEnviadas : 0) %></div><div class="sub">🤖 auto D+2: <b id="kAutoMensagens"><%= nf(typeof autoMensagens !== 'undefined' ? autoMensagens : 0) %></b> · ✋ manual: <b id="kManualMensagens"><%= nf(typeof manualMensagens !== 'undefined' ? manualMensagens : 0) %></b></div></div>
+        <div class="ltv-k" title="<%= _metaOn ? 'Número OFICIAL da Meta (Analytics da WABA) — mesma fonte da tela de Insights. Casa exato com a cobrança.' : 'Mensagens WhatsApp enviadas (todos os tipos), deduplicadas por wamid. Configure WHATSAPP_BUSINESS_ACCOUNT_ID no .env para puxar o número oficial da Meta.' %>"><div class="lbl"><span class="dot" style="background:#16a34a"></span>Mensagens WhatsApp (Meta)</div><div class="val" id="kWaEnviadas"><%= nf(_waHead) %></div><div class="sub"><% if (_metaOn) { %>oficial Meta · entregues <b id="kMetaDelivered"><%= nf(metaDelivered || 0) %></b><% if (typeof metaSyncedAt !== 'undefined' && metaSyncedAt) { %><br><span style="color:var(--faint);font-size:0.72rem;">sync <%= new Date(metaSyncedAt).toLocaleString('pt-BR') %></span><% } %><% } else { %>nosso registro<% if (typeof waLogSince !== 'undefined' && waLogSince) { %><br><span style="color:var(--faint);font-size:0.72rem;">desde <%= new Date(waLogSince).toLocaleDateString('pt-BR') %> · defina WABA ID p/ oficial</span><% } %><% } %></div></div>
+        <div class="ltv-k" title="Total real de mensagens LTV = automático (D+2) + manual (enviar por base)"><div class="lbl"><span class="dot" style="background:#059669"></span>Mensagens LTV enviadas</div><div class="val" id="kTotalEnviadas"><%= nf(typeof totalEnviadas !== 'undefined' ? totalEnviadas : 0) %></div><div class="sub">auto D+2: <b id="kAutoMensagens"><%= nf(typeof autoMensagens !== 'undefined' ? autoMensagens : 0) %></b> · manual: <b id="kManualMensagens"><%= nf(typeof manualMensagens !== 'undefined' ? manualMensagens : 0) %></b></div></div>
         <% var _ld = (typeof ltvDaily !== 'undefined' && ltvDaily) ? ltvDaily : { manualSent:0, manualCap:50, autoSent:0, autoCap:50, totalSentToday:0, totalCap:100 }; %>
-        <div class="ltv-k" title="Teto diário por canal (dia BRT): manual e automático têm quotas separadas, então o automático nunca engole o manual."><div class="lbl"><span class="dot" style="background:#0891b2"></span>Enviadas hoje (teto <%= _ld.totalCap %>/dia)</div><div class="val" id="kSentToday"><%= nf(_ld.totalSentToday) %></div><div class="sub">✋ manual <b id="kManualToday"><%= nf(_ld.manualSent) %></b>/<%= _ld.manualCap %> · 🤖 auto <b id="kAutoToday"><%= nf(_ld.autoSent) %></b>/<%= _ld.autoCap %></div></div>
+        <div class="ltv-k" title="Teto diário por canal (dia BRT): manual e automático têm quotas separadas, então o automático nunca engole o manual."><div class="lbl"><span class="dot" style="background:#0891b2"></span>Enviadas hoje (teto <%= _ld.totalCap %>/dia)</div><div class="val" id="kSentToday"><%= nf(_ld.totalSentToday) %></div><div class="sub">manual <b id="kManualToday"><%= nf(_ld.manualSent) %></b>/<%= _ld.manualCap %> · auto <b id="kAutoToday"><%= nf(_ld.autoSent) %></b>/<%= _ld.autoCap %></div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#d97706"></span>Clicaram no link</div><div class="val" id="kClicaram"><%= nf(clicaram) %></div><div class="sub"><span id="kCliques"><%= nf(cliques) %></span> cliques · <span id="kCtr"><%= _ctr %></span>% de clique</div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Descadastraram (opt-out)</div><div class="val" id="kOptout"><%= nf(optout) %></div><div class="sub"><span id="kRejeitando"><%= nf(rejeitando) %></span> rejeitando (&lt;<%= optoutThreshold %>x)</div></div>
         <!-- Crédito OpenAI do bot de IA (a API não dá o saldo: estimativa = saldo informado − uso registrado) -->
@@ -266,7 +294,7 @@
       %>
       <div class="ltv-fin">
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#059669"></span>Faturado LTV</div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub">via cupons do pool LTV</div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Custo dos serviços</div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">charge do fornecedor (estimado)</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Custo dos serviços</div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">fornecedor (charge real) + taxa do Pix</div></div>
         <div class="ltv-k" title="Custo das mensagens de WhatsApp enviadas (auto + manual) no período × custo por mensagem"><div class="lbl"><span class="dot" style="background:#d97706"></span>Custo das mensagens</div><div class="val red" id="kCustoMensagens"><%= brl(_custoMsg) %></div><div class="sub"><span id="kMsgQty"><%= nf(_totalEnv2) %></span> envios × <span id="kMsgUnit"><%= brl(_msgUnit) %></span>/msg</div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Lucro LTV</div><div class="val accent" id="kLucro"><%= brl(lucro) %></div><div class="sub">faturado − serviço − mensagens</div></div>
       </div>
@@ -277,19 +305,32 @@
           <span class="ltv-badge inf" style="margin-left:auto;">D+2 · total no período: <b id="autoTotalPeriod"><%= nf(typeof autoTotalPeriod !== 'undefined' ? autoTotalPeriod : 0) %></b> · sempre: <b id="autoTotalAll"><%= nf(typeof autoTotalAll !== 'undefined' ? autoTotalAll : 0) %></b></span>
         </div>
         <p class="ltv-note" style="margin-bottom:10px;">Quantos clientes receberam o LTV <b>automático</b> em cada dia (fonte durável — não some depois de 2 dias). Respeita o filtro de período acima.</p>
-        <div class="ltv-dist" id="autoByDay">
-          <%
-            var _auto = (typeof autoByDay !== 'undefined' && Array.isArray(autoByDay)) ? autoByDay : [];
-            var _autoMax = _auto.reduce(function(m,x){ return Math.max(m, Number(x.count)||0); }, 0) || 1;
-            var _fmtDay = function(d){ try{ var p=String(d).split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }catch(_){ return d; } };
-          %>
-          <% if (!_auto.length) { %>
-            <div class="ltv-empty">Nenhum envio automático no período.</div>
-          <% } %>
-          <% _auto.forEach(function(x){ %>
-            <div class="r"><span class="t"><%= _fmtDay(x.day) %></span><div class="bar"><span style="width:<%= Math.max(3, Math.round((Number(x.count)||0)/_autoMax*100)) %>%"></span></div><span class="n"><%= nf(x.count) %></span></div>
-          <% }); %>
-        </div>
+        <%
+          var _auto = (typeof autoByDay !== 'undefined' && Array.isArray(autoByDay)) ? autoByDay : [];
+        %>
+        <div id="autoByDay" data-dias='<%- JSON.stringify(_auto.map(function(x){ return { day: String(x.day), count: Number(x.count)||0 }; })).replace(/'/g, "&#39;") %>'></div>
+        <script>
+          // Desenha as colunas (também chamado pelo ↻ Atualizar com os dados novos).
+          window.__ltvAutoDias = function(arr){
+            var box = document.getElementById('autoByDay'); if (!box) return;
+            arr = (Array.isArray(arr) ? arr : []).slice().sort(function(a, b){ return String(a.day) < String(b.day) ? -1 : 1; });
+            if (!arr.length) { box.innerHTML = '<div class="ltv-empty">Nenhum envio automático no período.</div>'; return; }
+            var nf = function(v){ return (Number(v)||0).toLocaleString('pt-BR'); };
+            var br = function(d){ var p = String(d).split('-'); return p[2] + '/' + p[1] + (p[0] ? '/' + p[0] : ''); };
+            var tot = 0, mx = 0, melhor = arr[0];
+            arr.forEach(function(x){ tot += x.count; if (x.count > mx) { mx = x.count; melhor = x; } });
+            var passo = Math.max(1, Math.ceil(arr.length / 12));
+            var h = '<div class="ad-resumo"><span><b>' + nf(tot) + '</b>envios em ' + nf(arr.length) + ' dias</span><span><b>' + (tot / arr.length).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</b>por dia, em média</span><span><b>' + nf(mx) + '</b>no melhor dia (' + br(melhor.day) + ')</span></div>';
+            h += '<div class="ad-wrap"><div class="ad-cols">' + arr.map(function(x){
+              return '<div class="ad-col" data-t="' + br(x.day) + ': ' + nf(x.count) + ' envio' + (x.count === 1 ? '' : 's') + '" title="' + br(x.day) + ': ' + nf(x.count) + '"><span style="height:' + (mx ? Math.max(1.5, x.count / mx * 100) : 0) + '%"></span></div>';
+            }).join('') + '</div><div class="ad-eixo">' + arr.map(function(x, i){ var p = String(x.day).split('-'); return '<i>' + (i % passo === 0 ? p[2] + '/' + p[1] : '') + '</i>'; }).join('') + '</div></div>';
+            h += '<div class="ad-dica" id="adDica">Passe o mouse numa coluna para ver o dia.</div>';
+            box.innerHTML = h;
+            var dica = document.getElementById('adDica');
+            box.querySelector('.ad-cols').addEventListener('mouseover', function(e){ var c = e.target.closest('.ad-col'); if (c && dica) dica.innerHTML = '<b>' + c.getAttribute('data-t') + '</b>'; });
+          };
+          try { window.__ltvAutoDias(JSON.parse(document.getElementById('autoByDay').getAttribute('data-dias') || '[]')); } catch (_) {}
+        </script>
       </div>
 
       <!-- Vendas de LTV por origem: automático (D+2) × base de recompra -->
@@ -304,9 +345,9 @@
           var _lvW = function(v){ return Math.max(3, Math.round((Number(v)||0)/_lvMax*100)); };
         %>
         <div class="ltv-dist" id="ltvVendasOrigem">
-          <div class="r"><span class="t">Automático (D+2)</span><div class="bar"><span id="barVAuto" style="width:<%= _lvW(_lv.auto.faturado) %>%; background:#059669;"></span></div><span class="n" id="kVAuto"><%= brl(_lv.auto.faturado) %> · <%= nf(_lv.auto.n) %></span></div>
-          <div class="r"><span class="t">Base de recompra</span><div class="bar"><span id="barVManual" style="width:<%= _lvW(_lv.manual.faturado) %>%; background:#4f46e5;"></span></div><span class="n" id="kVManual"><%= brl(_lv.manual.faturado) %> · <%= nf(_lv.manual.n) %></span></div>
-          <div class="r"><span class="t">Sem origem</span><div class="bar"><span id="barVNone" style="width:<%= _lvW(_lv.semOrigem.faturado) %>%; background:#9ca3af;"></span></div><span class="n" id="kVNone"><%= brl(_lv.semOrigem.faturado) %> · <%= nf(_lv.semOrigem.n) %></span></div>
+          <div class="r"><span class="t">Automático (D+2)</span><div class="bar"><span id="barVAuto" style="width:<%= _lvW(_lv.auto.faturado) %>%; background:var(--green);"></span></div><span class="n" id="kVAuto"><%= brl(_lv.auto.faturado) %> · <%= nf(_lv.auto.n) %></span></div>
+          <div class="r"><span class="t">Base de recompra</span><div class="bar"><span id="barVManual" style="width:<%= _lvW(_lv.manual.faturado) %>%; background:var(--accent);"></span></div><span class="n" id="kVManual"><%= brl(_lv.manual.faturado) %> · <%= nf(_lv.manual.n) %></span></div>
+          <div class="r"><span class="t">Sem origem</span><div class="bar"><span id="barVNone" style="width:<%= _lvW(_lv.semOrigem.faturado) %>%; background:var(--borracha,#b8bec8);"></span></div><span class="n" id="kVNone"><%= brl(_lv.semOrigem.faturado) %> · <%= nf(_lv.semOrigem.n) %></span></div>
         </div>
       </div>
 
@@ -453,6 +494,14 @@
         <div class="ltv-h2">Blacklist de LTV</div>
         <p class="ltv-note">Números aqui <b>nunca recebem LTV</b> (nem o automático D+2 nem o envio manual da base). Digite o telefone e clique em <b>Verificar</b> — o painel busca o <b>@ do cliente</b> pelo telefone para você confirmar que é o número certo antes de bloquear.</p>
 
+        <div id="blSug" class="bl-sug" hidden>
+          <div class="ltv-h2">Registrar na blacklist? <span class="bl-sug-cont" id="blSugCount"></span>
+            <button class="ltv-btn" id="blSugRefresh" title="Varrer o CRM IA de novo" style="margin-left:auto; padding:3px 10px;">↻</button>
+          </div>
+          <p class="ltv-note">Clientes <b>que já pagaram</b> algum pedido e <b>reclamaram no CRM IA WhatsApp</b> nos últimos 30 dias (golpe, dinheiro de volta, Procon, vergonha, caiu tudo…). Dúvida de entrega não entra. <b>✓</b> registra o número na blacklist do LTV; <b>✗</b> descarta — só volta se a pessoa reclamar de novo.</p>
+          <div id="blSugList" class="bl-sug-list"></div>
+        </div>
+
         <div class="ltv-field-row" style="align-items:flex-end;">
           <div class="ltv-field">
             <label>Telefone (com DDD)</label>
@@ -477,12 +526,40 @@
   </div>
 
   <style>
+    .bl-aviso{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; padding:10px 14px; border-radius:10px; background:var(--amber-soft,#faf3e4); color:var(--ink,#14171c); text-decoration:none; font-size:13px; line-height:1.4; box-shadow:0 0 0 1px rgba(183,121,31,.25); }
+    .bl-aviso[hidden]{ display:none; }
+    .bl-aviso-n{ min-width:24px; height:24px; padding:0 7px; border-radius:999px; background:var(--amber,#b7791f); color:#fff; font-weight:700; font-size:12.5px; display:inline-flex; align-items:center; justify-content:center; font-variant-numeric:tabular-nums; }
+    .bl-aviso-ir{ margin-left:auto; color:var(--amber,#b7791f); font-weight:600; white-space:nowrap; }
+    .bl-aviso:hover .bl-aviso-ir{ text-decoration:underline; }
+    .bl-sug{ margin:6px 0 18px; padding:14px 16px 6px; border-radius:10px; background:var(--amber-soft,#faf3e4); box-shadow:0 0 0 1px rgba(183,121,31,.22); scroll-margin-top:16px; }
+    .bl-sug[hidden]{ display:none; }
+    .bl-sug-cont{ font-size:12px; font-weight:600; color:#fff; background:var(--amber,#b7791f); border-radius:999px; padding:1px 8px; font-variant-numeric:tabular-nums; }
+    .bl-sug-list{ display:flex; flex-direction:column; max-height:560px; overflow-y:auto; padding-right:6px; }
+    .bl-sug-row{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 14px; padding:11px 0; border-top:1px solid rgba(183,121,31,.2); align-items:start; }
+    .bl-sug-row:first-child{ border-top:0; }
+    .bl-sug-quem{ font-size:13px; display:flex; gap:8px; flex-wrap:wrap; align-items:baseline; }
+    .bl-sug-quem .ph{ font-weight:650; font-variant-numeric:tabular-nums; }
+    .bl-sug-quem .ig{ color:var(--muted,#525a67); }
+    .bl-sug-quem a{ color:var(--accent,#2f5bea); font-size:12px; text-decoration:none; font-weight:600; }
+    .bl-sug-quem a:hover{ text-decoration:underline; }
+    .bl-sug-msg{ grid-column:1; font-size:12.5px; color:var(--ink,#14171c); background:var(--card,#fff); border-radius:8px; padding:7px 10px; margin-top:4px; line-height:1.45; box-shadow:0 0 0 1px var(--line); }
+    .bl-sug-msg small{ display:block; color:var(--faint,#8a93a1); font-size:11px; margin-bottom:2px; }
+    .bl-sug-msg mark{ background:rgba(200,53,43,.12); color:var(--red,#c8352b); font-weight:600; border-radius:2px; padding:0; }
+    .bl-sug-acoes{ grid-column:2; grid-row:1 / span 3; display:flex; gap:6px; }
+    .bl-sug-acoes button{ width:36px; height:34px; border:0; border-radius:8px; cursor:pointer; font-size:17px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; }
+    .bl-sug-acoes .sim{ background:var(--green,#127a4a); color:#fff; }
+    .bl-sug-acoes .sim:hover{ filter:brightness(1.1); }
+    .bl-sug-acoes .nao{ background:var(--card,#fff); color:var(--red,#c8352b); box-shadow:0 0 0 1px var(--fio-forte,rgba(20,23,28,.16)); }
+    .bl-sug-acoes .nao:hover{ background:var(--red-soft,#fbeeec); }
+    .bl-sug-acoes button:disabled{ opacity:.5; cursor:wait; }
+    .bl-sug-mais{ font-size:11.5px; color:var(--faint,#8a93a1); }
     .ltv-bllist{display:flex;flex-direction:column;gap:6px;}
-    .ltv-bl-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border,#2a2a2a);border-radius:8px;font-size:0.86rem;flex-wrap:wrap;}
-    .ltv-bl-row .ph{font-weight:700;}
+    .ltv-bl-row{display:flex;align-items:center;gap:10px;padding:8px 2px;border:0;border-bottom:1px solid var(--line);border-radius:0;font-size:13px;flex-wrap:wrap;}
+    .ltv-bl-row:last-child{border-bottom:0;}
+    .ltv-bl-row .ph{font-weight:600;font-variant-numeric:tabular-nums;}
     .ltv-bl-row .ig{color:var(--faint,#8a8a8a);}
-    .ltv-bl-row .rm{margin-left:auto;background:transparent;border:1px solid #dc2626;color:#dc2626;border-radius:6px;padding:2px 10px;cursor:pointer;font-size:0.8rem;}
-    .ltv-bl-row .rm:hover{background:#dc2626;color:#fff;}
+    .ltv-bl-row .rm{margin-left:auto;background:transparent;border:0;box-shadow:0 0 0 1px var(--fio-forte,rgba(20,23,28,.16));color:var(--red);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;font-weight:600;}
+    .ltv-bl-row .rm:hover{background:var(--red-soft);}
     .ltv-bl-empty{color:var(--faint,#8a8a8a);font-size:0.85rem;}
   </style>
 
@@ -550,18 +627,7 @@
           if($('barVManual')) $('barVManual').style.width = wv(mn.faturado)+'%';
           if($('barVNone'))   $('barVNone').style.width   = wv(so.faturado)+'%';
         }
-        var box = $('autoByDay');
-        if (box) {
-          var arr = Array.isArray(s.autoByDay) ? s.autoByDay : [];
-          if (!arr.length) { box.innerHTML = '<div class="ltv-empty">Nenhum envio automático no período.</div>'; }
-          else {
-            var mx = arr.reduce(function(m,x){ return Math.max(m, Number(x.count)||0); }, 0) || 1;
-            box.innerHTML = arr.map(function(x){
-              var w = Math.max(3, Math.round((Number(x.count)||0)/mx*100));
-              return '<div class="r"><span class="t">'+fmtDayBR(x.day)+'</span><div class="bar"><span style="width:'+w+'%"></span></div><span class="n">'+nfFmt(x.count)+'</span></div>';
-            }).join('');
-          }
-        }
+        if (window.__ltvAutoDias) window.__ltvAutoDias((Array.isArray(s.autoByDay) ? s.autoByDay : []).map(function(x){ return { day: String(x.day), count: Number(x.count)||0 }; }));
         var cbox = document.querySelector('.ltv-coupons');
         if (cbox && Array.isArray(s.couponsView)) {
           if (!s.couponsView.length) { cbox.innerHTML = '<div class="ltv-empty">Nenhum cupom de LTV ainda.<br>Gere uma base — o pool é criado automaticamente.</div>'; }
@@ -777,6 +843,42 @@
           return '<div class="ltv-bl-row"><span class="ph">'+ph+'</span>'+(meta?('<span class="ig">'+meta+'</span>'):'')+'<button class="rm" data-key="'+esc(it.phoneKey||'')+'">Remover</button></div>';
         }).join('');
       }
+      // ── Pedidos de bloqueio (reclamações no CRM IA) ─────────────────────────
+      function blDataBR(v){ try { return new Date(v).toLocaleString('pt-BR', { timeZone:'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch(_) { return ''; } }
+      function blMarca(texto, termo){ var t = esc(texto); var k = esc(termo||''); if(!k) return t; var i = t.toLowerCase().indexOf(k.toLowerCase()); return i < 0 ? t : t.slice(0,i) + '<mark>' + t.slice(i, i + k.length) + '</mark>' + t.slice(i + k.length); }
+      function blSugContador(n){
+        var av=$('blSugAviso'), sec=$('blSug');
+        if(av){ av.hidden = !n; if($('blSugAvisoN')) $('blSugAvisoN').textContent = n; }
+        if(sec) sec.hidden = !n;
+        if($('blSugCount')) $('blSugCount').textContent = n;
+      }
+      async function blSugLoad(fresh){
+        var d = await api('/api/painel/ltv/blacklist/sugestoes' + (fresh ? '?fresh=1' : ''));
+        var box=$('blSugList'); if(!box) return;
+        if(!d || !d.ok){ blSugContador(0); return; }
+        var items = d.items || [];
+        blSugContador(items.length);
+        box.innerHTML = items.map(function(it){
+          var quem = [it.username ? '@'+esc(it.username) : '', esc(it.nomeCadastro || it.nomeWhats || '')].filter(Boolean).join(' · ');
+          var tr = (it.trechos||[]).slice(0,2).map(function(m){ return '<div class="bl-sug-msg"><small>'+blDataBR(m.at)+'</small>'+blMarca(m.text, m.termo)+'</div>'; }).join('');
+          var mais = (it.totalTrechos||0) > 2 ? '<span class="bl-sug-mais">+'+(it.totalTrechos-2)+' mensagem(ns) de reclamação</span>' : '';
+          return '<div class="bl-sug-row" data-ph="'+esc(it.phone)+'">'
+            + '<div class="bl-sug-quem"><span class="ph">'+esc(it.phone)+'</span>'+(quem?'<span class="ig">'+quem+'</span>':'<span class="ig">sem cadastro de cliente</span>')+'<span class="ig">'+(it.compras||0)+' compra'+((it.compras||0)===1?'':'s')+' paga'+((it.compras||0)===1?'':'s')+' · R$ '+Number(it.comprasTotal||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>'+'<a href="/painel/ia-crm?phone='+encodeURIComponent(it.phone)+'" target="_blank" rel="noopener">abrir conversa ↗</a></div>'
+            + '<div class="bl-sug-acoes"><button type="button" class="sim" data-acao="aprovar" title="Registrar na blacklist do LTV" aria-label="Aprovar: registrar na blacklist">✓</button><button type="button" class="nao" data-acao="recusar" title="Recusar (não bloquear)" aria-label="Recusar">✕</button></div>'
+            + tr + mais + '</div>';
+        }).join('');
+      }
+      if($('blSugList')) $('blSugList').addEventListener('click', async function(e){
+        var b = e.target && e.target.closest ? e.target.closest('button[data-acao]') : null; if(!b) return;
+        var row = b.closest('.bl-sug-row'); var ph = row && row.getAttribute('data-ph'); if(!ph) return;
+        row.querySelectorAll('button').forEach(function(x){ x.disabled = true; });
+        var d = await api('/api/painel/ltv/blacklist/sugestoes/decidir', { phone: ph, acao: b.getAttribute('data-acao') });
+        if(!d || !d.ok){ row.querySelectorAll('button').forEach(function(x){ x.disabled = false; }); alert('Não deu: '+((d&&d.error)||'falha')); return; }
+        row.remove();
+        blSugContador(document.querySelectorAll('#blSugList .bl-sug-row').length);
+        if(d.acao === 'aprovar') blLoadList();
+      });
+      if($('blSugRefresh')) $('blSugRefresh').addEventListener('click', function(){ blSugLoad(true); });
       if($('blLookupBtn')) $('blLookupBtn').addEventListener('click', blLookup);
       if($('blAddBtn')) $('blAddBtn').addEventListener('click', blAdd);
       if($('blRefreshBtn')) $('blRefreshBtn').addEventListener('click', blLoadList);
@@ -787,6 +889,7 @@
       refreshAvailable();
       loadD2();
       blLoadList();
+      blSugLoad(false);
     })();
   </script>
 </body>

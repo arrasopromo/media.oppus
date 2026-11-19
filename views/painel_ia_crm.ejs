@@ -371,6 +371,8 @@
         // independente da guia e da lista carregada.
         var modoArroba=!!(state.arroba && state.arroba.q);
         var items=modoArroba ? (state.arroba.resultados||[]).slice() : state.convs.filter(function(c){
+          // Com busca no servidor (state.qServer), a lista já vem filtrada (telefone com/sem 9, histórico todo).
+          if(q && state.qServer===state.filter) return true;   // resultado da busca: mostra em qualquer guia
           if(q && (c.name||'').toLowerCase().indexOf(q)<0 && (c.phone||'').indexOf(q)<0) return false;
           // "respondida" = VOCÊ respondeu manualmente em algum momento. Conversa
           // atendida só pelo BOT continua como não respondida. E o "ok" do cliente
@@ -443,8 +445,11 @@
 
       async function loadConvs(){
         var bloq=!!state.bloqueados;
-        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope)+(state.soResposta?'&withReply=1':'')+(bloq?'&bloqueados=1':''));
+        var qBusca=String(state.filter||'').trim(); if(qBusca.replace(/\D/g,'').length<4 && qBusca.length<3) qBusca='';
+        var d=await api(API+'/conversations?scope='+encodeURIComponent(state.scope)+(state.soResposta?'&withReply=1':'')+(bloq?'&bloqueados=1':'')+(qBusca?'&q='+encodeURIComponent(qBusca):''));
         if(bloq!==!!state.bloqueados) return;   // trocou de guia enquanto carregava
+        if(qBusca!==(String(state.filter||'').trim().replace(/\D/g,'').length<4 && String(state.filter||'').trim().length<3 ? '' : String(state.filter||'').trim())) return;   // a busca mudou enquanto carregava
+        state.qServer=qBusca ? state.filter : null;
         if(d&&d.ok){
           state.convs=d.conversations||[]; if(typeof d.pendingNew==='number') state.pendingNew=d.pendingNew;
           if(typeof d.bloqueadosTotal==='number' && $('blockCount')) $('blockCount').textContent=d.bloqueadosTotal;
@@ -678,7 +683,10 @@
           }, 400);
           return;
         }
-        state.arroba=null; state.filter=this.value; state._convsHtml=null; renderConvs();
+        state.arroba=null; state.filter=this.value; state.qServer=null; state._convsHtml=null; renderConvs();
+        // Busca também no servidor: a lista carregada só tem as 300 conversas mais recentes.
+        clearTimeout(buscaTimer);
+        buscaTimer=setTimeout(function(){ loadConvs(); }, 450);
       });
       $('botBtn').addEventListener('click', async function(){
         if(!state.current) return;

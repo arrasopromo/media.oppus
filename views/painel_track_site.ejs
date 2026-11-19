@@ -173,6 +173,31 @@
     h += '<section class="ts-bloco"><h2>Faturamento por dia</h2><p class="sub">Soma dos pedidos pagos, pelo dia em que o Pix foi gerado (site + bot).</p>'
       + '<div class="ts-chart baixo"><canvas id="gReceita" aria-label="Faturamento por dia"></canvas></div></section>';
 
+    // CAC do Meta: pelo pixel (compras que o Meta atribui aos anúncios) + cliente novo pelo banco
+    var M = d.meta;
+    var rs = function(v){ return v == null ? '<span class="muted">—</span>' : brl(v); };
+    var rx = function(v){ return v == null ? '<span class="muted">—</span>' : (Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '×'); };
+    if (M && !M.erro) {
+      h += '<section class="ts-bloco"><h2>CAC do Meta</h2><p class="sub">Contas ca 2 + ca3 em R$ (sem imposto). <b>CAC Meta</b> = gasto ÷ compras que o pixel do Meta atribui aos anúncios (a mesma conta do Gerenciador de Anúncios). <b>ROAS Meta</b> = valor dessas compras ÷ gasto. <b>CAC cliente novo</b> = gasto ÷ @ que pagaram pela primeira vez, pelo nosso banco (nenhum pedido pago antes do período).</p>'
+        + '<div class="ts-kpis" style="margin:0 0 14px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">'
+        + kpi('Gasto no Meta', brl(M.gasto))
+        + kpi('CAC Meta', rs(M.cac), nf(M.compras) + ' compras no pixel')
+        + kpi('ROAS Meta', rx(M.roas), brl(M.valor) + ' em compras no pixel')
+        + kpi('CAC cliente novo', rs(M.custoClienteNovo), nf(M.clientesNovos) + ' de ' + nf(M.clientes) + ' clientes compraram pela 1ª vez')
+        + '</div>'
+        + '<div class="ts-scroll"><table><thead><tr><th>Anúncio</th><th class="n">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
+        + (M.anuncios.length ? M.anuncios.map(function(a){
+            return '<tr><td>' + esc(a.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(a.conta) + ' · ' + esc(a.id) + (a.status && a.status !== 'ACTIVE' ? ' · ' + esc(a.status.toLowerCase()) : '') + '</span></td>'
+              + '<td class="n">' + brl(a.gasto) + '</td><td class="n">' + nf(a.compras) + '</td><td class="n">' + rs(a.cac) + '</td><td class="n">' + rx(a.roas) + '</td>'
+              + '<td class="n">' + nf(a.novos) + '</td><td class="n">' + rs(a.custoClienteNovo) + '</td></tr>';
+          }).join('') : '<tr><td colspan="7" class="muted">Sem gasto no período.</td></tr>')
+        + '</tbody></table></div>'
+        + '<p class="sub" style="margin-top:10px">Cliente novo por anúncio: ' + nf(M.novosAnuncio) + ' dos ' + nf(M.clientesNovos) + ' clientes novos têm o anúncio gravado no pedido (utm_content); o resto (bot, sem utm) só entra no total.</p>'
+        + '</section>';
+    } else if (M && M.erro) {
+      h += '<section class="ts-bloco"><h2>CAC do Meta</h2><p class="sub">Não consegui buscar os dados do Meta: ' + esc(M.erro) + '</p></section>';
+    }
+
     // Funil
     var f0 = (d.funil[0] && d.funil[0].n) || 0;
     var dtBR = function(iso){ try { return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
