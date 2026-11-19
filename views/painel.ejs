@@ -8332,6 +8332,12 @@
             .vd-filtro small{ color:#8a93a1; font-size:12px; margin-left:4px; }
             .vd-tipo-l{ display:inline-flex; align-items:center; gap:8px; margin-left:auto; font-size:13px; color:#3a404b; }
             .vd-tipo-l select{ padding:6px 10px; border:1px solid #e3e6eb; border-radius:8px; background:#fff; font:inherit; font-size:13px; color:#14171c; }
+            .vd-tipo-l{ white-space:nowrap; }
+            @media (max-width: 700px){
+              .vd-tipo-l{ margin-left:0; flex:1 1 100%; width:100%; order:10; }
+              .vd-tipo-l select{ flex:1 1 auto; min-width:0; width:100%; }
+              .vd-filtro small#vdFiltroInfo{ flex:1 1 100%; margin-left:0; }
+            }
           </style>
           <script>
             // Coluna "Status (fornecedor)": mostra o último status gravado e, logo depois, o status AO VIVO
