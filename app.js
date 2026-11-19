@@ -4985,7 +4985,70 @@ try {
   setInterval(() => { consolidarCustoReposicoesAuto().then(r => { try { console.log('💸 [custo-reposicao] periodico:', JSON.stringify(r)); } catch (_) {} }).catch(() => {}); }, 12 * 60 * 60 * 1000).unref?.();
 } catch (_) {}
 
-app.get('/painel/testes-servicos', requireAdmin, async (req, res) => {
+// ── Link compartilhável dos Testes de Serviços ─────────────────────────────────────────────
+// Quem abre /compartilhado/testes/<token> ganha um cookie que libera SÓ esta página (e as APIs
+// dela) — o resto do painel continua pedindo login. Permissão por link: 'ver' (só olha) ou
+// 'editar' (cria/edita linhas, checa, pede refil). Admin cria e revoga pelo botão "Compartilhar".
+const SHARE_COOKIE = 'oppus_share_testes';
+const __shareCache = new Map();
+async function __shareLinkDoReq(req) {
+  try {
+    const tk = String(parseCookieHeader(req)[SHARE_COOKIE] || '').trim();
+    if (!/^[a-f0-9]{48}$/.test(tk)) return null;
+    const c = __shareCache.get(tk);
+    if (c && Date.now() - c.at < 60000) return c.doc;
+    const doc = await (await getCollection('painel_share_links')).findOne({ _id: tk, escopo: 'testes-servicos', revogado: { $ne: true } });
+    __shareCache.set(tk, { at: Date.now(), doc: doc || null });
+    return doc || null;
+  } catch (_) { return null; }
+}
+function requireTestesAccess(precisaEditar) {
+  return async (req, res, next) => {
+    if (req.session && req.session.adminUser) return requireAdmin(req, res, next);
+    try { const ck = parseCookieHeader(req); if (ck[ADMIN_AUTH_COOKIE] && verifyAdminAuth(ck[ADMIN_AUTH_COOKIE])) return requireAdmin(req, res, next); } catch (_) {}
+    const link = await __shareLinkDoReq(req);
+    if (!link) return requireAdmin(req, res, next);
+    if (precisaEditar && link.permissao !== 'editar') return res.status(403).json({ ok: false, error: 'Este link é só para visualizar.' });
+    res.locals.shareMode = true;
+    res.locals.sharePerm = link.permissao === 'editar' ? 'editar' : 'ver';
+    res.locals.shareNome = String(link.nome || '');
+    try { (await getCollection('painel_share_links')).updateOne({ _id: link._id }, { $set: { ultimoAcessoEm: new Date() }, $inc: { acessos: 1 } }).catch(() => {}); } catch (_) {}
+    return next();
+  };
+}
+app.get('/compartilhado/testes/:token', async (req, res) => {
+  const tk = String(req.params.token || '').trim().toLowerCase();
+  const doc = /^[a-f0-9]{48}$/.test(tk) ? await (await getCollection('painel_share_links')).findOne({ _id: tk, escopo: 'testes-servicos', revogado: { $ne: true } }).catch(() => null) : null;
+  if (!doc) return res.status(404).send('<p style="font-family:sans-serif;padding:24px">Link inválido ou revogado.</p>');
+  res.cookie(SHARE_COOKIE, tk, { httpOnly: true, secure: __adminCookieSecure, path: '/', maxAge: 365 * 24 * 3600 * 1000 });
+  return res.redirect('/painel/testes-servicos');
+});
+app.get('/api/painel/share-links', requireAdmin, async (req, res) => {
+  try {
+    const l = await (await getCollection('painel_share_links')).find({ escopo: 'testes-servicos' }).sort({ criadoEm: -1 }).limit(100).toArray();
+    const base = (req.protocol + '://' + req.get('host'));
+    return res.json({ ok: true, links: l.map((x) => ({ token: x._id, nome: x.nome || '', permissao: x.permissao, revogado: !!x.revogado, criadoEm: x.criadoEm, ultimoAcessoEm: x.ultimoAcessoEm || null, acessos: x.acessos || 0, url: base + '/compartilhado/testes/' + x._id })) });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/share-links/create', requireAdmin, async (req, res) => {
+  try {
+    const nome = String((req.body && req.body.nome) || '').trim().slice(0, 60) || 'Sem nome';
+    const permissao = String((req.body && req.body.permissao) || '') === 'editar' ? 'editar' : 'ver';
+    const token = crypto.randomBytes(24).toString('hex');
+    await (await getCollection('painel_share_links')).insertOne({ _id: token, escopo: 'testes-servicos', nome, permissao, criadoEm: new Date(), criadoPor: String((req.session.adminUser && req.session.adminUser.username) || ''), acessos: 0 });
+    return res.json({ ok: true, token, url: req.protocol + '://' + req.get('host') + '/compartilhado/testes/' + token });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post('/api/painel/share-links/revoke', requireAdmin, async (req, res) => {
+  try {
+    const token = String((req.body && req.body.token) || '');
+    await (await getCollection('painel_share_links')).updateOne({ _id: token }, { $set: { revogado: true, revogadoEm: new Date() } });
+    __shareCache.delete(token);
+    return res.json({ ok: true });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/painel/testes-servicos', requireTestesAccess(false), async (req, res) => {
   try {
     const col = await getCollection('service_tests');
     // Mais antiga em cima, mais nova embaixo: a linha criada aparece junto do "+ nova linha".
@@ -5121,7 +5184,7 @@ async function pickAvailableTestProfile(col) {
   } catch (_) { return ''; }
 }
 // Cria um teste
-app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/create', requireTestesAccess(true), async (req, res) => {
   try {
     const b = req.body || {};
     const col = await getCollection('service_tests');
@@ -5178,7 +5241,7 @@ app.post('/api/painel/testes-servicos/create', requireAdmin, async (req, res) =>
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Edita campos manuais de um teste
-app.post('/api/painel/testes-servicos/update', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/update', requireTestesAccess(true), async (req, res) => {
   try {
     const b = req.body || {};
     const id = String(b.id || '').trim();
@@ -5208,7 +5271,7 @@ app.post('/api/painel/testes-servicos/update', requireAdmin, async (req, res) =>
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Remove um teste
-app.post('/api/painel/testes-servicos/delete', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/delete', requireTestesAccess(true), async (req, res) => {
   try {
     const id = String((req.body && req.body.id) || '').trim();
     if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
@@ -5219,7 +5282,7 @@ app.post('/api/painel/testes-servicos/delete', requireAdmin, async (req, res) =>
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Checa UM teste agora (botão por linha)
-app.post('/api/painel/testes-servicos/check', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/check', requireTestesAccess(true), async (req, res) => {
   try {
     const id = String((req.body && req.body.id) || '').trim();
     if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
@@ -5276,7 +5339,7 @@ function resolveRefilProviderFromFornecedor(fornecedor) {
   return { host, envName, key, apiBase: 'https://' + host + '/api/v2' };
 }
 // Solicita REFIL do teste ao fornecedor (action=refill&order=<providerOrderId>). Só faz sentido onde temRefil=Sim.
-app.post('/api/painel/testes-servicos/refil', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/refil', requireTestesAccess(true), async (req, res) => {
   try {
     const id = String((req.body && req.body.id) || '').trim();
     if (!/^[0-9a-fA-F]{24}$/.test(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
@@ -5308,7 +5371,7 @@ app.post('/api/painel/testes-servicos/refil', requireAdmin, async (req, res) => 
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Solicita refil em MASSA (botão do topo): recebe ids, pede refil de cada linha com temRefil.
-app.post('/api/painel/testes-servicos/refil-bulk', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/refil-bulk', requireTestesAccess(true), async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).filter((x) => /^[0-9a-fA-F]{24}$/.test(String(x))).slice(0, 500);
@@ -5349,7 +5412,7 @@ function svcJobMinutos(recs) {
   const nTT = recs.filter((r) => r.rede === 'tiktok').length;
   return Math.max(1, Math.ceil((nTT * (TT_GAP_MS + TT_JITTER_MS / 2) + (recs.length - nTT) * 1500) / 60000));
 }
-app.post('/api/painel/testes-servicos/check-all', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/check-all', requireTestesAccess(true), async (req, res) => {
   try {
     const rede = String((req.body && req.body.rede) || '').toLowerCase();
     if (__serviceTestsRunning) return res.json({ ok: false, error: 'Já tem uma checagem rodando (cron das 12h ou outro clique). Pause ela ou espere terminar.', status: svcJobStatus() });
@@ -5363,7 +5426,7 @@ app.post('/api/painel/testes-servicos/check-all', requireAdmin, async (req, res)
   catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Checa os SELECIONADOS agora (checkboxes das linhas) — também em segundo plano, pausável.
-app.post('/api/painel/testes-servicos/check-bulk', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/check-bulk', requireTestesAccess(true), async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).filter((x) => /^[0-9a-fA-F]{24}$/.test(String(x))).slice(0, 500);
@@ -5379,15 +5442,15 @@ app.post('/api/painel/testes-servicos/check-bulk', requireAdmin, async (req, res
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Progresso da checagem em andamento (o painel consulta a cada 2s).
-app.get('/api/painel/testes-servicos/check-status', requireAdmin, (req, res) => res.json({ ok: true, status: svcJobStatus() }));
+app.get('/api/painel/testes-servicos/check-status', requireTestesAccess(false), (req, res) => res.json({ ok: true, status: svcJobStatus() }));
 // Pausar: termina a linha que está sendo medida e para; guarda as que faltam.
-app.post('/api/painel/testes-servicos/check-pause', requireAdmin, (req, res) => {
+app.post('/api/painel/testes-servicos/check-pause', requireTestesAccess(true), (req, res) => {
   if (!__svcJob.running) return res.json({ ok: false, error: 'Nenhuma checagem rodando.', status: svcJobStatus() });
   __svcJob.pausar = true;
   return res.json({ ok: true, status: svcJobStatus() });
 });
 // Continuar: retoma só as linhas que faltavam quando pausou.
-app.post('/api/painel/testes-servicos/check-resume', requireAdmin, async (req, res) => {
+app.post('/api/painel/testes-servicos/check-resume', requireTestesAccess(true), async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const pz = __svcJob.pausado;
@@ -5402,7 +5465,7 @@ app.post('/api/painel/testes-servicos/check-resume', requireAdmin, async (req, r
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }
 });
 // Descartar a checagem pausada (some o "Continuar").
-app.post('/api/painel/testes-servicos/check-discard', requireAdmin, (req, res) => { __svcJob.pausado = null; return res.json({ ok: true, status: svcJobStatus() }); });
+app.post('/api/painel/testes-servicos/check-discard', requireTestesAccess(true), (req, res) => { __svcJob.pausado = null; return res.json({ ok: true, status: svcJobStatus() }); });
 
 // Follow-up diário do bot (IA WhatsApp): /painel/ia-followup + geração sob demanda.
 try { require('./iaFollowup.js').registerIaFollowup(app, { requireAdmin, sendNtfy: require('./whatsappSales.js').sendNtfy }); } catch (e) { try { console.error('⚠️ ia-followup não registrado:', e && e.message); } catch (_) {} }

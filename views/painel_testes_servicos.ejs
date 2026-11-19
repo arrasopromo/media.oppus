@@ -129,10 +129,56 @@
     .rede-tab.on .rede-n { background: color-mix(in srgb, var(--rede) 14%, #fff); color: var(--rede); }
   </style>
 </head>
-<body>
-  <%- include('partials/painel_sidebar', { page: 'testes-servicos' }) %>
+<% var _share = (typeof shareMode !== 'undefined' && shareMode); var _shareVer = _share && (typeof sharePerm === 'undefined' || sharePerm !== 'editar'); %>
+<body class="<%= _share ? 'share-mode' : '' %><%= _shareVer ? ' share-ver' : '' %>">
+  <% if (!_share) { %><%- include('partials/painel_sidebar', { page: 'testes-servicos' }) %><% } %>
+  <style>
+    body.share-mode .main-content { margin-left: 0 !important; padding: 24px 28px 64px; }
+    body.share-ver .toolbar button, body.share-ver #addRow, body.share-ver .mini-btn, body.share-ver .selRow, body.share-ver #selAll { display: none !important; }
+    body.share-ver td.edit { pointer-events: none; }
+    .share-modal { position: fixed; inset: 0; background: rgba(17,24,39,.45); display: none; align-items: flex-start; justify-content: center; z-index: 9999; padding: 60px 16px; }
+    .share-modal.on { display: flex; }
+    .share-box { background: #fff; border-radius: 12px; width: min(720px, 100%); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+    .share-box h3 { margin: 0 0 4px; }
+    .share-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid #eef0f6; font-size: 13px; }
+    .share-row input[readonly] { flex: 1 1 260px; min-width: 0; font-size: 12px; padding: 5px 7px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f9fafb; }
+  </style>
   <div class="main-content">
-    <h1>Testes de Serviços</h1>
+    <h1>Testes de Serviços<% if (_share) { %> <span class="sub" style="font-size:0.8rem;font-weight:500;">acesso compartilhado<%= _shareVer ? ' · só visualização' : '' %></span><% } %></h1>
+    <% if (!_share) { %><button type="button" id="shareBtn" class="btn" style="float:right;margin-top:-44px;background:#111827;color:#fff;">🔗 Compartilhar</button>
+    <div class="share-modal" id="shareModal"><div class="share-box">
+      <h3>Compartilhar Testes de Serviços</h3>
+      <div class="sub" style="margin:0 0 10px;">Quem abrir o link vê <strong>só esta página</strong> (o resto do painel continua pedindo login). Dá para revogar quando quiser.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input id="shareNome" placeholder="Nome (ex.: Fulano)" style="flex:1 1 180px;padding:7px 9px;border:1px solid #e5e7eb;border-radius:6px;">
+        <select id="sharePerm" style="padding:7px 9px;border:1px solid #e5e7eb;border-radius:6px;"><option value="ver">Só visualizar</option><option value="editar">Ver e editar</option></select>
+        <button type="button" id="shareCriar" class="btn btn-purple">Gerar link</button>
+        <button type="button" id="shareFechar" class="btn" style="background:#e5e7eb;color:#374151;">Fechar</button>
+      </div>
+      <div id="shareLista" style="margin-top:12px;"></div>
+    </div></div>
+    <script>
+    (function(){
+      var M=document.getElementById('shareModal'), L=document.getElementById('shareLista');
+      function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+      async function api(u,b){ var r=await fetch(u,{method:b?'POST':'GET',headers:{'Content-Type':'application/json','Accept':'application/json'},credentials:'same-origin',body:b?JSON.stringify(b):undefined}); return r.json(); }
+      async function carregar(){
+        L.innerHTML='<div class="sub">carregando…</div>';
+        var d=await api('/api/painel/share-links'); var ls=(d&&d.links)||[];
+        if(!ls.length){ L.innerHTML='<div class="sub">Nenhum link ainda.</div>'; return; }
+        L.innerHTML=ls.map(function(x){ var dt=x.ultimoAcessoEm?new Date(x.ultimoAcessoEm).toLocaleString('pt-BR'):'nunca';
+          return '<div class="share-row"><strong>'+esc(x.nome)+'</strong><span class="sub" style="margin:0;">'+(x.permissao==='editar'?'ver e editar':'só visualizar')+' · '+x.acessos+' acessos · último: '+esc(dt)+'</span>'+
+            (x.revogado?'<span style="color:#b91c1c;">revogado</span>':'<input readonly value="'+esc(x.url)+'"><button type="button" class="btn" data-copy="'+esc(x.url)+'">Copiar</button><button type="button" class="btn" style="background:#fee2e2;color:#b91c1c;" data-rev="'+esc(x.token)+'">Revogar</button>')+'</div>'; }).join('');
+      }
+      document.getElementById('shareBtn').onclick=function(){ M.classList.add('on'); carregar(); };
+      document.getElementById('shareFechar').onclick=function(){ M.classList.remove('on'); };
+      M.onclick=function(e){ if(e.target===M) M.classList.remove('on'); };
+      document.getElementById('shareCriar').onclick=async function(){ var d=await api('/api/painel/share-links/create',{nome:document.getElementById('shareNome').value,permissao:document.getElementById('sharePerm').value}); if(d&&d.ok){ document.getElementById('shareNome').value=''; try{ await navigator.clipboard.writeText(d.url); }catch(_){} carregar(); } else alert('Falha ao gerar link'); };
+      L.onclick=async function(e){ var c=e.target.getAttribute('data-copy'), r=e.target.getAttribute('data-rev');
+        if(c){ try{ await navigator.clipboard.writeText(c); e.target.textContent='Copiado'; }catch(_){ var i=e.target.previousElementSibling; i.select(); } }
+        if(r && confirm('Revogar este link? Quem tem ele perde o acesso na hora.')){ await api('/api/painel/share-links/revoke',{token:r}); carregar(); } };
+    })();
+    </script><% } %>
     <div class="sub">Clique em <strong>+ nova linha</strong> e preencha os campos direto na tabela (clique na célula pra editar). O sistema mede a <strong>quantidade atual de seguidores</strong> e a <strong>% de queda</strong> todo dia às 12h (BRT). A data do pedido é registrada automaticamente.</div>
 
     <% var _rede = (typeof rede !== 'undefined' && (rede === 'facebook' || rede === 'tiktok')) ? rede : 'instagram';
@@ -161,16 +207,16 @@
     <% var _rede = (typeof rede !== 'undefined' && (rede === 'facebook' || rede === 'tiktok')) ? rede : 'instagram';
        var _redeCounts = (typeof redeCounts !== 'undefined' && redeCounts) ? redeCounts : {};
        var TIPOS_POR_REDE = {
-         instagram: ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras'],
+         instagram: ['seguidores mundiais','seguidores brasileiros','seguidores latinos','curtidas mundiais','curtidas brasileiras'],
          facebook: ['seguidores perfil mundiais','seguidores perfil brasileiros','seguidores página mundiais','seguidores página brasileiros','curtidas mundiais','curtidas brasileiras','visualizações'],
-         tiktok: ['seguidores mundiais','seguidores brasileiros','curtidas mundiais','curtidas brasileiras','visualizações']
+         tiktok: ['seguidores mundiais','seguidores brasileiros','seguidores latinos','curtidas mundiais','curtidas brasileiras','visualizações']
        };
        var TIPO_OPTS = TIPOS_POR_REDE[_rede];
        var _ff = (typeof filter !== 'undefined' && filter) ? filter : { tipo:'', fornecedor:'', quedaMin:'', quedaMax:'', de:'', ate:'', svc:'', precoMin:'', precoMax:'' };
        var _svcGroups = (typeof svcGroups !== 'undefined' && svcGroups) ? svcGroups : {};
        var _forn = (typeof fornecedores !== 'undefined' && Array.isArray(fornecedores)) ? fornecedores : [];
        var IG_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>';
-       function _tipoIcon(t){ t=String(t||''); if(/mundial/i.test(t)) return '🌍'; if(/brasileir/i.test(t)) return '🇧🇷'; return ''; }
+       function _tipoIcon(t){ t=String(t||''); if(/mundial/i.test(t)) return '🌍'; if(/brasileir/i.test(t)) return '🇧🇷'; if(/latin/i.test(t)) return '🌎'; return ''; }
        function _tipoLabel(t){ var ic=_tipoIcon(t); return (ic?ic+' ':'') + t; }
        // Seguidores (link de PERFIL) → mostra só @usuario. Curtidas/views (link de POST
        // /p/ /reel/ /tv/ /stories/) → mantém a URL. Username puro → @usuario.

@@ -8200,6 +8200,9 @@
             <button type="button" data-f="parc"><i class="parc"></i>Parcial <span>0</span></button>
             <button type="button" data-f="ruim"><i class="ruim"></i>Cancelado / erro <span>0</span></button>
             <small id="vdFiltroInfo">consultando fornecedores…</small>
+            <label class="vd-tipo-l">Tipo de serviço
+              <select id="vdTipo"><option value="">Todos os tipos</option></select>
+            </label>
           </div>
           <div class="vd-lote" id="vdLote">
             <button type="button" id="vdReMarcados" disabled>⟳ Reenviar marcados (<span id="vdReN">0</span>)</button>
@@ -8260,7 +8263,7 @@
                    const dateStr = formatDateTimeSP(order.createdAt);
                    const userLabel = String(order.instagramUsername ? ('@' + String(order.instagramUsername).replace(/^@+/, '')) : (order.customerLabel || '-'));
                 %>
-                <tr data-oid="<%= String(order._id || '') %>">
+                <tr data-oid="<%= String(order._id || '') %>" data-tipo="<%= String(order.type || '') %>">
                   <td class="vd-ck"><input type="checkbox" class="vd-sel" disabled title="Só Parcial ou Cancelado podem ser reenviados" aria-label="Marcar para reenviar"></td>
                   <td><%= dateStr %></td>
                   <% const _igU = String(order.instagramUsername || '').replace(/^@+/, '').trim(); %>
@@ -8327,6 +8330,8 @@
             .vd-filtro button[aria-pressed="true"]{ background:#14171c; border-color:#14171c; color:#fff; }
             .vd-filtro button[aria-pressed="true"] span{ color:rgba(255,255,255,.7); }
             .vd-filtro small{ color:#8a93a1; font-size:12px; margin-left:4px; }
+            .vd-tipo-l{ display:inline-flex; align-items:center; gap:8px; margin-left:auto; font-size:13px; color:#3a404b; }
+            .vd-tipo-l select{ padding:6px 10px; border:1px solid #e3e6eb; border-radius:8px; background:#fff; font:inherit; font-size:13px; color:#14171c; }
           </style>
           <script>
             // Coluna "Status (fornecedor)": mostra o último status gravado e, logo depois, o status AO VIVO
@@ -8345,12 +8350,33 @@
                 if (/pend|created|queue/.test(s)) return ['Pendente','pend'];
                 return [st, ''];
               }
-              var filtro = '';
+              var filtro = '', filtroTipo = '';
+              // Filtro por TIPO de serviço (coluna Serviço): todos os tipos que a loja vende + os que aparecerem no período.
+              var TIPOS = [
+                ['seguidores_mistos','Seguidores mistos'], ['seguidores_brasileiros','Seguidores brasileiros'], ['organicos','Seguidores brasileiros reais (orgânicos)'],
+                ['curtidas_mistos','Curtidas mistas'], ['curtidas_brasileiras','Curtidas brasileiras'], ['curtidas_organicas','Curtidas reais'],
+                ['visualizacoes_reels','Visualizações de Reels'], ['comentarios','Comentários']
+              ];
+              var NOME_TIPO = {}; TIPOS.forEach(function(t){ NOME_TIPO[t[0]] = t[1]; });
+              function nomeTipo(t){ return NOME_TIPO[t] || String(t || '(sem tipo)').replace(/_/g, ' '); }
+              function montaTipos(){
+                var sel = document.getElementById('vdTipo'); if (!sel) return;
+                var cont = {};
+                Array.prototype.forEach.call(document.querySelectorAll('tr[data-oid]'), function(tr){ var t = tr.getAttribute('data-tipo') || ''; cont[t] = (cont[t] || 0) + 1; });
+                var lista = TIPOS.map(function(t){ return t[0]; });
+                Object.keys(cont).sort().forEach(function(t){ if (lista.indexOf(t) < 0) lista.push(t); });
+                var total = 0; Object.keys(cont).forEach(function(k){ total += cont[k]; });
+                sel.innerHTML = '<option value="">Todos os tipos (' + total.toLocaleString('pt-BR') + ')</option>' + lista.map(function(t){
+                  return '<option value="' + t.replace(/"/g, '&quot;') + '"' + (t === filtroTipo ? ' selected' : '') + '>' + nomeTipo(t).replace(/</g, '&lt;') + ' (' + (cont[t] || 0).toLocaleString('pt-BR') + ')</option>';
+                }).join('');
+                sel.onchange = function(){ filtroTipo = sel.value; aplica(); };
+              }
               function aplica(){
                 var n = { '': 0, ok: 0, and: 0, pend: 0, parc: 0, ruim: 0 };
                 Array.prototype.forEach.call(document.querySelectorAll('tr[data-oid]'), function(tr){
-                  var c = tr.getAttribute('data-cat') || ''; n[''] += 1; if (n[c] != null && c) n[c] += 1;
-                  tr.hidden = !!filtro && c !== filtro;
+                  var tipoOk = !filtroTipo || (tr.getAttribute('data-tipo') || '') === filtroTipo;
+                  var c = tr.getAttribute('data-cat') || ''; if (tipoOk) { n[''] += 1; if (n[c] != null && c) n[c] += 1; }
+                  tr.hidden = !tipoOk || (!!filtro && c !== filtro);
                 });
                 Array.prototype.forEach.call(document.querySelectorAll('#vdFiltro button'), function(b){
                   var f = b.getAttribute('data-f') || ''; b.setAttribute('aria-pressed', f === filtro ? 'true' : 'false');
@@ -8463,6 +8489,7 @@
               });
               var cels = Array.prototype.slice.call(document.querySelectorAll('td.vd-st'));
               cels.forEach(function(td){ pinta(td, { status: td.getAttribute('data-st'), remains: td.getAttribute('data-rem'), provider: td.getAttribute('data-prov'), orderId: td.getAttribute('data-ord'), posts: td.getAttribute('data-posts') }); });
+              montaTipos();
               aplica();
               var ids = cels.map(function(td){ var tr = td.closest('tr'); return tr ? tr.getAttribute('data-oid') : ''; }).filter(Boolean);
               var faltam = Math.ceil(ids.length / 150), info = document.getElementById('vdFiltroInfo');
