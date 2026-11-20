@@ -293,7 +293,7 @@
         var _totalEnv2 = (typeof totalEnviadas !== 'undefined') ? totalEnviadas : 0;
       %>
       <div class="ltv-fin">
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#059669"></span>Faturado LTV</div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub">via cupons do pool LTV</div></div>
+        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#059669"></span>Faturado LTV</div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub"><b id="kPedidosLtv"><%= (function(){ try { var v = (typeof ltvVendas !== 'undefined' && ltvVendas) || {}; return ((Number((v.auto||{}).n)||0) + (Number((v.manual||{}).n)||0) + (Number((v.semOrigem||{}).n)||0)).toLocaleString('pt-BR'); } catch (_) { return '0'; } })() %></b> pedido(s) pago(s) · via cupons do pool LTV</div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Custo dos serviços</div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">fornecedor (charge real) + taxa do Pix</div></div>
         <div class="ltv-k" title="Custo das mensagens de WhatsApp enviadas (auto + manual) no período × custo por mensagem"><div class="lbl"><span class="dot" style="background:#d97706"></span>Custo das mensagens</div><div class="val red" id="kCustoMensagens"><%= brl(_custoMsg) %></div><div class="sub"><span id="kMsgQty"><%= nf(_totalEnv2) %></span> envios × <span id="kMsgUnit"><%= brl(_msgUnit) %></span>/msg</div></div>
         <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Lucro LTV</div><div class="val accent" id="kLucro"><%= brl(lucro) %></div><div class="sub">faturado − serviço − mensagens</div></div>
@@ -620,6 +620,7 @@
           var lv = s.ltvVendas, a = lv.auto||{}, mn = lv.manual||{}, so = lv.semOrigem||{};
           var mx = Math.max(Number(a.faturado)||0, Number(mn.faturado)||0, Number(so.faturado)||0, 1);
           var wv = function(v){ return Math.max(3, Math.round((Number(v)||0)/mx*100)); };
+          setTxt('kPedidosLtv', nfFmt((Number(a.n)||0) + (Number(mn.n)||0) + (Number(so.n)||0)));
           setTxt('kVAuto', brlFmt(a.faturado) + ' · ' + nfFmt(a.n));
           setTxt('kVManual', brlFmt(mn.faturado) + ' · ' + nfFmt(mn.n));
           setTxt('kVNone', brlFmt(so.faturado) + ' · ' + nfFmt(so.n));
