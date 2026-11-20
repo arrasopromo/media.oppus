@@ -2109,9 +2109,24 @@
               var resp = await fetch('/api/painel/gerenciamento-seguidores/verify-filtered/status', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
               var data = await resp.json().catch(function(){ return null; });
               var job = data && data.ok ? data.job : null;
+              var tinhaJob = !!(verifyFilteredPollTimer || (verifyFilteredLastJob && verifyFilteredLastJob.status === 'running'));
               verifyFilteredLastJob = job || verifyFilteredLastJob;
               updatePauseAllButtonState();
-              if (!job) return;
+              if (!job) {
+                // O servidor não tem mais a verificação (ele foi reiniciado no meio): para de esperar e libera os botões.
+                if (tinhaJob) {
+                  if (verifyFilteredPollTimer) { clearInterval(verifyFilteredPollTimer); verifyFilteredPollTimer = null; }
+                  var ult = verifyFilteredLastJob || {};
+                  verifyFilteredLastJob = null;
+                  try { if (verifyFilteredBtn) verifyFilteredBtn.disabled = false; } catch (_) {}
+                  try { if (forceVerifyFilteredBtn) forceVerifyFilteredBtn.disabled = false; } catch (_) {}
+                  try { if (verifyMenuBtn) verifyMenuBtn.disabled = false; } catch (_) {}
+                  try { if (verifySelectedBtn) verifySelectedBtn.disabled = false; } catch (_) {}
+                  setStatus('A verificação parou em ' + String(ult.done || 0) + '/' + String(ult.total || 0) + ' porque o servidor foi reiniciado. Rode de novo: os já verificados vêm do cache e passam rápido.');
+                  updatePauseAllButtonState();
+                }
+                return;
+              }
               var done = Number(job.done || 0);
               var total = Number(job.total || 0);
               var ok = Number(job.ok || 0);
