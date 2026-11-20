@@ -42197,24 +42197,28 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     const cid = String(r.clientId || ''); if (!cid) continue;
     fVis.add(cid); if (__TS_PAG_SERV[String(r.path || '').split(':')[0]]) fServ.add(cid);
   }
-  let fPix = 0, fPagos = 0;
+  // Pix e pagos por PESSOA (visitorId): a mesma pessoa gera mais de um Pix quando troca de pacote ou tenta de novo.
+  // Upsell fica fora: é a oferta depois da compra, não uma nova entrada no funil.
+  const fPixP = new Set(), fPagosP = new Set();
   for (const o of orders) {
     if (!noFunil(o.createdAt)) continue;
-    const info = __tsProduto(o); if (info.cat === 'refil' || info.canal !== 'site') continue;
-    fPix++; if (pago(o)) fPagos++;
+    const info = __tsProduto(o); if (info.cat === 'refil' || info.canal !== 'site' || info.isUpsell) continue;
+    const quem = o.visitorId ? 'v:' + o.visitorId : 'o:' + String(o._id);
+    fPixP.add(quem); if (pago(o)) fPagosP.add(quem);
   }
+  const fPix = fPixP.size, fPagos = fPagosP.size;
   const funil = [
     { etapa: 'Visitantes no site', n: fVis.size },
     { etapa: 'Viram uma página de serviço', n: fServ.size },
   ];
   if (funilDesdeMs != null) funil.push(
-    { etapa: 'Escolheram um pacote', n: nEv('pacote_escolhido') },
     { etapa: 'Validaram o perfil', n: nEv('perfil_validado') },
+    { etapa: 'Escolheram um pacote', n: nEv('pacote_escolhido') },
     { etapa: 'Clicaram em pagar', n: nEv('clicou_pagar') },
   );
   funil.push(
-    { etapa: 'Pix gerado (pelo site)', n: fPix },
-    { etapa: 'Pagaram (pelo site)', n: fPagos },
+    { etapa: 'Geraram o pagamento', n: fPix },
+    { etapa: 'Pagaram', n: fPagos },
   );
 
   // 4) CAC do Meta (ca 2 + ca3, em R$), no total e por anúncio.
@@ -42238,7 +42242,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
         for (const o of antes) { const g = igDe(o); if (g) jaComprou.add(g); }
       }
       const porAd = new Map();
-      for (const a of (md.ads || [])) porAd.set(String(a.id), { id: String(a.id), nome: a.nome || '', conta: a.conta || '', status: a.efetivo || a.status || '', gasto: Number(a.gasto) || 0, compras: Number(a.metaCompras) || 0, valor: Number(a.metaValor) || 0, vendas: 0, receita: 0, novos: 0 });
+      for (const a of (md.ads || [])) porAd.set(String(a.id), { id: String(a.id), nome: a.nome || '', thumb: a.thumb || '', conta: a.conta || '', status: a.efetivo || a.status || '', gasto: Number(a.gasto) || 0, compras: Number(a.metaCompras) || 0, valor: Number(a.metaValor) || 0, vendas: 0, receita: 0, novos: 0 });
       const vistos = new Set(); let novos = 0, novosAnuncio = 0, vendasAnuncio = 0;
       for (const o of pagosP) {
         const g = igDe(o); const ad = adDe(o); const a = ad && porAd.get(ad);

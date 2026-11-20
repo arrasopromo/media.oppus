@@ -13,6 +13,7 @@
     .ts *{ box-sizing:border-box; }
     .ts .num{ font-variant-numeric:tabular-nums; }
     .ts-top5 li.ts-extra[hidden]{ display:none !important; }
+    .ts-ad{ display:flex; align-items:center; gap:10px; } .ts-thumb{ width:44px; height:44px; flex:none; border-radius:6px; object-fit:cover; background:#eef0f3; } .ts-thumb.vazio{ display:inline-block; }
     table.ts-sort th{ cursor:pointer; user-select:none; white-space:nowrap; }
     table.ts-sort th:hover{ color:inherit; text-decoration:underline; text-underline-offset:3px; }
     table.ts-sort th::after{ content:''; display:inline-block; width:0; margin-left:4px; opacity:.45; }
@@ -197,7 +198,7 @@
         + '<div class="ts-scroll"><table class="ts-sort"><thead><tr><th data-t="txt">Anúncio</th><th class="n" data-ord="desc">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
         + (M.anuncios.length ? M.anuncios.map(function(a){
             var dv = function(v){ return ' data-v="' + (v == null ? '' : Number(v)) + '"'; };
-            return '<tr><td data-v="' + esc(String(a.nome || '').toLowerCase()) + '">' + esc(a.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(a.conta) + ' · ' + esc(a.id) + (a.status && a.status !== 'ACTIVE' ? ' · ' + esc(a.status.toLowerCase()) : '') + '</span></td>'
+            return '<tr><td data-v="' + esc(String(a.nome || '').toLowerCase()) + '"><div class="ts-ad">' + (a.thumb ? '<img class="ts-thumb" src="' + esc(a.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<span class="ts-thumb vazio"></span>') + '<div>' + esc(a.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(a.conta) + ' · ' + esc(a.id) + (a.status && a.status !== 'ACTIVE' ? ' · ' + esc(a.status.toLowerCase()) : '') + '</span></div></div></td>'
               + '<td class="n"' + dv(a.gasto) + '>' + brl(a.gasto) + '</td><td class="n"' + dv(a.compras) + '>' + nf(a.compras) + '</td><td class="n"' + dv(a.cac) + '>' + rs(a.cac) + '</td><td class="n"' + dv(a.roas) + '>' + rx(a.roas) + '</td>'
               + '<td class="n"' + dv(a.novos) + '>' + nf(a.novos) + '</td><td class="n"' + dv(a.custoClienteNovo) + '>' + rs(a.custoClienteNovo) + '</td></tr>';
           }).join('') : '<tr><td colspan="7" class="muted">Sem gasto no período.</td></tr>')
@@ -212,7 +213,7 @@
     var f0 = (d.funil[0] && d.funil[0].n) || 0;
     var dtBR = function(iso){ try { return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
     var subFunil = d.funilDesde
-      ? 'Todas as etapas contadas na mesma janela: desde ' + dtBR(d.funilDesde) + ', quando o rastreio das etapas (pacote, perfil, pagar) entrou no ar. % sobre os visitantes e sobre a etapa anterior.'
+      ? 'Todas as etapas contadas por pessoa e na mesma janela: desde ' + dtBR(d.funilDesde) + ', quando o rastreio das etapas (pacote, perfil, pagar) entrou no ar. % sobre os visitantes e sobre a etapa anterior.'
       : 'Sem eventos de etapa no período: só visitas, Pix e pagos. % sobre os visitantes e sobre a etapa anterior.';
     h += '<section class="ts-bloco"><h2>Funil</h2><p class="sub">' + esc(subFunil) + '</p><div class="ts-funil">';
     var ant = null;
@@ -281,12 +282,11 @@
 
     // Produtos pagos
     var totRec = d.produtos.reduce(function(a, p){ return a + p.receita; }, 0) || 1;
-    h += '<section class="ts-bloco ts-8"><h2>Produtos pagos</h2><p class="sub">Todos os canais (site + bot). Upsell entra no produto dele.</p><div class="ts-scroll"><table><thead><tr><th>Produto</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th><th class="n">% do total</th><th></th></tr></thead><tbody>';
+    h += '<section class="ts-bloco"><h2>Produtos pagos</h2><p class="sub">Todos os canais (site + bot). Upsell entra no produto dele.</p><div class="ts-scroll"><table><thead><tr><th>Produto</th><th class="n">Pix</th><th class="n">Pagos</th><th class="n">Pix → pago</th><th class="n">Faturamento</th><th class="n">% do total</th><th></th></tr></thead><tbody>';
     d.produtos.forEach(function(p){
       h += '<tr><td>' + esc(p.produto) + '</td><td class="n">' + nf(p.pix) + '</td><td class="n">' + nf(p.pagos) + '</td><td class="n">' + (p.pix ? pct(p.pagos / p.pix) : '—') + '</td><td class="n">' + brl(p.receita) + '</td><td class="n">' + pct(p.receita / totRec) + '</td><td style="width:16%">' + barra(p.receita, d.produtos[0] ? d.produtos[0].receita : 1, C.pago) + '</td></tr>';
     });
     h += '</tbody></table></div></section>';
-    h += '<section class="ts-bloco ts-4"><h2>Faturamento por produto</h2><p class="sub">Participação no período.</p><div class="ts-chart baixo"><canvas id="gProdutos" aria-label="Faturamento por produto"></canvas></div></section>';
 
     // Público
     h += '<section class="ts-bloco ts-6"><h2>Cidades</h2><p class="sub">Top 10 por visitantes (pela localização do IP).</p><div class="ts-scroll"><table><tbody>'
@@ -322,10 +322,6 @@
       scales: { x: semGrade, y: Object.assign({ beginAtZero: true }, eixo, { ticks: { callback: function(v){ return 'R$ ' + Number(v).toLocaleString('pt-BR'); } } }) } }) }));
     graficos.push(new Chart($('gHora'), { type: 'bar', data: { labels: d.porHora.map(function(_, i){ return String(i).padStart(2, '0') + 'h'; }), datasets: [{ label: 'Pageviews', data: d.porHora, backgroundColor: C.vis, borderRadius: 2 }] },
       options: Object.assign({}, base, { scales: { x: Object.assign({}, semGrade, { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } }), y: Object.assign({ beginAtZero: true }, eixo) } }) }));
-    var paleta = [C.pago, C.vis, C.pix, '#8a4fd8', '#0e7490', '#c8352b', '#6b7280', '#a16207'];
-    var top = d.produtos.slice(0, 7), resto = d.produtos.slice(7).reduce(function(a, p){ return a + p.receita; }, 0);
-    graficos.push(new Chart($('gProdutos'), { type: 'doughnut', data: { labels: top.map(function(p){ return p.produto; }).concat(resto ? ['Outros'] : []), datasets: [{ data: top.map(function(p){ return p.receita; }).concat(resto ? [resto] : []), backgroundColor: paleta, borderWidth: 2, borderColor: cor('--folha', '#fff') }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { callbacks: { label: function(c){ return c.label + ': ' + brl(c.parsed); } } } } } }));
   }
   carregar();
 })();
