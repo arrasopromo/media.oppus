@@ -440,6 +440,21 @@ function registerWhatsappIa(app) {
           for (const msg of (value.messages || [])) {
             handleInboundMessage(msg, nameByWa[String(msg.from)] || '').catch(() => {});
           }
+          // Status de entrega das mensagens que mandamos (sent/delivered/read/failed). A Meta aceita o
+          // envio na hora e só avisa DEPOIS se falhou (ex.: 131047 fora da janela de 24h, 131026 sem WhatsApp).
+          for (const st of (value.statuses || [])) {
+            (async () => {
+              const err = Array.isArray(st.errors) && st.errors[0] ? st.errors[0] : null;
+              const set = { waStatus: String(st.status || ''), waStatusAt: new Date((Number(st.timestamp) || Date.now() / 1000) * 1000) };
+              if (err) set.waError = { code: Number(err.code) || 0, title: String(err.title || ''), message: String((err.error_data && err.error_data.details) || err.message || '').slice(0, 300) };
+              const col = await getCollection('wa_ia_messages');
+              await col.updateOne({ wamid: String(st.id || '') }, { $set: set });
+              if (st.status === 'failed') {
+                try { console.warn('⚠️ IA WhatsApp: entrega FALHOU', String(st.recipient_id || '').slice(-4), err ? (err.code + ' ' + (err.title || '')) : ''); } catch (_) {}
+                try { await (await getCollection('wa_send_errors')).insertOne({ at: new Date(), phone: String(st.recipient_id || ''), code: err ? Number(err.code) || 0 : 0, subcode: null, message: err ? String(err.title || err.message || '') : 'failed', detail: 'status de entrega (webhook)', wamid: String(st.id || '') }); } catch (_) {}
+              }
+            })().catch(() => {});
+          }
         }
       }
     } catch (e) { try { console.error('❌ IA webhook erro:', e && e.message); } catch (_) {} }
