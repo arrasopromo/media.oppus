@@ -42,7 +42,17 @@
 
     /* Cards */
     .ltv-card{ background:var(--card); border:0; border-radius:12px; padding:16px 18px 18px; box-shadow:var(--anelc); min-width:0; }
-    .ltv-k{ background:var(--card); padding:14px 16px; min-width:0; }
+    .ltv-k{ background:var(--card); padding:14px 16px; min-width:0; position:relative; }
+    .ltv-sec{ display:flex; align-items:baseline; gap:8px; margin:22px 0 8px; font-size:13px; font-weight:650; color:var(--ink); }
+    .ltv-sec span{ font-weight:400; font-size:12px; color:var(--faint); }
+    .ltv-ops{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+    @media(max-width:900px){ .ltv-ops{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:520px){ .ltv-ops{ grid-template-columns:1fr; } }
+    .ltv-i{ width:16px; height:16px; flex:none; border-radius:50%; border:1px solid var(--line); background:transparent; color:var(--faint); font:600 10px/14px Georgia,serif; font-style:italic; padding:0; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+    .ltv-i:hover, .ltv-i[aria-expanded="true"]{ color:var(--ink); border-color:var(--faint); }
+    .ltv-i:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+    .ltv-pop{ position:absolute; z-index:1000; width:min(320px, calc(100vw - 32px)); background:#1d2128; color:#fff; font-size:12.5px; line-height:1.5; padding:10px 12px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+    .ltv-pop::before{ content:''; position:absolute; top:-5px; left:var(--seta,24px); width:10px; height:10px; background:#1d2128; transform:rotate(45deg); }
     .ltv-k .lbl{ display:flex; align-items:center; gap:7px; font-size:12px; font-weight:500; color:var(--muted); }
     .ltv-k .dot{ display:none; }
     .ltv-k #oaDot{ display:inline-block; width:7px; height:7px; border-radius:50%; flex:none; }
@@ -210,32 +220,22 @@
         <span id="ltvRefreshMsg" style="font-size:0.78rem; color:var(--faint);"></span>
       </div>
 
-      <!-- KPIs -->
+      <%
+        var _ltvV = (typeof ltvVendas !== 'undefined' && ltvVendas) || {};
+        var _ltvN0 = (Number((_ltvV.auto||{}).n)||0) + (Number((_ltvV.manual||{}).n)||0) + (Number((_ltvV.semOrigem||{}).n)||0);
+        var _ltvN = _ltvN0.toLocaleString('pt-BR');
+        var _ltvTot = (typeof totalEnviadas !== 'undefined') ? Number(totalEnviadas) || 0 : 0;
+        var _ltvConv = (_ltvTot ? Math.round(_ltvN0 / _ltvTot * 1000) / 10 : 0).toLocaleString('pt-BR');
+      %>
+      <!-- 1) Resultado das mensagens: enviadas → clicaram → pagaram → faturado -->
+      <div class="ltv-sec">Resultado das mensagens <span>no período escolhido</span></div>
       <div class="ltv-kpis">
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Clientes de recompra</div><div class="val" id="kRecompra"><%= nf(recompra) %></div><div class="sub">2+ compras · de <span id="kTotalClientes"><%= nf(totalClientes) %></span> clientes</div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#0ea5e9"></span>Disponíveis p/ enviar</div><div class="val" id="kPendentes"><%= nf(pendentes) %></div><div class="sub">recompra ainda sem LTV ativo</div></div>
-        <%
-          var _metaOn = (typeof metaConfigured !== 'undefined' && metaConfigured && typeof metaSent !== 'undefined' && metaSent != null);
-          var _waHead = _metaOn ? metaSent : (typeof waEnviadas !== 'undefined' ? waEnviadas : 0);
-        %>
-        <div class="ltv-k" title="<%= _metaOn ? 'Número OFICIAL da Meta (Analytics da WABA) — mesma fonte da tela de Insights. Casa exato com a cobrança.' : 'Mensagens WhatsApp enviadas (todos os tipos), deduplicadas por wamid. Configure WHATSAPP_BUSINESS_ACCOUNT_ID no .env para puxar o número oficial da Meta.' %>"><div class="lbl"><span class="dot" style="background:#16a34a"></span>Mensagens WhatsApp (Meta)</div><div class="val" id="kWaEnviadas"><%= nf(_waHead) %></div><div class="sub"><% if (_metaOn) { %>oficial Meta · entregues <b id="kMetaDelivered"><%= nf(metaDelivered || 0) %></b><% if (typeof metaSyncedAt !== 'undefined' && metaSyncedAt) { %><br><span style="color:var(--faint);font-size:0.72rem;">sync <%= new Date(metaSyncedAt).toLocaleString('pt-BR') %></span><% } %><% } else { %>nosso registro<% if (typeof waLogSince !== 'undefined' && waLogSince) { %><br><span style="color:var(--faint);font-size:0.72rem;">desde <%= new Date(waLogSince).toLocaleDateString('pt-BR') %> · defina WABA ID p/ oficial</span><% } %><% } %></div></div>
-        <div class="ltv-k" title="Total real de mensagens LTV = automático (D+2) + manual (enviar por base)"><div class="lbl"><span class="dot" style="background:#059669"></span>Mensagens LTV enviadas</div><div class="val" id="kTotalEnviadas"><%= nf(typeof totalEnviadas !== 'undefined' ? totalEnviadas : 0) %></div><div class="sub">auto D+2: <b id="kAutoMensagens"><%= nf(typeof autoMensagens !== 'undefined' ? autoMensagens : 0) %></b> · manual: <b id="kManualMensagens"><%= nf(typeof manualMensagens !== 'undefined' ? manualMensagens : 0) %></b></div></div>
-        <% var _ld = (typeof ltvDaily !== 'undefined' && ltvDaily) ? ltvDaily : { manualSent:0, manualCap:50, autoSent:0, autoCap:50, totalSentToday:0, totalCap:100 }; %>
-        <div class="ltv-k" title="Teto diário por canal (dia BRT): manual e automático têm quotas separadas, então o automático nunca engole o manual."><div class="lbl"><span class="dot" style="background:#0891b2"></span>Enviadas hoje (teto <%= _ld.totalCap %>/dia)</div><div class="val" id="kSentToday"><%= nf(_ld.totalSentToday) %></div><div class="sub">manual <b id="kManualToday"><%= nf(_ld.manualSent) %></b>/<%= _ld.manualCap %> · auto <b id="kAutoToday"><%= nf(_ld.autoSent) %></b>/<%= _ld.autoCap %></div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#d97706"></span>Clicaram no link</div><div class="val" id="kClicaram"><%= nf(clicaram) %></div><div class="sub"><span id="kCliques"><%= nf(cliques) %></span> cliques · <span id="kCtr"><%= _ctr %></span>% de clique</div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Descadastraram (opt-out)</div><div class="val" id="kOptout"><%= nf(optout) %></div><div class="sub"><span id="kRejeitando"><%= nf(rejeitando) %></span> rejeitando (&lt;<%= optoutThreshold %>x)</div></div>
-        <!-- Crédito OpenAI do bot de IA (a API não dá o saldo: estimativa = saldo informado − uso registrado) -->
-        <div class="ltv-k oa-k" id="oaCard">
-          <div class="lbl"><span class="dot" id="oaDot" style="background:#94a3b8"></span>Crédito da IA (OpenAI)<button type="button" class="oa-toggle" id="oaToggle" aria-expanded="false">atualizar</button></div>
-          <div class="val" id="oaValor">…</div>
-          <div class="sub" id="oaInfo">consultando…</div>
-          <div class="oa-form" id="oaForm" hidden>
-            <input id="oaInput" class="ltv-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Saldo em US$">
-            <button type="button" class="ltv-btn primary" id="oaSalvar">Salvar</button>
-            <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener">ver saldo na OpenAI ↗</a>
-          </div>
-        </div>
+        <div class="ltv-k"><div class="lbl">Mensagens de LTV enviadas<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Quantas mensagens de LTV (cupom de recompra) o sistema mandou no período. Automático = o envio de 2 dias depois da compra (D+2). Manual = o botão Enviar por base. Não inclui lembretes de pagamento, recuperação nem conversas do bot.">i</button></div><div class="val" id="kTotalEnviadas"><%= nf(typeof totalEnviadas !== 'undefined' ? totalEnviadas : 0) %></div><div class="sub">automático <b id="kAutoMensagens"><%= nf(typeof autoMensagens !== 'undefined' ? autoMensagens : 0) %></b> · manual <b id="kManualMensagens"><%= nf(typeof manualMensagens !== 'undefined' ? manualMensagens : 0) %></b></div></div>
+        <div class="ltv-k"><div class="lbl">Pessoas que clicaram<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Quantas PESSOAS diferentes abriram o link do cupom pelo menos uma vez. O total de cliques é maior porque a mesma pessoa abre o link mais de uma vez e a prévia do link no WhatsApp também conta como clique. Use o número de pessoas.">i</button></div><div class="val" id="kClicaram"><%= nf(clicaram) %></div><div class="sub"><span id="kCtr"><%= String(_ctr).replace('.', ',') %></span>% de quem recebeu · <span id="kCliques"><%= nf(cliques) %></span> cliques no total</div></div>
+        <div class="ltv-k"><div class="lbl">Pedidos pagos pelo LTV<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Pedidos pagos no período usando um cupom do LTV. É a venda que a mensagem trouxe. A porcentagem é pedidos pagos ÷ mensagens enviadas.">i</button></div><div class="val green" id="kPedidosLtv"><%= _ltvN %></div><div class="sub"><span id="kConvPagos"><%= _ltvConv %></span>% das mensagens viraram compra</div></div>
+        <div class="ltv-k"><div class="lbl">Faturado com o LTV<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Soma do valor pago nos pedidos que usaram cupom do LTV no período.">i</button></div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub">ticket médio <span id="kTicket"><%= brl(_ltvN0 ? faturado / _ltvN0 : 0) %></span></div></div>
       </div>
+      <!-- (operação fica no bloco 3, mais abaixo) -->
       <style>
         .oa-k .lbl{ position:relative; }
         .oa-toggle{ all:unset; margin-left:auto; cursor:pointer; font-size:0.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--accent); }
@@ -292,11 +292,37 @@
         var _msgUnit   = (typeof msgCostUnitBRL !== 'undefined') ? msgCostUnitBRL : 0;
         var _totalEnv2 = (typeof totalEnviadas !== 'undefined') ? totalEnviadas : 0;
       %>
+      <div class="ltv-sec">Dinheiro <span>no período escolhido</span></div>
       <div class="ltv-fin">
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#059669"></span>Faturado LTV</div><div class="val green" id="kFaturado"><%= brl(faturado) %></div><div class="sub"><b id="kPedidosLtv"><%= (function(){ try { var v = (typeof ltvVendas !== 'undefined' && ltvVendas) || {}; return ((Number((v.auto||{}).n)||0) + (Number((v.manual||{}).n)||0) + (Number((v.semOrigem||{}).n)||0)).toLocaleString('pt-BR'); } catch (_) { return '0'; } })() %></b> pedido(s) pago(s) · via cupons do pool LTV</div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#dc2626"></span>Custo dos serviços</div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">fornecedor (charge real) + taxa do Pix</div></div>
-        <div class="ltv-k" title="Custo das mensagens de WhatsApp enviadas (auto + manual) no período × custo por mensagem"><div class="lbl"><span class="dot" style="background:#d97706"></span>Custo das mensagens</div><div class="val red" id="kCustoMensagens"><%= brl(_custoMsg) %></div><div class="sub"><span id="kMsgQty"><%= nf(_totalEnv2) %></span> envios × <span id="kMsgUnit"><%= brl(_msgUnit) %></span>/msg</div></div>
-        <div class="ltv-k"><div class="lbl"><span class="dot" style="background:#4f46e5"></span>Lucro LTV</div><div class="val accent" id="kLucro"><%= brl(lucro) %></div><div class="sub">faturado − serviço − mensagens</div></div>
+        <div class="ltv-k"><div class="lbl">Custo dos serviços<button type="button" class="ltv-i" aria-label="O que é este número" data-i="O que pagamos ao fornecedor para entregar os pedidos do LTV (custo real cobrado) mais a taxa do Pix de cada pedido.">i</button></div><div class="val red" id="kCustoServicos"><%= brl(_custoServ) %></div><div class="sub">fornecedor + taxa do Pix</div></div>
+        <div class="ltv-k"><div class="lbl">Custo das mensagens<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Mensagens de LTV enviadas no período × o preço de cada mensagem de marketing do WhatsApp (cobrado pela Meta).">i</button></div><div class="val red" id="kCustoMensagens"><%= brl(_custoMsg) %></div><div class="sub"><span id="kMsgQty"><%= nf(_totalEnv2) %></span> mensagens × <span id="kMsgUnit"><%= brl(_msgUnit) %></span></div></div>
+        <div class="ltv-k"><div class="lbl">Lucro do LTV<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Faturado com o LTV − custo dos serviços − custo das mensagens.">i</button></div><div class="val accent" id="kLucro"><%= brl(lucro) %></div><div class="sub">faturado − serviços − mensagens</div></div>
+        <div class="ltv-k"><div class="lbl">Retorno das mensagens<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Quanto voltou de faturamento para cada R$ 1 gasto em mensagens de LTV no período. Acima de R$ 1 a mensagem se paga; o lucro já desconta também o custo do fornecedor.">i</button></div><div class="val" id="kRetorno"><%= _custoMsg > 0 ? brl(faturado / _custoMsg) : '—' %></div><div class="sub">de faturamento para cada R$ 1 em mensagens</div></div>
+      </div>
+
+      <div class="ltv-sec">Base e operação</div>
+      <div class="ltv-kpis ltv-ops">
+        <div class="ltv-k"><div class="lbl">Compraram 2+ vezes no período<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Clientes que compraram SEGUIDORES duas vezes ou mais DENTRO do período escolhido, entre todos que compraram seguidores no período. Quem comprou antes e voltou agora conta como 1 compra no período. Em períodos curtos o número fica baixo; para ver a recompra de verdade use Este mês ou Tudo.">i</button></div><div class="val" id="kRecompra"><%= nf(recompra) %></div><div class="sub">de <span id="kTotalClientes"><%= nf(totalClientes) %></span> que compraram seguidores no período</div></div>
+        <div class="ltv-k"><div class="lbl">Prontos para receber<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Clientes de recompra que ainda não têm um cupom de LTV ativo e podem receber o envio agora (botão Enviar por base).">i</button></div><div class="val" id="kPendentes"><%= nf(pendentes) %></div><div class="sub">recompra ainda sem cupom ativo</div></div>
+        <% var _ld = (typeof ltvDaily !== 'undefined' && ltvDaily) ? ltvDaily : { manualSent:0, manualCap:50, autoSent:0, autoCap:50, totalSentToday:0, totalCap:100 }; %>
+        <div class="ltv-k"><div class="lbl">Enviadas hoje<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Mensagens de LTV mandadas HOJE (horário de Brasília), independente do período escolhido. Manual e automático têm limites diários separados, para um não ocupar o espaço do outro.">i</button></div><div class="val" id="kSentToday"><%= nf(_ld.totalSentToday) %></div><div class="sub">limite <%= _ld.totalCap %>/dia · manual <b id="kManualToday"><%= nf(_ld.manualSent) %></b>/<%= _ld.manualCap %> · automático <b id="kAutoToday"><%= nf(_ld.autoSent) %></b>/<%= _ld.autoCap %></div></div>
+        <div class="ltv-k"><div class="lbl">Pediram para sair<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Clientes que pediram para não receber mais mensagens automáticas (opt-out). Rejeitando = recusaram menos vezes que o limite e ainda podem receber.">i</button></div><div class="val" id="kOptout"><%= nf(optout) %></div><div class="sub"><span id="kRejeitando"><%= nf(rejeitando) %></span> recusaram menos de <%= optoutThreshold %>x</div></div>
+        <%
+          var _metaOn = (typeof metaConfigured !== 'undefined' && metaConfigured && typeof metaSent !== 'undefined' && metaSent != null);
+          var _waHead = _metaOn ? metaSent : (typeof waEnviadas !== 'undefined' ? waEnviadas : 0);
+        %>
+        <div class="ltv-k"><div class="lbl">Todas as mensagens do número<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Número oficial da Meta: TODAS as mensagens que o número do WhatsApp mandou no período (LTV, lembretes de pagamento, recuperação, respostas). Por isso é maior que as mensagens de LTV. É o que a Meta usa para cobrar. A Meta atualiza esse número com atraso; o horário da última atualização aparece embaixo.">i</button></div><div class="val" id="kWaEnviadas"><%= nf(_waHead) %></div><div class="sub"><% if (_metaOn) { %>entregues <b id="kMetaDelivered"><%= nf(metaDelivered || 0) %></b><% if (typeof metaSyncedAt !== 'undefined' && metaSyncedAt) { %> · atualizado <%= new Date(metaSyncedAt).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) %><% } %><% } else { %>nosso registro (configure o WABA ID para o número oficial)<% } %></div></div>
+        <!-- Crédito OpenAI do bot de IA (a API não dá o saldo: estimativa = saldo informado − uso registrado) -->
+        <div class="ltv-k oa-k" id="oaCard">
+          <div class="lbl"><span class="dot" id="oaDot" style="background:#94a3b8"></span>Crédito da IA (OpenAI)<button type="button" class="ltv-i" aria-label="O que é este número" data-i="Saldo estimado da OpenAI, que paga o bot de IA do WhatsApp. A OpenAI não informa o saldo pela API: a estimativa é o saldo que você informou menos o uso registrado desde então. Sem crédito, o bot para de responder.">i</button><button type="button" class="oa-toggle" id="oaToggle" aria-expanded="false">atualizar</button></div>
+          <div class="val" id="oaValor">…</div>
+          <div class="sub" id="oaInfo">consultando…</div>
+          <div class="oa-form" id="oaForm" hidden>
+            <input id="oaInput" class="ltv-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Saldo em US$">
+            <button type="button" class="ltv-btn primary" id="oaSalvar">Salvar</button>
+            <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener">ver saldo na OpenAI ↗</a>
+          </div>
+        </div>
       </div>
 
       <!-- Envios automáticos (D+2) por dia -->
@@ -330,7 +356,29 @@
             box.querySelector('.ad-cols').addEventListener('mouseover', function(e){ var c = e.target.closest('.ad-col'); if (c && dica) dica.innerHTML = '<b>' + c.getAttribute('data-t') + '</b>'; });
           };
           try { window.__ltvAutoDias(JSON.parse(document.getElementById('autoByDay').getAttribute('data-dias') || '[]')); } catch (_) {}
-        </script>
+        
+  // ⓘ dos cards: abre um balão com a explicação; fecha ao clicar fora, no mesmo ⓘ ou com Esc.
+  (function(){
+    var aberto = null;
+    function fecha(){ if (aberto) { aberto.pop.remove(); aberto.btn.setAttribute('aria-expanded', 'false'); aberto = null; } }
+    document.addEventListener('click', function(e){
+      var b = e.target.closest && e.target.closest('.ltv-i');
+      if (!b) { if (aberto && !(e.target.closest && e.target.closest('.ltv-pop'))) fecha(); return; }
+      e.preventDefault(); e.stopPropagation();
+      if (aberto && aberto.btn === b) { fecha(); return; }
+      fecha();
+      var pop = document.createElement('div'); pop.className = 'ltv-pop'; pop.setAttribute('role', 'tooltip'); pop.textContent = b.getAttribute('data-i') || '';
+      document.body.appendChild(pop); // fora da grade (ela corta o que passa da borda)
+      var br = b.getBoundingClientRect(), w = pop.offsetWidth, vw = document.documentElement.clientWidth;
+      var left = Math.min(Math.max(16, br.left + br.width / 2 - 24), vw - w - 16);
+      pop.style.left = (left + window.scrollX) + 'px';
+      pop.style.top = (br.bottom + window.scrollY + 8) + 'px';
+      pop.style.setProperty('--seta', Math.max(10, br.left + br.width / 2 - left - 5) + 'px');
+      b.setAttribute('aria-expanded', 'true'); aberto = { btn: b, pop: pop };
+    });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') fecha(); });
+  })();
+</script>
       </div>
 
       <!-- Vendas de LTV por origem: automático (D+2) × base de recompra -->
@@ -602,7 +650,7 @@
           setTxt('kAutoToday', nfFmt(s.ltvDaily.autoSent));
         }
         var ctr = (Number(s.totalEnviadas)>0) ? Math.round((Number(s.clicaram)||0)/Number(s.totalEnviadas)*1000)/10 : 0;
-        setTxt('kClicaram', nfFmt(s.clicaram)); setTxt('kCtr', ctr); setTxt('kCliques', nfFmt(s.cliques));
+        setTxt('kClicaram', nfFmt(s.clicaram)); setTxt('kCtr', (ctr||0).toLocaleString('pt-BR')); setTxt('kCliques', nfFmt(s.cliques));
         setTxt('kOptout', nfFmt(s.optout)); setTxt('kRejeitando', nfFmt(s.rejeitando));
         setTxt('kFaturado', brlFmt(s.faturado));
         setTxt('kCustoServicos', brlFmt(typeof s.custoServicos !== 'undefined' ? s.custoServicos : s.custo));
@@ -620,7 +668,11 @@
           var lv = s.ltvVendas, a = lv.auto||{}, mn = lv.manual||{}, so = lv.semOrigem||{};
           var mx = Math.max(Number(a.faturado)||0, Number(mn.faturado)||0, Number(so.faturado)||0, 1);
           var wv = function(v){ return Math.max(3, Math.round((Number(v)||0)/mx*100)); };
-          setTxt('kPedidosLtv', nfFmt((Number(a.n)||0) + (Number(mn.n)||0) + (Number(so.n)||0)));
+          var _n = (Number(a.n)||0) + (Number(mn.n)||0) + (Number(so.n)||0), _env = Number(s.totalEnviadas)||0;
+          setTxt('kPedidosLtv', nfFmt(_n));
+          setTxt('kConvPagos', (_env ? Math.round(_n / _env * 1000) / 10 : 0).toLocaleString('pt-BR'));
+          setTxt('kTicket', brlFmt(_n ? (Number(s.faturado)||0) / _n : 0));
+          setTxt('kRetorno', (Number(s.custoMensagens)||0) > 0 ? brlFmt((Number(s.faturado)||0) / Number(s.custoMensagens)) : '—');
           setTxt('kVAuto', brlFmt(a.faturado) + ' · ' + nfFmt(a.n));
           setTxt('kVManual', brlFmt(mn.faturado) + ' · ' + nfFmt(mn.n));
           setTxt('kVNone', brlFmt(so.faturado) + ' · ' + nfFmt(so.n));
