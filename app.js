@@ -45460,7 +45460,9 @@ app.get('/painel', requireAdmin, async (req, res) => {
         instagramUsername: igUser,
         phone,
         isUpsell: !!(o && o.upsell && o.upsell.isUpsell === true),
-        mainSupplier: mainProviderSlotOf(o)
+        mainSupplier: mainProviderSlotOf(o),
+        arquivado: o.archived === true ? String(o.archivedAt || '1') : '',
+        contatos: Number(o.contactCount) || 0
       };
     });
 
