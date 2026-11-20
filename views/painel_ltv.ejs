@@ -941,6 +941,19 @@
       if($('blPhone')) $('blPhone').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); blLookup(); } });
       if($('blList')) $('blList').addEventListener('click', function(e){ var b=e.target&&e.target.closest?e.target.closest('.rm'):null; if(b){ blRemove(b.getAttribute('data-key')); } });
 
+      // Enviar por base: lembra a última escolha (ordem, tipo e quantidade) neste navegador.
+      (function(){
+        var CH = 'ltvEnvioPrefs';
+        try {
+          var pf = JSON.parse(localStorage.getItem(CH) || '{}');
+          if (pf.sort && $('sendSort') && [].some.call($('sendSort').options, function(o){ return o.value === pf.sort; })) $('sendSort').value = pf.sort;
+          if (pf.tipo && $('sendTipo') && [].some.call($('sendTipo').options, function(o){ return o.value === pf.tipo; })) $('sendTipo').value = pf.tipo;
+          if (pf.qtd && $('sendQty')) $('sendQty').value = pf.qtd;
+        } catch (_) {}
+        function salva(){ try { localStorage.setItem(CH, JSON.stringify({ sort: $('sendSort') ? $('sendSort').value : '', tipo: $('sendTipo') ? $('sendTipo').value : '', qtd: $('sendQty') ? $('sendQty').value : '' })); } catch (_) {} }
+        ['sendSort', 'sendTipo', 'sendQty'].forEach(function(id){ if ($(id)) $(id).addEventListener('change', salva); });
+      })();
+
       refreshAvailable();
       loadD2();
       blLoadList();
