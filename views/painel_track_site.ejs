@@ -13,6 +13,11 @@
     .ts *{ box-sizing:border-box; }
     .ts .num{ font-variant-numeric:tabular-nums; }
     .ts-top5 li.ts-extra[hidden]{ display:none !important; }
+    table.ts-sort th{ cursor:pointer; user-select:none; white-space:nowrap; }
+    table.ts-sort th:hover{ color:inherit; text-decoration:underline; text-underline-offset:3px; }
+    table.ts-sort th::after{ content:''; display:inline-block; width:0; margin-left:4px; opacity:.45; }
+    table.ts-sort th[data-ord="desc"]::after{ content:'↓'; width:auto; opacity:1; }
+    table.ts-sort th[data-ord="asc"]::after{ content:'↑'; width:auto; opacity:1; }
     .ts-ver-todos{ margin-top:8px; padding:6px 12px; border:1px solid var(--linha,#e3e6eb); border-radius:999px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
     .ts-ver-todos:hover{ border-color:#c9ced6; }
     .ts-top{ display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin-bottom:18px; }
@@ -189,11 +194,12 @@
         + kpi('CAC geral', rs(M.custoClienteNovo), nf(M.clientesNovos) + ' clientes novos (todas as origens) de ' + nf(M.clientes))
         + kpi('CAC anúncio', rs(M.custoClienteNovoAnuncio), nf(M.novosAnuncio) + ' clientes novos vindos de anúncio')
         + '</div>'
-        + '<div class="ts-scroll"><table><thead><tr><th>Anúncio</th><th class="n">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
+        + '<div class="ts-scroll"><table class="ts-sort"><thead><tr><th data-t="txt">Anúncio</th><th class="n" data-ord="desc">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
         + (M.anuncios.length ? M.anuncios.map(function(a){
-            return '<tr><td>' + esc(a.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(a.conta) + ' · ' + esc(a.id) + (a.status && a.status !== 'ACTIVE' ? ' · ' + esc(a.status.toLowerCase()) : '') + '</span></td>'
-              + '<td class="n">' + brl(a.gasto) + '</td><td class="n">' + nf(a.compras) + '</td><td class="n">' + rs(a.cac) + '</td><td class="n">' + rx(a.roas) + '</td>'
-              + '<td class="n">' + nf(a.novos) + '</td><td class="n">' + rs(a.custoClienteNovo) + '</td></tr>';
+            var dv = function(v){ return ' data-v="' + (v == null ? '' : Number(v)) + '"'; };
+            return '<tr><td data-v="' + esc(String(a.nome || '').toLowerCase()) + '">' + esc(a.nome) + '<br><span class="muted" style="font-size:11.5px">' + esc(a.conta) + ' · ' + esc(a.id) + (a.status && a.status !== 'ACTIVE' ? ' · ' + esc(a.status.toLowerCase()) : '') + '</span></td>'
+              + '<td class="n"' + dv(a.gasto) + '>' + brl(a.gasto) + '</td><td class="n"' + dv(a.compras) + '>' + nf(a.compras) + '</td><td class="n"' + dv(a.cac) + '>' + rs(a.cac) + '</td><td class="n"' + dv(a.roas) + '>' + rx(a.roas) + '</td>'
+              + '<td class="n"' + dv(a.novos) + '>' + nf(a.novos) + '</td><td class="n"' + dv(a.custoClienteNovo) + '>' + rs(a.custoClienteNovo) + '</td></tr>';
           }).join('') : '<tr><td colspan="7" class="muted">Sem gasto no período.</td></tr>')
         + '</tbody></table></div>'
         + '<p class="sub" style="margin-top:10px">Cliente novo por anúncio: ' + nf(M.novosAnuncio) + ' dos ' + nf(M.clientesNovos) + ' clientes novos têm o anúncio gravado no pedido (utm_content); o resto (bot, sem utm) só entra no total.</p>'
@@ -243,6 +249,22 @@
         + (arr.length > 5 ? '<button type="button" class="ts-ver-todos" data-n="' + arr.length + '">Ver todos (' + arr.length + ')</button>' : '');
     }
     var tipoNome = { mistos: 'mistos', brasileiros: 'brasileiros', curtidas_brasileiras: 'brasileiras', organicos: 'reais', visualizacoes_reels: '', comentarios: '' };
+    if (!window.__tsOrdena) { window.__tsOrdena = true; document.addEventListener('click', function(e){
+      var th = e.target.closest && e.target.closest('table.ts-sort th'); if (!th) return;
+      var tb = th.closest('table'), body = tb.tBodies[0]; if (!body) return;
+      var col = [].indexOf.call(th.parentNode.children, th), txt = th.getAttribute('data-t') === 'txt';
+      var atual = th.getAttribute('data-ord'), dir = atual ? (atual === 'desc' ? 'asc' : 'desc') : (txt ? 'asc' : 'desc');
+      [].forEach.call(th.parentNode.children, function(x){ x.removeAttribute('data-ord'); });
+      th.setAttribute('data-ord', dir);
+      var linhas = [].slice.call(body.rows).filter(function(r){ return r.cells.length > col && r.cells[col].hasAttribute('data-v'); });
+      linhas.sort(function(a, b){
+        var va = a.cells[col].getAttribute('data-v'), vb = b.cells[col].getAttribute('data-v');
+        if (va === '' && vb === '') return 0; if (va === '') return 1; if (vb === '') return -1;
+        var r = txt ? va.localeCompare(vb, 'pt-BR') : (Number(va) - Number(vb));
+        return dir === 'asc' ? r : -r;
+      });
+      linhas.forEach(function(r){ body.appendChild(r); });
+    }); }
     if (!window.__tsVerTodos) { window.__tsVerTodos = true; document.addEventListener('click', function(e){
       var b = e.target.closest && e.target.closest('.ts-ver-todos'); if (!b) return;
       var ol = b.previousElementSibling; if (!ol) return;
