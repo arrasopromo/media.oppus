@@ -326,7 +326,7 @@
       }
       function initials(name, phone){ var n=String(name||'').trim(); if(n) return n.slice(0,2).toUpperCase(); var p=String(phone||'').replace(/\D/g,''); return p.slice(-2) || '?'; }
       function fmtTime(d){ try{ var x=new Date(d); var now=new Date(); var sameDay=x.toDateString()===now.toDateString(); return sameDay ? (('0'+x.getHours()).slice(-2)+':'+('0'+x.getMinutes()).slice(-2)) : (('0'+x.getDate()).slice(-2)+'/'+('0'+(x.getMonth()+1)).slice(-2)); }catch(_){ return ''; } }
-      async function api(url, opts){ var r=await fetch(url, Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts||{})); return await r.json().catch(function(){return null;}); }
+      async function api(url, opts){ opts=opts||{}; var ms=opts.timeoutMs, ctl=(ms&&typeof AbortController!=='undefined')?new AbortController():null, tm=ctl?setTimeout(function(){ ctl.abort(); }, ms):null; var o=Object.assign({ credentials:'same-origin', headers:{'Accept':'application/json'} }, opts); delete o.timeoutMs; if(ctl) o.signal=ctl.signal; try { var r=await fetch(url, o); return await r.json().catch(function(){return { ok:false, error:'http_'+r.status };}); } finally { if(tm) clearTimeout(tm); } }
 
       var state = { current: null, currentName: '', botPaused: false, convs: [], filter: '', tab: 'all', scope: 'all', answer: 'all', msgs: [], replyTo: null };
 
@@ -732,11 +732,12 @@
         }
         var txt=$('msgInput').value.trim(); if(!txt||!state.current) return;
         $('sendBtn').disabled=true;
-        var d=await api(API+'/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) });
+        var d; try { d=await api(API+'/send', { method:'POST', timeoutMs:45000, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone: state.current, text: txt, replyTo: state.replyTo || '' }) }); }
+        catch(ex){ d={ ok:false, detail:(ex&&ex.name==='AbortError')?'O servidor não respondeu em 45s. Confira se a mensagem apareceu antes de mandar de novo.':'Sem conexão com o servidor. Tente de novo.' }; }
         $('sendBtn').disabled=false;
         if(d&&d.ok){ $('msgInput').value=''; $('msgInput').style.height='auto'; clearReply(); setBotBtn(true); await refreshOpen(true); loadConvs(); }
         else { alert('Falha ao enviar: '+((d&&(d.detail||d.message||d.error))||'erro')); }
-        } finally { state.sending=false; }
+        } finally { state.sending=false; try{ $('sendBtn').disabled=false; }catch(_){} }
       }
       // Responder mensagem específica (citação) — vale p/ mensagem do cliente e nossa.
       function setReply(wamid){
