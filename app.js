@@ -42108,6 +42108,8 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   // A tabela de origem usa só as visitas a partir da 1ª com UTM, pra não mostrar milhares de "sem origem".
   let origemDesdeMs = null;
   for (const r of pvRows) { if (r.utm) { const t = new Date(r.createdAt).getTime(); if (origemDesdeMs == null || t < origemDesdeMs) origemDesdeMs = t; } }
+  const origemVisto = new Set();
+  pvRows.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   for (const r of pvRows) {
     if (__tsEhBot(r.ua, r.city, r.ip, r.referer, r.dc, r.country)) { botsPv++; continue; }
     const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
@@ -42122,13 +42124,19 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     if (cid) disp[tipoDisp].add(cid);
     const cidade = [r.city, r.region].filter(Boolean).join(' / ');
     if (cidade && cid) (cidades[cidade] || (cidades[cidade] = new Set())).add(cid);
-    let src = '';
-    if (r.utm && (r.utm.source || r.utm.campaign)) src = 'Anúncio';
-    else if (/facebook|instagram|fb\.|l\.instagram/i.test(String(r.referer || ''))) src = 'Instagram/Facebook';
-    else if (/google\./i.test(String(r.referer || ''))) src = 'Google';
-    else if (r.referer && !/agenciaoppus/i.test(String(r.referer))) src = 'Outros sites';
-    else src = 'Sem origem registrada';
-    if (cid && origemDesdeMs != null && new Date(r.createdAt).getTime() >= origemDesdeMs) (origem[src] || (origem[src] = new Set())).add(cid);
+    // Origem: UMA por pessoa, pela 1ª visita dela no período (antes contava cada página e a mesma pessoa
+    // aparecia em "Anúncio" e em "Sem origem" quando navegava pelo site).
+    if (cid && !origemVisto.has(cid) && origemDesdeMs != null && new Date(r.createdAt).getTime() >= origemDesdeMs) {
+      origemVisto.add(cid);
+      const ref = String(r.referer || '');
+      let src = '';
+      if (r.utm && (r.utm.source || r.utm.campaign || r.utm.fbclid)) src = 'Anúncio';
+      else if (/facebook|instagram|fb\.|l\.instagram/i.test(ref)) src = 'Instagram/Facebook';
+      else if (/google\./i.test(ref)) src = 'Google';
+      else if (ref && !/agenciaoppus/i.test(ref)) src = 'Outros sites';
+      else src = 'Direto / sem origem';
+      (origem[src] || (origem[src] = new Set())).add(cid);
+    }
   }
 
   // 2) Pedidos (Pix gerado) e pagos
@@ -42136,7 +42144,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const prod = {}, porCat = {}, pacotesPix = {}, pacotesPagos = {}, bumps = {}, utmContent = {};
   let pix = 0, pagos = 0, receita = 0, receitaUpsell = 0, pagosUpsell = 0, comVisitor = 0, comBumpPagos = 0;
   const canais = { site: { canal: 'Site', pix: 0, pagos: 0, receita: 0 }, bot: { canal: 'WhatsApp (bot)', pix: 0, pagos: 0, receita: 0 } };
-  const porCatSite = {};
+  const porCatSite = {}; const pagantesSite = new Set(); let pagosBotSemUpsell = 0;
   const bumpNome = { likes: 'Curtidas', views: 'Visualizações', comments: 'Comentários', upgrade: 'Upgrade de pacote', warranty_3m: 'Garantia 3 meses', warranty3m: 'Garantia 3 meses', warranty_4m: 'Garantia 4 meses', warranty_6m: 'Garantia 6 meses' };
   for (const o of orders) {
     const info = __tsProduto(o);
@@ -42146,7 +42154,9 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     pix++; if (porDia[d]) porDia[d].pix++;
     if (o.visitorId) comVisitor++;
     const cn = canais[info.canal]; cn.pix++; if (ok) { cn.pagos++; cn.receita += v; }
-    if (info.canal === 'site') { const ps = porCatSite[info.cat] || (porCatSite[info.cat] = { pix: 0, pagos: 0, receita: 0 }); ps.pix++; if (ok) { ps.pagos++; ps.receita += v; } }
+    if (info.canal === 'site' && !info.isUpsell) { const ps = porCatSite[info.cat] || (porCatSite[info.cat] = { pix: 0, pagos: 0, receita: 0, pessoas: new Set() }); ps.pix++; if (ok) { ps.pagos++; ps.receita += v; if (o.visitorId) ps.pessoas.add(String(o.visitorId)); } }
+    if (info.canal === 'site' && !info.isUpsell && ok) pagantesSite.add(o.visitorId ? 'v:' + o.visitorId : 'o:' + String(o._id));
+    if (info.canal === 'bot' && !info.isUpsell && ok) pagosBotSemUpsell++;
     const pk = info.nome + '|' + info.qtd;
     (pacotesPix[pk] || (pacotesPix[pk] = { produto: info.nome, qtd: info.qtd, n: 0 })).n++;
     const pr = prod[info.nome] || (prod[info.nome] = { produto: info.nome, cat: info.cat, pix: 0, pagos: 0, receita: 0 });
@@ -42280,7 +42290,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     kpis: {
       visitantes: visitantes.size, pageviews: pvRows.length - botsPv, pvPorVisitante: visitantes.size ? (pvRows.length - botsPv) / visitantes.size : 0,
       perfisValidados: vuRows.length, perfisValidadosBot: vuBot, pix, pagos, receita, ticket: pagos ? receita / pagos : 0,
-      convVisitantePago: visitantes.size ? canais.site.pagos / visitantes.size : 0, convPixPago: pix ? pagos / pix : 0,
+      convVisitantePago: visitantes.size ? pagantesSite.size / visitantes.size : 0, convComBot: visitantes.size ? (pagantesSite.size + pagosBotSemUpsell) / visitantes.size : 0, pagantesSite: pagantesSite.size, convPixPago: pix ? pagos / pix : 0,
       pixSite: canais.site.pix, pagosSite: canais.site.pagos, receitaSite: Math.round(canais.site.receita * 100) / 100,
       pixBot: canais.bot.pix, pagosBot: canais.bot.pagos, receitaBot: Math.round(canais.bot.receita * 100) / 100, botsPageviews: botsPv,
       pagosUpsell, receitaUpsell, pedidosComOferta: comBumpPagos, pedidosComVisitante: comVisitor,
@@ -42288,7 +42298,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
     },
     serie: dias.map((d) => { const x = porDia[d]; return { dia: d, pageviews: x.pageviews, visitantes: x.visitantes.size, pix: x.pix, pagos: x.pagos, receita: Math.round(x.receita * 100) / 100 }; }),
     porHora,
-    paginas: Object.values(pags).map((p) => { const c = porCatSite[__TS_PAG_SERV[p.path]] || (__TS_PAG_SERV[p.path] ? { pix: 0, pagos: 0, receita: 0 } : null); return { path: p.path, nome: p.nome, pageviews: p.pageviews, visitantes: p.vis.size, pix: c ? c.pix : null, pagos: c ? c.pagos : null, receita: c ? Math.round(c.receita * 100) / 100 : null }; }).sort((a, b) => b.pageviews - a.pageviews),
+    paginas: Object.values(pags).map((p) => { const c = porCatSite[__TS_PAG_SERV[p.path]] || (__TS_PAG_SERV[p.path] ? { pix: 0, pagos: 0, receita: 0 } : null); let conv = null; if (c && p.vis.size) { let n = 0; if (c.pessoas) for (const v of c.pessoas) if (p.vis.has(v)) n++; conv = n / p.vis.size; } return { path: p.path, nome: p.nome, pageviews: p.pageviews, visitantes: p.vis.size, pix: c ? c.pix : null, pagos: c ? c.pagos : null, receita: c ? Math.round(c.receita * 100) / 100 : null, conv }; }).sort((a, b) => b.pageviews - a.pageviews),
     funil,
     topEscolhidos: top(Object.fromEntries(Object.entries(escolhidos).map(([k, x]) => [k, { servico: x.servico, tipo: x.tipo, qtd: x.qtd, preco: x.preco, visitantes: x.vis.size }])), 'visitantes', 200),
     topPix: top(pacotesPix, 'n', 200),
