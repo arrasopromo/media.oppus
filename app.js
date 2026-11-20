@@ -12064,14 +12064,20 @@ async function ltvBlSugestoesScan(force) {
   if (!force && Date.now() - __ltvSugScanAt < 5 * 60 * 1000) return;
   __ltvSugScanning = (async () => {
     try {
-      const msgs = await (await getCollection('wa_ia_messages')).find({ direction: 'in', createdAt: { $gte: new Date(Date.now() - 30 * 864e5) } }).project({ phone: 1, name: 1, text: 1, createdAt: 1 }).toArray();
+      // Duas fontes: CRM IA WhatsApp (wa_ia_messages, número do bot) e CRM do LTV (wa_messages, respostas às campanhas do LTV).
+      const desde30 = new Date(Date.now() - 30 * 864e5);
+      const msgsIa = await (await getCollection('wa_ia_messages')).find({ direction: 'in', createdAt: { $gte: desde30 } }).project({ phone: 1, name: 1, text: 1, createdAt: 1 }).toArray();
+      let msgsLtv = [];
+      try { msgsLtv = await (await getCollection('wa_messages')).find({ direction: 'in', $or: [{ createdAt: { $gte: desde30 } }, { createdAt: { $gte: desde30.toISOString() } }] }).project({ phoneE164: 1, phoneKey: 1, name: 1, text: 1, createdAt: 1 }).toArray(); } catch (_) {}
+      const msgs = msgsIa.map((m) => Object.assign(m, { origem: 'CRM IA' }))
+        .concat(msgsLtv.map((m) => ({ phone: m.phoneE164 || (m.phoneKey ? '55' + String(m.phoneKey).replace(/\D/g, '') : ''), name: m.name, text: m.text, createdAt: m.createdAt, origem: 'CRM LTV' })));
       const por = new Map();
       for (const m of msgs) {
         const t = String(m.text || ''); const hit = t.match(LTV_RECLAMACAO_RE); if (!hit) continue;
         const k = String(m.phone || '').replace(/\D/g, ''); if (!k) continue;
-        const ms = new Date(m.createdAt).getTime();
+        const ms = new Date(m.createdAt).getTime(); if (!ms) continue;
         const x = por.get(k) || { phone: k, nome: '', trechos: [], ultima: 0 };
-        x.trechos.push({ text: t.slice(0, 300), termo: hit[0], at: new Date(ms) });
+        x.trechos.push({ text: t.slice(0, 300), termo: hit[0], at: new Date(ms), origem: m.origem });
         if (ms > x.ultima) { x.ultima = ms; if (m.name) x.nome = String(m.name); }
         por.set(k, x);
       }
@@ -42255,6 +42261,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
       const porAd = new Map();
       for (const a of (md.ads || [])) porAd.set(String(a.id), { id: String(a.id), nome: a.nome || '', thumb: a.thumb || '', conta: a.conta || '', status: a.efetivo || a.status || '', gasto: Number(a.gasto) || 0, compras: Number(a.metaCompras) || 0, valor: Number(a.metaValor) || 0, vendas: 0, receita: 0, novos: 0 });
       const vistos = new Set(); let novos = 0, novosAnuncio = 0, vendasAnuncio = 0;
+      const novosSet = new Set(); let receitaNovos = 0, receita1aNovos = 0;
       for (const o of pagosP) {
         const g = igDe(o); const ad = adDe(o); const a = ad && porAd.get(ad);
         const v = Number(o.valueCents || o.expectedValueCents || 0) / 100;
@@ -42263,7 +42270,10 @@ async function computeTrackSite({ since, until, fresh } = {}) {
         vistos.add(g);
         if (jaComprou.has(g)) continue;
         novos++; if (a) { a.novos++; novosAnuncio++; }
+        novosSet.add(g); receita1aNovos += v;
       }
+      // Ticket do cliente novo: tudo que os clientes novos do período pagaram (1ª compra + recompras no período) ÷ nº de novos.
+      for (const o of pagosP) { const g = igDe(o); if (g && novosSet.has(g)) receitaNovos += Number(o.valueCents || o.expectedValueCents || 0) / 100; }
       const r2 = (n) => Math.round(n * 100) / 100;
       const div = (a, b) => (b > 0 ? r2(a / b) : null);
       const gasto = [...porAd.values()].reduce((x, a) => x + a.gasto, 0);
@@ -42274,6 +42284,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
         vendas: pagosP.length,
         clientesNovos: novos, custoClienteNovo: div(gasto, novos), custoClienteNovoAnuncio: div(gasto, novosAnuncio),
         vendasAnuncio, novosAnuncio, clientes: vistos.size,
+        receitaNovos: r2(receitaNovos), ticketNovo: div(receitaNovos, novos), ticket1aNovo: div(receita1aNovos, novos), retornoNovo: div(receitaNovos, gasto),
         anuncios: [...porAd.values()].filter((a) => a.gasto > 0 || a.compras > 0 || a.vendas > 0)
           .map((a) => ({ ...a, gasto: r2(a.gasto), valor: r2(a.valor), receita: r2(a.receita), cac: div(a.gasto, a.compras), roas: div(a.valor, a.gasto), custoClienteNovo: div(a.gasto, a.novos) }))
           .sort((x, y) => y.gasto - x.gasto),
@@ -43314,6 +43325,17 @@ app.get('/painel', requireAdmin, async (req, res) => {
           const cur = customerAgg.get(customerKey) || { orders: 0, spend: 0, label, username, phone: '', email: '', coreTypes: new Set(), coreTypeCounts: new Map() };
           cur.orders += 1;
           if (!cur.username && username) cur.username = username;
+          // Telefone, e-mail e última compra do cliente (o modal de clientes mostrava "-").
+          try {
+            const ai = (k) => { for (const arr of [o.additionalInfoPaid, o.additionalInfo]) { if (Array.isArray(arr)) { const it = arr.find((x) => x && x.key === k); if (it && it.value) return String(it.value); } } for (const mp of [o.additionalInfoMapPaid, o.additionalInfoMap]) { if (mp && mp[k]) return String(mp[k]); } return ''; };
+            const cu = o.customer || {};
+            const tel = String(cu.phone || cu.phone_number || cu.telefone || cu.whatsapp || ai('phone') || ai('telefone') || ai('whatsapp') || '').trim();
+            const mail = String(cu.email || ai('email') || ai('customer_email') || '').trim();
+            const quandoMs = new Date(o.paidAt || o.createdAt || 0).getTime();
+            if (quandoMs && (!cur.lastAtMs || quandoMs > cur.lastAtMs)) { cur.lastAtMs = quandoMs; if (tel) cur.phone = tel; if (mail) cur.email = mail; }
+            if (!cur.phone && tel) cur.phone = tel;
+            if (!cur.email && mail) cur.email = mail;
+          } catch (_) {}
 
           // LTV conta só o SERVIÇO PRINCIPAL — exclui a parte de order bump do pedido.
           cur.spend += Math.max(0, totalPaid - resolveOrderBumpsTotal(o));
@@ -43441,7 +43463,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
           phone: String(v && v.phone ? v.phone : ''),
           email: String(v && v.email ? v.email : ''),
           orders: Number(v && v.orders ? v.orders : 0),
-          spend: Number(v && v.spend ? v.spend : 0)
+          spend: Number(v && v.spend ? v.spend : 0),
+          lastAt: (v && v.lastAtMs) ? new Date(v.lastAtMs).toISOString() : ''
         }))
         .sort((a, b) => (b.orders - a.orders) || (b.spend - a.spend) || String(a.label).localeCompare(String(b.label)));
 

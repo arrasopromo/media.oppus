@@ -200,6 +200,7 @@
         + kpi('ROAS Meta', rx(M.roas), brl(M.valor) + ' em compras no pixel')
         + kpi('CAC geral', rs(M.custoClienteNovo), nf(M.clientesNovos) + ' clientes novos (todas as origens) de ' + nf(M.clientes))
         + kpi('CAC anúncio', rs(M.custoClienteNovoAnuncio), nf(M.novosAnuncio) + ' clientes novos vindos de anúncio')
+        + kpi('Ticket médio cliente novo', rs(M.ticketNovo), nf(M.clientesNovos) + ' novos pagaram ' + brl(M.receitaNovos) + ' no período (com recompras) · só a 1ª compra: ' + rs(M.ticket1aNovo) + (M.ticketNovo && M.custoClienteNovo ? ' · retorno ' + rx(M.ticketNovo / M.custoClienteNovo) + ' sobre o CAC' : ''))
         + '</div>'
         + '<div class="ts-scroll"><table class="ts-sort"><thead><tr><th data-t="txt">Anúncio</th><th class="n" data-ord="desc">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
         + (M.anuncios.length ? M.anuncios.map(function(a){

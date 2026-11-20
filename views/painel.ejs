@@ -8978,10 +8978,11 @@
                             <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Email</th>
                             <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Pedidos</th>
                             <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Gasto</th>
+                            <th style="text-align:right; padding:8px 6px; border-bottom:1px solid #e5e7eb;">Última compra</th>
                           </tr>
                         </thead>
                         <tbody id="ltvCustomersTbody">
-                          <tr><td colspan="5" style="padding:10px 6px; color:#6b7280;">Carregando...</td></tr>
+                          <tr><td colspan="6" style="padding:10px 6px; color:#6b7280;">Carregando...</td></tr>
                         </tbody>
                       </table>
                     </div>
@@ -9068,7 +9069,7 @@
                     if (!rows.length) {
                       var tr0 = document.createElement('tr');
                       var td0 = document.createElement('td');
-                      td0.colSpan = 5;
+                      td0.colSpan = 6;
                       td0.style.padding = '10px 6px';
                       td0.style.color = '#6b7280';
                       td0.textContent = 'Sem dados';
@@ -9105,7 +9106,14 @@
                       tr.appendChild(tdPhone);
                       tr.appendChild(tdEmail);
                       tr.appendChild(tdOrders);
+                      var tdLast = document.createElement('td');
+                      tdLast.style.padding = '8px 6px';
+                      tdLast.style.borderBottom = '1px solid #fafafa';
+                      tdLast.style.textAlign = 'right';
+                      tdLast.style.whiteSpace = 'nowrap';
+                      tdLast.textContent = (function(){ var d = r.lastAt ? new Date(r.lastAt) : null; return (d && !isNaN(d)) ? d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'; })();
                       tr.appendChild(tdSpend);
+                      tr.appendChild(tdLast);
                       tbody.appendChild(tr);
                     }
                   }
@@ -9125,7 +9133,7 @@
           <% } %>
         <% } %>
 
-        <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && view === 'dashboard') { %>
+        <% if (!isCouponsView && !isFollowersMgmtView && !isWhatsappSalesView && !isLtvView && view === 'dashboard' && false /* Geolocalização retirada do Dashboard a pedido (20/11/2026) */) { %>
         <div style="border:1px solid #e5e7eb; border-radius:10px; padding:14px; background:#fff; margin-top: 18px;">
           <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap;">
             <strong style="font-size:1.05rem; color:#111827;">Geolocalização de Acessos e Perfis Validados</strong>

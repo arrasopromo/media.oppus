@@ -915,7 +915,7 @@
         blSugContador(items.length);
         box.innerHTML = items.map(function(it){
           var quem = [it.username ? '@'+esc(it.username) : '', esc(it.nomeCadastro || it.nomeWhats || '')].filter(Boolean).join(' · ');
-          var tr = (it.trechos||[]).slice(0,2).map(function(m){ return '<div class="bl-sug-msg"><small>'+blDataBR(m.at)+'</small>'+blMarca(m.text, m.termo)+'</div>'; }).join('');
+          var tr = (it.trechos||[]).slice(0,2).map(function(m){ return '<div class="bl-sug-msg"><small>'+blDataBR(m.at)+(m.origem ? ' · '+String(m.origem).replace(/[<>&"]/g,'') : '')+'</small>'+blMarca(m.text, m.termo)+'</div>'; }).join('');
           var mais = (it.totalTrechos||0) > 2 ? '<span class="bl-sug-mais">+'+(it.totalTrechos-2)+' mensagem(ns) de reclamação</span>' : '';
           return '<div class="bl-sug-row" data-ph="'+esc(it.phone)+'">'
             + '<div class="bl-sug-quem"><span class="ph">'+esc(it.phone)+'</span>'+(quem?'<span class="ig">'+quem+'</span>':'<span class="ig">sem cadastro de cliente</span>')+'<span class="ig">'+(it.compras||0)+' compra'+((it.compras||0)===1?'':'s')+' paga'+((it.compras||0)===1?'':'s')+' · R$ '+Number(it.comprasTotal||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>'+'<a href="/painel/ia-crm?phone='+encodeURIComponent(it.phone)+'" target="_blank" rel="noopener">abrir conversa ↗</a></div>'
