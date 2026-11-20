@@ -164,7 +164,7 @@
       + kpi('Pedidos pagos', nf(k.pagos), nf(k.pagosSite) + ' site · ' + nf(k.pagosBot) + ' bot')
       + kpi('Faturamento', brl(k.receita), 'ticket ' + brl(k.ticket))
       + kpi('Faturamento do site', brl(k.receitaSite), 'bot WhatsApp: ' + brl(k.receitaBot))
-      + kpi('Visitante → pago', pct(k.convVisitantePago), 'só pedidos do site')
+      + kpi('Visitante → pago', pct(k.convVisitantePago), 'só pedidos do site · com o bot: ' + pct(k.visitantes ? (Number(k.pagos) || 0) / k.visitantes : 0))
       + kpi('Pix → pago', pct(k.convPixPago))
       + kpi('Com oferta (bump)', nf(k.pedidosComOferta), k.pagos ? pct(k.pedidosComOferta / k.pagos) + ' dos pagos' : '')
       + kpi('Upsell pago', nf(k.pagosUpsell), brl(k.receitaUpsell))
