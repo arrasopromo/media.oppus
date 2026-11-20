@@ -140,14 +140,20 @@
   function marcar(p){ Array.prototype.forEach.call(document.querySelectorAll('#atalhos button'), function(b){ b.setAttribute('aria-pressed', b.getAttribute('data-p') === p ? 'true' : 'false'); }); }
   $('atalhos').addEventListener('click', function(e){ var b = e.target.closest('button'); if (!b) return; var p = b.getAttribute('data-p'); var r = periodo(p); $('dIni').value = r[0]; $('dFim').value = r[1]; marcar(p); carregar(); });
   $('btnAtualizar').addEventListener('click', function(){ marcar(''); carregar(true); });
+  // Mudou a data no topo: recarrega na hora (antes só valia depois de clicar em Atualizar).
+  ['dIni', 'dFim'].forEach(function(id){ $(id).addEventListener('change', function(){ if (!$('dIni').value || !$('dFim').value) return; if ($('dFim').value < $('dIni').value) $('dFim').value = $('dIni').value; marcar(''); carregar(); }); });
   var r0 = periodo('mes'); $('dIni').value = r0[0]; $('dFim').value = r0[1];
 
+  // Cada carga leva um número; a resposta de uma carga antiga (ex.: "Este mês", mais lenta) chegava
+  // DEPOIS da de "Hoje" e sobrescrevia a tela com os números do mês. Agora só a última desenha.
+  var cargaAtual = 0;
   function carregar(fresh){
+    var minha = ++cargaAtual;
     $('conteudo').innerHTML = '<div class="ts-carregando">Carregando…</div>';
     fetch('/api/painel/track-site/dados?since=' + $('dIni').value + '&until=' + $('dFim').value + (fresh ? '&fresh=1' : ''))
       .then(function(r){ return r.json(); })
-      .then(function(d){ if (!d || !d.ok) throw new Error((d && d.error) || 'falha'); if (d.since && $('dIni').value < d.since) $('dIni').value = d.since; $('avisoFunil').hidden = false; desenhar(d); })
-      .catch(function(e){ $('conteudo').innerHTML = '<div class="ts-erro">Não foi possível carregar: ' + esc(e.message) + '</div>'; });
+      .then(function(d){ if (minha !== cargaAtual) return; if (!d || !d.ok) throw new Error((d && d.error) || 'falha'); if (d.since && $('dIni').value < d.since) $('dIni').value = d.since; $('avisoFunil').hidden = false; desenhar(d); })
+      .catch(function(e){ if (minha !== cargaAtual) return; $('conteudo').innerHTML = '<div class="ts-erro">Não foi possível carregar: ' + esc(e.message) + '</div>'; });
   }
 
   function kpi(r, v, s){ return '<div class="ts-kpi"><div class="r">' + r + '</div><div class="v">' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>'; }
