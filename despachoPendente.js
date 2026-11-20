@@ -22,7 +22,7 @@
 //     confere o perfil AO VIVO; se abriu, despacha. Arquivados em /painel/privados e
 //     marcados como enviados ficam de fora (decisão manual).
 //
-//  Desliga: DESPACHO_PENDENTE_ENABLED=false / PRIVADOS_RECHECK_ENABLED=false.
+//  Desliga o envio: DESPACHO_PENDENTE_ENABLED=false. Privados vem DESLIGADO (gasta RocketAPI); liga com PRIVADOS_RECHECK_ENABLED=true.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const _ax = require('axios'); const axios = (_ax && typeof _ax.post === 'function') ? _ax : (_ax && _ax.default) || _ax;
@@ -80,7 +80,8 @@ module.exports = function iniciarDespachoPendente(deps) {
     sendEvolutionText, backgroundJobsEnabled, site,
   } = deps;
   const ligadoEnvio = String(process.env.DESPACHO_PENDENTE_ENABLED || 'true').toLowerCase() !== 'false';
-  const ligadoPriv = String(process.env.PRIVADOS_RECHECK_ENABLED || 'true').toLowerCase() !== 'false';
+  // Privados: DESLIGADO por padrão (cada checagem gasta request da RocketAPI). Só liga com PRIVADOS_RECHECK_ENABLED=true.
+  const ligadoPriv = String(process.env.PRIVADOS_RECHECK_ENABLED || 'false').toLowerCase() === 'true';
   if (!ligadoEnvio && !ligadoPriv) { try { console.log('⏸️ [despacho-pendente] DESLIGADO'); } catch (_) {} return; }
 
   const LOOP_MIN = num(process.env.DESPACHO_PENDENTE_LOOP_MIN, 5);
