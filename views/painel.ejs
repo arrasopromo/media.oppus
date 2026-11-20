@@ -210,6 +210,7 @@
     <% if (!isCouponsView && !isFollowersMgmtView && !isLtvView && !isRefil2View && !isServiceTypesView) { %>
     <div class="filters">
       <a href="<%= baseUrl + sep %>period=today" class="<%= panelPeriod === 'today' ? 'active' : '' %>">Hoje</a>
+      <a href="<%= baseUrl + sep %>period=yesterday" class="<%= panelPeriod === 'yesterday' ? 'active' : '' %>">Ontem</a>
       <a href="<%= baseUrl + sep %>period=last3days" class="<%= panelPeriod === 'last3days' ? 'active' : '' %>">Últimos 3 dias</a>
       <a href="<%= baseUrl + sep %>period=last7days" class="<%= panelPeriod === 'last7days' ? 'active' : '' %>">Últimos 7 dias</a>
       <a href="<%= baseUrl + sep %>period=thismonth" class="<%= panelPeriod === 'thismonth' ? 'active' : '' %>">Este mês</a>

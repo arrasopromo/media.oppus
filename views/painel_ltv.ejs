@@ -191,7 +191,7 @@
         var _curPeriod = (typeof period !== 'undefined' && period) ? String(period) : 'all';
         var _curStart  = (typeof startDate !== 'undefined') ? String(startDate||'') : '';
         var _curEnd    = (typeof endDate   !== 'undefined') ? String(endDate||'')   : '';
-        var _ltvPeriods = [['all','Tudo'],['today','Hoje'],['last3days','Últimos 3 dias'],['last7days','Últimos 7 dias'],['thismonth','Este mês'],['lastmonth','Mês passado']];
+        var _ltvPeriods = [['all','Tudo'],['today','Hoje'],['yesterday','Ontem'],['last3days','Últimos 3 dias'],['last7days','Últimos 7 dias'],['thismonth','Este mês'],['lastmonth','Mês passado']];
       %>
       <div class="ltv-card" style="padding:12px 16px; margin-bottom:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <span style="font-weight:600; font-size:0.82rem; color:var(--muted);">Período:</span>

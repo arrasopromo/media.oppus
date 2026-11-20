@@ -147,7 +147,7 @@
 
     <!-- Filtro por período (mesmos presets do dash/vendas) -->
     <%
-      var _periods = [['all','Tudo'],['today','Hoje'],['last3days','Últimos 3 dias'],['last7days','Últimos 7 dias'],['thismonth','Este mês'],['lastmonth','Mês passado']];
+      var _periods = [['all','Tudo'],['today','Hoje'],['yesterday','Ontem'],['last3days','Últimos 3 dias'],['last7days','Últimos 7 dias'],['thismonth','Este mês'],['lastmonth','Mês passado']];
       var _curPeriod = (typeof filterPeriod !== 'undefined' && filterPeriod) ? String(filterPeriod) : 'all';
       var _curStart = (typeof filterStartDate !== 'undefined') ? String(filterStartDate||'') : '';
       var _curEnd   = (typeof filterEndDate   !== 'undefined') ? String(filterEndDate||'')   : '';

@@ -11540,6 +11540,7 @@ function resolvePanelPeriodRange(period, startDate, endDate) {
     return { start: null, endExclusive: null };
   };
   if (p === 'today') return { start: startOfTodayUtc, endExclusive: startOfTomorrowUtc };
+  if (p === 'yesterday') { const s = new Date(startOfTodayUtc); s.setUTCDate(s.getUTCDate() - 1); return { start: s, endExclusive: startOfTodayUtc }; }
   if (p === 'last3days') { const s = new Date(startOfTodayUtc); s.setUTCDate(s.getUTCDate() - 2); return { start: s, endExclusive: startOfTomorrowUtc }; }
   if (p === 'last7days') { const s = new Date(startOfTodayUtc); s.setUTCDate(s.getUTCDate() - 6); return { start: s, endExclusive: startOfTomorrowUtc }; }
   if (p === 'thismonth') { const s = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), 1, 3, 0, 0, 0)); return { start: s, endExclusive: startOfTomorrowUtc }; }
@@ -30205,6 +30206,11 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
           if (period === 'today') {
             range.gteIso = startOfTodayUtc.toISOString();
             range.ltIso = startOfTomorrowUtc.toISOString();
+          } else if (period === 'yesterday') {
+            const s = new Date(startOfTodayUtc);
+            s.setUTCDate(s.getUTCDate() - 1);
+            range.gteIso = s.toISOString();
+            range.ltIso = startOfTodayUtc.toISOString();
           } else if (period === 'last3days') {
             const s = new Date(startOfTodayUtc);
             s.setUTCDate(s.getUTCDate() - 2);
@@ -30266,6 +30272,11 @@ app.get('/painel/recuperacao', requireAdmin, async (req, res) => {
     if (period && period !== 'all') {
       if (period === 'today') {
         dateRange.$gte = startOfTodayUtc.toISOString();
+      } else if (period === 'yesterday') {
+        const s = new Date(startOfTodayUtc);
+        s.setUTCDate(s.getUTCDate() - 1);
+        dateRange.$gte = s.toISOString();
+        dateRange.$lt = minIso(dateRange.$lt, startOfTodayUtc.toISOString());
       } else if (period === 'last3days') {
         const s = new Date(startOfTodayUtc);
         s.setUTCDate(s.getUTCDate() - 2);
@@ -40666,6 +40677,9 @@ app.get('/painel/recuperacao-whatsapp', requireAdmin, async (req, res) => {
     if (period === 'today') {
       rangeStartKey = todayKey;
       rangeEndKey = todayKey;
+    } else if (period === 'yesterday') {
+      rangeStartKey = daysAgoKey(1);
+      rangeEndKey = daysAgoKey(1);
     } else if (period === 'last3days') {
       rangeStartKey = daysAgoKey(2);
       rangeEndKey = todayKey;
@@ -42832,6 +42846,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return true;
       }
       if (period === 'today') return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
+      if (period === 'yesterday') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 1); return orderDateUTC >= start && orderDateUTC < startOfTodayUtc; }
       if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
       if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
       if (period === 'thismonth') { const start = new Date(startOfTodayUtc); start.setUTCDate(1); return orderDateUTC >= start && orderDateUTC < startOfTomorrowUtc; }
@@ -43707,6 +43722,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const computeScanLowerBound = (period) => {
       if (period === 'all') return null;
       if (period === 'today') return startOfTodayUtc;
+      if (period === 'yesterday') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 1); return start; }
       if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return start; }
       if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return start; }
       if (period === 'thismonth') { const start = new Date(startOfTodayUtc); start.setUTCDate(1); return start; }
@@ -43812,6 +43828,10 @@ app.get('/painel', requireAdmin, async (req, res) => {
         return true;
       } else if (period === 'today') {
         return orderDateUTC >= startOfTodayUtc && orderDateUTC < startOfTomorrowUtc;
+      } else if (period === 'yesterday') {
+        const start = new Date(startOfTodayUtc);
+        start.setUTCDate(start.getUTCDate() - 1);
+        return orderDateUTC >= start && orderDateUTC < startOfTodayUtc;
       } else if (period === 'last3days') {
         const start = new Date(startOfTodayUtc);
         start.setUTCDate(start.getUTCDate() - 2);
@@ -44618,6 +44638,11 @@ app.get('/painel', requireAdmin, async (req, res) => {
     const getPeriodRange = () => {
       if (period === 'today') {
         return { start: startOfTodayUtc, endExclusive: startOfTomorrowUtc };
+      }
+      if (period === 'yesterday') {
+        const start = new Date(startOfTodayUtc);
+        start.setUTCDate(start.getUTCDate() - 1);
+        return { start, endExclusive: startOfTodayUtc };
       }
       if (period === 'last3days') {
         const start = new Date(startOfTodayUtc);
@@ -45897,6 +45922,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         try {
           if (period === 'all') return null;
           if (period === 'today') return { start: startOfTodayUtc, end: startOfTomorrowUtc };
+          if (period === 'yesterday') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 1); return { start, end: startOfTodayUtc }; }
           if (period === 'last3days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 2); return { start, end: startOfTomorrowUtc }; }
           if (period === 'last7days') { const start = new Date(startOfTodayUtc); start.setUTCDate(start.getUTCDate() - 6); return { start, end: startOfTomorrowUtc }; }
           if (period === 'thismonth') { const start = new Date(Date.UTC(nowSP.getUTCFullYear(), nowSP.getUTCMonth(), 1, 3, 0, 0, 0)); return { start, end: startOfTomorrowUtc }; }
@@ -46537,6 +46563,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const spNow = toSP(nowUTC);
         let fbArgs;
         if (period === 'today') fbArgs = { since: todayY, until: todayY };
+        else if (period === 'yesterday') fbArgs = { since: dayBack(1), until: dayBack(1) };
         else if (period === 'last3days') fbArgs = { since: dayBack(2), until: todayY };
         else if (period === 'last7days') fbArgs = { since: dayBack(6), until: todayY };
         else if (period === 'thismonth') fbArgs = { since: `${spNow.getUTCFullYear()}-${pad(spNow.getUTCMonth() + 1)}-01`, until: todayY };
@@ -49193,6 +49220,7 @@ app.get('/painel/unknown_orderid/export', requireAdmin, async (req, res) => {
       const orderDateSP = toSP(orderDateUTC);
       if (period === 'all') return true;
       if (period === 'today') return orderDateSP >= startOfTodaySP && orderDateSP < startOfTomorrowSP;
+      if (period === 'yesterday') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 1); return orderDateSP >= s && orderDateSP < startOfTodaySP; }
       if (period === 'last3days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 2); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
       if (period === 'last7days') { const s = new Date(startOfTodaySP); s.setUTCDate(s.getUTCDate() - 6); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
       if (period === 'thismonth') { const s = new Date(startOfTodaySP); s.setUTCDate(1); return orderDateSP >= s && orderDateSP < startOfTomorrowSP; }
