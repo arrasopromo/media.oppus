@@ -113,25 +113,48 @@ module.exports = function iniciarDespachoPendente(deps) {
   const quem = (o) => '@' + String(o.instagramUsername || o.instauser || mapaInfo(o).instagram_username || '?') + ' ' + (o.identifier || o._id);
 
   // orderIds de um fornecedor gravados no banco (para achar a faixa a varrer e descartar os conhecidos).
+  // Oppus e You Agency usam as MESMAS contas de fornecedor (ex.: JAP) e o mesmo servidor Mongo, em bancos
+  // diferentes. Um pedido da outra loja não é "desconhecido": lê os dois bancos (pedidos e testes).
+  // Se o outro banco não puder ser lido, os pedidos dele aparecem como suspeitos e nada é reenviado (lado seguro).
+  const OUTROS_DBS = String(process.env.DESPACHO_PENDENTE_OUTROS_DBS || (/you agency/i.test(String(site || '')) ? 'site-whatsapp' : 'you-agency'))
+    .split(',').map((x) => x.trim()).filter((x) => x && x !== String(process.env.MONGODB_DB_NAME || ''));
+  let cliOutros = null;
+  async function colecoesOutras(nome) {
+    if (!OUTROS_DBS.length || !process.env.MONGODB_URI) return [];
+    try {
+      if (!cliOutros) { const { MongoClient } = require('mongodb'); cliOutros = await MongoClient.connect(process.env.MONGODB_URI); }
+      return OUTROS_DBS.map((n) => cliOutros.db(n).collection(nome));
+    } catch (e) { cliOutros = null; console.warn('[despacho-pendente] não abriu o banco da outra loja:', e && e.message); return []; }
+  }
+
   async function idsConhecidos(col, provId, desdeMs) {
     const pares = []; const todos = new Set();
-    const docs = await col.find({ createdAt: { $gte: new Date(desdeMs).toISOString() } }).project({ paghiper: 0, woovi: 0, xpag: 0, additionalInfo: 0, additionalInfoPaid: 0, customer: 0, utms: 0, tracking: 0 }).toArray();
-    for (const d of docs) for (const [k, v] of Object.entries(d)) {
-      if (!v || typeof v !== 'object' || Array.isArray(v) || CHAVES_NAO_SLOT.test(k)) continue;
-      const p = slotProvider(k, v); if (!p || p.id !== provId) continue;
-      const lista = [v].concat(Array.isArray(v.orders) ? v.orders : []);
-      for (const x of lista) { const id = x && (x.orderId || x.id); if (!temId(id)) continue; todos.add(String(id)); const t = msDe(x.requestedAt || v.requestedAt || x.at); if (t) pares.push([t, Number(id)]); }
-      if (Array.isArray(v.reorders)) for (const r of v.reorders) if (r && temId(r.orderId)) todos.add(String(r.orderId));
+    const desdeIso = new Date(desdeMs).toISOString();
+    const proj = { paghiper: 0, woovi: 0, xpag: 0, additionalInfo: 0, additionalInfoPaid: 0, customer: 0, utms: 0, tracking: 0 };
+    for (const c of [col].concat(await colecoesOutras('checkout_orders'))) {
+      let docs = [];
+      try { docs = await c.find({ createdAt: { $gte: desdeIso } }).project(proj).toArray(); } catch (e) { if (c === col) throw e; continue; }
+      for (const d of docs) for (const [k, v] of Object.entries(d)) {
+        if (!v || typeof v !== 'object' || Array.isArray(v) || CHAVES_NAO_SLOT.test(k)) continue;
+        const p = slotProvider(k, v); if (!p || p.id !== provId) continue;
+        const lista = [v].concat(Array.isArray(v.orders) ? v.orders : []);
+        for (const x of lista) { const id = x && (x.orderId || x.id); if (!temId(id)) continue; todos.add(String(id)); const t = msDe(x.requestedAt || v.requestedAt || x.at); if (t) pares.push([t, Number(id)]); }
+        if (Array.isArray(v.reorders)) for (const r of v.reorders) if (r && temId(r.orderId)) todos.add(String(r.orderId));
+        if (Array.isArray(v.parcialHistorico)) for (const r of v.parcialHistorico) if (r && temId(r.orderId)) todos.add(String(r.orderId));
+      }
     }
     // Pedidos da tela de Testes de Serviços também são nossos: servem de referência e não são "desconhecidos".
-    try {
-      const testes = await (await getCollection('service_tests')).find({ providerOrderId: { $exists: true, $nin: [null, ''] }, createdAt: { $gte: new Date(desdeMs).toISOString() } }).project({ providerOrderId: 1, fornecedor: 1, createdAt: 1, dataPedidoMs: 1 }).toArray();
-      for (const t of testes) {
-        const host = String(t.fornecedor || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[./]/)[0];
-        const p = prov(host); if (!p || p.id !== provId || !temId(t.providerOrderId)) continue;
-        todos.add(String(t.providerOrderId)); const ms = Number(t.dataPedidoMs) || msDe(t.createdAt); if (ms) pares.push([ms, Number(t.providerOrderId)]);
-      }
-    } catch (_) {}
+    let colTestes = []; try { colTestes = [await getCollection('service_tests')]; } catch (_) {}
+    for (const tc of colTestes.concat(await colecoesOutras('service_tests'))) {
+      try {
+        const testes = await tc.find({ providerOrderId: { $exists: true, $nin: [null, ''] }, createdAt: { $gte: desdeIso } }).project({ providerOrderId: 1, fornecedor: 1, createdAt: 1, dataPedidoMs: 1 }).toArray();
+        for (const t of testes) {
+          const host = String(t.fornecedor || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[./]/)[0];
+          const p = prov(host); if (!p || p.id !== provId || !temId(t.providerOrderId)) continue;
+          todos.add(String(t.providerOrderId)); const ms = Number(t.dataPedidoMs) || msDe(t.createdAt); if (ms) pares.push([ms, Number(t.providerOrderId)]);
+        }
+      } catch (_) {}
+    }
     pares.sort((a, b) => a[0] - b[0]);
     return { pares, todos };
   }
