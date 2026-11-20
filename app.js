@@ -3006,6 +3006,7 @@ const insertPageViewIfNeeded = (clientId, path, req) => {
                     if (typeof geo.lat === 'number') doc.lat = geo.lat;
                     if (typeof geo.lon === 'number') doc.lon = geo.lon;
                     doc.geoSource = geo.source || '';
+                    if (geo.dc) doc.dc = true; // IP de data center/proxy (robô)
                 }
                 await col.insertOne(doc);
             } catch (_) {}
@@ -7790,7 +7791,7 @@ async function geoLookupIp(ipRaw) {
     }
     const axios = require('axios');
     const tryIpApi = async () => {
-      const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,regionName,city,lat,lon`;
+      const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,regionName,city,lat,lon,hosting,proxy`;
       const resp = await axios.get(url, { timeout: 2500, validateStatus: () => true });
       const data = resp && resp.data ? resp.data : null;
       if (!data || data.status === 'fail') return null;
@@ -7800,7 +7801,7 @@ async function geoLookupIp(ipRaw) {
       const lat = Number.isFinite(Number(data.lat)) ? Number(data.lat) : null;
       const lon = Number.isFinite(Number(data.lon)) ? Number(data.lon) : null;
       if (!city && !region && !country) return null;
-      return { city, region, country, lat, lon, source: 'ip-api.com' };
+      return { city, region, country, lat, lon, source: 'ip-api.com', dc: !!(data.hosting || data.proxy) };
     };
     const tryIpApiCo = async () => {
       const url = `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
@@ -42054,7 +42055,13 @@ function __tsIpMeta(ip) {
 }
 const __TS_SCAN_RE = /censys|internetmeasurement|infrawatch|expanse|zgrab|masscan|nmap|nuclei|l9explore|l9tcpid|httpx|okhttp|libwww|java\/|scanner|netcraft|leakix|odin|shodan|paloalto|cortex|xpanse|ahrefs|semrush|mj12|dataforseo|petal|bytespider|gptbot|ccbot|amazonbot|applebot/i;
 function __tsRefIp(ref) { try { const h = new URL(String(ref || '')).host; return /^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?$/i.test(h); } catch (_) { return false; } }
-function __tsEhBot(ua, city, ip, ref) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || __TS_SCAN_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()) || __tsIpMeta(ip) || __tsRefIp(ref); }
+// Países do público (TRACK_PAISES, vírgula). Visita de outro país não conta como visitante.
+const __TS_PAISES = String(process.env.TRACK_PAISES || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+// IP de data center só é robô FORA do país do público: iPhone com Private Relay da Apple aparece como data center e é cliente de verdade.
+const __TS_CASA = String(process.env.TRACK_PAIS_CASA || 'Brazil').trim().toLowerCase();
+function __tsPaisCasa(country) { return !!(__TS_CASA && String(country || '').trim().toLowerCase() === __TS_CASA); }
+function __tsForaPublico(country) { const c = String(country || '').trim().toLowerCase(); return !!(__TS_PAISES.length && c && !__TS_PAISES.includes(c)); }
+function __tsEhBot(ua, city, ip, ref, dc, country) { return !String(ua || '').trim() || __TS_BOT_RE.test(String(ua || '')) || __TS_SCAN_RE.test(String(ua || '')) || /^mountain view$/i.test(String(city || '').trim()) || __tsIpMeta(ip) || __tsRefIp(ref) || (dc === true && !__tsPaisCasa(country)) || __tsForaPublico(country); }
 const TRACK_SITE_INICIO = '2026-11-17';
 async function computeTrackSite({ since, until, fresh } = {}) {
   const hojeSP = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
@@ -42078,7 +42085,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
 
   // 1) Visitas
   const [pvRows, feRows, orders, vuRows, alRows] = await Promise.all([
-    db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, utm: 1, referer: 1, ip: 1 }).toArray(),
+    db.pv.find(rangeDate).project({ path: 1, clientId: 1, createdAt: 1, ua: 1, city: 1, region: 1, country: 1, dc: 1, utm: 1, referer: 1, ip: 1 }).toArray(),
     db.fe.find(rangeDate).project({ visitorId: 1, evento: 1, servico: 1, tipo: 1, qtd: 1, preco: 1, erro: 1, createdAt: 1, utm: 1 }).toArray(),
     db.co.find(rangeStr).project({ status: 1, paidAt: 1, 'paghiper.paidAt': 1, 'paghiper.status': 1, createdAt: 1, valueCents: 1, expectedValueCents: 1, tipo: 1, tipoServico: 1, qtd: 1, quantidade: 1, additionalInfo: 1, additionalInfoMap: 1, additionalInfoPaid: 1, additionalInfoMapPaid: 1, upsell: 1, utms: 1, visitorId: 1, refund: 1, refunded: 1, instagramUsername: 1, instauser: 1 }).toArray(),
     // Mesma regra do card do Dashboard: só validação REAL (o cliente digitou o @ no site → source
@@ -42102,7 +42109,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   let origemDesdeMs = null;
   for (const r of pvRows) { if (r.utm) { const t = new Date(r.createdAt).getTime(); if (origemDesdeMs == null || t < origemDesdeMs) origemDesdeMs = t; } }
   for (const r of pvRows) {
-    if (__tsEhBot(r.ua, r.city, r.ip, r.referer)) { botsPv++; continue; }
+    if (__tsEhBot(r.ua, r.city, r.ip, r.referer, r.dc, r.country)) { botsPv++; continue; }
     const cid = String(r.clientId || ''); const p = String(r.path || '').split(':')[0] || '(sem caminho)';
     const d = diaSP(r.createdAt);
     if (porDia[d]) { porDia[d].pageviews++; if (cid) porDia[d].visitantes.add(cid); }
@@ -42186,7 +42193,7 @@ async function computeTrackSite({ since, until, fresh } = {}) {
   const noFunil = (d) => funilDesdeMs == null || new Date(d).getTime() >= funilDesdeMs;
   const fVis = new Set(), fServ = new Set();
   for (const r of pvRows) {
-    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city, r.ip, r.referer)) continue;
+    if (!noFunil(r.createdAt) || __tsEhBot(r.ua, r.city, r.ip, r.referer, r.dc, r.country)) continue;
     const cid = String(r.clientId || ''); if (!cid) continue;
     fVis.add(cid); if (__TS_PAG_SERV[String(r.path || '').split(':')[0]]) fServ.add(cid);
   }
