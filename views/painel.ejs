@@ -8213,7 +8213,7 @@
                   <td class="vd-ck"><input type="checkbox" class="vd-sel" disabled title="Só Parcial ou Cancelado podem ser reenviados" aria-label="Marcar para reenviar"></td>
                   <td><%= dateStr %></td>
                   <% const _igU = String(order.instagramUsername || '').replace(/^@+/, '').trim(); %>
-                  <td><% if (/^[A-Za-z0-9._]{1,30}$/.test(_igU)) { %><a class="vd-user" href="https://www.instagram.com/<%= _igU %>/" target="_blank" rel="noopener noreferrer" title="Abrir o perfil no Instagram">@<%= _igU %></a><% } else { %><%= userLabel %><% } %></td>
+                  <td><% if (/^[A-Za-z0-9._]{1,30}$/.test(_igU)) { %><a class="vd-user" href="https://www.instagram.com/<%= _igU %>/" target="_blank" rel="noopener noreferrer" title="Abrir o perfil no Instagram">@<%= _igU %></a><% } else if (order.perfilRede) { %><% const _rl = String(order.perfilRedeLink || ''); %><% if (/^https:\/\/([a-z0-9-]+\.)*(tiktok\.com|facebook\.com|fb\.com)\//i.test(_rl)) { %><a class="vd-user" href="<%= _rl %>" target="_blank" rel="noopener noreferrer" title="Abrir o perfil">@<%= order.perfilRede %></a><% } else { %>@<%= order.perfilRede %><% } %><% } else { %><%= userLabel %><% } %></td>
                   <td><%= order.type %></td>
                   <td><%= order.qty %></td>
                   <td>

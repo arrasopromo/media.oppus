@@ -13087,7 +13087,8 @@ const mainProviderSlotOf = (o, provMap) => {
       } catch (_) {}
       return '';
     };
-    const ordem = (/organic/.test(tipo) && !/curtid/.test(cat)) ? ['fornecedor_social', 'fama24h', 'fama24h_multi', 'topfama'] : ['fama24h', 'fama24h_multi', 'fornecedor_social', 'topfama'];
+    // 'redes' = pedido de TikTok/Facebook (despacho próprio, slot carimbado com o fornecedor).
+    const ordem = (/organic/.test(tipo) && !/curtid/.test(cat)) ? ['fornecedor_social', 'fama24h', 'fama24h_multi', 'topfama', 'redes'] : ['fama24h', 'fama24h_multi', 'fornecedor_social', 'topfama', 'redes'];
     for (const slot of ordem) {
       const v = o[slot];
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
@@ -45479,6 +45480,9 @@ app.get('/painel', requireAdmin, async (req, res) => {
         customerKey,
         customerLabel,
         instagramUsername: igUser,
+        // TikTok/Facebook: o @ fica em perfil_rede (o pedido não tem instagram_username).
+        perfilRede: (function () { try { return String(extractInfo('perfil_rede') || '').replace(/^@+/, '').trim(); } catch (_) { return ''; } })(),
+        perfilRedeLink: (function () { try { return String(extractInfo('perfil_rede_link') || extractInfo('link_alvo') || '').trim(); } catch (_) { return ''; } })(),
         phone,
         isUpsell: !!(o && o.upsell && o.upsell.isUpsell === true),
         mainSupplier: mainProviderSlotOf(o),
