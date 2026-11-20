@@ -193,14 +193,14 @@
     var rs = function(v){ return v == null ? '<span class="muted">—</span>' : brl(v); };
     var rx = function(v){ return v == null ? '<span class="muted">—</span>' : (Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '×'); };
     if (M && !M.erro) {
-      h += '<section class="ts-bloco"><h2>CAC do Meta</h2><p class="sub">Contas ca 2 + ca3 em R$ (sem imposto). <b>CAC Meta</b> = gasto ÷ compras que o pixel do Meta atribui aos anúncios (a mesma conta do Gerenciador de Anúncios). <b>ROAS Meta</b> = valor dessas compras ÷ gasto. <b>CAC geral</b> = gasto ÷ todos os clientes novos do período (@ que pagou pela 1ª vez, de anúncio, orgânico ou bot). <b>CAC anúncio</b> = gasto ÷ só os clientes novos que vieram de anúncio (venda com o anúncio gravado no pedido, utm_content).</p>'
+      h += '<section class="ts-bloco"><h2>CAC do Meta</h2><p class="sub">Contas ca 2 + ca3 em R$ (sem imposto). <b>CAC Meta</b> = gasto ÷ compras que o pixel do Meta atribui aos anúncios (a mesma conta do Gerenciador de Anúncios). <b>ROAS Meta</b> = valor dessas compras ÷ gasto. <b>CAC médio cliente novo</b> = gasto ÷ todos os clientes novos do período (@ que pagou pela 1ª vez, de anúncio, orgânico ou bot). <b>CAC anúncio</b> = gasto ÷ só os clientes novos que vieram de anúncio (venda com o anúncio gravado no pedido, utm_content).</p>'
         + '<div class="ts-kpis" style="margin:0 0 14px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">'
         + kpi('Gasto no Meta', brl(M.gasto))
         + kpi('CAC Meta', rs(M.cac), nf(M.compras) + ' compras no pixel')
         + kpi('ROAS Meta', rx(M.roas), brl(M.valor) + ' em compras no pixel')
-        + kpi('CAC geral', rs(M.custoClienteNovo), nf(M.clientesNovos) + ' clientes novos (todas as origens) de ' + nf(M.clientes))
+        + kpi('CAC médio cliente novo', rs(M.custoClienteNovo), 'gasto ÷ ' + nf(M.clientesNovos) + ' clientes novos (todas as origens) de ' + nf(M.clientes) + ' clientes')
         + kpi('CAC anúncio', rs(M.custoClienteNovoAnuncio), nf(M.novosAnuncio) + ' clientes novos vindos de anúncio')
-        + kpi('Ticket médio cliente novo', rs(M.ticketNovo), nf(M.clientesNovos) + ' novos pagaram ' + brl(M.receitaNovos) + ' no período (com recompras) · só a 1ª compra: ' + rs(M.ticket1aNovo) + (M.ticketNovo && M.custoClienteNovo ? ' · retorno ' + rx(M.ticketNovo / M.custoClienteNovo) + ' sobre o CAC' : ''))
+        + kpi('Ticket médio cliente novo', rs(M.ticketNovo), nf(M.clientesNovos) + ' novos pagaram ' + brl(M.receitaNovos) + ' no período (com recompras) · só a 1ª compra: ' + rs(M.ticket1aNovo) + (M.ticketNovo && M.custoClienteNovo ? ' · CAC médio ' + rs(M.custoClienteNovo) + ' → retorno ' + rx(M.ticketNovo / M.custoClienteNovo) : ''))
         + '</div>'
         + '<div class="ts-scroll"><table class="ts-sort"><thead><tr><th data-t="txt">Anúncio</th><th class="n" data-ord="desc">Gasto</th><th class="n">Compras (Meta)</th><th class="n">CAC Meta</th><th class="n">ROAS Meta</th><th class="n">Clientes novos</th><th class="n">CAC cliente novo</th></tr></thead><tbody>'
         + (M.anuncios.length ? M.anuncios.map(function(a){
