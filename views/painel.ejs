@@ -4690,6 +4690,7 @@
         <div class="summary-card">
           <div class="summary-label">% faturamento (orderbump) (período)</div>
           <div class="summary-value"><%= (typeof bumpRevenuePctOfTotal !== 'undefined' ? Number(bumpRevenuePctOfTotal || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+          <div class="summary-sub">R$ <%= (typeof totalBumpRevenue !== 'undefined' ? Number(totalBumpRevenue || 0) : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) %> em orderbump no período</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">Pedidos pagos hoje</div>
@@ -4917,15 +4918,6 @@
             if (boughtOnly) boughtOnly.addEventListener('change', render);
           })();
         </script>
-        <div class="summary-card">
-          <div class="summary-label">Vendas sem orderbump</div>
-          <div class="summary-value">R$ <%= (typeof revenueWithoutBumps !== 'undefined' ? Number(revenueWithoutBumps || 0) : 0).toFixed(2).replace('.', ',') %></div>
-          <div style="margin-top:8px;">
-            <a href="<%= (typeof toggleIgnoreBumpRevenueUrl !== 'undefined' && toggleIgnoreBumpRevenueUrl) ? toggleIgnoreBumpRevenueUrl : '/painel' %>" style="display:inline-block; padding:6px 10px; background:#0d6efd; color:#fff; border-radius:6px; text-decoration:none; font-size:0.85rem;">
-              <%= (typeof ignoreBumpRevenue !== 'undefined' && ignoreBumpRevenue) ? 'Considerar venda de orderbump' : 'Retirar venda de orderbump' %>
-            </a>
-          </div>
-        </div>
         <% var _us = (typeof upsellStats !== 'undefined' && upsellStats) ? upsellStats : { revenueBRL:'R$ 0,00', conversionPct:0, paidCount:0, avgTicketBRL:'R$ 0,00', eligibleParents:0, costBRL:'R$ 0,00', costPct:0, netBRL:'R$ 0,00' }; %>
         <div class="summary-card">
           <div class="summary-label">Valor total pago de Upsell (período)</div>
