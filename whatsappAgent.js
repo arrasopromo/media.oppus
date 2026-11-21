@@ -384,6 +384,25 @@ async function runTool(name, args, ctx) {
         ctx.validatedUsername = validado;
       }
       if (normU(a2.usuario) !== normU(validado)) { try { console.log('🔁 [agent] gerar_pix com @ validado:', a2.usuario, '->', validado); } catch (_) {} a2.usuario = validado; }
+      // "queria MAIS 4 mil", "outro igual", "de novo": é recompra — sem isso o mesmo pacote pago nos últimos 7 dias
+      // voltava como "já foi pago" e a venda se perdia (19/11, R$ 148,90). Reclamação não conta.
+      if (a2.comprar_mais !== true) {
+        const ult = (ctx.recentUserTexts || []).slice(0, 3).join(' ');
+        const recompra = /\b(mais|outr[oa]s?|de\s+novo|novamente|repetir|recompra)\b/i.test(ult);
+        const reclama = /(n[ãa]o\s+(chegou|entrou|caiu|veio|subiu|recebi)|cad[êe]|ca[íi](ram|u)|sumi|reclam|faltando|falta|demor|reemb|estorno|devolu)/i.test(ult);
+        if (recompra && !reclama) a2.comprar_mais = true;
+      }
+      // Link do post: o modelo às vezes não manda post_links -> usa o último link de post que o CLIENTE escreveu.
+      if (['curtidas', 'visualizacoes'].includes(String(a2.servico || '').toLowerCase())) {
+        const rxUm = /instagram\.com\/(?:[^\s/]+\/)?(?:p|reel|reels|tv)\/[A-Za-z0-9_-]{5,}/i;
+        const rxTodos = /https?:\/\/(?:www\.)?instagram\.com\/(?:[^\s/]+\/)?(?:p|reel|reels|tv)\/[A-Za-z0-9_-]{5,}[^\s]*/gi;
+        let links = Array.isArray(a2.post_links) ? a2.post_links.filter(Boolean) : (a2.post_links ? String(a2.post_links).split(',').map((x) => x.trim()) : []);
+        if (!links.some((u) => rxUm.test(String(u || '')) && !/X{5,}/.test(String(u || '')))) {
+          const ordem = [(ctx.allUserTexts || [])[0]].concat((ctx.allUserTexts || []).slice(1).reverse());
+          for (const t of ordem) { const ms = String(t || '').match(rxTodos); if (ms && ms.length) { links = [ms[ms.length - 1]]; break; } }
+          a2.post_links = links;
+        }
+      }
       const r = await sales.createPixOrder(Object.assign({ phone: ctx.phone }, a2));
       if (r.ok && r.pixCopiaECola) ctx.pixToSend = r.pixCopiaECola; // enviado em mensagem separada
       if (r.ok && r.reaproveitado) { ctx.pixReused = true; r.resumo = r.resumo + ' — é o MESMO Pix gerado antes para este pedido (não é pedido novo); diga isso ao cliente.'; }

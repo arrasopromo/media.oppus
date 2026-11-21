@@ -289,7 +289,7 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
         if (novos.length) {
           return { ok: false, error: 'links_apos_pagamento', linksNovos: novos, message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e já foi enviado com os links que estavam nele. NÃO gere outro Pix e NÃO diga que vai cobrar de novo. Diga ao cliente que você vai encaminhar os posts para a equipe distribuir, e chame chamar_suporte com o motivo "dividir curtidas/visualizações do pedido pago em mais posts" e os links novos.' };
         }
-        return { ok: false, error: 'pedido_ja_pago', message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e está em andamento. NÃO gere outro Pix: confirme o pagamento para o cliente e fale da entrega. Reclamação ou pergunta sobre a entrega NUNCA é motivo para Pix novo. Só gere outro se o cliente disser claramente que quer COMPRAR MAIS um pacote — aí chame gerar_pix com comprar_mais=true.' };
+        return { ok: false, error: 'pedido_ja_pago', message: 'Este pedido (' + cot.quantidade + ' ' + cot.unit + ' para @' + username + ') JÁ FOI PAGO e está em andamento. NÃO gere outro Pix: confirme o pagamento para o cliente e fale da entrega. Reclamação ou pergunta sobre a entrega NUNCA é motivo para Pix novo. Só gere outro se o cliente disser claramente que quer COMPRAR MAIS um pacote — aí chame gerar_pix com comprar_mais=true. Se o cliente está pedindo um pacote NOVO ("quero mais 4 mil", "outro igual") e não reclamando, NÃO diga que já foi pago: pergunte "Quer comprar mais um pacote igual a esse que você já pagou?" e, se ele confirmar, chame com comprar_mais=true.' };
       }
       const aberto = iguais.find((o) => o.paghiper && o.paghiper.brCode && !(String(o.status || '').toLowerCase() === 'pago' || o.paidAt) && new Date(o.createdAt).getTime() >= limiteAberto);
       if (aberto) {
@@ -610,7 +610,7 @@ async function flagSupport(phone, motivo) {
     const col = await getCollection('whatsapp_contacts');
     await col.updateOne(
       { _id: String(phone) },
-      { $set: { flag: 'suporte', botPaused: true, supportReason: String(motivo || '').slice(0, 300), supportAt: new Date().toISOString() } },
+      { $set: { flag: 'suporte', botPaused: true, pausaManual: false, supportReason: String(motivo || '').slice(0, 300), supportAt: new Date().toISOString() } },
       { upsert: true }
     );
     // Notificação push (ntfy) — não bloqueia o fluxo se falhar/não configurado.

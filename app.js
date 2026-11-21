@@ -5713,7 +5713,7 @@ app.post('/api/painel/ia-crm/bot', requireAdmin, async (req, res) => {
     const paused = !!(req.body && req.body.paused);
     if (!phone) return res.status(400).json({ ok: false, error: 'no_phone' });
     const cc = await getCollection('whatsapp_contacts');
-    await cc.updateOne({ _id: phone }, { $set: { botPaused: paused } }, { upsert: true });
+    await cc.updateOne({ _id: phone }, { $set: { botPaused: paused, pausaManual: paused } }, { upsert: true }); // pausa manual não é retomada sozinha (retomaAposSuporte)
     if (!paused) { try { require('./whatsappAgent.js').clearHistory(phone); } catch (_) {} }
     return res.json({ ok: true, botPaused: paused });
   } catch (e) { return res.status(500).json({ ok: false, error: (e && e.message) || 'internal' }); }

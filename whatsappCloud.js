@@ -139,6 +139,28 @@ async function isBotPaused(phone) {
   try { const col = await getCollection('whatsapp_contacts'); const d = await col.findOne({ _id: String(phone) }, { projection: { botPaused: 1, bloqueado: 1 } }); return !!(d && (d.botPaused || d.bloqueado)); } catch (_) { return false; }
 }
 
+// Pausa AUTOMÁTICA de suporte (bot chamou chamar_suporte / anti-loop) que ninguém atendeu: o cliente
+// ficava falando sozinho (20/11: mandou os 5 links, a IA pausou e ele esperou 3h). Retoma o bot se nenhum
+// atendente respondeu desde a pausa e (a) o cliente clicou/escreveu "Quero comprar" ou (b) já passaram
+// WHATSAPP_IA_SUPORTE_RETOMA_MIN minutos (padrão 20). Pausa manual (/pause, botão do CRM) e bloqueado continuam.
+async function retomaAposSuporte(phone, { btnId, bodyRaw } = {}) {
+  try {
+    const col = await getCollection('whatsapp_contacts');
+    const d = await col.findOne({ _id: String(phone) }, { projection: { botPaused: 1, bloqueado: 1, flag: 1, supportAt: 1, pausaManual: 1 } });
+    if (!d || d.bloqueado || d.pausaManual || !d.botPaused || d.flag !== 'suporte' || !d.supportAt) return false;
+    const desde = new Date(d.supportAt);
+    if (!Number.isFinite(desde.getTime())) return false;
+    const cm = await getCollection('wa_ia_messages');
+    const humano = await cm.findOne({ phone: String(phone), direction: 'out', agent: true, createdAt: { $gte: desde } }, { projection: { _id: 1 } });
+    if (humano) return false;
+    const querComprar = btnId === 'quero_comprar' || /^\s*(🔘\s*)?quero\s+comprar\b/i.test(String(bodyRaw || ''));
+    const minutos = Math.max(1, Number(process.env.WHATSAPP_IA_SUPORTE_RETOMA_MIN || 20));
+    if (!querComprar && Date.now() - desde.getTime() < minutos * 60e3) return false;
+    await col.updateOne({ _id: String(phone) }, { $set: { botPaused: false, supportAutoRetomadoAt: new Date().toISOString() } });
+    return true;
+  } catch (_) { return false; }
+}
+
 // ── Debounce: junta mensagens picadas do mesmo telefone antes de responder ──
 const buffers = new Map(); // phone -> { parts:[], timer }
 function scheduleFlush(phone) {
@@ -200,9 +222,12 @@ const IA_FLOOD_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD
 const IA_FLOOD_BURST_MAX = Math.max(0, Number(process.env.WHATSAPP_IA_FLOOD_BURST_MAX || 10) || 10);     // rajada; 0 = desativado
 const IA_FLOOD_BURST_WINDOW_MS = Math.max(60000, (Number(process.env.WHATSAPP_IA_FLOOD_BURST_WINDOW_MIN || 5) || 5) * 60000); // janela curta (default 5min)
 const iaReplyTimes = new Map(); // phone -> number[] timestamps das respostas da IA
-async function tripFloodGuard(phone) {
+async function tripFloodGuard(phone, text) {
   if (!(IA_FLOOD_MAX > 0) && !(IA_FLOOD_BURST_MAX > 0)) return false; // desativado por config
   const p = String(phone || '');
+  // Cliente mandando os links dos posts um atrás do outro (20/11: 5 links de reels -> 11 respostas em 5min -> IA pausada
+  // e a venda ficou 3h sem resposta). Mensagem com link de post não conta como resposta de loop.
+  if (/instagram\.com\/(?:[^\s/]+\/)?(?:p|reel|reels|tv)\//i.test(String(text || ''))) return false;
   const now = Date.now();
   const janela = Math.max(IA_FLOOD_WINDOW_MS, IA_FLOOD_BURST_WINDOW_MS);
   const arr = (iaReplyTimes.get(p) || []).filter((t) => (now - t) < janela);
@@ -219,7 +244,7 @@ async function tripFloodGuard(phone) {
   if (!motivo) return false;
   try {
     const col = await getCollection('whatsapp_contacts');
-    await col.updateOne({ _id: p }, { $set: { botPaused: true, flag: 'suporte', supportReason: `IA pausada: anti-loop (${motivo})`, supportAt: new Date().toISOString() } }, { upsert: true });
+    await col.updateOne({ _id: p }, { $set: { botPaused: true, pausaManual: false, flag: 'suporte', supportReason: `IA pausada: anti-loop (${motivo})`, supportAt: new Date().toISOString() } }, { upsert: true });
   } catch (_) {}
   iaReplyTimes.delete(p); // já pausou; zera pra não re-disparar
   try { console.warn(`🛑 [IA] anti-loop: ${p} ${motivo} → IA pausada + flag suporte`); } catch (_) {}
@@ -230,7 +255,7 @@ async function runAgent(phone, text) {
   const p = String(phone || '');
   const andamento = turnosEmAndamento.get(p);
   if (andamento) { andamento.pendentes.push(text); try { console.log('⏳ [IA] ' + p + ' ainda respondendo — mensagem entra no próximo turno'); } catch (_) {} return null; }
-  if (await tripFloodGuard(p)) return null; // anti-loop: pausou a IA e sinalizou humano
+  if (await tripFloodGuard(p, text)) return null; // anti-loop: pausou a IA e sinalizou humano
   const estado = { pendentes: [] };
   turnosEmAndamento.set(p, estado);
   let res = null;
@@ -382,11 +407,13 @@ async function handleInboundMessage(m, contactName) {
   if (bodyRaw && RE_REC_OPTOUT.test(bodyRaw)) { markRecoveryOptOut(from).catch(() => {}); }
 
   // Comandos de controle (texto): /pause e /start (para operar o número da IA).
-  if (/^\/(pause|pausar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: true } }, { upsert: true }); } catch (_) {} return; }
-  if (/^\/(start|iniciar|começar|comecar|resume|retomar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: false } }, { upsert: true }); } catch (_) {} try { await agent.clearHistory(from); } catch (_) {} return; }
+  if (/^\/(pause|pausar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: true, pausaManual: true } }, { upsert: true }); } catch (_) {} return; }
+  if (/^\/(start|iniciar|começar|comecar|resume|retomar)$/.test(lc)) { try { const col = await getCollection('whatsapp_contacts'); await col.updateOne({ _id: from }, { $set: { botPaused: false, pausaManual: false } }, { upsert: true }); } catch (_) {} try { await agent.clearHistory(from); } catch (_) {} return; }
 
   if (!c.autoReply) return;
-  if (await isBotPaused(from)) return; // humano assumiu
+  if (await isBotPaused(from)) { // humano assumiu
+    if (!(await retomaAposSuporte(from, { btnId, bodyRaw }))) return;
+  }
 
   // ── Clique num botão do menu ──
   if (btnId) {
