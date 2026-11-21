@@ -13166,6 +13166,15 @@ const resolveMainDispatch = async ({ ctx, key, fallbackId, fallbackProvider = 'f
 let __orgLikesBumpMd = { provider: 'fornecedor_social', serviceId: 194 };
 async function __refreshOrgLikesBumpMd() {
   try {
+    // Curtidas REAIS ocultas no Gerenciamento de Tipo → o bump de curtidas reais vai como curtidas
+    // BRASILEIRAS (o tipo simples), no mesmo provedor/serviço configurado para curtidas_brasileiras.
+    try {
+      const vis = await loadServiceVisibility();
+      if (vis && Array.isArray(vis.curtidas) && vis.curtidas.includes('organicos')) {
+        const br = await resolveMainDispatch({ ctx: 'curtidas', key: 'curtidas_brasileiras', fallbackId: 679 });
+        if (br && br.serviceId > 0) { __orgLikesBumpMd = { provider: 'fama24h', serviceId: br.serviceId, url: br.url, key: br.key, effProvider: br.provider, viaOcultas: true }; return; }
+      }
+    } catch (_) {}
     const md = await resolveMainDispatch({ ctx: 'curtidas', key: 'organicos', fallbackId: 194, fallbackProvider: 'fornecedor_social' });
     if (md && md.provider && (md.serviceId > 0)) __orgLikesBumpMd = md;
   } catch (_) {}
