@@ -22363,6 +22363,10 @@ async function processOrderFulfillment(record, col, req) {
         const likesBumpTipo = String(additionalInfoMap['likes_bump_tipo'] || (arrPaid.find(it => it && it.key === 'likes_bump_tipo')?.value) || (arrOrig.find(it => it && it.key === 'likes_bump_tipo')?.value) || '').toLowerCase().trim();
         const likesBumpConf = (() => {
           const t = String(tipo || '').toLowerCase();
+          // Vale para qualquer página: o tipo que a oferta mostrou e cobrou (likes_bump_tipo) manda no envio.
+          const __lbtBump = likesBumpTipo;
+          if (__lbtBump === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };
+          if (__lbtBump === 'mistos') return { provider: 'fama24h', serviceId: _likesMistasMd.serviceId, url: _likesMistasMd.url, key: _likesMistasMd.key, effProvider: _likesMistasMd.provider };
           if (/coment|visualizacoes|views|reels/i.test(t)) {
             if (likesBumpTipo === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };
             if (likesBumpTipo === 'mistos') return { provider: 'fama24h', serviceId: _likesMistasMd.serviceId, url: _likesMistasMd.url, key: _likesMistasMd.key, effProvider: _likesMistasMd.provider };
@@ -25114,6 +25118,10 @@ app.post('/api/openpix/webhook', async (req, res) => {
               const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoPaid) && !isCurtidasBaseLocal && !isViewsBaseLocal;
               const likesBumpConf = (() => {
                 const t = String(tipoPaid || '').toLowerCase();
+                // O tipo que a oferta mostrou e cobrou (likes_bump_tipo) manda no envio (ex.: brasileiras quando as reais estão ocultas).
+                const __lbtBump = String((additionalInfoMap && additionalInfoMap['likes_bump_tipo']) || '').toLowerCase().trim();
+                if (__lbtBump === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };
+                if (__lbtBump === 'mistos') return { provider: 'fama24h', serviceId: _likesMistasMd.serviceId, url: _likesMistasMd.url, key: _likesMistasMd.key, effProvider: _likesMistasMd.provider };
                 if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
                 const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
                 const isFollowerOrg = isFollowerBase && /organicos/.test(t);
@@ -25861,6 +25869,10 @@ app.post('/api/orderbump/resend', adminOnly, async (req, res) => {
       const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
       const likesBumpConf = (() => {
         const t = String(tipoLocal || '').toLowerCase();
+        // O tipo que a oferta mostrou e cobrou (likes_bump_tipo) manda no envio (ex.: brasileiras quando as reais estão ocultas).
+        const __lbtBump = String((map && map['likes_bump_tipo']) || '').toLowerCase().trim();
+        if (__lbtBump === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: 163 };
+        if (__lbtBump === 'mistos') return { provider: 'fama24h', serviceId: 5 };
         if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
         const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const isFollowerOrg = isFollowerBase && /organicos/.test(t);
@@ -26054,6 +26066,10 @@ app.post('/api/orderbump/fix-latest', adminOnly, async (req, res) => {
         const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
         const likesBumpConf = (() => {
           const t = String(tipoLocal || '').toLowerCase();
+          // O tipo que a oferta mostrou e cobrou (likes_bump_tipo) manda no envio (ex.: brasileiras quando as reais estão ocultas).
+          const __lbtBump = String((map2 && map2['likes_bump_tipo']) || '').toLowerCase().trim();
+          if (__lbtBump === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: 163 };
+          if (__lbtBump === 'mistos') return { provider: 'fama24h', serviceId: 5 };
           if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
           const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
           const isFollowerOrg = isFollowerBase && /organicos/.test(t);
@@ -27830,6 +27846,10 @@ app.post('/session/mark-paid', async (req, res) => {
           const isFollowersBaseLocal = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(tipoLocal) && !isCurtidasBaseLocal && !isViewsBaseLocal;
           const likesBumpConf = (() => {
             const t = String(tipoLocal || '').toLowerCase();
+            // O tipo que a oferta mostrou e cobrou (likes_bump_tipo) manda no envio (ex.: brasileiras quando as reais estão ocultas).
+            const __lbtBump = String((mapPaid && mapPaid['likes_bump_tipo']) || '').toLowerCase().trim();
+            if (__lbtBump === 'curtidas_brasileiras') return { provider: 'fama24h', serviceId: _likesBrMd.serviceId, url: _likesBrMd.url, key: _likesBrMd.key, effProvider: _likesBrMd.provider };
+            if (__lbtBump === 'mistos') return { provider: 'fama24h', serviceId: _likesMistasMd.serviceId, url: _likesMistasMd.url, key: _likesMistasMd.key, effProvider: _likesMistasMd.provider };
             if (/coment|visualizacoes|views|reels/i.test(t)) return __orgLikesBumpMd; // comentarios/views -> curtidas reais
             const isFollowerBase = /(mistos|brasileiros|organicos|seguidores_tiktok)/i.test(t) && !isCurtidasBaseLocal && !isViewsBaseLocal;
             const isFollowerOrg = isFollowerBase && /organicos/.test(t);
