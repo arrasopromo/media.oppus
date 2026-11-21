@@ -13094,12 +13094,14 @@ const mainProviderSlotOf = (o, provMap) => {
       return '';
     };
     // 'redes' = pedido de TikTok/Facebook (despacho próprio, slot carimbado com o fornecedor).
-    const ordem = (/organic/.test(tipo) && !/curtid/.test(cat)) ? ['fornecedor_social', 'fama24h', 'fama24h_multi', 'topfama', 'redes'] : ['fama24h', 'fama24h_multi', 'fornecedor_social', 'topfama', 'redes'];
+    const ordem = (/organic/.test(tipo) && !/curtid/.test(cat)) ? ['fornecedor_social', 'fornecedor_social_multi', 'fama24h', 'fama24h_multi', 'topfama', 'redes'] : ['fama24h', 'fama24h_multi', 'fornecedor_social_multi', 'fornecedor_social', 'topfama', 'redes'];
     for (const slot of ordem) {
       const v = o[slot];
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
       const subs = Array.isArray(v.orders) ? v.orders.filter((x) => x && typeof x === 'object') : [];
       if (!v.orderId && !v.status && !v.error && !subs.length) continue;
+      // Slot vazio deixado por despacho antigo (sem orderId, status 'unknown', sem erro): não é o pedido.
+      if (!v.orderId && !subs.length && !v.error && /^unknown$/i.test(String(v.status || ''))) continue;
       const carimbo = normalizeSmmProvider(v.provider || (subs[0] && subs[0].provider) || o.provider);
       const provider = (carimbo && SMM_PROVIDERS[carimbo]) ? carimbo : (slot === 'fama24h_multi' ? (provDoTipo() || slotRealProvider(slot, v, o)) : slotRealProvider(slot, v, o));
       if (subs.length) {
@@ -45074,6 +45076,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
 
     // Cost calculation
     let totalCost = 0;
+    let __feeCostTotal = 0, __provCostTotal = 0; // legenda do card % custo: taxas de pagamento x painéis
     let totalRevenue = 0;
     // Agregação por DIA (BRT) para a tabela de lucro diário. Usa exatamente o mesmo
     // faturamento e custo por pedido do resto do dashboard — o custo já inclui a taxa
@@ -45394,6 +45397,8 @@ app.get('/painel', requireAdmin, async (req, res) => {
       const usedRealCost = realProviderTotal != null;
       const totalItemCost = usedRealCost ? (paymentFee + realProviderTotal) : (paymentFee + serviceCost + bumpCost);
       totalCost += totalItemCost;
+      __feeCostTotal += Number(paymentFee) || 0;
+      __provCostTotal += Math.max(0, totalItemCost - (Number(paymentFee) || 0));
 
       // Custo/1k e Custo Bump da tabela de vendas saem do action=status (charge real).
       // O divisor é a quantidade ENVIADA ao fornecedor (já com upgrade) — usar o `qty`
@@ -45550,6 +45555,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
         const _novo = Math.round((Number(r.paymentFee || 0) + _novoProv) * 100) / 100;
         const _delta = _novo - _old;
         totalCost = Math.round((totalCost + _delta) * 100) / 100;
+        __provCostTotal += _delta; // ajuste só na parte do painel
         r.cost = _novo; r.costEstimadoHistorico = true;
         try {
           const _ms = r.createdAt ? new Date(r.createdAt).getTime() : 0;
@@ -46708,7 +46714,7 @@ app.get('/painel', requireAdmin, async (req, res) => {
       custosFixos = { itens: _cf.itens, mensal: _cf.mensal, meses: _cf.meses, periodo: _cp.periodo, dias: _cp.dias, mesRef: _cp.mesRef, porMes: _cp.porMes };
     } catch (_) {}
 
-    const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendBr, fbSpendUsd, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
+    const __painelRenderData = { view, ajustesLucro, custosFixos, orders: report, totalCost, feeCostTotal: __feeCostTotal, providerCostTotal: __provCostTotal, totalRevenue, dailyProfit, dailyProfitTotals, dailyProfitAdsOk, dailyProfitTruncated, DASH_IMPOSTO_PCT, DASH_ADS_MARKUP_PCT, revenueShown, avgTicket, timelineSeries, bumpRevenueSeries, paidValidatedSeries, totalBumpRevenue, revenueWithoutBumps, ignoreBumpRevenue, bumpRevenuePctOfTotal, costOverRevenuePct, toggleIgnoreBumpRevenueUrl, period, totalTransactions: paidReport.length, costSettings, validatedProfilesToday, validatedProfilesPeriod, paidOrdersToday, paidOverValidatedTodayPct, paidOverValidatedPeriodPct, validatedProfilesConverted, validatedTodayConverted, ignoreBumps, toggleIgnoreBumpsUrl, repeatCustomerPct, repeatCustomers, totalCustomers, topUsersByOrders, topUsersBySpend, topService, servicePie, servicePieOthers, ltvAllTime, paymentPie, channelPie, platformPie, servicePageViews, onlineNow, refil2Requests, refil2Pagination, vitalicioPurchases, upsellStats, recoveryStats, fbSpend, fbSpendBr, fbSpendUsd, fbSpendOk, adFormatPie, bumpPie, ltvRevenue, ltvCustomers, ltvPurchases, totalOrdersGenerated, totalOrdersGeneratedValue, totalOrdersGeneratedPaid, generatedToday, paidGeneratedToday, generatedToPaidPct, generatedToPaidTodayPct, generatedNotPaid, generatedNotPaidList, validatedProfilesList };
     if (__painelCacheable) {
       // Renderiza, cacheia o HTML (TTL) e envia. Próximos loads/filtros iguais vêm do cache (instantâneo).
       return res.render('painel', __painelRenderData, (err, html) => {

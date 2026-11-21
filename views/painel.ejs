@@ -4686,6 +4686,8 @@
         <div class="summary-card">
           <div class="summary-label">% custo / vendas (período)</div>
           <div class="summary-value"><%= (typeof costOverRevenuePct !== 'undefined' ? Number(costOverRevenuePct || 0) : 0).toFixed(1).replace('.', ',') %>%</div>
+          <% var _tcVend = (typeof revenueShown !== 'undefined' ? Number(revenueShown || 0) : Number(totalRevenue || 0)); var _tcFee = Number((typeof feeCostTotal !== 'undefined' ? feeCostTotal : 0) || 0); var _tcProv = Number((typeof providerCostTotal !== 'undefined' ? providerCostTotal : 0) || 0); var _tcPct = function(x){ return _tcVend > 0 ? (x / _tcVend * 100).toFixed(1).replace('.', ',') + '%' : '—'; }; var _tcR = function(x){ return 'R$ ' + Number(x || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }; %>
+          <div class="summary-sub">Taxas de pagamento <%= _tcR(_tcFee) %> (<%= _tcPct(_tcFee) %>)<br>Serviço dos painéis <%= _tcR(_tcProv) %> (<%= _tcPct(_tcProv) %>)</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">% faturamento (orderbump) (período)</div>
