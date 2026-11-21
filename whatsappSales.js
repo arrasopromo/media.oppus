@@ -101,7 +101,7 @@ async function quote({ servico, tipo, quantidade }) {
   const table = tableFor(svc, tipo);
   if (!(q > 0)) return { ok: false, error: 'quantidade_invalida', available: table.map((x) => x.q) };
   const item = table.find((x) => x.q === q);
-  if (!item) return { ok: false, error: 'quantidade_indisponivel', available: table.map((x) => x.q), message: 'Essa quantidade não está na tabela.' };
+  if (!item) return { ok: false, error: 'quantidade_indisponivel', available: table.map((x) => x.q), message: 'Essa quantidade não está na tabela. NÃO divida em vários pedidos por conta própria e NÃO gere Pix: mostre ao cliente as quantidades da tabela mais próximas (a maior disponível, se ele pediu mais que ela) e pergunte qual ele quer. Só faça 2 pedidos se o CLIENTE pedir, e um de cada vez.' };
   const priceCents = parsePrecoToCents(item.p);
   return {
     ok: true, servico: svc.key, categoria: svc.categoria,
@@ -250,7 +250,7 @@ async function createPixOrder({ servico, quantidade, tipo, usuario, nome, email,
     return { ok: false, error: 'tipo_obrigatorio', message: 'Antes de gerar o Pix, confirme o tipo: mistos, brasileiros ou brasileiros reais (orgânicos).' };
   }
   const cot = await quote({ servico, tipo, quantidade });
-  if (!cot.ok) return { ok: false, error: cot.error || 'cotacao_falhou', available: cot.available };
+  if (!cot.ok) return { ok: false, error: cot.error || 'cotacao_falhou', available: cot.available, message: cot.message };
   const username = parseIgUsername(usuario);
   if (!username) return { ok: false, error: 'usuario_invalido', message: 'O @ informado parece ser uma resposta ("sim", "ok", etc.), não um usuário do Instagram. NÃO gere o Pix: peça o @ correto do perfil antes de criar o pedido.' };
   if (cot.needsPost) {

@@ -216,6 +216,8 @@ function systemPrompt(dispTipos) {
     'SEGURANÇA / MEDO DE BAN / SENHA ("é seguro?", "vai dar problema/ban na minha conta?", "preciso passar a senha?"): tranquilize com firmeza — é 100% SEGURO, NÃO precisamos da sua senha em momento nenhum, o método não coloca sua conta em risco, e milhares de clientes já usaram. Passe segurança e volte pro atendimento.',
     'OBJEÇÃO DE PREÇO ("achei caro", "tá puxado", "só tenho X reais"): JAMAIS ofereça um pacote menor/inferior ao da tabela, NEM invente preço ou desconto. Mostre a tabela oficial (tabela_precos) e reforce o valor/custo-benefício com gentileza, sem pressionar. Fique SEMPRE dentro da tabela — nunca abaixo dela.',
     'SUPORTE HUMANO / HORÁRIO: se o cliente pedir um atendente humano ou reclamar de algo que você não resolve, informe que o *suporte humanizado é de segunda a sexta, das 10h às 21h*, e acione chamar_suporte. Fora desse horário, avise com gentileza que o suporte retorna no próximo horário de atendimento.',
+    'ENTREGA PERSONALIZADA ("10 por dia", "aos poucos durante 15 dias", "espaçado pra não ficar evidente", "metade hoje e metade amanhã"): NÃO existe e NUNCA prometa nem combine isso. A entrega segue o padrão do serviço: *brasileiros reais* entram de forma gradual em até 48h (é a opção mais natural); mistos e brasileiros entram rápido. Se o cliente quer bem devagar, a alternativa é ele comprar pacotes menores em dias diferentes — diga isso com gentileza.',
+    'QUANTIDADE ACIMA DA TABELA (ex.: "25 mil curtidas" com máximo de 15.000): NÃO gere nada sozinho. Diga qual é o maior pacote e ofereça, se ele quiser, completar com um segundo pacote (ex.: 15.000 + 10.000) — pergunte e espere a resposta. Gere UM Pix por vez, cada um com seu valor, e só gere o segundo depois que o cliente confirmar.',
     'AGENDAR HORÁRIO DE ENTREGA ("quero que cheguem às 16h", "dá pra agendar a chegada?"): explique com gentileza que NÃO é possível agendar um horário exato — a entrega começa/roda após a confirmação do pagamento, dentro do prazo do serviço.',
     'PÓS-VENDA: seja sempre acolhedor e resolva. Se o cliente disser que "comprou e não recebeu tudo" ou "recebeu menos", use consultar_pedido e explique com calma (número inicial + o que foi entregue). Muitos clientes compram de mais de um lugar e confundem — verifique antes de afirmar qualquer coisa.',
     'STATUS REAL — NUNCA afirme "em andamento" às cegas: quando consultar_pedido retornar precisaSuporte=true, o pedido está num estado-PROBLEMA (cancelado no fornecedor, pago mas sem envio, ou travado). NESSE CASO: NÃO diga "está em andamento", NÃO dê prazo de entrega e NÃO tranquilize como se estivesse tudo certo — diga que você VAI VERIFICAR com a equipe e já retorna, e chame chamar_suporte com o motivo. Só afirme "em andamento" ou "concluído" quando precisaSuporte=false.',
@@ -363,6 +365,11 @@ async function runTool(name, args, ctx) {
     if (name === 'chamar_suporte') { ctx.support = true; return await sales.flagSupport(ctx.phone, (args && args.motivo) || ''); }
     if (name === 'gerar_pix') {
       const a2 = Object.assign({}, args || {});
+      // UM Pix por mensagem do cliente (19/11: 4 Pix num turno para "25 mil curtidas em 5 reels"; só o último foi
+      // enviado e a cliente pagou 5 mil achando que eram 25 mil).
+      if (ctx.pixGeradoNoTurno) {
+        return { ok: false, error: 'um_pix_por_vez', message: 'Você JÁ gerou um Pix nesta resposta (' + ctx.pixGeradoNoTurno + '). NÃO gere outro agora. Confirme esse pedido com o cliente; se ele quiser mais um pacote, ele pede e você gera depois, um de cada vez.' };
+      }
       // O @ do pedido é o que foi VALIDADO na conversa — o modelo chegou a gravar "@rafael.oliveira"
       // (tirado do nome do cliente) em vez de @rafaelrobru, que ele tinha validado.
       let validado = ctx.validatedUsername || ctx.histUsername || '';
@@ -404,7 +411,7 @@ async function runTool(name, args, ctx) {
         }
       }
       const r = await sales.createPixOrder(Object.assign({ phone: ctx.phone }, a2));
-      if (r.ok && r.pixCopiaECola) ctx.pixToSend = r.pixCopiaECola; // enviado em mensagem separada
+      if (r.ok && r.pixCopiaECola) { ctx.pixToSend = r.pixCopiaECola; ctx.pixGeradoNoTurno = (a2.quantidade || '') + ' ' + (a2.servico || '') + ' ' + (r.valorLabel || ''); } // enviado em mensagem separada
       if (r.ok && r.reaproveitado) { ctx.pixReused = true; r.resumo = r.resumo + ' — é o MESMO Pix gerado antes para este pedido (não é pedido novo); diga isso ao cliente.'; }
       // NÃO exponha o copia-e-cola nem o link do QR ao modelo — senão ele cola no texto.
       // O sistema envia o código em mensagem separada + a instrução de como copiar.
