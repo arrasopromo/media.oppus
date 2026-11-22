@@ -11901,7 +11901,7 @@ async function computeLtvStats(opts = {}) {
         if (hasRange && !inRange(orderDateMs(o))) continue;
         let cid = couponByMongo.get(String(o._id)); if (!cid && o.identifier) cid = couponByIdent.get(String(o.identifier)); if (!cid) continue;
         // + taxa do Pix do pedido (PagHiper pela data do pagamento; antigo/Woovi = 0,85) — igual à tela de Vendas.
-        const __taxa = (function () { try { const pd = o.paidAt || (o.paghiper && o.paghiper.paidAt) || (o.woovi && o.woovi.paidAt) || o.createdAt; return o.paghiper ? paghiperFeeFor(pd) : 0.85; } catch (_) { return 0.85; } })();
+        const __taxa = (function () { try { const pd = o.paidAt || (o.paghiper && o.paghiper.paidAt) || (o.woovi && o.woovi.paidAt) || o.createdAt; return isPedidoCartaoPagarme(o) ? pagarmeTaxaReais(o) : (o.paghiper ? paghiperFeeFor(pd) : 0.85); } catch (_) { return 0.85; } })();
         const cents = getPaidCents(o), costR = (await getCostReais(o)) + __taxa;
         movedByCid.set(cid, (movedByCid.get(cid) || 0) + cents);
         costByCid.set(cid, (costByCid.get(cid) || 0) + costR);
@@ -18094,6 +18094,62 @@ function paghiperFeeFor(dateLike) {
   return fee;
 }
 
+// ── Taxa do CARTÃO (Pagar.me) ─────────────────────────────────────────────────
+// Antes o pedido de cartão entrava com R$ 0,85 (Vendas) ou R$ 0,69 (PagHiper, no custo da TrackCombo).
+// Agora: MDR REAL da venda (payables do Pagar.me: fee + anticipation_fee + fraud_coverage_fee, gravado em
+// pagarme.feeCents pela rotina abaixo) + R$ 0,35 de processamento + R$ 0,35 de antifraude por transação
+// aprovada (cobrados à parte, não vêm no payable). Enquanto o Pagar.me não libera o payable, usa a tabela do
+// contrato (PDF de 22/11/2026): à vista 3,27%, 2x–6x 3,63%, 7x–18x 3,89%.
+const PAGARME_FIXO_REAIS = Number(process.env.PAGARME_TAXA_FIXA_REAIS || 0.70);
+function pagarmeMdrPct(parcelas) { const n = Number(parcelas) || 1; return n <= 1 ? 3.27 : (n <= 6 ? 3.63 : 3.89); }
+function isPedidoCartaoPagarme(o) { return !!(o && o.pagarme && typeof o.pagarme === 'object' && (o.pagarme.charge_id || o.pagarme.order_id)); }
+function pagarmeTaxaReais(o, valorReais) {
+  const pg = (o && o.pagarme) || {};
+  const v = Number.isFinite(Number(valorReais)) && Number(valorReais) > 0 ? Number(valorReais) : (Number(o && o.valueCents) || 0) / 100;
+  const real = pg.feeCents != null && Number.isFinite(Number(pg.feeCents)) ? Number(pg.feeCents) / 100 : null;
+  const mdr = real != null ? real : v * pagarmeMdrPct(pg.installments) / 100;
+  return Math.round((mdr + PAGARME_FIXO_REAIS) * 100) / 100;
+}
+let __pagarmeFeeRodando = false;
+async function runPagarmeFeeSweep(limite = 40) {
+  const sk = String(process.env.PAGARME_SECRET_KEY || '').trim();
+  if (!sk || __pagarmeFeeRodando) return { ok: false };
+  __pagarmeFeeRodando = true;
+  const out = { lidos: 0, gravados: 0, semPayable: 0 };
+  try {
+    const col = await getCollection('checkout_orders');
+    const desde = new Date(Date.now() - 60 * 864e5);
+    const reCheca = new Date(Date.now() - 30 * 60e3);
+    const docs = await col.find({
+      status: 'pago', 'pagarme.charge_id': { $exists: true, $ne: '' }, 'pagarme.feeCents': { $exists: false },
+      $and: [
+        { $or: [{ createdAt: { $gte: desde.toISOString() } }, { createdAt: { $gte: desde } }] },
+        { $or: [{ 'pagarme.feeCheckedAt': { $exists: false } }, { 'pagarme.feeCheckedAt': { $lte: reCheca } }] },
+      ],
+    }).project({ 'pagarme.charge_id': 1, identifier: 1 }).limit(limite).toArray();
+    const H = { Authorization: 'Basic ' + Buffer.from(sk + ':').toString('base64') };
+    for (const d of docs) {
+      out.lidos++;
+      try {
+        const r = await axios.get('https://api.pagar.me/core/v5/payables', { params: { charge_id: d.pagarme.charge_id, size: 50 }, headers: H, timeout: 20000, validateStatus: () => true });
+        const lista = (r.status === 200 && r.data && Array.isArray(r.data.data)) ? r.data.data : [];
+        if (!lista.length) { out.semPayable++; await col.updateOne({ _id: d._id }, { $set: { 'pagarme.feeCheckedAt': new Date() } }); continue; }
+        const fee = lista.reduce((a, x) => a + (Number(x.fee) || 0) + (Number(x.anticipation_fee) || 0) + (Number(x.fraud_coverage_fee) || 0), 0);
+        await col.updateOne({ _id: d._id }, { $set: { 'pagarme.feeCents': fee, 'pagarme.feeParcelas': lista.length, 'pagarme.feeFetchedAt': new Date() } });
+        out.gravados++;
+      } catch (_) {}
+      await new Promise((res) => setTimeout(res, 300));
+    }
+  } catch (e) { out.erro = e && e.message; } finally { __pagarmeFeeRodando = false; }
+  if (out.gravados || out.erro) { try { console.log('💳 [pagarme-taxa]', JSON.stringify(out)); } catch (_) {} }
+  return out;
+}
+(function startPagarmeFeeLoop() {
+  if (!backgroundJobsEnabled()) return;
+  setTimeout(() => { runPagarmeFeeSweep(100).catch(() => {}); }, 90 * 1000);
+  setInterval(() => { runPagarmeFeeSweep().catch(() => {}); }, 10 * 60 * 1000);
+})();
+
 async function computeTrackComboOrderCost(order, opts = {}) {
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const sources = [];
@@ -18146,7 +18202,8 @@ async function computeTrackComboOrderCost(order, opts = {}) {
   const valueCents = Number(opts.valueCents);
   const saleValue = Number.isFinite(valueCents) && valueCents > 0 ? valueCents / 100 : (Number(order && order.valueCents) || 0) / 100;
   const feeCents = Number(opts.feeCents);
-  const gatewayFee = Number.isFinite(feeCents) && feeCents >= 0 ? feeCents / 100 : paghiperFeeFor((order && order.paghiper && order.paghiper.paidAt) || (order && order.paidAt) || null);
+  const gatewayFee = isPedidoCartaoPagarme(order) ? pagarmeTaxaReais(order, saleValue)
+    : (Number.isFinite(feeCents) && feeCents >= 0 ? feeCents / 100 : paghiperFeeFor((order && order.paghiper && order.paghiper.paidAt) || (order && order.paidAt) || null));
   const tax = saleValue * (DASH_IMPOSTO_PCT / 100);
   const total = (service || 0) + bumps + gatewayFee + tax;
   return {
@@ -45482,14 +45539,16 @@ app.get('/painel', requireAdmin, async (req, res) => {
         ).toLowerCase().trim();
 
         let gateway = '';
-        if (phPaid) gateway = 'paghiper';
+        if (isPedidoCartaoPagarme(o)) gateway = 'pagarme';
+        else if (phPaid) gateway = 'paghiper';
         else if (wooviPaid) gateway = 'woovi';
         else if (hasPaghiperField && !wooviPaid) gateway = 'paghiper';
         else if ((phA || phB || phC) && !wooviPaid) gateway = 'paghiper';
         else if (methodHint.includes('paghiper') || gatewayHint.includes('paghiper') || gatewayHint.includes('pag_hiper') || gatewayHint.includes('pag hiper')) gateway = 'paghiper';
         else if (hasWoovi) gateway = 'woovi';
 
-        if (gateway === 'paghiper') paymentFee = paghiperFeeFor((phA && phA.paidAt) || (phB && phB.paidAt) || (phC && phC.paidAt) || o.paidAt || o.createdAt || null);
+        if (gateway === 'pagarme') paymentFee = pagarmeTaxaReais(o);
+        else if (gateway === 'paghiper') paymentFee = paghiperFeeFor((phA && phA.paidAt) || (phB && phB.paidAt) || (phC && phC.paidAt) || o.paidAt || o.createdAt || null);
         else paymentFee = 0.85;
       } catch (_) {}
       // Custo do fornecedor: CHARGE REAL (action=status) somando base + TODOS os bumps —
