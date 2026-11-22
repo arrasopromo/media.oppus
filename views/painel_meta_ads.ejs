@@ -129,6 +129,7 @@
 
     .fonte b{ display:block; font-size:14px; font-weight:620; }
     .fonte small{ display:block; font-size:12px; color:var(--lapis); }
+    .fonte small.eq{ font-size:11px; color:var(--grafite); margin-top:1px; cursor:help; }
     .baixo{ color:var(--prejuizo) !important; }
     .alto{ color:var(--lucro) !important; }
 
@@ -309,7 +310,21 @@
       $('balanco').innerHTML = '<div class="ma-cols">'+cols+'</div><div class="ma-regua"><div class="cap">'+cap+'</div><div class="rg" style="margin-top:'+(linMax*19+4)+'px"><span class="eixo"></span><span class="perda" style="width:'+pos(1,max)+'%"></span><span class="emp" style="left:'+pos(1,max)+'%"><span>1,0 empata</span></span>'+ticks+rots+mks+'</div></div>';
     }
 
-    var CAMPOS = ['gasto','gastoHoje','cliques','impressoes','metaCompras','metaValor','tcVendas','tcReceita','vendas','receita'];
+    var CAMPOS = ['gasto','gastoHoje','cliques','impressoes','metaCompras','metaValor','tcVendas','tcReceita','vendas','receita','custoBanco','custoTc','tcReceitaCusto'];
+    // ROAS de equilíbrio (lucro zero) = 1 ÷ (1 − custo%), custo% = (fornecedor + bumps + taxa do gateway + imposto) ÷ venda.
+    // Banco e TrackCombo: custo real dos pedidos de cada coluna. Meta não diz quais pedidos foram: usa o custo%
+    // do Banco do mesmo criativo (ou o do TC, ou o geral do período) — é estimativa (≈).
+    function pctGeral(){
+      var c = 0, r = 0; (S.dados && S.dados.ads || []).forEach(function(a){ c += Number(a.custoBanco)||0; r += Number(a.receita)||0; });
+      return r > 0 ? c/r : null;
+    }
+    function equilibrio(o){
+      var pb = o.receita > 0 ? o.custoBanco/o.receita : null;
+      var pt = o.tcReceitaCusto > 0 ? o.custoTc/o.tcReceitaCusto : null;
+      var pm = pb != null ? pb : (pt != null ? pt : pctGeral());
+      var be = function(x){ return x == null ? null : (x < 0.99 ? 1/(1-x) : 99); };
+      return { banco: be(pb), tc: be(pt), meta: be(pm), pb: pb, pt: pt, pm: pm };
+    }
     function no(o){ var x = Object.assign({ n:0, js:{} }, o); CAMPOS.forEach(function(k){ x[k]=0; }); return x; }
     function soma(x, a){ CAMPOS.forEach(function(k){ x[k] += Number(a[k])||0; }); }
     function campDe(a){ return a.campanha || { id:'sem', nome:'Sem campanha', status:'', efetivo:'' }; }
@@ -350,16 +365,19 @@
 
     var EST = { ACTIVE:['Ativo','on'], PAUSED:['Desativado',''], ADSET_PAUSED:['Conjunto desligado',''], CAMPAIGN_PAUSED:['Campanha desligada',''], DISAPPROVED:['Reprovado','err'], WITH_ISSUES:['Com problema','err'], PENDING_REVIEW:['Em análise','warn'], IN_PROCESS:['Processando','warn'], PENDING_BILLING_INFO:['Pagamento pendente','err'] };
     function estado(ef){ var x = EST[ef] || [String(ef||'—').toLowerCase().replace(/_/g,' '),'warn']; return '<span class="est '+x[1]+'"><i></i>'+esc(x[0])+'</span>'; }
-    function fonte(v, n, g){
+    function fonte(v, n, g, be, pct, est){
       if (!(g>0)) return '<td class="fonte">'+(n>0?'<b>—</b><small class="num">'+nf(n)+' · '+brl0(v)+'</small>':'<small>—</small>')+'</td>';
-      var r = v/g; return '<td class="fonte num"><b class="'+roasCls(r)+'">'+dec(r,2)+'</b><small>'+nf(n)+' · '+brl0(v)+'</small></td>';
+      var r = v/g, cls = be != null ? (r >= be ? 'alto' : 'baixo') : roasCls(r);
+      var eq = be != null ? '<small class="eq" title="'+(est?'Estimativa: custo% do Banco deste criativo aplicado ao valor do Meta. ':'')+'Custo '+dec(pct*100,0)+'% da venda (fornecedor + taxa + imposto). Acima de '+dec(be,2)+' dá lucro.">equilíbrio '+(est?'≈':'')+dec(be,2)+'</small>' : '';
+      return '<td class="fonte num"><b class="'+cls+'">'+dec(r,2)+'</b><small>'+nf(n)+' · '+brl0(v)+'</small>'+eq+'</td>';
     }
     function mini(o){
       if (!(o.gasto>0)) return '<td><span class="mini vazio">sem gasto</span></td>';
       var rs = { meta:o.metaValor/o.gasto, banco:o.receita/o.gasto }, max = 3;
       if (tcAtivo()) rs.tc = o.tcReceita/o.gasto;
-      var t = 'Meta '+dec(rs.meta,2)+(rs.tc!=null?' · TrackCombo '+dec(rs.tc,2):'')+' · Banco '+dec(rs.banco,2);
-      return '<td><span class="mini" title="'+t+'" aria-label="ROAS '+t+'"><span class="eixo"></span><span class="perda" style="width:'+pos(1,max)+'%"></span><span class="emp" style="left:'+pos(1,max)+'%"></span>' +
+      var e = equilibrio(o), eqv = e.banco != null ? e.banco : (e.tc != null ? e.tc : (e.meta != null ? e.meta : 1));
+      var t = 'Meta '+dec(rs.meta,2)+(rs.tc!=null?' · TrackCombo '+dec(rs.tc,2):'')+' · Banco '+dec(rs.banco,2)+' · equilíbrio '+dec(eqv,2);
+      return '<td><span class="mini" title="'+t+'" aria-label="ROAS '+t+'"><span class="eixo"></span><span class="perda" style="width:'+pos(eqv,max)+'%"></span><span class="emp" style="left:'+pos(eqv,max)+'%"></span>' +
         Object.keys(rs).reverse().map(function(k){ return '<span class="mk '+k+'" style="left:'+pos(rs[k],max)+'%"></span>'; }).join('') + '</span></td>';
     }
     function chave2(n){ return n.id==='sem' || String(n.id).indexOf('sem-')===0 || !n.status; }
@@ -374,7 +392,8 @@
     function celulas(n){
       var g = n.gasto, h = colHoje();
       return '<td class="num"><b style="font-weight:600">'+brl(g)+'</b>'+(h?'<small style="display:block;color:var(--lapis);font-size:12px;font-weight:500">'+(n.gastoHoje>0?brl0(n.gastoHoje)+' hoje':'nada hoje')+'</small>':'')+'</td>' +
-        fonte(n.metaValor, n.metaCompras, g) + (tcAtivo() ? fonte(n.tcReceita, n.tcVendas, g) : '<td class="fonte"><small title="TrackCombo sem chave no servidor">—</small></td>') + fonte(n.receita, n.vendas, g) +
+        (function(){ var e = equilibrio(n);
+          return fonte(n.metaValor, n.metaCompras, g, e.meta, e.pm, true) + (tcAtivo() ? fonte(n.tcReceita, n.tcVendas, g, e.tc, e.pt, false) : '<td class="fonte"><small title="TrackCombo sem chave no servidor">—</small></td>') + fonte(n.receita, n.vendas, g, e.banco, e.pb, false); })() +
         mini(n) +
         '<td class="num">'+(n.metaCompras>0?brl(g/n.metaCompras):'—')+'</td>' +
         '<td class="num">'+(tcAtivo() && n.tcVendas>0?brl(g/n.tcVendas):'—')+'</td>' +

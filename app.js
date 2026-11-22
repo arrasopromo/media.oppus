@@ -41848,6 +41848,7 @@ async function fetchFacebookInsightsByFormat({ since, until, datePreset } = {}) 
 // Permite pausar/ativar anúncio e conjunto (token FB_ADS_TOKEN tem ads_management);
 // toda troca fica em meta_ads_log.
 const __metaAdsCache = new Map();
+const __metaCustoCache = new Map(); // custo por pedido (20 min) para o equilíbrio por criativo
 const __META_PURCH = ['purchase', 'offsite_conversion.fb_pixel_purchase', 'omni_purchase'];
 function __metaPick(arr) {
   if (!Array.isArray(arr)) return 0;
@@ -41978,6 +41979,7 @@ async function computeMetaAdsData(q) {
           campanha: a.campaign ? { id: String(a.campaign.id), nome: a.campaign.name || '', status: a.campaign.status || '', efetivo: a.campaign.effective_status || '', orcamentoDia: a.campaign.daily_budget ? (Number(a.campaign.daily_budget) / 100) * m : null } : null,
           thumb: (a.creative && a.creative.thumbnail_url) || '',
           gasto: 0, gastoHoje: 0, impressoes: 0, cliques: 0, metaCompras: 0, metaValor: 0, vendas: 0, receita: 0, tcVendas: 0, tcReceita: 0,
+          custoBanco: 0, tcReceitaCusto: 0, custoTc: 0, tcSemPedido: 0, _pedBanco: [], _txTc: [],
         });
       }
       for (const x of ins) {
@@ -42012,7 +42014,7 @@ async function computeMetaAdsData(q) {
       let ad = adDe(d.utms);
       if (!ad && d.upsell) { const p = paiPorId.get('i:' + d.upsell.parentIdentifier) || paiPorId.get('c:' + d.upsell.parentCorrelationID); if (p) ad = adDe(p.utms); }
       const a = ad && ads.get(ad);
-      if (a) { a.vendas++; a.receita += v; if (d.utmsFonte === 'cookie_oppus') { recuperadas.vendas++; recuperadas.receita += v; } } else { semAnuncio.vendas++; semAnuncio.receita += v; }
+      if (a) { a._pedBanco.push(d._id); a.vendas++; a.receita += v; if (d.utmsFonte === 'cookie_oppus') { recuperadas.vendas++; recuperadas.receita += v; } } else { semAnuncio.vendas++; semAnuncio.receita += v; }
       // CAC: 1ª compra de cada @ no período (refil fora), com ou sem anúncio.
       try {
         if (__tsProduto(d).cat !== 'refil') {
@@ -42048,16 +42050,44 @@ async function computeMetaAdsData(q) {
         else if (!imp.has(cp.tx)) { tc.semRelatorio.vendas++; tc.semRelatorio.receita += cp.valor; }
         const ad = adDe({ content: cp.content || imp.get(cp.tx) || '' });
         const a = ad && ads.get(ad);
-        if (a) { a.tcVendas++; a.tcReceita += cp.valor; tc.anuncio.vendas++; tc.anuncio.receita += cp.valor; }
+        if (a) { a._txTc.push({ tx: cp.tx, valor: cp.valor }); a.tcVendas++; a.tcReceita += cp.valor; tc.anuncio.vendas++; tc.anuncio.receita += cp.valor; }
         if (a || cp.pago) { tc.meta.vendas++; tc.meta.receita += cp.valor; }
       }
     }
   } catch (e) { erros.push('banco: ' + ((e && e.message) || e)); }
+  // Custo por anúncio (para o ROAS de equilíbrio de cada criativo): fornecedor + bumps + taxa do
+  // gateway + imposto, a MESMA conta do custo repassado à TrackCombo (computeTrackComboOrderCost, sem
+  // consultar fornecedor). Banco = pedidos do anúncio; TrackCombo = venda do TC → pedido pelo
+  // transaction_id (= identifier do pedido: Pix da PagHiper ou or_ do Pagar.me).
+  try {
+    const idsBanco = [], txs = [];
+    for (const a of ads.values()) { idsBanco.push(...a._pedBanco); txs.push(...a._txTc.map((x) => x.tx)); }
+    if (idsBanco.length || txs.length) {
+      const colC = await getCollection('checkout_orders');
+      const docsC = await colC.find({ $or: [{ _id: { $in: idsBanco } }, { identifier: { $in: txs } }] }).toArray();
+      const porId = new Map(), porTx = new Map();
+      for (const d of docsC) { porId.set(String(d._id), d); if (d.identifier) porTx.set(String(d.identifier), d); }
+      const custoDe = async (d) => {
+        const k = String(d._id); const hit = __metaCustoCache.get(k);
+        if (hit && hit.exp > Date.now()) return hit.v;
+        let v = null;
+        try { const c = await computeTrackComboOrderCost(d, { live: false }); if (c && c.total >= 0) v = c.total; } catch (_) {}
+        __metaCustoCache.set(k, { v, exp: Date.now() + 20 * 60e3 });
+        if (__metaCustoCache.size > 20000) __metaCustoCache.clear();
+        return v;
+      };
+      for (const a of ads.values()) {
+        for (const id of a._pedBanco) { const d = porId.get(String(id)); const c = d ? await custoDe(d) : null; if (c != null) a.custoBanco += c; }
+        for (const t of a._txTc) { const d = porTx.get(String(t.tx)); const c = d ? await custoDe(d) : null; if (c != null) { a.custoTc += c; a.tcReceitaCusto += t.valor; } else a.tcSemPedido++; }
+      }
+    }
+  } catch (e) { erros.push('custo por anúncio: ' + ((e && e.message) || e)); }
+  for (const a of ads.values()) { delete a._pedBanco; delete a._txTc; }
   const r2 = (n) => Math.round(n * 100) / 100;
   for (const k of ['total', 'meta', 'anuncio', 'semRelatorio']) tc[k].receita = r2(tc[k].receita);
   const linhas = [...ads.values()]
     .filter((a) => a.gasto > 0 || a.vendas > 0 || a.metaCompras > 0 || a.tcVendas > 0 || a.efetivo === 'ACTIVE')
-    .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
+    .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), custoBanco: r2(a.custoBanco), custoTc: r2(a.custoTc), tcReceitaCusto: r2(a.tcReceitaCusto), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
     .sort((x, y) => y.gasto - x.gasto);
   const __gastoTot = r2([...ads.values()].reduce((x, a) => x + (Number(a.gasto) || 0), 0));
   const cac = { gasto: __gastoTot, clientes: __cacCli.clientes, novos: __cacCli.novos, novosAnuncio: __cacCli.novosAnuncio, cacGeral: __cacCli.novos ? r2(__gastoTot / __cacCli.novos) : null, cacAnuncio: __cacCli.novosAnuncio ? r2(__gastoTot / __cacCli.novosAnuncio) : null };
