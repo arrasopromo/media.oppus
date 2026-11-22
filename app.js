@@ -4598,6 +4598,20 @@ async function fetchTikTokVideoLikeCount(linkRaw, campo = 'diggCount') {
   return { blocked: true };
 }
 
+// Falha de medição: só ESCONDE o teste (measureFailed) depois de 2 falhas seguidas em DIAS diferentes.
+// Antes bastava 1: em 22/11/2026 a RocketAPI ficou sem saldo e 171 testes foram escondidos por engano.
+// Qualquer medição que dá certo zera a contagem (measureFailDias).
+async function svcRegistrarFalha(col, rec, reason) {
+  const agora = new Date().toISOString();
+  const hoje = brtDayKey(Date.now());
+  const dias = (Array.isArray(rec.measureFailDias) ? rec.measureFailDias : []).filter(Boolean);
+  if (!dias.includes(hoje)) dias.push(hoje);
+  const esconder = dias.length >= 2;
+  const set = { measureFailDias: dias.slice(-5), measureFailReason: String(reason || 'fetch_failed'), lastCheckError: String(reason || 'fetch_failed'), lastCheckErrorAt: agora, updatedAt: agora };
+  if (esconder) { set.measureFailed = true; set.measureFailedAt = agora; }
+  try { await col.updateOne({ _id: rec._id }, { $set: set, $inc: { measureFailCount: 1 } }); } catch (_) {}
+  return { ok: false, falhaPendente: !esconder };
+}
 async function serviceTestCheckOne(col, rec) {
   // Facebook: só SEGUIDORES (perfil/página) têm medição; curtidas/visualizações ainda não.
   if (rec && rec.rede === 'facebook' && !/seguidor/i.test(String(rec.tipo || ''))) return { ok: false, skipped: 'rede_sem_medicao' };
@@ -4618,8 +4632,7 @@ async function serviceTestCheckOne(col, rec) {
       return { ok: false, blocked: true };
     }
     if (!tt) {
-      try { await col.updateOne({ _id: rec._id }, { $set: { measureFailed: true, measureFailedAt: new Date().toISOString(), measureFailReason: rec.rede + '_fetch_failed', updatedAt: new Date().toISOString() }, $inc: { measureFailCount: 1 } }); } catch (_) {}
-      return { ok: false };
+      return await svcRegistrarFalha(col, rec, rec.rede + '_fetch_failed');
     }
     const count = tt.count;
     const pico = Math.max(Number(rec.pico || 0) || 0, count);
@@ -4628,7 +4641,7 @@ async function serviceTestCheckOne(col, rec) {
     const point = { at: new Date().toISOString(), count, source: tt.source };
     if (hist.length && brtDayKey(hist[hist.length - 1].at) === brtDayKey(Date.now())) hist[hist.length - 1] = point; else hist.push(point);
     if (hist.length > 180) hist = hist.slice(-180);
-    await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: tt.source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, $unset: { lastCheckError: '', lastCheckErrorAt: '' } });
+    await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: tt.source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, measureFailDias: [], lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, $unset: { lastCheckError: '', lastCheckErrorAt: '' } });
     return { ok: true, count, pico, quedaPct, source: tt.source };
   }
   // Tipo CURTIDAS → o "perfil" é o LINK DO POST; medimos as CURTIDAS ATUAIS do post
@@ -4637,8 +4650,7 @@ async function serviceTestCheckOne(col, rec) {
   // Persiste a FALHA de medição no próprio doc (perfil caiu/sumiu/privado). Assim a linha
   // fica marcada (X no painel) e passa a ser IGNORADA nas próximas checagens em lote.
   const markFail = async (reason) => {
-    try { await col.updateOne({ _id: rec._id }, { $set: { measureFailed: true, measureFailedAt: new Date().toISOString(), measureFailReason: String(reason || 'fetch_failed'), updatedAt: new Date().toISOString() }, $inc: { measureFailCount: 1 } }); } catch (_) {}
-    return { ok: false };
+    return await svcRegistrarFalha(col, rec, reason);
   };
   let count = null, source = '';
   if (isCurtidas) {
@@ -4646,7 +4658,7 @@ async function serviceTestCheckOne(col, rec) {
     if (!lr) return await markFail('post_fetch_failed');
     if (lr.hidden) {
       // Curtidas ocultadas no post → sem número; registra o estado e mantém o histórico.
-      await col.updateOne({ _id: rec._id }, { $set: { atualSource: lr.source, atualHidden: true, measureFailed: false, lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+      await col.updateOne({ _id: rec._id }, { $set: { atualSource: lr.source, atualHidden: true, measureFailed: false, measureFailDias: [], lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
       return { ok: true, hidden: true, source: lr.source };
     }
     count = Number(lr.likes); source = lr.source;
@@ -4664,7 +4676,7 @@ async function serviceTestCheckOne(col, rec) {
   if (hist.length && brtDayKey(hist[hist.length - 1].at) === today) hist[hist.length - 1] = point;
   else hist.push(point);
   if (hist.length > 180) hist = hist.slice(-180);
-  await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+  await col.updateOne({ _id: rec._id }, { $set: { atual: count, atualSource: source, atualHidden: false, pico, quedaPct, history: hist, measureFailed: false, measureFailDias: [], lastCheckAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
   return { ok: true, count, pico, quedaPct, source };
 }
 // Checagem dos testes: um job por vez (cron das 12h, "Checar todos", "Checar selecionados").
