@@ -93,6 +93,8 @@
        consultadas nas checagens em lote. */
     tr.row-new td { background: #eef2ff !important; transition: background .8s; }
     tr.row-failed td { background: #f7e0e0 !important; color: #7b6b6b !important; }
+    tr.row-encerrada td { background: #eef3ee !important; color: #6b7b6e !important; }
+    tr.row-encerrada td.rownum { box-shadow: inset 3px 0 0 #6b9a72; }
     tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7b6b6b; }
     tr.row-failed:hover td { background: #f2d3d3 !important; }
     /* Acento vermelho sutil só na 1ª célula (sem o X). */
@@ -333,8 +335,8 @@
           %>
 <%# Saida escapada transformava as aspas do atributo em entidade: o class virava texto
       solto e o navegador ignorava, entao a linha nunca ficava marcada. Emite de verdade. %>
-          <% var _rowCls = []; if (r.measureFailed) _rowCls.push('row-failed'); if (r.servicoForaDoCatalogo) _rowCls.push('row-noservice');
-             var _rowTitle = r.servicoForaDoCatalogo ? ('Serviço ' + (r.serviceId||'') + ' não existe mais no catálogo do fornecedor' + (r.servicoForaDoCatalogoEm ? (' (visto em ' + String(r.servicoForaDoCatalogoEm).slice(0,10) + ')') : '')) : (r.measureFailed ? ('Falha ao medir' + (r.measureFailReason ? (' (' + r.measureFailReason + ')') : '') + ' — ignorada nas checagens em lote') : ''); %>
+          <% var _rowCls = []; if (r.measureFailed) _rowCls.push('row-failed'); if (r.servicoForaDoCatalogo) _rowCls.push('row-noservice'); if (r.medicaoEncerrada && !r.measureFailed) _rowCls.push('row-encerrada');
+             var _rowTitle = r.servicoForaDoCatalogo ? ('Serviço ' + (r.serviceId||'') + ' não existe mais no catálogo do fornecedor' + (r.servicoForaDoCatalogoEm ? (' (visto em ' + String(r.servicoForaDoCatalogoEm).slice(0,10) + ')') : '')) : (r.measureFailed ? ('Falha ao medir' + (r.measureFailReason ? (' (' + r.measureFailReason + ')') : '') + ' — ignorada nas checagens em lote') : (r.medicaoEncerrada ? ('Medição encerrada: ' + (r.medicaoEncerradaMotivo || 'quantidade estável') + ' — não entra mais nas checagens em lote') : '')); %>
           <tr data-id="<%= r.id %>"<% if (_rowCls.length) { %> class="<%= _rowCls.join(' ') %>"<% } %><% if (r.measureFailed) { %> data-failed="1"<% } %><% if (r.servicoForaDoCatalogo) { %> data-noservice="1"<% } %><% if (_rowTitle) { %> title="<%= _rowTitle %>"<% } %>>
             <td class="rownum"><input type="checkbox" class="selRow" data-id="<%= r.id %>"> <span class="rn-num"><%= _i + 1 %></span></td>
             <td class="edit" data-field="serviceId" data-type="text" data-raw="<%= r.serviceId %>"><%= r.serviceId || '—' %><% var _gk = (r.fornecedor||'')+'|'+(r.serviceId||''); var _gn = (r.serviceId && _svcGroups[_gk]) ? _svcGroups[_gk] : 0; if (_gn > 1) { %> <a class="svc-link" href="/painel/testes-servicos?svc=<%= encodeURIComponent(r.serviceId) %>&fornecedor=<%= encodeURIComponent(r.fornecedor||'') %>" title="Ver os <%= _gn %> testes deste serviço" style="text-decoration:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:1px 6px;font-size:11px;color:#4338ca;white-space:nowrap;">↔ <%= _gn %></a><% } %></td>

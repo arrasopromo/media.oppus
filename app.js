@@ -4717,13 +4717,38 @@ async function runServiceTestsJob(recs, { rede = '', origem = '', ignored = 0 } 
 function svcFiltroRede(rede) {
   return rede === 'tiktok' || rede === 'facebook' ? { rede } : (rede === 'instagram' ? { rede: { $nin: ['tiktok', 'facebook'] } } : {});
 }
+// Teste ESTÁVEL: 10+ dias desde o cadastro e a mesma quantidade nas 3 últimas medições (1 por dia).
+// Não precisa mais medir (gasta request da RocketAPI): ganha medicaoEncerrada e sai das checagens em lote.
+// "Checar selecionados" continua medindo se quiser. Nada é apagado.
+const SVC_ENCERRA_DIAS = Math.max(1, Number(process.env.SVC_TESTE_ENCERRA_DIAS || 10) || 10);
+const SVC_ENCERRA_PONTOS = Math.max(2, Number(process.env.SVC_TESTE_ENCERRA_PONTOS || 3) || 3);
+function svcTesteEstavel(rec) {
+  const criado = new Date(rec && rec.createdAt).getTime();
+  if (!Number.isFinite(criado) || Date.now() - criado < SVC_ENCERRA_DIAS * 864e5) return false;
+  const h = Array.isArray(rec.history) ? rec.history : [];
+  if (h.length < SVC_ENCERRA_PONTOS) return false;
+  const ult = h.slice(-SVC_ENCERRA_PONTOS).map((x) => Number(x && x.count));
+  return ult.every((n) => Number.isFinite(n) && n === ult[0]);
+}
+// Separa os testes que acabaram de ficar estáveis (marca no banco) dos que seguem sendo medidos.
+async function svcSepararEstaveis(col, recs) {
+  const medir = []; let encerrados = 0;
+  for (const r of recs) {
+    if (svcTesteEstavel(r)) {
+      const h = r.history.slice(-SVC_ENCERRA_PONTOS);
+      try { await col.updateOne({ _id: r._id }, { $set: { medicaoEncerrada: true, medicaoEncerradaAt: new Date().toISOString(), medicaoEncerradaMotivo: SVC_ENCERRA_PONTOS + ' medições iguais (' + Number(h[0].count) + ') depois de ' + SVC_ENCERRA_DIAS + '+ dias' } }); encerrados++; } catch (_) { medir.push(r); }
+    } else medir.push(r);
+  }
+  if (encerrados) { try { console.log('🧪 [testes-servicos] ' + encerrados + ' teste(s) estável(is) — medição encerrada'); } catch (_) {} }
+  return { medir, encerrados };
+}
 // Checa TODOS os testes (cron das 12h sem `rede`; botão "Checar todos agora" com a rede da aba aberta).
 async function runServiceTestsDailyCheck(rede, origem) {
   if (__serviceTestsRunning) return { skipped: true, reason: 'running' };
   const col = await getCollection('service_tests');
-  // Ignora linhas já marcadas como falha (perfil caiu/sumiu) — não tenta medir de novo.
+  // Ignora linhas já marcadas como falha (perfil caiu/sumiu) ou com medição encerrada (estáveis).
   const fRede = svcFiltroRede(rede);
-  const recs = await col.find({ ...fRede, measureFailed: { $ne: true } }).toArray();
+  const recs = (await svcSepararEstaveis(col, await col.find({ ...fRede, measureFailed: { $ne: true }, medicaoEncerrada: { $ne: true } }).toArray())).medir;
   const ignored = await col.countDocuments({ ...fRede, measureFailed: true }).catch(() => 0);
   return runServiceTestsJob(recs, { rede: rede || '', origem: origem || 'cron', ignored });
 }
@@ -4914,6 +4939,8 @@ app.get('/painel/testes-servicos', requireTestesAccess(false), async (req, res) 
       lastCheckAt: d.lastCheckAt || null,
       measureFailed: !!d.measureFailed,
       measureFailReason: String(d.measureFailReason || ''),
+      medicaoEncerrada: !!d.medicaoEncerrada,
+      medicaoEncerradaMotivo: String(d.medicaoEncerradaMotivo || ''),
       servicoForaDoCatalogo: !!d.servicoForaDoCatalogo,
       servicoForaDoCatalogoEm: d.servicoForaDoCatalogoEm || null,
       history: Array.isArray(d.history) ? d.history : [],
@@ -5249,7 +5276,7 @@ app.post('/api/painel/testes-servicos/check-all', requireTestesAccess(true), asy
     if (__serviceTestsRunning) return res.json({ ok: false, error: 'Já tem uma checagem rodando (cron das 12h ou outro clique). Pause ela ou espere terminar.', status: svcJobStatus() });
     const r0 = ['instagram', 'tiktok', 'facebook'].includes(rede) ? rede : '';
     const col = await getCollection('service_tests');
-    const recs = await col.find({ ...svcFiltroRede(r0), measureFailed: { $ne: true } }).toArray();
+    const recs = (await svcSepararEstaveis(col, await col.find({ ...svcFiltroRede(r0), measureFailed: { $ne: true }, medicaoEncerrada: { $ne: true } }).toArray())).medir;
     const ignored = await col.countDocuments({ ...svcFiltroRede(r0), measureFailed: true }).catch(() => 0);
     runServiceTestsJob(recs, { rede: r0, origem: 'todos', ignored }).then((r) => { try { console.log('🧪 [testes-servicos] checar todos (' + (r0 || 'todas') + '):', JSON.stringify({ ...r, failedIds: undefined })); } catch (_) {} }).catch(() => {});
     return res.json({ ok: true, background: true, total: recs.length, minutos: svcJobMinutos(recs), status: svcJobStatus() });
