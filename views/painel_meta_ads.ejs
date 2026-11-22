@@ -321,7 +321,10 @@
     function equilibrio(o){
       var pb = o.receita > 0 ? o.custoBanco/o.receita : null;
       var pt = o.tcReceitaCusto > 0 ? o.custoTc/o.tcReceitaCusto : null;
-      var pm = pb != null ? pb : (pt != null ? pt : pctGeral());
+      // Meta: custo% da coluna com MAIS vendas desse criativo (menos ruído); com menos de 5 vendas nas duas, o geral do período.
+      var nb = Number(o.vendas)||0, nt = Number(o.tcVendas)||0;
+      var pm = Math.max(nb, nt) < 5 ? pctGeral() : ((nt > nb && pt != null) ? pt : (pb != null ? pb : pt));
+      if (pm == null) pm = pctGeral();
       var be = function(x){ return x == null ? null : (x < 0.99 ? 1/(1-x) : 99); };
       return { banco: be(pb), tc: be(pt), meta: be(pm), pb: pb, pt: pt, pm: pm };
     }
@@ -368,7 +371,7 @@
     function fonte(v, n, g, be, pct, est){
       if (!(g>0)) return '<td class="fonte">'+(n>0?'<b>—</b><small class="num">'+nf(n)+' · '+brl0(v)+'</small>':'<small>—</small>')+'</td>';
       var r = v/g, cls = be != null ? (r >= be ? 'alto' : 'baixo') : roasCls(r);
-      var eq = be != null ? '<small class="eq" title="'+(est?'Estimativa: custo% do Banco deste criativo aplicado ao valor do Meta. ':'')+'Custo '+dec(pct*100,0)+'% da venda (fornecedor + taxa + imposto). Acima de '+dec(be,2)+' dá lucro.">equilíbrio '+(est?'≈':'')+dec(be,2)+'</small>' : '';
+      var eq = be != null ? '<small class="eq" title="'+(est?'Estimativa: custo% da coluna com mais vendas deste criativo (Banco ou TrackCombo; com menos de 5 vendas, o geral do período) aplicado ao valor do Meta. ':'')+'Custo '+dec(pct*100,0)+'% da venda (fornecedor + taxa + imposto). Acima de '+dec(be,2)+' dá lucro.">equilíbrio '+(est?'≈':'')+dec(be,2)+'</small>' : '';
       return '<td class="fonte num"><b class="'+cls+'">'+dec(r,2)+'</b><small>'+nf(n)+' · '+brl0(v)+'</small>'+eq+'</td>';
     }
     function mini(o){
