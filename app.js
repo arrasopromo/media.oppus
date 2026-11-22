@@ -41916,7 +41916,11 @@ async function __tcDia(dia, agora) {
   do {
     const args = { container_id: container, from: ini, to: fim - 1, limit: 200 };
     if (cursor) args.cursor = cursor;
-    const o = await __tcMcpCall(args, 'get_sales_report');
+    let o = null, ult = null;
+    for (let t = 0; t < 3 && !o; t++) {
+      try { o = await __tcMcpCall(args, 'get_sales_report'); } catch (e) { ult = e; await new Promise((r) => setTimeout(r, 1500 * (t + 1))); }
+    }
+    if (!o) throw ult || new Error('tc_sem_resposta');
     for (const s of (o.sales || [])) {
       const tx = String(s.transaction_id || '').trim(); if (!tx || String(s.status || 'OK').toUpperCase() !== 'OK') continue;
       const lt = s.last_touch || {};
@@ -41932,13 +41936,18 @@ async function __tcDia(dia, agora) {
 async function __tcCompras(iniMs, fimMs) {
   const agora = Date.now(), dias = [];
   for (let t = iniMs; t < Math.min(fimMs, agora); t += 864e5) dias.push(new Date(t - 3 * 3600e3).toISOString().slice(0, 10));
-  const out = [];
-  for (let i = 0; i < dias.length; i += 6) {
-    const lote = await Promise.all(dias.slice(i, i + 6).map((d) => __tcDia(d, agora)));
-    for (const l of lote) out.push(...l);
+  const out = [], falhou = [];
+  for (let i = 0; i < dias.length; i += 3) {
+    const grupo = dias.slice(i, i + 3);
+    const lote = await Promise.allSettled(grupo.map((d) => __tcDia(d, agora)));
+    lote.forEach((r, j) => { if (r.status === 'fulfilled') out.push(...r.value); else falhou.push(grupo[j]); });
   }
+  // Segunda chance, um dia por vez, para os que falharam.
+  for (const d of falhou.splice(0)) { try { out.push(...(await __tcDia(d, agora))); } catch (_) { falhou.push(d); } }
   const vistos = new Set();
-  return out.filter((c) => c.em >= iniMs && c.em < fimMs && !vistos.has(c.tx) && vistos.add(c.tx));
+  const res = out.filter((c) => c.em >= iniMs && c.em < fimMs && !vistos.has(c.tx) && vistos.add(c.tx));
+  res.diasSemDados = falhou;
+  return res;
 }
 async function computeMetaAdsData(q) {
   const range = __metaRange(q || {});
@@ -41979,7 +41988,7 @@ async function computeMetaAdsData(q) {
           campanha: a.campaign ? { id: String(a.campaign.id), nome: a.campaign.name || '', status: a.campaign.status || '', efetivo: a.campaign.effective_status || '', orcamentoDia: a.campaign.daily_budget ? (Number(a.campaign.daily_budget) / 100) * m : null } : null,
           thumb: (a.creative && a.creative.thumbnail_url) || '',
           gasto: 0, gastoHoje: 0, impressoes: 0, cliques: 0, metaCompras: 0, metaValor: 0, vendas: 0, receita: 0, tcVendas: 0, tcReceita: 0,
-          custoBanco: 0, tcReceitaCusto: 0, custoTc: 0, tcSemPedido: 0, _pedBanco: [], _txTc: [],
+          custoBanco: 0, tcReceitaCusto: 0, custoTc: 0, tcSemPedido: 0, custoReal: 0, custoEstimado: 0, custoSem: 0, receitaCartao: 0, _pedBanco: [], _txTc: [],
         });
       }
       for (const x of ins) {
@@ -42039,6 +42048,7 @@ async function computeMetaAdsData(q) {
     // O anúncio de cada venda vem da UTM do último clique no relatório de Vendas do TC (get_sales_report).
     // tc_atribuicao (raspagem antiga do painel do TC) só cobre venda que veio sem utm_content na API.
     const compras = await tcPromise;
+    if (compras.diasSemDados && compras.diasSemDados.length) erros.push('TrackCombo: ' + compras.diasSemDados.length + ' dia(s) sem resposta da TrackCombo (' + compras.diasSemDados.map((d) => d.slice(8, 10) + '/' + d.slice(5, 7)).join(', ') + '), a coluna está sem esses dias. Atualize em alguns minutos.');
     if (compras.length) {
       const ids = [...new Set(compras.map((x) => x.tx).filter(Boolean))];
       const imp = new Map();
@@ -42071,14 +42081,22 @@ async function computeMetaAdsData(q) {
         const k = String(d._id); const hit = __metaCustoCache.get(k);
         if (hit && hit.exp > Date.now()) return hit.v;
         let v = null;
-        try { const c = await computeTrackComboOrderCost(d, { live: false }); if (c && c.total >= 0) v = c.total; } catch (_) {}
+        try {
+          const c = await computeTrackComboOrderCost(d, { live: false });
+          if (c && c.total >= 0) v = { total: c.total, fonte: /service:real/.test(c.source) ? 'real' : (c.hasService ? 'estimado' : 'sem'), cartao: String(d.paymentMethod || '') === 'credit_card' || /^or_/.test(String(d.identifier || '')), valor: (Number(d.valueCents) || 0) / 100 };
+        } catch (_) {}
         __metaCustoCache.set(k, { v, exp: Date.now() + 20 * 60e3 });
         if (__metaCustoCache.size > 20000) __metaCustoCache.clear();
         return v;
       };
       for (const a of ads.values()) {
-        for (const id of a._pedBanco) { const d = porId.get(String(id)); const c = d ? await custoDe(d) : null; if (c != null) a.custoBanco += c; }
-        for (const t of a._txTc) { const d = porTx.get(String(t.tx)); const c = d ? await custoDe(d) : null; if (c != null) { a.custoTc += c; a.tcReceitaCusto += t.valor; } else a.tcSemPedido++; }
+        for (const id of a._pedBanco) {
+          const d = porId.get(String(id)); const c = d ? await custoDe(d) : null;
+          if (c == null) { a.custoSem++; continue; }
+          a.custoBanco += c.total; if (c.fonte === 'real') a.custoReal++; else if (c.fonte === 'estimado') a.custoEstimado++; else a.custoSem++;
+          if (c.cartao) a.receitaCartao += c.valor;
+        }
+        for (const t of a._txTc) { const d = porTx.get(String(t.tx)); const c = d ? await custoDe(d) : null; if (c != null) { a.custoTc += c.total; a.tcReceitaCusto += t.valor; } else a.tcSemPedido++; }
       }
     }
   } catch (e) { erros.push('custo por anúncio: ' + ((e && e.message) || e)); }
@@ -42087,7 +42105,7 @@ async function computeMetaAdsData(q) {
   for (const k of ['total', 'meta', 'anuncio', 'semRelatorio']) tc[k].receita = r2(tc[k].receita);
   const linhas = [...ads.values()]
     .filter((a) => a.gasto > 0 || a.vendas > 0 || a.metaCompras > 0 || a.tcVendas > 0 || a.efetivo === 'ACTIVE')
-    .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), custoBanco: r2(a.custoBanco), custoTc: r2(a.custoTc), tcReceitaCusto: r2(a.tcReceitaCusto), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
+    .map((a) => ({ ...a, gasto: r2(a.gasto), gastoHoje: r2(a.gastoHoje), metaValor: r2(a.metaValor), receita: r2(a.receita), tcReceita: r2(a.tcReceita), custoBanco: r2(a.custoBanco), custoTc: r2(a.custoTc), tcReceitaCusto: r2(a.tcReceitaCusto), receitaCartao: r2(a.receitaCartao), conjunto: a.conjunto && { ...a.conjunto, orcamentoDia: a.conjunto.orcamentoDia == null ? null : r2(a.conjunto.orcamentoDia) }, campanha: a.campanha && { ...a.campanha, orcamentoDia: a.campanha.orcamentoDia == null ? null : r2(a.campanha.orcamentoDia) } }))
     .sort((x, y) => y.gasto - x.gasto);
   const __gastoTot = r2([...ads.values()].reduce((x, a) => x + (Number(a.gasto) || 0), 0));
   const cac = { gasto: __gastoTot, clientes: __cacCli.clientes, novos: __cacCli.novos, novosAnuncio: __cacCli.novosAnuncio, cacGeral: __cacCli.novos ? r2(__gastoTot / __cacCli.novos) : null, cacAnuncio: __cacCli.novosAnuncio ? r2(__gastoTot / __cacCli.novosAnuncio) : null };
