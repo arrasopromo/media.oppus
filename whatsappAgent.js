@@ -254,7 +254,8 @@ function systemPrompt(dispTipos) {
     'LINK DE REPOSIÇÃO: mande o link de reposição SÓ quando o cliente falar de queda de seguidores ou pedir reposição. Para quem está esperando a entrega (pedido em andamento), NÃO mande o link.',
     'PEDIDO JÁ PAGO: se gerar_pix responder pedido_ja_pago, ou se o cliente mandou comprovante/disse que pagou, NÃO gere outro Pix e NÃO diga que está aguardando pagamento. Confirme e fale da entrega. Se ele disser que pagou mas o sistema ainda não confirmou, diga que a confirmação pode levar alguns minutos.',
     'RECLAMAÇÃO NÃO VIRA PIX: "não chegou", "não mudou nada", "vai entrar mesmo?", "cadê minhas curtidas" são perguntas sobre um pedido JÁ PAGO — use consultar_pedido e responda. NUNCA chame gerar_pix nessas mensagens. Só use comprar_mais=true em gerar_pix quando o cliente pedir claramente para COMPRAR OUTRO pacote.',
-    'PERFIL PRIVADO: se o cliente disser que o perfil está PÚBLICO, não repita que está privado. Agradeça, diga que vai verificar e acione chamar_suporte.',
+    'PERFIL PRIVADO NA COMPRA: se validar_perfil mostrar perfil PRIVADO, NÃO acione chamar_suporte e NÃO pare de vender. Avise UMA vez que o perfil precisa estar PÚBLICO para receber e que o envio começa automaticamente quando ele deixar público e avisar aqui. NÃO exija que ele abra antes de pagar: siga a venda normalmente (e-mail, Pix) mesmo com o perfil privado. Depois do Pix, lembre em uma frase: "assim que deixar o perfil público, me avise aqui que eu libero o envio".',
+    'PERFIL PRIVADO (cliente diz que está PÚBLICO): não repita que está privado. Valide de novo; se ainda vier privado, explique que pode levar alguns minutos para o Instagram atualizar. Só acione chamar_suporte se for um pedido JÁ PAGO que não começou.',
     'MAIS DE UM SERVIÇO: gere UM Pix por serviço, na ordem, e só depois de ter o link do post daquele serviço. Nunca diga que gerou um pedido que a ferramenta não confirmou. Ao dividir curtidas em vários posts, confirme a quantidade de links que o cliente REALMENTE enviou.',
     'Se o cliente pedir atendente humano ou fizer reclamação séria, use chamar_suporte e pare de vender.',
   ].join('\n');
@@ -362,7 +363,14 @@ async function runTool(name, args, ctx) {
       ctx.lastConsulta = r;
       return r;
     }
-    if (name === 'chamar_suporte') { ctx.support = true; return await sales.flagSupport(ctx.phone, (args && args.motivo) || ''); }
+    if (name === 'chamar_suporte') {
+      // 23/11: perfil privado na COMPRA pausava a IA (cliente mandou o e-mail e ficou sem resposta). Privado não é suporte:
+      // o bot avisa para deixar público e segue vendendo. Só passa se o cliente falou de pedido pago/reclamação.
+      const motivoSup = String((args && args.motivo) || '');
+      const falaPedido = /(paguei|pago|comprovante|j[aá] comprei|n[aã]o (chegou|recebi|caiu|come[cç]ou)|reembolso|estorno|atendente|humano|reclama)/i.test((ctx.recentUserTexts || []).slice(0, 4).join(' '));
+      if (/privad/i.test(motivoSup) && !falaPedido) return { ok: false, error: 'nao_e_suporte', message: 'Perfil privado NÃO é motivo para suporte e NÃO pausa a venda. Diga ao cliente (uma vez) que o perfil precisa estar PÚBLICO para receber e que o envio começa quando estiver público, e continue a venda normalmente (peça o que falta e gere o Pix).' };
+      ctx.support = true; return await sales.flagSupport(ctx.phone, motivoSup);
+    }
     if (name === 'gerar_pix') {
       const a2 = Object.assign({}, args || {});
       // UM Pix por mensagem do cliente (19/11: 4 Pix num turno para "25 mil curtidas em 5 reels"; só o último foi
@@ -453,7 +461,17 @@ async function handleAgentMessage(msg, sendText) {
     if (achados.length) ctx.histUsername = achados[achados.length - 1][1].replace(/[.,]+$/, '');
   } catch (_) {}
   let _dispTipos = null; try { _dispTipos = await sales.tiposDisponiveis(); } catch (_) {}
-  const work = [{ role: 'system', content: systemPrompt(_dispTipos) }, ...hist, { role: 'user', content: text }];
+  // "Abri o perfil" / "já está público": se tem pedido PAGO de perfil privado sem envio, confere ao vivo e libera.
+  let notaPrivado = '';
+  if (/(abri|deixei|coloquei|botei|j[aá]\s+(est[aá]|t[aá])|agora\s+(est[aá]|t[aá])|t[aá]|est[aá]|ficou|mudei)[^.?!]{0,25}p[uú]blic|desprivat|tirei\s+(o\s+)?privad|abri\s+(o\s+|meu\s+)?(perfil|insta|conta)/i.test(text)) {
+    try {
+      const lp = await sales.liberarPrivadoPago(phone);
+      if (lp.status === 'despachado') notaPrivado = 'SISTEMA: conferi agora — o perfil @' + lp.usuario + ' está PÚBLICO e o envio do pedido pago JÁ FOI LIBERADO. Confirme isso ao cliente (começa a entrar em breve, de forma gradual) e peça para manter o perfil público até terminar. NÃO gere Pix.';
+      else if (lp.status === 'ainda_privado') notaPrivado = 'SISTEMA: conferi agora — o perfil @' + lp.usuario + ' do pedido pago AINDA aparece PRIVADO. Diga com gentileza que ainda aparece privado (às vezes o Instagram demora alguns minutos) e peça para conferir e avisar de novo. NÃO acione suporte. NÃO gere Pix.';
+      else if (lp.status === 'erro_envio' || lp.status === 'nao_conferiu') notaPrivado = 'SISTEMA: o perfil do pedido pago foi conferido, mas não consegui liberar o envio automaticamente; o suporte já foi avisado. Diga ao cliente que a equipe vai liberar em breve. NÃO gere Pix.';
+    } catch (_) {}
+  }
+  const work = [{ role: 'system', content: systemPrompt(_dispTipos) }, ...hist].concat(notaPrivado ? [{ role: 'system', content: notaPrivado }] : []).concat([{ role: 'user', content: text }]);
   let finalText = '';
 
   try {

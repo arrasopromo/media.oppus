@@ -631,7 +631,34 @@ async function flagSupport(phone, motivo) {
   } catch (e) { return { ok: false, error: (e && e.message) || 'erro' }; }
 }
 
+// Pedido PAGO de perfil PRIVADO (envio adiado) deste telefone: confere o perfil AO VIVO e, se abriu, despacha pelo
+// mesmo caminho do botão "já deixei público" da página do pedido (/api/order/retry-fulfillment). 23/11/2026.
+async function liberarPrivadoPago(phone) {
+  try {
+    const fim8 = String(phone || '').replace(/\D/g, '').slice(-8);
+    if (fim8.length !== 8) return { status: 'sem_pedido' };
+    const col = await getCollection('checkout_orders');
+    const desde = new Date(Date.now() - 7 * 24 * 3600e3).toISOString();
+    const os = await col.find({ createdAt: { $gte: desde }, status: { $in: ['pago', 'paid'] }, 'customer.phone': { $regex: fim8 + '$' }, $or: [{ isPrivate: true }, { 'profilePrivacy.isPrivate': true }] }).sort({ createdAt: -1 }).limit(5).toArray();
+    const temEnvio = (o) => [o.fama24h, o.fornecedor_social, o.topfama, o.nuvra].some((b) => b && b.orderId) || [o.fama24h_multi, o.fornecedor_social_multi].some((b) => b && Array.isArray(b.orders) && b.orders.some((x) => x && (x.orderId || x.id)));
+    const o = os.find((x) => !temEnvio(x) && !(x.privados && x.privados.arquivado));
+    if (!o) return { status: 'sem_pedido' };
+    const u = String(o.instagramUsername || o.instauser || '').replace(/^@+/, '');
+    if (!u) return { status: 'sem_pedido' };
+    let priv = null;
+    try { const ig = await require('./instagramScraper.js').getInstagramProfile(u, { fresh: true }); if (ig && ig.ok && ig.profile) priv = !!ig.profile.isPrivate; } catch (_) {}
+    if (priv !== false) return { status: priv === true ? 'ainda_privado' : 'nao_conferiu', usuario: u };
+    const headers = {}; const sec = String(process.env.INTERNAL_API_SECRET || '').trim(); if (sec) headers['x-internal-secret'] = sec;
+    // UMA chamada só (sem repetir sozinho: evita pedido duplicado no fornecedor).
+    const r = await axios.post(INTERNAL_BASE + '/api/order/retry-fulfillment', { identifier: String(o.identifier || o.correlationID) }, { timeout: 60000, validateStatus: () => true, headers });
+    const ok = r && r.status >= 200 && r.status < 300;
+    if (!ok) { try { await flagSupport(phone, 'Perfil @' + u + ' abriu mas o envio falhou (HTTP ' + (r && r.status) + ')'); } catch (_) {} }
+    return { status: ok ? 'despachado' : 'erro_envio', usuario: u };
+  } catch (e) { return { status: 'erro', message: (e && e.message) || 'erro' }; }
+}
+
 module.exports = {
+  liberarPrivadoPago,
   CATALOG, normalizeServico, normalizeTipo, parseIgUsername,
   quote, priceTable, validateProfile, createPixOrder, generateValidCPF, flagSupport, consultarPedido, brl, sendNtfy,
   loadHiddenTypes, tiposDisponiveis,
