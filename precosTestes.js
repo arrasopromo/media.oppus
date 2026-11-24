@@ -83,6 +83,7 @@ const FORNECEDORES = [
   P('topfama', 'TopFama', /topfama\.com/i, 'BRL', { url: 'https://topfama.com/api/v2', keyEnv: 'TOPFAMA_API_KEY', min: 50 }),
   P('revendaexclusiva', 'RevendaExclusiva', /revendaexclusiva\.com/i, 'BRL', { url: 'https://revendaexclusiva.com/api/v2', keyEnv: 'REVENDAEXCLUSIVA_API_KEY', min: 30 }),
   P('smmbind', 'SMMBind', /smmbind\.com/i, 'USD', { url: 'https://smmbind.com/api/v2', keyEnv: 'SMMBIND_API_KEY', min: 1000 }),
+  P('autosmmpanel', 'AutoSMMPanel', /autosmmpanel\.com/i, 'USD', { url: 'https://autosmmpanel.com/api/v2', keyEnv: 'AUTOSMMPANEL_API_KEY', min: 300 }),
   P('smmpix', 'SMMPix', /smmpix\.com/i, null, { url: 'https://smmpix.com/api/v2', keyEnv: 'SMMPIX_API_KEY', min: 200 }),
   // Catálogo incompleto/incerto pela API → só atualiza preço quando acha, NUNCA marca ausência.
   P('nuvra', 'Nuvra', /nuvrasmm\.com/i, 'BRL', { url: process.env.NUVRASMM_API_URL || 'https://nuvrasmm.com/api/v2', keyEnv: 'NUVRASMM_API_KEY', marca: false, min: 1 }),

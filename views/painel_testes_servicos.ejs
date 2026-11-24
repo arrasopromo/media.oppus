@@ -93,8 +93,14 @@
        consultadas nas checagens em lote. */
     tr.row-new td { background: #eef2ff !important; transition: background .8s; }
     tr.row-failed td { background: #f7e0e0 !important; color: #7b6b6b !important; }
-    tr.row-encerrada td { background: #eef3ee !important; color: #6b7b6e !important; }
-    tr.row-encerrada td.rownum { box-shadow: inset 3px 0 0 #6b9a72; }
+    /* Medição encerrada (10+ dias e 3 medições iguais): fundo AMARELO. Paramos de medir para não gastar RocketAPI; o número é o da última medição. */
+    tr.row-encerrada td { background: #fdf5d6 !important; color: #6f6131 !important; }
+    tr.row-encerrada td.rownum { box-shadow: inset 3px 0 0 #e0b100; }
+    tr.row-encerrada:hover td { background: #faedbd !important; }
+    .legenda-cores { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 0 0 10px; font-size: 12.5px; color: #4b5563; }
+    .legenda-cores .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .legenda-cores .sw { width: 16px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.12); }
+    .legenda-cores .q { font-weight: 700; }
     tr.row-failed td .cell-select, tr.row-failed td input { background: transparent; color: #7b6b6b; }
     tr.row-failed:hover td { background: #f2d3d3 !important; }
     /* Acento vermelho sutil só na 1ª célula (sem o X). */
@@ -280,6 +286,13 @@
       // client-side), o clique num link pra mesma URL não recarrega — então forçamos reload.
       var la=document.getElementById('clearAllFilters');if(la)la.addEventListener('click',function(e){e.preventDefault();var base='/painel/testes-servicos?rede=<%= _rede %>';if(location.pathname+location.search===base){location.reload();}else{location.href=base;}});});</script>
 
+    <div class="legenda-cores" aria-label="Legenda das cores">
+      <span class="lg"><span class="sw" style="background:#f7e0e0;box-shadow:inset 3px 0 0 #dc2626"></span>Vermelho: perfil caiu (sumiu, ficou privado ou a medição falhou 2 dias seguidos), sai das checagens</span>
+      <span class="lg"><span class="sw" style="background:#e9eaec;box-shadow:inset 3px 0 0 #9ca3af"></span>Cinza: serviço não existe mais no catálogo do fornecedor</span>
+      <span class="lg"><span class="sw" style="background:#fdf5d6;box-shadow:inset 3px 0 0 #e0b100"></span>Amarelo: medição encerrada (10+ dias e 3 medições iguais), paramos de medir para economizar RocketAPI; vale o último número</span>
+      <span class="lg"><span class="sw" style="background:#eef2ff"></span>Azul: teste recém-criado</span>
+      <span class="lg"><span class="q" style="color:#dc2626">▼ %</span> abaixo da quantidade pedida · <span class="q" style="color:#166534">▲ %</span> acima</span>
+    </div>
     <div class="top-scroll" id="topScroll"><div class="top-scroll-inner" id="topScrollInner"></div></div>
     <div class="grid-wrap" id="gridWrap">
       <table>
