@@ -6580,9 +6580,15 @@ async function verifyInstagramProfile(username, userAgent, ip, req, res, bypassC
     // Checagens que NÃO são o cliente validando o @ no site: refil/refil2, a conferência de perfil público no
     // DESPACHO do pedido e a validação feita pelo BOT do WhatsApp. Ganham source próprio (refilcheck_*,
     // despachocheck_*, botcheck_*) para não contarem como "perfil validado" no Dashboard/Track do Site.
+    // Conferências de FUNDO ganham source próprio p/ NÃO contarem como "perfil validado" (Dashboard/Vendas).
+    // 24/11: a página /pedido (Background-Pedido, aberta muito por robôs da Meta na prévia do link) e os
+    // webhooks de pagamento gravavam verifyInstagramProfile_* e inflavam os validados.
+    const __uaBg = String(userAgent || '');
     const __bgCheck = (purpose === 'refil' || purpose === 'refil2') ? ('refilcheck_%s_' + purpose)
-      : (String(userAgent || '') === 'ProcessFulfillment-Check' ? 'despachocheck_%s'
-      : (purpose === 'bot_check' ? 'botcheck_%s' : ''));
+      : (__uaBg === 'ProcessFulfillment-Check' ? 'despachocheck_%s'
+      : (__uaBg === 'Background-Pedido' ? 'pedidocheck_%s'
+      : (__uaBg === 'Webhook-Payment' || __uaBg === 'Webhook-LiveCheck' ? 'pagamentocheck_%s'
+      : (purpose === 'bot_check' ? 'botcheck_%s' : ''))));
     const skipPosts = opts.skipPosts === true || purpose === 'refil' || purpose === 'refil2';
 
     if (!bypassCache) {
@@ -26716,8 +26722,12 @@ app.get('/pedido', async (req, res) => {
         const nowMs = Date.now();
         const lastCheck = vUser && vUser.checkedAt ? new Date(vUser.checkedAt).getTime() : 0;
         const isOld = (nowMs - lastCheck) > (60 * 60 * 1000);
-        
-        if (!vUser || isOld) {
+        // 24/11: robô (prévia de link da Meta/WhatsApp, Google…) abrindo /pedido não dispara consulta paga da RocketAPI.
+        const __uaPed = String(req.get('user-agent') || '');
+        const __ipPed = String(req.ip || '').replace(/^::ffff:/, '');
+        const __roboPed = (typeof __TS_BOT_RE !== 'undefined' && __TS_BOT_RE.test(__uaPed)) || !__uaPed || /^2a03:2880:|^57\.141\.|^31\.13\.|^66\.220\.|^69\.171\.|^173\.252\./i.test(__ipPed);
+
+        if ((!vUser || isOld) && !__roboPed) {
              const mockReq = { session: {}, query: {}, body: {} };
              // Disparar verificação sem aguardar (fire-and-forget) para não travar o carregamento
              verifyInstagramProfile(uname, 'Background-Pedido', req.ip || '127.0.0.1', mockReq, null)
