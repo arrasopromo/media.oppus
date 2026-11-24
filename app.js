@@ -4729,18 +4729,32 @@ async function runServiceTestsJob(recs, { rede = '', origem = '', ignored = 0 } 
 function svcFiltroRede(rede) {
   return rede === 'tiktok' || rede === 'facebook' ? { rede } : (rede === 'instagram' ? { rede: { $nin: ['tiktok', 'facebook'] } } : {});
 }
-// Teste ESTÁVEL: 10+ dias desde o cadastro e a mesma quantidade nas 3 últimas medições (1 por dia).
-// Não precisa mais medir (gasta request da RocketAPI): ganha medicaoEncerrada e sai das checagens em lote.
+// Teste PARADO SEM ENTREGAR: 10+ dias desde o cadastro, as 3 últimas medições iguais ou quase
+// (diferença até 2 ou 2% do contratado) e o pico NÃO chegou a 90% do contratado.
+// Não precisa mais medir (gasta request da RocketAPI): ganha medicaoEncerrada (linha amarela) e sai das checagens em lote.
+// 24/11: teste que ENTREGOU (pico >= 90% do contratado) segue sendo medido enquanto o perfil e o serviço existirem,
+// mesmo com o número parado (ex.: 300 → 301 → 299…), porque é a queda dele que interessa.
 // "Checar selecionados" continua medindo se quiser. Nada é apagado.
 const SVC_ENCERRA_DIAS = Math.max(1, Number(process.env.SVC_TESTE_ENCERRA_DIAS || 10) || 10);
 const SVC_ENCERRA_PONTOS = Math.max(2, Number(process.env.SVC_TESTE_ENCERRA_PONTOS || 3) || 3);
+const SVC_ENTREGA_MIN_PCT = Math.min(100, Math.max(1, Number(process.env.SVC_TESTE_ENTREGA_MIN_PCT || 90) || 90));
+function svcEntregouContratado(rec) {
+  const q = Number(rec && rec.quantidade) || 0;
+  if (q <= 0) return false;
+  const h = Array.isArray(rec.history) ? rec.history : [];
+  const pico = Math.max(Number(rec.pico) || 0, ...h.map((x) => Number(x && x.count) || 0));
+  return pico - (Number(rec.baseAntes) || 0) >= q * SVC_ENTREGA_MIN_PCT / 100;
+}
 function svcTesteEstavel(rec) {
   const criado = new Date(rec && rec.createdAt).getTime();
   if (!Number.isFinite(criado) || Date.now() - criado < SVC_ENCERRA_DIAS * 864e5) return false;
+  if (!rec.servicoForaDoCatalogo && svcEntregouContratado(rec)) return false;
   const h = Array.isArray(rec.history) ? rec.history : [];
   if (h.length < SVC_ENCERRA_PONTOS) return false;
   const ult = h.slice(-SVC_ENCERRA_PONTOS).map((x) => Number(x && x.count));
-  return ult.every((n) => Number.isFinite(n) && n === ult[0]);
+  if (!ult.every((n) => Number.isFinite(n))) return false;
+  const tol = Math.max(2, Math.round((Number(rec.quantidade) || 0) * 0.02));
+  return Math.max(...ult) - Math.min(...ult) <= tol;
 }
 // Separa os testes que acabaram de ficar estáveis (marca no banco) dos que seguem sendo medidos.
 async function svcSepararEstaveis(col, recs) {
@@ -4748,7 +4762,7 @@ async function svcSepararEstaveis(col, recs) {
   for (const r of recs) {
     if (svcTesteEstavel(r)) {
       const h = r.history.slice(-SVC_ENCERRA_PONTOS);
-      try { await col.updateOne({ _id: r._id }, { $set: { medicaoEncerrada: true, medicaoEncerradaAt: new Date().toISOString(), medicaoEncerradaMotivo: SVC_ENCERRA_PONTOS + ' medições iguais (' + Number(h[0].count) + ') depois de ' + SVC_ENCERRA_DIAS + '+ dias' } }); encerrados++; } catch (_) { medir.push(r); }
+      try { await col.updateOne({ _id: r._id }, { $set: { medicaoEncerrada: true, medicaoEncerradaAt: new Date().toISOString(), medicaoEncerradaMotivo: 'não chegou a ' + SVC_ENTREGA_MIN_PCT + '% do contratado e ficou parado em ~' + Number(h[h.length - 1].count) + ' (' + SVC_ENCERRA_PONTOS + ' medições) depois de ' + SVC_ENCERRA_DIAS + '+ dias' } }); encerrados++; } catch (_) { medir.push(r); }
     } else medir.push(r);
   }
   if (encerrados) { try { console.log('🧪 [testes-servicos] ' + encerrados + ' teste(s) estável(is) — medição encerrada'); } catch (_) {} }
